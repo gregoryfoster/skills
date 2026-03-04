@@ -71,7 +71,25 @@ metadata:
 
 ## Spec compliance
 
-- Validate skills with `skills-ref validate skills/<name>` (install: `pip install git+https://github.com/agentskills/agentskills#subdirectory=skills-ref`)
+Validate skills with `skills-ref validate skills/<name>`.
+
+### Installing `skills-ref`
+
+Use `uv tool install` (recommended — isolated, no `--break-system-packages` needed):
+
+```bash
+uv tool install "git+https://github.com/agentskills/agentskills#subdirectory=skills-ref"
+```
+
+Or with pip in a venv:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-ref"
+```
+
+### Spec rules
+
 - Required frontmatter: `name`, `description`
 - `name` must match the directory name exactly
 - `description` max 1024 chars; write in third person; include what and when
