@@ -40,4 +40,4 @@ Follows the [Agent Skills specification](https://agentskills.io/specification). 
 
 ## License
 
-Apache 2.0
+MIT
