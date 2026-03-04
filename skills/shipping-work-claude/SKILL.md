@@ -33,9 +33,10 @@ bash scripts/check-status.sh
 
 If uncommitted changes exist, commit them following the project convention. Check AGENTS.md for the project's commit message format. Default:
 ```
-#<issue>: <type>: <description>
+#<number> [type]: <description>       # with GH issue
+[type]: <description>                 # without GH issue
 ```
-For multiple issues: `#19, #20: feat: description`
+Multiple issues: `#19, #20 [type]: <description>`
 
 ### Step 3 — Ensure on main
 
