@@ -42,16 +42,16 @@ Create relative symlinks from the project's `skills/` directory to the submodule
 
 ```bash
 mkdir -p skills
-ln -s ../../vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>
+ln -s ../vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>
 ```
 
 Example:
 ```bash
-ln -s ../../vendor/gregoryfoster-skills/skills/reviewing-code-claude skills/reviewing-code-claude
-ln -s ../../vendor/gregoryfoster-skills/skills/shipping-work-claude skills/shipping-work-claude
+ln -s ../vendor/gregoryfoster-skills/skills/reviewing-code-claude skills/reviewing-code-claude
+ln -s ../vendor/gregoryfoster-skills/skills/shipping-work-claude skills/shipping-work-claude
 ```
 
-The `../../` prefix is required because the symlink is relative from `skills/<skill-name>` back to the repo root.
+The `../` prefix is required because the symlink target is resolved relative to the symlink's parent directory (`skills/`), which is one level below the repo root.
 
 #### Step 3 — Update the project's AGENTS.md
 
