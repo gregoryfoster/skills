@@ -11,6 +11,7 @@ Skills are folders of instructions, scripts, and references that agents can disc
 | [`reviewing-code-claude`](skills/reviewing-code-claude/) | CR, code review, perform a review | Structured code & documentation review with severity-tiered findings |
 | [`reviewing-architecture-claude`](skills/reviewing-architecture-claude/) | AR, architecture review, architectural review | High-level architectural review across 11 structural dimensions |
 | [`shipping-work-claude`](skills/shipping-work-claude/) | ship it, push GH, close GH, wrap up | Commit, push, comment, and close GitHub issues |
+| [`managing-skills-claude`](skills/managing-skills-claude/) | add skill repo, add external skills, manage skills, update skills submodule | Add, update, and remove external skill repos using git submodules + symlinks |
 
 ## Structure
 
@@ -29,6 +30,28 @@ Point your agent at this repo's `skills/` directory. For Claude Code and similar
 ```bash
 skills-ref to-prompt skills/reviewing-code-claude skills/reviewing-architecture-claude skills/shipping-work-claude
 ```
+
+## Consuming this repo
+
+The recommended pattern for using these skills in your project is **git submodule + symlinks**:
+
+```bash
+# 1. Add as a submodule
+git submodule add https://github.com/gregoryfoster/skills.git vendor/gregoryfoster-skills
+
+# 2. Symlink the skills you want
+mkdir -p skills
+ln -s ../../vendor/gregoryfoster-skills/skills/reviewing-code-claude skills/reviewing-code-claude
+ln -s ../../vendor/gregoryfoster-skills/skills/shipping-work-claude skills/shipping-work-claude
+
+# 3. Commit
+git add .gitmodules vendor/gregoryfoster-skills skills/
+git commit -m "feat: add gregoryfoster/skills submodule"
+```
+
+Symlinked skills are auto-discovered by the agent framework. To override a global skill with project-specific behavior, replace the symlink with a committed directory of the same name.
+
+See [`managing-skills-claude`](skills/managing-skills-claude/) for the full procedure.
 
 ## Project-level overrides
 

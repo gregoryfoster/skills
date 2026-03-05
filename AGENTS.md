@@ -122,6 +122,22 @@ Common types: `feat`, `fix`, `docs`, `refactor`, `chore`
 
 Example: `feat: add reviewing-architecture-cursor variant`
 
+## How downstream projects consume this repo
+
+Projects use the **git submodule + symlink** pattern:
+
+1. Add this repo as a submodule at `vendor/gregoryfoster-skills/`
+2. Symlink individual skills into the project's `skills/` directory using relative paths
+3. The agent framework auto-discovers skills by scanning `skills/` — symlinks make them visible
+
+Key rules:
+- Submodule path convention: `vendor/<owner>-<repo>/` (e.g., `vendor/gregoryfoster-skills/`)
+- Symlink paths must be relative: `../../vendor/gregoryfoster-skills/skills/<skill-name>`
+- Local overrides (committed directories in `skills/`) always win over symlinks
+- The `vendor/` directory is read-only from the consuming project's perspective
+
+The [`managing-skills-claude`](skills/managing-skills-claude/) skill teaches agents how to perform these operations.
+
 ## Adding a new skill
 
 1. Create `skills/<skill-name>/SKILL.md` with valid frontmatter
@@ -129,6 +145,7 @@ Example: `feat: add reviewing-architecture-cursor variant`
 3. Validate: `skills-ref validate skills/<skill-name>`
 4. Commit and push
 5. Update project AGENTS.md files that reference this repo to include the new skill in their `<available_skills>` block (if applicable)
+6. If the skill should be listed in this repo's README.md skills table, add it there too
 
 ## Adding a new agent variant
 
