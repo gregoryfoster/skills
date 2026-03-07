@@ -4,13 +4,30 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
 # Shipping Work
 
 Finalizes work: clean commit, push, GitHub issue comments, and closure.
+
+## The Iron Law
+
+```
+NO PUSH WITHOUT PASSING TESTS — VERIFIED IN THIS SESSION
+NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION — VERIFIED AGAINST ORIGINAL REQUIREMENTS
+```
+
+## Rationalization prevention
+
+| Thought | Reality |
+|---|---|
+| "Tests passed earlier in this session" | Run them again. State can change. Require fresh output. |
+| "It's basically done, just needs minor cleanup" | Incomplete = not done. Finish or explicitly descope before closing. |
+| "The issue will track follow-up work" | Only close if the core requirement is fully met. Open a new issue for follow-up. |
+| "gh push is failing, I'll skip it" | Resolve the error. Do not mark as shipped without a successful push. |
+| "User is in a hurry" | A bad ship is slower than a good one. Run the checklist. |
 
 ## Scope detection
 
@@ -23,7 +40,15 @@ Determine which GitHub issue(s) to close (priority order):
 
 ### Step 1 — Run tests
 
-If tests haven't been run this session, run them now before proceeding. Do not push failing tests.
+```bash
+bash scripts/pre-ship.sh
+```
+
+```
+NO CONTINUATION IF TESTS FAIL
+```
+
+If tests fail: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
 ### Step 2 — Ensure a clean working tree
 
@@ -65,11 +90,16 @@ Comment must include:
 
 ### Step 6 — Close GitHub issues
 
+<HARD-GATE>
+Before closing any issue, verify the original requirements against what was implemented:
+1. Re-read the issue body
+2. Confirm each stated requirement is addressed in commits
+3. If any requirement is missing: do NOT close — ask the user whether to descope or continue
+</HARD-GATE>
+
 ```bash
 bash scripts/close-issue.sh <number>
 ```
-
-Never close an issue that wasn't fully implemented — ask first if uncertain.
 
 ### Step 7 — Report
 

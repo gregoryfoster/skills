@@ -4,13 +4,34 @@ description: Performs a structured code and documentation review using a severit
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: CR, code review, perform a review
 ---
 
 # Code & Documentation Review
 
 A systematic review workflow that produces a numbered findings report, waits for directives, then implements approved changes.
+
+## The Iron Law
+
+```
+NO FINDINGS REPORT WITHOUT RUNNING THE TEST SUITE FIRST
+NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES
+```
+
+If you haven't run `gather-context.sh` and confirmed tests pass, you have not completed Phase 1.
+If the user hasn't responded with directives, you cannot implement anything.
+
+## Rationalization prevention
+
+| Thought | Reality |
+|---|---|
+| "It's a small change, no need for a full review" | Size doesn't determine risk. Run the review. |
+| "I just implemented this, I know it's correct" | Familiarity bias. A fresh pass finds what implementation blindness missed. |
+| "Tests are passing, that's the review" | Tests verify behavior, not convention compliance or docs. |
+| "The user seems in a hurry" | A fast broken change is slower than a thorough correct one. |
+| "I'll fix things as I find them" | Phase 4 exists. Present first, implement after directives. |
+| "This file wasn't in the diff" | Related files need review too. Check call sites, tests, AGENTS.md. |
 
 ## Scope detection
 
@@ -55,13 +76,23 @@ Key rules:
 - Group by severity: 🔴 Bugs → 🟡 Issues to fix → 💭 Minor/observations
 - **Summary** — 1–2 sentences on overall assessment and top priorities
 
+### Phase 3.5 — Verify before reporting
+
+```
+NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+```
+
+- Re-run tests if any implementation happened in this conversation
+- If tests fail: report the failure as a 🔴 finding regardless of cause
+- Do NOT claim "tests pass" unless you have output from this session confirming it
+
 ### Phase 4 — Wait for feedback
 
 **Stop. Do not make changes until the user responds.**
 
 Accept terse directives referencing item numbers. See [references/directives.md](references/directives.md).
 
-After directives, implement all requested changes, commit, and present a summary table.
+After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table.
 
 ## Second review rounds
 
