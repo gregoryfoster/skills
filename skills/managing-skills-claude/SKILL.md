@@ -1,10 +1,10 @@
 ---
 name: managing-skills-claude
-description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under vendor/, symlinks individual skills into the project's skills/ directory, handles updates and removal. Use when the user says 'add skill repo', 'add external skills', 'manage skills', or 'update skills submodule'."
+description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under vendor/, symlinks individual skills into the project's skills/ directory and .claude/skills/ for Claude Code discovery, handles updates and removal. Use when the user says 'add skill repo', 'add external skills', 'manage skills', or 'update skills submodule'."
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: add skill repo, add external skills, manage skills, update skills submodule
 ---
 
@@ -16,8 +16,9 @@ Adds, updates, and removes external skill repos in a project using git submodule
 
 - Skill repos are added as **git submodules** at `vendor/<owner>-<repo>/`
 - Individual skills are **symlinked** from the submodule into the project's `skills/` directory
-- Local overrides (committed directories in `skills/`, not symlinks) always take precedence
-- The agent framework auto-discovers skills by scanning `skills/` — symlinks make external skills discoverable
+- A second symlink from `.claude/skills/<name>` → `../../skills/<name>` wires each skill into Claude Code's native discovery path
+- Local overrides (committed directories in `skills/`, not symlinks) always take precedence in **both** discovery systems — no changes to `.claude/skills/` needed when creating an override
+- The agentskills.io framework auto-discovers skills by scanning `skills/`; Claude Code discovers them from `.claude/skills/`
 
 ## Procedure
 
@@ -53,6 +54,23 @@ ln -s ../vendor/gregoryfoster-skills/skills/shipping-work-claude skills/shipping
 
 The `../` prefix is required because the symlink target is resolved relative to the symlink's parent directory (`skills/`), which is one level below the repo root.
 
+#### Step 2b — Wire to Claude Code's skill discovery path
+
+Claude Code discovers project skills from `.claude/skills/`, not from the project root `skills/`. Create a second symlink pointing through `skills/` rather than directly to vendor — this ensures local overrides in `skills/` automatically shadow vendor skills in both discovery systems without duplication:
+
+```bash
+mkdir -p .claude/skills
+ln -s ../../skills/<skill-name> .claude/skills/<skill-name>
+```
+
+Example:
+```bash
+ln -s ../../skills/reviewing-code-claude .claude/skills/reviewing-code-claude
+ln -s ../../skills/shipping-work-claude .claude/skills/shipping-work-claude
+```
+
+The `../../` prefix resolves from `.claude/skills/` back to the project root, then into `skills/<name>`.
+
 #### Step 3 — Update the project's AGENTS.md
 
 Add or update the `<available_skills>` block to list the newly available skills. Document which skills are symlinked (global) vs local overrides.
@@ -62,7 +80,7 @@ Add or update the `<available_skills>` block to list the newly available skills.
 Commit the `.gitmodules` file, the `vendor/` submodule reference, and the new symlinks together:
 
 ```bash
-git add .gitmodules vendor/<owner>-<repo> skills/
+git add .gitmodules vendor/<owner>-<repo> skills/ .claude/skills/
 git commit -m "feat: add <owner>/<repo> skills submodule"
 ```
 
@@ -134,3 +152,4 @@ git clone --recurse-submodules <project-url>
 - Always use relative symlink paths so they work regardless of where the repo is cloned
 - If a symlink is broken (target missing), run `git submodule update --init`
 - The `vendor/` directory should be treated as read-only — make changes upstream
+- The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed
