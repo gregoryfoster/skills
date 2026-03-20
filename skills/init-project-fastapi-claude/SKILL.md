@@ -1,5 +1,5 @@
 ---
-name: init-project-fastapi
+name: init-project-fastapi-claude
 description: Bootstraps a new FastAPI project with the full CannObserv agent tooling foundation — SSH deploy key, pyproject.toml, FastAPI skeleton, structured logging, TDD scaffold, vendor skill submodules, local skill overrides, and GitHub issue tracking. Use when starting a new service in the CannObserv org.
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
@@ -50,7 +50,7 @@ Confirm all seven before proceeding.
 ### Phase 1 — SSH deploy key
 
 ```bash
-bash skills/init-project-fastapi/scripts/gen-deploy-key.sh <PROJECT_NAME> <DEPLOY_KEY_LABEL>
+bash skills/init-project-fastapi-claude/scripts/gen-deploy-key.sh <PROJECT_NAME> <DEPLOY_KEY_LABEL>
 ```
 
 Present the **public key** to the user:
@@ -62,7 +62,7 @@ Present the **public key** to the user:
 ### Phase 2 — Configure git remote
 
 ```bash
-bash skills/init-project-fastapi/scripts/configure-remote.sh <PROJECT_NAME> <GITHUB_ORG>
+bash skills/init-project-fastapi-claude/scripts/configure-remote.sh <PROJECT_NAME> <GITHUB_ORG>
 ```
 
 Verify connectivity:

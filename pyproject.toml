@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: requires ANTHROPIC_API_KEY, skipped by default",
+    "benchmark: expensive LLM-as-judge tests, run on-demand only",
+]
+addopts = "-m 'not integration and not benchmark'"
