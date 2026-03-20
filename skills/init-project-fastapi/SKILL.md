@@ -27,8 +27,23 @@ Ask the user (one at a time if not provided upfront):
 | `GITHUB_ORG` | `CannObserv` | git remote, deploy key host alias, GH issue |
 | `API_PORT` | `8000` | AGENTS.md, README.md, docs/COMMANDS.md |
 | `DEPLOY_KEY_LABEL` | `watcher-deploy-key` | ssh-keygen comment |
+| `GIT_USER_NAME` | `Ada Lovelace` | git local config, commits |
+| `GIT_USER_EMAIL` | `ada@example.com` | git local config, commits |
 
-Confirm all five before proceeding.
+Before confirming, show the current global git identity and ask the user whether to use it or override per-project:
+
+```
+Current global git identity:
+  user.name  = <git config --global user.name>
+  user.email = <git config --global user.email>
+
+Enter GIT_USER_NAME [press Enter to use global value]:
+Enter GIT_USER_EMAIL [press Enter to use global value]:
+```
+
+If the user accepts both global values, skip Phase 2a.
+
+Confirm all seven before proceeding.
 
 ## Procedure
 
@@ -57,6 +72,22 @@ ssh -o StrictHostKeyChecking=no -T git@github-<PROJECT_NAME> 2>&1
 ```
 
 Expected: `Hi <GITHUB_ORG>/<PROJECT_NAME>! You've successfully authenticated...`
+
+### Phase 2a — Configure git identity
+
+> Skip this phase if the user accepted both global values in the parameter collection step.
+
+```bash
+git config user.name  "<GIT_USER_NAME>"
+git config user.email "<GIT_USER_EMAIL>"
+```
+
+Verify:
+
+```bash
+git config user.name   # should echo GIT_USER_NAME
+git config user.email  # should echo GIT_USER_EMAIL
+```
 
 ### Phase 3 — Core config files
 
