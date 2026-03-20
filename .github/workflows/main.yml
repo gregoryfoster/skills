@@ -29,7 +29,6 @@ jobs:
     name: Integration tests (behavioral gate enforcement)
     runs-on: ubuntu-latest
     needs: structural
-
     steps:
       - uses: actions/checkout@v4
 

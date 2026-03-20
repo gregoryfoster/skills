@@ -12,6 +12,8 @@ metadata:
 
 A systematic review workflow that produces a numbered findings report, waits for directives, then implements approved changes.
 
+**Activation triggers:** CR (shorthand for code review), "code review", "perform a review".
+
 ## The Iron Law
 
 ```
