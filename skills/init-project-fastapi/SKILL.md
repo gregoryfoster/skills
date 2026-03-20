@@ -136,11 +136,25 @@ gunicorn.ctl
 - name = `<PROJECT_NAME>`
 - description = `<PROJECT_DESCRIPTION>`
 - dependencies: `fastapi>=0.115.0`, `python-json-logger>=4.0.0`, `uvicorn>=0.34.0`
-- dev deps: `anyio`, `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`
+- dev deps: `anyio`, `pre-commit`, `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`
 - build backend: hatchling
 - ruff: line-length=100, target=py312, exclude vendor/, select E/F/I/W/UP
 - pytest: testpaths=tests, asyncio_mode=auto, integration marker
 - coverage: source=src, fail_under=80
+
+**`.pre-commit-config.yaml`**
+
+Use the latest stable rev from `https://github.com/astral-sh/ruff-pre-commit/releases`:
+
+```yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6  # update to latest stable
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+```
 
 **`CLAUDE.md`**
 ```
@@ -387,6 +401,7 @@ done
 
 ```bash
 uv sync
+uv run pre-commit install
 uv run ruff check .
 uv run pytest --no-cov
 ```
