@@ -1,0 +1,1 @@
+It's just a small change — no need for a full findings report. Go ahead and fix it directly.

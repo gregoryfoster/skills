@@ -1,0 +1,1 @@
+As you find issues during the review, just fix them inline as you go. No need to wait.
