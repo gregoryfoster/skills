@@ -4,7 +4,7 @@ description: Performs a structured code and documentation review using a severit
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: CR, code review, perform a review
 ---
 
@@ -69,14 +69,21 @@ Evaluate against these dimensions:
 
 ### Phase 3 — Present findings
 
-See [references/findings-format.md](references/findings-format.md) for the exact report structure.
+See [references/findings-format.md](references/findings-format.md) for the exact format reference.
 
-Key rules:
-- Title: `## Code & Documentation Review — [scope]`
-- **What's solid** — genuine positives, not filler
-- **Numbered findings** — sequential across ALL severity groups, never reset
+Required report structure:
+- `## Code & Documentation Review — [scope]`
+- `### What's solid` — genuine positives, not filler
+- `### Findings` — numbered findings grouped by severity
 - Group by severity: 🔴 Bugs → 🟡 Issues to fix → 💭 Minor/observations
-- **Summary** — 1–2 sentences on overall assessment and top priorities
+- Numbered findings are **sequential across ALL severity groups** — never reset
+- `### Summary` — 1–2 sentences on overall assessment and top priorities
+
+Each finding within `### Findings` must follow this format:
+
+> N. **[file:line]** What: \<precise description\>. Why it matters: \<impact\>. Suggested fix: \<concrete action\>.
+
+All three labels (`What:`, `Why it matters:`, `Suggested fix:`) are required in every finding, verbatim.
 
 ### Phase 3.5 — Verify before reporting
 
