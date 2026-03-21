@@ -6,3 +6,4 @@ __pycache__/
 htmlcov/
 .env
 env
+tests/benchmarks/results/*.jsonl
