@@ -11,7 +11,7 @@ repos:
 
       - id: integration-tests
         name: Integration Tests
-        entry: bash -c 'source .venv/bin/activate && pytest tests/integration/ -v -m integration'
+        entry: bash -c 'set -a && source env && set +a && source .venv/bin/activate && pytest tests/integration/ -v -m integration'
         language: system
         pass_filenames: false
         always_run: true
