@@ -76,6 +76,7 @@ _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
     ("managing-skills-claude", "add skill repo"),
     ("managing-skills-claude", "manage skills"),
     ("managing-skills-claude", "update vendor skills"),
+    ("reviewing-architecture-claude", "AR"),
     ("shipping-work-claude", "close GH"),
     ("shipping-work-claude", "push GH"),
 }
