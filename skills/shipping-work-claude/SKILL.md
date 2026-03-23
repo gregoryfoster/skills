@@ -109,6 +109,30 @@ Present a summary table:
 |---|---|---|---|
 | #19 | ... | ✅ Closed | Summary posted |
 
+### Step 8 — Next-steps notification
+
+After the summary table, review commits and changes shipped to identify any post-deploy work the user may need to perform. Common categories:
+
+| Category | Trigger | Example action |
+|---|---|---|
+| DB migration | `schema.sql` changed, new table/column/index | `apply_schema` or restart service |
+| Service restart | Any production code change (no auto-reload) | `systemctl restart power-map` or gunicorn signal |
+| Data migration | New normalizer, field rename, backfill script | Run the relevant `scripts/` file |
+| Env var / secret | New config key added | Add to `/etc/power-map/env` and restart |
+| Index bootstrap | New unique index on dirty table | Deduplicate first, then re-run `apply_schema` |
+
+Present only the items that apply. Be specific — name the file, table, or command. Example:
+
+```
+**Next steps for production:**
+- `apply_schema` required — `schema.sql` changed (new `link_types`/`links` tables + migration)
+- Restart uvicorn/gunicorn — code changes don't auto-reload in production
+```
+
+Then **offer to execute** any item within your capabilities (e.g., running `apply_schema`, running a migration script). Ask once — don't nag.
+
+If nothing applies, omit this step entirely.
+
 ## Notes
 
 - If `gh` CLI hits errors (e.g., Projects API changes), use `--json` flag workarounds as needed
