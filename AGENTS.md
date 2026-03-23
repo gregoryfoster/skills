@@ -138,6 +138,27 @@ Key rules:
 
 The [`managing-skills-claude`](skills/managing-skills-claude/) skill teaches agents how to perform these operations.
 
+## Dev setup
+
+Create a venv, install dependencies, and activate local git hooks (run once after cloning):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-test.txt
+pre-commit install                       # structural tests run on every commit
+pre-commit install --hook-type pre-push  # integration tests run on every push
+```
+
+Hooks use `.venv/` directly, so the venv must be at the repo root.
+
+Tests run automatically from that point on. To run them manually:
+
+```bash
+pytest tests/structural/ -v              # fast, no API key needed
+pytest tests/integration/ -v -m integration  # requires ANTHROPIC_API_KEY
+```
+
 ## Adding a new skill
 
 1. Create `skills/<skill-name>/SKILL.md` with valid frontmatter

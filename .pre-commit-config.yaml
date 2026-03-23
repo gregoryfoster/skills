@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: structural-tests
+        name: Structural Tests
+        entry: bash -c 'source .venv/bin/activate && pytest tests/structural/ -v'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: integration-tests
+        name: Integration Tests
+        entry: bash -c 'source .venv/bin/activate && pytest tests/integration/ -v -m integration'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
