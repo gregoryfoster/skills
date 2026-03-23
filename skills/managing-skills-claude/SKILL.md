@@ -1,11 +1,11 @@
 ---
 name: managing-skills-claude
-description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under vendor/, symlinks individual skills into the project's skills/ directory and .claude/skills/ for Claude Code discovery, handles updates and removal. Use when the user says 'add skill repo', 'add external skills', 'manage skills', or 'update skills submodule'."
+description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under vendor/, symlinks individual skills into the project's skills/ directory and .claude/skills/ for Claude Code discovery, handles updates and removal. Use when the user says 'add skill repo', 'add external skills', 'manage skills', or 'update vendor skills'."
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
   version: "1.1"
-  triggers: add skill repo, add external skills, manage skills, update skills submodule
+  triggers: add skill repo, add external skills, manage skills, update vendor skills
 ---
 
 # Managing External Skills
