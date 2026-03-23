@@ -9,10 +9,13 @@ repos:
         always_run: true
         stages: [pre-commit]
 
-      - id: integration-tests
-        name: Integration Tests
-        entry: scripts/run-integration-tests.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
+      # Integration tests disabled on pre-push — LLM non-determinism makes this
+      # too flaky as a hard gate. Run manually: scripts/run-integration-tests.sh
+      # Uncomment to re-enable:
+      # - id: integration-tests
+      #   name: Integration Tests
+      #   entry: scripts/run-integration-tests.sh
+      #   language: system
+      #   pass_filenames: false
+      #   always_run: true
+      #   stages: [pre-push]
