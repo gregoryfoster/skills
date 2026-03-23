@@ -75,6 +75,7 @@ _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
     ("init-project-fastapi-claude", "set up foundation"),
     ("managing-skills-claude", "add skill repo"),
     ("managing-skills-claude", "manage skills"),
+    ("managing-skills-claude", "update vendor skills"),
     ("shipping-work-claude", "close GH"),
     ("shipping-work-claude", "push GH"),
 }
