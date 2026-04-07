@@ -126,15 +126,15 @@ Example: `feat: add reviewing-architecture-cursor variant`
 
 Projects use the **git submodule + symlink** pattern:
 
-1. Add this repo as a submodule at `vendor/gregoryfoster-skills/`
+1. Add this repo as a submodule at `skills-vendor/gregoryfoster-skills/`
 2. Symlink individual skills into the project's `skills/` directory using relative paths
 3. The agent framework auto-discovers skills by scanning `skills/` — symlinks make them visible
 
 Key rules:
-- Submodule path convention: `vendor/<owner>-<repo>/` (e.g., `vendor/gregoryfoster-skills/`)
-- Symlink paths must be relative: `../../vendor/gregoryfoster-skills/skills/<skill-name>`
+- Submodule path convention: `skills-vendor/<owner>-<repo>/` (e.g., `skills-vendor/gregoryfoster-skills/`)
+- Symlink paths must be relative: `../../skills-vendor/gregoryfoster-skills/skills/<skill-name>`
 - Local overrides (committed directories in `skills/`) always win over symlinks
-- The `vendor/` directory is read-only from the consuming project's perspective
+- The `skills-vendor/` directory is read-only from the consuming project's perspective
 
 The [`managing-skills-claude`](skills/managing-skills-claude/) skill teaches agents how to perform these operations.
 
