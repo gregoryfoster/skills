@@ -222,8 +222,8 @@ class TestManagingSkillsClaude:
         self.s = skill("managing-skills-claude")
 
     def test_relative_symlink_paths_documented(self):
-        assert "../vendor/" in self.s.body, (
-            "Relative symlink path '../vendor/' must be documented (symlinks must be relative)"
+        assert "../skills-vendor/" in self.s.body, (
+            "Relative symlink path '../skills-vendor/' must be documented (symlinks must be relative)"
         )
 
     def test_two_level_chain_documented(self):

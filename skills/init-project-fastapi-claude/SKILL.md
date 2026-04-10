@@ -328,7 +328,7 @@ Create empty `__init__.py` files:
         "hooks": [
           {
             "type": "command",
-            "command": "LOCK=\"/tmp/<PROJECT_NAME>-submodule-update-$(date +%Y%m%d)\"; if [ ! -f \"$LOCK\" ]; then git submodule update --remote --merge vendor/gregoryfoster-skills vendor/obra-superpowers && touch \"$LOCK\" && if ! git diff --quiet HEAD vendor/gregoryfoster-skills vendor/obra-superpowers 2>/dev/null; then git add vendor/gregoryfoster-skills vendor/obra-superpowers && git commit -m 'chore: update skills submodules'; fi; fi"
+            "command": "LOCK=\"/tmp/<PROJECT_NAME>-submodule-update-$(date +%Y%m%d)\"; if [ ! -f \"$LOCK\" ]; then git submodule update --remote --merge skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers && touch \"$LOCK\" && if ! git diff --quiet HEAD skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers 2>/dev/null; then git add skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers && git commit -m 'chore: update skills submodules'; fi; fi"
           }
         ]
       }
@@ -345,8 +345,8 @@ Create empty `__init__.py` files:
 ### Phase 9 — Vendor submodules
 
 ```bash
-git submodule add https://github.com/gregoryfoster/skills.git vendor/gregoryfoster-skills
-git submodule add https://github.com/obra/superpowers.git vendor/obra-superpowers
+git submodule add https://github.com/gregoryfoster/skills.git skills-vendor/gregoryfoster-skills
+git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-superpowers
 ```
 
 ### Phase 10 — `skills/` directory
@@ -355,17 +355,17 @@ git submodule add https://github.com/obra/superpowers.git vendor/obra-superpower
 
 ```bash
 # obra-superpowers
-ln -s ../vendor/obra-superpowers/skills/dispatching-parallel-agents  skills/dispatching-parallel-agents
-ln -s ../vendor/obra-superpowers/skills/subagent-driven-development   skills/subagent-driven-development
-ln -s ../vendor/obra-superpowers/skills/systematic-debugging          skills/systematic-debugging
-ln -s ../vendor/obra-superpowers/skills/test-driven-development       skills/test-driven-development
-ln -s ../vendor/obra-superpowers/skills/using-git-worktrees           skills/using-git-worktrees
-ln -s ../vendor/obra-superpowers/skills/verification-before-completion skills/verification-before-completion
-ln -s ../vendor/obra-superpowers/skills/writing-skills                skills/writing-skills
+ln -s ../skills-vendor/obra-superpowers/skills/dispatching-parallel-agents  skills/dispatching-parallel-agents
+ln -s ../skills-vendor/obra-superpowers/skills/subagent-driven-development   skills/subagent-driven-development
+ln -s ../skills-vendor/obra-superpowers/skills/systematic-debugging          skills/systematic-debugging
+ln -s ../skills-vendor/obra-superpowers/skills/test-driven-development       skills/test-driven-development
+ln -s ../skills-vendor/obra-superpowers/skills/using-git-worktrees           skills/using-git-worktrees
+ln -s ../skills-vendor/obra-superpowers/skills/verification-before-completion skills/verification-before-completion
+ln -s ../skills-vendor/obra-superpowers/skills/writing-skills                skills/writing-skills
 
 # gregoryfoster-skills
-ln -s ../vendor/gregoryfoster-skills/skills/managing-skills-claude    skills/managing-skills-claude
-ln -s ../vendor/gregoryfoster-skills/skills/reviewing-architecture-claude skills/reviewing-architecture-claude
+ln -s ../skills-vendor/gregoryfoster-skills/skills/managing-skills-claude    skills/managing-skills-claude
+ln -s ../skills-vendor/gregoryfoster-skills/skills/reviewing-architecture-claude skills/reviewing-architecture-claude
 ```
 
 **Local overrides (4):** Copy the following from this project and substitute `<PROJECT_NAME>` in the frontmatter `name:` field and skill headers:
