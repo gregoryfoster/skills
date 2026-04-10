@@ -351,21 +351,16 @@ git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-sup
 
 ### Phase 10 — `skills/` directory
 
-**Vendor symlinks (9):** Create from within the repo root — paths must be relative from `skills/`:
+**Vendor symlinks:** Symlink every skill from each submodule. Create from within the repo root — paths must be relative from `skills/`:
 
 ```bash
-# obra-superpowers
-ln -s ../skills-vendor/obra-superpowers/skills/dispatching-parallel-agents  skills/dispatching-parallel-agents
-ln -s ../skills-vendor/obra-superpowers/skills/subagent-driven-development   skills/subagent-driven-development
-ln -s ../skills-vendor/obra-superpowers/skills/systematic-debugging          skills/systematic-debugging
-ln -s ../skills-vendor/obra-superpowers/skills/test-driven-development       skills/test-driven-development
-ln -s ../skills-vendor/obra-superpowers/skills/using-git-worktrees           skills/using-git-worktrees
-ln -s ../skills-vendor/obra-superpowers/skills/verification-before-completion skills/verification-before-completion
-ln -s ../skills-vendor/obra-superpowers/skills/writing-skills                skills/writing-skills
-
-# gregoryfoster-skills
-ln -s ../skills-vendor/gregoryfoster-skills/skills/managing-skills-claude    skills/managing-skills-claude
-ln -s ../skills-vendor/gregoryfoster-skills/skills/reviewing-architecture-claude skills/reviewing-architecture-claude
+mkdir -p skills
+for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; do
+  for skill_dir in "$repo"/skills/*/; do
+    skill_name=$(basename "$skill_dir")
+    ln -s "../$repo/skills/$skill_name" "skills/$skill_name"
+  done
+done
 ```
 
 **Local overrides (4):** Copy the following from this project and substitute `<PROJECT_NAME>` in the frontmatter `name:` field and skill headers:
@@ -382,18 +377,15 @@ Substitutions in local overrides:
 - `pre-ship.sh` stamp file prefix: `pm-tests-clean` → `<PROJECT_NAME>-tests-clean`
 - All other content: verbatim
 
-### Phase 11 — `.claude/skills/` symlinks (13)
+### Phase 11 — `.claude/skills/` symlinks
 
-Create from repo root — paths must be relative from `.claude/skills/`:
+Mirror every entry in `skills/` into `.claude/skills/` so Claude Code discovers them. Create from repo root — paths must be relative from `.claude/skills/`:
 
 ```bash
 mkdir -p .claude/skills
-for skill in \
-  brainstorming reviewing-code-claude shipping-work-claude writing-plans \
-  dispatching-parallel-agents managing-skills-claude reviewing-architecture-claude \
-  subagent-driven-development systematic-debugging test-driven-development \
-  using-git-worktrees verification-before-completion writing-skills; do
-  ln -s "../../skills/$skill" ".claude/skills/$skill"
+for skill_dir in skills/*/; do
+  skill_name=$(basename "$skill_dir")
+  ln -s "../../skills/$skill_name" ".claude/skills/$skill_name"
 done
 ```
 
