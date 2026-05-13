@@ -4,7 +4,7 @@ description: Performs a structured code and documentation review using a severit
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: CR, code review, perform a review
 ---
 
@@ -93,6 +93,8 @@ NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
 - Re-run tests if any implementation happened in this conversation
 - If tests fail: report the failure as a 🔴 finding regardless of cause
 - Do NOT claim "tests pass" unless you have output from this session confirming it
+- If the project ships lint and format checks (e.g., `ruff check` + `ruff format --check`, `pint --test`, `eslint --max-warnings 0`), run them against the changed files and report any violations as findings — they're verification, not optional polish
+- Lint/format violations are 🟡 by default, 🔴 if they signal a real bug (e.g., undefined name, unreachable code)
 
 ### Phase 4 — Wait for feedback
 
