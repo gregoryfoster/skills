@@ -4,6 +4,10 @@ Verify that safety-critical text (hard gates, phase ordering, references) is
 verbatim present in each skill. These tests catch accidental deletion of
 behavioral contracts during edits.
 
+Cross-cutting invariants are parameterized across the baseline and every stack
+variant so drift is mechanically impossible. Stack-specific invariants live in
+their own variant-only classes.
+
 No API calls required.
 """
 
@@ -17,49 +21,99 @@ def skill(name: str):
 
 
 # ---------------------------------------------------------------------------
-# shipping-work
+# shipping-work (baseline + variants)
 # ---------------------------------------------------------------------------
 
 
-class TestShippingWorkClaude:
+@pytest.fixture(params=["shipping-work", "shipping-work-php"])
+def shipping_work_skill(request):
+    return skill(request.param)
+
+
+class TestShippingWork:
+    """Cross-cutting invariants — must hold for the baseline and every variant."""
+
+    def test_iron_law_no_closure_without_implementation(self, shipping_work_skill):
+        assert "NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION" in shipping_work_skill.body, (
+            "Iron Law text 'NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION' must be present verbatim"
+        )
+
+    def test_hard_gate_xml_block_present(self, shipping_work_skill):
+        assert "<HARD-GATE>" in shipping_work_skill.body, (
+            "<HARD-GATE> XML block must be present"
+        )
+
+    def test_step_ordering_step1_before_push(self, shipping_work_skill):
+        body = shipping_work_skill.body
+        # Step 1 name differs across variants; locate by leading marker only.
+        step1_pos = body.find("### Step 1 —")
+        step4_pos = body.find("Step 4 — Push")
+        assert step1_pos != -1, "Step 1 header not found"
+        assert step4_pos != -1, "Step 4 — Push not found"
+        assert step1_pos < step4_pos, (
+            "Step 1 must appear before Step 4 (Push) in the procedure"
+        )
+
+    def test_rationalization_table_present(self, shipping_work_skill):
+        assert "Rationalization prevention" in shipping_work_skill.body, (
+            "Rationalization prevention table must be present"
+        )
+
+
+class TestShippingWorkBaseline:
+    """Baseline-only invariants — Iron Law first line + 'Run tests' wording."""
+
     @pytest.fixture(autouse=True)
     def _load(self):
         self.s = skill("shipping-work")
 
     def test_iron_law_no_push_without_tests(self):
         assert "NO PUSH WITHOUT PASSING TESTS" in self.s.body, (
-            "Iron Law text 'NO PUSH WITHOUT PASSING TESTS' must be present verbatim"
+            "Baseline Iron Law text 'NO PUSH WITHOUT PASSING TESTS' must be present verbatim"
         )
 
-    def test_iron_law_no_closure_without_implementation(self):
-        assert "NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION" in self.s.body, (
-            "Iron Law text 'NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION' must be present verbatim"
-        )
-
-    def test_hard_gate_xml_block_present(self):
-        assert "<HARD-GATE>" in self.s.body, (
-            "<HARD-GATE> XML block must be present in shipping-work"
-        )
-
-    def test_step_ordering_tests_before_push(self):
-        body = self.s.body
-        step1_pos = body.find("Step 1 — Run tests")
-        step4_pos = body.find("Step 4 — Push")
-        assert step1_pos != -1, "Step 1 — Run tests not found"
-        assert step4_pos != -1, "Step 4 — Push not found"
-        assert step1_pos < step4_pos, (
-            "Step 1 (Run tests) must appear before Step 4 (Push) in the procedure"
+    def test_step1_run_tests(self):
+        assert "Step 1 — Run tests" in self.s.body, (
+            "Baseline Step 1 heading must be 'Run tests'"
         )
 
     def test_no_continuation_if_tests_fail(self):
         assert "NO CONTINUATION IF TESTS FAIL" in self.s.body, (
-            "'NO CONTINUATION IF TESTS FAIL' block must be present"
+            "'NO CONTINUATION IF TESTS FAIL' block must be present in baseline"
         )
 
-    def test_rationalization_table_present(self):
-        assert "Rationalization prevention" in self.s.body, (
-            "Rationalization prevention table must be present"
+
+class TestShippingWorkPhp:
+    """PHP variant-only invariants."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("shipping-work-php")
+
+    def test_iron_law_no_push_without_pre_ship_checks(self):
+        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
+            "PHP Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
         )
+
+    def test_step1_run_pre_ship_checks(self):
+        assert "Step 1 — Run pre-ship checks" in self.s.body, (
+            "PHP variant Step 1 heading must be 'Run pre-ship checks'"
+        )
+
+    def test_no_continuation_if_checks_fail(self):
+        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
+            "'NO CONTINUATION IF CHECKS FAIL' block must be present in PHP variant"
+        )
+
+    def test_h1_includes_php_suffix(self):
+        assert "# Shipping Work — PHP" in self.s.body, (
+            "PHP variant H1 must be '# Shipping Work — PHP'"
+        )
+
+    def test_wp_next_steps_categories_present(self):
+        body = self.s.body
+        for category in ("ACF JSON sync", "Asset build", "WP-CLI cache", "Composer deps"):
+            assert category in body, f"WP next-steps category '{category}' must be present"
 
 
 # ---------------------------------------------------------------------------
@@ -114,56 +168,59 @@ class TestInitProjectFastapi:
 
 
 # ---------------------------------------------------------------------------
-# reviewing-code
+# reviewing-code (baseline + variants)
 # ---------------------------------------------------------------------------
 
 
-class TestReviewingCodeClaude:
-    @pytest.fixture(autouse=True)
-    def _load(self):
-        self.s = skill("reviewing-code")
+@pytest.fixture(params=["reviewing-code", "reviewing-code-php"])
+def reviewing_code_skill(request):
+    return skill(request.param)
 
-    def test_iron_law_no_changes_without_report(self):
-        assert "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES" in self.s.body, (
+
+class TestReviewingCode:
+    """Cross-cutting invariants — must hold for the baseline and every variant."""
+
+    def test_iron_law_no_changes_without_report(self, reviewing_code_skill):
+        assert "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES" in reviewing_code_skill.body, (
             "Iron Law text 'NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES' "
             "must be present verbatim"
         )
 
-    def test_iron_law_no_report_without_gather_context(self):
-        assert "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in self.s.body, (
+    def test_iron_law_no_report_without_gather_context(self, reviewing_code_skill):
+        assert "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in reviewing_code_skill.body, (
             "Iron Law text 'NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST' "
             "must be present verbatim"
         )
 
-    def test_phase4_wait_for_feedback_present(self):
-        assert "Phase 4 — Wait for feedback" in self.s.body, (
+    def test_phase4_wait_for_feedback_present(self, reviewing_code_skill):
+        assert "Phase 4 — Wait for feedback" in reviewing_code_skill.body, (
             "Phase 4 — Wait for feedback must be present"
         )
 
-    def test_phase4_stop_instruction(self):
-        assert "Stop. Do not make changes until the user responds." in self.s.body, (
+    def test_phase4_stop_instruction(self, reviewing_code_skill):
+        assert "Stop. Do not make changes until the user responds." in reviewing_code_skill.body, (
             "'Stop. Do not make changes until the user responds.' must appear in Phase 4"
         )
 
-    def test_findings_format_inline(self):
-        body = self.s.body
+    def test_findings_format_inline(self, reviewing_code_skill):
+        body = reviewing_code_skill.body
         assert "What:" in body, "'What:' label must appear in findings format"
         assert "Why it matters:" in body, "'Why it matters:' label must appear in findings format"
         assert "Suggested fix:" in body, "'Suggested fix:' label must appear in findings format"
 
-    def test_directives_table_inline(self):
-        body = self.s.body
+    def test_directives_table_inline(self, reviewing_code_skill):
+        body = reviewing_code_skill.body
         assert "`1: fix`" in body, "Directives table must list '1: fix' verbatim"
         assert "`3: stet`" in body, "Directives table must list '3: stet' verbatim"
         assert "`10: GH`" in body, "Directives table must list '10: GH' verbatim"
 
-    def test_rationalization_table_present(self):
-        assert "Rationalization prevention" in self.s.body, (
+    def test_rationalization_table_present(self, reviewing_code_skill):
+        assert "Rationalization prevention" in reviewing_code_skill.body, (
             "Rationalization prevention table must be present"
         )
 
-    def test_phase_ordering_gather_before_present(self):
-        body = self.s.body
+    def test_phase_ordering_gather_before_present(self, reviewing_code_skill):
+        body = reviewing_code_skill.body
         phase1_pos = body.find("Phase 1 — Gather context")
         phase3_pos = body.find("Phase 3 — Present findings")
         phase4_pos = body.find("Phase 4 — Wait for feedback")
@@ -175,12 +232,45 @@ class TestReviewingCodeClaude:
         )
 
 
+class TestReviewingCodePhp:
+    """PHP variant-only invariants."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("reviewing-code-php")
+
+    def test_h1_includes_php_suffix(self):
+        assert "# Code & Documentation Review — PHP" in self.s.body, (
+            "PHP variant H1 must be '# Code & Documentation Review — PHP'"
+        )
+
+    def test_bedrock_dimension_present(self):
+        assert "Bedrock conventions" in self.s.body, (
+            "Bedrock conventions dimension must be present in Phase 2"
+        )
+
+    def test_sage_dimension_present(self):
+        assert "Sage 11 patterns" in self.s.body, (
+            "Sage 11 patterns dimension must be present in Phase 2"
+        )
+
+    def test_sql_safety_dimension_present(self):
+        assert "$wpdb->prepare()" in self.s.body, (
+            "SQL safety dimension must mention $wpdb->prepare()"
+        )
+
+    def test_pint_lint_gate_present(self):
+        assert "pint --test" in self.s.body, (
+            "Phase 3.5 must mention 'pint --test' for PHP lint/format gate"
+        )
+
+
 # ---------------------------------------------------------------------------
 # reviewing-architecture
 # ---------------------------------------------------------------------------
 
 
-class TestReviewingArchitectureClaude:
+class TestReviewingArchitecture:
     @pytest.fixture(autouse=True)
     def _load(self):
         self.s = skill("reviewing-architecture")
@@ -223,7 +313,7 @@ class TestReviewingArchitectureClaude:
 # ---------------------------------------------------------------------------
 
 
-class TestManagingSkillsClaude:
+class TestManagingSkills:
     @pytest.fixture(autouse=True)
     def _load(self):
         self.s = skill("managing-skills")
