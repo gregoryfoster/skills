@@ -4,7 +4,7 @@ description: Performs a structured code and documentation review using a severit
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: CR, code review, perform a review
 ---
 
@@ -17,11 +17,11 @@ A systematic review workflow that produces a numbered findings report, waits for
 ## The Iron Law
 
 ```
-NO FINDINGS REPORT WITHOUT RUNNING THE TEST SUITE FIRST
+NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST
 NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES
 ```
 
-If you haven't run `gather-context.sh` and confirmed tests pass, you have not completed Phase 1.
+If you haven't run `gather-context.sh` and confirmed it passed, you have not completed Phase 1.
 If the user hasn't responded with directives, you cannot implement anything.
 
 ## Rationalization prevention

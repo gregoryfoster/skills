@@ -129,9 +129,9 @@ class TestReviewingCodeClaude:
             "must be present verbatim"
         )
 
-    def test_iron_law_no_report_without_tests(self):
-        assert "NO FINDINGS REPORT WITHOUT RUNNING THE TEST SUITE FIRST" in self.s.body, (
-            "Iron Law text 'NO FINDINGS REPORT WITHOUT RUNNING THE TEST SUITE FIRST' "
+    def test_iron_law_no_report_without_gather_context(self):
+        assert "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in self.s.body, (
+            "Iron Law text 'NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST' "
             "must be present verbatim"
         )
 
