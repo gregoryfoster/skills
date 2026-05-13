@@ -1,7 +1,7 @@
 """Integration tests — structured output format compliance.
 
 Verifies that reviewing-code and reviewing-architecture produce
-responses that match the findings format spec in references/findings-format.md.
+responses that match each skill's documented findings format.
 
 Uses controlled code snippets with unambiguous issues spanning all three
 severity tiers (🔴 🟡 💭) to ensure deterministic findings structure.

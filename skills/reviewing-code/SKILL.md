@@ -69,14 +69,13 @@ Evaluate against these dimensions:
 
 ### Phase 3 — Present findings
 
-See [references/findings-format.md](references/findings-format.md) for the exact format reference.
-
 Required report structure:
 - `## Code & Documentation Review — [scope]`
 - `### What's solid` — genuine positives, not filler
 - `### Findings` — numbered findings grouped by severity
 - Group by severity: 🔴 Bugs → 🟡 Issues to fix → 💭 Minor/observations
 - Numbered findings are **sequential across ALL severity groups** — never reset
+- Sub-items under a single finding use `2a.`, `2b.` etc.
 - `### Summary` — 1–2 sentences on overall assessment and top priorities
 
 Each finding within `### Findings` must follow this format:
@@ -99,9 +98,24 @@ NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
 
 **Stop. Do not make changes until the user responds.**
 
-Accept terse directives referencing item numbers. See [references/directives.md](references/directives.md).
+Accept terse directives referencing item numbers:
 
-After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table.
+| Directive | Meaning |
+|---|---|
+| `1: fix` | Implement the suggested fix |
+| `3: stet` | Leave as-is (acknowledged, no action) |
+| `5: fix, but use X approach` | Fix with the user's preferred approach |
+| `2: document as TODO` | Add a code comment or AGENTS.md note instead of fixing |
+| `7: investigate further` | Gather more information before deciding |
+| `10: GH` | Create or update a corresponding GitHub issue |
+
+After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table:
+
+| Item | Action | Result |
+|---|---|---|
+| 1 | Fixed | `services/parser.py:42 — added bounds check` |
+| 3 | Stet | — |
+| 10 | GH | Issue #22 created |
 
 ## Second review rounds
 

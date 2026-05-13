@@ -145,10 +145,17 @@ class TestReviewingCodeClaude:
             "'Stop. Do not make changes until the user responds.' must appear in Phase 4"
         )
 
-    def test_findings_format_reference(self):
-        assert "references/findings-format.md" in self.s.body, (
-            "references/findings-format.md must be referenced in the skill body"
-        )
+    def test_findings_format_inline(self):
+        body = self.s.body
+        assert "What:" in body, "'What:' label must appear in findings format"
+        assert "Why it matters:" in body, "'Why it matters:' label must appear in findings format"
+        assert "Suggested fix:" in body, "'Suggested fix:' label must appear in findings format"
+
+    def test_directives_table_inline(self):
+        body = self.s.body
+        assert "`1: fix`" in body, "Directives table must list '1: fix' verbatim"
+        assert "`3: stet`" in body, "Directives table must list '3: stet' verbatim"
+        assert "`10: GH`" in body, "Directives table must list '10: GH' verbatim"
 
     def test_rationalization_table_present(self):
         assert "Rationalization prevention" in self.s.body, (
