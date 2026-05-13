@@ -68,7 +68,13 @@ A project-level override is appropriate when the global skill would require proj
 - Project-specific CI/CD steps
 - Custom severity criteria for that codebase
 
-Document the override rationale in the project skill's `metadata` block:
+### Required override frontmatter
+
+Every project-level override **must** declare two fields in its `metadata` block:
+
+- `overrides: <upstream-skill-name>` — the upstream skill being replaced
+- `override-reason: <one-line rationale>` — why a full replacement was needed
+
 ```yaml
 metadata:
   author: gregoryfoster
@@ -76,6 +82,18 @@ metadata:
   overrides: reviewing-code
   override-reason: Adds project-specific commit convention and systemctl restart step
 ```
+
+These keys make it possible to audit divergence across downstream repos (e.g. "which overrides have drifted from upstream") without inspecting every SKILL.md by hand. Upstream skills in this repo do not carry these keys — they aren't overrides.
+
+### Project-name suffix on the H1
+
+When an override is active, suffix the `SKILL.md` body's top-level heading with the project name so users can tell at a glance which version is loaded:
+
+```markdown
+# Code & Documentation Review — Address Validator
+```
+
+The suffix is recommended (not required) and applies to the H1 only — not the skill `name` field (which must continue to match the directory name).
 
 ## Spec compliance
 
