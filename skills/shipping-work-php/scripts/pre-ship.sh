@@ -23,6 +23,11 @@ fi
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
+if ! command -v composer >/dev/null; then
+  echo "ERROR: composer not installed. This variant is for Composer-managed repos." >&2
+  exit 2
+fi
+
 FAIL=0
 
 # --- composer validate --------------------------------------------------------
@@ -71,7 +76,7 @@ fi
 
 echo ""
 echo "=== composer test ==="
-if [[ -f composer.json ]] && composer run-script --list 2>/dev/null | grep -qE '^\s*test\s'; then
+if [[ -f composer.json ]] && composer run-script --list 2>/dev/null | grep -qE '^[[:space:]]*test[[:space:]]'; then
   if ! composer test; then
     echo "FAIL: composer test" >&2
     FAIL=1
