@@ -1,5 +1,5 @@
 ---
-name: init-project-fastapi-claude
+name: init-project-fastapi
 description: Bootstraps a new FastAPI project with the full CannObserv agent tooling foundation — SSH deploy key, pyproject.toml, FastAPI skeleton, structured logging, TDD scaffold, vendor skill submodules, local skill overrides, and GitHub issue tracking. Use when starting a new service in the CannObserv org.
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
@@ -50,7 +50,7 @@ Confirm all seven before proceeding.
 ### Phase 1 — SSH deploy key
 
 ```bash
-bash skills/init-project-fastapi-claude/scripts/gen-deploy-key.sh <PROJECT_NAME> <DEPLOY_KEY_LABEL>
+bash skills/init-project-fastapi/scripts/gen-deploy-key.sh <PROJECT_NAME> <DEPLOY_KEY_LABEL>
 ```
 
 Present the **public key** to the user:
@@ -62,7 +62,7 @@ Present the **public key** to the user:
 ### Phase 2 — Configure git remote
 
 ```bash
-bash skills/init-project-fastapi-claude/scripts/configure-remote.sh <PROJECT_NAME> <GITHUB_ORG>
+bash skills/init-project-fastapi/scripts/configure-remote.sh <PROJECT_NAME> <GITHUB_ORG>
 ```
 
 Verify connectivity:
@@ -368,8 +368,8 @@ done
 | Override | Files |
 |---|---|
 | `skills/brainstorming/` | `SKILL.md` |
-| `skills/reviewing-code-claude/` | `SKILL.md`, `scripts/gather-context.sh` |
-| `skills/shipping-work-claude/` | `SKILL.md`, `scripts/check-status.sh`, `scripts/close-issue.sh`, `scripts/comment-issue.sh`, `scripts/pre-ship.sh`, `scripts/push.sh` |
+| `skills/reviewing-code/` | `SKILL.md`, `scripts/gather-context.sh` |
+| `skills/shipping-work/` | `SKILL.md`, `scripts/check-status.sh`, `scripts/close-issue.sh`, `scripts/comment-issue.sh`, `scripts/pre-ship.sh`, `scripts/push.sh` |
 | `skills/writing-plans/` | `SKILL.md`, `plan-document-reviewer-prompt.md` |
 
 Substitutions in local overrides:
@@ -416,7 +416,7 @@ Commit message body should list all key scaffold components (see AGENTS.md commi
 ### Phase 14 — Push
 
 ```bash
-bash skills/shipping-work-claude/scripts/push.sh
+bash skills/shipping-work/scripts/push.sh
 ```
 
 ### Phase 15 — GitHub issue

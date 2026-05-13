@@ -17,14 +17,14 @@ def skill(name: str):
 
 
 # ---------------------------------------------------------------------------
-# shipping-work-claude
+# shipping-work
 # ---------------------------------------------------------------------------
 
 
 class TestShippingWorkClaude:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.s = skill("shipping-work-claude")
+        self.s = skill("shipping-work")
 
     def test_iron_law_no_push_without_tests(self):
         assert "NO PUSH WITHOUT PASSING TESTS" in self.s.body, (
@@ -38,7 +38,7 @@ class TestShippingWorkClaude:
 
     def test_hard_gate_xml_block_present(self):
         assert "<HARD-GATE>" in self.s.body, (
-            "<HARD-GATE> XML block must be present in shipping-work-claude"
+            "<HARD-GATE> XML block must be present in shipping-work"
         )
 
     def test_step_ordering_tests_before_push(self):
@@ -70,11 +70,11 @@ class TestShippingWorkClaude:
 class TestInitProjectFastapi:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.s = skill("init-project-fastapi-claude")
+        self.s = skill("init-project-fastapi")
 
     def test_hard_gate_xml_block_present(self):
         assert "<HARD-GATE>" in self.s.body, (
-            "<HARD-GATE> XML block must be present in init-project-fastapi-claude"
+            "<HARD-GATE> XML block must be present in init-project-fastapi"
         )
 
     def test_hard_gate_collect_params_first(self):
@@ -114,14 +114,14 @@ class TestInitProjectFastapi:
 
 
 # ---------------------------------------------------------------------------
-# reviewing-code-claude
+# reviewing-code
 # ---------------------------------------------------------------------------
 
 
 class TestReviewingCodeClaude:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.s = skill("reviewing-code-claude")
+        self.s = skill("reviewing-code")
 
     def test_iron_law_no_changes_without_report(self):
         assert "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES" in self.s.body, (
@@ -169,14 +169,14 @@ class TestReviewingCodeClaude:
 
 
 # ---------------------------------------------------------------------------
-# reviewing-architecture-claude
+# reviewing-architecture
 # ---------------------------------------------------------------------------
 
 
 class TestReviewingArchitectureClaude:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.s = skill("reviewing-architecture-claude")
+        self.s = skill("reviewing-architecture")
 
     def test_phase4_wait_for_feedback_present(self):
         assert "Phase 4 — Wait for feedback" in self.s.body, (
@@ -212,14 +212,14 @@ class TestReviewingArchitectureClaude:
 
 
 # ---------------------------------------------------------------------------
-# managing-skills-claude
+# managing-skills
 # ---------------------------------------------------------------------------
 
 
 class TestManagingSkillsClaude:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.s = skill("managing-skills-claude")
+        self.s = skill("managing-skills")
 
     def test_relative_symlink_paths_documented(self):
         assert "../skills-vendor/" in self.s.body, (

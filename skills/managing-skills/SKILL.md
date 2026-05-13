@@ -1,5 +1,5 @@
 ---
-name: managing-skills-claude
+name: managing-skills
 description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under skills-vendor/, symlinks individual skills into the project's skills/ directory and .claude/skills/ for Claude Code discovery, handles updates and removal. Use when the user says 'add skill repo', 'add external skills', 'manage skills', or 'update vendor skills'."
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
@@ -48,8 +48,8 @@ ln -s ../skills-vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>
 
 Example:
 ```bash
-ln -s ../skills-vendor/gregoryfoster-skills/skills/reviewing-code-claude skills/reviewing-code-claude
-ln -s ../skills-vendor/gregoryfoster-skills/skills/shipping-work-claude skills/shipping-work-claude
+ln -s ../skills-vendor/gregoryfoster-skills/skills/reviewing-code skills/reviewing-code
+ln -s ../skills-vendor/gregoryfoster-skills/skills/shipping-work skills/shipping-work
 ```
 
 The `../` prefix is required because the symlink target is resolved relative to the symlink's parent directory (`skills/`), which is one level below the repo root.
@@ -65,8 +65,8 @@ ln -s ../../skills/<skill-name> .claude/skills/<skill-name>
 
 Example:
 ```bash
-ln -s ../../skills/reviewing-code-claude .claude/skills/reviewing-code-claude
-ln -s ../../skills/shipping-work-claude .claude/skills/shipping-work-claude
+ln -s ../../skills/reviewing-code .claude/skills/reviewing-code
+ln -s ../../skills/shipping-work .claude/skills/shipping-work
 ```
 
 The `../../` prefix resolves from `.claude/skills/` back to the project root, then into `skills/<name>`.

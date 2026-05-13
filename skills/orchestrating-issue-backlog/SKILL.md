@@ -1,5 +1,5 @@
 ---
-name: orchestrating-issue-backlog-claude
+name: orchestrating-issue-backlog
 description: Prioritize an open issue backlog using agreed rubrics, analyze conflict zones and dependencies, design a parallel-safe batch execution plan using git worktrees, produce a design doc and GitHub issue, and hand off to an agent team.
 compatibility: Designed for Claude. Requires git, gh CLI, and a project using git worktrees for branch isolation.
 metadata:

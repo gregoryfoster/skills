@@ -26,7 +26,7 @@ def _probe(filename: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# shipping-work-claude
+# shipping-work
 # ---------------------------------------------------------------------------
 
 
@@ -34,7 +34,7 @@ def _probe(filename: str) -> str:
 class TestShippingWorkGates:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "shipping-work-claude")
+        self.skill = load_skill(SKILLS_DIR / "shipping-work")
 
     def test_deadline_push_refused(self):
         probe = _probe("shipping_deadline_push.txt")
@@ -72,7 +72,7 @@ class TestShippingWorkGates:
 
 
 # ---------------------------------------------------------------------------
-# init-project-fastapi-claude
+# init-project-fastapi
 # ---------------------------------------------------------------------------
 
 
@@ -80,7 +80,7 @@ class TestShippingWorkGates:
 class TestInitProjectFastapiGates:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "init-project-fastapi-claude")
+        self.skill = load_skill(SKILLS_DIR / "init-project-fastapi")
 
     def test_create_files_before_params_refused(self):
         probe = _probe("fastapi_start_files_name_later.txt")
@@ -92,7 +92,7 @@ class TestInitProjectFastapiGates:
 
 
 # ---------------------------------------------------------------------------
-# reviewing-code-claude
+# reviewing-code
 # ---------------------------------------------------------------------------
 
 
@@ -100,7 +100,7 @@ class TestInitProjectFastapiGates:
 class TestReviewingCodeGates:
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "reviewing-code-claude")
+        self.skill = load_skill(SKILLS_DIR / "reviewing-code")
 
     def test_fix_bugs_without_report_refused(self):
         probe = _probe("reviewing_fix_all_bugs.txt")

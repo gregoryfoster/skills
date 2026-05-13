@@ -3,8 +3,6 @@
 Validates that skill directories follow the conventions documented in AGENTS.md:
 - Lowercase, hyphens only, no consecutive hyphens, max 64 chars
 - Directory name matches the 'name' field in frontmatter exactly
-- Gerund + agent suffix pattern (or 'All agents' compatibility)
-- overrides/override-reason consistency
 
 No API calls required.
 """
@@ -14,9 +12,6 @@ import re
 import pytest
 
 from tests.utils.skill_loader import Skill, all_skills
-
-KNOWN_SUFFIXES = {"-claude", "-cursor", "-copilot", "-gemini"}
-ALL_AGENTS_COMPATIBILITY = "All agents"
 
 # Pattern: lowercase letters, digits, hyphens; no consecutive hyphens; max 64 chars
 VALID_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
@@ -51,15 +46,4 @@ class TestNameFieldConsistency:
         assert skill.name == skill.dir_name, (
             f"'name' field in frontmatter ('{skill.name}') must match "
             f"directory name ('{skill.dir_name}') exactly"
-        )
-
-
-class TestAgentSuffixConvention:
-    def test_has_agent_suffix_or_all_agents_compatibility(self, skill):
-        has_suffix = any(skill.dir_name.endswith(suffix) for suffix in KNOWN_SUFFIXES)
-        is_all_agents = ALL_AGENTS_COMPATIBILITY.lower() in skill.compatibility.lower()
-        assert has_suffix or is_all_agents, (
-            f"Skill '{skill.dir_name}' must either end with an agent suffix "
-            f"({', '.join(KNOWN_SUFFIXES)}) or declare "
-            f"'compatibility: {ALL_AGENTS_COMPATIBILITY}'"
         )

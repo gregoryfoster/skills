@@ -1,5 +1,5 @@
 ---
-name: reviewing-architecture-claude
+name: reviewing-architecture
 description: Performs a high-level architectural review evaluating structural health, design principles, and long-term maintainability. Use when the user says "AR", "architecture review", or "architectural review". Distinct from line-level code review. Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements approved refactors.
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:

@@ -1,6 +1,6 @@
 """Integration tests — structured output format compliance.
 
-Verifies that reviewing-code-claude and reviewing-architecture-claude produce
+Verifies that reviewing-code and reviewing-architecture produce
 responses that match the findings format spec in references/findings-format.md.
 
 Uses controlled code snippets with unambiguous issues spanning all three
@@ -101,14 +101,14 @@ _ARCH_REVIEW_PROMPT = (
 
 
 # ---------------------------------------------------------------------------
-# reviewing-code-claude
+# reviewing-code
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="class")
 def code_review_response():
     """Single API call shared across all TestCodeReviewOutputFormat methods."""
-    skill = load_skill(SKILLS_DIR / "reviewing-code-claude")
+    skill = load_skill(SKILLS_DIR / "reviewing-code")
     return claude_with_skill(skill, _CODE_REVIEW_PROMPT, max_tokens=1500)
 
 
@@ -132,14 +132,14 @@ class TestCodeReviewOutputFormat:
 
 
 # ---------------------------------------------------------------------------
-# reviewing-architecture-claude
+# reviewing-architecture
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="class")
 def arch_review_response():
     """Single API call shared across all TestArchReviewOutputFormat methods."""
-    skill = load_skill(SKILLS_DIR / "reviewing-architecture-claude")
+    skill = load_skill(SKILLS_DIR / "reviewing-architecture")
     return claude_with_skill(skill, _ARCH_REVIEW_PROMPT, max_tokens=2500)
 
 

@@ -90,7 +90,7 @@ def _print_score_table(skill_name: str, rubric: str, scores: list[dict], avg: fl
 
 
 # ---------------------------------------------------------------------------
-# shipping-work-claude — procedure adherence
+# shipping-work — procedure adherence
 # ---------------------------------------------------------------------------
 
 _SHIPPING_SCENARIO = """\
@@ -126,11 +126,11 @@ _SHIPPING_THRESHOLD = 6
 
 @pytest.mark.benchmark
 class TestShippingWorkQuality:
-    """Rubric-scored quality benchmark for shipping-work-claude."""
+    """Rubric-scored quality benchmark for shipping-work."""
 
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "shipping-work-claude")
+        self.skill = load_skill(SKILLS_DIR / "shipping-work")
 
     def test_procedure_adherence(self):
         scores = []
@@ -141,17 +141,17 @@ class TestShippingWorkQuality:
             scores.append(score)
 
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
-        _save_result("shipping-work-claude", "procedure_adherence", scores, avg)
-        _print_score_table("shipping-work-claude", "procedure_adherence", scores, avg, _SHIPPING_THRESHOLD)
+        _save_result("shipping-work", "procedure_adherence", scores, avg)
+        _print_score_table("shipping-work", "procedure_adherence", scores, avg, _SHIPPING_THRESHOLD)
 
         assert avg >= _SHIPPING_THRESHOLD, (
-            f"shipping-work-claude procedure adherence avg {avg:.2f} < threshold {_SHIPPING_THRESHOLD}. "
+            f"shipping-work procedure adherence avg {avg:.2f} < threshold {_SHIPPING_THRESHOLD}. "
             f"Judge scores: {scores}"
         )
 
 
 # ---------------------------------------------------------------------------
-# reviewing-code-claude — findings quality
+# reviewing-code — findings quality
 # ---------------------------------------------------------------------------
 
 _CODE_REVIEW_SCENARIO = """\
@@ -210,11 +210,11 @@ _CODE_REVIEW_THRESHOLD = 3
 
 @pytest.mark.benchmark
 class TestReviewingCodeQuality:
-    """Rubric-scored quality benchmark for reviewing-code-claude."""
+    """Rubric-scored quality benchmark for reviewing-code."""
 
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "reviewing-code-claude")
+        self.skill = load_skill(SKILLS_DIR / "reviewing-code")
 
     def test_findings_quality(self):
         scores = []
@@ -231,17 +231,17 @@ class TestReviewingCodeQuality:
             scores.append(score)
 
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
-        _save_result("reviewing-code-claude", "findings_quality", scores, avg)
-        _print_score_table("reviewing-code-claude", "findings_quality", scores, avg, _CODE_REVIEW_THRESHOLD)
+        _save_result("reviewing-code", "findings_quality", scores, avg)
+        _print_score_table("reviewing-code", "findings_quality", scores, avg, _CODE_REVIEW_THRESHOLD)
 
         assert avg >= _CODE_REVIEW_THRESHOLD, (
-            f"reviewing-code-claude findings quality avg {avg:.2f} < threshold {_CODE_REVIEW_THRESHOLD}. "
+            f"reviewing-code findings quality avg {avg:.2f} < threshold {_CODE_REVIEW_THRESHOLD}. "
             f"Judge scores: {scores}"
         )
 
 
 # ---------------------------------------------------------------------------
-# init-project-fastapi-claude — parameter gate adherence
+# init-project-fastapi — parameter gate adherence
 # ---------------------------------------------------------------------------
 
 _FASTAPI_INCOMPLETE_SCENARIO = """\
@@ -272,11 +272,11 @@ _FASTAPI_THRESHOLD = 3
 
 @pytest.mark.benchmark
 class TestInitProjectFastapiQuality:
-    """Rubric-scored quality benchmark for init-project-fastapi-claude."""
+    """Rubric-scored quality benchmark for init-project-fastapi."""
 
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "init-project-fastapi-claude")
+        self.skill = load_skill(SKILLS_DIR / "init-project-fastapi")
 
     def test_parameter_gate_adherence(self):
         scores = []
@@ -287,19 +287,19 @@ class TestInitProjectFastapiQuality:
             scores.append(score)
 
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
-        _save_result("init-project-fastapi-claude", "parameter_gate_adherence", scores, avg)
+        _save_result("init-project-fastapi", "parameter_gate_adherence", scores, avg)
         _print_score_table(
-            "init-project-fastapi-claude", "parameter_gate_adherence", scores, avg, _FASTAPI_THRESHOLD
+            "init-project-fastapi", "parameter_gate_adherence", scores, avg, _FASTAPI_THRESHOLD
         )
 
         assert avg >= _FASTAPI_THRESHOLD, (
-            f"init-project-fastapi-claude parameter gate avg {avg:.2f} < threshold {_FASTAPI_THRESHOLD}. "
+            f"init-project-fastapi parameter gate avg {avg:.2f} < threshold {_FASTAPI_THRESHOLD}. "
             f"Judge scores: {scores}"
         )
 
 
 # ---------------------------------------------------------------------------
-# reviewing-architecture-claude — architectural coverage
+# reviewing-architecture — architectural coverage
 # ---------------------------------------------------------------------------
 
 _ARCH_REVIEW_SCENARIO = """\
@@ -362,11 +362,11 @@ _ARCH_REVIEW_THRESHOLD = 5
 
 @pytest.mark.benchmark
 class TestReviewingArchitectureQuality:
-    """Rubric-scored quality benchmark for reviewing-architecture-claude."""
+    """Rubric-scored quality benchmark for reviewing-architecture."""
 
     @pytest.fixture(autouse=True)
     def _load(self):
-        self.skill = load_skill(SKILLS_DIR / "reviewing-architecture-claude")
+        self.skill = load_skill(SKILLS_DIR / "reviewing-architecture")
 
     def test_architectural_coverage(self):
         scores = []
@@ -377,12 +377,12 @@ class TestReviewingArchitectureQuality:
             scores.append(score)
 
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
-        _save_result("reviewing-architecture-claude", "architectural_coverage", scores, avg)
+        _save_result("reviewing-architecture", "architectural_coverage", scores, avg)
         _print_score_table(
-            "reviewing-architecture-claude", "architectural_coverage", scores, avg, _ARCH_REVIEW_THRESHOLD
+            "reviewing-architecture", "architectural_coverage", scores, avg, _ARCH_REVIEW_THRESHOLD
         )
 
         assert avg >= _ARCH_REVIEW_THRESHOLD, (
-            f"reviewing-architecture-claude coverage avg {avg:.2f} < threshold {_ARCH_REVIEW_THRESHOLD}/11. "
+            f"reviewing-architecture coverage avg {avg:.2f} < threshold {_ARCH_REVIEW_THRESHOLD}/11. "
             f"Judge scores: {scores}"
         )

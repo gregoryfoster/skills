@@ -20,31 +20,39 @@ All active skills live under `skills/`. No other top-level layout is required by
 
 ## Naming conventions
 
-- Skill directories use **gerund form + agent suffix**: `reviewing-code-claude`, `shipping-work-cursor`, etc.
-- Agent suffixes: `-claude`, `-cursor`, `-copilot`, `-gemini` (add more as needed)
-- When a skill works identically across all agents, omit the suffix and document `compatibility: All agents`
-- Names must be lowercase, hyphens only, no consecutive hyphens, max 64 chars (spec requirement)
+- Skill directories use **gerund form, no suffix**: `reviewing-code`, `shipping-work`, `init-project-fastapi`.
+- Names must be lowercase, hyphens only, no consecutive hyphens, max 64 chars (spec requirement).
+- In practice all current skills run identically across agent providers, so the bare name is the default.
 
-## Variant strategy (per-agent tuning)
+### When to add a suffix
 
-Each skill may have multiple agent-specific variants as separate directories:
+Two situations warrant a suffix:
+
+- **Agent-specific variant** when a skill genuinely needs to diverge for one provider (e.g. provider-specific tool invocation, prompt-style tuning that materially affects behavior). Allowed suffixes: `-claude`, `-cursor`, `-copilot`, `-gemini`.
+- **Stack-specific variant** when a skill diverges along a technology axis (e.g. `reviewing-code-php`, `shipping-work-python`). Use the language or framework as the suffix.
+
+Without a sibling variant, do not add a suffix prophylactically — it adds noise without information.
+
+## Variant strategy
+
+When a skill needs a variant, each variant lives in its own directory:
 
 ```
 skills/
-  reviewing-code-claude/
-  reviewing-code-cursor/
-  reviewing-code-gemini/
+  reviewing-code/            # baseline (used when no variant matches)
+  reviewing-code-php/        # PHP/WordPress stack variant
+  reviewing-code-cursor/     # Cursor-specific agent variant (hypothetical)
 ```
 
-Variants share the same trigger phrases (documented in `metadata.triggers`). The agent's runtime selects the appropriate variant. Each variant is a **complete, self-contained skill** — no inheritance between variants.
+Variants share the same trigger phrases (documented in `metadata.triggers`). The runtime selects the appropriate variant. Each variant is a **complete, self-contained skill** — no inheritance between variants.
 
 ## Project-level superseding
 
 Projects may define a local `/skills/` directory with the **same skill name**. The local version is a **complete replacement** — not an extension. There is no partial override or inheritance.
 
 Resolution order (most specific wins):
-1. Project-level skill (e.g., `my-project/skills/reviewing-code-claude/`)
-2. Global skill (this repo, e.g., `gregoryfoster/skills/skills/reviewing-code-claude/`)
+1. Project-level skill (e.g., `my-project/skills/reviewing-code/`)
+2. Global skill (this repo, e.g., `gregoryfoster/skills/skills/reviewing-code/`)
 
 Consequences:
 - Global skills must be fully general and project-agnostic
@@ -65,7 +73,7 @@ Document the override rationale in the project skill's `metadata` block:
 metadata:
   author: gregoryfoster
   version: "1.0"
-  overrides: reviewing-code-claude
+  overrides: reviewing-code
   override-reason: Adds project-specific commit convention and systemctl restart step
 ```
 
@@ -136,7 +144,17 @@ Key rules:
 - Local overrides (committed directories in `skills/`) always win over symlinks
 - The `skills-vendor/` directory is read-only from the consuming project's perspective
 
-The [`managing-skills-claude`](skills/managing-skills-claude/) skill teaches agents how to perform these operations.
+The [`managing-skills`](skills/managing-skills/) skill teaches agents how to perform these operations.
+
+### Self-discovery (`.claude/skills` in this repo)
+
+This repo's own `.claude/skills` is a symlink to `../skills`, so Claude Code auto-discovers the skills under `skills/` when this repo is opened as the working directory. Recreate with:
+
+```bash
+ln -sfn ../skills .claude/skills
+```
+
+The target must be `../skills` (one `..`), not `../../skills` — the latter resolves back to the repo root because the repo itself is named `skills`, which silently breaks discovery.
 
 ## Dev setup
 
@@ -168,9 +186,11 @@ pytest tests/integration/ -v -m integration  # requires ANTHROPIC_API_KEY
 5. Update project AGENTS.md files that reference this repo to include the new skill in their `<available_skills>` block (if applicable)
 6. If the skill should be listed in this repo's README.md skills table, add it there too
 
-## Adding a new agent variant
+## Adding a variant
 
-1. Copy an existing variant: `cp -r skills/reviewing-code-claude skills/reviewing-code-<agent>`
+When an agent-specific or stack-specific divergence is needed (see "Variant strategy"):
+
+1. Copy the baseline: `cp -r skills/reviewing-code skills/reviewing-code-<suffix>` (e.g. `-php`, `-python`, `-cursor`)
 2. Update the `name` field in `SKILL.md` to match the directory name
-3. Tune instructions, scripts, and references for the target agent
+3. Tune instructions, scripts, and references for the target stack or agent
 4. Validate and commit

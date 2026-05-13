@@ -8,12 +8,12 @@ Skills are folders of instructions, scripts, and references that agents can disc
 
 | Skill | Triggers | Description |
 |---|---|---|
-| [`reviewing-code-claude`](skills/reviewing-code-claude/) | CR, code review, perform a review | Structured code & documentation review with severity-tiered findings |
-| [`reviewing-architecture-claude`](skills/reviewing-architecture-claude/) | AR, architecture review, architectural review | High-level architectural review across 11 structural dimensions |
-| [`shipping-work-claude`](skills/shipping-work-claude/) | ship it, push GH, close GH, wrap up | Commit, push, comment, and close GitHub issues |
-| [`managing-skills-claude`](skills/managing-skills-claude/) | add skill repo, add external skills, manage skills, update skills submodule | Add, update, and remove external skill repos using git submodules + symlinks |
-| [`init-project-fastapi-claude`](skills/init-project-fastapi-claude/) | init project, bootstrap project, new fastapi project, set up foundation | Bootstrap a new FastAPI service with SSH deploy key, pyproject.toml, structured logging, TDD scaffold, vendor skill submodules, and GitHub issue tracking |
-| [`orchestrating-issue-backlog-claude`](skills/orchestrating-issue-backlog-claude/) | orchestrate backlog, prioritize issues, plan issue execution, clear backlog | Prioritize an open issue backlog, analyze conflict zones, design a parallel-safe batch execution plan using git worktrees, and hand off to an agent team |
+| [`reviewing-code`](skills/reviewing-code/) | CR, code review, perform a review | Structured code & documentation review with severity-tiered findings |
+| [`reviewing-architecture`](skills/reviewing-architecture/) | AR, architecture review, architectural review | High-level architectural review across 11 structural dimensions |
+| [`shipping-work`](skills/shipping-work/) | ship it, push GH, close GH, wrap up | Commit, push, comment, and close GitHub issues |
+| [`managing-skills`](skills/managing-skills/) | add skill repo, add external skills, manage skills, update skills submodule | Add, update, and remove external skill repos using git submodules + symlinks |
+| [`init-project-fastapi`](skills/init-project-fastapi/) | init project, bootstrap project, new fastapi project, set up foundation | Bootstrap a new FastAPI service with SSH deploy key, pyproject.toml, structured logging, TDD scaffold, vendor skill submodules, and GitHub issue tracking |
+| [`orchestrating-issue-backlog`](skills/orchestrating-issue-backlog/) | orchestrate backlog, prioritize issues, plan issue execution, clear backlog | Prioritize an open issue backlog, analyze conflict zones, design a parallel-safe batch execution plan using git worktrees, and hand off to an agent team |
 
 ## Structure
 
@@ -30,7 +30,7 @@ skills/
 Point your agent at this repo's `skills/` directory. For Claude Code and similar tools, add a `<available_skills>` block to your system prompt or AGENTS.md using the [`skills-ref`](https://github.com/agentskills/agentskills/tree/main/skills-ref) CLI:
 
 ```bash
-skills-ref to-prompt skills/reviewing-code-claude skills/reviewing-architecture-claude skills/shipping-work-claude
+skills-ref to-prompt skills/reviewing-code skills/reviewing-architecture skills/shipping-work
 ```
 
 ## Consuming this repo
@@ -44,8 +44,8 @@ git submodule add https://github.com/gregoryfoster/skills.git skills-vendor/greg
 # 2. Symlink the skills you want
 #    (relative paths assume skills-vendor/ is at the repo root)
 mkdir -p skills
-ln -s ../../skills-vendor/gregoryfoster-skills/skills/reviewing-code-claude skills/reviewing-code-claude
-ln -s ../../skills-vendor/gregoryfoster-skills/skills/shipping-work-claude skills/shipping-work-claude
+ln -s ../../skills-vendor/gregoryfoster-skills/skills/reviewing-code skills/reviewing-code
+ln -s ../../skills-vendor/gregoryfoster-skills/skills/shipping-work skills/shipping-work
 
 # 3. Commit
 git add .gitmodules skills-vendor/gregoryfoster-skills skills/
@@ -54,7 +54,7 @@ git commit -m "feat: add gregoryfoster/skills submodule"
 
 Symlinked skills are auto-discovered by the agent framework. To override a global skill with project-specific behavior, replace the symlink with a committed directory of the same name.
 
-See [`managing-skills-claude`](skills/managing-skills-claude/) for the full procedure.
+See [`managing-skills`](skills/managing-skills/) for the full procedure.
 
 ## Project-level overrides
 

@@ -1,5 +1,5 @@
 ---
-name: reviewing-code-claude
+name: reviewing-code
 description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes.
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:

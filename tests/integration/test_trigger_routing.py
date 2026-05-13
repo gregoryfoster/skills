@@ -71,14 +71,14 @@ except Exception:
 # Triggers that only work with prior conversational context — the bare phrase
 # is too ambiguous for the detection probe to reliably identify the skill.
 _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
-    ("init-project-fastapi-claude", "bootstrap project"),
-    ("init-project-fastapi-claude", "set up foundation"),
-    ("managing-skills-claude", "add skill repo"),
-    ("managing-skills-claude", "manage skills"),
-    ("managing-skills-claude", "update vendor skills"),
-    ("reviewing-architecture-claude", "AR"),
-    ("shipping-work-claude", "close GH"),
-    ("shipping-work-claude", "push GH"),
+    ("init-project-fastapi", "bootstrap project"),
+    ("init-project-fastapi", "set up foundation"),
+    ("managing-skills", "add skill repo"),
+    ("managing-skills", "manage skills"),
+    ("managing-skills", "update vendor skills"),
+    ("reviewing-architecture", "AR"),
+    ("shipping-work", "close GH"),
+    ("shipping-work", "push GH"),
 }
 
 def _trigger_param(skill: "Skill", trigger: str) -> pytest.param:
