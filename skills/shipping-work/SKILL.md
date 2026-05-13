@@ -50,6 +50,16 @@ NO CONTINUATION IF TESTS FAIL
 
 If tests fail: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
+### Step 1.5 — Documentation spot-check
+
+```bash
+bash scripts/doc-check.sh
+```
+
+`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's `SENSITIVE_PATHS` array (AGENTS.md, README.md, schema files, public-API directories, etc.). When sensitive paths change, the matching doc sections may need updates too.
+
+If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the project doesn't ship a `doc-check.sh`, skip this step.
+
 ### Step 2 — Ensure a clean working tree
 
 ```bash

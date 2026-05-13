@@ -369,7 +369,7 @@ done
 |---|---|
 | `skills/brainstorming/` | `SKILL.md` |
 | `skills/reviewing-code/` | `SKILL.md`, `scripts/gather-context.sh` |
-| `skills/shipping-work/` | `SKILL.md`, `scripts/check-status.sh`, `scripts/close-issue.sh`, `scripts/comment-issue.sh`, `scripts/pre-ship.sh`, `scripts/push.sh` |
+| `skills/shipping-work/` | `SKILL.md`, `scripts/check-status.sh`, `scripts/close-issue.sh`, `scripts/comment-issue.sh`, `scripts/doc-check.sh`, `scripts/pre-ship.sh`, `scripts/push.sh` |
 | `skills/writing-plans/` | `SKILL.md`, `plan-document-reviewer-prompt.md` |
 
 Substitutions in local overrides:
