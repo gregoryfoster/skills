@@ -10,7 +10,8 @@
 #
 # This is a SKELETON. Projects should override the SENSITIVE_PATHS array at
 # the top to match their own conventions. Exits 0 if no sensitive paths
-# changed, 1 if any did (so it can gate shipping if desired).
+# changed, 1 if any did (so it can gate shipping if desired), or 2 on an
+# infra/tooling failure that prevented the check from running.
 #
 # Usage: bash scripts/doc-check.sh [--help] [--base <ref>]
 set -euo pipefail
@@ -47,8 +48,10 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Exit codes:"
   echo "  0  no sensitive paths changed (or no changes at all)"
   echo "  1  one or more sensitive paths changed"
-  echo "  2  infra failure (missing --base argument, unresolvable base ref,"
-  echo "     or git diff failed) — the gate did not run"
+  echo "  2  infra/tooling failure — the gate did not run. Covers: missing"
+  echo "     --base argument, base ref auto-detection exhausted, or git diff"
+  echo "     failed. Other unexpected failures (e.g., not in a git repo) may"
+  echo "     surface git's own exit code instead; check stderr in either case."
   exit 0
 fi
 

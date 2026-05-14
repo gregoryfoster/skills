@@ -62,7 +62,7 @@ bash scripts/doc-check.sh
 
 `doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's `SENSITIVE_PATHS` array (AGENTS.md, README.md, pyproject.toml, uv.lock, schema.sql, route/model/core dirs, `.env.example`). When sensitive paths change, the matching doc sections may need updates too.
 
-If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips.
+If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2: an infra/tooling problem prevented the doc check from running — investigate the underlying error rather than proceeding.
 
 ### Step 2 — Ensure a clean working tree
 
