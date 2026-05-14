@@ -32,12 +32,7 @@ if ! command -v composer >/dev/null; then
 fi
 
 FAIL=0
-
-JOBS="${PRE_SHIP_PHP_LINT_JOBS:-4}"
-if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "WARN: PRE_SHIP_PHP_LINT_JOBS='$JOBS' invalid (expected positive integer); using 4." >&2
-  JOBS=4
-fi
+JOBS_DEFAULT=4
 
 # --- composer validate --------------------------------------------------------
 
@@ -64,18 +59,23 @@ fi
 
 # --- php -l on all tracked PHP files ------------------------------------------
 
-echo ""
-echo "=== php -l (all tracked PHP files, ${JOBS} parallel workers) ==="
-
 # Read NUL-separated list into an array. Bash command substitution truncates
 # at the first NUL byte, so the array form is the portable single-invocation
 # path — works on bash 3.2 (stock macOS) through bash 5+.
 TRACKED_PHP=()
 while IFS= read -r -d '' f; do TRACKED_PHP+=("$f"); done < <(git ls-files -z '*.php' 2>/dev/null)
 
+echo ""
 if [[ ${#TRACKED_PHP[@]} -eq 0 ]]; then
+  echo "=== php -l (all tracked PHP files) ==="
   echo "No tracked PHP files."
 else
+  JOBS="${PRE_SHIP_PHP_LINT_JOBS:-$JOBS_DEFAULT}"
+  if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: PRE_SHIP_PHP_LINT_JOBS='$JOBS' invalid (expected positive integer); using $JOBS_DEFAULT." >&2
+    JOBS=$JOBS_DEFAULT
+  fi
+  echo "=== php -l (all tracked PHP files, ${JOBS} parallel workers) ==="
   # xargs returns 123 if any worker exits 1-125; we map that to FAIL=1 and let
   # php -l's stderr (multi-line syntax errors) flow through to the user.
   # shellcheck disable=SC2016  # $1 is expanded by the inner bash -c, intentional
