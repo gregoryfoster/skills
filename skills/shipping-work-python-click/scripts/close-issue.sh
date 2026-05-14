@@ -1,0 +1,1 @@
+../../shipping-work/scripts/close-issue.sh
