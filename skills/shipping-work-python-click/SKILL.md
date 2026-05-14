@@ -1,7 +1,7 @@
 ---
 name: shipping-work-python-click
 description: "Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Use when the user says 'ship it', 'push GH', 'close GH', or 'wrap up'."
-compatibility: Designed for Python Click CLI projects using uv, ruff, pytest. Tolerates projects with no test suite (pre-ship falls back to ruff + import check). Multi-package projects opt in via a committed `.skills/import-targets` file at the repo root (one package name per line). Requires git, gh, uv.
+compatibility: Designed for Python Click CLI projects using uv, ruff, pytest. Requires git, gh, uv.
 metadata:
   author: gregoryfoster
   version: "1.0"
@@ -51,7 +51,7 @@ NO CONTINUATION IF CHECKS FAIL
 
 If checks fail: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
-`pre-ship.sh` runs ruff, an import check (auto-detected from `pyproject.toml` or `.skills/import-targets`), and pytest if a `tests/` directory exists. A missing test suite is acceptable — ruff and import check still gate the ship.
+`pre-ship.sh` runs ruff, an import check (auto-detected from `pyproject.toml` or `.skills/import-targets`), and pytest. The test runner discovers the suite via (1) a top-level `tests/` directory, or (2) the first entry in `pyproject.toml [tool.pytest.ini_options].testpaths`. Projects that nest tests elsewhere (e.g., `src/<pkg>/tests/`) should set `testpaths` in `pyproject.toml`. A missing test suite is acceptable — ruff and import check still gate the ship.
 
 ### Step 1.5 — Documentation spot-check
 

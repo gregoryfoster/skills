@@ -1,0 +1,1 @@
+../../shipping-work-python-click/scripts/detect-import-targets.sh

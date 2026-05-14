@@ -1,7 +1,7 @@
 ---
 name: reviewing-code-python-click
 description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes.
-compatibility: Designed for Python Click CLI projects using uv, ruff, pytest. Pydantic v2 idioms assumed. Tolerates projects with no test suite (verification falls back to ruff + import check). Multi-package projects opt in via a committed `.skills/import-targets` file at the repo root (one package name per line). Requires git, gh, uv.
+compatibility: Designed for Python Click CLI projects using uv, ruff, pytest, and Pydantic v2. Requires git, gh, uv.
 metadata:
   author: gregoryfoster
   version: "1.0"
@@ -72,10 +72,11 @@ Also:
 Evaluate against these dimensions:
 
 - **Correctness** — bugs, logic errors, edge cases, off-by-ones
+- **Data integrity** — for CLIs that touch storage (archive, ingest, sync flows): schema constraints, migration safety, transactional boundaries, idempotent retries
 - **Convention compliance** — AGENTS.md patterns (logging, naming, style); `uv.lock` committed alongside `pyproject.toml`; ruff rule set
 - **Documentation** — do AGENTS.md, README.md, docstrings, and `--help` output reflect changes?
 - **Robustness** — error handling, idempotency, graceful degradation; user-facing error messages distinguishable from stack traces
-- **Click command correctness** — decorator order is meaningful (typical pattern: `@command` → `@pass_context` → custom `@click_option_*` decorators → `@click.option`); `ctx.invoke` used correctly for delegation; `ctx.obj` carries a typed binding (e.g., `ctx_obj: ArchiveLazyServices`) rather than an untyped dict
+- **Click command correctness** — decorator order is meaningful (typical pattern: `@command` → `@pass_context` → custom `@click_option_*` decorators → `@click.option`); `ctx.invoke` used correctly for delegation; `ctx.obj` carries a typed binding (e.g., `ctx_obj: AppContext`) rather than an untyped dict
 - **ParamType testability** — custom ParamTypes should be tested via `ParamType.callback()` (the conversion function), not `ParamType.convert()` (which can pull in live dependencies). Tests that hit `convert()` against a network or DB are brittle.
 - **Command registration** — newly added Click commands are registered in the project's entrypoint module (e.g., `src/<project>.py`). An unregistered command compiles, imports, and passes type checks but is invisible to users.
 - **Pydantic v2 idioms** — `X | None` syntax over `Optional[X]`; mutable default footgun (use `Field(default_factory=list)` not `= []`); type hints on every signature; `model_config` not `Config` inner class

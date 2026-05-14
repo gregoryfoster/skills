@@ -70,36 +70,15 @@ echo "=== ruff check (informational) ==="
 uv run ruff check . 2>&1 || true
 
 # --- Informational import check ----------------------------------------------
-# Resolution order:
-#   1. .skills/import-targets (committed override, one package per line)
-#   2. tomllib-parsed `[project] name` with hyphens normalized to underscores
+# Resolution handled by detect-import-targets.sh (shared with pre-ship.sh).
 # Failures here are NOT gather-context errors — they become Phase 3 findings.
 
 echo ""
 echo "=== import check (informational) ==="
 IMPORT_TARGETS=()
-if [[ -f .skills/import-targets ]]; then
-  while IFS= read -r pkg; do
-    # Skip blanks and comments
-    [[ -z "$pkg" || "$pkg" =~ ^[[:space:]]*# ]] && continue
-    IMPORT_TARGETS+=("$(echo "$pkg" | xargs)")
-  done < .skills/import-targets
-elif [[ -f pyproject.toml ]]; then
-  DETECTED=$(uv run python -c "
-import sys, tomllib
-try:
-    with open('pyproject.toml', 'rb') as f:
-        data = tomllib.load(f)
-    name = data.get('project', {}).get('name', '')
-    if name:
-        print(name.replace('-', '_'))
-except Exception as e:
-    print(f'detection-failed: {e}', file=sys.stderr)
-" 2>/dev/null || true)
-  if [[ -n "$DETECTED" ]]; then
-    IMPORT_TARGETS+=("$DETECTED")
-  fi
-fi
+while IFS= read -r pkg; do
+  [[ -n "$pkg" ]] && IMPORT_TARGETS+=("$pkg")
+done < <(bash "$(dirname "$0")/detect-import-targets.sh")
 
 if [[ ${#IMPORT_TARGETS[@]} -eq 0 ]]; then
   echo "No import target detected (no .skills/import-targets and no [project] name in pyproject.toml). Skipping."

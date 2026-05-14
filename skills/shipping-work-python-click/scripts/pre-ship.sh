@@ -44,34 +44,14 @@ echo "=== Lint (ruff) ==="
 uv run ruff check .
 
 # --- Import check ------------------------------------------------------------
-# Resolution order:
-#   1. .skills/import-targets (committed override, one package per line)
-#   2. tomllib-parsed `[project] name` with hyphens normalized to underscores
+# Resolution handled by detect-import-targets.sh (shared with gather-context.sh).
 
 echo ""
 echo "=== Import check ==="
 IMPORT_TARGETS=()
-if [[ -f .skills/import-targets ]]; then
-  while IFS= read -r pkg; do
-    [[ -z "$pkg" || "$pkg" =~ ^[[:space:]]*# ]] && continue
-    IMPORT_TARGETS+=("$(echo "$pkg" | xargs)")
-  done < .skills/import-targets
-elif [[ -f pyproject.toml ]]; then
-  DETECTED=$(uv run python -c "
-import sys, tomllib
-try:
-    with open('pyproject.toml', 'rb') as f:
-        data = tomllib.load(f)
-    name = data.get('project', {}).get('name', '')
-    if name:
-        print(name.replace('-', '_'))
-except Exception as e:
-    print(f'detection-failed: {e}', file=sys.stderr)
-" 2>/dev/null || true)
-  if [[ -n "$DETECTED" ]]; then
-    IMPORT_TARGETS+=("$DETECTED")
-  fi
-fi
+while IFS= read -r pkg; do
+  [[ -n "$pkg" ]] && IMPORT_TARGETS+=("$pkg")
+done < <(bash "$(dirname "$0")/detect-import-targets.sh")
 
 if [[ ${#IMPORT_TARGETS[@]} -eq 0 ]]; then
   echo "No import target detected (no .skills/import-targets and no [project] name in pyproject.toml). Skipping."
@@ -84,27 +64,55 @@ fi
 
 # --- Tests -------------------------------------------------------------------
 # Per-SHA stamp: skip pytest if HEAD hasn't changed AND working tree is clean.
-# A missing tests/ directory is acceptable — shared libraries may not have a
-# test suite; ruff + import-check still gate the ship.
+# A missing test suite is acceptable — shared libraries may not have one;
+# ruff + import-check still gate the ship.
+#
+# Test-location resolution:
+#   1. top-level tests/
+#   2. first entry in pyproject.toml [tool.pytest.ini_options].testpaths
+# Projects that nest tests elsewhere (e.g., src/<pkg>/tests/) should set
+# testpaths in pyproject.toml so this script discovers them.
 
 echo ""
 echo "=== Tests (Python) ==="
-if [[ ! -d tests ]]; then
-  echo "No tests/ directory found. Skipping pytest. (This is acceptable for shared libraries without a suite.)"
+
+TESTS_DIR=""
+if [[ -d tests ]]; then
+  TESTS_DIR="tests"
+elif [[ -f pyproject.toml ]]; then
+  CANDIDATE=$(uv run python -c "
+import sys, tomllib
+try:
+    with open('pyproject.toml', 'rb') as f:
+        data = tomllib.load(f)
+    paths = data.get('tool', {}).get('pytest', {}).get('ini_options', {}).get('testpaths', [])
+    if isinstance(paths, str):
+        paths = paths.split()
+    if paths:
+        print(paths[0])
+except Exception as e:
+    print(f'detect-testpaths: {e}', file=sys.stderr)
+" || true)
+  if [[ -n "$CANDIDATE" && -d "$CANDIDATE" ]]; then
+    TESTS_DIR="$CANDIDATE"
+  fi
+fi
+
+if [[ -z "$TESTS_DIR" ]]; then
+  echo "No tests directory found (checked tests/ and pyproject.toml [tool.pytest.ini_options].testpaths). Skipping pytest. (This is acceptable for shared libraries without a suite.)"
 else
   CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
   STAMP_PREFIX="$(basename "$PROJECT_ROOT")-tests-clean"
   STAMP_FILE="/tmp/${STAMP_PREFIX}-${CURRENT_SHA}"
   WORKING_TREE_DIRTY=$(git status --porcelain 2>/dev/null \
     | grep -v '^??' \
-    | grep -v '^[ M]M.*vendor/' \
     || true)
 
   if [[ -f "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
     echo "Test suite already passed for commit ${CURRENT_SHA:0:7} with a clean working tree — skipping."
   else
     # Exit code 5 = no tests collected (acceptable on an empty suite).
-    uv run pytest tests/ -v || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
+    uv run pytest "$TESTS_DIR/" -v || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
     if [[ -z "$WORKING_TREE_DIRTY" ]]; then
       touch "$STAMP_FILE"
     fi
