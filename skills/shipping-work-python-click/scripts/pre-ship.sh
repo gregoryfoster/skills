@@ -72,35 +72,19 @@ fi
 # A missing test suite is acceptable — shared libraries may not have one;
 # ruff + import-check still gate the ship.
 #
-# Test-location resolution:
-#   1. top-level tests/ (single dir)
-#   2. every entry in pyproject.toml [tool.pytest.ini_options].testpaths
-# Projects that nest tests elsewhere (e.g., src/<pkg>/tests/) should set
-# testpaths in pyproject.toml so this script discovers them.
+# Test directory resolution is delegated to detect-test-dirs.sh (shared
+# with gather-context.sh). The helper prefers tests/ then falls back to
+# every entry in pyproject.toml [tool.pytest.ini_options].testpaths.
 
 echo ""
 echo "=== Tests (Python) ==="
 
 TEST_DIRS=()
-if [[ -d tests ]]; then
-  TEST_DIRS=("tests/")
-elif [[ -f pyproject.toml ]]; then
-  while IFS= read -r path; do
-    [[ -n "$path" && -d "$path" ]] && TEST_DIRS+=("$path/")
-  done < <(uv run python -c "
-import sys, tomllib
-try:
-    with open('pyproject.toml', 'rb') as f:
-        data = tomllib.load(f)
-    paths = data.get('tool', {}).get('pytest', {}).get('ini_options', {}).get('testpaths', [])
-    if isinstance(paths, str):
-        paths = paths.split()
-    for p in paths:
-        print(p)
-except Exception as e:
-    print(f'detect-testpaths: {e}', file=sys.stderr)
-" || true)
-fi
+while IFS= read -r dir; do
+  # Normalize: strip any trailing slash, then append exactly one. Avoids
+  # double-slash noise when testpaths entries already include one.
+  [[ -n "$dir" ]] && TEST_DIRS+=("${dir%/}/")
+done < <(bash "$SCRIPT_DIR/detect-test-dirs.sh")
 
 if [[ ${#TEST_DIRS[@]} -eq 0 ]]; then
   echo "No tests directory found (checked tests/ and pyproject.toml [tool.pytest.ini_options].testpaths). Skipping pytest. (This is acceptable for shared libraries without a suite.)"

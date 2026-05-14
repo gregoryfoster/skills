@@ -7,10 +7,10 @@
 # suites are typically fast and the audit found existing downstream
 # consumers already run them at review time.
 #
-# Import target auto-detection: reads `[project] name` from pyproject.toml
-# via tomllib (Python 3.11+), normalizes hyphens to underscores. If the
-# heuristic picks the wrong package, commit a .skills/import-targets file
-# at the repo root (one package per line) — the script consumes it instead.
+# Import target resolution is delegated to detect-import-targets.sh
+# (shared with pre-ship.sh). Test directory resolution is delegated to
+# detect-test-dirs.sh (also shared with pre-ship.sh), so review and ship
+# always agree on what to import-check and where the test suite lives.
 #
 # Usage: bash scripts/gather-context.sh [--help]
 set -euo pipefail
@@ -94,13 +94,20 @@ else
 fi
 
 # --- Informational pytest ----------------------------------------------------
-# Runs only if a tests/ directory exists. A missing suite is a warning, not
-# an error (the cannobserv shared-library case has no test suite).
+# Test directory resolution is delegated to detect-test-dirs.sh (shared
+# with pre-ship.sh), so review and ship agree on test discovery. A
+# missing suite is a warning, not an error (the cannobserv shared-library
+# case has no test suite).
 
 echo ""
 echo "=== pytest (informational) ==="
-if [[ -d tests ]]; then
-  uv run pytest tests/ 2>&1 || true
+TEST_DIRS=()
+while IFS= read -r dir; do
+  [[ -n "$dir" ]] && TEST_DIRS+=("${dir%/}/")
+done < <(bash "$SCRIPT_DIR/detect-test-dirs.sh")
+
+if [[ ${#TEST_DIRS[@]} -eq 0 ]]; then
+  echo "No tests directory found (checked tests/ and pyproject.toml [tool.pytest.ini_options].testpaths). Skipping pytest. (This is acceptable for shared libraries without a suite.)"
 else
-  echo "No tests/ directory found. Skipping pytest. (This is acceptable for shared libraries without a suite.)"
+  uv run pytest "${TEST_DIRS[@]}" 2>&1 || true
 fi

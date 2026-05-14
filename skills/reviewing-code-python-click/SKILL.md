@@ -58,7 +58,7 @@ The script runs the variant's review-time checks informationally (output capture
 
 - `uv run ruff check .`
 - `uv run python -c "import <PACKAGE>"` — the import target is auto-detected from `pyproject.toml` (`[project] name`, hyphens normalized to underscores). Auto-detection is a heuristic; if it picks the wrong package, the project should commit a `.skills/import-targets` file at the repo root (one package per line) which the script consumes instead.
-- `uv run pytest tests/` — runs only if a `tests/` directory exists. A missing test suite is a warning, not an error (the cannobserv shared-library case has no test suite).
+- `uv run pytest <dirs>` — test directories resolved via the same helper as pre-ship (`tests/` first, then every existing entry in `pyproject.toml [tool.pytest.ini_options].testpaths`). A missing test suite is a warning, not an error (the cannobserv shared-library case has no test suite).
 
 **Pytest in gather-context (variant-specific):** Click CLI test suites are typically fast enough that running them at review time materially shortens the feedback loop — the audit found existing downstream consumers already do this. This differs from the FastAPI variant, which defers pytest to ship time. The divergence is deliberate.
 

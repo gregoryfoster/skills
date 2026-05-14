@@ -505,6 +505,14 @@ class TestPythonClickHelperIntegration:
             "import target via one canonical resolver"
         )
 
+    def test_invokes_detect_test_dirs_helper(self, script_path):
+        content = script_path.read_text()
+        assert "detect-test-dirs.sh" in content, (
+            f"{script_path.parent.parent.name}/{script_path.name} must invoke "
+            "detect-test-dirs.sh — review and ship must agree on test "
+            "directory discovery via one canonical resolver"
+        )
+
 
 # ---------------------------------------------------------------------------
 # reviewing-architecture

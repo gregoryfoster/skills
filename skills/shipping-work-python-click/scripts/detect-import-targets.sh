@@ -36,6 +36,7 @@ if [[ -f .skills/import-targets ]]; then
     # Pure-bash trim of leading/trailing whitespace (no fork+pipe per line).
     pkg="${pkg#"${pkg%%[![:space:]]*}"}"
     pkg="${pkg%"${pkg##*[![:space:]]}"}"
+    [[ -z "$pkg" ]] && continue
     echo "$pkg"
   done < .skills/import-targets
 elif [[ -f pyproject.toml ]] && command -v uv >/dev/null 2>&1; then
