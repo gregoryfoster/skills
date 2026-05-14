@@ -15,6 +15,10 @@
 # Usage: bash scripts/gather-context.sh [--help]
 set -euo pipefail
 
+# Capture the script's own directory *before* any cd, so helper lookups
+# resolve correctly regardless of invocation cwd.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
 if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash scripts/gather-context.sh"
   echo ""
@@ -78,7 +82,7 @@ echo "=== import check (informational) ==="
 IMPORT_TARGETS=()
 while IFS= read -r pkg; do
   [[ -n "$pkg" ]] && IMPORT_TARGETS+=("$pkg")
-done < <(bash "$(dirname "$0")/detect-import-targets.sh")
+done < <(bash "$SCRIPT_DIR/detect-import-targets.sh")
 
 if [[ ${#IMPORT_TARGETS[@]} -eq 0 ]]; then
   echo "No import target detected (no .skills/import-targets and no [project] name in pyproject.toml). Skipping."

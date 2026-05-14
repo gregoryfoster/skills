@@ -478,6 +478,35 @@ class TestReviewingCodePythonClick:
 
 
 # ---------------------------------------------------------------------------
+# Python/Click cross-script integration
+# ---------------------------------------------------------------------------
+
+
+class TestPythonClickHelperIntegration:
+    """Both review and ship must resolve import targets via the same helper —
+    a regression here would let the two skills disagree about which package
+    to import-check."""
+
+    @pytest.fixture(
+        params=[
+            "reviewing-code-python-click/scripts/gather-context.sh",
+            "shipping-work-python-click/scripts/pre-ship.sh",
+        ],
+        ids=lambda p: p.split("/")[0] + "/" + p.split("/")[-1],
+    )
+    def script_path(self, request):
+        return SKILLS_DIR / request.param
+
+    def test_invokes_detect_import_targets_helper(self, script_path):
+        content = script_path.read_text()
+        assert "detect-import-targets.sh" in content, (
+            f"{script_path.parent.parent.name}/{script_path.name} must invoke "
+            "detect-import-targets.sh — review and ship must agree on the "
+            "import target via one canonical resolver"
+        )
+
+
+# ---------------------------------------------------------------------------
 # reviewing-architecture
 # ---------------------------------------------------------------------------
 
