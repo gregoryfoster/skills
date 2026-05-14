@@ -4,7 +4,9 @@
 #   1. composer validate --no-check-publish at root + every discovered
 #      composer dir under themes/ and plugins/
 #   2. php -l on ALL tracked PHP files (comprehensive — pre-ship cardinality
-#      differs from gather-context, which lints only changed files)
+#      differs from gather-context, which lints only changed files).
+#      Parallelized via xargs -P; override worker count with PRE_SHIP_PHP_LINT_JOBS
+#      (default: 4).
 #   3. Test runner if the root composer.json defines a "test" script
 #
 # Exits non-zero if any check fails.
@@ -16,7 +18,8 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash scripts/pre-ship.sh"
   echo ""
   echo "Runs composer validate at each composer.json, php -l on every tracked"
-  echo "PHP file, and 'composer test' if defined. Fails fast on any error."
+  echo "PHP file (parallel; PRE_SHIP_PHP_LINT_JOBS=N to tune, default 4), and"
+  echo "'composer test' if defined. Fails fast on any error."
   exit 0
 fi
 
@@ -29,6 +32,12 @@ if ! command -v composer >/dev/null; then
 fi
 
 FAIL=0
+
+JOBS="${PRE_SHIP_PHP_LINT_JOBS:-4}"
+if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "WARN: PRE_SHIP_PHP_LINT_JOBS='$JOBS' invalid (expected positive integer); using 4." >&2
+  JOBS=4
+fi
 
 # --- composer validate --------------------------------------------------------
 
@@ -56,20 +65,26 @@ fi
 # --- php -l on all tracked PHP files ------------------------------------------
 
 echo ""
-echo "=== php -l (all tracked PHP files) ==="
-TRACKED_PHP=$(git ls-files '*.php' 2>/dev/null || true)
-if [[ -z "$TRACKED_PHP" ]]; then
+echo "=== php -l (all tracked PHP files, ${JOBS} parallel workers) ==="
+
+# Read NUL-separated list into an array. Bash command substitution truncates
+# at the first NUL byte, so the array form is the portable single-invocation
+# path — works on bash 3.2 (stock macOS) through bash 5+.
+TRACKED_PHP=()
+while IFS= read -r -d '' f; do TRACKED_PHP+=("$f"); done < <(git ls-files -z '*.php' 2>/dev/null)
+
+if [[ ${#TRACKED_PHP[@]} -eq 0 ]]; then
   echo "No tracked PHP files."
 else
-  while IFS= read -r file; do
-    [[ -z "$file" ]] && continue
-    [[ ! -f "$file" ]] && continue
-    if ! php -l "$file" >/dev/null; then
-      echo "FAIL: php -l $file" >&2
-      FAIL=1
-    fi
-  done <<< "$TRACKED_PHP"
-  echo "Lint OK."
+  # xargs returns 123 if any worker exits 1-125; we map that to FAIL=1 and let
+  # php -l's stderr (multi-line syntax errors) flow through to the user.
+  # shellcheck disable=SC2016  # $1 is expanded by the inner bash -c, intentional
+  if ! printf '%s\0' "${TRACKED_PHP[@]}" | xargs -0 -P "$JOBS" -I {} \
+      bash -c '[[ -f "$1" ]] || exit 0; php -l "$1" >/dev/null || { echo "FAIL: php -l $1" >&2; exit 1; }' _ {}; then
+    FAIL=1
+  else
+    echo "Lint OK."
+  fi
 fi
 
 # --- test runner (optional) ---------------------------------------------------

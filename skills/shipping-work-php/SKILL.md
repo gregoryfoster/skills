@@ -48,6 +48,8 @@ Determine which GitHub issue(s) to close (priority order):
 bash scripts/pre-ship.sh
 ```
 
+> Lint runs 4 parallel `php -l` workers by default; tune via `PRE_SHIP_PHP_LINT_JOBS=N bash scripts/pre-ship.sh` for very large monorepos.
+
 ```
 NO CONTINUATION IF CHECKS FAIL
 ```
