@@ -21,11 +21,15 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Exit codes:"
   echo "  0  All checks passed"
   echo "  1  Lint or test failure"
+  echo "  2  Tooling/infra failure (uv missing, git status failed, mktemp failed)"
   echo ""
   echo "Skips pytest when HEAD hasn't changed AND working tree is clean (per-SHA stamp)."
   exit 0
 fi
 
+# Intentional `|| pwd` fallback: this script may be invoked outside a git repo
+# (e.g., in a scratch directory during local development). The pwd fallback
+# lets downstream checks run against the cwd rather than aborting.
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
@@ -44,27 +48,57 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 2
 fi
 
+# Single trap covers every tempfile created below (git status capture).
+# Scalars (not an array) for bash 3.2 + `set -u` — an empty array expansion
+# errors under set -u on stock-macOS bash.
+STATUS_OUT=""; STATUS_ERR=""
+trap 'rm -f "$STATUS_OUT" "$STATUS_ERR"' EXIT
+
 echo "=== Lint (ruff) ==="
 uv run ruff check .
 
 echo ""
 echo "=== Tests (Python) ==="
-CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-STAMP_PREFIX="$(basename "$PROJECT_ROOT")-tests-clean"
-STAMP_FILE="/tmp/${STAMP_PREFIX}-${CURRENT_SHA}"
-WORKING_TREE_DIRTY=$(git status --porcelain 2>/dev/null \
-  | grep -v '^??' \
-  | grep -v '^[ M]M.*vendor/' \
-  || true)
 
-if [[ -f "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
+# SHA resolution: degrade gracefully. If git can't compute HEAD (no commits
+# yet, broken index), run pytest unconditionally rather than poisoning a
+# shared `/tmp/<project>-tests-clean-unknown` stamp slot across runs.
+CURRENT_SHA=""
+if ! CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null); then
+  echo "WARN: could not resolve HEAD SHA; running pytest unconditionally (no stamp)" >&2
+fi
+
+# git status: ERROR + exit 2 on failure. A masked failure here is a real
+# gate-defeating path — `WORKING_TREE_DIRTY=""` would cause the script to
+# touch the stamp file, recording a "passed" run that may not actually be
+# clean.
+STATUS_OUT=$(mktemp) || { echo "ERROR: mktemp failed (STATUS_OUT)" >&2; exit 2; }
+STATUS_ERR=$(mktemp) || { echo "ERROR: mktemp failed (STATUS_ERR)" >&2; exit 2; }
+STATUS_RC=0
+git status --porcelain >"$STATUS_OUT" 2>"$STATUS_ERR" || STATUS_RC=$?
+if [[ $STATUS_RC -ne 0 ]]; then
+  echo "ERROR: git status --porcelain failed (exit $STATUS_RC):" >&2
+  cat "$STATUS_ERR" >&2
+  exit 2
+fi
+# Strip untracked and vendor-only modifications before deciding cleanliness.
+WORKING_TREE_DIRTY=$(grep -v '^??' "$STATUS_OUT" | grep -v '^[ M]M.*vendor/' || true)
+
+if [[ -n "$CURRENT_SHA" ]]; then
+  STAMP_PREFIX="$(basename "$PROJECT_ROOT")-tests-clean"
+  STAMP_FILE="/tmp/${STAMP_PREFIX}-${CURRENT_SHA}"
+else
+  STAMP_FILE=""
+fi
+
+if [[ -n "$STAMP_FILE" && -f "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
   echo "Test suite already passed for commit ${CURRENT_SHA:0:7} with a clean working tree — skipping."
 else
   # Exit code 5 = no tests collected (acceptable on an empty suite).
   # --no-cov skips coverage (faster); requires pytest-cov to be installed
   # (drop the flag if your project doesn't depend on it).
   uv run pytest --no-cov -x -m "not integration" || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
-  if [[ -z "$WORKING_TREE_DIRTY" ]]; then
+  if [[ -n "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
     touch "$STAMP_FILE"
   fi
 fi

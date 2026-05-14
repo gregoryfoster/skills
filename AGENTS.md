@@ -144,6 +144,21 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Use `set -euo pipefail` in bash scripts
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
 
+### Gate-script discipline (pre-ship, doc-check)
+
+Scripts whose output drives a control-flow decision (will-we-ship vs. will-we-skip) must never silently swallow stderr from the tool that produces that output. The two-bucket rule:
+
+- **Gate-like commands** — output drives a `for` loop, a "did we find anything?" branch, a "is the tree clean?" check, or a stamp-write. Capture exit code explicitly and treat non-zero as ERROR + exit 2. Use a tempfile when the command runs inside a process substitution (`done < <(...)`), since process-substitution exit codes aren't visible in the parent shell.
+- **Reporting-only commands** — output is shown to the user as context (status output, log snippet, diff stat). Silent `2>/dev/null || true` is fine: degraded output is acceptable, false-success on a gate is not.
+
+Reference patterns:
+- Tempfile + exit-code capture for process substitution: [skills/shipping-work-php/scripts/pre-ship.sh:99-111](skills/shipping-work-php/scripts/pre-ship.sh#L99-L111)
+- Three-case handler (non-zero ERROR, exit-0-with-stderr WARN, clean proceed): [skills/shipping-work-php/scripts/pre-ship.sh:60-80](skills/shipping-work-php/scripts/pre-ship.sh#L60-L80)
+- Consolidated EXIT trap covering multiple tempfile scalars (bash 3.2 + `set -u` compatible): [skills/shipping-work-php/scripts/pre-ship.sh:46-47](skills/shipping-work-php/scripts/pre-ship.sh#L46-L47)
+- `--help` exit-code block enumerating exit 2 conditions: [skills/shipping-work-php/scripts/pre-ship.sh:24-28](skills/shipping-work-php/scripts/pre-ship.sh#L24-L28)
+
+Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2>/dev/null || pwd` for the "invoke outside a repo" path) with a one-line comment explaining why the fallback is deliberate.
+
 ## Commit conventions
 
 Conventional Commits style:
