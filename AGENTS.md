@@ -156,7 +156,7 @@ Reference patterns — all in [skills/shipping-work-php/scripts/pre-ship.sh](ski
 - **Tempfile + exit-code capture for process substitution** — grep for `LS_RC`. Use when a command runs inside `done < <(...)` and you need its exit status: capture stdout to a tempfile, capture `$?` into a scalar, branch on it.
 - **Three-case `find` handler** — grep for `FIND_RC`. Non-zero exit → ERROR + exit 2; exit-0 with stderr → WARN + proceed; exit-0 silent → proceed.
 - **Consolidated EXIT trap** — grep for `trap '` at the top of the file. Multiple tempfile *scalars* (not an array) in one trap line for bash 3.2 + `set -u` compatibility.
-- **`--help` exit-code block** — search the `--help` block. Enumerates the exit-2 conditions (which infra failures escape the gate).
+- **`--help` exit-code block** — search the `--help` block. Enumerates which infra failures map to exit 2 (vs. silently degrading).
 
 Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2>/dev/null || pwd`) with a one-line comment describing what the fallback actually does, not the rationale you assume it has.
 
