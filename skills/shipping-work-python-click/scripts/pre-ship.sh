@@ -38,9 +38,9 @@ if [[ "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-# Intentional `|| pwd` fallback: this script may be invoked outside a git repo
-# (e.g., in a scratch directory during local development). The pwd fallback
-# lets downstream checks run against the cwd rather than aborting.
+# Defensive fallback inherited from sibling scripts. If pre-ship is invoked
+# outside a repo, downstream git checks (status, rev-parse HEAD) will still
+# fail loudly — this `|| pwd` only delays that to a clearer error site.
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
@@ -49,11 +49,11 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 2
 fi
 
-# Single trap covers every tempfile created below (helper-script captures
-# plus git status). Scalars (not an array) for bash 3.2 + `set -u` — an
-# empty array expansion errors under set -u on stock-macOS bash.
-IMPORT_OUT=""; TESTDIRS_OUT=""; STATUS_OUT=""; STATUS_ERR=""
-trap 'rm -f "$IMPORT_OUT" "$TESTDIRS_OUT" "$STATUS_OUT" "$STATUS_ERR"' EXIT
+# Single trap covers every tempfile created below (helper-script captures,
+# git status, git rev-parse stderr). Scalars (not an array) for bash 3.2 +
+# `set -u` — an empty array expansion errors under set -u on stock-macOS bash.
+IMPORT_OUT=""; TESTDIRS_OUT=""; STATUS_OUT=""; STATUS_ERR=""; REV_ERR=""
+trap 'rm -f "$IMPORT_OUT" "$TESTDIRS_OUT" "$STATUS_OUT" "$STATUS_ERR" "$REV_ERR"' EXIT
 
 echo "=== Lint (ruff) ==="
 uv run ruff check .
@@ -124,9 +124,13 @@ else
   # SHA resolution: degrade gracefully. If git can't compute HEAD (no commits
   # yet, broken index), run pytest unconditionally rather than poisoning a
   # shared `/tmp/<project>-tests-clean-unknown` stamp slot across runs.
+  # Stream git's own stderr in the WARN so operators can triage expected
+  # ("no HEAD yet") vs. genuine infra rot.
+  REV_ERR=$(mktemp) || { echo "ERROR: mktemp failed (REV_ERR)" >&2; exit 2; }
   CURRENT_SHA=""
-  if ! CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null); then
-    echo "WARN: could not resolve HEAD SHA; running pytest unconditionally (no stamp)" >&2
+  if ! CURRENT_SHA=$(git rev-parse HEAD 2>"$REV_ERR"); then
+    echo "WARN: could not resolve HEAD SHA; running pytest unconditionally (no stamp):" >&2
+    cat "$REV_ERR" >&2
   fi
 
   # git status: ERROR + exit 2 on failure. A masked failure here is a real
@@ -142,6 +146,9 @@ else
     cat "$STATUS_ERR" >&2
     exit 2
   fi
+  # grep -v exits 1 when the inverse filter matches no lines — i.e., the
+  # clean-tree case (empty $STATUS_OUT) or the all-untracked case. The
+  # `|| true` keeps that benign exit-1 from tripping `set -e`.
   WORKING_TREE_DIRTY=$(grep -v '^??' "$STATUS_OUT" || true)
 
   if [[ -n "$CURRENT_SHA" ]]; then
