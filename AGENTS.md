@@ -42,10 +42,12 @@ skills/
   reviewing-code/                  # baseline (used when no variant matches)
   reviewing-code-php/              # PHP/WordPress stack variant
   reviewing-code-python-fastapi/   # Python/FastAPI stack variant
+  reviewing-code-python-click/     # Python/Click CLI stack variant
   reviewing-code-cursor/           # Cursor-specific agent variant (hypothetical)
   shipping-work/                   # baseline
   shipping-work-php/               # PHP/WordPress stack variant
   shipping-work-python-fastapi/    # Python/FastAPI stack variant
+  shipping-work-python-click/      # Python/Click CLI stack variant
 ```
 
 Variants share the same trigger phrases (documented in `metadata.triggers`). The runtime selects the appropriate variant. Each variant is a **complete, self-contained skill** — no inheritance between variants.
