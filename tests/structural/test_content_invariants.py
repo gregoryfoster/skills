@@ -25,7 +25,7 @@ def skill(name: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["shipping-work", "shipping-work-php"])
+@pytest.fixture(params=["shipping-work", "shipping-work-php", "shipping-work-python-fastapi"])
 def shipping_work_skill(request):
     return skill(request.param)
 
@@ -116,6 +116,45 @@ class TestShippingWorkPhp:
             assert category in body, f"WP next-steps category '{category}' must be present"
 
 
+class TestShippingWorkPythonFastapi:
+    """Python/FastAPI variant-only invariants."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("shipping-work-python-fastapi")
+
+    def test_iron_law_no_push_without_pre_ship_checks(self):
+        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
+            "Python/FastAPI Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
+        )
+
+    def test_step1_run_pre_ship_checks(self):
+        assert "Step 1 — Run pre-ship checks" in self.s.body, (
+            "Python/FastAPI variant Step 1 heading must be 'Run pre-ship checks'"
+        )
+
+    def test_no_continuation_if_checks_fail(self):
+        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
+            "'NO CONTINUATION IF CHECKS FAIL' block must be present in Python/FastAPI variant"
+        )
+
+    def test_h1_includes_python_fastapi_suffix(self):
+        assert "# Shipping Work — Python/FastAPI" in self.s.body, (
+            "Python/FastAPI variant H1 must be '# Shipping Work — Python/FastAPI'"
+        )
+
+    def test_fastapi_next_steps_categories_present(self):
+        body = self.s.body
+        for category in ("DB migration", "Service restart", "Integration tests", "Env var", "Dev-server cleanup"):
+            assert category in body, f"FastAPI next-steps category '{category}' must be present"
+
+    def test_auto_derived_stamp_prefix_documented(self):
+        assert "auto-derives" in self.s.body or "auto-derived" in self.s.body, (
+            "Variant must document that the per-SHA stamp prefix is auto-derived "
+            "(eliminates the project-name substitution copy-paste bug class)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # init-project-fastapi
 # ---------------------------------------------------------------------------
@@ -172,7 +211,7 @@ class TestInitProjectFastapi:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["reviewing-code", "reviewing-code-php"])
+@pytest.fixture(params=["reviewing-code", "reviewing-code-php", "reviewing-code-python-fastapi"])
 def reviewing_code_skill(request):
     return skill(request.param)
 
@@ -262,6 +301,63 @@ class TestReviewingCodePhp:
     def test_pint_lint_gate_present(self):
         assert "pint --test" in self.s.body, (
             "Phase 3.5 must mention 'pint --test' for PHP lint/format gate"
+        )
+
+
+class TestReviewingCodePythonFastapi:
+    """Python/FastAPI variant-only invariants."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("reviewing-code-python-fastapi")
+
+    def test_h1_includes_python_fastapi_suffix(self):
+        assert "# Code & Documentation Review — Python/FastAPI" in self.s.body, (
+            "Python/FastAPI variant H1 must be '# Code & Documentation Review — Python/FastAPI'"
+        )
+
+    def test_tdd_dimension_present(self):
+        assert "TDD discipline" in self.s.body, (
+            "TDD discipline dimension must be present in Phase 2"
+        )
+
+    def test_api_contract_dimension_present(self):
+        assert "API contract" in self.s.body, (
+            "API contract dimension must be present in Phase 2"
+        )
+
+    def test_logging_convention_dimension_present(self):
+        body = self.s.body
+        assert "Logging convention" in body, (
+            "Logging convention dimension must be present in Phase 2"
+        )
+        assert "get_logger(__name__)" in body, (
+            "Logging convention must reference get_logger(__name__)"
+        )
+
+    def test_datetime_convention_dimension_present(self):
+        assert "Datetime convention" in self.s.body, (
+            "Datetime convention dimension must be present in Phase 2"
+        )
+
+    def test_pydantic_idioms_dimension_present(self):
+        assert "Pydantic v2 idioms" in self.s.body, (
+            "Pydantic v2 idioms dimension must be present in Phase 2"
+        )
+
+    def test_ruff_lint_gate_present(self):
+        body = self.s.body
+        assert "uv run ruff check" in body, (
+            "Phase 3.5 must mention 'uv run ruff check' for Python lint gate"
+        )
+        assert "uv run ruff format --check" in body, (
+            "Phase 3.5 must mention 'uv run ruff format --check' for Python format gate"
+        )
+
+    def test_pytest_excluded_from_review(self):
+        assert "Do not run pytest during a review" in self.s.body, (
+            "Variant must instruct reviewers not to run the full pytest suite "
+            "during review (full-suite runs belong in pre-ship.sh)"
         )
 
 
