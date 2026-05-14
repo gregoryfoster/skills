@@ -1,0 +1,1 @@
+../../shipping-work/scripts/check-status.sh
