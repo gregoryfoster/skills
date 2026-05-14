@@ -44,7 +44,11 @@ if [[ "${1:-}" == "--help" ]]; then
   echo ""
   echo "  --base <ref>   Compare against <ref> instead of the auto-detected default."
   echo ""
-  echo "Exits 0 if no sensitive paths changed, 1 otherwise."
+  echo "Exit codes:"
+  echo "  0  no sensitive paths changed (or no changes at all)"
+  echo "  1  one or more sensitive paths changed"
+  echo "  2  infra failure (missing --base argument, unresolvable base ref,"
+  echo "     or git diff failed) — the gate did not run"
   exit 0
 fi
 
@@ -74,7 +78,13 @@ if [[ -z "$BASE_REF" ]]; then
   fi
 fi
 
-CHANGED=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || true)
+CHANGED=""
+DIFF_RC=0
+CHANGED=$(git diff --name-only "${BASE_REF}...HEAD") || DIFF_RC=$?
+if [[ $DIFF_RC -ne 0 ]]; then
+  echo "ERROR: git diff --name-only ${BASE_REF}...HEAD failed (exit $DIFF_RC)" >&2
+  exit 2
+fi
 
 if [[ -z "$CHANGED" ]]; then
   echo "No changes vs $BASE_REF."
