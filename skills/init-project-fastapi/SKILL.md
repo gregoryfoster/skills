@@ -363,19 +363,24 @@ for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; d
 done
 ```
 
-**Local overrides (4):** Copy the following from this project and substitute `<PROJECT_NAME>` in the frontmatter `name:` field and skill headers:
+**Local overrides (2):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10 vendor loop above already does this) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
+
+The remaining local overrides are project-narrative skills that genuinely vary per-project:
 
 | Override | Files |
 |---|---|
 | `skills/brainstorming/` | `SKILL.md` |
-| `skills/reviewing-code/` | `SKILL.md`, `scripts/gather-context.sh` |
-| `skills/shipping-work/` | `SKILL.md`, `scripts/check-status.sh`, `scripts/close-issue.sh`, `scripts/comment-issue.sh`, `scripts/doc-check.sh`, `scripts/pre-ship.sh`, `scripts/push.sh` |
 | `skills/writing-plans/` | `SKILL.md`, `plan-document-reviewer-prompt.md` |
 
 Substitutions in local overrides:
 - Skill headers: `— power-map` → `— <PROJECT_NAME>`
-- `pre-ship.sh` stamp file prefix: `pm-tests-clean` → `<PROJECT_NAME>-tests-clean`
 - All other content: verbatim
+
+> **Override frontmatter is required.** Every local override `SKILL.md` (both the rows above and any thin overrides below) must declare `overrides: <upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block. See AGENTS.md § Required override frontmatter in the upstream `gregoryfoster/skills` repo for the canonical wording.
+
+**Optional thin overrides** (only when the project genuinely needs them):
+- `skills/shipping-work-python-fastapi/scripts/pre-ship.sh` — fork only if the project requires `/etc/<project>/.env` loading before tests (e.g., archiver, notifier, watcher). Keep the auto-derived stamp prefix. The forked `SKILL.md` needs `overrides: shipping-work-python-fastapi` + `override-reason:` (e.g., `"Adds /etc/<project>/.env loading before pytest"`).
+- Step 2.5 worktree-aware merge path — fork the relevant `shipping-work-python-fastapi/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
 
 ### Phase 11 — `.claude/skills/` symlinks
 
@@ -450,12 +455,12 @@ Present a completion table:
 | FastAPI skeleton | `src/api/main.py`, `src/core/logging.py` |
 | Tests scaffold | `tests/api/`, `tests/core/` |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
-| Skills | 4 local overrides + 9 vendor symlinks + 13 Claude discovery symlinks |
+| Skills | Local overrides + all vendor skills symlinked + matching `.claude/skills/` discovery symlinks |
 | GH issue | #1 closed |
 
 ## Key invariants
 
-- The stamp file prefix in `pre-ship.sh` must use `<PROJECT_NAME>` not `pm` — mixing stamp files across projects causes false test-pass skips.
+- The `pre-ship.sh` per-SHA stamp prefix is auto-derived from `$(basename "$(git rev-parse --show-toplevel)")` in the `shipping-work-python-fastapi` variant — no per-project substitution required (and no risk of cross-project stamp collisions).
 - All symlinks use **relative** paths — absolute paths break after cloning.
 - `configure_logging()` called once in `src/api/main.py` only — never in library modules.
 - `uv.lock` must be committed alongside `pyproject.toml`.
