@@ -30,10 +30,14 @@ NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION — VERIFIED AGAINST ORIGINAL REQUI
 | "No tests/ directory means nothing to verify" | Ruff and the import check still apply. Skipping pytest is not skipping pre-ship. |
 | "User is in a hurry" | A bad ship is slower than a good one. Run the checklist. |
 
+## Parameterized invocation
+
+Trigger phrases may include scope inline — e.g., `wrap up #19 #20`, `ship it #14`. Apply the appended issue numbers as the explicit scope (step 1 of Scope detection); skip the conversation-context fallback.
+
 ## Scope detection
 
 Determine which GitHub issue(s) to close (priority order):
-1. **Explicit scope** — user specifies issue number(s) (e.g., `wrap up #19 #20`)
+1. **Explicit scope** — user specifies issue number(s)
 2. **Conversation context** — issues referenced in recent commit messages or discussion
 3. **Ask** — if ambiguous, confirm before closing anything
 

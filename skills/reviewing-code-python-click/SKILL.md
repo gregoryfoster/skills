@@ -38,6 +38,10 @@ If the user hasn't responded with directives, you cannot implement anything.
 | "It's just a decorator order tweak" | Click decorator order changes parameter binding semantics. Treat ordering changes as behavior changes. |
 | "Naive datetime is close enough" | ISO 8601 UTC only. Naive datetimes cause silent timezone drift in production. |
 
+## Parameterized invocation
+
+Trigger phrases may include scope inline — e.g., `CR #14`, `code review src/cli/commands/run.py`, `CR <commit-range>`. Apply the appended context as the explicit scope (step 1 of Scope detection); skip the conversation-context and uncommitted-work fallbacks.
+
 ## Scope detection
 
 Determine what to review (priority order):

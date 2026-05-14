@@ -59,6 +59,12 @@ class TestShippingWork:
             "Rationalization prevention table must be present"
         )
 
+    def test_parameterized_invocation_section_present(self, shipping_work_skill):
+        assert "## Parameterized invocation" in shipping_work_skill.body, (
+            "Parameterized invocation section must be present (formalizes inline scope "
+            "in trigger phrases, e.g., `wrap up #19 #20`)"
+        )
+
 
 class TestShippingWorkBaseline:
     """Baseline-only invariants — Iron Law first line + 'Run tests' wording."""
@@ -319,6 +325,12 @@ class TestReviewingCode:
             "Phase ordering must be: Gather (1) → Present (3) → Wait (4)"
         )
 
+    def test_parameterized_invocation_section_present(self, reviewing_code_skill):
+        assert "## Parameterized invocation" in reviewing_code_skill.body, (
+            "Parameterized invocation section must be present (formalizes inline scope "
+            "in trigger phrases, e.g., `CR #14`)"
+        )
+
 
 class TestReviewingCodePhp:
     """PHP variant-only invariants."""
@@ -554,6 +566,12 @@ class TestReviewingArchitecture:
     def test_eleven_dimensions_referenced(self):
         assert "references/dimensions.md" in self.s.body, (
             "references/dimensions.md must be referenced in the skill body"
+        )
+
+    def test_parameterized_invocation_section_present(self):
+        assert "## Parameterized invocation" in self.s.body, (
+            "Parameterized invocation section must be present (formalizes inline scope "
+            "in trigger phrases, e.g., `AR services/`)"
         )
 
 

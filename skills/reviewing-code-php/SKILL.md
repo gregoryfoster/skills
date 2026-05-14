@@ -35,6 +35,10 @@ If the user hasn't responded with directives, you cannot implement anything.
 | "I'll fix things as I find them" | Phase 4 exists. Present first, implement after directives. |
 | "This file wasn't in the diff" | Related files need review too. Check call sites, tests, AGENTS.md. |
 
+## Parameterized invocation
+
+Trigger phrases may include scope inline — e.g., `CR #14`, `code review web/app/themes/sage/app/Providers/ThemeServiceProvider.php`, `CR <commit-range>`. Apply the appended context as the explicit scope (step 1 of Scope detection); skip the conversation-context and uncommitted-work fallbacks.
+
 ## Scope detection
 
 Determine what to review (priority order):

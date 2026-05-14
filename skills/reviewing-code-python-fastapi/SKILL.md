@@ -37,6 +37,10 @@ If the user hasn't responded with directives, you cannot implement anything.
 | "Pydantic model is internal, breaking changes are fine" | API contract leaks through OpenAPI and consumers. Flag breaking changes explicitly. |
 | "Naive datetime is close enough" | ISO 8601 UTC only. Naive datetimes cause silent timezone drift in production. |
 
+## Parameterized invocation
+
+Trigger phrases may include scope inline — e.g., `CR #14`, `code review src/api/routes/v1.py`, `CR <commit-range>`. Apply the appended context as the explicit scope (step 1 of Scope detection); skip the conversation-context and uncommitted-work fallbacks.
+
 ## Scope detection
 
 Determine what to review (priority order):

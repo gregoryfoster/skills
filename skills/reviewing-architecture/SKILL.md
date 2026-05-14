@@ -12,6 +12,10 @@ metadata:
 
 A high-level review of application architecture: structural health, design principles, and long-term maintainability. Distinct from line-level code review.
 
+## Parameterized invocation
+
+Trigger phrases may include scope inline — e.g., `AR services/`, `architecture review routers/`, `AR #22`. Apply the appended context as the explicit scope (step 1 of Scope detection); skip the conversation-context and full-project fallbacks.
+
 ## Scope detection
 
 Determine what to review (priority order):
@@ -82,7 +86,3 @@ If the review leads to structural changes:
 - AGENTS.md project layout and architecture sections
 - README.md if module boundaries or service topology changed
 - Module-level docstrings affected by refactoring
-
-## Parameterized invocation
-
-Triggers may include scope inline — e.g., `AR services/`, `architecture review routers/`. Apply the appended context as the explicit scope (step 1 of scope detection).
