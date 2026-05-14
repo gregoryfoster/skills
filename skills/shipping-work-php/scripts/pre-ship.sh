@@ -24,8 +24,8 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Exit codes:"
   echo "  0 = pass"
   echo "  1 = check failure (composer validate, php -l, or composer test)"
-  echo "  2 = tooling/infra failure (composer missing, git ls-files failed,"
-  echo "      mktemp failed)"
+  echo "  2 = tooling/infra failure (composer missing, find failed,"
+  echo "      git ls-files failed, mktemp failed)"
   exit 0
 fi
 
@@ -40,14 +40,43 @@ fi
 FAIL=0
 JOBS_DEFAULT=4
 
+# Single trap covers every tempfile created below (find + git ls-files).
+# Scalars (not an array) for bash 3.2 + `set -u` compatibility — expanding
+# an empty array under set -u errors on stock-macOS bash.
+FIND_OUT=""; FIND_ERR=""; LS_OUT=""; LS_ERR=""
+trap 'rm -f "$FIND_OUT" "$FIND_ERR" "$LS_OUT" "$LS_ERR"' EXIT
+
 # --- composer validate --------------------------------------------------------
 
 COMPOSER_DIRS=()
 [[ -f composer.json ]] && COMPOSER_DIRS+=(".")
-if [[ -d themes ]] || [[ -d plugins ]]; then
+
+# Build find paths dynamically: passing a missing dir to `find` is itself an
+# error (non-zero exit + stderr), which would falsely trip the ERROR handler
+# below on repos that have only themes/ or only plugins/.
+FIND_PATHS=()
+[[ -d themes ]] && FIND_PATHS+=(themes)
+[[ -d plugins ]] && FIND_PATHS+=(plugins)
+if [[ ${#FIND_PATHS[@]} -gt 0 ]]; then
+  FIND_OUT=$(mktemp) || { echo "ERROR: mktemp failed (FIND_OUT)" >&2; exit 2; }
+  FIND_ERR=$(mktemp) || { echo "ERROR: mktemp failed (FIND_ERR)" >&2; exit 2; }
+  FIND_RC=0
+  find "${FIND_PATHS[@]}" -mindepth 2 -maxdepth 2 -name composer.json \
+    >"$FIND_OUT" 2>"$FIND_ERR" || FIND_RC=$?
+  if [[ $FIND_RC -ne 0 ]]; then
+    echo "ERROR: find for composer.json failed (exit $FIND_RC):" >&2
+    cat "$FIND_ERR" >&2
+    exit 2
+  fi
+  # `find` can exit 0 yet still write to stderr (e.g. permission-denied on a
+  # subdir). Surface those without aborting — discovered dirs are still valid.
+  if [[ -s "$FIND_ERR" ]]; then
+    echo "WARN: find for composer.json wrote diagnostics:" >&2
+    cat "$FIND_ERR" >&2
+  fi
   while IFS= read -r f; do
     [[ -n "$f" ]] && COMPOSER_DIRS+=("$(dirname "$f")")
-  done < <(find themes plugins -mindepth 2 -maxdepth 2 -name composer.json 2>/dev/null || true)
+  done < "$FIND_OUT"
 fi
 
 echo "=== composer validate ==="
@@ -67,16 +96,16 @@ fi
 
 # Run git to a tempfile so its exit code is observable — process substitution
 # hides the producer's status. Tempfile also preserves NUL separators.
+# Tempfile cleanup is handled by the consolidated trap set above.
 TRACKED_PHP=()
-LS_OUT=""; LS_ERR=""
-trap 'rm -f "$LS_OUT" "$LS_ERR"' EXIT  # set before mktemps; rm -f "" is a no-op
 LS_OUT=$(mktemp) || { echo "ERROR: mktemp failed (LS_OUT)" >&2; exit 2; }
 LS_ERR=$(mktemp) || { echo "ERROR: mktemp failed (LS_ERR)" >&2; exit 2; }
 
 LS_RC=0
 git ls-files -z '*.php' >"$LS_OUT" 2>"$LS_ERR" || LS_RC=$?
 if [[ $LS_RC -ne 0 ]]; then
-  echo "ERROR: git ls-files failed (exit $LS_RC): $(cat "$LS_ERR")" >&2
+  echo "ERROR: git ls-files failed (exit $LS_RC):" >&2
+  cat "$LS_ERR" >&2
   exit 2
 fi
 
