@@ -20,6 +20,12 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Runs composer validate at each composer.json, php -l on every tracked"
   echo "PHP file (parallel; PRE_SHIP_PHP_LINT_JOBS=N to tune, default 4), and"
   echo "'composer test' if defined. Fails fast on any error."
+  echo ""
+  echo "Exit codes:"
+  echo "  0 = pass"
+  echo "  1 = check failure (composer validate, php -l, or composer test)"
+  echo "  2 = tooling/infra failure (composer missing, git ls-files failed,"
+  echo "      mktemp failed)"
   exit 0
 fi
 
@@ -59,11 +65,22 @@ fi
 
 # --- php -l on all tracked PHP files ------------------------------------------
 
-# Read NUL-separated list into an array. Bash command substitution truncates
-# at the first NUL byte, so the array form is the portable single-invocation
-# path — works on bash 3.2 (stock macOS) through bash 5+.
+# Run git to a tempfile so its exit code is observable — process substitution
+# hides the producer's status. Tempfile also preserves NUL separators.
 TRACKED_PHP=()
-while IFS= read -r -d '' f; do TRACKED_PHP+=("$f"); done < <(git ls-files -z '*.php' 2>/dev/null)
+LS_OUT=""; LS_ERR=""
+trap 'rm -f "$LS_OUT" "$LS_ERR"' EXIT  # set before mktemps; rm -f "" is a no-op
+LS_OUT=$(mktemp) || { echo "ERROR: mktemp failed (LS_OUT)" >&2; exit 2; }
+LS_ERR=$(mktemp) || { echo "ERROR: mktemp failed (LS_ERR)" >&2; exit 2; }
+
+LS_RC=0
+git ls-files -z '*.php' >"$LS_OUT" 2>"$LS_ERR" || LS_RC=$?
+if [[ $LS_RC -ne 0 ]]; then
+  echo "ERROR: git ls-files failed (exit $LS_RC): $(cat "$LS_ERR")" >&2
+  exit 2
+fi
+
+while IFS= read -r -d '' f; do TRACKED_PHP+=("$f"); done < "$LS_OUT"
 
 echo ""
 if [[ ${#TRACKED_PHP[@]} -eq 0 ]]; then
