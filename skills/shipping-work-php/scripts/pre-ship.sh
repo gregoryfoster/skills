@@ -96,7 +96,6 @@ fi
 
 # Run git to a tempfile so its exit code is observable — process substitution
 # hides the producer's status. Tempfile also preserves NUL separators.
-# Tempfile cleanup is handled by the consolidated trap set above.
 TRACKED_PHP=()
 LS_OUT=$(mktemp) || { echo "ERROR: mktemp failed (LS_OUT)" >&2; exit 2; }
 LS_ERR=$(mktemp) || { echo "ERROR: mktemp failed (LS_ERR)" >&2; exit 2; }
