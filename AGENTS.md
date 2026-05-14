@@ -151,13 +151,13 @@ Scripts whose output drives a control-flow decision (will-we-ship vs. will-we-sk
 - **Gate-like commands** — output drives a `for` loop, a "did we find anything?" branch, a "is the tree clean?" check, or a stamp-write. Capture exit code explicitly and treat non-zero as ERROR + exit 2. Use a tempfile when the command runs inside a process substitution (`done < <(...)`), since process-substitution exit codes aren't visible in the parent shell.
 - **Reporting-only commands** — output is shown to the user as context (status output, log snippet, diff stat). Silent `2>/dev/null || true` is fine: degraded output is acceptable, false-success on a gate is not.
 
-Reference patterns — search by the named anchor below rather than line number, since line numbers drift. The four pre-ship patterns live in [skills/shipping-work-php/scripts/pre-ship.sh](skills/shipping-work-php/scripts/pre-ship.sh); the simpler doc-check pattern lives in [skills/shipping-work/scripts/doc-check.sh](skills/shipping-work/scripts/doc-check.sh):
+Reference patterns — search by the named anchor below rather than line number, since line numbers drift. Each bullet calls out which reference script(s) carry the canonical implementation; the two canonical scripts are [skills/shipping-work-php/scripts/pre-ship.sh](skills/shipping-work-php/scripts/pre-ship.sh) and [skills/shipping-work/scripts/doc-check.sh](skills/shipping-work/scripts/doc-check.sh):
 
 - **Tempfile + exit-code capture for process substitution** — grep for `LS_RC` (pre-ship.sh). Use when a command runs inside `done < <(...)` and you need its exit status: capture stdout to a tempfile, capture `$?` into a scalar, branch on it.
 - **Three-case `find` handler** — grep for `FIND_RC` (pre-ship.sh). Non-zero exit → ERROR + exit 2; exit-0 with stderr → WARN + proceed; exit-0 silent → proceed.
-- **Command substitution + exit-code capture (simpler variant)** — grep for `DIFF_RC` (doc-check.sh). Use when the output fits in a scalar and there's no process substitution; `$?` is directly observable via `OUT=$(cmd) || RC=$?`, no tempfile needed.
+- **Command substitution + exit-code capture (simpler variant)** — grep for `DIFF_RC` (doc-check.sh). Use when the output fits in a scalar and there's no process substitution; `$?` is directly observable via `RC=0; OUT=$(cmd) || RC=$?`, no tempfile needed. The `RC=0` pre-init is load-bearing under `set -u`: on the success path, `|| RC=$?` doesn't fire, so without the init the subsequent `[[ $RC -ne 0 ]]` check would abort with `RC: unbound variable`.
 - **Consolidated EXIT trap** — grep for `trap '` at the top of the file (pre-ship.sh). Multiple tempfile *scalars* (not an array) in one trap line for bash 3.2 + `set -u` compatibility.
-- **`--help` exit-code block** — search the `--help` block. Enumerates which infra failures map to exit 2 (vs. silently degrading).
+- **`--help` exit-code block** — search the `--help` block (pre-ship.sh, doc-check.sh). Enumerates which infra failures map to exit 2 (vs. silently degrading).
 
 Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2>/dev/null || pwd`) with a one-line comment describing what the fallback actually does, not the rationale you assume it has.
 

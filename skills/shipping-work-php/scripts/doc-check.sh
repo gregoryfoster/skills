@@ -44,10 +44,11 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Exit codes:"
   echo "  0  no sensitive paths changed (or no changes at all)"
   echo "  1  one or more sensitive paths changed"
-  echo "  2  infra/tooling failure — the gate did not run. Covers: missing"
-  echo "     --base argument, base ref auto-detection exhausted, or git diff"
-  echo "     failed. Other unexpected failures (e.g., not in a git repo) may"
-  echo "     surface git's own exit code instead; check stderr in either case."
+  echo "  2  infra/tooling failure — the gate did not run. Covers: a missing"
+  echo "     --base argument, a base-ref auto-detection failure, or a git-diff"
+  echo "     failure. Other unexpected failures (e.g., running outside a git"
+  echo "     repo) may surface git's own exit code instead; check stderr in"
+  echo "     either case."
   exit 0
 fi
 
@@ -76,7 +77,6 @@ if [[ -z "$BASE_REF" ]]; then
   fi
 fi
 
-CHANGED=""
 DIFF_RC=0
 CHANGED=$(git diff --name-only "${BASE_REF}...HEAD") || DIFF_RC=$?
 if [[ $DIFF_RC -ne 0 ]]; then
