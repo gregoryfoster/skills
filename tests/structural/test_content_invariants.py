@@ -25,7 +25,7 @@ def skill(name: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["shipping-work", "shipping-work-php", "shipping-work-python-fastapi"])
+@pytest.fixture(params=["shipping-work", "shipping-work-php", "shipping-work-python-fastapi", "shipping-work-python-click"])
 def shipping_work_skill(request):
     return skill(request.param)
 
@@ -155,6 +155,55 @@ class TestShippingWorkPythonFastapi:
         )
 
 
+class TestShippingWorkPythonClick:
+    """Python/Click variant-only invariants."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("shipping-work-python-click")
+
+    def test_iron_law_no_push_without_pre_ship_checks(self):
+        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
+            "Python/Click Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
+        )
+
+    def test_step1_run_pre_ship_checks(self):
+        assert "Step 1 — Run pre-ship checks" in self.s.body, (
+            "Python/Click variant Step 1 heading must be 'Run pre-ship checks'"
+        )
+
+    def test_no_continuation_if_checks_fail(self):
+        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
+            "'NO CONTINUATION IF CHECKS FAIL' block must be present in Python/Click variant"
+        )
+
+    def test_h1_includes_python_click_suffix(self):
+        assert "# Shipping Work — Python/Click" in self.s.body, (
+            "Python/Click variant H1 must be '# Shipping Work — Python/Click'"
+        )
+
+    def test_click_next_steps_categories_present(self):
+        body = self.s.body
+        for category in ("Dep update", "Cross-package consumer", "Pydantic pin", "New command"):
+            assert category in body, f"Click next-steps category '{category}' must be present"
+
+    def test_auto_detected_import_target_documented(self):
+        body = self.s.body
+        assert "auto-detected" in body, (
+            "Variant must document that the import-check target is auto-detected from pyproject.toml"
+        )
+        assert ".skills/import-targets" in body, (
+            "Variant must document the .skills/import-targets override path for multi-package projects"
+        )
+
+    def test_no_substitution_markers(self):
+        body = self.s.body
+        assert "<PROJECT_PACKAGE>" not in body, (
+            "Variant must not carry <PROJECT_PACKAGE> substitution markers — "
+            "import target is auto-detected from pyproject.toml"
+        )
+
+
 # ---------------------------------------------------------------------------
 # init-project-fastapi
 # ---------------------------------------------------------------------------
@@ -211,7 +260,7 @@ class TestInitProjectFastapi:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["reviewing-code", "reviewing-code-php", "reviewing-code-python-fastapi"])
+@pytest.fixture(params=["reviewing-code", "reviewing-code-php", "reviewing-code-python-fastapi", "reviewing-code-python-click"])
 def reviewing_code_skill(request):
     return skill(request.param)
 
@@ -358,6 +407,73 @@ class TestReviewingCodePythonFastapi:
         assert "Do not run pytest during a review" in self.s.body, (
             "Variant must instruct reviewers not to run the full pytest suite "
             "during review (full-suite runs belong in pre-ship.sh)"
+        )
+
+
+class TestReviewingCodePythonClick:
+    """Python/Click variant-only invariants."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("reviewing-code-python-click")
+
+    def test_h1_includes_python_click_suffix(self):
+        assert "# Code & Documentation Review — Python/Click" in self.s.body, (
+            "Python/Click variant H1 must be '# Code & Documentation Review — Python/Click'"
+        )
+
+    def test_click_command_correctness_dimension_present(self):
+        assert "Click command correctness" in self.s.body, (
+            "Click command correctness dimension must be present in Phase 2"
+        )
+
+    def test_paramtype_testability_dimension_present(self):
+        body = self.s.body
+        assert "ParamType testability" in body, (
+            "ParamType testability dimension must be present in Phase 2"
+        )
+        assert "ParamType.callback()" in body, (
+            "ParamType testability must reference callback() vs convert()"
+        )
+
+    def test_command_registration_dimension_present(self):
+        assert "Command registration" in self.s.body, (
+            "Command registration dimension must be present in Phase 2"
+        )
+
+    def test_pydantic_idioms_dimension_present(self):
+        assert "Pydantic v2 idioms" in self.s.body, (
+            "Pydantic v2 idioms dimension must be present in Phase 2"
+        )
+
+    def test_cross_package_boundary_dimension_present(self):
+        assert "Cross-package boundary" in self.s.body, (
+            "Cross-package boundary dimension must be present in Phase 2"
+        )
+
+    def test_ruff_lint_gate_present(self):
+        body = self.s.body
+        assert "uv run ruff check" in body, (
+            "Phase 3.5 must mention 'uv run ruff check' for Python lint gate"
+        )
+        assert "uv run ruff format --check" in body, (
+            "Phase 3.5 must mention 'uv run ruff format --check' for Python format gate"
+        )
+
+    def test_auto_detected_import_target_documented(self):
+        body = self.s.body
+        assert "auto-detected from `pyproject.toml`" in body or "auto-detected from pyproject.toml" in body, (
+            "Variant must document that the import target is auto-detected from pyproject.toml"
+        )
+        assert ".skills/import-targets" in body, (
+            "Variant must document the .skills/import-targets override path"
+        )
+
+    def test_no_substitution_markers(self):
+        body = self.s.body
+        assert "<PROJECT_PACKAGE>" not in body, (
+            "Variant must not carry <PROJECT_PACKAGE> substitution markers — "
+            "import target is auto-detected from pyproject.toml"
         )
 
 
