@@ -729,9 +729,36 @@ class TestReviewingArchitecture:
             "'Stop. Do not make changes until the user responds.' must appear in Phase 4"
         )
 
-    def test_findings_format_reference(self):
-        assert "references/findings-format.md" in self.s.body, (
-            "references/findings-format.md must be referenced in the skill body"
+    def test_iron_law_no_report_without_gather_context(self):
+        assert "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in self.s.body, (
+            "Iron Law text 'NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST' must be present verbatim"
+        )
+
+    def test_iron_law_no_changes_without_report(self):
+        assert "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES" in self.s.body, (
+            "Iron Law text 'NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES' must be present verbatim"
+        )
+
+    def test_rationalization_table_present(self):
+        assert "Rationalization prevention" in self.s.body, (
+            "Rationalization prevention table must be present"
+        )
+
+    def test_findings_format_inline(self):
+        body = self.s.body
+        assert "What:" in body, "'What:' label must appear in findings format"
+        assert "Why it matters:" in body, "'Why it matters:' label must appear in findings format"
+        assert "Suggested approach:" in body, "'Suggested approach:' label must appear in findings format"
+
+    def test_directives_table_inline(self):
+        body = self.s.body
+        assert "`1: fix`" in body, "Directives table must list '1: fix' verbatim"
+        assert "`3: stet`" in body, "Directives table must list '3: stet' verbatim"
+        assert "`10: GH`" in body, "Directives table must list '10: GH' verbatim"
+
+    def test_phase35_verify_before_reporting(self):
+        assert "Phase 3.5 — Verify before reporting" in self.s.body, (
+            "Phase 3.5 verification gate must be present"
         )
 
     def test_phase_ordering_gather_before_present(self):

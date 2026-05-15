@@ -4,13 +4,36 @@ description: Performs a high-level architectural review evaluating structural he
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: AR, architecture review, architectural review
 ---
 
 # Architectural Review
 
 A high-level review of application architecture: structural health, design principles, and long-term maintainability. Distinct from line-level code review.
+
+**Activation triggers:** AR (shorthand for architecture review), "architecture review", "architectural review".
+
+## The Iron Law
+
+```
+NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST
+NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES
+```
+
+If you haven't run `gather-context.sh` and surveyed the actual current architecture, you have not completed Phase 1.
+If the user hasn't responded with directives, you cannot implement anything.
+
+## Rationalization prevention
+
+| Thought | Reality |
+|---|---|
+| "This is a strategic review, no need for detailed evidence" | Without specific code/structure citations, findings are opinions. Cite the modules that triggered each finding. |
+| "I already understand this architecture" | Familiarity bias. Re-survey the actual current state, not your remembered version — directory trees and dependency graphs change. |
+| "Tests pass, that's the architecture" | Tests verify behavior, not coupling, cohesion, layering, or scalability. |
+| "I'll suggest a refactor as I go" | Phase 4 exists. Present findings first; user picks which refactors warrant doing. |
+| "This module wasn't in the diff" | Architecture review crosses boundaries — call graphs, dependency direction, layering. The diff is the trigger, not the scope. |
+| "The user seems in a hurry" | A fast bad architecture pivot is slower than a thorough correct one. |
 
 ## Parameterized invocation
 
@@ -58,23 +81,54 @@ Evaluate against these dimensions. See [references/dimensions.md](references/dim
 
 ### Phase 3 — Present findings
 
-See [references/findings-format.md](references/findings-format.md) for the exact report structure.
-
-Key rules:
-- Title: `## Architectural Review — [scope]`
-- **Architecture summary** — 2–4 sentence description of current architecture (shared context for findings)
-- **What's solid** — genuine architectural strengths worth preserving
-- **Numbered findings** — sequential across ALL severity groups, never reset
+Required report structure:
+- `## Architectural Review — [scope]`
+- `### Architecture summary` — 2–4 sentence description of current architecture (shared context for findings)
+- `### What's solid` — genuine architectural strengths worth preserving
+- `### Findings` — numbered findings grouped by severity
 - Group by severity: 🔴 Structural problems → 🟡 Design improvements → 💭 Observations & opportunities
-- **Summary** — 1–2 sentences on overall architectural health and highest-priority items
+- Numbered findings are **sequential across ALL severity groups** — never reset
+- Sub-items under a single finding use `2a.`, `2b.` etc.
+- `### Summary` — 1–2 sentences on overall architectural health and top priorities
+
+Each finding within `### Findings` must follow this format:
+
+> N. **[module/file]** What: \<precise description with file/module reference\>. Why it matters: \<architectural impact: maintainability? performance? correctness?\>. Suggested approach: \<concrete refactoring direction — name new modules, describe the split, sketch the pattern\>.
+
+All three labels (`What:`, `Why it matters:`, `Suggested approach:`) are required in every finding, verbatim.
+
+### Phase 3.5 — Verify before reporting
+
+```
+NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
+```
+
+- Each finding must cite a specific module, file, or directory — not a generic claim about "the architecture"
+- If any refactor was prototyped in this conversation, re-run the test suite and report failures as 🔴 findings regardless of cause
+- Do NOT claim a structural problem exists unless you have output from this session (file listing, dependency trace, line count) confirming it
 
 ### Phase 4 — Wait for feedback
 
 **Stop. Do not make changes until the user responds.**
 
-Accept terse directives referencing item numbers. See [references/directives.md](references/directives.md).
+Accept terse directives referencing item numbers:
 
-After directives, implement all requested changes, commit, and present a summary table.
+| Directive | Meaning |
+|---|---|
+| `1: fix` | Implement the suggested refactoring |
+| `3: stet` | Leave as-is (acknowledged, no action) |
+| `5: fix, but use X approach` | Refactor with the user's preferred approach |
+| `2: document as TODO` | Add a code comment or AGENTS.md note instead of fixing |
+| `7: investigate further` | Gather more information before deciding |
+| `10: GH` | Create or update a corresponding GitHub issue |
+
+After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table:
+
+| Item | Action | Result |
+|---|---|---|
+| 1 | Fixed | `Split services/parser.py → parser.py + recovery.py` |
+| 3 | Stet | — |
+| 10 | GH | Issue #22 created |
 
 ## Second review rounds
 
