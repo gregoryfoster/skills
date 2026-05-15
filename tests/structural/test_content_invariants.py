@@ -809,3 +809,85 @@ class TestManagingSkills:
         assert "git submodule add" in self.s.body, (
             "Submodule add command must be documented"
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-family variant consistency (drift assertions)
+# ---------------------------------------------------------------------------
+
+
+# (base, variant, stack-keyword-required-in-compatibility)
+VARIANT_FAMILY_PAIRS = [
+    ("reviewing-code", "reviewing-code-php", "PHP"),
+    ("reviewing-code", "reviewing-code-python-fastapi", "FastAPI"),
+    ("reviewing-code", "reviewing-code-python-click", "Click"),
+    ("shipping-work", "shipping-work-php", "PHP"),
+    ("shipping-work", "shipping-work-python-fastapi", "FastAPI"),
+    ("shipping-work", "shipping-work-python-click", "Click"),
+]
+
+
+def _iron_law_first_line(body: str) -> str:
+    """Extract the first line inside the Iron Law code fence."""
+    m = re.search(r"## The Iron Law\s*\n+```\s*\n(.+?)\n", body)
+    return m.group(1) if m else ""
+
+
+class TestVariantFamilyConsistency:
+    """Drift assertions across each baseline + variant family.
+
+    Catches the class of drift surfaced in the post-#11 review: identical
+    descriptions across variants, missing stack keyword in compatibility,
+    trigger drift between baseline and variant, and Iron Law text drift
+    between baseline and variants (the kind that left shipping-work baseline
+    on `NO PUSH WITHOUT PASSING TESTS` while all three variants used
+    `NO PUSH WITHOUT PASSING PRE-SHIP CHECKS` until #c3316b0 generalized it).
+    """
+
+    @pytest.fixture(
+        params=VARIANT_FAMILY_PAIRS,
+        ids=lambda p: f"{p[1]}_vs_{p[0]}",
+    )
+    def pair(self, request):
+        base_name, variant_name, stack_keyword = request.param
+        return skill(base_name), skill(variant_name), stack_keyword
+
+    def test_triggers_match_baseline(self, pair):
+        base, variant, _ = pair
+        base_triggers = (base.skill_metadata.get("triggers") or "").strip()
+        variant_triggers = (variant.skill_metadata.get("triggers") or "").strip()
+        assert base_triggers, f"{base.name}: missing metadata.triggers"
+        assert variant_triggers, f"{variant.name}: missing metadata.triggers"
+        assert variant_triggers == base_triggers, (
+            f"{variant.name} triggers ({variant_triggers!r}) must match baseline "
+            f"{base.name} triggers ({base_triggers!r}) — the runtime selects on triggers, "
+            "so divergence breaks variant discovery"
+        )
+
+    def test_description_differs_from_baseline(self, pair):
+        base, variant, _ = pair
+        assert variant.description != base.description, (
+            f"{variant.name} description must differ from baseline {base.name} — "
+            "identical descriptions give the runtime no signal to prefer the right variant. "
+            "Prepend a stack identifier (e.g., 'For PHP/WordPress projects:')"
+        )
+
+    def test_compatibility_mentions_stack(self, pair):
+        base, variant, stack_keyword = pair
+        assert stack_keyword.lower() in variant.compatibility.lower(), (
+            f"{variant.name} compatibility must mention {stack_keyword!r} so consumers "
+            f"can tell what stack this variant targets. Got: {variant.compatibility!r}"
+        )
+
+    def test_iron_law_first_line_matches_baseline(self, pair):
+        base, variant, _ = pair
+        base_first = _iron_law_first_line(base.body)
+        variant_first = _iron_law_first_line(variant.body)
+        assert base_first, f"{base.name}: could not locate Iron Law first line"
+        assert variant_first, f"{variant.name}: could not locate Iron Law first line"
+        assert variant_first == base_first, (
+            f"{variant.name} Iron Law first line ({variant_first!r}) must match "
+            f"baseline {base.name} ({base_first!r}). The Iron Law states what must be "
+            "true, not which tool — variant-specific tooling lives in gather-context.sh "
+            "and pre-ship.sh, not the law."
+        )
