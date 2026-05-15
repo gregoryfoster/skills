@@ -114,7 +114,9 @@ Get approval before writing the design doc.
 
 ### Step 8: Design doc
 
-Path: `docs/plans/YYYY-MM-DD-<topic>-backlog.md`
+The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The section structure below is specific to backlog orchestration and differs from the generic plan structure prescribed by `writing-plans` — share the directory, not the shape.
+
+Path (default): `docs/plans/YYYY-MM-DD-<topic>-backlog.md`
 
 Sections:
 - **Goal** — one paragraph

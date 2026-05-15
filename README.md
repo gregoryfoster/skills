@@ -21,6 +21,7 @@ Skills are folders of instructions, scripts, and references that agents can disc
 | [`init-project-fastapi`](skills/init-project-fastapi/) | init project, bootstrap project, new fastapi project, set up foundation | Bootstrap a new FastAPI service with SSH deploy key, pyproject.toml, structured logging, TDD scaffold, vendor skill submodules, and GitHub issue tracking |
 | [`orchestrating-issue-backlog`](skills/orchestrating-issue-backlog/) | orchestrate backlog, prioritize issues, plan issue execution, clear backlog | Prioritize an open issue backlog, analyze conflict zones, design a parallel-safe batch execution plan using git worktrees, and hand off to an agent team |
 | [`using-git-worktrees`](skills/using-git-worktrees/) | create worktree, new worktree, destroy worktree, merge worktree, wt | Workflow for parallel branch checkouts via `git worktree`: standardizes creation, lifecycle, port/env separation, and cleanup |
+| [`writing-plans`](skills/writing-plans/) | write a plan, plan this, let's plan | Discipline for writing a short, reviewed plan before non-trivial implementation; plans land in a configurable plans directory (default `docs/plans/`) with a prescribed structure |
 
 ## Structure
 

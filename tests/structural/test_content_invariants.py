@@ -273,6 +273,13 @@ class TestInitProjectFastapi:
             "Phase ordering must be: Verify (12) → Commit (13) → Push (14)"
         )
 
+    def test_writing_plans_cross_reference_present(self):
+        body = self.s.body
+        assert "writing-plans" in body, (
+            "init-project-fastapi must reference the writing-plans skill by name — "
+            "the bootstrap creates `docs/plans/` and the skill governs what goes in it"
+        )
+
 
 # ---------------------------------------------------------------------------
 # using-git-worktrees
@@ -368,6 +375,122 @@ class TestUsingGitWorktrees:
         assert "--descoped" in body, (
             "Iron Law escape hatch '--descoped <reason>' must be documented "
             "(used by worktree-destroy.sh to acknowledge an intentional descope)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# writing-plans
+# ---------------------------------------------------------------------------
+
+
+class TestWritingPlans:
+    """Invariants for the writing-plans discipline skill.
+
+    Lighter than using-git-worktrees — no multi-phase stateful workflow — but
+    carries an Iron Law, Rationalization-prevention table, Parameterized
+    invocation block, plans-directory resolution order, and the prescribed
+    plan structure (problem / approach / tradeoffs / steps / open questions).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("writing-plans")
+
+    def test_h1_present(self):
+        assert "# Writing Plans" in self.s.body, (
+            "H1 must be '# Writing Plans'"
+        )
+
+    def test_iron_law_no_implementation_without_plan(self):
+        assert "NO NON-TRIVIAL IMPLEMENTATION WITHOUT A WRITTEN, REVIEWED PLAN" in self.s.body, (
+            "Iron Law text 'NO NON-TRIVIAL IMPLEMENTATION WITHOUT A WRITTEN, REVIEWED PLAN' "
+            "must be present verbatim"
+        )
+
+    def test_rationalization_table_present(self):
+        assert "Rationalization prevention" in self.s.body, (
+            "Rationalization prevention table must be present"
+        )
+
+    def test_parameterized_invocation_section_present(self):
+        assert "## Parameterized invocation" in self.s.body, (
+            "Parameterized invocation section must be present (formalizes inline topic "
+            "in trigger phrases, e.g., `write a plan for auth rotation`)"
+        )
+
+    def test_resolution_order_documented(self):
+        body = self.s.body
+        for token in ("PLANS_DIR", ".skills/plans_dir", "docs/plans/"):
+            assert token in body, (
+                f"Plans-directory resolution order must mention '{token}' "
+                "(env var → .skills/plans_dir → <repo>/docs/plans/)"
+            )
+
+    def test_plan_structure_sections_documented(self):
+        body = self.s.body
+        for section in ("Problem", "Approach", "Tradeoffs", "Steps", "Open questions"):
+            assert section in body, (
+                f"Prescribed plan section '{section}' must be documented in the body"
+            )
+
+    def test_script_referenced_in_body(self):
+        assert "resolve-plans-dir.sh" in self.s.body, (
+            "Script 'resolve-plans-dir.sh' must be referenced in SKILL.md body"
+        )
+
+    def test_template_referenced_in_body(self):
+        assert "assets/plan-template.md" in self.s.body, (
+            "Plan template 'assets/plan-template.md' must be referenced in SKILL.md body"
+        )
+
+    def test_all_phases_present(self):
+        body = self.s.body
+        for phase in (
+            "Phase 1 — Decide",
+            "Phase 2 — Draft",
+            "Phase 3 — Request review",
+            "Phase 4 — Execute",
+        ):
+            assert phase in body, f"'{phase}' header must be present"
+
+    def test_phase_ordering(self):
+        body = self.s.body
+        positions = [body.find(p) for p in (
+            "Phase 1 — Decide",
+            "Phase 2 — Draft",
+            "Phase 3 — Request review",
+            "Phase 4 — Execute",
+        )]
+        assert all(p != -1 for p in positions), "All phases must be discoverable"
+        assert positions == sorted(positions), (
+            "Phases must appear in numeric order in the body"
+        )
+
+    def test_supersedes_chain_documented(self):
+        assert "Supersedes" in self.s.body, (
+            "Plan-supersession convention ('Supersedes: <old-plan-path>') must be documented "
+            "so pivots produce a discoverable chain"
+        )
+
+
+# ---------------------------------------------------------------------------
+# orchestrating-issue-backlog
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratingIssueBacklog:
+    """Cross-reference invariant — orchestrating-issue-backlog writes design
+    docs into the plans directory, so it must hard-reference writing-plans
+    by name. Keeps the dependency graph visible and structural."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("orchestrating-issue-backlog")
+
+    def test_writing_plans_cross_reference_present(self):
+        assert "writing-plans" in self.s.body, (
+            "orchestrating-issue-backlog must reference the writing-plans skill by name — "
+            "design docs land in the plans directory governed by that skill"
         )
 
 

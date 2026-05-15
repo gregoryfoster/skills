@@ -175,6 +175,16 @@ Skills and project-local scripts that operate on `git worktree`s resolve the wor
 
 The helper `bash skills/using-git-worktrees/scripts/resolve-worktree-root.sh` prints the resolved root. Project-local wrapper scripts (e.g., `dev.sh worktree create`) should invoke the upstream `worktree-*.sh` scripts rather than reimplement them, and may pre-populate env files, allocate ports, or run extra bootstrap — but must not bypass the Iron Law gates.
 
+## Plans directory convention
+
+Skills that read or write plan documents resolve the plans directory via the same three-step lookup pattern (see [`writing-plans`](skills/writing-plans/)):
+
+1. `PLANS_DIR` env var (highest priority — one-off overrides)
+2. `.skills/plans_dir` file under the repo root (single-line path; the project's persistent default)
+3. `<repo-root>/docs/plans/` (fallback)
+
+The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the resolved directory. Downstream projects that previously carried a `writing-plans` override solely to repoint the storage path can drop the override and configure `.skills/plans_dir` instead — the upstream skill's resolution order makes the path a knob rather than a fork.
+
 ## Commit conventions
 
 Conventional Commits style:

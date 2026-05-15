@@ -316,7 +316,7 @@ Create empty `__init__.py` files:
 
 **`docs/SKILLS.md`** — copy from this project's `docs/SKILLS.md` verbatim (skill names and vendor sources are the same across projects).
 
-**`docs/plans/.gitkeep`** — empty file to track the directory.
+**`docs/plans/.gitkeep`** — empty file to track the directory. This is the default plans directory governed by the [`writing-plans`](../writing-plans/) skill; bootstrap creates it so the first plan can be written without ceremony. Projects that prefer a different path can drop a single-line `.skills/plans_dir` file under the repo root (see [`writing-plans/SKILL.md`](../writing-plans/SKILL.md) for the resolution order).
 
 ### Phase 8 — `.claude/settings.json`
 
@@ -363,22 +363,22 @@ for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; d
 done
 ```
 
-**Local overrides (2):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10 vendor loop above already does this) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
+**Local overrides (1):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10 vendor loop above already does this) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
 
-The remaining local overrides are project-narrative skills that genuinely vary per-project:
+The remaining local override is the project-narrative skill that genuinely varies per-project:
 
 | Override | Files |
 |---|---|
 | `skills/brainstorming/` | `SKILL.md` |
-| `skills/writing-plans/` | `SKILL.md`, `plan-document-reviewer-prompt.md` |
 
 Substitutions in local overrides:
 - Skill headers: `— power-map` → `— <PROJECT_NAME>`
 - All other content: verbatim
 
-> **Override frontmatter is required.** Every local override `SKILL.md` (both the rows above and any thin overrides below) must declare `overrides: <upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block. See AGENTS.md § Required override frontmatter in the upstream `gregoryfoster/skills` repo for the canonical wording.
+> **Override frontmatter is required.** Every local override `SKILL.md` (both the row above and any thin overrides below) must declare `overrides: <upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block. See AGENTS.md § Required override frontmatter in the upstream `gregoryfoster/skills` repo for the canonical wording.
 
 **Optional thin overrides** (only when the project genuinely needs them):
+- `skills/writing-plans/` — fork only if the project ships project-specific narrative content (e.g., `plan-document-reviewer-prompt.md`). The plans directory itself is configurable via `.skills/plans_dir`; do not fork just to repoint it. The forked `SKILL.md` needs `overrides: writing-plans` + `override-reason:`.
 - `skills/shipping-work-python-fastapi/scripts/pre-ship.sh` — fork only if the project requires `/etc/<project>/.env` loading before tests (e.g., archiver, notifier, watcher). Keep the auto-derived stamp prefix. The forked `SKILL.md` needs `overrides: shipping-work-python-fastapi` + `override-reason:` (e.g., `"Adds /etc/<project>/.env loading before pytest"`).
 - Step 2.5 worktree-aware merge path — fork the relevant `shipping-work-python-fastapi/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
 
