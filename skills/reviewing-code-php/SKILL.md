@@ -1,6 +1,6 @@
 ---
 name: reviewing-code-php
-description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes.
+description: "For PHP/WordPress projects (Bedrock + Sage 11): performs a structured code and documentation review using a severity-tiered findings format. Use when the user says \"CR\", \"code review\", or \"perform a review\" and the project is a Composer-managed PHP/WordPress monorepo. Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes."
 compatibility: Designed for PHP 8.4 WordPress/Bedrock/Sage 11 monorepos with Composer. Requires git, gh, composer, php.
 metadata:
   author: gregoryfoster

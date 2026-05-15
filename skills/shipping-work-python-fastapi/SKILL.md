@@ -1,6 +1,6 @@
 ---
 name: shipping-work-python-fastapi
-description: "Finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Use when the user says 'ship it', 'push GH', 'close GH', or 'wrap up'."
+description: "For Python/FastAPI projects (uv + ruff + pytest): finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Use when the user says 'ship it', 'push GH', 'close GH', or 'wrap up' and the project is a FastAPI service."
 compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requires git, gh, uv, and pytest-cov (for the --no-cov flag in pre-ship.sh — drop the flag in a thin local override if your project doesn't depend on it).
 metadata:
   author: gregoryfoster

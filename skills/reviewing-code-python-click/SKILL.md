@@ -1,6 +1,6 @@
 ---
 name: reviewing-code-python-click
-description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes.
+description: "For Python/Click CLI projects (uv + ruff + pytest + Pydantic v2): performs a structured code and documentation review using a severity-tiered findings format. Use when the user says \"CR\", \"code review\", or \"perform a review\" and the project is a Click-based CLI. Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes."
 compatibility: Designed for Python Click CLI projects using uv, ruff, pytest, and Pydantic v2. Requires git, gh, uv.
 metadata:
   author: gregoryfoster
