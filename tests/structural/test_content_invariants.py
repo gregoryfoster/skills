@@ -75,19 +75,19 @@ class TestShippingWorkBaseline:
     def _load(self):
         self.s = skill("shipping-work")
 
-    def test_iron_law_no_push_without_tests(self):
-        assert "NO PUSH WITHOUT PASSING TESTS" in self.s.body, (
-            "Baseline Iron Law text 'NO PUSH WITHOUT PASSING TESTS' must be present verbatim"
+    def test_iron_law_no_push_without_pre_ship_checks(self):
+        assert "NO PUSH WITHOUT PASSING PRE-SHIP CHECKS" in self.s.body, (
+            "Baseline Iron Law text 'NO PUSH WITHOUT PASSING PRE-SHIP CHECKS' must be present verbatim"
         )
 
-    def test_step1_run_tests(self):
-        assert "Step 1 — Run tests" in self.s.body, (
-            "Baseline Step 1 heading must be 'Run tests'"
+    def test_step1_run_pre_ship_checks(self):
+        assert "Step 1 — Run pre-ship checks" in self.s.body, (
+            "Baseline Step 1 heading must be 'Run pre-ship checks'"
         )
 
-    def test_no_continuation_if_tests_fail(self):
-        assert "NO CONTINUATION IF TESTS FAIL" in self.s.body, (
-            "'NO CONTINUATION IF TESTS FAIL' block must be present in baseline"
+    def test_no_continuation_if_checks_fail(self):
+        assert "NO CONTINUATION IF CHECKS FAIL" in self.s.body, (
+            "'NO CONTINUATION IF CHECKS FAIL' block must be present in baseline"
         )
 
 

@@ -4,7 +4,7 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -15,7 +15,7 @@ Finalizes work: clean commit, push, GitHub issue comments, and closure.
 ## The Iron Law
 
 ```
-NO PUSH WITHOUT PASSING TESTS — VERIFIED IN THIS SESSION
+NO PUSH WITHOUT PASSING PRE-SHIP CHECKS — VERIFIED IN THIS SESSION
 NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION — VERIFIED AGAINST ORIGINAL REQUIREMENTS
 ```
 
@@ -23,7 +23,7 @@ NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION — VERIFIED AGAINST ORIGINAL REQUI
 
 | Thought | Reality |
 |---|---|
-| "Tests passed earlier in this session" | Run them again. State can change. Require fresh output. |
+| "Checks passed earlier in this session" | Run them again. State can change. Require fresh output. |
 | "It's basically done, just needs minor cleanup" | Incomplete = not done. Finish or explicitly descope before closing. |
 | "The issue will track follow-up work" | Only close if the core requirement is fully met. Open a new issue for follow-up. |
 | "gh push is failing, I'll skip it" | Resolve the error. Do not mark as shipped without a successful push. |
@@ -42,17 +42,17 @@ Determine which GitHub issue(s) to close (priority order):
 
 ## Procedure
 
-### Step 1 — Run tests
+### Step 1 — Run pre-ship checks
 
 ```bash
 bash scripts/pre-ship.sh
 ```
 
 ```
-NO CONTINUATION IF TESTS FAIL
+NO CONTINUATION IF CHECKS FAIL
 ```
 
-If tests fail: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
+If pre-ship fails: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
 ### Step 1.5 — Documentation spot-check
 
