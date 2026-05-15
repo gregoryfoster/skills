@@ -11,6 +11,8 @@ their own variant-only classes.
 No API calls required.
 """
 
+import re
+
 import pytest
 
 from tests.utils.skill_loader import load_skill, SKILLS_DIR
@@ -524,6 +526,152 @@ class TestPythonClickHelperIntegration:
             "detect-test-dirs.sh — review and ship must agree on test "
             "directory discovery via one canonical resolver"
         )
+
+
+# ---------------------------------------------------------------------------
+# Pre-ship gate-script hardening (cross-variant)
+# ---------------------------------------------------------------------------
+
+
+_PROCESS_SUBSTITUTION_DONE = re.compile(r"\bdone\s*<\s*<\(")
+_UNHARDENED_ESCAPE = re.compile(r"#\s*unhardened\s*:", re.IGNORECASE)
+_GATE_HARDENING_LOOKBACK = 10
+
+
+def _unhardened_process_substitution_sites(content: str) -> list[tuple[int, str]]:
+    """Locate `done < <(...)` lines lacking an `# unhardened: <reason>` escape
+    on the same line or within the prior 10 lines. Pure-comment lines (first
+    non-whitespace char is `#`) are skipped so explanatory prose citing the
+    anti-pattern doesn't trip the gate. Returns [(1-indexed lineno, line), ...]."""
+    lines = content.splitlines()
+    violations = []
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            continue
+        if not _PROCESS_SUBSTITUTION_DONE.search(line):
+            continue
+        window = lines[max(0, i - _GATE_HARDENING_LOOKBACK) : i + 1]
+        if any(_UNHARDENED_ESCAPE.search(w) for w in window):
+            continue
+        violations.append((i + 1, line.rstrip()))
+    return violations
+
+
+class TestPreShipGateHardening:
+    """Enforce the gate-script discipline codified in AGENTS.md.
+
+    Pre-ship scripts must not use `done < <(producer ...)` for control-flow
+    inputs: process-substitution exit codes aren't visible in the parent shell,
+    so a producer failure (git, find, helper script) silently empties the loop
+    and the gate falsely passes. The canonical hardened pattern captures
+    producer output to a tempfile and its exit code into a scalar — see
+    `LS_RC` in skills/shipping-work-php/scripts/pre-ship.sh and the
+    "Gate-script discipline" subsection in AGENTS.md.
+
+    Scope is intentionally pre-ship only. Review/gather-context scripts are
+    reporting-only producers (degraded output is acceptable), so they are
+    exempt — extending this assertion to them would force the existing
+    legitimate process-substitution sites in those scripts to be rewritten
+    unnecessarily.
+
+    Escape hatch: tag the loop with `# unhardened: <reason>` either on the
+    `done` line itself or anywhere within the prior 10 lines, if a
+    process-substitution input is genuinely required.
+    """
+
+    _PRE_SHIP_PATHS = sorted(
+        p.relative_to(SKILLS_DIR).as_posix()
+        for p in SKILLS_DIR.glob("shipping-work*/scripts/pre-ship.sh")
+    )
+
+    @pytest.fixture(
+        params=_PRE_SHIP_PATHS,
+        ids=lambda p: p.split("/")[0],
+    )
+    def script_path(self, request):
+        return SKILLS_DIR / request.param
+
+    def test_pre_ship_scripts_discovered(self):
+        # Sanity guard: if the glob ever returns nothing, the parameterized
+        # test would silently skip and the gate would vanish unnoticed.
+        assert len(self._PRE_SHIP_PATHS) >= 1, (
+            "Glob `shipping-work*/scripts/pre-ship.sh` matched zero files — "
+            "the hardening gate has silently disabled itself. Check whether "
+            "the skills/ directory layout or naming convention changed."
+        )
+
+    def test_no_unhardened_process_substitution(self, script_path):
+        violations = _unhardened_process_substitution_sites(script_path.read_text())
+        assert not violations, (
+            f"{script_path.relative_to(SKILLS_DIR)} contains unhardened "
+            f"`done < <(...)` site(s):\n"
+            + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations)
+            + "\n\nGate-script inputs must capture the producer's exit code. "
+            "Replace with the tempfile + `*_RC=$?` pattern (see `LS_RC` in "
+            "skills/shipping-work-php/scripts/pre-ship.sh and the "
+            '"Gate-script discipline" subsection of AGENTS.md). '
+            "If process substitution is genuinely required, tag the loop "
+            "with `# unhardened: <reason>` on the `done` line itself or "
+            "anywhere within the prior 10 lines."
+        )
+
+
+class TestProcessSubstitutionDetector:
+    """Unit-test the gate-script detector function directly. The integration
+    test above exercises it only against current scripts (which have zero
+    violations); these synthetic cases lock in the behavioral guarantees
+    so a future refactor of the regex or lookback can't silently weaken
+    detection."""
+
+    def test_inline_one_liner_regression_detected(self):
+        # The most common bash form: `while ...; do ...; done < <(producer)`.
+        src = 'while IFS= read -r f; do TRACKED+=("$f"); done < <(git ls-files)'
+        v = _unhardened_process_substitution_sites(src)
+        assert len(v) == 1, f"inline one-liner regression must trip, got {v}"
+
+    def test_multiline_loop_regression_detected(self):
+        src = "while read x; do\n  echo \"$x\"\ndone < <(producer)\n"
+        v = _unhardened_process_substitution_sites(src)
+        assert len(v) == 1, f"multiline `done < <(...)` must trip, got {v}"
+
+    def test_hardened_tempfile_form_clean(self):
+        src = (
+            "LS_RC=0\n"
+            'git ls-files >"$LS_OUT" || LS_RC=$?\n'
+            'while read x; do :; done < "$LS_OUT"\n'
+        )
+        assert _unhardened_process_substitution_sites(src) == []
+
+    def test_escape_hatch_prior_line_bypasses(self):
+        src = (
+            "# unhardened: producer is a constant printf, no failure mode\n"
+            'while read x; do :; done < <(printf "a\\nb\\n")\n'
+        )
+        assert _unhardened_process_substitution_sites(src) == []
+
+    def test_escape_hatch_inline_same_line_bypasses(self):
+        # Finding 2: a `# unhardened:` comment on the `done` line itself
+        # must also be honored — inline suppression is ergonomic and common.
+        src = 'while read x; do :; done < <(producer)  # unhardened: deliberate'
+        assert _unhardened_process_substitution_sites(src) == []
+
+    def test_stale_escape_hatch_beyond_lookback_rejected(self):
+        # An `# unhardened:` comment more than 10 lines above the offending
+        # `done` must NOT greenlight it — otherwise stale comments could
+        # silently authorize unrelated regressions further down the file.
+        src = "# unhardened: legitimate older site\n" + "\n" * 12 + "while read x; do :; done < <(producer)\n"
+        v = _unhardened_process_substitution_sites(src)
+        assert len(v) == 1, f"stale whitelist >10 lines away must not bypass, got {v}"
+
+    def test_pure_comment_line_not_flagged(self):
+        # Finding 1: explanatory prose citing the anti-pattern (common in
+        # AGENTS.md-style comments) must not trip the gate.
+        src = "# Never write `done < <(producer)` in a gate context — see AGENTS.md.\n"
+        assert _unhardened_process_substitution_sites(src) == []
+
+    def test_indented_comment_line_not_flagged(self):
+        src = "    # example: done < <(producer)  # for illustration only"
+        assert _unhardened_process_substitution_sites(src) == []
 
 
 # ---------------------------------------------------------------------------
