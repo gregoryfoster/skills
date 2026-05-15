@@ -17,8 +17,9 @@
 set -euo pipefail
 
 # --- Project-configurable section ---------------------------------------------
-# Add globs (one per line) for paths that, when changed, warrant a doc review.
-# These defaults are conservative; projects should tailor them.
+# Add paths (one per line) — exact filenames or directory prefixes ending in /.
+# Entries are matched literally, not as globs. Defaults are conservative;
+# projects should tailor them.
 SENSITIVE_PATHS=(
   "AGENTS.md"
   "README.md"
@@ -96,9 +97,9 @@ fi
 
 HITS=()
 while IFS= read -r file; do
-  for pattern in "${SENSITIVE_PATHS[@]}"; do
+  for prefix in "${SENSITIVE_PATHS[@]}"; do
     case "$file" in
-      $pattern|$pattern*) HITS+=("$file"); break ;;
+      "$prefix"|"$prefix"*) HITS+=("$file"); break ;;
     esac
   done
 done <<< "$CHANGED"
