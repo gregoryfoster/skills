@@ -4,9 +4,9 @@
 # Also runs PHP-specific checks: composer validate (root + each discovered
 # composer dir under themes/ and plugins/) and php -l on changed PHP files.
 #
-# Exit codes (non-exhaustive):
+# Exit codes:
 #   0 = success
-#   2 = tooling/infra failure on a gate-like discovery step (e.g. find for
+#   2 = tooling/infra failure on a gate-like discovery step (find for
 #       composer.json failed, mktemp failed). Reporting-only sections
 #       (git status, diff, log) intentionally degrade silently and do not
 #       map to exit 2.
@@ -21,9 +21,9 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "then runs composer validate at each composer.json location and php -l on"
   echo "changed PHP files."
   echo ""
-  echo "Exit codes (non-exhaustive):"
+  echo "Exit codes:"
   echo "  0 = success"
-  echo "  2 = tooling/infra failure on a gate-like discovery step (find or mktemp)"
+  echo "  2 = tooling/infra failure (find for composer.json failed, mktemp failed)"
   exit 0
 fi
 
