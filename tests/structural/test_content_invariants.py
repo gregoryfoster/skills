@@ -812,6 +812,69 @@ class TestManagingSkills:
 
 
 # ---------------------------------------------------------------------------
+# reviewing-code gather-context.sh shared-baseline (drift assertion)
+# ---------------------------------------------------------------------------
+
+
+REVIEWING_CODE_GATHER_CONTEXT_PATHS = sorted(
+    p.relative_to(SKILLS_DIR).as_posix()
+    for p in SKILLS_DIR.glob("reviewing-code*/scripts/gather-context.sh")
+)
+
+# Each variant's gather-context.sh must invoke these commands. Captures the
+# shared boilerplate that's duplicated across variants; if one variant drops
+# (or renames) a required command, this test catches it before that variant
+# loses parity with the baseline.
+GATHER_CONTEXT_REQUIRED_COMMANDS = [
+    "git rev-parse --show-toplevel",
+    "git status --short",
+    "git diff --staged",
+    "git diff --stat",
+    "git log --oneline",
+    "git diff --name-only HEAD",
+]
+
+
+class TestReviewingCodeGatherContextSharedBaseline:
+    """The reviewing-code* gather-context.sh files share a boilerplate baseline
+    (project-root resolution + git status/diffs/log/changed-files). Stack
+    variants extend it with stack-specific commands (composer validate, ruff,
+    etc.) but must not drop the shared baseline — otherwise the variant's
+    Phase 1 returns less context than the user expects from a "code review."
+    """
+
+    @pytest.fixture(
+        params=REVIEWING_CODE_GATHER_CONTEXT_PATHS,
+        ids=lambda p: p.split("/")[0],
+    )
+    def script(self, request):
+        return (SKILLS_DIR / request.param).read_text()
+
+    def test_shebang(self, script):
+        assert script.startswith("#!/usr/bin/env bash\n"), (
+            "gather-context.sh must start with `#!/usr/bin/env bash`"
+        )
+
+    def test_set_euo_pipefail(self, script):
+        assert "set -euo pipefail" in script, (
+            "gather-context.sh must declare `set -euo pipefail`"
+        )
+
+    def test_help_flag_handler(self, script):
+        assert '"${1:-}" == "--help"' in script, (
+            "gather-context.sh must handle a --help flag"
+        )
+
+    @pytest.mark.parametrize("cmd", GATHER_CONTEXT_REQUIRED_COMMANDS)
+    def test_required_command_present(self, script, cmd):
+        assert cmd in script, (
+            f"gather-context.sh must invoke `{cmd}` — shared baseline across the "
+            "reviewing-code* family. If this variant intentionally drops the command, "
+            "remove it from GATHER_CONTEXT_REQUIRED_COMMANDS and document the divergence."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Cross-family variant consistency (drift assertions)
 # ---------------------------------------------------------------------------
 
