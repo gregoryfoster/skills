@@ -4,7 +4,7 @@ description: "For Python/FastAPI projects (uv + ruff + pytest): finalizes work b
 compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requires git, gh, uv. pytest-cov is optional — pre-ship.sh auto-detects it and adds --no-cov when present.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -81,9 +81,20 @@ Common `[type]` values: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
 
 Multiple issues: `#19, #20 [type]: <description>`
 
+### Step 2.5 — Worktree-aware merge (if applicable)
+
+If this checkout is a worktree (test: `git rev-parse --show-toplevel` differs from the main checkout, listed first in `git worktree list`):
+
+1. Commit current changes inside the worktree (Step 2 above)
+2. Invoke `using-git-worktrees` Phase 4 to merge the branch back into the main checkout before continuing
+3. The remaining steps (push, GH comments, close) run from the main checkout
+
+If this is a single (non-worktree) checkout, skip this step.
+
 ### Step 3 — Ensure on main
 
-If on a feature branch, merge to `main` first. Then continue.
+If Step 2.5 applied, the merge already happened — you're on `main` in the main checkout; continue.
+If Step 2.5 did not apply (single checkout) and you're on a feature branch, merge to `main` first.
 
 ### Step 4 — Push
 

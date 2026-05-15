@@ -165,6 +165,16 @@ Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2
 
 This convention is enforced for `shipping-work*/scripts/pre-ship.sh` by [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) (`TestPreShipGateHardening`). Reverting a hardened site to `done < <(...)` form fails the structural suite. If process substitution is genuinely required, tag the loop with `# unhardened: <reason>` either on the `done` line itself or anywhere within the prior 10 lines as an opt-out.
 
+## Worktree root convention
+
+Skills and project-local scripts that operate on `git worktree`s resolve the worktree root via a three-step lookup (see [`using-git-worktrees`](skills/using-git-worktrees/)):
+
+1. `WORKTREE_ROOT` env var (highest priority — one-off overrides)
+2. `.skills/worktree_root` file under the repo root (single-line path; the project's persistent default)
+3. `<repo-root>/.worktrees/` (fallback)
+
+The helper `bash skills/using-git-worktrees/scripts/resolve-worktree-root.sh` prints the resolved root. Project-local wrapper scripts (e.g., `dev.sh worktree create`) should invoke the upstream `worktree-*.sh` scripts rather than reimplement them, and may pre-populate env files, allocate ports, or run extra bootstrap — but must not bypass the Iron Law gates.
+
 ## Commit conventions
 
 Conventional Commits style:

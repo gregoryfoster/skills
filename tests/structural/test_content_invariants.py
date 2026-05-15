@@ -162,6 +162,17 @@ class TestShippingWorkPythonFastapi:
             "(eliminates the project-name substitution copy-paste bug class)"
         )
 
+    def test_worktree_aware_merge_step_present(self):
+        body = self.s.body
+        assert "Step 2.5 — Worktree-aware merge" in body, (
+            "Step 2.5 (worktree-aware merge) must be present in the FastAPI variant — "
+            "it closes the loop opened in #10 (deferred until using-git-worktrees landed)"
+        )
+        assert "using-git-worktrees" in body, (
+            "Step 2.5 must reference the using-git-worktrees skill by name (hard cross-reference) "
+            "so the agent can discover and invoke the worktree workflow when it applies"
+        )
+
 
 class TestShippingWorkPythonClick:
     """Python/Click variant-only invariants."""
@@ -260,6 +271,103 @@ class TestInitProjectFastapi:
         assert push_pos != -1, "Phase 14 — Push not found"
         assert verify_pos < commit_pos < push_pos, (
             "Phase ordering must be: Verify (12) → Commit (13) → Push (14)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# using-git-worktrees
+# ---------------------------------------------------------------------------
+
+
+class TestUsingGitWorktrees:
+    """Invariants for the using-git-worktrees workflow skill.
+
+    This is a workflow skill (not a review skill), so it does not carry a
+    findings-format or directives table — but it does carry an Iron Law,
+    Rationalization-prevention table, Parameterized invocation block, and
+    a six-phase procedure (1, 2, 3, 3.5, 4, 5). Phase 3.5 is the worktree-
+    health verification gate; the test below asserts it explicitly so it
+    cannot be silently deleted.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("using-git-worktrees")
+
+    def test_h1_present(self):
+        assert "# Using Git Worktrees" in self.s.body, (
+            "H1 must be '# Using Git Worktrees'"
+        )
+
+    def test_iron_law_no_destroy_without_merge(self):
+        assert "NO WORKTREE DESTROY WITHOUT VERIFIED MERGE OR EXPLICIT DESCOPE" in self.s.body, (
+            "Iron Law line 1 must be present verbatim"
+        )
+
+    def test_iron_law_no_double_checkout(self):
+        assert "NO BRANCH CHECKED OUT IN TWO WORKTREES SIMULTANEOUSLY" in self.s.body, (
+            "Iron Law line 2 must be present verbatim"
+        )
+
+    def test_rationalization_table_present(self):
+        assert "Rationalization prevention" in self.s.body, (
+            "Rationalization prevention table must be present"
+        )
+
+    def test_parameterized_invocation_section_present(self):
+        assert "## Parameterized invocation" in self.s.body, (
+            "Parameterized invocation section must be present (formalizes inline branch "
+            "in trigger phrases, e.g., `create worktree feature/foo`)"
+        )
+
+    def test_resolution_order_documented(self):
+        body = self.s.body
+        for token in ("WORKTREE_ROOT", ".skills/worktree_root", ".worktrees/"):
+            assert token in body, (
+                f"Worktree-root resolution order must mention '{token}' "
+                "(env var → .skills/worktree_root → <repo>/.worktrees/)"
+            )
+
+    def test_all_phases_present(self):
+        body = self.s.body
+        for phase in (
+            "Phase 1 — Decide",
+            "Phase 2 — Create",
+            "Phase 3 — Work",
+            "Phase 3.5 — Verify",
+            "Phase 4 — Merge",
+            "Phase 5 — Destroy",
+        ):
+            assert phase in body, f"'{phase}' header must be present"
+
+    def test_phase_ordering(self):
+        body = self.s.body
+        positions = [body.find(p) for p in (
+            "Phase 1 — Decide",
+            "Phase 2 — Create",
+            "Phase 3 — Work",
+            "Phase 3.5 — Verify",
+            "Phase 4 — Merge",
+            "Phase 5 — Destroy",
+        )]
+        assert all(p != -1 for p in positions), "All phases must be discoverable"
+        assert positions == sorted(positions), (
+            "Phases must appear in numeric order in the body "
+            "(Phase 3.5 between Phase 3 and Phase 4)"
+        )
+
+    def test_scripts_referenced_in_body(self):
+        body = self.s.body
+        for script in ("worktree-create.sh", "worktree-destroy.sh", "worktree-list.sh", "resolve-worktree-root.sh"):
+            assert script in body, (
+                f"Script '{script}' must be referenced in SKILL.md body"
+            )
+
+    def test_descoped_flag_documented(self):
+        body = self.s.body
+        assert "--descoped" in body, (
+            "Iron Law escape hatch '--descoped <reason>' must be documented "
+            "(used by worktree-destroy.sh to acknowledge an intentional descope)"
         )
 
 
