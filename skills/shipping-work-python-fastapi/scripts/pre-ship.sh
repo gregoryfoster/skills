@@ -14,7 +14,8 @@ set -euo pipefail
 if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash scripts/pre-ship.sh"
   echo ""
-  echo "Runs 'uv run ruff check .' and 'uv run pytest --no-cov -x -m \"not integration\"'."
+  echo "Runs 'uv run ruff check .' and 'uv run pytest -x -m \"not integration\"'"
+  echo "(with --no-cov auto-applied when pytest-cov is installed)."
   echo "If package.json is present, also runs npm lint/format/test scripts."
   echo "Exits non-zero on any failure. Must pass before committing or pushing."
   echo ""
@@ -98,13 +99,21 @@ else
   STAMP_FILE=""
 fi
 
+# Auto-detect pytest-cov. When present, pass --no-cov to skip coverage on the
+# pre-ship run (faster, and the coverage threshold belongs in CI, not the
+# pre-push gate). When absent, omit the flag — passing --no-cov to a pytest
+# install without the plugin is a hard usage error.
+PYTEST_COV_FLAG=""
+if uv run python -c "import pytest_cov" >/dev/null 2>&1; then
+  PYTEST_COV_FLAG="--no-cov"
+fi
+
 if [[ -n "$STAMP_FILE" && -f "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
   echo "Test suite already passed for commit ${CURRENT_SHA:0:7} with a clean working tree — skipping."
 else
   # Exit code 5 = no tests collected (acceptable on an empty suite).
-  # --no-cov skips coverage (faster); requires pytest-cov to be installed
-  # (drop the flag if your project doesn't depend on it).
-  uv run pytest --no-cov -x -m "not integration" || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
+  # $PYTEST_COV_FLAG is intentionally unquoted: empty expansion → no arg.
+  uv run pytest $PYTEST_COV_FLAG -x -m "not integration" || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
   if [[ -n "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
     touch "$STAMP_FILE"
   fi
