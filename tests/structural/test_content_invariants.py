@@ -528,6 +528,41 @@ class TestPythonClickHelperIntegration:
         )
 
 
+class TestPythonClickHelperByteEquality:
+    """Each helper exists as an independent copy in both reviewing-code-python-click/scripts/
+    and shipping-work-python-click/scripts/ so each variant is self-contained per the
+    Agent Skills spec (no cross-skill symlinks). The two copies must stay byte-equal
+    until intentionally diverged — if you genuinely need them to differ, delete this
+    test class and document the divergence in both scripts' headers.
+    """
+
+    @pytest.fixture(
+        params=["detect-import-targets.sh", "detect-test-dirs.sh"],
+        ids=lambda n: n,
+    )
+    def helper_name(self, request):
+        return request.param
+
+    def test_review_and_ship_copies_byte_equal(self, helper_name):
+        review = SKILLS_DIR / "reviewing-code-python-click" / "scripts" / helper_name
+        ship = SKILLS_DIR / "shipping-work-python-click" / "scripts" / helper_name
+        assert review.exists(), f"missing helper copy in reviewing-code-python-click: {helper_name}"
+        assert ship.exists(), f"missing helper copy in shipping-work-python-click: {helper_name}"
+        assert not review.is_symlink(), (
+            f"reviewing-code-python-click/scripts/{helper_name} is a symlink — variants must be "
+            "self-contained per the Agent Skills spec; replace with a real copy"
+        )
+        assert not ship.is_symlink(), (
+            f"shipping-work-python-click/scripts/{helper_name} is a symlink — variants must be "
+            "self-contained per the Agent Skills spec; replace with a real copy"
+        )
+        assert review.read_bytes() == ship.read_bytes(), (
+            f"{helper_name} differs between reviewing-code-python-click and "
+            f"shipping-work-python-click copies. Either re-sync them or delete this "
+            f"assertion and document the intended divergence."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Pre-ship gate-script hardening (cross-variant)
 # ---------------------------------------------------------------------------
