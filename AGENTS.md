@@ -78,18 +78,26 @@ A project-level override is appropriate when the global skill would require proj
 
 Every project-level override **must** declare two fields in its `metadata` block:
 
-- `overrides: <upstream-skill-name>` — the upstream skill being replaced
+- `overrides: <vendor>/<upstream-skill-name>` — the upstream skill being replaced, qualified by the vendor it comes from
 - `override-reason: <one-line rationale>` — why a full replacement was needed
 
 ```yaml
 metadata:
   author: gregoryfoster
   version: "1.0"
-  overrides: reviewing-code
+  overrides: gregoryfoster-skills/reviewing-code
   override-reason: Adds project-specific commit convention and systemctl restart step
 ```
 
+The `<vendor>` token matches the submodule directory name under `skills-vendor/` (e.g. `gregoryfoster-skills`, `obra-superpowers`). This is the same `<owner>-<repo>` convention documented in [`managing-skills`](skills/managing-skills/). When the same upstream skill name exists in two vendored sources (e.g. both `gregoryfoster-skills/writing-plans` and `obra-superpowers/writing-plans`), the vendor prefix is the only thing that disambiguates which parent the override is replacing — a reader (or audit tool) should never have to consult git history to figure that out.
+
+If the same upstream repo is vendored from two forks, the submodule directory name still disambiguates (e.g. `gregoryfoster-skills` vs `someone-else-skills`); the vendor token is whatever the project actually checked out, not the canonical upstream.
+
 These keys make it possible to audit divergence across downstream repos (e.g. "which overrides have drifted from upstream") without inspecting every SKILL.md by hand. Upstream skills in this repo do not carry these keys — they aren't overrides.
+
+#### Legacy unqualified form
+
+The earlier convention allowed bare `overrides: <skill-name>` without a vendor prefix. That form is **tolerated for existing downstream files** but should be migrated to the qualified form during the next routine touch (e.g., as part of a downstream sweep). New overrides must use the qualified form. Bare entries are ambiguous as soon as a second vendor ships a skill of the same name, so the tolerance window closes once the audited downstreams have been updated.
 
 ### Project-name suffix on the H1
 
