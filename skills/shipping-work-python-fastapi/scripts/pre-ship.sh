@@ -124,7 +124,21 @@ fi
 # projects skip this block entirely without per-project override.
 
 if [[ -f "package.json" ]]; then
-  has_script() { node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts['$1'] ? 0 : 1)" 2>/dev/null; }
+  # Probing package.json requires node. Fail loudly if it's absent rather than
+  # silently treating every script as missing (gate-script discipline: the
+  # output of `has_script` decides whether each JS gate runs, so its stderr
+  # must not be swallowed).
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: node is required to probe package.json scripts (no JS gates would run)" >&2
+    exit 2
+  fi
+
+  # has_script <name>: exits 0 if package.json has the named npm script, else 1.
+  # Script name is passed via env so colons (`lint:js`) or any future special
+  # character can't break out of the node -e JS literal.
+  has_script() {
+    SCRIPT="$1" node -e 'process.exit(require("./package.json").scripts && require("./package.json").scripts[process.env.SCRIPT] ? 0 : 1)'
+  }
 
   if has_script lint:js; then
     echo ""
