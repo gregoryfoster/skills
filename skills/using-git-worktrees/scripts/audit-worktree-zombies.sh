@@ -9,10 +9,13 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash scripts/audit-worktree-zombies.sh [--quiet]"
+  echo "Usage: bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh [--quiet]"
   echo ""
   echo "Lists processes whose cmdline references a .worktrees/<name>/ path that"
   echo "no longer exists on disk. Detection-only — does not kill anything."
+  echo ""
+  echo "Adjust the path prefix when the skill is vendored under a different"
+  echo "layout (e.g. skills-vendor/<owner>-<repo>/skills/using-git-worktrees/...)."
   echo ""
   echo "Exit codes:"
   echo "  0  No zombies found"
@@ -45,6 +48,10 @@ ZOMBIES=()
 while IFS= read -r line; do
   PID=$(awk '{print $1}' <<<"$line")
   CMD=$(awk '{$1=""; print substr($0,2)}' <<<"$line")
+  # The pgrep filter guarantees $CMD contains at least one match for
+  # "$ESC_ROOT/.worktrees/<name>", so this extraction is the SECOND-pass
+  # step: it isolates which specific worktree this process belongs to,
+  # so we can check whether that worktree's directory still exists.
   WT_PATH=$(grep -oE "$ESC_ROOT/\.worktrees/[^/ ]+" <<<"$CMD" | head -1 || true)
   [[ -z "$WT_PATH" ]] && continue
   [[ -d "$WT_PATH" ]] && continue
