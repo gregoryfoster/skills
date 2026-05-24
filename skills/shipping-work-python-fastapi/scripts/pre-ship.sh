@@ -137,7 +137,9 @@ if [[ -f "package.json" ]]; then
   # would return non-zero on a JSON parse error and the JS gates would silently
   # skip — conflating "script missing" with "package.json broken." Gate-script
   # discipline: a broken package.json is an ERROR (exit 2), not a skip.
-  if ! node -e 'JSON.parse(require("fs").readFileSync("./package.json","utf8"))' >/dev/null; then
+  # require("./package.json") uses node's built-in JSON loader; a parse error
+  # throws and node exits non-zero with the parse error on stderr.
+  if ! node -e 'require("./package.json")' >/dev/null; then
     echo "ERROR: package.json failed to parse" >&2
     exit 2
   fi
