@@ -201,12 +201,19 @@ fi
 # path in its argv (typically via .venv/bin/<interpreter>), so pgrep -f on
 # $WORKTREE_PATH is a more authoritative primitive than the .port file.
 # TERM first, then KILL stragglers after a 1s grace.
+#
+# Escape regex metacharacters in $WORKTREE_PATH before handing to pgrep -f,
+# which treats its argument as an extended regex. Path slashes and dots are
+# regex-meaningful; a worktree slug containing other meta characters could
+# otherwise produce surprising matches.
+ESC_WT_PATH=$(printf '%s\n' "$WORKTREE_PATH" | sed 's/[][\\.*^$/()+?{|}]/\\&/g')
+
 echo "Killing processes referencing $WORKTREE_PATH..."
-PIDS=$(pgrep -f "$WORKTREE_PATH" 2>/dev/null || true)
+PIDS=$(pgrep -f "$ESC_WT_PATH" 2>/dev/null || true)
 if [[ -n "$PIDS" ]]; then
   echo "$PIDS" | xargs kill 2>/dev/null || true
   sleep 1
-  STRAGGLERS=$(pgrep -f "$WORKTREE_PATH" 2>/dev/null || true)
+  STRAGGLERS=$(pgrep -f "$ESC_WT_PATH" 2>/dev/null || true)
   if [[ -n "$STRAGGLERS" ]]; then
     echo "$STRAGGLERS" | xargs kill -9 2>/dev/null || true
   fi
@@ -217,10 +224,13 @@ git worktree prune || exit 2
 
 # Post-removal sweep: warn (do not fail) if anything still references the path.
 # Informational only — surfaces leaks the operator can investigate.
-STRAGGLERS=$(pgrep -f "$WORKTREE_PATH" 2>/dev/null || true)
+STRAGGLERS=$(pgrep -f "$ESC_WT_PATH" 2>/dev/null || true)
 if [[ -n "$STRAGGLERS" ]]; then
   echo "WARN: processes still reference $WORKTREE_PATH after destroy:" >&2
-  echo "$STRAGGLERS" | xargs ps -p 2>/dev/null >&2 || true
+  # ps -p accepts a comma-separated PID list on both BSD (macOS) and GNU,
+  # whereas space-separated/multiple-flag forms diverge across the two.
+  PID_LIST=$(echo "$STRAGGLERS" | tr '\n' ',' | sed 's/,$//')
+  ps -p "$PID_LIST" >&2 2>/dev/null || true
 fi
 
 echo "Worktree removed: $WORKTREE_PATH"
