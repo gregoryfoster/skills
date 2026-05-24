@@ -377,6 +377,14 @@ class TestUsingGitWorktrees:
             "(used by worktree-destroy.sh to acknowledge an intentional descope)"
         )
 
+    def test_base_flag_documented(self):
+        body = self.s.body
+        assert "--base" in body, (
+            "Base-ref override '--base <ref>' must be documented "
+            "(used by worktree-destroy.sh to verify merge into a non-default "
+            "integration branch such as 'batch/<x>' in multi-agent orchestrations)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # writing-plans

@@ -112,10 +112,11 @@ If the branch is **descoped** (will not be merged), document why before Phase 5:
 ```bash
 bash scripts/worktree-destroy.sh <branch>
 bash scripts/worktree-destroy.sh <branch> --descoped "<reason>"
+bash scripts/worktree-destroy.sh <branch> --base <ref>   # verify merge into <ref> instead of project default
 ```
 
 The script:
-- Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Base ref is resolved from `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied.
+- Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied.
 - If `<worktree>/.port` exists, kills any process bound to that port via `lsof -ti tcp:<port>` (portable to macOS + Linux). Falls back to a warning if `lsof` isn't installed.
 - Runs `git worktree remove <path>`
 - Runs `git worktree prune` to clean stale metadata

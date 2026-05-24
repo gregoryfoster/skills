@@ -3,11 +3,11 @@
 # Destroys the worktree for <branch>. Refuses if the branch is NOT merged
 # into the base ref AND --descoped <reason> was not supplied (Iron Law).
 #
-# Usage: bash scripts/worktree-destroy.sh <branch> [--descoped <reason>] [--help]
+# Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--help]
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash scripts/worktree-destroy.sh <branch> [--descoped <reason>]"
+  echo "Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>]"
   echo ""
   echo "Destroys the worktree for <branch> (resolved via the same path scheme"
   echo "as worktree-create.sh). Iron Law: refuses if the branch has NOT been"
@@ -20,9 +20,18 @@ usage() {
   echo "  - Runs git worktree prune to clean stale metadata."
   echo ""
   echo "Merge verification:"
-  echo "  Refuses if the branch is not an ancestor of the base ref. Base ref"
-  echo "  is resolved as: .skills/default_branch -> origin's HEAD -> 'main'."
+  echo "  Refuses if the branch is not an ancestor of the base ref."
+  echo "  Default base resolution: .skills/default_branch -> origin's HEAD -> 'main'."
   echo "  Prefers origin/<base> over local <base> (authoritative remote state)."
+  echo ""
+  echo "  --base <ref> overrides the default resolution and verifies merge into"
+  echo "  the explicit ref instead. The ref is used as-given (no origin/<ref>"
+  echo "  preference), so callers can target a local-only integration branch"
+  echo "  such as 'batch/<x>' in a multi-agent orchestration. The Iron Law still"
+  echo "  applies — the branch must be an ancestor of the supplied ref."
+  echo ""
+  echo "  Precedence: --descoped takes precedence over --base. If both are"
+  echo "  supplied, the merge check is skipped entirely and --base is ignored."
   echo ""
   echo "Does NOT delete the branch ref. Use 'git branch -d <branch>' afterward"
   echo "if you also want to drop the local ref."
@@ -48,14 +57,35 @@ shift
 
 DESCOPED=0
 DESCOPE_REASON=""
-if [[ "${1:-}" == "--descoped" ]]; then
-  DESCOPED=1
-  DESCOPE_REASON="${2:-}"
-  if [[ -z "$DESCOPE_REASON" ]]; then
-    echo "ERROR: --descoped requires a <reason> argument" >&2
-    exit 2
-  fi
-fi
+BASE_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --descoped)
+      DESCOPED=1
+      DESCOPE_REASON="${2:-}"
+      if [[ -z "$DESCOPE_REASON" ]]; then
+        echo "ERROR: --descoped requires a <reason> argument" >&2
+        usage >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --base)
+      BASE_OVERRIDE="${2:-}"
+      if [[ -z "$BASE_OVERRIDE" ]]; then
+        echo "ERROR: --base requires a <ref> argument" >&2
+        usage >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    *)
+      echo "ERROR: unknown flag '$1'" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "ERROR: not inside a git repository" >&2
@@ -77,38 +107,54 @@ if [[ ! -d "$WORKTREE_PATH" ]]; then
   exit 2
 fi
 
-# Iron Law: verify the branch has been merged into the project's base branch.
-# "Verified merge" = the branch tip is an ancestor of the base branch. Pushing
+# Iron Law: verify the branch has been merged into the base ref.
+# "Verified merge" = the branch tip is an ancestor of the base ref. Pushing
 # alone is NOT enough — a pushed-but-unmerged branch would still lose work on
-# destroy. Base branch resolution order:
-#   1. .skills/default_branch (single-line file)
-#   2. git symbolic-ref refs/remotes/origin/HEAD (whatever origin's HEAD points to)
-#   3. "main" fallback
+# destroy.
+#
+# Base resolution:
+#   - If --base <ref> was supplied, use it verbatim (no origin/<ref> preference
+#     — the caller is being explicit, possibly targeting a local-only branch
+#     like 'batch/<x>' from a multi-agent orchestration).
+#   - Otherwise resolve the project default:
+#     1. .skills/default_branch (single-line file)
+#     2. git symbolic-ref refs/remotes/origin/HEAD (whatever origin's HEAD points to)
+#     3. "main" fallback
+#     Then prefer origin/<base> over local <base> for authoritative remote state.
 if [[ $DESCOPED -eq 0 ]]; then
-  BASE=""
-  if [[ -f "$PROJECT_ROOT/.skills/default_branch" ]]; then
-    BASE=$(head -n1 "$PROJECT_ROOT/.skills/default_branch" | tr -d '[:space:]')
-  fi
-  if [[ -z "$BASE" ]]; then
-    BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
-  fi
-  if [[ -z "$BASE" ]]; then
-    BASE="main"
-  fi
-
-  # Resolve the base ref. Prefer origin/<base> (authoritative — what the team
-  # has merged), fall back to local <base> if no remote tracking exists.
   BASE_REF=""
-  if git rev-parse --verify --quiet "origin/$BASE" >/dev/null; then
-    BASE_REF="origin/$BASE"
-  elif git rev-parse --verify --quiet "$BASE" >/dev/null; then
-    BASE_REF="$BASE"
-  fi
+  if [[ -n "$BASE_OVERRIDE" ]]; then
+    if git rev-parse --verify --quiet "$BASE_OVERRIDE" >/dev/null; then
+      BASE_REF="$BASE_OVERRIDE"
+    else
+      echo "ERROR: --base ref '$BASE_OVERRIDE' does not exist" >&2
+      exit 2
+    fi
+  else
+    BASE=""
+    if [[ -f "$PROJECT_ROOT/.skills/default_branch" ]]; then
+      BASE=$(head -n1 "$PROJECT_ROOT/.skills/default_branch" | tr -d '[:space:]')
+    fi
+    if [[ -z "$BASE" ]]; then
+      BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@' || true)
+    fi
+    if [[ -z "$BASE" ]]; then
+      BASE="main"
+    fi
 
-  if [[ -z "$BASE_REF" ]]; then
-    echo "ERROR: could not resolve base branch '$BASE' (neither origin/$BASE nor local $BASE exists)" >&2
-    echo "Set .skills/default_branch to your project's base branch name, or pass --descoped <reason>." >&2
-    exit 2
+    # Resolve the base ref. Prefer origin/<base> (authoritative — what the team
+    # has merged), fall back to local <base> if no remote tracking exists.
+    if git rev-parse --verify --quiet "origin/$BASE" >/dev/null; then
+      BASE_REF="origin/$BASE"
+    elif git rev-parse --verify --quiet "$BASE" >/dev/null; then
+      BASE_REF="$BASE"
+    fi
+
+    if [[ -z "$BASE_REF" ]]; then
+      echo "ERROR: could not resolve base branch '$BASE' (neither origin/$BASE nor local $BASE exists)" >&2
+      echo "Set .skills/default_branch to your project's base branch name, pass --base <ref>, or pass --descoped <reason>." >&2
+      exit 2
+    fi
   fi
 
   if ! git rev-parse --verify --quiet "$BRANCH" >/dev/null; then
