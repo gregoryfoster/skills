@@ -239,8 +239,12 @@ class TestInitProjectFastapi:
         )
 
     def test_hard_gate_collect_params_first(self):
-        assert "Do NOT create files or run commands until" in self.s.body, (
-            "Hard gate text 'Do NOT create files or run commands until' must be present verbatim"
+        expected = (
+            "Do NOT create files in the bootstrapped project's working tree "
+            "or run project-mutating commands until"
+        )
+        assert expected in self.s.body, (
+            f"Hard gate text {expected!r} must be present verbatim"
         )
 
     def test_all_required_parameters_listed(self):

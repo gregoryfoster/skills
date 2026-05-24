@@ -13,7 +13,7 @@ metadata:
 Bootstraps a new CannObserv FastAPI service from an empty git repo to a fully wired foundation: SSH deploy key, Python tooling, FastAPI skeleton, agent skills, and a closed GitHub issue.
 
 <HARD-GATE>
-Do NOT create files or run commands until you have collected all required parameters from the user and confirmed them. The project name drives file content, package names, and git remotes throughout — getting it wrong means manual cleanup.
+Do NOT create files in the bootstrapped project's working tree or run project-mutating commands until you have collected all required parameters from the user and confirmed them. (Phase 0 below clones this skill's source to a scratch dir under `/tmp`; that does not touch the project tree.) The project name drives file content, package names, and git remotes throughout — getting it wrong means manual cleanup.
 </HARD-GATE>
 
 ## Parameters to collect
@@ -78,10 +78,34 @@ Confirm all core parameters AND all branch-point parameters (or their defaults) 
 
 ## Procedure
 
+### Phase 0 — Acquire skill source
+
+Phases 1, 2, and 5c reference scripts and assets that live in *this* skill, not in the bootstrapped project. The project has no `skills/init-project-fastapi/` directory until Phases 9–10 create the vendor submodule and symlinks, so an early `bash skills/init-project-fastapi/scripts/foo.sh` would resolve to "file not found." Clone this skill's repo to a scratch location once, and reference everything skill-internal through the captured path.
+
+Run the block below as a **single Bash invocation** — `set -euo pipefail` only protects the sequence when it executes atomically; splitting line-by-line drops the safety net (and `$SKILL_TMP` would expand to empty in each fresh sub-shell):
+
+```bash
+set -euo pipefail
+SKILL_TMP=$(mktemp -d "${TMPDIR:-/tmp}/init-project-fastapi.XXXXXX")
+git clone --depth 1 https://github.com/gregoryfoster/skills.git "$SKILL_TMP/gregoryfoster-skills"
+SKILL_DIR="$SKILL_TMP/gregoryfoster-skills/skills/init-project-fastapi"
+test -d "$SKILL_DIR/scripts" || { echo "Phase 0 clone failed — $SKILL_DIR/scripts missing"; exit 1; }
+SKILL_SHA=$(git -C "$SKILL_TMP/gregoryfoster-skills" rev-parse HEAD)
+echo "SKILL_DIR=$SKILL_DIR"
+echo "SKILL_SHA=$SKILL_SHA"
+echo "SKILL_TMP=$SKILL_TMP"
+```
+
+**Scope of the variable names.** Inside the block above, `$SKILL_TMP` / `$SKILL_DIR` / `$SKILL_SHA` are real bash variables — the block runs as a single shell invocation and they're live within it. *Outside* this block, the angle-bracketed forms `<SKILL_DIR>` / `<SKILL_SHA>` / `<SKILL_TMP>` are **placeholders** (same convention as `<PROJECT_NAME>`) — substitute the literal absolute path/SHA printed by Phase 0, do not paste them verbatim. Each later Bash invocation runs in a fresh shell, so Phase 0's variables are not inherited.
+
+Record the three printed values. `<SKILL_SHA>` lands in the Phase 15 GH issue body so the bootstrap is reproducible; `<SKILL_TMP>` is what Phase 16 cleans up.
+
+> **Pinning.** The clone above tracks `main`. Once this repo starts tagging releases, pass `-b <tag>` (or `-b <sha>`) to `git clone` to lock the bootstrap to a specific version.
+
 ### Phase 1 — SSH deploy key
 
 ```bash
-bash skills/init-project-fastapi/scripts/gen-deploy-key.sh <PROJECT_NAME> <DEPLOY_KEY_LABEL>
+bash "<SKILL_DIR>/scripts/gen-deploy-key.sh" <PROJECT_NAME> <DEPLOY_KEY_LABEL>
 ```
 
 Present the **public key** to the user:
@@ -93,7 +117,7 @@ Present the **public key** to the user:
 ### Phase 2 — Configure git remote
 
 ```bash
-bash skills/init-project-fastapi/scripts/configure-remote.sh <PROJECT_NAME> <GITHUB_ORG>
+bash "<SKILL_DIR>/scripts/configure-remote.sh" <PROJECT_NAME> <GITHUB_ORG>
 ```
 
 Verify connectivity:
@@ -224,7 +248,7 @@ Follow [`references/database-scaffolding.md`](references/database-scaffolding.md
 
 1. **`src/core/database.py`** — async engine + session factory (`get_engine`, `get_session_factory`, `reset_engine`). Reads via `get_database_url` from `src/core/config.py`.
 2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`.
-3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the content from the asset [`assets/alembic-env.py`](assets/alembic-env.py) (use the Write tool — the asset path is the agent's source-of-truth, not a path in the bootstrapped project; vendor symlinks under `skills/` do not exist until Phases 9–10 run). Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN).
+3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN).
 4. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
 
 ### Phase 6 — Tests scaffold
@@ -392,7 +416,7 @@ gh issue create \
   --body "..."
 ```
 
-Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components). When Phase 12's pytest smoke step was skipped because `TEST_DATABASE_URL` wasn't set on the fresh bootstrap, add a `## Follow-ups` section noting that the smoke test must run before the first feature PR lands.
+Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components), and a `## Bootstrap provenance` line citing the Phase 0 clone (`gregoryfoster/skills@<SKILL_SHA>`) so future bootstraps are reproducible against the same skill revision. When Phase 12's pytest smoke step was skipped because `TEST_DATABASE_URL` wasn't set on the fresh bootstrap, add a `## Follow-ups` section noting that the smoke test must run before the first feature PR lands.
 
 Post a completion comment referencing the commit SHA, then close:
 
@@ -403,7 +427,15 @@ gh issue close 1
 
 ### Phase 16 — Report
 
-Present a completion table. Branch-point rows show the choice made (or "skipped" when the branch was disabled):
+First, clean up the Phase 0 scratch clone:
+
+```bash
+rm -rf "<SKILL_TMP>"
+```
+
+If the bootstrap aborted mid-phase, `<SKILL_TMP>` (under `/tmp`) is left behind and the OS reclaims it on the standard tmp-cleanup cadence; no manual intervention required.
+
+Then present a completion table. Branch-point rows show the choice made (or "skipped" when the branch was disabled):
 
 | Component | Status |
 |---|---|
@@ -419,9 +451,11 @@ Present a completion table. Branch-point rows show the choice made (or "skipped"
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
 | Skills | Local overrides + all vendor skills symlinked + matching `.claude/skills/` discovery symlinks |
 | GH issue | #1 closed |
+| Phase 0 scratch | Cleaned up (`<SKILL_TMP>` removed) |
 
 ## Key invariants
 
+- `<SKILL_DIR>`, `<SKILL_SHA>`, and `<SKILL_TMP>` from Phase 0 are **placeholders** for literal absolute values captured once and substituted into every later phase that names them (same convention as `<PROJECT_NAME>`) — they are not inherited shell variables (each Bash invocation runs in a fresh shell). If the agent session restarts mid-bootstrap, re-run Phase 0 and use the new paths from there on.
 - The `pre-ship.sh` per-SHA stamp prefix is auto-derived from `$(basename "$(git rev-parse --show-toplevel)")` in the `shipping-work-python-fastapi` variant — no per-project substitution required (and no risk of cross-project stamp collisions).
 - All symlinks use **relative** paths — absolute paths break after cloning.
 - `src/core/config.py` is the single source of env access. Both `os.environ` reads and `pydantic-settings` instantiation belong there; no other module should call `os.environ.get()` for runtime configuration.

@@ -114,7 +114,13 @@ Initialize Alembic, then overwrite the generated `alembic/env.py` with the asset
 uv run alembic init alembic
 ```
 
-Now use the Write tool to replace `alembic/env.py` with the content of the asset [`alembic-env.py`](../assets/alembic-env.py). Do **not** use `cp` — Phase 5c runs before the vendor submodules and `skills/` symlinks are created (Phases 9–10), so the asset path doesn't exist as a real file in the bootstrapped project's tree. The asset is the agent's loaded source-of-truth; write its content directly.
+Overwrite `alembic/env.py` with the asset:
+
+```bash
+cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py
+```
+
+`<SKILL_DIR>` is the placeholder for the path captured in [Phase 0 of SKILL.md](../SKILL.md#phase-0--acquire-skill-source). Substitute the literal value printed by Phase 0.
 
 Edit `alembic.ini`:
 

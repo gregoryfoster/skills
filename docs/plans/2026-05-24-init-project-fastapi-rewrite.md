@@ -2,6 +2,7 @@
 title: Rewrite init-project-fastapi as core spine + opinionated branch points
 date: 2026-05-24
 status: executed
+addendum: 2026-05-24
 ---
 
 # Rewrite init-project-fastapi as core spine + opinionated branch points
@@ -61,3 +62,13 @@ Restructure the skill into a **core spine** (applies to every bootstrap) plus **
 - ~~**Systemd unit assumes `User=exedev` + `/home/exedev/<proj>` layout**~~ **Resolved:** added `DEPLOY_USER` (default `exedev`) and `DEPLOY_HOME` (default `/home/<DEPLOY_USER>/<PROJECT_NAME>`) as sub-parameters of `DEPLOY_TARGET=systemd`. See Step 8.
 
 - **No CI/CD workflow in scope** — only 1/7 repos has a workflow today (notifier's SDK-staleness check, project-specific). Confirming we are *not* adding a generic `.github/workflows/ci.yml` in this rewrite; revisit when 2+ services need one.
+
+## Addendum — Phase 0 (skill-source acquisition)
+
+The executed rewrite shipped with a chicken-and-egg bug pattern: Phases 1, 2, and 5c invoked `bash skills/init-project-fastapi/scripts/...` / `cp skills/init-project-fastapi/assets/...` paths that don't exist in the bootstrapped project until Phases 9–10 create the vendor submodule and symlinks. Phase 5c was patched in #29 with a Write-tool workaround; Phases 1 and 2 were left broken.
+
+Issue [#32](https://github.com/gregoryfoster/skills/issues/32) replaces the per-path workaround with a structural fix: a new **Phase 0** clones the skill repo to a scratch location, captures `SKILL_DIR` / `SKILL_SHA` / `SKILL_TMP`, and every later phase references the captured path. This subsumes the Write-tool patch (Phase 5c reverts to `cp`), unlocks on-demand reads of `references/` (lower context pressure), and makes the bootstrap reproducible (SHA pinning + future tag support).
+
+Cleanup is explicit at Phase 16 (`rm -rf "<SKILL_TMP>"`, run before the report table); abort paths leak the temp dir to `/tmp` and rely on OS reclamation rather than a shell trap (traps can't span the per-phase fresh-shell boundary, so trapping in Phase 0 would wipe the clone immediately).
+
+A grep audit (`grep -El 'git init|bootstrap.*project|empty repo' skills/*/SKILL.md`) returned `init-project-fastapi/SKILL.md` as the sole match, confirming no other skill in this repo bootstraps from an empty repo. Issue #32 closes without a sibling follow-up.
