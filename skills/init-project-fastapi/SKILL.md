@@ -18,19 +18,21 @@ Do NOT create files or run commands until you have collected all required parame
 
 ## Parameters to collect
 
-Ask the user (one at a time if not provided upfront):
+Ask the user (one at a time if not provided upfront).
+
+### Core parameters (required)
 
 | Parameter | Example | Used in |
 |---|---|---|
 | `PROJECT_NAME` | `watcher` | pyproject.toml, AGENTS.md, README.md, skill headers, GH issue |
 | `PROJECT_DESCRIPTION` | `monitors cannabis industry activity: licenses, regulatory filings...` | pyproject.toml, AGENTS.md, README.md |
 | `GITHUB_ORG` | `CannObserv` | git remote, deploy key host alias, GH issue |
-| `API_PORT` | `8000` | AGENTS.md, README.md, docs/COMMANDS.md |
+| `API_PORT` | `8000` | AGENTS.md, README.md, docs/COMMANDS.md, systemd unit |
 | `DEPLOY_KEY_LABEL` | `watcher-deploy-key` | ssh-keygen comment |
 | `GIT_USER_NAME` | `Ada Lovelace` | git local config, commits |
 | `GIT_USER_EMAIL` | `ada@example.com` | git local config, commits |
 
-Before confirming, show the current global git identity and ask the user whether to use it or override per-project:
+Before confirming the core parameters, show the current global git identity and ask the user whether to use it or override per-project:
 
 ```
 Current global git identity:
@@ -43,7 +45,36 @@ Enter GIT_USER_EMAIL [press Enter to use global value]:
 
 If the user accepts both global values, skip Phase 2a.
 
-Confirm all seven before proceeding.
+### Branch-point parameters (defaults reflect CannObserv cohort majority)
+
+Each has a default the user can accept silently. Defaults come from comparing 7 sibling services (`address-validator`, `wslcb-licensing-tracker`, `power-map`, `archiver`, `watcher`, `notifier`, `observo`). The "drives" column names the phase(s) the choice activates or modifies.
+
+| Parameter | Default | Choices | Drives |
+|---|---|---|---|
+| `DB_BACKED` | `yes` | `yes` \| `no` | Phase 3 deps, Phase 5c (database + models + alembic + deps.py), Phase 6 conftest savepoint fixture, Phase 12 alembic smoke check |
+| `SETTINGS_STYLE` | `pydantic-settings` | `pydantic-settings` \| `os.environ` | Phase 3 deps, Phase 5b (`src/core/config.py` shape) |
+| `MODELS_LAYOUT` | `monolithic` | `monolithic` \| `package` | Phase 5c (`src/core/models.py` vs `src/core/models/`) |
+| `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
+| `DEPLOY_TARGET` | `systemd` | `systemd` \| `none` | Phase 7b (`deploy/<PROJECT_NAME>.service`), Phase 3 `.gitignore`, README "Deploy" section |
+
+**Sub-parameters of `DEPLOY_TARGET=systemd`** (skipped entirely when `DEPLOY_TARGET=none`):
+
+| Sub-parameter | Default | Used in |
+|---|---|---|
+| `DEPLOY_USER` | `exedev` | systemd unit `User=` + `chown` in `ExecStartPre` |
+| `DEPLOY_HOME` | `/home/<DEPLOY_USER>/<PROJECT_NAME>` | systemd unit `WorkingDirectory=` + repo-`.env` `EnvironmentFile` path |
+
+### Cohort context (informational; show to the user when they ask "why this default?")
+
+- **`DB_BACKED=yes`**: 6/7 use SQLAlchemy[asyncio] + asyncpg. Power-map is the lone exception (raw asyncpg, no ORM).
+- **`SETTINGS_STYLE=pydantic-settings`**: 3/7 newer services (power-map, address-validator, observo) converged here. Older services (notifier, archiver, watcher) still use explicit `os.environ` guard functions — both work, the newer pattern is the recommended default.
+- **`MODELS_LAYOUT=monolithic`**: 6/7 use a single `models.py`. Promote to a `models/` package when crossing ~5 tables or natural domain boundaries (notifier did this).
+- **`LINT_PROFILE=minimal`**: 5/7 stick to `E,F,I,W,UP`. Address-validator alone enabled the full strict profile (`ANN,S,SIM,RUF,PL,TCH,…`); offered as a branch point but not the default.
+- **`DEPLOY_TARGET=systemd`**: notifier is the only production-deployed service today, and its systemd pattern (BUILD_ID via `ExecStartPre`, two-tier `EnvironmentFile`) is canonical. 0/7 use Docker.
+
+**Async task queue (not a branch point yet).** Only notifier and watcher use [procrastinate](https://procrastinate.readthedocs.io/) for background work, and each wires its workers project-specifically (notifier's Apprise dispatcher, watcher's domain rate-limit poller). Until a third project converges on a shared shape, the skill does not scaffold procrastinate — promote it deliberately when you actually need a worker, following notifier's wiring as the reference.
+
+Confirm all core parameters AND all branch-point parameters (or their defaults) before proceeding.
 
 ## Procedure
 
@@ -112,6 +143,7 @@ wheels/
 .venv
 
 # Environment / secrets
+.env
 env
 
 # Coverage
@@ -125,22 +157,14 @@ coverage.xml
 *.swp
 *.swo
 
-# Gunicorn
-gunicorn.ctl
-
 # Git worktrees
 .worktrees/
+
+# Runtime (BUILD_ID stamp target — DEPLOY_TARGET=systemd writes /run/<PROJECT_NAME>/build-id)
+/run/
 ```
 
-**`pyproject.toml`**
-- name = `<PROJECT_NAME>`
-- description = `<PROJECT_DESCRIPTION>`
-- dependencies: `fastapi>=0.115.0`, `python-json-logger>=4.0.0`, `uvicorn>=0.34.0`
-- dev deps: `anyio`, `pre-commit`, `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`
-- build backend: hatchling
-- ruff: line-length=100, target=py312, exclude vendor/, select E/F/I/W/UP
-- pytest: testpaths=tests, asyncio_mode=auto, integration marker
-- coverage: source=src, fail_under=80
+**`pyproject.toml`** — assemble from the templates in [`references/pyproject-toml.md`](references/pyproject-toml.md). The reference covers the `[project]` table (with `DB_BACKED` and `SETTINGS_STYLE` conditional deps spliced in via prose instructions), the pytest + coverage + build-system blocks (always present), and both ruff profiles (`minimal` default vs `strict` opt-in).
 
 **`.pre-commit-config.yaml`**
 
@@ -165,150 +189,50 @@ repos:
 
 ### Phase 4 — AGENTS.md
 
-Adapt the template below for the project. Replace `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>` throughout.
+Adapt the template in [`references/agents-md-template.md`](references/agents-md-template.md) for the project. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<API_PORT_DEV>` (= `<API_PORT> + 1`) throughout.
 
-```markdown
-# <PROJECT_NAME> — Agent Guidelines
+**Conditional-block syntax.** The template (and several other references) uses a blockquote pattern to gate content on branch-point values:
 
-Be terse. Prefer fragments over full sentences. Skip filler and preamble. Sacrifice grammar for density. Lead with the answer or action.
-
-## Project Overview
-
-<PROJECT_DESCRIPTION>
-
-## Development Methodology
-
-TDD required. Red → Green → Refactor. No production code without a failing test first.
-
-## Environment & Tooling
-
-Python ≥3.12, uv, pytest, ruff
-
-## Project Layout
-
-​```
-src/api/        — FastAPI app (ASGI, routes, schemas)
-src/core/       — Shared domain logic
-tests/          — Mirrors src/ structure
-docs/           — Reference docs (COMMANDS, SKILLS)
-​```
-
-## Services
-
-| Service | Framework | Port |
-|---|---|---|
-| API | FastAPI | <API_PORT> |
-
-​```bash
-# FastAPI dev server
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload
-​```
-
-## Secrets
-
-`env` (git-ignored): API keys and tokens. Never commit secrets.
-
-​```bash
-export $(cat env | xargs)
-​```
-
-Currently defined:
-- `GH_TOKEN` — GitHub personal access token (used by `gh` CLI)
-
-## Common Commands
-
-​```bash
-uv sync
-uv run pytest
-uv run ruff check .
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload
-​```
-
-Full reference: `docs/COMMANDS.md`
-
-## Agent Skills
-
-Skills in `skills/` (agentskills.io) and `.claude/skills/` (Claude Code). Reference: `docs/SKILLS.md`
-
-## Conventions
-
-**Commit Messages:**
-​```
-#<number> [type]: <description>      # with issue
-[type]: <description>                # without issue
-​```
-Types: feat, fix, refactor, docs, test, chore
-
-**Logging:**
-​```python
-from src.core.logging import get_logger
-logger = get_logger(__name__)
-​```
-Entry points only: call `configure_logging()` once.
-
-**Date & Time:**
-- All UTC
-- ISO 8601: `YYYY-MM-DDTHH:MM:SS.ffffffZ` (timestamps), `YYYY-MM-DD` (dates)
-
-**General:**
-- No inline module imports; all at file top
-- Docstrings for public modules, classes, functions
-- Test structure mirrors source (`src/foo.py` → `tests/test_foo.py`)
-- Explicit imports only
-- Small, focused functions
 ```
+> Include when <PARAM>=<value>:
+... content ...
+> end include
+```
+
+When the condition is satisfied, write the inner content with placeholders substituted but **drop the `> Include when …:` and `> end include` marker lines**. When the condition is not satisfied, drop the entire block (markers + content). The markers must never appear in the rendered project file.
+
+Sections in the template: Project Overview, Development Methodology, Environment & Tooling, Code Exploration Policy, Project Layout, Infrastructure, Server Lifecycle, Environment Variables, Common Commands, Agent Skills, Conventions.
 
 ### Phase 5 — Source skeleton
 
-**`src/__init__.py`** — empty
+Create the empty `__init__.py` files (`src/`, `src/api/`, `src/core/`), then copy the templates from [`references/source-skeleton.md`](references/source-skeleton.md):
 
-**`src/api/__init__.py`** — empty
+- `src/api/main.py` — FastAPI app with lifespan, `/health`, and (when `DB_BACKED=yes`) `/ready`. The reference's "Adjustments for non-default branch points" subsection lists the edits to make for `SETTINGS_STYLE=os.environ` and `DB_BACKED=no`.
+- `src/core/logging.py` — verbatim JSON logging utility (`configure_logging` + `get_logger`).
 
-**`src/api/main.py`**
-```python
-"""FastAPI application entry point."""
+### Phase 5b — Settings (`src/core/config.py`)
 
-from fastapi import FastAPI
+Single source of env access. `src/core/database.py` (Phase 5c) and any future runtime config imports from here.
 
-from src.core.logging import configure_logging
+Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-scaffolding.md`](references/settings-scaffolding.md): `pydantic-settings` (default — typed `Settings(BaseSettings)` class with `get_settings()` and a `get_database_url()` shim) or `os.environ` (explicit `get_database_url()` / `get_log_level()` / `get_build_id()` guard functions). When `DB_BACKED=no`, drop the `get_database_url()` block from whichever variant you use.
 
-configure_logging()
+### Phase 5c — Database scaffolding
 
-app = FastAPI(title="<PROJECT_NAME>", version="0.1.0")
-```
+> Skip this entire phase when `DB_BACKED=no`.
 
-**`src/core/__init__.py`** — empty
+Follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
 
-**`src/core/logging.py`** — copy verbatim from the reference implementation:
-```python
-"""Structured JSON logging utilities."""
-
-import logging
-import sys
-
-from pythonjsonlogger.json import JsonFormatter
-
-
-def configure_logging(level: int = logging.INFO) -> None:
-    """Configure root logger with JSON formatting. Call once at entry points."""
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
-    root = logging.getLogger()
-    root.setLevel(level)
-    root.handlers = [handler]
-
-
-def get_logger(name: str) -> logging.Logger:
-    """Return a named logger. Use in modules as: logger = get_logger(__name__)"""
-    return logging.getLogger(name)
-```
+1. **`src/core/database.py`** — async engine + session factory (`get_engine`, `get_session_factory`, `reset_engine`). Reads via `get_database_url` from `src/core/config.py`.
+2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`.
+3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the content from the asset [`assets/alembic-env.py`](assets/alembic-env.py) (use the Write tool — the asset path is the agent's source-of-truth, not a path in the bootstrapped project; vendor symlinks under `skills/` do not exist until Phases 9–10 run). Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN).
+4. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
 
 ### Phase 6 — Tests scaffold
 
-Create empty `__init__.py` files:
-- `tests/__init__.py`
-- `tests/api/__init__.py`
-- `tests/core/__init__.py`
+Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then copy the templates from [`references/tests-scaffolding.md`](references/tests-scaffolding.md):
+
+- `tests/conftest.py` — default (DB_BACKED=yes) includes session-scoped event loop fixture, `_check_test_url_safety` guard, `test_engine` (create_all/drop_all), savepoint-isolated `db_session`, and `client` AsyncClient with `get_db_session` dependency override. The reference also ships a no-DB variant for `DB_BACKED=no`.
+- `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `build` keys. Always created.
 
 ### Phase 7 — Docs
 
@@ -317,6 +241,15 @@ Create empty `__init__.py` files:
 **`docs/SKILLS.md`** — copy from this project's `docs/SKILLS.md` verbatim (skill names and vendor sources are the same across projects).
 
 **`docs/plans/.gitkeep`** — empty file to track the directory. This is the default plans directory governed by the [`writing-plans`](../writing-plans/) skill; bootstrap creates it so the first plan can be written without ceremony. Projects that prefer a different path can drop a single-line `.skills/plans_dir` file under the repo root (see [`writing-plans/SKILL.md`](../writing-plans/SKILL.md) for the resolution order).
+
+### Phase 7b — Deployment artifacts
+
+> Skip this entire phase when `DEPLOY_TARGET=none`.
+
+Copy the templates from [`references/systemd-deploy.md`](references/systemd-deploy.md):
+
+- `deploy/<PROJECT_NAME>.service` — systemd unit lifted from `notifier`'s canonical pattern: BUILD_ID stamping via `ExecStartPre`, three-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env` → repo `.env`). Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments (PostgreSQL `After=`, `uv` install path).
+- README **"Deploy"** section — append the `systemctl` install/restart/journalctl recipe to `README.md`.
 
 ### Phase 8 — `.claude/settings.json`
 
@@ -396,16 +329,41 @@ done
 
 ### Phase 12 — Verify
 
+Always run:
+
 ```bash
 uv sync
 uv run pre-commit install
 uv run ruff check .
+```
+
+Expected: ruff clean.
+
+When `DB_BACKED=yes`, also run:
+
+```bash
+# Confirm Alembic can introspect models and report current revision.
+# Output should be empty (no revisions yet) or list the head revision.
+uv run alembic current 2>&1 | grep -Ev "^(INFO|$)" || true
+```
+
+If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database), also run the smoke test:
+
+```bash
+uv run pytest tests/test_health.py
+```
+
+If `TEST_DATABASE_URL` is **not** set on a fresh bootstrap, skip the pytest smoke step — the conftest raises at import time without it. Note this clearly in the GH issue body (Phase 15) so the smoke test runs before the first feature PR lands.
+
+When `DB_BACKED=no`, run:
+
+```bash
 uv run pytest --no-cov
 ```
 
-Expected: ruff clean, pytest exits 0 or 5 (no tests collected — acceptable on empty suite).
+Expected: pytest exits 0 or 5 (no tests collected — acceptable on empty suite). The conftest's `client` fixture binds to the app even without a database.
 
-If either fails, fix before proceeding.
+If any of the above fails, fix the underlying issue before proceeding.
 
 ### Phase 13 — Commit
 
@@ -434,7 +392,7 @@ gh issue create \
   --body "..."
 ```
 
-Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components).
+Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components). When Phase 12's pytest smoke step was skipped because `TEST_DATABASE_URL` wasn't set on the fresh bootstrap, add a `## Follow-ups` section noting that the smoke test must run before the first feature PR lands.
 
 Post a completion comment referencing the commit SHA, then close:
 
@@ -445,15 +403,19 @@ gh issue close 1
 
 ### Phase 16 — Report
 
-Present a completion table:
+Present a completion table. Branch-point rows show the choice made (or "skipped" when the branch was disabled):
 
 | Component | Status |
 |---|---|
 | SSH deploy key | Configured |
 | Git remote | `git@github-<PROJECT_NAME>:<GITHUB_ORG>/<PROJECT_NAME>.git` |
 | Python tooling | uv, pytest, ruff, hatchling |
-| FastAPI skeleton | `src/api/main.py`, `src/core/logging.py` |
-| Tests scaffold | `tests/api/`, `tests/core/` |
+| FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready]), `src/core/logging.py` |
+| Settings | `src/core/config.py` (`<SETTINGS_STYLE>`) |
+| Database | `<DB_BACKED>` — when yes: `src/core/database.py`, `src/core/models[.py\|/]` (`<MODELS_LAYOUT>`), `alembic/` |
+| Lint profile | `<LINT_PROFILE>` |
+| Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/api/`, `tests/core/` |
+| Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
 | Skills | Local overrides + all vendor skills symlinked + matching `.claude/skills/` discovery symlinks |
 | GH issue | #1 closed |
@@ -462,5 +424,8 @@ Present a completion table:
 
 - The `pre-ship.sh` per-SHA stamp prefix is auto-derived from `$(basename "$(git rev-parse --show-toplevel)")` in the `shipping-work-python-fastapi` variant — no per-project substitution required (and no risk of cross-project stamp collisions).
 - All symlinks use **relative** paths — absolute paths break after cloning.
-- `configure_logging()` called once in `src/api/main.py` only — never in library modules.
+- `src/core/config.py` is the single source of env access. Both `os.environ` reads and `pydantic-settings` instantiation belong there; no other module should call `os.environ.get()` for runtime configuration.
+- `configure_logging()` is called once inside the FastAPI `lifespan` context manager — never at module import time, and never in library modules.
+- When `DEPLOY_TARGET=systemd`: the unit must declare its `ExecStartPre` BUILD_ID write **before** the `EnvironmentFile=-/run/<PROJECT_NAME>/build-id` line (the file must exist when systemd loads it). The `EnvironmentFile` order itself follows systemd convention — later entries override earlier ones — so BUILD_ID (read-only state from `ExecStartPre`) goes first as the lowest-precedence layer, then `/etc/<PROJECT_NAME>/.env`, then the repo `.env`.
+- When `DB_BACKED=yes`: `tests/conftest.py` must reject `TEST_DATABASE_URL == DATABASE_URL` (production-URL safety check) — `Base.metadata.drop_all` runs on teardown and would destroy any production table mapped to the project's models.
 - `uv.lock` must be committed alongside `pyproject.toml`.

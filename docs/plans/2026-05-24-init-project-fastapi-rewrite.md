@@ -1,7 +1,7 @@
 ---
 title: Rewrite init-project-fastapi as core spine + opinionated branch points
 date: 2026-05-24
-status: draft
+status: executed
 ---
 
 # Rewrite init-project-fastapi as core spine + opinionated branch points
@@ -30,9 +30,9 @@ Restructure the skill into a **core spine** (applies to every bootstrap) plus **
 
 3. **Add DB branch sub-section to Phase 3 (pyproject.toml)** — conditional deps block adds `sqlalchemy[asyncio]>=2.0`, `asyncpg>=0.30`, `alembic>=1.14`; ruff `exclude` gains `alembic/versions/`. Add `pydantic-settings>=2.0` when `SETTINGS_STYLE=pydantic-settings` (default).
 
-4. **Add Phase 5b: Database scaffolding (conditional on `DB_BACKED=yes`)** — create `src/core/database.py` with `get_engine`/`get_session_factory`/`reset_engine`; create `src/core/models.py` (monolithic) or `src/core/models/__init__.py` + `base.py` (package) based on `MODELS_LAYOUT`; run `uv run alembic init alembic` and edit `alembic/env.py` to use the async engine + import the declarative base. Include a one-screen explanatory diff for the `env.py` edits.
+4. **Add Phase 5c: Database scaffolding (conditional on `DB_BACKED=yes`)** — create `src/core/database.py` with `get_engine`/`get_session_factory`/`reset_engine` (imports `get_database_url` from `src/core/config.py`); create `src/core/models.py` (monolithic) or `src/core/models/__init__.py` + `base.py` (package) based on `MODELS_LAYOUT`; create `src/api/deps.py` with `get_db_session` async generator; ship `alembic/env.py` as asset `skills/init-project-fastapi/assets/alembic-env.py`; instruct `uv run alembic init alembic` then `cp` over the asset. **In-flight revision:** renumbered to 5c (was 5b) so Settings (5b) precedes Database (5c) — Database imports `get_database_url` from Settings. Also added `src/api/deps.py` to this phase so the conftest's session override has something to bind to.
 
-5. **Add Phase 5c: Settings scaffolding (conditional on `SETTINGS_STYLE`)** — `pydantic-settings` path creates `src/core/config.py` with `Settings(BaseSettings)` reading `DATABASE_URL`, `LOG_LEVEL`, etc.; `os.environ` path creates `src/core/config.py` with explicit guard functions (`get_database_url()` raising a helpful `RuntimeError`).
+5. **Add Phase 5b: Settings scaffolding (always, with branch on `SETTINGS_STYLE`)** — `pydantic-settings` path creates `src/core/config.py` with `Settings(BaseSettings)` + `get_settings()` + `get_database_url()` shim; `os.environ` path creates `src/core/config.py` with explicit guard functions (`get_database_url()`, `get_log_level()`, `get_build_id()`). **In-flight revision:** renumbered to 5b (was 5c) so Database can import from this phase.
 
 6. **Expand Phase 5 (Source skeleton) `src/api/main.py`** — add `/health` and `/ready` route stubs to the core template (returns `{"status": "ok"}`); add a `lifespan` async context manager stub that calls `configure_logging()` and (if DB branch) initializes the engine. Move `configure_logging()` call into the lifespan instead of module-level.
 
@@ -50,13 +50,13 @@ Restructure the skill into a **core spine** (applies to every bootstrap) plus **
 
 ## Open questions / risks
 
-- **`notifier` uses `os.environ` for settings, not `pydantic-settings`** — the new default (`pydantic-settings`) reflects the *newer* converged choice (3/7 most recent), but Step 12's self-test against `notifier` will not be a perfect match on this dimension. Acceptable, but worth flagging in the rewrite that the most mature production service is on the older pattern.
+- ~~**`notifier` uses `os.environ` for settings, not `pydantic-settings`**~~ **Acknowledged in-flight:** noted explicitly in SKILL.md's branch-point cohort context section ("Older services (notifier, archiver, watcher) still use explicit `os.environ` guard functions — both work, the newer pattern is the recommended default"). Step 12 self-test verdict captured this as the only material deviation between the rewrite and today's notifier.
 
-- **Models package vs monolithic default** — chose monolithic (6/7) for the default, but `notifier`'s package layout becomes load-bearing past ~5 tables. The skill should include a one-line note: "Promote to `models/` package when you cross ~5 tables or domain boundaries become clear."
+- ~~**Models package vs monolithic default**~~ **Acknowledged in-flight:** the recommended promotion threshold ("when crossing ~5 tables or natural domain boundaries") landed in the `models.py` template comment (`references/database-scaffolding.md`) and in the cohort context note in SKILL.md.
 
 - **`pydantic-settings` adds a runtime dep to every new service** — even ones that don't immediately need typed config. ~2 MB install footprint, negligible startup cost. Calling out so the user can override the default if minimalism matters more than ergonomics.
 
-- **Alembic `env.py` edits are non-trivial to template** — the async engine wiring + import-the-declarative-base pattern needs a working example, not just inline instructions. Plan to ship the edited `env.py` as an asset under `skills/init-project-fastapi/assets/alembic-env.py` and have the procedure copy + substitute.
+- ~~**Alembic `env.py` edits are non-trivial to template**~~ **Resolved:** shipped as `skills/init-project-fastapi/assets/alembic-env.py`; Phase 5c instructs `cp skills/init-project-fastapi/assets/alembic-env.py alembic/env.py` after `alembic init`. Asset is a generic async PostgreSQL env.py; per-project extensions (e.g., custom type render hooks) are documented in the asset's docstring.
 
 - ~~**Systemd unit assumes `User=exedev` + `/home/exedev/<proj>` layout**~~ **Resolved:** added `DEPLOY_USER` (default `exedev`) and `DEPLOY_HOME` (default `/home/<DEPLOY_USER>/<PROJECT_NAME>`) as sub-parameters of `DEPLOY_TARGET=systemd`. See Step 8.
 
