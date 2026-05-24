@@ -422,3 +422,31 @@ Do not relaunch a salvaged agent in the same wave that hit the ceiling. Resolve 
 - Adjacent project shapes worth probing during Q5: Docker-Compose projects may be bounded by their port-mapping range, OR may share a single set of services across worktrees (different failure mode — shared state instead of a ceiling). Plain git-worktree-only projects have no ceiling beyond `git worktree add` concurrency.
 
 **Host project follow-up (not yet filed):** widen `dev.sh worktree create` port pool past 8009, recycle stale ports on `worktree destroy`, or fall back cleanly to "no Nginx vhost" without changing cwd. The originating Q2 backlog tracking issue is `CannObserv/cannabis.observer-wordpress#279`; the port-pool work is a separate follow-up to be filed against that project.
+
+---
+
+## Process Log — Session 2026-05-24 (skills repo, six-issue Batch F)
+
+**Project:** `gregoryfoster/skills` (this repo)
+
+**Backlog:** issues #26, #27, #28, #30, #31, #33 — references convention, FastAPI pre-ship fix, worktree-destroy leak fix, structural tests for references, new audit script, doc-check default tightening.
+
+**Interview answers:**
+- Q1 Quality: Correctness above all → formula adjusted to `(Foundation × 2) + (Correctness × 3) + Scope`, max 18.
+- Q2 Deploy: active production (downstream submodule consumers).
+- Q3 Defer: none — ship all 6.
+- Q4 Parallelism: maximize within batches.
+- Q5 Ceiling: no host-project ceiling (plain `git worktree add` + pytest); cap at batch size (6).
+
+**Shape:** single batch with 6 parallel agents. All issues file-disjoint at minimum scope; ceiling equals batch size, so no chunking needed. Tracking issue: `#34`.
+
+**Non-obvious decisions captured:**
+
+- **Single-owner assignment to resolve a one-line shared-file overlap.** [skills/using-git-worktrees/SKILL.md](../using-git-worktrees/SKILL.md) was the only contested file (between #28 documenting an internal fix and #31 documenting a new script). Resolution: assign SKILL.md edits exclusively to one agent (F4, the larger contributor) rather than serializing two small edits with a rebase. F1 (#28) ceded SKILL.md and relies on commit message + inline script comments to document the internal change. This is cheaper than any merge-order ceremony for ≤2-line overlaps and worth reaching for first.
+- **Detection-only as the merge-safe minimum for a paired feature.** #31's issue listed `worktree-create.sh` preamble integration and `pre-ship.sh` wiring as optional. Both were scoped out to keep F4's diff narrow and avoid pulling additional files (`worktree-create.sh`) into the batch. Pattern: when an issue offers a "main thing + optional integration points," ship the main thing in this batch and file follow-ups for the wiring.
+- **Variable rubric weight.** First session where Correctness flexed to ×3. Confirmed the existing "unless the user requests different weights" escape hatch is enough — no rubric change needed at the skill level. Worth noting that the weighting choice flipped the ordering: under Correctness ×2 / Foundation ×2, #28 and the convention work (#26) would have been closer; under Correctness ×3, #28 leads clearly because of real downstream forensics.
+
+**Tactical lessons:**
+
+- **`gh issue create` with `--body "$(cat <<'EOF' ... EOF)"` chokes on apostrophes inside the body** (e.g. `skill's`), even though the heredoc is single-quoted. The error surfaces as `unexpected EOF while looking for matching '`'. Switch to `gh issue create --body-file <path>` — sidesteps all shell quoting issues and lets the body include any character.
+- **Step 8 commit format clarification.** The skill's recommended commit format is `#<n> docs: add <topic> backlog orchestration plan`, but `<n>` (the tracking issue) doesn't exist until Step 9. Two viable orderings: (a) commit with the `#<n>` prefix omitted, then open the issue; (b) open the issue first, then commit with the prefix. Recent precedent in this repo uses (a) — design-doc commits land without a `#` prefix, and later follow-up commits reference the tracking issue. Either ordering is fine; just don't block waiting for an issue number.
