@@ -7,3 +7,4 @@ htmlcov/
 .env
 env
 tests/benchmarks/results/*.jsonl
+.claude/worktrees/
