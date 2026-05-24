@@ -63,7 +63,7 @@ if (( ${#ZOMBIES[@]} > 0 )); then
     printf 'Worktree zombie processes detected (%d):\n' "${#ZOMBIES[@]}"
     printf '  %s\n' "${ZOMBIES[@]}"
     echo ""
-    echo "Kill all: bash scripts/audit-worktree-zombies.sh | awk '/^  [0-9]/ {print \$1}' | xargs kill"
+    echo "Kill all: bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh | awk '/^  [0-9]/ {print \$1}' | xargs kill"
   fi
   exit 1
 fi
