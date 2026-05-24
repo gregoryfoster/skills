@@ -32,7 +32,7 @@ SENSITIVE_PATHS=(
 )
 DOC_SECTIONS=(
   "AGENTS.md: project structure, conventions, skill inventory, route table"
-  "README.md: feature list, install/run instructions, env var inventory"
+  "README.md: orientation + curated links into canonical docs; only the README-owned bits (e.g. top-level CLI list, two-line quick start) should change here"
 )
 # ------------------------------------------------------------------------------
 

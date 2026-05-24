@@ -34,7 +34,7 @@ SENSITIVE_PATHS=(
 # Sections in AGENTS.md / README.md to spot-check when drift is detected.
 DOC_SECTIONS=(
   "AGENTS.md: project structure, conventions, skill inventory"
-  "README.md: feature list, install/run instructions"
+  "README.md: orientation + curated links into canonical docs; only the README-owned bits (e.g. top-level CLI list, two-line quick start) should change here"
 )
 # ------------------------------------------------------------------------------
 
