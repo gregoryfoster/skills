@@ -126,12 +126,14 @@ The branch ref itself is **not** deleted — that's a separate decision. Use `gi
 
 ### Auditing for zombie processes
 
-Operators sometimes bypass `worktree-destroy.sh` (raw `git worktree remove`, manual `rm -rf`), leaving behind processes spawned from inside the now-gone worktree. Run the audit script to surface them:
+Operators sometimes bypass `worktree-destroy.sh` (raw `git worktree remove`, manual `rm -rf`), leaving behind processes spawned from inside the now-gone worktree. Run the audit script to surface them. From the consuming project's repo root:
 
 ```bash
-bash scripts/audit-worktree-zombies.sh         # prints zombies, exits 1 if any
-bash scripts/audit-worktree-zombies.sh --quiet # silent; exit code only — wire into pre-flight
+bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh         # prints zombies, exits 1 if any
+bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh --quiet # silent; exit code only — wire into pre-flight
 ```
+
+Adjust the path prefix when the skill is vendored under a different layout (e.g. `skills-vendor/<owner>-<repo>/skills/using-git-worktrees/scripts/audit-worktree-zombies.sh`).
 
 Detection-only — it does not kill anything. The operator decides whether to kill the listed PIDs.
 
