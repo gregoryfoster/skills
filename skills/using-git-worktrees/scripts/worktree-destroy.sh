@@ -208,9 +208,9 @@ fi
 # otherwise produce surprising matches.
 ESC_WT_PATH=$(printf '%s\n' "$WORKTREE_PATH" | sed 's/[][\\.*^$/()+?{|}]/\\&/g')
 
-echo "Killing processes referencing $WORKTREE_PATH..."
 PIDS=$(pgrep -f "$ESC_WT_PATH" 2>/dev/null || true)
 if [[ -n "$PIDS" ]]; then
+  echo "Killing processes referencing $WORKTREE_PATH..."
   echo "$PIDS" | xargs kill 2>/dev/null || true
   sleep 1
   STRAGGLERS=$(pgrep -f "$ESC_WT_PATH" 2>/dev/null || true)
