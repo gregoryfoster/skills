@@ -16,6 +16,8 @@ usage() {
   echo "Side effects:"
   echo "  - If <worktree>/.port exists, kills any process bound to that port"
   echo "    via 'lsof -ti tcp:<port>' (portable to macOS + Linux)."
+  echo "  - Kills any process whose argv references the worktree path"
+  echo "    (pgrep -f), catching dev-server stragglers that lost their port."
   echo "  - Removes the worktree directory (git worktree remove)."
   echo "  - Runs git worktree prune to clean stale metadata."
   echo ""
@@ -193,7 +195,32 @@ if [[ -f "$PORT_FILE" ]]; then
   fi
 fi
 
+# Path-based kill: catches processes that lost their port binding (e.g.,
+# uvicorn parents whose workers crashed or were reparented to init). Every
+# process spawned from inside the worktree carries the worktree's absolute
+# path in its argv (typically via .venv/bin/<interpreter>), so pgrep -f on
+# $WORKTREE_PATH is a more authoritative primitive than the .port file.
+# TERM first, then KILL stragglers after a 1s grace.
+echo "Killing processes referencing $WORKTREE_PATH..."
+PIDS=$(pgrep -f "$WORKTREE_PATH" 2>/dev/null || true)
+if [[ -n "$PIDS" ]]; then
+  echo "$PIDS" | xargs kill 2>/dev/null || true
+  sleep 1
+  STRAGGLERS=$(pgrep -f "$WORKTREE_PATH" 2>/dev/null || true)
+  if [[ -n "$STRAGGLERS" ]]; then
+    echo "$STRAGGLERS" | xargs kill -9 2>/dev/null || true
+  fi
+fi
+
 git worktree remove "$WORKTREE_PATH" || exit 2
 git worktree prune || exit 2
+
+# Post-removal sweep: warn (do not fail) if anything still references the path.
+# Informational only — surfaces leaks the operator can investigate.
+STRAGGLERS=$(pgrep -f "$WORKTREE_PATH" 2>/dev/null || true)
+if [[ -n "$STRAGGLERS" ]]; then
+  echo "WARN: processes still reference $WORKTREE_PATH after destroy:" >&2
+  echo "$STRAGGLERS" | xargs ps -p 2>/dev/null >&2 || true
+fi
 
 echo "Worktree removed: $WORKTREE_PATH"
