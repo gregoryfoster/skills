@@ -124,17 +124,25 @@ fi
 # projects skip this block entirely without per-project override.
 
 if [[ -f "package.json" ]]; then
-  echo ""
-  echo "=== Lint (ESLint) ==="
-  npm run lint:js
+  has_script() { node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts['$1'] ? 0 : 1)" 2>/dev/null; }
 
-  echo ""
-  echo "=== Format check (Prettier) ==="
-  npm run format:js:check
+  if has_script lint:js; then
+    echo ""
+    echo "=== Lint (ESLint) ==="
+    npm run lint:js
+  fi
 
-  echo ""
-  echo "=== Tests (JS) ==="
-  npm run test:js
+  if has_script format:js:check; then
+    echo ""
+    echo "=== Format check (Prettier) ==="
+    npm run format:js:check
+  fi
+
+  if has_script test:js; then
+    echo ""
+    echo "=== Tests (JS) ==="
+    npm run test:js
+  fi
 fi
 
 echo ""
