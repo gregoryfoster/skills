@@ -48,12 +48,23 @@ class TestReferences:
             )
 
     def test_no_orphan_references(self, skill: Skill) -> None:
-        """Every *.md file under references/ must be linked from sibling SKILL.md."""
+        """Every *.md file under references/ must be linked from sibling SKILL.md.
+
+        Enforces the AGENTS.md "References convention" rule that references files
+        must appear as a markdown link `[label](references/<name>.md)`, not merely
+        as a backtick mention or comment. Uses the same regex as the linked-file
+        check so the two assertions stay in lockstep.
+        """
         ref_dir = skill.directory / "references"
         if not ref_dir.is_dir():
-            return
+            pytest.skip("no references/ directory")
+        linked_names = {
+            raw.split("#", 1)[0].split("?", 1)[0]
+            for kind, raw in _LINK_RE.findall(skill.body)
+            if kind == "references"
+        }
         for ref in sorted(ref_dir.glob("*.md")):
-            assert ref.name in skill.body, (
+            assert ref.name in linked_names, (
                 f"{skill.dir_name}: references/{ref.name} exists but is not linked "
-                "from SKILL.md"
+                f"as a markdown link `[label](references/{ref.name})` from SKILL.md"
             )
