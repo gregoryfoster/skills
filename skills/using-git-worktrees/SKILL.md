@@ -124,6 +124,19 @@ The script:
 
 The branch ref itself is **not** deleted — that's a separate decision. Use `git branch -d <branch>` afterward if you also want to drop the local ref.
 
+### Auditing for zombie processes
+
+Operators sometimes bypass `worktree-destroy.sh` (raw `git worktree remove`, manual `rm -rf`), leaving behind processes spawned from inside the now-gone worktree. Run the audit script to surface them. From the consuming project's repo root:
+
+```bash
+bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh         # prints zombies, exits 1 if any
+bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh --quiet # silent; exit code only — wire into pre-flight
+```
+
+Adjust the path prefix when the skill is vendored under a different layout (e.g. `skills-vendor/<owner>-<repo>/skills/using-git-worktrees/scripts/audit-worktree-zombies.sh`).
+
+Detection-only — it does not kill anything. The operator decides whether to kill the listed PIDs.
+
 ## Project-local wrapper scripts
 
 When a project ships a wrapper (e.g., `./infrastructure/scripts/dev.sh worktree create|destroy`), it must invoke the upstream scripts under the hood, not reimplement them. The wrapper may:
