@@ -199,6 +199,7 @@ Skills may carry supplementary `references/*.md` files for content that exceeds 
 
 - **No frontmatter.** Plain markdown, no YAML preamble.
 - **Linked from the sibling SKILL.md.** Every `references/<name>.md` must appear as a `[label](references/<name>.md)` link in its sibling SKILL.md body. Orphans are blocked by [tests/structural/test_references.py](tests/structural/test_references.py).
+- **Flat directory.** No subdirectories under `references/`. The structural no-orphan check compares link targets against `references/*.md` (non-recursive); nested layouts would be silently missed.
 - **No length cap.** The whole point of a references file is escaping the SKILL.md body recommendation — don't reimpose one.
 - **Naming:** `lowercase-kebab.md`, matching the broader skill naming convention.
 
