@@ -59,6 +59,10 @@ Four questions establish everything needed. Ask them in order; do not stack mult
 > Maximize parallel agents, sequential waves, or hybrid (parallel within batches, gates between)?
 > Follow up: worktrees for branch isolation? (almost always yes)
 
+**Q5 — Worktree provisioning mechanics and ceiling?**
+> Does the host project have a custom worktree-create script (e.g. `dev.sh worktree create`)? If so, what concurrent ceiling does it support? What does it provision beyond plain `git worktree add` — Nginx vhosts, DB clones, port pools, node_modules overlays?
+> The answer caps the per-batch agent count regardless of file-disjointness. If the user doesn't know, ask them to grep the script for port-pool size, docker-compose port ranges, or similar limits before proceeding.
+
 Record agreements explicitly as you go — they feed the design doc.
 
 ### Step 4: Scoring rubric
@@ -95,6 +99,8 @@ Group issues into **merge batches**. The core principle: within a batch, all age
 
 **Batch design rules:**
 - **Batch 0 / Batch A**: truly isolated issues — each touches files no other issue in this batch touches. Maximum agent count.
+- **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`. Exceeding the ceiling produces silent fall-through, not a graceful error — see Rule 5.
+- **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free). Agents within a sub-wave run in parallel up to the ceiling; sub-waves themselves run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves.
 - **Subsequent batches**: ordered by the dependency chain of contested files. One agent per batch on the critical path; parallelize only where file coverage is genuinely disjoint.
 - **Bundle related issues** in one agent when: they touch the same file(s) AND are best reviewed together (e.g. define constants then use them; fix protocol then add config models).
 - **Correctness fixes first within a batch**: if a targeted bug fix touches a file that later gets a wide refactor, put the bug fix at the head of the refactor agent's commit sequence, not in an earlier parallel slot.
@@ -185,19 +191,27 @@ Each **multi-agent batch** gets a shared integration branch (e.g. `batch/a`, `ba
 
 The human review happens against the **batch branch**: run tests, inspect the combined diff, then merge to `main`. After merge, the orchestrator checks `main` back out, pulls to sync, and uses it as the base for the next batch branch.
 
-Ask the user their preferred merge strategy (regular, squash, rebase) and record it in the design doc.
+**Intra-batch worker→batch integration must be fast-forward or regular-merge — not squash or rebase.** The orchestrator destroys completed workers' worktrees via `worktree-destroy.sh --base batch/<X>` (Orchestrator step 5), which verifies the worker branch is an ancestor of `batch/<X>`. Squash merges drop the parent link and rebase rewrites commits; both break the ancestor check and force the orchestrator to descope the destroy, defeating the merge-safety gate. This is a separate decision from the batch-branch→main merge strategy below (which the user picks).
+
+Ask the user their preferred **batch→main** merge strategy (regular, squash, rebase) and record it in the design doc. The intra-batch strategy is fixed at FF/regular-merge regardless.
 
 ### Orchestrator agent
 
 The orchestrator reads the batch plan and manages progression. It:
 1. **Sync local main before every batch launch** — `git checkout main && git pull --ff-only`. Agents worktree from local main; if local main is stale, agents base their work on the wrong commit.
 2. **Check out the batch branch before spawning agents** — `git checkout -b batch/<X>`. Because `isolation: "worktree"` merges to the caller's current branch, this ensures all worker output accumulates on `batch/<X>` rather than `main` (see Rule 3).
-3. Launches all worker agents whose batch gate is currently satisfied simultaneously
-4. On each worker completion signal, verifies the merge landed on `batch/<X>` (respecting any intra-batch ordering; returns conflicts to the responsible worker agent to resolve)
-5. When all workers are merged, runs the full test suite against `batch/<X>`
-6. Notifies the user: "Batch X ready for review: `batch/<X>`, N issues, tests passing"
-7. Waits for merge confirmation before proceeding
-8. **On confirmation**, checks out `main`, merges `batch/<X>`, pushes, then syncs local main before launching the next batch
+3. **Verify worktree slot availability** — before launching, check that consumed slots + planned agents ≤ project ceiling (Rule 5). Prefer the host project's own slot-status command if it exists (e.g., a `dev.sh worktree status` or listing files in the port-pool directory) — this reports the **actual** resource consumption. If only the git-worktree count is available, use `bash skills/using-git-worktrees/scripts/worktree-list.sh --porcelain | grep -c '^worktree '` (minus 1 for the main checkout) as a **lower-bound** proxy and apply a safety margin (e.g., treat the effective ceiling as `ceiling - 1`) to absorb port leaks from previously-destroyed worktrees whose project-side cleanup didn't run.
+4. Launches all worker agents whose batch gate is currently satisfied simultaneously
+5. **On each worker completion signal**:
+   - Run `git -C <main> status --porcelain` (Rule 6). Any output → halt the batch and salvage.
+   - Verify the merge landed on `batch/<X>` (respecting any intra-batch ordering; returns conflicts to the responsible worker agent to resolve).
+   - Destroy the merged worker's worktree: `bash skills/using-git-worktrees/scripts/worktree-destroy.sh <agent-branch> --base batch/<X>`. The `--base` flag tells the destroy script to verify the merge against the batch branch rather than `main`, since the human batch-to-main merge hasn't happened yet (would otherwise refuse). Frees the slot for a chunked sub-wave.
+   - Drop the now-unused ref: `git branch -d <agent-branch>`. The lowercase `-d` refuses if the branch isn't merged into HEAD, providing a second guard against the same merge-safety class as the destroy script's Iron Law. If `-d` refuses, the worker's commits are not actually on `batch/<X>` — escalate before forcing.
+6. When all workers are merged, runs the full test suite against `batch/<X>`
+7. **Between sub-waves of a chunked batch** — after destroying completed workers' worktrees in sub-wave Aₙ, re-verify slot availability (step 3) before launching Aₙ₊₁
+8. Notifies the user: "Batch X ready for review: `batch/<X>`, N issues, tests passing"
+9. Waits for merge confirmation before proceeding
+10. **On confirmation**, checks out `main`, merges `batch/<X>`, pushes, then syncs local main before launching the next batch
 
 Never writes implementation code itself.
 
@@ -205,13 +219,18 @@ Never writes implementation code itself.
 
 Each worker agent follows this protocol before signaling completion:
 
-1. **Set up worktree** — isolated branch `feature/batch-<X>-<issue>` in `.worktrees/`
-2. **Implement with TDD** — red → green → refactor
-3. **Run full test suite** — all tests must pass
-4. **Run linter** — no violations
-5. **Self-review diff** — check: correctness, test coverage, project conventions, no unintended side effects outside issue scope
-6. **Address findings** — fix before signaling; do not signal with known issues
-7. **Signal completion** — notify orchestrator the branch is ready to merge into the batch branch
+1. **Set up worktree** — isolated branch `feature/batch-<X>-<issue>` in `.worktrees/` (or the project's resolved worktree root — see [`using-git-worktrees`](../using-git-worktrees/))
+2. **Pre-flight: verify isolation** — confirm cwd is an isolated worktree, not the main checkout. Use either:
+   - `[ -f "$(git rev-parse --show-toplevel)/.git" ]` — in a linked worktree, `.git` is a *file* pointing to the worktree's git-dir; in the main checkout it's a *directory*. Cheapest reliable check.
+   - Or compare resolved paths: `[ "$(realpath "$(git rev-parse --git-dir)")" != "$(realpath "$(git rev-parse --git-common-dir)")" ]`. Do not compare the raw `git rev-parse` outputs without `realpath` — git may return one as absolute and the other as relative depending on cwd, producing false-unequal results that mask a fall-through.
+
+   If the check fails, abort and signal the orchestrator that worktree provisioning fell through (Rule 5/6) — do NOT modify files in the main checkout.
+3. **Implement with TDD** — red → green → refactor
+4. **Run full test suite** — all tests must pass
+5. **Run linter** — no violations
+6. **Self-review diff** — check: correctness, test coverage, project conventions, no unintended side effects outside issue scope
+7. **Address findings** — fix before signaling; do not signal with known issues
+8. **Signal completion** — notify orchestrator the branch is ready to merge into the batch branch. The orchestrator destroys the worktree after merge (see Orchestrator step 5); the worker does NOT destroy it itself (premature destruction can race with the merge).
 
 **No PR is opened by the worker.** The orchestrator merges into the batch branch; the user reviews the batch branch as a whole.
 
@@ -222,7 +241,7 @@ Each worker agent follows this protocol before signaling completion:
 - **Blast radius ≠ priority** — a high-blast issue may score high but still must wait for lower-priority isolates to merge first
 - **Correctness fixes lead refactors** — if a bug fix and a structural refactor both touch the same file, fix the bug in the first commit of the refactor branch, not in a separate earlier batch
 - **Bundle when cohesive** — two issues that naturally sequence (define → use, protocol → config) belong in one agent with sequential commits, not two agents with a gate
-- **Worktrees always** — use `isolation: "worktree"` for all worker agents; each gets an isolated working directory. Pre-create and check out the batch branch first so their output lands there, not on `main`.
+- **Worktrees always — and verify the host project can provision them** — use `isolation: "worktree"` for all worker agents; each gets an isolated working directory. Pre-create and check out the batch branch first so their output lands there, not on `main`. The Agent tool parameter does NOT guarantee filesystem isolation if the host project's worktree-create script falls through (port pool exhausted, docker port collision, etc.); cap per-batch agents at the project's provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
 - **Deferred is a decision** — explicitly name what is out of scope and why; don't silently omit
 - **Batch feature branches for multi-agent batches** — gives the user a single integration point to test and review before merging to main; surfaces intra-batch conflicts at the batch branch, not at main
 - **Single-agent batches skip the extra branch** — the agent's feature branch is the batch branch
@@ -300,6 +319,35 @@ git commit --amend -m "..."    # fix message before doing anything else
 # only then: git rebase --continue for the next patch (if any)
 ```
 
+### Rule 5 — Cap per-batch parallelism at the host project's worktree provisioning ceiling
+
+`isolation: "worktree"` is an Agent tool parameter; it does not control the host project's worktree-create tooling. If that tooling has a finite resource ceiling (port pool, docker port range, license slot), exceeding it produces **silent fall-through**, not a graceful error: the agent's worktree-create script may print a warning and fall back to plain `git worktree add` (losing project-specific provisioning), or — worse — drop the agent into the main checkout where it modifies tracked files in place.
+
+**Before launching any batch**, verify `len(agents) ≤ project ceiling` established in Q5. If file-disjointness allows more parallelism than the ceiling, chunk the batch into ceiling-sized sub-waves (see Step 7 batch design rules) rather than narrowing.
+
+**Recording the ceiling**: capture it in the design doc's "Approved approach" section so subsequent sessions inherit it without re-interviewing.
+
+### Rule 6 — Detect worktree fall-through at runtime
+
+A ceiling check is a precondition, not a guarantee — Q5 answers can be wrong, port pools can shrink mid-run, scripts can fail in new ways. The orchestrator MUST detect when an agent fell through into the main checkout.
+
+**Between worker completion signals**, the orchestrator runs:
+```bash
+git -C <main checkout> status --porcelain
+```
+
+Any output indicates a worker fell through and is modifying files in the main checkout. Stop processing further completion signals from this batch until the salvage completes and `git -C <main> status --porcelain` is clean again. Identify the responsible agent (most recently signaled, or — if commits ended up on the wrong branch — via `git log main..HEAD` on the main checkout), and salvage per the Recovery procedure in [`references/recovery.md`](references/recovery.md).
+
+This check is cheap and runs on the orchestrator's host, not in any agent's worktree. Do it on every signal, not just on suspicion.
+
+---
+
+## Recovery
+
+When Rule 6 detects uncommitted work in the main checkout — or a worker's pre-flight isolation check (Worker step 2) fires — halt further completion signals for the affected batch and follow the salvage procedure in [`references/recovery.md`](references/recovery.md). The procedure preserves the worker's intended commits, replays uncommitted modifications onto the correct feature branch, and re-runs verification (the agent's pre-salvage test pass is invalid — it ran against the main checkout's working tree, not an isolated copy).
+
+Do not relaunch a salvaged agent in the same wave that hit the ceiling. Resolve the ceiling first (destroy a completed worktree, widen the host-project pool, or chunk the remaining work into smaller sub-waves per Step 7).
+
 ---
 
 ## Process Log — Session 2026-03-23
@@ -342,3 +390,35 @@ git commit --amend -m "..."    # fix message before doing anything else
 - #27 and #28 (dashboard 404 + delete watch) were batched into a single agent (A5) despite being distinct issues, because they both touch `dashboard/routes.py`. Batching eliminated a merge conflict risk within Batch A.
 - #16 (event constants) scored 13/15 — highest in the backlog — because it is a prerequisite for #18 (audit helper) and eliminates silent audit-log typo bugs across 8 files.
 - The critical path (Batches B→C→D→E) runs through `tasks.py`. All four batches are single-agent sequential because the file accumulates changes from each batch that the next batch must build on.
+
+---
+
+## Process Log — Session 2026-05-22 (port-pool incident)
+
+**Project:** `cannabis.observer-wordpress` (Bedrock + Sage 11 + Lima VM monorepo)
+
+**Incident:** `/orchestrating-issue-backlog` launched 10 parallel worker agents for Batch A. The host project's `dev.sh worktree create` script allocates ports from a pool of 9 slots (8001–8009) for per-worktree Nginx vhosts. Agents 9–10 (and several others starting near-simultaneously) hit the ceiling.
+
+**Fall-through modes observed:**
+- **Majority (A4, A6, A8, A10):** `dev.sh worktree create` printed "port pool exhausted" and fell back to plain `git worktree add`. Lost VM vhost, DB clone, node_modules overlay — but git branch + commits landed correctly on the agent's feature branch.
+- **One agent (A9):** Silently fell through to the **main checkout** as its working directory. Modified tracked files in place, ran tests against them (passed — because the modifications WERE the working tree), and was about to run `php -l` when the orchestrator caught it via `git status` on main showing uncommitted modifications.
+
+**Salvage (A9):** Stashed uncommitted work + untracked files (`stash push -u`) in the main checkout, switched to A9's empty feature branch (`feature/batch-a-249-tranche-c6-c9`), popped the stash, committed manually as `e0307c0`. No work lost.
+
+**Rules added (Rule 5, Rule 6):**
+- **Rule 5** — Cap per-batch parallelism at the host project's worktree provisioning ceiling. Establish via new Q5 in interview.
+- **Rule 6** — Orchestrator runs `git -C <main> status --porcelain` between worker completion signals to detect fall-through. Cheap, mandatory, runs on every signal.
+
+**Recovery procedure documented:** Stash-and-replay salvage with mandatory test re-run post-salvage (the agent's pre-salvage test pass is invalid).
+
+**Step 3 interview** gained Q5 — worktree provisioning mechanics and ceiling.
+
+**Step 7 batch design** gained ceiling-driven chunking: when file-disjoint agent count exceeds the ceiling, split into sub-waves rather than narrowing the batch.
+
+**"Worktrees always" key principle** amended to acknowledge that the `isolation: "worktree"` Agent parameter does not guarantee filesystem isolation if host-project tooling falls through.
+
+**Anecdotal ceiling patterns** (from this incident only — surface the actual ceiling via Q5 per session; do not extrapolate these as defaults):
+- In this incident: cannabis.observer-wordpress (Bedrock + Lima + Nginx vhost per worktree) had a 9-slot port pool (8001–8009).
+- Adjacent project shapes worth probing during Q5: Docker-Compose projects may be bounded by their port-mapping range, OR may share a single set of services across worktrees (different failure mode — shared state instead of a ceiling). Plain git-worktree-only projects have no ceiling beyond `git worktree add` concurrency.
+
+**Host project follow-up (not yet filed):** widen `dev.sh worktree create` port pool past 8009, recycle stale ports on `worktree destroy`, or fall back cleanly to "no Nginx vhost" without changing cwd. The originating Q2 backlog tracking issue is `CannObserv/cannabis.observer-wordpress#279`; the port-pool work is a separate follow-up to be filed against that project.
