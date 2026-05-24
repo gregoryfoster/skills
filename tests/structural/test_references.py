@@ -22,10 +22,12 @@ import pytest
 from tests.utils.skill_loader import Skill, all_skills
 
 # Match Markdown link targets of the form `(references/<path>)` or
-# `(assets/<path>)`. `[^)]+` captures everything up to the closing paren,
-# which may include a `#fragment` or `?query` suffix — callers must strip
-# those before resolving against the filesystem.
-_LINK_RE = re.compile(r"\((references|assets)/([^)]+)\)")
+# `(assets/<path>)`. `[^) ]+` captures everything up to the closing paren OR
+# the first whitespace — which excludes a CommonMark link title such as
+# `[label](references/foo.md "Title")`. The captured path may still include
+# a `#fragment` or `?query` suffix; callers must strip those before
+# resolving against the filesystem.
+_LINK_RE = re.compile(r"\((references|assets)/([^) ]+)")
 
 
 @pytest.fixture(params=all_skills(), ids=lambda s: s.dir_name)
