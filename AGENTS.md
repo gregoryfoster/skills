@@ -193,6 +193,17 @@ Skills that read or write plan documents resolve the plans directory via the sam
 
 The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the resolved directory. Downstream projects that previously carried a `writing-plans` override solely to repoint the storage path can drop the override and configure `.skills/plans_dir` instead — the upstream skill's resolution order makes the path a knob rather than a fork.
 
+## References convention
+
+Skills may carry supplementary `references/*.md` files for content that exceeds the SKILL.md body cap (SKILL.md is recommended to stay under 500 lines). References files are loaded on demand by the agent, not on skill activation.
+
+- **No frontmatter.** Plain markdown, no YAML preamble.
+- **Linked from the sibling SKILL.md.** Every `references/<name>.md` must appear as a `[label](references/<name>.md)` link in its sibling SKILL.md body. Orphans are blocked by [tests/structural/test_references.py](tests/structural/test_references.py).
+- **No length cap.** The whole point of a references file is escaping the SKILL.md body recommendation — don't reimpose one.
+- **Naming:** `lowercase-kebab.md`, matching the broader skill naming convention.
+
+The same conventions apply to `assets/` (templates, schemas, copy-into-place artifacts), with the obvious adjustment that `assets/` files are typically not markdown.
+
 ## Commit conventions
 
 Conventional Commits style:
