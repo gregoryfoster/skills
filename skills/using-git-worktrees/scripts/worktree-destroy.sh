@@ -230,6 +230,9 @@ if [[ -n "$STRAGGLERS" ]]; then
   # ps -p accepts a comma-separated PID list on both BSD (macOS) and GNU,
   # whereas space-separated/multiple-flag forms diverge across the two.
   PID_LIST=$(echo "$STRAGGLERS" | tr '\n' ',' | sed 's/,$//')
+  # Redirection order: `>&2` first reroutes ps's stdout to stderr (so the
+  # operator sees the process table as part of the WARN message). `2>/dev/null`
+  # then silences ps's OWN stderr (e.g., complaints about an already-dead PID).
   ps -p "$PID_LIST" >&2 2>/dev/null || true
 fi
 
