@@ -19,6 +19,17 @@ if [[ "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+# Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
+# worktrees are still around. Helps surface drift the destroy script can't see
+# (operators using raw `git worktree remove`, post-destroy spawn races, etc.).
+# Silent skip when vendored at a non-canonical path (warning, not a gate).
+AUDIT_SCRIPT="skills/using-git-worktrees/scripts/audit-worktree-zombies.sh"
+if [[ -x "$AUDIT_SCRIPT" ]]; then
+  if ! "$AUDIT_SCRIPT" --quiet; then
+    echo "WARN: worktree zombies detected — see 'bash $AUDIT_SCRIPT'" >&2
+  fi
+fi
+
 # --- Optional JS toolchain (auto-detected) -----------------------------------
 # The stub itself does not run a test runner — overrides supply that. The JS
 # toolchain block is kept here so a downstream project that only swaps the

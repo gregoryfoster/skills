@@ -32,6 +32,17 @@ fi
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
+# Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
+# worktrees are still around. Helps surface drift the destroy script can't see
+# (operators using raw `git worktree remove`, post-destroy spawn races, etc.).
+# Silent skip when vendored at a non-canonical path (warning, not a gate).
+AUDIT_SCRIPT="skills/using-git-worktrees/scripts/audit-worktree-zombies.sh"
+if [[ -x "$AUDIT_SCRIPT" ]]; then
+  if ! "$AUDIT_SCRIPT" --quiet; then
+    echo "WARN: worktree zombies detected — see 'bash $AUDIT_SCRIPT'" >&2
+  fi
+fi
+
 if ! command -v composer >/dev/null; then
   echo "ERROR: composer not installed. This variant is for Composer-managed repos." >&2
   exit 2
