@@ -54,6 +54,17 @@ ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   exit 2
 }
 
+# Pre-flight zombie audit: warn (do not fail) if processes from previously-
+# destroyed worktrees are still around. Fresh worktree creation is a good
+# moment to surface stale state — non-zero from the audit becomes a WARN,
+# never a gate. The audit script is detection-only and lives in the same
+# scripts/ directory.
+if [[ -x "$SCRIPT_DIR/audit-worktree-zombies.sh" ]]; then
+  if ! "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet; then
+    echo "WARN: worktree zombies detected — run 'bash $SCRIPT_DIR/audit-worktree-zombies.sh' for details" >&2
+  fi
+fi
+
 SLUG="${BRANCH//\//-}"
 WORKTREE_PATH="$ROOT/$SLUG"
 
