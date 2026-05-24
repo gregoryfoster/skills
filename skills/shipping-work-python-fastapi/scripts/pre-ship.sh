@@ -133,11 +133,21 @@ if [[ -f "package.json" ]]; then
     exit 2
   fi
 
+  # Validate package.json parses cleanly up front. Without this, `has_script`
+  # would return non-zero on a JSON parse error and the JS gates would silently
+  # skip — conflating "script missing" with "package.json broken." Gate-script
+  # discipline: a broken package.json is an ERROR (exit 2), not a skip.
+  if ! node -e 'JSON.parse(require("fs").readFileSync("./package.json","utf8"))' >/dev/null; then
+    echo "ERROR: package.json failed to parse" >&2
+    exit 2
+  fi
+
   # has_script <name>: exits 0 if package.json has the named npm script, else 1.
   # Script name is passed via env so colons (`lint:js`) or any future special
-  # character can't break out of the node -e JS literal.
+  # character can't break out of the node -e JS literal. With package.json
+  # pre-validated above, non-zero from has_script means only "script not present".
   has_script() {
-    SCRIPT="$1" node -e 'process.exit(require("./package.json").scripts && require("./package.json").scripts[process.env.SCRIPT] ? 0 : 1)'
+    SCRIPT="$1" node -e 'const s=require("./package.json").scripts; process.exit(s&&s[process.env.SCRIPT]?0:1)'
   }
 
   if has_script lint:js; then
