@@ -44,6 +44,17 @@ fi
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
+# Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
+# worktrees are still around. Helps surface drift the destroy script can't see
+# (operators using raw `git worktree remove`, post-destroy spawn races, etc.).
+# Silent skip when vendored at a non-canonical path (warning, not a gate).
+AUDIT_SCRIPT="skills/using-git-worktrees/scripts/audit-worktree-zombies.sh"
+if [[ -x "$AUDIT_SCRIPT" ]]; then
+  if ! "$AUDIT_SCRIPT" --quiet; then
+    echo "WARN: worktree zombies detected — see 'bash $AUDIT_SCRIPT'" >&2
+  fi
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "ERROR: uv not installed. This variant is for uv-managed Python projects." >&2
   exit 2
@@ -166,6 +177,58 @@ else
     if [[ -n "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
       touch "$STAMP_FILE"
     fi
+  fi
+fi
+
+# --- Optional JS toolchain (auto-detected) -----------------------------------
+# Projects with a frontend (e.g., power-map) ship a package.json. Pure-backend
+# projects skip this block entirely without per-project override.
+
+if [[ -f "package.json" ]]; then
+  # Probing package.json requires node. Fail loudly if it's absent rather than
+  # silently treating every script as missing (gate-script discipline: the
+  # output of `has_script` decides whether each JS gate runs, so its stderr
+  # must not be swallowed).
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: node is required to probe package.json scripts (no JS gates would run)" >&2
+    exit 2
+  fi
+
+  # Validate package.json parses cleanly up front. Without this, `has_script`
+  # would return non-zero on a JSON parse error and the JS gates would silently
+  # skip — conflating "script missing" with "package.json broken." Gate-script
+  # discipline: a broken package.json is an ERROR (exit 2), not a skip.
+  # require("./package.json") uses node's built-in JSON loader; a parse error
+  # throws and node exits non-zero with the parse error on stderr.
+  if ! node -e 'require("./package.json")' >/dev/null; then
+    echo "ERROR: package.json failed to parse" >&2
+    exit 2
+  fi
+
+  # has_script <name>: exits 0 if package.json has the named npm script, else 1.
+  # Script name is passed via env so colons (`lint:js`) or any future special
+  # character can't break out of the node -e JS literal. With package.json
+  # pre-validated above, non-zero from has_script means only "script not present".
+  has_script() {
+    SCRIPT="$1" node -e 'const s=require("./package.json").scripts; process.exit(s&&s[process.env.SCRIPT]?0:1)'
+  }
+
+  if has_script lint:js; then
+    echo ""
+    echo "=== Lint (ESLint) ==="
+    npm run lint:js
+  fi
+
+  if has_script format:js:check; then
+    echo ""
+    echo "=== Format check (Prettier) ==="
+    npm run format:js:check
+  fi
+
+  if has_script test:js; then
+    echo ""
+    echo "=== Tests (JS) ==="
+    npm run test:js
   fi
 fi
 
