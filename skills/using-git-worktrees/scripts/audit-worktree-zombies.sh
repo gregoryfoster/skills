@@ -30,16 +30,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
-  echo "ERROR: not inside a git repository" >&2
-  exit 2
-}
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKTREE_ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
   echo "ERROR: failed to resolve worktree root" >&2
   exit 2
 }
+# resolve-worktree-root.sh already verifies we're inside a git repo (exits 2
+# otherwise), so no separate `git rev-parse --show-toplevel` sentinel is needed.
+
+# Trim any trailing slash so the pgrep/grep patterns don't produce `//` when
+# WORKTREE_ROOT is set via env with a conventional trailing slash. Without
+# this, `WORKTREE_ROOT=/custom/wt/` produces pattern `/custom/wt//` which
+# won't match real cmdlines — silent false negatives.
+WORKTREE_ROOT="${WORKTREE_ROOT%/}"
 
 # Scope all matching to the project's RESOLVED worktree root, which may be the
 # default <repo>/.worktrees/ or a custom location set via WORKTREE_ROOT env var
