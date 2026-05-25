@@ -29,6 +29,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "anyio>=4.0,<5",
+    "httpx>=0.27,<1",
     "pre-commit>=4.0,<5",
     "pytest>=8.0,<9",
     "pytest-asyncio>=1.0,<2",

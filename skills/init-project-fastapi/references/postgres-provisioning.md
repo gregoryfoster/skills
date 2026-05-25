@@ -1,0 +1,69 @@
+# PostgreSQL provisioning (Phase 5d)
+
+Provisioning recipe used by [Phase 5d of SKILL.md](../SKILL.md#phase-5d--provision-postgresql) when `DB_BACKED=yes` and `PROVISION_POSTGRES=yes`. When `PROVISION_POSTGRES=no`, the operator runs steps 2–6 below themselves before Phase 12.
+
+**Substitution convention.** `<PROJECT_UNDERSCORE>` is an angle-bracket placeholder derived in Phase 5c (`${PROJECT_NAME//-/_}`); substitute it literally below (e.g. `usa_wa`) so role and database names stay unquoted. For hyphen-free project names it equals `<PROJECT_NAME>` and the substitutions are no-ops. `$PG_PW` is a real shell variable set in step 3 and expanded by bash inside the unquoted heredocs (`<<SQL`, `<<ENV`). Leaving `<PROJECT_UNDERSCORE>` literal in step 4 creates a Postgres role named `<PROJECT_UNDERSCORE>` (broken), and the step 6 verification queries would mask the typo because they reference the same placeholder.
+
+## 1. Detect existing install
+
+Skip any sub-step that's already done:
+
+```bash
+systemctl is-active postgresql 2>/dev/null || echo "postgresql not active"
+which psql || echo "psql not on PATH"
+```
+
+## 2. Install (Ubuntu/Debian)
+
+Matches the canonical systemd unit's `After=postgresql.service`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y postgresql postgresql-contrib
+```
+
+## 3. Generate a random role password
+
+24 bytes ≈ 48 hex characters:
+
+```bash
+PG_PW=$(openssl rand -hex 24)
+echo "PG_PW=$PG_PW   # save this — also written to ./.env in step 5"
+```
+
+## 4. Create the role and two databases
+
+As the `postgres` superuser:
+
+```bash
+sudo -u postgres psql <<SQL
+CREATE ROLE <PROJECT_UNDERSCORE> LOGIN PASSWORD '$PG_PW';
+CREATE DATABASE <PROJECT_UNDERSCORE>      OWNER <PROJECT_UNDERSCORE>;
+CREATE DATABASE <PROJECT_UNDERSCORE>_test OWNER <PROJECT_UNDERSCORE>;
+SQL
+```
+
+## 5. Append `DATABASE_URL` and `TEST_DATABASE_URL` to `./.env`
+
+Use the `postgresql+asyncpg://` driver to match the runtime engine (Phase 5c's `database.py`). The `grep` guard makes the append idempotent — re-running Phase 5d after a step-6 failure won't produce duplicate keys. The `tail -c1` check ensures a trailing newline so the first appended line doesn't concatenate onto an existing last line that lacks one:
+
+```bash
+if ! grep -q '^DATABASE_URL=' ./.env 2>/dev/null; then
+  [ -s ./.env ] && [ "$(tail -c1 ./.env)" != "" ] && echo "" >> ./.env
+  cat >> ./.env <<ENV
+DATABASE_URL=postgresql+asyncpg://<PROJECT_UNDERSCORE>:$PG_PW@localhost:5432/<PROJECT_UNDERSCORE>
+TEST_DATABASE_URL=postgresql+asyncpg://<PROJECT_UNDERSCORE>:$PG_PW@localhost:5432/<PROJECT_UNDERSCORE>_test
+ENV
+fi
+```
+
+## 6. Verify TCP + password connectivity from both databases
+
+This proves the role can authenticate over TCP (not just `peer` auth on the local socket) and that both databases are reachable:
+
+```bash
+PGPASSWORD="$PG_PW" psql -h localhost -U <PROJECT_UNDERSCORE> -d <PROJECT_UNDERSCORE>      -c "SELECT 1;"
+PGPASSWORD="$PG_PW" psql -h localhost -U <PROJECT_UNDERSCORE> -d <PROJECT_UNDERSCORE>_test -c "SELECT 1;"
+```
+
+Both `SELECT 1;` queries must return `1`. If either fails, fix the underlying issue (typical causes: `pg_hba.conf` `local` vs `host` rules, role password mismatch, Postgres not listening on `localhost`) before proceeding to Phase 12.
