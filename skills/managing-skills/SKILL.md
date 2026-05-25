@@ -1,11 +1,11 @@
 ---
 name: managing-skills
-description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under skills-vendor/, symlinks individual skills into the project's skills/ directory and .claude/skills/ for Claude Code discovery, handles updates and removal. Use when the user says 'add skill repo', 'add external skills', 'manage skills', or 'update vendor skills'."
+description: "Manages external skill repos in a project using the git submodule + symlink pattern: adds skill repos as submodules under skills-vendor/, symlinks individual skills into the project's skills/ directory and .claude/skills/ for Claude Code discovery, handles updates and removal, and can install an optional once-per-day auto-refresh hook. Use when the user says 'add skill repo', 'add external skills', 'manage skills', 'update vendor skills', 'install skills hook', or 'enable auto-refresh'."
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.2"
-  triggers: add skill repo, add external skills, manage skills, update vendor skills
+  version: "1.3"
+  triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
 # Managing External Skills
@@ -84,6 +84,18 @@ git add .gitmodules skills-vendor/<owner>-<repo> skills/ .claude/skills/
 git commit -m "feat: add <owner>/<repo> skills submodule"
 ```
 
+#### Step 5 — Offer to install the auto-refresh hook
+
+After the commit, ask the user:
+
+> Install the once-per-day auto-refresh hook for `skills-vendor/`? Recommended
+> for long-lived projects — pulls upstream changes daily on `main` only,
+> auto-commits the pointer bump, never blocks a session.
+
+On **yes**, follow the [*Installing the auto-refresh hook*](#installing-the-auto-refresh-hook) procedure below — its **Step 0** ensures re-runs never double-wire.
+
+On **no**, leave the user with a pointer to the same procedure so they can opt in later.
+
 ### Updating a skill repo
 
 Pull the latest changes from the upstream skills repo:
@@ -102,6 +114,118 @@ Or update all submodules at once:
 git submodule update --remote --merge
 git add skills-vendor/
 git commit -m "chore: update skill submodules"
+```
+
+### Installing the auto-refresh hook
+
+Pulls upstream submodule changes once per calendar day, on `main` only, and auto-commits the pointer bumps. Designed for invocation as a Claude Code `SessionStart` hook — exits `0` on every non-fatal condition so it can never block a session.
+
+**Behaviour:**
+- Runs at most once per UTC day (single `.git/skills-update.lock` containing today's UTC date).
+- Skips silently on any branch other than `main`.
+- Skips silently if the project has no `skills-vendor/` directory.
+- Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
+- Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
+- Matches diff scope to add scope (`skills-vendor/`), so unrelated dirty work cannot be absorbed and empty commits cannot be created.
+- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
+
+#### Step 0 — Skip if already installed
+
+Re-runs of `/managing-skills` must never double-wire the hook. Bail out of the procedure if **both** of these are already true:
+
+- The symlink at `.claude/hooks/skills-submodule-update.sh` exists and resolves to the vendored script (`../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh`).
+- `.claude/settings.json` contains the string `bash .claude/hooks/skills-submodule-update.sh` at least once.
+
+Otherwise — fresh install or partial install — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
+
+#### Step 1 — Symlink the hook script
+
+Install via **symlink**, not copy, so upstream fixes to the script propagate via the normal submodule refresh. Use `-f` so a re-run replaces an existing symlink rather than failing:
+
+```bash
+mkdir -p .claude/hooks
+ln -sf ../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh \
+   .claude/hooks/skills-submodule-update.sh
+```
+
+The `../../` prefix resolves from `.claude/hooks/` back to the project root, then into the vendored script path.
+
+#### Step 2 — Merge the hook into `.claude/settings.json`
+
+**Merge, don't overwrite.** If `.claude/settings.json` already has `hooks.SessionStart` entries, append to that array — never clobber the file. The jq expression below is defensive in two ways: it creates `.hooks` and `.hooks.SessionStart` if they don't exist, and it **strips any pre-existing entry for this hook before appending** so re-runs never produce duplicates. It works against an empty `{}`, a partial settings.json without a `hooks` block, a populated one with other hooks, and one where this hook is already present:
+
+```bash
+jq '(.hooks //= {}) |
+    (.hooks.SessionStart //= []) |
+    .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh")) |
+    .hooks.SessionStart += [{
+      "matcher": ".*",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/skills-submodule-update.sh"
+      }]
+    }]' .claude/settings.json > .claude/settings.json.tmp \
+  && mv .claude/settings.json.tmp .claude/settings.json
+```
+
+If `.claude/settings.json` does not exist yet, create it with `echo '{}' > .claude/settings.json` before running the jq command.
+
+The merged result should look like:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/skills-submodule-update.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+#### Step 3 — Commit
+
+```bash
+git add .claude/hooks/skills-submodule-update.sh .claude/settings.json
+git commit -m "chore: enable skills auto-refresh hook"
+```
+
+### Uninstalling the auto-refresh hook
+
+Remove the symlink:
+
+```bash
+git rm .claude/hooks/skills-submodule-update.sh
+```
+
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block:
+
+```bash
+jq 'if .hooks.SessionStart then
+      .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh"))
+    else . end' \
+   .claude/settings.json > .claude/settings.json.tmp \
+  && mv .claude/settings.json.tmp .claude/settings.json
+```
+
+Stage and commit:
+
+```bash
+git add .claude/settings.json
+git commit -m "chore: disable skills auto-refresh hook"
+```
+
+You may also want to delete the lock and log files in `.git/` if you don't plan to reinstall:
+
+```bash
+rm -f .git/skills-update.lock .git/skills-update.log
 ```
 
 ### Creating a local override
