@@ -249,7 +249,7 @@ Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-s
 **Derive `PROJECT_UNDERSCORE` first.** Postgres SQL identifiers (role and database names) must not contain hyphens unless double-quoted everywhere — `CREATE ROLE usa-wa` is a syntax error and `psql -U usa-wa` parses `-wa` as a flag. Compute the underscore form once and substitute `<PROJECT_UNDERSCORE>` literally into the `alembic.ini` offline-fallback DSN (this phase) and the Phase 5d provisioning SQL:
 
 ```bash
-PROJECT_NAME=<PROJECT_NAME>             # substitute literal, e.g. usa-wa
+PROJECT_NAME="<PROJECT_NAME>"           # substitute literal, e.g. usa-wa
 PROJECT_UNDERSCORE=${PROJECT_NAME//-/_}
 echo "PROJECT_UNDERSCORE=$PROJECT_UNDERSCORE"
 ```
