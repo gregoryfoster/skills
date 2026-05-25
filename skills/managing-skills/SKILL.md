@@ -127,15 +127,24 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
 - Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
 - Matches diff scope to add scope (`skills-vendor/`), so unrelated dirty work cannot be absorbed and empty commits cannot be created.
-- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`.
+- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
+
+#### Step 0 — Skip if already installed
+
+Re-runs of `/managing-skills` must never double-wire the hook. Bail out of the procedure if **both** of these are already true:
+
+- The symlink at `.claude/hooks/skills-submodule-update.sh` exists and resolves to the vendored script (`../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh`).
+- `.claude/settings.json` contains the string `bash .claude/hooks/skills-submodule-update.sh` at least once.
+
+If only one is true, the install is partial — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
 
 #### Step 1 — Symlink the hook script
 
-Install via **symlink**, not copy, so upstream fixes to the script propagate via the normal submodule refresh:
+Install via **symlink**, not copy, so upstream fixes to the script propagate via the normal submodule refresh. Use `-f` so a re-run replaces an existing symlink rather than failing:
 
 ```bash
 mkdir -p .claude/hooks
-ln -s ../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh \
+ln -sf ../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh \
    .claude/hooks/skills-submodule-update.sh
 ```
 
@@ -143,16 +152,19 @@ The `../../` prefix resolves from `.claude/hooks/` back to the project root, the
 
 #### Step 2 — Merge the hook into `.claude/settings.json`
 
-**Merge, don't overwrite.** If `.claude/settings.json` already has `hooks.SessionStart` entries, append to that array — never clobber the file. The jq expression below is defensive: it creates `.hooks` and `.hooks.SessionStart` if they don't exist, then appends, so it works against an empty `{}`, a partial settings.json without a `hooks` block, and a fully-populated one with other hook entries:
+**Merge, don't overwrite.** If `.claude/settings.json` already has `hooks.SessionStart` entries, append to that array — never clobber the file. The jq expression below is defensive in two ways: it creates `.hooks` and `.hooks.SessionStart` if they don't exist, and it **strips any pre-existing entry for this hook before appending** so re-runs never produce duplicates. It works against an empty `{}`, a partial settings.json without a `hooks` block, a populated one with other hooks, and one where this hook is already present:
 
 ```bash
-jq '(.hooks //= {}) | (.hooks.SessionStart //= []) | .hooks.SessionStart += [{
-  "matcher": ".*",
-  "hooks": [{
-    "type": "command",
-    "command": "bash .claude/hooks/skills-submodule-update.sh"
-  }]
-}]' .claude/settings.json > .claude/settings.json.tmp \
+jq '(.hooks //= {}) |
+    (.hooks.SessionStart //= []) |
+    .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh")) |
+    .hooks.SessionStart += [{
+      "matcher": ".*",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/skills-submodule-update.sh"
+      }]
+    }]' .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
 ```
 
@@ -178,16 +190,7 @@ The merged result should look like:
 }
 ```
 
-#### Step 3 — Idempotency check before committing
-
-Before staging, confirm the hook is not already wired up (re-runs of `/managing-skills` must not double-wire):
-
-- The symlink at `.claude/hooks/skills-submodule-update.sh` resolves to the expected target.
-- `.claude/settings.json` contains the string `bash .claude/hooks/skills-submodule-update.sh` exactly once.
-
-If either check shows the hook is already installed, stop — no commit needed.
-
-#### Step 4 — Commit
+#### Step 3 — Commit
 
 ```bash
 git add .claude/hooks/skills-submodule-update.sh .claude/settings.json
@@ -196,11 +199,21 @@ git commit -m "chore: enable skills auto-refresh hook"
 
 ### Uninstalling the auto-refresh hook
 
+Remove the symlink:
+
 ```bash
 git rm .claude/hooks/skills-submodule-update.sh
 ```
 
-Then remove the matching `SessionStart` entry from `.claude/settings.json` (preserving any other entries), stage it, and commit:
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `select(... != ...)` filter mirrors the dedupe filter in the install step:
+
+```bash
+jq '.hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh"))' \
+   .claude/settings.json > .claude/settings.json.tmp \
+  && mv .claude/settings.json.tmp .claude/settings.json
+```
+
+Stage and commit:
 
 ```bash
 git add .claude/settings.json

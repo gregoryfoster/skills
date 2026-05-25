@@ -8,9 +8,9 @@ set -euo pipefail
 # block a session). Logs a one-line breadcrumb to LOG when LOG is already
 # defined, so unexpected failures remain debuggable.
 _hook_panic() {
-  rc=$?
+  local rc=$?
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] unexpected hook error (rc=$rc)" \
-    >> "${LOG:-/dev/null}" 2>/dev/null
+    >> "${LOG:-/dev/null}" 2>/dev/null || true
   exit 0
 }
 trap _hook_panic ERR
