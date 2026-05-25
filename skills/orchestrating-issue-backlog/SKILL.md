@@ -448,5 +448,35 @@ Do not relaunch a salvaged agent in the same wave that hit the ceiling. Resolve 
 
 **Tactical lessons:**
 
-- **`gh issue create` with `--body "$(cat <<'EOF' ... EOF)"` chokes on apostrophes inside the body** (e.g. `skill's`), even though the heredoc is single-quoted. The error surfaces as `unexpected EOF while looking for matching '`'. Switch to `gh issue create --body-file <path>` — sidesteps all shell quoting issues and lets the body include any character.
+- **`gh issue create` with `--body "$(cat <<'EOF' ... EOF)"` chokes on apostrophes inside the body** (e.g. `skill's`), even though the heredoc is single-quoted. The error surfaces as `unexpected EOF while looking for matching '`'. Switch to `gh issue create --body-file <path>` — sidesteps all shell quoting issues and lets the body include any character. The **same workaround applies to `git commit -m "$(cat <<'EOF' ... EOF)"`** — use `git commit -F <path>` for any commit message containing apostrophes, dollar signs, or backticks. Confirmed again in Session 2026-05-25.
 - **Step 8 commit format clarification.** The skill's recommended commit format is `#<n> docs: add <topic> backlog orchestration plan`, but `<n>` (the tracking issue) doesn't exist until Step 9. Two viable orderings: (a) commit with the `#<n>` prefix omitted, then open the issue; (b) open the issue first, then commit with the prefix. Recent precedent in this repo uses (a) — design-doc commits land without a `#` prefix, and later follow-up commits reference the tracking issue. Either ordering is fine; just don't block waiting for an issue number.
+
+---
+
+## Process Log — Session 2026-05-25 (skills repo, four-issue Batch H)
+
+**Project:** `gregoryfoster/skills` (this repo)
+
+**Backlog:** issues #41, #42, #43, #44 — all surfaced by the 2026-05-25 `CannObserv/usa-wa` fresh-VM bootstrap of `init-project-fastapi`. New Phase 5d Postgres provisioning; missing `httpx` dev dep; alembic.ini hyphen-DSN; Phase 10 `ln -s` collision producing a permanent dangling symlink in the obra submodule.
+
+**Interview answers:**
+- Q1 Quality: Correctness above all → `(Foundation × 2) + (Correctness × 3) + Scope`, max 18.
+- Q2 Deploy: **bootstrap skill with SHA-pinned downstream consumers** — see note below; this is a new framing not covered by the existing three Q2 options.
+- Q3 Defer: none — ship all 4.
+- Q4 Parallelism: bundle into 2 agents (recommended option). #42 isolated, #41+#43+#44 sequential in one branch (#43 first to establish `PROJECT_UNDERSCORE`).
+- Q5 Ceiling: no host-project ceiling (plain `git worktree add`).
+
+**Shape:** single batch (`batch/h`) with 2 parallel agents. Tracking issue: `#45`.
+
+**Non-obvious decisions:**
+
+- **Bundle three issues touching the same file into one agent with sequential commits.** #41, #43, #44 all touch `init-project-fastapi/SKILL.md` in different phase blocks. Three parallel agents would have produced (a) merge-conflict surface even in non-overlapping hunks, and (b) intra-batch merge ordering ceremony for #43-before-#41. One agent with three commits eliminates both. Cheaper than any parallel-with-ordering design for a 4-issue batch.
+- **#43 leads #41 inside the bundle, not its own earlier batch.** #43's `PROJECT_UNDERSCORE` derivation is a prerequisite for #41's Phase 5d to create the right database. The "correctness-fixes-lead-refactors" rule generalizes: any *prerequisite* fix leads its dependent, even within a single agent. Putting them in one agent (rather than two batches with a gate) gets the same correctness ordering with less ceremony.
+
+**Q2 framing not in the standard options — worth noting:**
+
+The standard Q2 options (pre-production / early production / active production) anchor on whether *running consumers* can absorb churn. For *bootstrap skills* (anything that operators run once on a clean VM to scaffold a new project), there's a fourth shape: the skill itself has SHA-pinned downstream consumers who will only re-bootstrap when they choose to, so structural changes to the skill don't break anyone's running services. This gives pre-production-style runway even though the skill is "in use." Worth surfacing as a Q2 option if this case keeps recurring; for now, recording it here so a future session can recognize the pattern.
+
+**Tactical lessons:**
+
+- **`git commit -m "$(cat <<'EOF' ... EOF)"` has the same apostrophe failure mode as `gh issue create --body`** — see the Session 2026-05-24 lesson above; the workaround is `git commit -F <path>`. Cleaner: write the commit message to `/tmp/<name>-msg.txt` first, then `git commit -F`. Same shape as the `gh issue create --body-file` workaround.
