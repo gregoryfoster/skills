@@ -332,10 +332,13 @@ git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-sup
 
 ```bash
 mkdir -p skills
+# ln -sfn: later vendor in loop overrides earlier (gregoryfoster overrides obra defaults).
+# Bare `ln -s` would recurse into an existing directory-symlink and deposit a dangling
+# link inside the obra submodule on name collisions (e.g. using-git-worktrees, writing-plans).
 for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; do
   for skill_dir in "$repo"/skills/*/; do
     skill_name=$(basename "$skill_dir")
-    ln -s "../$repo/skills/$skill_name" "skills/$skill_name"
+    ln -sfn "../$repo/skills/$skill_name" "skills/$skill_name"
   done
 done
 ```
@@ -365,9 +368,10 @@ Mirror every entry in `skills/` into `.claude/skills/` so Claude Code discovers 
 
 ```bash
 mkdir -p .claude/skills
+# ln -sfn: same atomic-replace policy as Phase 10 — keeps the loop idempotent on re-runs.
 for skill_dir in skills/*/; do
   skill_name=$(basename "$skill_dir")
-  ln -s "../../skills/$skill_name" ".claude/skills/$skill_name"
+  ln -sfn "../../skills/$skill_name" ".claude/skills/$skill_name"
 done
 ```
 
