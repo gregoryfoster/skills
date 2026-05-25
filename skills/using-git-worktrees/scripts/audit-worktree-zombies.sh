@@ -6,8 +6,9 @@ set -euo pipefail
 usage() {
   echo "Usage: bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh [--quiet]"
   echo ""
-  echo "Lists processes whose cmdline references a .worktrees/<name>/ path that"
-  echo "no longer exists on disk. Detection-only — does not kill anything."
+  echo "Lists processes whose cmdline references a path under the resolved"
+  echo "worktree root that no longer exists on disk. Detection-only — does"
+  echo "not kill anything."
   echo ""
   echo "Searches for zombies under the resolved worktree root (env WORKTREE_ROOT"
   echo "→ .skills/worktree_root → <repo>/.worktrees/, in that order)."
