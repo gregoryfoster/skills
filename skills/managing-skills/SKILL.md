@@ -121,11 +121,13 @@ git commit -m "chore: update skill submodules"
 Pulls upstream submodule changes once per calendar day, on `main` only, and auto-commits the pointer bumps. Designed for invocation as a Claude Code `SessionStart` hook — exits `0` on every non-fatal condition so it can never block a session.
 
 **Behaviour:**
-- Runs at most once per day (single `.git/skills-update.lock` containing today's date).
+- Runs at most once per UTC day (single `.git/skills-update.lock` containing today's UTC date).
 - Skips silently on any branch other than `main`.
+- Skips silently if the project has no `skills-vendor/` directory.
 - Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
 - Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
 - Matches diff scope to add scope (`skills-vendor/`), so unrelated dirty work cannot be absorbed and empty commits cannot be created.
+- To verify the hook is running, check `.git/skills-update.log` after a session start on `main`.
 
 #### Step 1 — Symlink the hook script
 
@@ -141,10 +143,10 @@ The `../../` prefix resolves from `.claude/hooks/` back to the project root, the
 
 #### Step 2 — Merge the hook into `.claude/settings.json`
 
-**Merge, don't overwrite.** If `.claude/settings.json` already has `hooks.SessionStart` entries, append to that array — never clobber the file. Use `jq` (or read/parse/write) to keep existing entries intact:
+**Merge, don't overwrite.** If `.claude/settings.json` already has `hooks.SessionStart` entries, append to that array — never clobber the file. The jq expression below is defensive: it creates `.hooks` and `.hooks.SessionStart` if they don't exist, then appends, so it works against an empty `{}`, a partial settings.json without a `hooks` block, and a fully-populated one with other hook entries:
 
 ```bash
-jq '.hooks.SessionStart += [{
+jq '(.hooks //= {}) | (.hooks.SessionStart //= []) | .hooks.SessionStart += [{
   "matcher": ".*",
   "hooks": [{
     "type": "command",
@@ -153,6 +155,8 @@ jq '.hooks.SessionStart += [{
 }]' .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
 ```
+
+If `.claude/settings.json` does not exist yet, create it with `echo '{}' > .claude/settings.json` before running the jq command.
 
 The merged result should look like:
 
