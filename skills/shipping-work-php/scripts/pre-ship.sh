@@ -190,22 +190,26 @@ if [[ -f "package.json" ]]; then
     SCRIPT="$1" node -e 'const s=require("./package.json").scripts; process.exit(s&&s[process.env.SCRIPT]?0:1)'
   }
 
+  # JS gate failures participate in $FAIL aggregation rather than aborting via
+  # set -e. Matches the surrounding PHP checks (composer test/phpstan/phpcs)
+  # so a JS-only failure doesn't bypass the final "Pre-ship checks failed."
+  # summary or hide earlier-tracked failures from the operator's view.
   if has_script lint:js; then
     echo ""
     echo "=== Lint (ESLint) ==="
-    npm run lint:js
+    npm run lint:js || FAIL=$((FAIL+1))
   fi
 
   if has_script format:js:check; then
     echo ""
     echo "=== Format check (Prettier) ==="
-    npm run format:js:check
+    npm run format:js:check || FAIL=$((FAIL+1))
   fi
 
   if has_script test:js; then
     echo ""
     echo "=== Tests (JS) ==="
-    npm run test:js
+    npm run test:js || FAIL=$((FAIL+1))
   fi
 fi
 
