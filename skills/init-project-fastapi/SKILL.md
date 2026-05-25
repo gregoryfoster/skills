@@ -244,11 +244,20 @@ Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-s
 
 > Skip this entire phase when `DB_BACKED=no`.
 
-Follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
+**Derive `PROJECT_UNDERSCORE` first.** Postgres SQL identifiers (role names, database names) must not contain hyphens unless double-quoted everywhere — `CREATE ROLE usa-wa` is a syntax error, `psql -U usa-wa` parses `-wa` as a flag, etc. Compute the underscore form once and use it in the `alembic.ini` offline-fallback DSN (this phase) and in the Phase 5d Postgres provisioning SQL:
+
+```bash
+PROJECT_UNDERSCORE=${PROJECT_NAME//-/_}
+echo "PROJECT_UNDERSCORE=$PROJECT_UNDERSCORE"
+```
+
+For hyphen-free project names `PROJECT_UNDERSCORE == PROJECT_NAME` and the substitution is a no-op.
+
+Then follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
 
 1. **`src/core/database.py`** — async engine + session factory (`get_engine`, `get_session_factory`, `reset_engine`). Reads via `get_database_url` from `src/core/config.py`.
 2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`.
-3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN).
+3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN — substitute `<PROJECT_UNDERSCORE>` derived above).
 4. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
 
 ### Phase 6 — Tests scaffold
