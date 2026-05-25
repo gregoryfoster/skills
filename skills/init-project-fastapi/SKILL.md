@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
@@ -246,14 +246,15 @@ Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-s
 
 > Skip this entire phase when `DB_BACKED=no`.
 
-**Derive `PROJECT_UNDERSCORE` first.** Postgres SQL identifiers (role names, database names) must not contain hyphens unless double-quoted everywhere — `CREATE ROLE usa-wa` is a syntax error, `psql -U usa-wa` parses `-wa` as a flag, etc. Compute the underscore form once and use it in the `alembic.ini` offline-fallback DSN (this phase) and in the Phase 5d Postgres provisioning SQL:
+**Derive `PROJECT_UNDERSCORE` first.** Postgres SQL identifiers (role and database names) must not contain hyphens unless double-quoted everywhere — `CREATE ROLE usa-wa` is a syntax error and `psql -U usa-wa` parses `-wa` as a flag. Compute the underscore form once and substitute `<PROJECT_UNDERSCORE>` literally into the `alembic.ini` offline-fallback DSN (this phase) and the Phase 5d provisioning SQL:
 
 ```bash
+PROJECT_NAME=<PROJECT_NAME>             # substitute literal, e.g. usa-wa
 PROJECT_UNDERSCORE=${PROJECT_NAME//-/_}
 echo "PROJECT_UNDERSCORE=$PROJECT_UNDERSCORE"
 ```
 
-For hyphen-free project names `PROJECT_UNDERSCORE == PROJECT_NAME` and the substitution is a no-op.
+For hyphen-free project names `PROJECT_UNDERSCORE == PROJECT_NAME`.
 
 Then follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
 
@@ -265,11 +266,10 @@ Then follow [`references/database-scaffolding.md`](references/database-scaffoldi
 ### Phase 5d — Provision PostgreSQL
 
 > Skip this entire phase when `DB_BACKED=no`.
-> When `PROVISION_POSTGRES=no`, skip the install/`CREATE ROLE`/`.env`-append steps and instead print the manual provisioning checklist (steps 2–6 in the reference) so the operator can run it themselves before re-running Phase 12.
+>
+> When `PROVISION_POSTGRES=no`, skip Phase 5d. The operator must run steps 2–6 of [`references/postgres-provisioning.md`](references/postgres-provisioning.md) themselves before Phase 12.
 
-Phase 5c scaffolds the code that *talks* to Postgres; this phase actually stands Postgres up so Phase 12's alembic + pytest smoke can exercise the DB path on a fresh VM.
-
-Follow [`references/postgres-provisioning.md`](references/postgres-provisioning.md). The six steps cover: detect existing install, `apt-get install postgresql`, generate random password, create role + two databases (using `<PROJECT_UNDERSCORE>` from Phase 5c so SQL identifiers stay unquoted), append `DATABASE_URL` + `TEST_DATABASE_URL` to `./.env`, and verify TCP+password connectivity from both databases. If either verification query fails, fix the underlying issue before proceeding to Phase 12.
+Follow [`references/postgres-provisioning.md`](references/postgres-provisioning.md): detect existing install, `apt-get install postgresql`, generate a random password, create the role + two databases (using `<PROJECT_UNDERSCORE>` from Phase 5c so SQL identifiers stay unquoted), append `DATABASE_URL` + `TEST_DATABASE_URL` to `./.env`, and verify TCP+password connectivity. Fix any verification failure before proceeding to Phase 12.
 
 ### Phase 6 — Tests scaffold
 
@@ -430,15 +430,13 @@ Commit message body should list all key scaffold components (see AGENTS.md commi
 bash skills/shipping-work/scripts/push.sh
 ```
 
-**If the push is rejected with `! [rejected] main -> main (fetch first)`,** the GitHub repo was created via the UI with the "Add LICENSE" or "Add README" checkbox, so the remote already has an initial commit on `main` that the local branch doesn't share history with. Detect this and rebase before re-pushing:
+**If the push is rejected with `! [rejected] main -> main (fetch first)`,** the GitHub repo was created via the UI with "Add LICENSE" or "Add README" checked, leaving an unrelated initial commit on `main`. Prevent it next time by creating the repo with no LICENSE/README; recover this time by rebasing onto the remote and re-pushing:
 
 ```bash
 # Only run when the push above was rejected for divergent history.
 git pull --rebase --allow-unrelated-histories origin main
 bash skills/shipping-work/scripts/push.sh
 ```
-
-The preferred long-term fix is to create the GitHub repo with **no LICENSE, no README** (the empty-repo state) so the first push has nothing to reconcile against; the rebase recipe is the recovery path when that didn't happen.
 
 ### Phase 15 — GitHub issue
 

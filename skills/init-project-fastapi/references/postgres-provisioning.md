@@ -1,8 +1,10 @@
 # PostgreSQL provisioning (Phase 5d)
 
-Provisioning recipe used by [Phase 5d of SKILL.md](../SKILL.md#phase-5d--provision-postgresql) when `DB_BACKED=yes` and `PROVISION_POSTGRES=yes`. When `PROVISION_POSTGRES=no`, the phase prints steps 2–6 below as a manual checklist so the operator can run them themselves before re-running Phase 12.
+Provisioning recipe used by [Phase 5d of SKILL.md](../SKILL.md#phase-5d--provision-postgresql) when `DB_BACKED=yes` and `PROVISION_POSTGRES=yes`. When `PROVISION_POSTGRES=no`, the operator runs steps 2–6 below themselves before Phase 12.
 
 Every SQL identifier below uses `<PROJECT_UNDERSCORE>` (derived in Phase 5c — `${PROJECT_NAME//-/_}`) so role and database names stay unquoted. For hyphen-free project names `PROJECT_UNDERSCORE == PROJECT_NAME` and the substitutions are no-ops.
+
+**Substitution convention.** `<PROJECT_UNDERSCORE>` is an angle-bracket placeholder — substitute it literally (e.g. `usa_wa`) before running any command below. `$PG_PW` is a real shell variable set in step 3 and expanded by bash inside the unquoted heredocs (`<<SQL`, `<<ENV`). Do not mix them up: leaving `<PROJECT_UNDERSCORE>` literal in step 4 creates a Postgres role named `<PROJECT_UNDERSCORE>` (broken), and the step 6 verification queries would mask the typo because they reference the same placeholder.
 
 ## 1. Detect existing install
 
@@ -45,13 +47,15 @@ SQL
 
 ## 5. Append `DATABASE_URL` and `TEST_DATABASE_URL` to `./.env`
 
-Use the `postgresql+asyncpg://` driver to match the runtime engine (Phase 5c's `database.py`):
+Use the `postgresql+asyncpg://` driver to match the runtime engine (Phase 5c's `database.py`). The `grep` guard makes the append idempotent — re-running Phase 5d after a step-6 failure won't produce duplicate keys:
 
 ```bash
-cat >> ./.env <<ENV
+if ! grep -q '^DATABASE_URL=' ./.env 2>/dev/null; then
+  cat >> ./.env <<ENV
 DATABASE_URL=postgresql+asyncpg://<PROJECT_UNDERSCORE>:$PG_PW@localhost:5432/<PROJECT_UNDERSCORE>
 TEST_DATABASE_URL=postgresql+asyncpg://<PROJECT_UNDERSCORE>:$PG_PW@localhost:5432/<PROJECT_UNDERSCORE>_test
 ENV
+fi
 ```
 
 ## 6. Verify TCP + password connectivity from both databases
