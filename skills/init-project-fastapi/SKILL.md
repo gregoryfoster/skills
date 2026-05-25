@@ -52,6 +52,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | Parameter | Default | Choices | Drives |
 |---|---|---|---|
 | `DB_BACKED` | `yes` | `yes` \| `no` | Phase 3 deps, Phase 5c (database + models + alembic + deps.py), Phase 6 conftest savepoint fixture, Phase 12 alembic smoke check |
+| `PROVISION_POSTGRES` | `yes` | `yes` \| `no` | Phase 5d (apt-install Postgres, create role + databases, write `DATABASE_URL`/`TEST_DATABASE_URL` to `.env`); gated on `DB_BACKED=yes`. Set to `no` when an external Postgres is already wired up. |
 | `SETTINGS_STYLE` | `pydantic-settings` | `pydantic-settings` \| `os.environ` | Phase 3 deps, Phase 5b (`src/core/config.py` shape) |
 | `MODELS_LAYOUT` | `monolithic` | `monolithic` \| `package` | Phase 5c (`src/core/models.py` vs `src/core/models/`) |
 | `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
@@ -67,6 +68,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 ### Cohort context (informational; show to the user when they ask "why this default?")
 
 - **`DB_BACKED=yes`**: 6/7 use SQLAlchemy[asyncio] + asyncpg. Power-map is the lone exception (raw asyncpg, no ORM).
+- **`PROVISION_POSTGRES=yes`**: a fresh Ubuntu/Debian VM with no Postgres is the assumed CannObserv host (the canonical systemd unit's `After=postgresql.service` reflects this). Set to `no` when the host already has Postgres or when Postgres lives on a separate machine — Phase 5d then prints the manual provisioning checklist instead.
 - **`SETTINGS_STYLE=pydantic-settings`**: 3/7 newer services (power-map, address-validator, observo) converged here. Older services (notifier, archiver, watcher) still use explicit `os.environ` guard functions — both work, the newer pattern is the recommended default.
 - **`MODELS_LAYOUT=monolithic`**: 6/7 use a single `models.py`. Promote to a `models/` package when crossing ~5 tables or natural domain boundaries (notifier did this).
 - **`LINT_PROFILE=minimal`**: 5/7 stick to `E,F,I,W,UP`. Address-validator alone enabled the full strict profile (`ANN,S,SIM,RUF,PL,TCH,…`); offered as a branch point but not the default.
@@ -244,12 +246,30 @@ Copy the variant for the project's `SETTINGS_STYLE` from [`references/settings-s
 
 > Skip this entire phase when `DB_BACKED=no`.
 
-Follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
+**Derive `PROJECT_UNDERSCORE` first.** Postgres SQL identifiers (role names, database names) must not contain hyphens unless double-quoted everywhere — `CREATE ROLE usa-wa` is a syntax error, `psql -U usa-wa` parses `-wa` as a flag, etc. Compute the underscore form once and use it in the `alembic.ini` offline-fallback DSN (this phase) and in the Phase 5d Postgres provisioning SQL:
+
+```bash
+PROJECT_UNDERSCORE=${PROJECT_NAME//-/_}
+echo "PROJECT_UNDERSCORE=$PROJECT_UNDERSCORE"
+```
+
+For hyphen-free project names `PROJECT_UNDERSCORE == PROJECT_NAME` and the substitution is a no-op.
+
+Then follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
 
 1. **`src/core/database.py`** — async engine + session factory (`get_engine`, `get_session_factory`, `reset_engine`). Reads via `get_database_url` from `src/core/config.py`.
 2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`.
-3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN).
+3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN — substitute `<PROJECT_UNDERSCORE>` derived above).
 4. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
+
+### Phase 5d — Provision PostgreSQL
+
+> Skip this entire phase when `DB_BACKED=no`.
+> When `PROVISION_POSTGRES=no`, skip the install/`CREATE ROLE`/`.env`-append steps and instead print the manual provisioning checklist (steps 2–6 in the reference) so the operator can run it themselves before re-running Phase 12.
+
+Phase 5c scaffolds the code that *talks* to Postgres; this phase actually stands Postgres up so Phase 12's alembic + pytest smoke can exercise the DB path on a fresh VM.
+
+Follow [`references/postgres-provisioning.md`](references/postgres-provisioning.md). The six steps cover: detect existing install, `apt-get install postgresql`, generate random password, create role + two databases (using `<PROJECT_UNDERSCORE>` from Phase 5c so SQL identifiers stay unquoted), append `DATABASE_URL` + `TEST_DATABASE_URL` to `./.env`, and verify TCP+password connectivity from both databases. If either verification query fails, fix the underlying issue before proceeding to Phase 12.
 
 ### Phase 6 — Tests scaffold
 
@@ -312,10 +332,13 @@ git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-sup
 
 ```bash
 mkdir -p skills
+# ln -sfn: later vendor in loop overrides earlier (gregoryfoster overrides obra defaults).
+# Bare `ln -s` would recurse into an existing directory-symlink and deposit a dangling
+# link inside the obra submodule on name collisions (e.g. using-git-worktrees, writing-plans).
 for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; do
   for skill_dir in "$repo"/skills/*/; do
     skill_name=$(basename "$skill_dir")
-    ln -s "../$repo/skills/$skill_name" "skills/$skill_name"
+    ln -sfn "../$repo/skills/$skill_name" "skills/$skill_name"
   done
 done
 ```
@@ -345,9 +368,10 @@ Mirror every entry in `skills/` into `.claude/skills/` so Claude Code discovers 
 
 ```bash
 mkdir -p .claude/skills
+# ln -sfn: same atomic-replace policy as Phase 10 — keeps the loop idempotent on re-runs.
 for skill_dir in skills/*/; do
   skill_name=$(basename "$skill_dir")
-  ln -s "../../skills/$skill_name" ".claude/skills/$skill_name"
+  ln -sfn "../../skills/$skill_name" ".claude/skills/$skill_name"
 done
 ```
 
@@ -371,10 +395,10 @@ When `DB_BACKED=yes`, also run:
 uv run alembic current 2>&1 | grep -Ev "^(INFO|$)" || true
 ```
 
-If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database), also run the smoke test:
+If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database via Phase 5d or out-of-band), also run the smoke test. Use `--no-cov` for subset runs — a fresh project has one test exercising one file (~63% coverage in practice), which trips the `fail_under=80` coverage gate from `pyproject.toml`. This matches the AGENTS.md template's "Common Commands" section, which already documents `--no-cov` for subset runs:
 
 ```bash
-uv run pytest tests/test_health.py
+uv run pytest --no-cov tests/test_health.py
 ```
 
 If `TEST_DATABASE_URL` is **not** set on a fresh bootstrap, skip the pytest smoke step — the conftest raises at import time without it. Note this clearly in the GH issue body (Phase 15) so the smoke test runs before the first feature PR lands.
@@ -405,6 +429,16 @@ Commit message body should list all key scaffold components (see AGENTS.md commi
 ```bash
 bash skills/shipping-work/scripts/push.sh
 ```
+
+**If the push is rejected with `! [rejected] main -> main (fetch first)`,** the GitHub repo was created via the UI with the "Add LICENSE" or "Add README" checkbox, so the remote already has an initial commit on `main` that the local branch doesn't share history with. Detect this and rebase before re-pushing:
+
+```bash
+# Only run when the push above was rejected for divergent history.
+git pull --rebase --allow-unrelated-histories origin main
+bash skills/shipping-work/scripts/push.sh
+```
+
+The preferred long-term fix is to create the GitHub repo with **no LICENSE, no README** (the empty-repo state) so the first push has nothing to reconcile against; the rebase recipe is the recovery path when that didn't happen.
 
 ### Phase 15 — GitHub issue
 

@@ -19,5 +19,6 @@ cd "$PROJECT_ROOT"
 
 BRANCH=$(git branch --show-current)
 echo "Pushing $BRANCH to origin..."
-git push origin "$BRANCH"
+# -u sets upstream tracking on first push; no-op when tracking is already configured.
+git push -u origin "$BRANCH"
 echo "Push succeeded."

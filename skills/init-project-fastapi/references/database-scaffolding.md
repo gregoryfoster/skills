@@ -126,7 +126,7 @@ Edit `alembic.ini`:
 
 - Set `script_location = %(here)s/alembic`
 - Confirm `prepend_sys_path = .` is present (alembic init populates it by default)
-- Set the offline-fallback DSN: `sqlalchemy.url = postgresql+asyncpg://<PROJECT_NAME>:<PROJECT_NAME>@localhost:5432/<PROJECT_NAME>` (only used by `alembic --sql` offline tooling; runtime reads `DATABASE_URL`).
+- Set the offline-fallback DSN: `sqlalchemy.url = postgresql+asyncpg://<PROJECT_UNDERSCORE>:<PROJECT_UNDERSCORE>@localhost:5432/<PROJECT_UNDERSCORE>` (only used by `alembic --sql` offline tooling; runtime reads `DATABASE_URL`). `<PROJECT_UNDERSCORE>` is the project name with hyphens converted to underscores (derived in Phase 5c — see SKILL.md). For hyphen-free project names it equals `<PROJECT_NAME>`; for hyphenated names (e.g. `usa-wa` → `usa_wa`) the underscore form keeps SQL identifiers unquoted so the offline DSN and the real Postgres role/database (Phase 5d) agree.
 
 > The asset [`alembic-env.py`](../assets/alembic-env.py) imports `Base` from `src.core.models`. The package re-export in `MODELS_LAYOUT=package` and the monolithic `models.py` both expose `Base` at that path, so no env.py edit is needed for either layout.
 
