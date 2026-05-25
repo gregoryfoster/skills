@@ -92,7 +92,7 @@ After the commit, ask the user:
 > for long-lived projects — pulls upstream changes daily on `main` only,
 > auto-commits the pointer bump, never blocks a session.
 
-On **yes**, follow the [*Installing the auto-refresh hook*](#installing-the-auto-refresh-hook) procedure below. The hook is **idempotent**: if the symlink already points at the right target and `.claude/settings.json` already contains the command string, skip silently — re-running `/managing-skills` must never double-wire.
+On **yes**, follow the [*Installing the auto-refresh hook*](#installing-the-auto-refresh-hook) procedure below — its **Step 0** ensures re-runs never double-wire.
 
 On **no**, leave the user with a pointer to the same procedure so they can opt in later.
 
@@ -136,7 +136,7 @@ Re-runs of `/managing-skills` must never double-wire the hook. Bail out of the p
 - The symlink at `.claude/hooks/skills-submodule-update.sh` exists and resolves to the vendored script (`../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh`).
 - `.claude/settings.json` contains the string `bash .claude/hooks/skills-submodule-update.sh` at least once.
 
-If only one is true, the install is partial — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
+Otherwise — fresh install or partial install — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
 
 #### Step 1 — Symlink the hook script
 
@@ -205,10 +205,12 @@ Remove the symlink:
 git rm .claude/hooks/skills-submodule-update.sh
 ```
 
-Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `select(... != ...)` filter mirrors the dedupe filter in the install step:
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block:
 
 ```bash
-jq '.hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh"))' \
+jq 'if .hooks.SessionStart then
+      .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh"))
+    else . end' \
    .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
 ```
