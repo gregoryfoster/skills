@@ -13,11 +13,34 @@ if [[ "${1:-}" == "--help" ]]; then
   echo ""
   echo "Runs the project test suite. Must be overridden in the consuming project."
   echo "The global skill provides this stub only — replace with your test runner."
-  echo "If package.json is present, also runs npm lint/format/test scripts (these"
-  echo "gates run even in the stub so a downstream override that only swaps the"
-  echo "test-runner block inherits the hardened JS toolchain pattern verbatim)."
+  echo ""
+  echo "Scaffolding (worktree zombie audit + JS toolchain auto-detection) is"
+  echo "included below the stub exit. Overrides that remove the exit block"
+  echo "inherit the scaffolding verbatim, matching the FastAPI/Click/PHP siblings."
   exit 0
 fi
+
+# === STUB EARLY EXIT =========================================================
+# The bare skill's pre-ship.sh exits HERE. Everything below is scaffolding
+# downstream overrides inherit when they delete this exit block and replace
+# it with a real test-runner invocation. Until then, the stub does no work
+# (no audit, no npm gates) so its "you must override" message is the first
+# and only thing the operator sees.
+echo "ERROR: pre-ship.sh is a stub. The consuming project must override this script." >&2
+echo "       Copy shipping-work/ into your project's skills/ directory and" >&2
+echo "       replace this file with your test runner (e.g., uv run pytest)." >&2
+exit 1
+# ============================================================================
+
+# --- SCAFFOLDING BELOW (not executed by the stub) ----------------------------
+# When an override removes the stub exit above, this block runs. Mirrors the
+# FastAPI/Click/PHP siblings so overrides have a working template out of the
+# box. Overrides should keep PROJECT_ROOT resolution + cd at the top so the
+# AUDIT_SCRIPT and `package.json` paths resolve from the repo root regardless
+# of where the script was invoked from.
+
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+cd "$PROJECT_ROOT"
 
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see
@@ -31,11 +54,8 @@ if [[ -x "$AUDIT_SCRIPT" ]]; then
 fi
 
 # --- Optional JS toolchain (auto-detected) -----------------------------------
-# The stub itself does not run a test runner — overrides supply that. The JS
-# toolchain block is kept here so a downstream project that only swaps the
-# `exit 1` stub for a real Python/Node test invocation inherits the hardened
-# four-element pattern (node pre-flight, JSON pre-validation, `has_script`
-# helper, per-script gates) verbatim — matching the FastAPI/Click/PHP siblings.
+# Projects with a frontend ship a package.json. Pure-backend projects skip
+# this block entirely without per-project override.
 
 if [[ -f "package.json" ]]; then
   # Probing package.json requires node. Fail loudly if it's absent rather than
@@ -84,8 +104,3 @@ if [[ -f "package.json" ]]; then
     npm run test:js
   fi
 fi
-
-echo "ERROR: pre-ship.sh is a stub. The consuming project must override this script." >&2
-echo "       Copy shipping-work/ into your project's skills/ directory and" >&2
-echo "       replace this file with your test runner (e.g., uv run pytest)." >&2
-exit 1
