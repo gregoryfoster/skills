@@ -4,7 +4,7 @@ description: Performs a high-level architectural review evaluating structural he
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: AR, architecture review, architectural review
 ---
 
@@ -52,6 +52,7 @@ Determine what to review (priority order):
 ### Phase 1 — Gather context
 
 ```bash
+[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
 bash scripts/gather-context.sh
 ```
 

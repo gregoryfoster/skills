@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -71,6 +71,18 @@ ln -s ../../skills/shipping-work .claude/skills/shipping-work
 
 The `../../` prefix resolves from `.claude/skills/` back to the project root, then into `skills/<name>`.
 
+#### Step 2c — Install the doctor script
+
+Skills referenced via the symlink chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/.../skills/<name>`) are unreachable when the submodule isn't initialized — fresh `git worktree add`, shallow CI clones without `--recurse-submodules`, etc. The doctor is a tiny script copied into the consumer's `.skills/` directory that walks `skills/*` symlinks, auto-runs `git submodule update --init --recursive` when any dangle, and prints an actionable error otherwise. Phase 1 of every `reviewing-*` / `shipping-*` skill invokes it as a preflight.
+
+Run the installer from the vendor copy:
+
+```bash
+bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh
+```
+
+This is idempotent — re-running is a no-op when the destination already matches. The installer refuses to clobber a file at `.skills/doctor.sh` that doesn't look like a doctor, so a user-authored file at that path is never silently overwritten.
+
 #### Step 3 — Update the project's AGENTS.md
 
 Add or update the `<available_skills>` block to list the newly available skills. Document which skills are symlinked (global) vs local overrides.
@@ -80,7 +92,7 @@ Add or update the `<available_skills>` block to list the newly available skills.
 Commit the `.gitmodules` file, the `skills-vendor/` submodule reference, and the new symlinks together:
 
 ```bash
-git add .gitmodules skills-vendor/<owner>-<repo> skills/ .claude/skills/
+git add .gitmodules skills-vendor/<owner>-<repo> skills/ .claude/skills/ .skills/doctor.sh
 git commit -m "feat: add <owner>/<repo> skills submodule"
 ```
 
@@ -116,6 +128,12 @@ git add skills-vendor/
 git commit -m "chore: update skill submodules"
 ```
 
+After updating, re-run `install-doctor.sh` to pick up any new doctor version — the auto-refresh hook does this automatically on session start, but a manual refresh is useful when iterating outside a session:
+
+```bash
+bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh
+```
+
 ### Installing the auto-refresh hook
 
 Pulls upstream submodule changes once per calendar day, on `main` only, and auto-commits the pointer bumps. Designed for invocation as a Claude Code `SessionStart` hook — exits `0` on every non-fatal condition so it can never block a session.
@@ -127,6 +145,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
 - Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
 - Matches diff scope to add scope (`skills-vendor/`), so unrelated dirty work cannot be absorbed and empty commits cannot be created.
+- **Opportunistically installs/updates `.skills/doctor.sh`** on every session (not gated by the once-per-day lock) so the doctor self-heals if accidentally deleted, and so consumers added before the doctor existed pick it up automatically on the next session start.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
 
 #### Step 0 — Skip if already installed
@@ -274,6 +293,6 @@ git clone --recurse-submodules <project-url>
 ## Notes
 
 - Always use relative symlink paths so they work regardless of where the repo is cloned
-- If a symlink is broken (target missing), run `git submodule update --init`
+- If a symlink is broken (target missing), run `bash .skills/doctor.sh` — it auto-runs `git submodule update --init --recursive` and reports an actionable error if self-healing fails
 - The `skills-vendor/` directory should be treated as read-only — make changes upstream
 - The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed

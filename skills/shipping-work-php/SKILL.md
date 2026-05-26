@@ -4,7 +4,7 @@ description: "For PHP/WordPress projects (Bedrock + Sage 11): finalizes work by 
 compatibility: Designed for PHP 8.4 WordPress/Bedrock/Sage 11 monorepos with Composer. Requires git, gh, composer, php.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -45,6 +45,7 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
+[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
 bash scripts/pre-ship.sh
 ```
 

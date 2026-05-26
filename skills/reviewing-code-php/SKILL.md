@@ -4,7 +4,7 @@ description: "For PHP/WordPress projects (Bedrock + Sage 11): performs a structu
 compatibility: Designed for PHP 8.4 WordPress/Bedrock/Sage 11 monorepos with Composer. Requires git, gh, composer, php.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: CR, code review, perform a review
 ---
 
@@ -52,6 +52,7 @@ Determine what to review (priority order):
 ### Phase 1 — Gather context
 
 ```bash
+[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
 bash scripts/gather-context.sh
 ```
 

@@ -4,7 +4,7 @@ description: "For Python/Click CLI projects (uv + ruff + pytest): finalizes work
 compatibility: Designed for Python Click CLI projects using uv, ruff, pytest. Requires git, gh, uv.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -46,6 +46,7 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
+[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
 bash scripts/pre-ship.sh
 ```
 

@@ -4,7 +4,7 @@ description: Performs a structured code and documentation review using a severit
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.4"
+  version: "1.5"
   triggers: CR, code review, perform a review
 ---
 
@@ -52,6 +52,7 @@ Determine what to review (priority order):
 ### Phase 1 — Gather context
 
 ```bash
+[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
 bash scripts/gather-context.sh
 ```
 

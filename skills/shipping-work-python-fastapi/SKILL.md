@@ -4,7 +4,7 @@ description: "For Python/FastAPI projects (uv + ruff + pytest): finalizes work b
 compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requires git, gh, uv. pytest-cov is optional — pre-ship.sh auto-detects it and adds --no-cov when present.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -45,6 +45,7 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
+[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
 bash scripts/pre-ship.sh
 ```
 
