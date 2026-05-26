@@ -63,8 +63,10 @@ DEST="$DEST_DIR/doctor.sh"
 mkdir -p "$DEST_DIR"
 
 # If destination exists and isn't recognizably a doctor, refuse to clobber.
-# The header check matches the marker line in doctor.sh.
-if [ -f "$DEST" ] && ! head -n 2 "$DEST" | grep -q '^# doctor.sh — diagnose and self-heal'; then
+# Grep for the stable marker comment that doctor.sh carries near the top of
+# the file (intentionally orthogonal to the wording of the doctor's intro
+# paragraph, which is allowed to change).
+if [ -f "$DEST" ] && ! head -n 3 "$DEST" | grep -q '^# managing-skills-doctor:'; then
   err "refusing to overwrite $DEST — file exists and is not a managing-skills doctor"
   err "remove the file manually if you want to install the doctor"
   exit 1
@@ -76,13 +78,8 @@ if [ -f "$DEST" ] && cmp -s "$SRC" "$DEST"; then
   exit 0
 fi
 
-# Copy. Use install(1) when available for atomic mode-preserving copy.
-if command -v install >/dev/null 2>&1; then
-  install -m 755 "$SRC" "$DEST"
-else
-  cp "$SRC" "$DEST"
-  chmod 755 "$DEST"
-fi
+# Copy via install(1) for atomic mode-preserving write.
+install -m 755 "$SRC" "$DEST"
 
 log "installed $DEST"
 exit 0

@@ -46,9 +46,10 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
-[ -x .skills/doctor.sh ] && bash .skills/doctor.sh   # heals dangling vendor symlinks; silent if absent
-bash scripts/pre-ship.sh
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && bash scripts/pre-ship.sh
 ```
+
+The leading group is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. The `&&` chain skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message.
 
 ```
 NO CONTINUATION IF CHECKS FAIL
