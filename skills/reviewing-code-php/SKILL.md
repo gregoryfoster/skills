@@ -4,7 +4,7 @@ description: "For PHP/WordPress projects (Bedrock + Sage 11): performs a structu
 compatibility: Designed for PHP 8.4 WordPress/Bedrock/Sage 11 monorepos with Composer. Requires git, gh, composer, php.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: CR, code review, perform a review
 ---
 
@@ -52,8 +52,10 @@ Determine what to review (priority order):
 ### Phase 1 — Gather context
 
 ```bash
-bash scripts/gather-context.sh
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && bash scripts/gather-context.sh
 ```
+
+The leading group is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. The `&&` chain skips `gather-context.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message.
 
 The script runs `composer validate --no-check-publish` at root and at every auto-discovered composer directory under `themes/` and `plugins/`, plus `php -l` on changed PHP files.
 

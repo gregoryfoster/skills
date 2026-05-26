@@ -4,7 +4,7 @@ description: "For PHP/WordPress projects (Bedrock + Sage 11): finalizes work by 
 compatibility: Designed for PHP 8.4 WordPress/Bedrock/Sage 11 monorepos with Composer. Requires git, gh, composer, php.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -45,8 +45,10 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
-bash scripts/pre-ship.sh
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && bash scripts/pre-ship.sh
 ```
+
+The leading group is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. The `&&` chain skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message.
 
 > Lint runs 4 parallel `php -l` workers by default; tune via `PRE_SHIP_PHP_LINT_JOBS=N bash scripts/pre-ship.sh` for very large monorepos.
 

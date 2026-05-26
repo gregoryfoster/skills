@@ -49,6 +49,19 @@ LOG="$gitdir/skills-update.log"
 # Nothing to refresh if the project doesn't use the skills-vendor/ pattern.
 [ -d skills-vendor ] || exit 0
 
+# Opportunistically install/update .skills/doctor.sh — the backport path
+# for consumers added before doctor.sh existed. Runs on every session
+# (not gated by the once-per-day lock) so accidental deletions self-heal
+# at the next session start. install-doctor.sh is a no-op when content
+# matches, so the cost is one file compare per session.
+for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
+  [ -x "$installer" ] || continue
+  if ! bash "$installer" --quiet >>"$LOG" 2>&1; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] doctor install failed (see lines above)" >>"$LOG"
+  fi
+  break
+done
+
 # Lock check: once per UTC day. UTC matches the log timestamp timezone so
 # "today" never disagrees between lock and log at the day boundary.
 if [ -f "$LOCK" ] && [ "$(cat "$LOCK" 2>/dev/null || true)" = "$(date -u +%Y%m%d)" ]; then

@@ -55,8 +55,12 @@ mkdir -p skills
 ln -s ../../skills-vendor/gregoryfoster-skills/skills/reviewing-code skills/reviewing-code
 ln -s ../../skills-vendor/gregoryfoster-skills/skills/shipping-work skills/shipping-work
 
-# 3. Commit
-git add .gitmodules skills-vendor/gregoryfoster-skills skills/
+# 3. Install the doctor preflight (self-heals dangling symlinks in fresh
+#    worktrees, shallow CI clones, etc.)
+bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-doctor.sh
+
+# 4. Commit
+git add .gitmodules skills-vendor/gregoryfoster-skills skills/ .skills/doctor.sh
 git commit -m "feat: add gregoryfoster/skills submodule"
 ```
 

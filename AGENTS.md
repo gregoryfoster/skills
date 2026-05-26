@@ -228,6 +228,7 @@ Key rules:
 - Symlink paths must be relative: `../../skills-vendor/gregoryfoster-skills/skills/<skill-name>`
 - Local overrides (committed directories in `skills/`) always win over symlinks
 - The `skills-vendor/` directory is read-only from the consuming project's perspective
+- Install `.skills/doctor.sh` via `bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh` — Phase 1 of `reviewing-*` / `shipping-*` skills uses it to self-heal dangling vendor symlinks. The auto-refresh hook re-installs it opportunistically; the manual command is only needed before the first session.
 
 The [`managing-skills`](skills/managing-skills/) skill teaches agents how to perform these operations.
 

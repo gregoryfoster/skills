@@ -4,7 +4,7 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -45,8 +45,10 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
-bash scripts/pre-ship.sh
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && bash scripts/pre-ship.sh
 ```
+
+The leading group is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. The `&&` chain skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message.
 
 ```
 NO CONTINUATION IF CHECKS FAIL

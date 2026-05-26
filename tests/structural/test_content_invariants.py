@@ -1197,3 +1197,80 @@ class TestVariantFamilyConsistency:
             "true, not which tool — variant-specific tooling lives in gather-context.sh "
             "and pre-ship.sh, not the law."
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 doctor preflight (drift assertion)
+# ---------------------------------------------------------------------------
+
+
+# Each tuple is (skill-name, phase-1-script-name). Reviewing-* skills use
+# gather-context.sh; shipping-* skills use pre-ship.sh.
+SKILLS_REQUIRING_DOCTOR_PREFLIGHT = [
+    ("reviewing-code", "gather-context.sh"),
+    ("reviewing-code-php", "gather-context.sh"),
+    ("reviewing-code-python-click", "gather-context.sh"),
+    ("reviewing-code-python-fastapi", "gather-context.sh"),
+    ("reviewing-architecture", "gather-context.sh"),
+    ("shipping-work", "pre-ship.sh"),
+    ("shipping-work-php", "pre-ship.sh"),
+    ("shipping-work-python-click", "pre-ship.sh"),
+    ("shipping-work-python-fastapi", "pre-ship.sh"),
+]
+
+
+class TestPhase1DoctorPreflight:
+    """Every reviewing-*/shipping-* SKILL.md must invoke `.skills/doctor.sh`
+    as a guarded preflight before the gather/pre-ship script, chained with
+    `&&` so the original "No such file or directory" noise from a dangling
+    vendor symlink chain doesn't drown out the doctor's actionable error.
+    The chain is followed by a paragraph explaining the semantics so a
+    future reader doesn't have to reverse-engineer the dense one-liner.
+
+    A future SKILL.md refactor could drop the chain or the paragraph from
+    one variant and the inconsistency would only surface in a broken-symlink
+    scenario (fresh `git worktree add`, shallow CI clone). These tests pin
+    both so the inconsistency surfaces during review instead.
+    """
+
+    @pytest.fixture(
+        params=SKILLS_REQUIRING_DOCTOR_PREFLIGHT,
+        ids=lambda p: p[0],
+    )
+    def skill_and_script(self, request):
+        skill_name, script_name = request.param
+        return skill(skill_name).body, script_name
+
+    def test_doctor_preflight_chain_present(self, skill_and_script):
+        body, script_name = skill_and_script
+        # Match the canonical chain form including the phase-1 script name.
+        # The `&&` is the load-bearing part: it skips gather/pre-ship when
+        # the doctor reports unrecoverable state.
+        expected = (
+            "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && "
+            f"bash scripts/{script_name}"
+        )
+        assert expected in body, (
+            f"SKILL.md Phase 1 must invoke the doctor preflight as:\n  {expected}\n"
+            "See skills/managing-skills/scripts/doctor.sh and "
+            "https://github.com/gregoryfoster/skills/issues/46."
+        )
+
+    def test_doctor_preflight_paragraph_present(self, skill_and_script):
+        body, script_name = skill_and_script
+        # Pin the explanatory paragraph that follows the chain — same wording
+        # across the family with only the phase-1 script name varying.
+        expected = (
+            "The leading group is a preflight: when `.skills/doctor.sh` is "
+            "present, it heals any dangling vendor symlinks (or reports an "
+            "actionable error); when absent, the group is a no-op. The `&&` "
+            f"chain skips `{script_name}` if the doctor reports unrecoverable "
+            "state so the original \"No such file or directory\" noise "
+            "doesn't drown out the doctor's message."
+        )
+        assert expected in body, (
+            "SKILL.md Phase 1 must include the explanatory paragraph below "
+            "the doctor preflight chain so future readers don't have to "
+            "reverse-engineer the dense one-liner. Expected:\n\n  "
+            + expected
+        )

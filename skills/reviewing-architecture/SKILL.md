@@ -4,7 +4,7 @@ description: Performs a high-level architectural review evaluating structural he
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: AR, architecture review, architectural review
 ---
 
@@ -52,8 +52,10 @@ Determine what to review (priority order):
 ### Phase 1 — Gather context
 
 ```bash
-bash scripts/gather-context.sh
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && bash scripts/gather-context.sh
 ```
+
+The leading group is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. The `&&` chain skips `gather-context.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message.
 
 Also:
 - Read AGENTS.md, README.md, and project layout documentation
