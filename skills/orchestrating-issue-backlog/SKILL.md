@@ -142,10 +142,21 @@ Sections:
 - **Deferred items** — what was explicitly excluded and why
 - **Out of scope** — anything that came up but was ruled out
 
-Commit:
+**Where to commit.**
+
+Default: directly on `main`. Matches the orchestrator's "workers branch from local main" assumption (Rule 1) and avoids an extra merge gate before launching agents.
+
+Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook that names "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint before launching agents. Ask if the project's conventions aren't already clear. In that case, either:
+- **Merge the doc PR before launching workers** (cleanest; workers' local main sees the doc on disk), OR
+- **Pass the plan to workers via the dispatch prompt** (workers don't actually need the doc on disk to function; acceptable if the user wants the doc PR to land alongside the batch branch).
+
+**Commit format.**
+
 ```
 #<n> docs: add <topic> backlog orchestration plan
 ```
+
+The `#<n>` prefix is the tracking issue number, which doesn't exist until Step 9. Two viable orderings: (a) commit without the `#<n>` prefix, then open the issue (recent precedent in this repo); (b) open the issue first, then commit with the prefix. Either works — don't block waiting for an issue number.
 
 ### Step 9: GitHub tracking issue
 
