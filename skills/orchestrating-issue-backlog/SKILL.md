@@ -41,16 +41,16 @@ Fetch issues and read project context before asking any questions. Go into the i
 - Rough categories of issues (architectural, bug, feature, infra)
 - Which files are most frequently touched across issues
 - Any issues that are likely already closed (cross-reference recent commits)
-- Pairs of issues that may describe the same underlying bug or fix. Check title overlap, body keywords, **and files/symbols mentioned** — files/symbols catches duplicates that don't share title language (e.g. two issues describing the same bug from different stack frames). If a candidate pair is found, surface it as a pre-rubric question (see Q0 in Step 3): keep both, close one as dup, or treat as separate. Resolving before scoring avoids redundant ranking and accidental two-agent overlap on the same file.
+- Pairs of issues that may describe the same underlying bug or fix — check title overlap, body keywords, and **files/symbols mentioned** (files/symbols catches duplicates that don't share title language). If found, surface as Q0 in Step 3 — resolving before scoring avoids redundant ranking and accidental two-agent overlap.
 
 ### Step 3: Interview (one question at a time)
 
 These questions establish everything needed. Ask them in order; do not stack multiple questions.
 
-**Q0 (conditional) — Resolve any candidate duplicate pairs surfaced in Step 1-2.**
-> For each candidate pair: keep both, close one as dup, or treat as separate?
+**Q0 (conditional) — Resolve any candidate duplicate pairs surfaced in Step 1–2.**
+> For each candidate pair: **bundle** (one agent handles both — see the Step 7 bundling rule), **close one as dup**, or **score independently** (separate batch slots)?
 
-Skip Q0 entirely if Step 1-2 didn't flag any candidates. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close` before moving to Q1 so the scored backlog reflects the resolved state.
+Skip Q0 entirely if Step 1–2 didn't flag any candidates. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close <issue> --comment 'duplicate of #<survivor>'` before moving to Q1 so the scored backlog reflects the resolved state and the closed issue records the dup link.
 
 **Q1 — What does "quality" mean here?**
 > Which matters most: testability, correctness, maintainability, or all roughly equally?
@@ -148,7 +148,7 @@ Default: directly on `main`. Matches the orchestrator's "workers branch from loc
 
 Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook that names "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint before launching agents. Ask if the project's conventions aren't already clear. In that case, either:
 - **Merge the doc PR before launching workers** (cleanest; workers' local main sees the doc on disk), OR
-- **Pass the plan to workers via the dispatch prompt** (workers don't actually need the doc on disk to function; acceptable if the user wants the doc PR to land alongside the batch branch).
+- **Include the plan in the Agent tool's prompt when launching each worker** (workers don't actually need the doc on disk to function; acceptable if the user wants the doc PR to land alongside the batch branch).
 
 **Commit format.**
 
@@ -466,7 +466,7 @@ Do not relaunch a salvaged agent in the same wave that hit the ceiling. Resolve 
 **Tactical lessons:**
 
 - **`gh issue create` with `--body "$(cat <<'EOF' ... EOF)"` chokes on apostrophes inside the body** (e.g. `skill's`), even though the heredoc is single-quoted. The error surfaces as `unexpected EOF while looking for matching '`'. Switch to `gh issue create --body-file <path>` — sidesteps all shell quoting issues and lets the body include any character. The **same workaround applies to `git commit -m "$(cat <<'EOF' ... EOF)"`** — use `git commit -F <path>` for any commit message containing apostrophes, dollar signs, or backticks. Confirmed again in Session 2026-05-25.
-- **Step 8 commit format clarification.** The skill's recommended commit format is `#<n> docs: add <topic> backlog orchestration plan`, but `<n>` (the tracking issue) doesn't exist until Step 9. Two viable orderings: (a) commit with the `#<n>` prefix omitted, then open the issue; (b) open the issue first, then commit with the prefix. Recent precedent in this repo uses (a) — design-doc commits land without a `#` prefix, and later follow-up commits reference the tracking issue. Either ordering is fine; just don't block waiting for an issue number.
+- **Step 8 commit format clarification.** First documented the chicken-and-egg between Step 8's `#<n>` commit prefix and Step 9's issue creation. Promoted to Step 8 instructions in #48.
 
 ---
 
