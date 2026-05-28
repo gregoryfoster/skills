@@ -41,14 +41,14 @@ Fetch issues and read project context before asking any questions. Go into the i
 - Rough categories of issues (architectural, bug, feature, infra)
 - Which files are most frequently touched across issues
 - Any issues that are likely already closed (cross-reference recent commits)
-- Pairs of issues that may describe the same underlying bug or fix — check title overlap, body keywords, and **files/symbols mentioned** (files/symbols catches duplicates that don't share title language). If found, surface as Q0 in Step 3 — resolving before scoring avoids redundant ranking and accidental two-agent overlap.
+- Pairs of issues that may describe the same underlying bug or fix — check title overlap, body keywords, and **files/symbols mentioned** (files/symbols catches duplicates that don't share title language). If a candidate pair is found, surface as Q0 in Step 3 — resolving before scoring avoids redundant ranking and accidental two-agent overlap.
 
 ### Step 3: Interview (one question at a time)
 
 These questions establish everything needed. Ask them in order; do not stack multiple questions.
 
 **Q0 (conditional) — Resolve any candidate duplicate pairs surfaced in Step 1–2.**
-> For each candidate pair: **bundle** (one agent handles both — see the Step 7 bundling rule), **close one as dup**, or **score independently** (separate batch slots)?
+> For each candidate pair: **bundle** (one agent handles both — see the "Bundle related issues" rule in Step 7), **close one as dup**, or **score independently** (two separate work items — Step 7 decides batch shape)?
 
 Skip Q0 entirely if Step 1–2 didn't flag any candidates. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close <issue> --comment 'duplicate of #<survivor>'` before moving to Q1 so the scored backlog reflects the resolved state and the closed issue records the dup link.
 
