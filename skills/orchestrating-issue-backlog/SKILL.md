@@ -41,10 +41,16 @@ Fetch issues and read project context before asking any questions. Go into the i
 - Rough categories of issues (architectural, bug, feature, infra)
 - Which files are most frequently touched across issues
 - Any issues that are likely already closed (cross-reference recent commits)
+- Pairs of issues that may describe the same underlying bug or fix. Check title overlap, body keywords, **and files/symbols mentioned** — files/symbols catches duplicates that don't share title language (e.g. two issues describing the same bug from different stack frames). If a candidate pair is found, surface it as a pre-rubric question (see Q0 in Step 3): keep both, close one as dup, or treat as separate. Resolving before scoring avoids redundant ranking and accidental two-agent overlap on the same file.
 
 ### Step 3: Interview (one question at a time)
 
-Four questions establish everything needed. Ask them in order; do not stack multiple questions.
+These questions establish everything needed. Ask them in order; do not stack multiple questions.
+
+**Q0 (conditional) — Resolve any candidate duplicate pairs surfaced in Step 1-2.**
+> For each candidate pair: keep both, close one as dup, or treat as separate?
+
+Skip Q0 entirely if Step 1-2 didn't flag any candidates. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close` before moving to Q1 so the scored backlog reflects the resolved state.
 
 **Q1 — What does "quality" mean here?**
 > Which matters most: testability, correctness, maintainability, or all roughly equally?
