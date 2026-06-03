@@ -328,7 +328,7 @@ git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-sup
 
 ### Phase 10 — `skills/` directory
 
-**Vendor symlinks:** Symlink every skill from each submodule. Create from within the repo root — paths must be relative from `skills/`:
+**Vendor symlinks:** Symlink every skill from each submodule, except the cross-cutting review/ship workflows where only the `-python-fastapi` stack variant belongs in a FastAPI project. Create from within the repo root — paths must be relative from `skills/`:
 
 ```bash
 mkdir -p skills
@@ -338,12 +338,24 @@ mkdir -p skills
 for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; do
   for skill_dir in "$repo"/skills/*/; do
     skill_name=$(basename "$skill_dir")
+    # Cross-cutting review/ship workflows ship as stack variants upstream.
+    # A FastAPI project wants ONLY the -python-fastapi variant of each; skip
+    # the stack-neutral name and any other stack variants. Pattern-based so
+    # future stack variants added upstream get filtered automatically.
+    case "$skill_name" in
+      reviewing-code|reviewing-code-*|shipping-work|shipping-work-*)
+        case "$skill_name" in
+          reviewing-code-python-fastapi|shipping-work-python-fastapi) ;;
+          *) continue ;;
+        esac
+        ;;
+    esac
     ln -sfn "../$repo/skills/$skill_name" "skills/$skill_name"
   done
 done
 ```
 
-**Local overrides (1):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10 vendor loop above already does this) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
+**Local overrides (1):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10's vendor loop above selects only the `-python-fastapi` variants of these workflows) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
 
 The remaining local override is the project-narrative skill that genuinely varies per-project:
 
@@ -481,7 +493,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/api/`, `tests/core/` |
 | Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
-| Skills | Local overrides + all vendor skills symlinked + matching `.claude/skills/` discovery symlinks |
+| Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + matching `.claude/skills/` discovery symlinks |
 | GH issue | #1 closed |
 | Phase 0 scratch | Cleaned up (`<SKILL_TMP>` removed) |
 
