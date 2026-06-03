@@ -439,7 +439,7 @@ Commit message body should list all key scaffold components (see AGENTS.md commi
 ### Phase 14 — Push
 
 ```bash
-bash skills/shipping-work/scripts/push.sh
+bash skills/shipping-work-python-fastapi/scripts/push.sh
 ```
 
 **If the push is rejected with `! [rejected] main -> main (fetch first)`,** the GitHub repo was created via the UI with "Add LICENSE" or "Add README" checked, leaving an unrelated initial commit on `main`. Prevent it next time by creating the repo with no LICENSE/README; recover this time by rebasing onto the remote and re-pushing:
@@ -447,7 +447,7 @@ bash skills/shipping-work/scripts/push.sh
 ```bash
 # Only run when the push above was rejected for divergent history.
 git pull --rebase --allow-unrelated-histories origin main
-bash skills/shipping-work/scripts/push.sh
+bash skills/shipping-work-python-fastapi/scripts/push.sh
 ```
 
 ### Phase 15 — GitHub issue
