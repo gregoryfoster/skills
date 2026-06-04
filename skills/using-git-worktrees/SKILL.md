@@ -113,14 +113,17 @@ If the branch is **descoped** (will not be merged), document why before Phase 5:
 bash scripts/worktree-destroy.sh <branch>
 bash scripts/worktree-destroy.sh <branch> --descoped "<reason>"
 bash scripts/worktree-destroy.sh <branch> --base <ref>   # verify merge into <ref> instead of project default
+bash scripts/worktree-destroy.sh <branch> --force        # required when the worktree contains submodules
 ```
 
 The script:
 - Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied.
 - If `<worktree>/.port` exists, kills any process bound to that port via `lsof -ti tcp:<port>` (portable to macOS + Linux). Falls back to a warning if `lsof` isn't installed.
-- Runs `git worktree remove <path>`
+- Runs `git worktree remove <path>` (or `git worktree remove --force <path>` if `--force` was supplied)
 - Runs `git worktree prune` to clean stale metadata
 - Exits 0 on success, 1 on Iron Law violation (unmerged work without `--descoped`), 2 on tooling failure
+
+**When to pass `--force`:** git's `worktree remove` refuses to act on worktrees containing checked-out submodules (`fatal: working trees containing submodules cannot be moved or removed`). If the project ships submodules (e.g., `skills-vendor/*` consumed via `managing-skills`), every destroy will hit this. Pass `--force` to propagate `--force` to `git worktree remove`. The Iron Law's merge gate is unaffected — `--force` only controls the final removal mechanics. **Caveat:** `--force` also bypasses git's dirty-working-tree refusal, so any uncommitted changes in the worktree are silently discarded; verify the worktree is clean before forcing.
 
 The branch ref itself is **not** deleted — that's a separate decision. Use `git branch -d <branch>` afterward if you also want to drop the local ref.
 
