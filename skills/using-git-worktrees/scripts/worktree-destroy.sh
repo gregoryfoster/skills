@@ -236,28 +236,28 @@ fi
 # keep it opt-in rather than auto-detecting submodules — silent auto-force
 # would also silently discard uncommitted changes in the worktree.
 #
-# Capture stderr on failure so we can hint at --force when git's refusal looks
-# like the submodule case. The Iron Law's merge gate has already passed by
-# this point; this hint is purely about the final removal mechanics.
-REMOVE_ERR=""
-if [[ $FORCE -eq 1 ]]; then
-  if ! REMOVE_ERR=$(git worktree remove --force "$WORKTREE_PATH" 2>&1 >/dev/null); then
-    echo "ERROR: git worktree remove --force failed:" >&2
-    echo "$REMOVE_ERR" >&2
-    exit 2
+# Capture stderr so we can (a) hint at --force when git's refusal looks like
+# the submodule case, and (b) surface git's non-fatal warnings on success
+# (which the prior fire-and-forget invocation passed straight to the terminal
+# — preserve that visibility under the captured-stderr pattern). The Iron
+# Law's merge gate has already cleared (passed or explicitly descoped) by
+# this point; the hint is purely about removal mechanics.
+REMOVE_ARGS=()
+[[ $FORCE -eq 1 ]] && REMOVE_ARGS+=(--force)
+# ${arr[@]+"${arr[@]}"} is the bash-3.2-safe expansion for "maybe-empty array
+# under set -u" — macOS still ships bash 3.2, where a plain "${arr[@]}" on an
+# empty array trips nounset.
+if ! REMOVE_ERR=$(git worktree remove ${REMOVE_ARGS[@]+"${REMOVE_ARGS[@]}"} "$WORKTREE_PATH" 2>&1 >/dev/null); then
+  echo "ERROR: git worktree remove failed:" >&2
+  echo "$REMOVE_ERR" >&2
+  if [[ $FORCE -eq 0 && "$REMOVE_ERR" == *submodule* ]]; then
+    echo "" >&2
+    echo "Hint: the worktree contains submodules. Re-run with --force to bypass." >&2
+    echo "      (--force also bypasses git's dirty-tree check; verify the worktree is clean first.)" >&2
   fi
-else
-  if ! REMOVE_ERR=$(git worktree remove "$WORKTREE_PATH" 2>&1 >/dev/null); then
-    echo "ERROR: git worktree remove failed:" >&2
-    echo "$REMOVE_ERR" >&2
-    if [[ "$REMOVE_ERR" == *submodule* ]]; then
-      echo "" >&2
-      echo "Hint: the worktree contains submodules. Re-run with --force to bypass." >&2
-      echo "      (--force also bypasses git's dirty-tree check; verify the worktree is clean first.)" >&2
-    fi
-    exit 2
-  fi
+  exit 2
 fi
+[[ -n "$REMOVE_ERR" ]] && printf '%s\n' "$REMOVE_ERR" | sed 's/^/WARN: /' >&2
 git worktree prune || exit 2
 
 # Post-removal sweep: warn (do not fail) if anything still references the path.
