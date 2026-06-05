@@ -3,11 +3,11 @@
 # Destroys the worktree for <branch>. Refuses if the branch is NOT merged
 # into the base ref AND --descoped <reason> was not supplied (Iron Law).
 #
-# Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--help]
+# Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force] [--help]
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>]"
+  echo "Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force]"
   echo ""
   echo "Destroys the worktree for <branch> (resolved via the same path scheme"
   echo "as worktree-create.sh). Iron Law: refuses if the branch has NOT been"
@@ -35,6 +35,13 @@ usage() {
   echo "  Precedence: --descoped takes precedence over --base. If both are"
   echo "  supplied, the merge check is skipped entirely and --base is ignored."
   echo ""
+  echo "  --force propagates to 'git worktree remove --force'. Required when the"
+  echo "  worktree contains checked-out submodules (git refuses to remove those"
+  echo "  without --force). Note: --force ALSO bypasses git's dirty-working-tree"
+  echo "  check, so any uncommitted changes in the worktree are discarded. The"
+  echo "  Iron Law's merge gate is unaffected — --force only changes removal"
+  echo "  mechanics, not merge verification."
+  echo ""
   echo "Does NOT delete the branch ref. Use 'git branch -d <branch>' afterward"
   echo "if you also want to drop the local ref."
   echo ""
@@ -60,6 +67,7 @@ shift
 DESCOPED=0
 DESCOPE_REASON=""
 BASE_OVERRIDE=""
+FORCE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --descoped)
@@ -80,6 +88,10 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       shift 2
+      ;;
+    --force)
+      FORCE=1
+      shift
       ;;
     *)
       echo "ERROR: unknown flag '$1'" >&2
@@ -219,7 +231,33 @@ if [[ -n "$PIDS" ]]; then
   fi
 fi
 
-git worktree remove "$WORKTREE_PATH" || exit 2
+# Removal: pass --force only when explicitly requested. --force bypasses BOTH
+# git's submodule-presence refusal AND its dirty-working-tree refusal, so we
+# keep it opt-in rather than auto-detecting submodules — silent auto-force
+# would also silently discard uncommitted changes in the worktree.
+#
+# Capture stderr so we can (a) hint at --force when git's refusal looks like
+# the submodule case, and (b) surface git's non-fatal warnings on success
+# (which the prior fire-and-forget invocation passed straight to the terminal
+# — preserve that visibility under the captured-stderr pattern). The Iron
+# Law's merge gate has already cleared (passed or explicitly descoped) by
+# this point; the hint is purely about removal mechanics.
+REMOVE_ARGS=()
+[[ $FORCE -eq 1 ]] && REMOVE_ARGS+=(--force)
+# ${arr[@]+"${arr[@]}"} is the bash-3.2-safe expansion for "maybe-empty array
+# under set -u" — macOS still ships bash 3.2, where a plain "${arr[@]}" on an
+# empty array trips nounset.
+if ! REMOVE_ERR=$(git worktree remove ${REMOVE_ARGS[@]+"${REMOVE_ARGS[@]}"} "$WORKTREE_PATH" 2>&1 >/dev/null); then
+  echo "ERROR: git worktree remove failed:" >&2
+  echo "$REMOVE_ERR" >&2
+  if [[ $FORCE -eq 0 && "$REMOVE_ERR" == *submodule* ]]; then
+    echo "" >&2
+    echo "Hint: the worktree contains submodules. Re-run with --force to bypass." >&2
+    echo "      (--force also bypasses git's dirty-tree check; verify the worktree is clean first.)" >&2
+  fi
+  exit 2
+fi
+[[ -n "$REMOVE_ERR" ]] && printf '%s\n' "$REMOVE_ERR" | sed 's/^/WARN: /' >&2
 git worktree prune || exit 2
 
 # Post-removal sweep: warn (do not fail) if anything still references the path.
