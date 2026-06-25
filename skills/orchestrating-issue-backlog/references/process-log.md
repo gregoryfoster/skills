@@ -7,6 +7,8 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | Date | Project | Headline |
 |---|---|---|
 | 2026-03-23 | gregoryfoster/skills (origin session) | Establishing batch branch pattern; Rules 1–4 origins (local-main staleness; `git push HEAD:main` antipattern; `isolation: "worktree"` auto-merge semantics; rebase commit-message clobber) |
+| 2026-05-09 | cannabis.observer/power-map | CR-surfaced backlog → 6-agent fully-parallel batch (disjoint by design); strict-subset bundling; grep contested symbols before scoring; `isolation:"worktree"` auto-merge is unreliable — verify per worker |
+| 2026-05-11 | cannabis.observer/power-map | Feature-followup backlog clusters on the producing file (single contested template); closed-in-fact grep for every issue; 4 distinct worktree branch-base/completion behaviors; `.claude/worktrees` gitignore + `remove -f -f` |
 | 2026-05-22 | cannabis.observer-wordpress | Port-pool incident → Rules 5/6 (per-batch ceiling, runtime fall-through detection) |
 | 2026-05-24 | gregoryfoster/skills | Single-owner overlap resolution; rubric weight variance (`Correctness × 3`); `gh issue create --body-file` workaround |
 | 2026-05-25 | gregoryfoster/skills | Bundle three same-file issues into one agent (Shape A); bootstrap-skill Q2 framing |
@@ -56,6 +58,96 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 - #27 and #28 (dashboard 404 + delete watch) were batched into a single agent (A5) despite being distinct issues, because they both touch `dashboard/routes.py`. Batching eliminated a merge conflict risk within Batch A.
 - #16 (event constants) scored 13/15 — highest in the backlog — because it is a prerequisite for #18 (audit helper) and eliminates silent audit-log typo bugs across 8 files.
 - The critical path (Batches B→C→D→E) runs through `tasks.py`. All four batches are single-agent sequential because the file accumulates changes from each batch that the next batch must build on.
+
+## Session 2026-05-09 (cannabis.observer/power-map, seven-issue CR-surfaced backlog)
+
+**Backlog:** seven CR-surfaced issues from #131 / #135 work (#122, #124, #125, #132, #133, #134, #136). Output: tracking issue #141, design doc `docs/plans/2026-05-09-stability-and-cleanup-backlog.md`.
+
+**Outcome:** single 6-agent parallel batch — zero contested files between agents. This is the inverse shape of the 2026-03-23 backlog (which had a sequential critical path through `tasks.py`).
+
+**New patterns worth keeping:**
+
+1. **CR-surfaced backlogs tend to be disjoint.** When all the issues in a backlog were discovered during code review of recent feature work (#131 and #135 here), each one tends to live in a different review-pass area — the reviewer found one bug per feature surface. Result: high parallelism is the default, not the exception. Don't assume sequential gates are needed just because past backlogs had them.
+
+2. **"Strict subset" is a stronger bundling signal than "same file."** #124 was a literal subset of #136 section (A) — the same fix closes both. The skill already covers "Bundle when cohesive" for issues that touch the same file. Add: when one issue is a strict subset of another, always bundle into the larger issue's first commit. Two agents on the same fix would create branch contention with zero benefit.
+
+3. **Verify the conflict-zone hypothesis before presenting the score table.** During scoring I ran `grep -rn "is_canonical"` and `grep -rn "?v="` to ground the file-footprint estimates. The `is_canonical` grep revealed that #136 section (A) was 5× larger than #124's body suggested (touched `src/core/ingestion/pipeline.py` + `csv_*.py`, not just the dedup script). If I'd skipped that step, the bundling decision and A1's self-review checks would have been wrong. **Recommended addition to Step 5:** before presenting conflict zones, grep for the contested symbols/keywords to confirm the file footprint matches each issue's stated scope.
+
+4. **Top-level-template vs partial-template is a real disjointness boundary.** #133 (cache-bust) and #125 (DOM-ID audit) both looked like "HIGH-blast admin template work" and looked headed for a sequential gate. They're actually disjoint: cache-bust lives in *top-level* templates that load scripts (`base.html`, `detail.html`); DOM-ID audit lives in *partial* form-row templates (no script tags). Worth checking this distinction explicitly before gating template-heavy issues against each other.
+
+**Execution observations (added after the batch ran):**
+
+5. **`isolation: "worktree"` agent merge behavior is INCONSISTENT — earlier sessions over-generalized.** Of 6 agents launched in one parallel volley:
+   - 5 of 6 (A1, A2, A3, A5, A6) stayed on per-agent `worktree-agent-<id>` branches branched from the orchestrator's HEAD at spawn time. Their work did NOT auto-merge to the orchestrator's current branch — the orchestrator had to merge each branch manually with `git merge --no-ff worktree-agent-<id>`.
+   - 1 of 6 (A4) committed directly to the orchestrator's current local branch (`batch/2026-05-09-a`), parented at the latest commit at the moment A4 finished — i.e. its base advanced to include earlier siblings' merges. The agent itself reported: "Branch: batch/2026-05-09-a (orchestrator's batch branch — not the per-slot ... merging strategy chose to commit directly into batch branch)".
+   - **The 2026-03-23 skill log claimed agents "auto-merge to caller's current branch." That's true for *some* agents in *some* circumstances — possibly the last to complete, or those whose worktree base shifted to overlap the orchestrator's branch. It is NOT reliable.**
+   - **Operating rule going forward:** after every worker completion, run `git branch --list "worktree-*"` to discover whether the agent left a branch behind, and merge it if present. Don't assume auto-merge; verify.
+
+6. **Cross-slot scope leaks happen when a template change invalidates an assertion in a file outside the prompt's allowlist.** A2 (#133) had to patch one assertion in `tests/api/admin/test_people_name_templates.py`; A4 (#125) had to patch three assertions in `tests/api/admin/test_orgs_templates.py`. Neither file was in any other slot's named list. Both agents flagged the leak in their report and explained why the change was forced. Net effect: zero merge conflicts, but the orchestrator's "files you may touch" allowlist is *incomplete* by design — anywhere a literal template URL or DOM ID is asserted in a test, that test joins the producing slot's de-facto scope.
+   - **Recommended addition to worker prompts:** include a "your changes may also force mechanical updates to assertions referencing the same literals — fix those too, document the file in your report" clause. Cuts ambiguity at completion time.
+
+7. **Test failures pre-existing on `main` vs. failures introduced by the batch — discriminate before reporting.** A1 reported 2 remaining `test_orgs_addresses.py` failures alongside its 15 fixed; the orchestrator confirmed they fail identically on `main` (`KeyError: 'hx-trigger'` in both). They were not in #136's scope and stay deferred. Pattern: when worker self-review surfaces extra failures, the orchestrator must verify they're pre-existing on `main` before greenlighting the batch — the test-suite floor isn't perfect, and what looks like a regression introduced by the batch may already exist upstream.
+
+8. **Final test-suite snapshot for this batch:** `1008 passed, 2 skipped, 2 pre-existing failed` (integration); `109/109 passed` (npm); ESLint + Prettier clean. All 15 failures listed in #136 closed. #122 added 5 new parametrized trigger tests. #134 STYLE.md §33 added.
+
+## Session 2026-05-11 (cannabis.observer/power-map, five name-editor follow-ups)
+
+**Backlog:** five name-editor follow-ups from the #123 / #127 work cluster (#126, #128, #129, #130, #139). Output: tracking issue #143, design doc `docs/plans/2026-05-11-name-editor-followups-backlog.md`. Four issues batched; one (#129) closed-in-fact during scoring.
+
+**Outcome:** One 2-agent parallel batch (#128, #130) then two single-agent sequential batches (#126, #139). Critical path runs through a single contested template, `_name_parts_editor.html`. Different shape from the previous two sessions:
+
+- 2026-03-23: critical path through `tasks.py` across **four** batches (B→C→D→E, all single-agent on the same file).
+- 2026-05-09: zero contested files across **six** parallel agents (CR-surfaced bugs are naturally disjoint).
+- 2026-05-11: critical path through `_name_parts_editor.html` across **three** batches, plus one isolated parallel slot.
+
+**Pattern: "feature-followup" backlogs cluster on the producing files.** Issues filed against a recently-shipped feature tend to congregate on the same 1–2 files the feature lives in — the implementer left TODOs, the reviewer flagged smells in the same area, the QA pass surfaced UX gaps in the same partial. Expect a single-file critical path with a small number of parallel-safe outliers. This is the inverse of 2026-05-09's CR-surfaced disjointness and distinct from 2026-03-23's deep architectural chain.
+
+**New patterns worth keeping:**
+
+1. **Grep the file's own header comments during the closed-in-fact check.** Issue #129 was verified resolved by reading [_name_metadata_fields.html](src/templates/admin/people/partials/_name_metadata_fields.html) — the file's docstring explicitly credits #131 for the fix. Adding `grep -rn "Issue #" src/templates/ src/api/admin/` to the closed-in-fact pass surfaces these credits without needing to read entire files. Module/template docstrings are an underused signal — they're how careful contributors annotate which footgun an edit retired. The 2026-05-09 log already established "grep for contested symbols before presenting scores"; expand the recommendation: also grep for `Issue #` in the contested files themselves.
+
+2. **The "closed-in-fact" check should target every issue, not just the high-blast ones.** #129 had Med blast and the highest score (10/15). If I'd skipped grep verification because "high blast = surely still open", I'd have allocated a batch slot to dead work. **Rule:** for every scored issue, grep at least one identifying symbol from its body. Don't trust the issue body's claim about file state.
+
+3. **Mechanical 1-line refactors don't bundle with adjacent UX features even when they touch the same file.** #128 (one-character substitution: `"5"` → `{{ ARRAY_CAP }}`) and #126 (UX feature: arrow buttons + new JS + new vitest) both touch `_name_parts_editor.html`. The skill's "bundle when cohesive" rule could have pulled them into one agent, but separating them gives the user two clean review surfaces (mechanical refactor vs. UX affordance). The bundling rule's real signal is "naturally sequenced (define → use)", not "happens to touch the same file". When in doubt, separate — gates between single-agent batches are cheap.
+
+4. **`_name_parts_editor.html` vs `_name_metadata_fields.html` disjointness boundary.** Both partials cohabit the same name-editor UX, but they don't overlap in this backlog: parts-editor work (#126, #128, #139) and metadata-fields work (#129 if it had been open) are independent. Worth checking this partial-vs-partial distinction explicitly when the backlog spans an editor with split rendering, similar to the "top-level-template vs partial-template" distinction in the 2026-05-09 log.
+
+5. **Pre-production deployment context doesn't change the rubric, but does change the cost calculus on sequencing.** With pre-production runway, three sequential single-agent batches (B, C, then a future fourth if needed) cost almost nothing — the orchestrator round-trips are the only cost, and the user can review three small surfaces. In active production, the same backlog would more aggressively bundle to minimize merge-to-main events. Document the deployment context in the design doc's "Approved approach" section so future readers understand why sequencing was relaxed (or tightened).
+
+**Execution-phase observations (added after the batches ran):**
+
+6. **`isolation: "worktree"` agent behavior is even more variable than the 2026-05-09 log claimed.** Across 4 agents this session:
+   - A1 (#128) — branched from `08c756e` (the prior `origin/main` HEAD, predating my orchestration commits); committed to a `worktree-agent-X` branch; orchestrator manually merged.
+   - A2 (#130) — branched from same `08c756e`; **left work uncommitted in the worktree's working tree even though the harness reported the task "completed"**; orchestrator manually committed on the agent's branch before merging.
+   - B1 (#126) — branched from the *current* local main HEAD (post-orchestration commits); committed to a **custom-named feature branch** (`126-reorder-buttons-name-parts`, not `worktree-agent-X`); orchestrator's working tree shifted onto the agent's branch on completion.
+   - C1 (#139) — branched from current local main; committed to the normal `worktree-agent-X` pattern.
+
+   Three distinct branch-base behaviors AND three distinct completion behaviors in one session. The 2026-05-09 model ("agents auto-merge to caller's current branch") is too narrow. The actual behavior space:
+   - **Branch base:** `origin/main` HEAD at worktree-creation time, OR the orchestrator's current local HEAD. Possibly depends on whether `origin/main` was reachable when the worktree was set up; possibly depends on harness version.
+   - **Branch name:** usually `worktree-agent-X`, occasionally a custom name the agent picks.
+   - **Completion:** usually a committed branch ready to merge; occasionally uncommitted work in the worktree directory.
+   - **Orchestrator's branch after agent completes:** usually unchanged, occasionally shifted to the agent's branch.
+
+   **Operating rule for every worker completion:**
+   1. Check `git branch --show-current` — orchestrator may have shifted off main.
+   2. Check `git branch --list "worktree-*"` AND look for custom-named feature branches via `git log --oneline main..HEAD`.
+   3. Check the worktree directory at `.claude/worktrees/agent-<id>/` for uncommitted changes — if present, the agent didn't finish committing.
+   4. Reconcile: commit any uncommitted work on the agent's branch (with the prescribed message format), then merge into the batch branch (multi-agent) or directly into main (single-agent).
+
+7. **Worktree harness locks are real but force-removable.** Worktree directories under `.claude/worktrees/` are locked by the agent harness daemon (the lock reason names the PID). Standard `git worktree remove` fails with "cannot remove a locked working tree" — but `git worktree remove -f -f` (double-force) succeeds cleanly and doesn't appear to disturb the harness. Cleanup pattern: `git worktree remove -f -f .claude/worktrees/agent-X` then `git worktree prune` then `git branch -D worktree-agent-X` (or the custom name).
+
+8. **The `.claude/worktrees/` path needed an explicit `.gitignore` entry.** Agent harness creates per-agent directories there; default `.gitignore` covered `.worktrees/` (top-level, for user-created worktrees) but not the harness path. Without the entry, the harness's leftover worktree directories show up as untracked and trip `shipping-work-claude`'s check-status gate. One-line fix; worth doing once per project that uses the harness.
+
+9. **Pre-existing test failures stay pre-existing across batches.** The 2 `test_orgs_addresses.py` flash-trigger failures (`KeyError: 'hx-trigger'`) persisted unchanged through all three batches (A → B → C), each time verified by running the same tests on `main`. The 2026-05-09 log already captured "discriminate pre-existing from introduced before reporting"; this session validates that the same 2 failures are stable across many merges — they're real test debt, not flaky. Track as a separate issue when the count crosses a threshold.
+
+10. **CR-surfaced follow-up rate: ≈1 issue per batch.** Each batch's CR rounds surfaced new GH issues that captured real concerns outside the current scope: #144 (asyncpg pool refactor, Batch A CR), #145 (focus preservation, Batch B CR), #146 (aria-label disambiguation, Batch B CR). Pattern: review surfaces something real but out-of-scope; orchestrator files a follow-up issue; comes back later. The cost is low (one `gh issue create` per surface) and the value is preserving design fidelity to what was actually shipped. Plan for it — don't be surprised by the rate.
+
+11. **Pre-existing infrastructure should be discoverable by agents before they reinvent it.** B1 invented `window.__cardstackReorderSync` as an IIFE side-channel (acceptable, but CR flagged it for documentation). C1 hand-duplicated `_NON_DECOMPOSABLE_TYPES` as a local frozenset rather than importing from the canonical normalizer module (CR caught the drift). Worker-agent prompts should explicitly name the established infrastructure to reuse:
+    - For Jinja constants from Python: name the `register_X_global` / `inject_X_into_admin_templates` pattern from `src/api/admin/assets.py:60-90`.
+    - For canonical sets/enums shared between Python + templates: name `NON_DECOMPOSABLE_TYPES` and `ARRAY_CAP` as exemplars.
+    - For HTMX swap design across paired partials: name the `<details id="parts-editor-{{ n.id }}">` + `hx-swap="outerHTML"` shape that #139 used.
+
+12. **The "single contested template" backlog shape held up across 3 batches.** Predicted in the plan (`_name_parts_editor.html` carried the critical path), held up in execution: every batch contributed to that file's evolution AND each batch's CR work fed the next. Batch A's `register_array_cap_global` pattern became the template for Batch C's `register_non_decomposable_types_global`. Batch B's `<details id="parts-editor-{{ n.id }}">` wrapper became the swap target Batch C used. This shape is reproducible — feature-followup backlogs against a recently-shipped subsystem cluster on its producing files AND build on each other's plumbing. The orchestrator can design batches that maximize this lineage (each batch lays groundwork for the next) without explicitly tracking it as a dependency.
 
 ---
 

@@ -10,7 +10,7 @@ The procedure assumes you have already halted further completion signals for the
 
 ## Salvage procedure
 
-1. **Identify** the responsible agent and its intended feature branch (e.g. `feature/batch-a-<issue>`). The most recently signaled agent is the usual suspect; cross-check by reviewing the agent's recent tool calls and the modified files in `git status`.
+1. **Identify** the responsible agent and the branch to salvage onto (e.g. the auto-provisioned `worktree-agent-<id>`). In a true fall-through the harness created no worktree branch, so the salvage branch name is the orchestrator's choice — match the project's convention. The most recently signaled agent is the usual suspect; cross-check by reviewing the agent's recent tool calls and the modified files in `git status`.
 
 2. **Capture state** in the main checkout:
    ```bash
