@@ -415,7 +415,7 @@ Session-specific institutional memory — interview answers, batch shapes, non-o
 - Step 8 docs-only-worktree authoring option — 2026-06-08
 - Step 9 `--body-file` over heredoc — confirmed across 2026-05-24, 2026-05-25, 2026-06-08, 2026-06-09
 - Rule 5 slot-reclaim semantics + cheap ceiling re-verification — 2026-06-09
-- Rubric variable-weight escape hatch — confirmed for **Foundation**-leading (×3), not just Correctness — 2026-05-24 (Correctness ×3), 2026-06-29 (Foundation ×3)
-- Blast ≠ priority refinement: a single issue whose blast intersects **multiple** otherwise-parallel agents → isolate in its own gated batch (grep call sites to verify) — 2026-06-29
+- Step 4 rubric variable-weight escape hatch — confirmed for **Foundation**-leading (×3), not just Correctness — 2026-05-24 (Correctness ×3), 2026-06-29 (Foundation ×3)
+- Step 4 / Key Principles "blast ≠ priority" refinement: a single issue whose blast intersects **multiple** otherwise-parallel agents → isolate in its own gated batch (grep call sites to verify) — 2026-06-29
 
 When closing out a backlog orchestration session (Step 10), append a new entry to the reference file and update its index table. Promote any stable cross-session pattern into the body of this skill; leave one-off tactical details in the log.
