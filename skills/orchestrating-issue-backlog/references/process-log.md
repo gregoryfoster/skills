@@ -17,6 +17,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-06-16 | CannObserv/usa-wa | **Validity-re-analysis gate** (re-validate every issue against a just-merged change *before* scoring → supersede/rescope/defer/close); followup-backlog mode (3rd recurrence); ceiling gated by **shared Postgres test DB**, not git/ports; pervasive shared-file (config/descriptor) co-edits → sequential single-agent tail |
 | 2026-06-28 | cannabis.observer-wordpress | **Cross-layer followup backlog → CR-like disjointness** (4th followup recurrence, but the followups span one-bug-per-layer instead of clustering on the producing file → high parallelism, single doc-file overlap); grep narrowed two issues' footprints below their issue-body claims (#407 → 1 transformer, #399 → 2 commands) |
 | 2026-06-29 | address-validator | **Foundation ×3** (first Foundation-leading weight — confirms the variable-weight escape hatch covers it, not just Correctness); aggressive same-file bundling (9 issues → 5 agents); single issue whose blast intersects **multiple** parallel agents → isolate in its own gated batch (blast ≠ priority refinement, verify call sites by grep); sub-score commit order inverts for define-then-use |
+| 2026-07-08 | CannObserv/power-map | **Shared test infrastructure is a soft conflict zone** — a test-suite-optimization issue (#283) with zero *source*-file overlap still sequenced **last & solo** because it mutates `conftest.py`/session fixtures every other worker's TDD tests depend on; **stability-critical deploy context split a fully-disjoint backlog into 3 gated batches** even though all 6 could run at once (correctness-first won over max-parallelism); closed-in-fact catch via `git log -S` (#20 → resolved by #210) closed **before** the interview; standard equal-weight rubric (no flex) |
 
 ---
 
@@ -444,3 +445,37 @@ Lesson: run the closed-in-fact / footprint grep even when no issue looks stale �
 - `gh issue create --body-file <path>` used from the start (the 2026-05-24 apostrophe lesson) — clean, no quoting issues.
 - Design-doc commit used precedent (a): committed without `#<n>` prefix, then opened the tracking issue.
 - `resolve-plans-dir.sh` lives under `skills-vendor/gregoryfoster-skills/skills/writing-plans/scripts/` (vendored submodule), not `skills/` — the SKILL's `bash skills/writing-plans/...` path is a symlink-relative reference that may not resolve from repo root; `find skills skills-vendor -name resolve-plans-dir.sh` locates it. Resolved to `docs/plans/`.
+
+---
+
+## Session 2026-07-08 (power-map CR-followup backlog)
+
+**Project:** `CannObserv/power-map` (FastAPI; uv + ruff + pytest). Six CR/review
+followups — #262 (from #260 CR), #277 (from #276), #280/#281/#282/#283 (all from
+the #275 Phase 2 CR) — plus #20 requested but closed-in-fact. Tracking issue
+`#285`.
+
+**Interview answers:**
+- Q1 Quality: **all equal** → standard `(Foundation × 2) + (Correctness × 2) + Scope`, max 15. First session in a while to use the *default* rubric with no weight flex (contrast 2026-06-29 Foundation ×3, 2026-05-24 Correctness ×3).
+- Q2 Deploy: **active production, stability-critical.**
+- Q3 Defer: none — all 6.
+- Q4 Parallelism: **hybrid.**
+- Q5 Ceiling: **3** — generic `using-git-worktrees` scripts, no custom port pool; dev server on 8001 is manual. (No shared-resource cap like the 2026-05-22 WordPress port pool or 2026-06-16 usa-wa shared Postgres; the cap is a comfort preference on a single VM.)
+- Q6 Merge: regular merge commit (batch→main); intra-batch fixed FF/regular.
+
+**Shape:** 6 issues → **6 agents across 3 gated batches** (A: 3 parallel / B: 2 parallel / C: 1 solo). All six issues are file-disjoint — max parallelism was *available* but not *chosen*.
+
+**Non-obvious decisions captured:**
+
+- **Shared test infrastructure is a soft conflict zone even at zero source-file overlap.** #283 (optimize the ~16-min integration suite) touches no product source and no other issue's files — by the pure contested-file grep it's fully parallel-safe. But its real work mutates `conftest.py` / session-scoped fixtures / the isolation strategy that *every other worker's TDD tests* depend on. Merging it concurrently with five workers who are each adding tests against the old fixtures is a guaranteed churn/rebase mess, and it would be optimizing an incomplete suite. Resolution: sequence it **last & solo**, tuning the fully-merged suite as a read-only baseline. Generalizable rule candidate: *a test-suite-restructuring issue is a soft dependency on all issues that add tests, even when it shares no source file with them — put it last and alone.* (First occurrence; log-only until it recurs.)
+
+- **Stability-critical deploy context can override max-parallelism on a fully-disjoint backlog.** With every issue file-disjoint, the mechanical answer is "one batch, 6 agents (chunked to the ceiling)." But Q2 = active production + Q4 = hybrid turned it into three correctness-ordered gated batches: the data-loss bug (#280, C3) and the two runtime-risk issues (#277, #262, both C2) in Batch A reviewed as a unit *before* any cosmetic/UX cleanup (#281/#282) touches the tree; #283 last. Disjointness enables parallelism; deploy context decides whether to *spend* it. The two prior CR-surfaced power-map sessions (2026-05-09 pre-/early-production) went fully parallel — the difference here is purely the stability posture.
+
+- **#262 grouped with the correctness batch, not the cleanups, despite being "perf."** It's a production request-path change with lost-write/ordering risk if botched (C2), so it belongs where the careful review is — and it fills Batch A to exactly the 3-agent ceiling.
+
+- **Closed-in-fact catch via `git log -S`, closed before the interview.** #20 (dup-count cache stale under multi-worker) described a module-level dict in `orgs.py`; `git log -S dup_count_cache -- src/core/schema.sql` surfaced `#210 feat: move dup count cache to DB so all workers share it`, and the current `org_dups.py`/`people_dups.py` carry a DB-backed `dup_count_cache` table documented as worker-shared. Confirmed the issue's own file reference was stale (the code had moved modules *and* mechanisms). Closed as a Q0-adjacent clarifier (`AskUserQuestion`) before Q1 so the scored backlog reflected reality — the HARD-GATE permits clarifying questions.
+
+**Tactical confirmations:**
+- Design-doc commit used precedent (b): opened the tracking issue **first** (#285), then committed the doc with the `#285 docs:` prefix. Committed directly on `main` — no workspace-isolation pre-commit hook here (hooks are ruff/pytest/eslint/prettier/vitest/version-sync/terraform-fmt; the markdown-only commit ran ruff+pytest-unit and passed).
+- `gh issue create --body-file` from the start (2026-05-24 apostrophe lesson).
+- **Process-log lives in a vendored submodule** (`skills-vendor/gregoryfoster-skills`, reached via the `.claude/skills/...` symlink). Per the project's "don't leave uncommitted edits in vendored skills" rule, this entry is committed *inside the submodule's own git* and flagged for upstream push to `gregoryfoster/skills` — not left as local divergence that `git submodule update` would clobber.
