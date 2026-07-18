@@ -243,6 +243,8 @@ async function cmdIndex(projectPath) {
 
     const started = Date.now();
     let contextKicked = false;
+    let contextKickFails = 0;
+    const MAX_CONTEXT_KICKS = 3;
     let nullPolls = 0;
     for (;;) {
       if (Date.now() - started > INDEX_TIMEOUT_MS) {
@@ -283,12 +285,19 @@ async function cmdIndex(projectPath) {
       );
 
       // Once embeddings are done, nudge context indexing if artifacts lag (gotcha C).
+      // Retry on transient failure (leave contextKicked false) rather than
+      // spinning to the timeout; give up loudly after MAX_CONTEXT_KICKS.
       if (pct === 100 && !contextKicked && wantArtifacts > 0 && art.done < wantArtifacts) {
         try {
           await client.callTool('codebase_context_index', { projectPath });
           contextKicked = true;
           console.error('[driver] kicked codebase_context_index');
-        } catch { /* may auto-index; keep polling */ }
+        } catch (e) {
+          if (++contextKickFails >= MAX_CONTEXT_KICKS) {
+            die(`codebase_context_index failed ${contextKickFails}× — context indexing did not start (${e.message})`);
+          }
+          console.error(`[driver] codebase_context_index attempt ${contextKickFails} failed; retrying next poll`);
+        }
       }
 
       const artifactsDone = wantArtifacts === 0 || art.done >= wantArtifacts;
@@ -318,6 +327,23 @@ async function cmdVerify(projectPath) {
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // ── entry ────────────────────────────────────────────────────────────────────
+const USAGE = `mcp-driver.mjs — fenced fallback that drives the SocratiCode stdio MCP server directly.
+
+Usage: node mcp-driver.mjs <command> [projectPath]
+
+Commands:
+  index    run a full fresh index; block until embeddings 100%, graph READY,
+           and context artifacts complete
+  status   print codebase_status once and exit
+  verify   sample codebase_search + graph_status + list_projects; exit 0/1
+
+projectPath defaults to the current working directory.
+
+Env:
+  SOCRATICODE_ENTRY   explicit path to the socraticode server entry (skips resolution)
+  POLL_INTERVAL_MS    status poll cadence (default 15000)
+  INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)`;
+
 const [cmd, projectPathArg] = process.argv.slice(2);
 const projectPath = projectPathArg ? resolvePath(projectPathArg) : process.cwd();
 
@@ -325,7 +351,8 @@ switch (cmd) {
   case 'index': await cmdIndex(projectPath); break;
   case 'status': await cmdStatus(projectPath); break;
   case 'verify': await cmdVerify(projectPath); break;
+  case '--help': case '-h': console.log(USAGE); break;
   default:
-    console.error('usage: node mcp-driver.mjs <index|status|verify> [projectPath]');
+    console.error(USAGE);
     process.exit(2);
 }

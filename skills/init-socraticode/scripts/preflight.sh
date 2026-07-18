@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# >>> usage
 # preflight.sh — host readiness gates for SocratiCode indexing.
 #
 # Detect-and-instruct only: every failing gate prints the exact fix command and
@@ -12,6 +13,7 @@
 #   bash preflight.sh --help     # show usage
 #
 # Exit codes: 0 = all gates green; 1 = at least one gate failed (see messages).
+# <<< usage
 
 # -e is safe here: every gate's commands live inside `if`/`&&`/`||` conditions
 # (which -e ignores), so a failing probe records FAIL and moves on rather than
@@ -20,7 +22,8 @@ set -euo pipefail
 
 case "${1:-}" in
   --help | -h)
-    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    # Print the sentinel-delimited usage block (robust to header edits).
+    sed -n '/^# >>> usage$/,/^# <<< usage$/p' "$0" | sed '1d;$d;s/^# \{0,1\}//'
     exit 0
     ;;
   --check | '')
