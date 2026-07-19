@@ -17,6 +17,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-06-16 | CannObserv/usa-wa | **Validity-re-analysis gate** (re-validate every issue against a just-merged change *before* scoring → supersede/rescope/defer/close); followup-backlog mode (3rd recurrence); ceiling gated by **shared Postgres test DB**, not git/ports; pervasive shared-file (config/descriptor) co-edits → sequential single-agent tail |
 | 2026-06-28 | cannabis.observer-wordpress | **Cross-layer followup backlog → CR-like disjointness** (4th followup recurrence, but the followups span one-bug-per-layer instead of clustering on the producing file → high parallelism, single doc-file overlap); grep narrowed two issues' footprints below their issue-body claims (#407 → 1 transformer, #399 → 2 commands) |
 | 2026-06-29 | address-validator | **Foundation ×3** (first Foundation-leading weight — confirms the variable-weight escape hatch covers it, not just Correctness); aggressive same-file bundling (9 issues → 5 agents); single issue whose blast intersects **multiple** parallel agents → isolate in its own gated batch (blast ≠ priority refinement, verify call sites by grep); sub-score commit order inverts for define-then-use |
+| 2026-07-19 | CannObserv/archiver | **Version-freshness hard edge**: a metadata fix (#85 pyproject bump) must precede the issue that *snapshots* it (#92 commits `archiver-openapi.json`, which embeds `info.version`) — a dependency invisible to file-overlap analysis; **route new CI checks to an uncontested job** (lockstep check → lint job, away from the two jobs Batch B edits); shared-test-DB ceiling **2nd recurrence** (after 2026-06-16 usa-wa) — resolved by serializing full-suite runs, orchestrator's batch-branch run authoritative; validator-merges-last ordering (#85 last in batch so its lockstep check validates the batch's final state) |
 | 2026-07-08 | CannObserv/power-map | **Shared test infrastructure is a soft conflict zone** — a test-suite-optimization issue (#283) with zero *source*-file overlap still sequenced **last & solo** because it mutates `conftest.py`/session fixtures every other worker's TDD tests depend on; **stability-critical deploy context split a fully-disjoint backlog into 3 gated batches** even though all 6 could run at once (correctness-first won over max-parallelism); closed-in-fact catch via `git log -S` (#20 → resolved by #210) closed **before** the interview; standard equal-weight rubric (no flex) |
 
 ---
@@ -479,3 +480,36 @@ the #275 Phase 2 CR) — plus #20 requested but closed-in-fact. Tracking issue
 - Design-doc commit used precedent (b): opened the tracking issue **first** (#285), then committed the doc with the `#285 docs:` prefix. Committed directly on `main` — no workspace-isolation pre-commit hook here (hooks are ruff/pytest/eslint/prettier/vitest/version-sync/terraform-fmt; the markdown-only commit ran ruff+pytest-unit and passed).
 - `gh issue create --body-file` from the start (2026-05-24 apostrophe lesson).
 - **Process-log lives in a vendored submodule** (`skills-vendor/gregoryfoster-skills`, reached via the `.claude/skills/...` symlink). Per the project's "don't leave uncommitted edits in vendored skills" rule, this entry is committed *inside the submodule's own git* and flagged for upstream push to `gregoryfoster/skills` — not left as local divergence that `git submodule update` would clobber.
+
+---
+
+## Session 2026-07-19 (archiver CR-followup backlog)
+
+**Project:** `CannObserv/archiver` (FastAPI; uv + ruff + pytest). Five CR/shipping
+followups from the #82/#86/#87 cycles — #88/#89 (from #86 CR), #85 (from #82 CR),
+#91 (from shipping #86), #92 (spun out of #87). Tracking issue `#93`.
+
+**Interview answers:**
+- Q1 Quality: **all equal** → standard `(Foundation × 2) + (Correctness × 2) + Scope`, max 15.
+- Q2 Deploy: early production (live on 8020, Watcher consumes; low volume).
+- Q3 Defer: none — all 5 in full, including #89's `/health` surfacing and #92's step 4 (attempt-or-document).
+- Q4 Parallelism: hybrid.
+- Q5 Ceiling: **no worktree script** (plain `git worktree add`); real constraint is the **shared Postgres test DB** (`TEST_DATABASE_URL` — teardown drops the whole `information` schema). Resolution: unlimited edit parallelism, **serialize full-suite runs**; orchestrator's batch-branch run is the authoritative gate. 2nd recurrence of the DB-gated ceiling (after 2026-06-16 usa-wa, which capped agents instead — serialization is the lighter answer when the orchestrator re-runs the suite anyway).
+- Q6 Merge: regular merge commit (batch→main); intra-batch fixed FF/regular.
+
+**Shape:** 5 issues → **5 agents across 2 batches** (A: #88/#89/#85 parallel; B: #91/#92 parallel, gated on A). CR-surfaced prior held: implementation surfaces fully disjoint; contention confined to `ci.yml` and `CHANGELOG.md`.
+
+**Non-obvious decisions captured:**
+
+- **Version-freshness hard edge — invisible to file-overlap analysis.** #92 commits `archiver-openapi.json` as contract-of-record; the FastAPI app builds `info.version` from `pyproject.toml`, which #85 bumps (3.2.0 → 4.2.2). Zero shared files between the two issues, yet #85 must merge first or #92's snapshot is born stale and needs immediate regen. Generalizable: **when one issue snapshots/freezes an artifact that another issue's fix feeds into, that's a hard dependency edge no contested-file grep will surface** — hunt for "commits a snapshot / vendors a copy / bakes a version" language in issue bodies and trace what the snapshot embeds.
+
+- **Route new CI checks to an uncontested job.** #85 (option 1) adds a CHANGELOG↔pyproject lockstep check; the naive home (the `changelog` job) is contested by #91, and the `client-drift` job by #92. Placing the check in the **lint** job — where it also fits semantically (static file assertion) — removed #85 from both contested hunks and let it run in Batch A. When an issue's *new* code has placement freedom, spend that freedom on de-conflicting.
+
+- **Validator merges last.** Batch A merge order is #88 → #89 → #85: the first two append CHANGELOG entries; #85 both bumps the version and installs the check that asserts heading↔version agreement, so it merges after the state it validates is final. Same family as 2026-06-29's "sub-score commit order inverts for define-then-use," but at merge-order granularity: **check-installing issues merge after the issues that mutate the checked artifact.**
+
+- **CHANGELOG top-append is a tolerated conflict, not a batch-splitter.** Three Batch-A workers all touch `CHANGELOG.md` top-of-file. Rather than serialize the batch, accept trivial rebase conflicts under an explicit merge order. The one real hazard was #85's option 2 (drop version headings = full-file rewrite conflicting with everyone) — rejected partly *on conflict-shape grounds*, a case of the orchestration analysis feeding back into which fix option gets chosen.
+
+**Tactical confirmations:**
+- `gh issue create --body-file` from the start; GH_TOKEN must be re-sourced from `.env` per Bash call (fresh shell each time).
+- Design-doc commit used precedent (a): committed on `main` without the `#<n>` prefix, then opened #93.
+- Process-log entry committed inside the `gregoryfoster-skills` submodule and pushed upstream (2026-07-08 discipline).
