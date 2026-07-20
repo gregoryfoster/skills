@@ -17,7 +17,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/detect-test-dirs.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Emits one existing test directory per line to stdout."
   echo "Resolution: tests/ > pyproject.toml [tool.pytest.ini_options].testpaths."

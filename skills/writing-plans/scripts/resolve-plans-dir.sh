@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/resolve-plans-dir.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Prints the resolved plans directory for the current repo on stdout."
   echo ""

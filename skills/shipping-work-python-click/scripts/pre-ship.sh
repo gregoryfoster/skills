@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Runs 'uv run ruff check .', an import check (auto-detected from"
   echo "pyproject.toml or .skills/import-targets via detect-import-targets.sh),"

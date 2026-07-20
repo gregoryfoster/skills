@@ -1252,13 +1252,48 @@ class TestPhase1DoctorPreflight:
             f"N={skill_name} S={script_name}\n"
             "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1\n"
             'for d in scripts ".claude/skills/$N/scripts" '
-            '"$HOME/.claude/skills/$N/scripts"; do'
+            '"$HOME/.claude/skills/$N/scripts"; do\n'
+            '  [ -f "$d/$S" ] && { SD="$d"; break; }\n'
+            "done\n"
         )
         assert expected in body, (
             f"SKILL.md Phase 1 must open with:\n  {expected}\n"
             "See skills/managing-skills/scripts/doctor.sh, "
             "https://github.com/gregoryfoster/skills/issues/46 and "
             "https://github.com/gregoryfoster/skills/issues/63."
+        )
+
+    def test_doctor_preflight_invokes_script(self, skill_and_script):
+        body, _skill_name, _script_name = skill_and_script
+        # The head assertion above stops at `done`, so on its own it would
+        # still pass if the line that actually RUNS the script were deleted —
+        # leaving the Iron Law gating on a script that never executes, which
+        # is the #63 failure class. Pin the invocation separately.
+        #
+        # Two legitimate shapes: reviewing-* guard inline at the call site,
+        # while shipping-* publish SKILL_SCRIPTS first (so later steps can
+        # substitute it) and invoke off the already-guarded $SD.
+        invocations = (
+            'bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, '
+            'or ~/.claude/skills/$N/scripts/}/$S"',
+            'bash "$SD/$S"',
+        )
+        assert any(form in body for form in invocations), (
+            "SKILL.md Phase 1 resolves the script but never invokes it. "
+            "Expected one of:\n  " + "\n  ".join(invocations)
+        )
+
+    def test_doctor_preflight_guards_unresolved_path(self, skill_and_script):
+        body, _skill_name, _script_name = skill_and_script
+        # `${SD:?…}` is what turns "resolved nothing" into a loud failure
+        # naming the searched paths, rather than a silent no-op loop.
+        guard = (
+            "${SD:?not found in scripts/, .claude/skills/$N/scripts/, "
+            "or ~/.claude/skills/$N/scripts/}"
+        )
+        assert guard in body, (
+            "SKILL.md Phase 1 must fail loudly when no candidate resolves. "
+            f"Expected the guard:\n  {guard}"
         )
 
     def test_doctor_preflight_paragraph_present(self, skill_and_script):
@@ -1301,10 +1336,17 @@ class TestNoBareScriptPaths:
     literal path. This test pins the absence of the old form so a future
     edit can't quietly reintroduce it — the failure mode is invisible in
     any project that does have a root scripts/ directory.
+
+    references/ files are scanned alongside SKILL.md: they are loaded into
+    context and can carry invocations just as SKILL.md does.
     """
 
     @pytest.fixture(
-        params=sorted(SKILLS_DIR.glob("*/SKILL.md")), ids=lambda p: p.parent.name
+        params=sorted(
+            list(SKILLS_DIR.glob("*/SKILL.md"))
+            + list(SKILLS_DIR.glob("*/references/*.md"))
+        ),
+        ids=lambda p: str(p.relative_to(SKILLS_DIR)),
     )
     def skill_md(self, request):
         return request.param
@@ -1316,7 +1358,7 @@ class TestNoBareScriptPaths:
             if re.search(r"bash\s+scripts/\S+\.sh", line)
         ]
         assert not offenders, (
-            f"{skill_md.parent.name}/SKILL.md invokes a script via a bare "
+            f"{skill_md.relative_to(SKILLS_DIR)} invokes a script via a bare "
             "cwd-relative path:\n  "
             + "\n  ".join(offenders)
             + '\n\nUse the resolved placeholder form instead: bash "<SKILL_SCRIPTS>/X.sh"'

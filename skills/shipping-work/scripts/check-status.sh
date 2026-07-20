@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/check-status.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Reports branch, working tree status, and recent commits."
   echo "Exits 0 if clean, 1 if uncommitted changes are present."

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/comment-issue.sh <issue-number> <comment-body>"
+  echo "Usage: bash \"$0\" <issue-number> <comment-body>"
   echo ""
   echo "Posts a comment to a GitHub issue via the gh CLI."
   echo ""
@@ -16,7 +16,7 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "  comment-body   Comment text (quote multi-word strings)"
   echo ""
   echo "Example:"
-  echo "  bash <SKILL_SCRIPTS>/comment-issue.sh 19 \"Implemented X. Commits: abc123..def456\""
+  echo "  bash \"$0\" 19 \"Implemented X. Commits: abc123..def456\""
   echo ""
   echo "Exit codes:"
   echo "  0  Comment posted successfully"

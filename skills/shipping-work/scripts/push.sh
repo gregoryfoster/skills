@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/push.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Pushes the current git branch to origin."
   echo "Automatically resolves the git project root regardless of invocation directory."

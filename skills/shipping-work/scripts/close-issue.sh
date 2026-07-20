@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/close-issue.sh <issue-number>"
+  echo "Usage: bash \"$0\" <issue-number>"
   echo ""
   echo "Closes a GitHub issue via the gh CLI."
   echo ""
@@ -15,7 +15,7 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "  issue-number   GitHub issue number (e.g. 19)"
   echo ""
   echo "Example:"
-  echo "  bash <SKILL_SCRIPTS>/close-issue.sh 19"
+  echo "  bash \"$0\" 19"
   echo ""
   echo "Exit codes:"
   echo "  0  Issue closed successfully"

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Prints directory tree, source file sizes, dependency manifests, and recent commits."
   echo "Automatically resolves the git project root regardless of invocation directory."

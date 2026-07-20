@@ -12,7 +12,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Runs 'uv run ruff check .' and 'uv run pytest -x -m \"not integration\"'"
   echo "(with --no-cov auto-applied when pytest-cov is installed)."

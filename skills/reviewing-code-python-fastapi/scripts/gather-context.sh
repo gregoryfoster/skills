@@ -9,7 +9,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, changed files,"
   echo "then runs 'uv run ruff check .' informationally. Does not run pytest."

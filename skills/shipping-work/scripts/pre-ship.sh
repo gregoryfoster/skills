@@ -9,7 +9,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Runs the project test suite. Must be overridden in the consuming project."
   echo "The global skill provides this stub only — replace with your test runner."

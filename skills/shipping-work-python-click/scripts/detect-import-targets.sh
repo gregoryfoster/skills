@@ -19,7 +19,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/detect-import-targets.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Emits one Python package name per line to stdout."
   echo "Resolution: .skills/import-targets > pyproject.toml [project] name."

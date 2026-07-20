@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/resolve-worktree-root.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Prints the resolved worktree root for the current repo on stdout."
   echo ""

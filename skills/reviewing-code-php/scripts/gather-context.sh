@@ -15,7 +15,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, changed files,"
   echo "then runs composer validate at each composer.json location and php -l on"

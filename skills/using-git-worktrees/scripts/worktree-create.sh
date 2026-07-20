@@ -7,7 +7,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash <SKILL_SCRIPTS>/worktree-create.sh [--new] <branch>"
+  echo "Usage: bash \"$0\" [--new] <branch>"
   echo ""
   echo "Creates a worktree at <root>/<branch-slug>, where <branch-slug> is"
   echo "<branch> with '/' replaced by '-' (e.g., feature/foo -> feature-foo)."
@@ -62,7 +62,7 @@ WORKTREE_PATH="$ROOT/$SLUG"
 EXISTING=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '$1=="branch" && $2==b {print "match"; exit}')
 if [[ "$EXISTING" == "match" ]]; then
   echo "ERROR: branch '$BRANCH' is already checked out in another worktree (Iron Law: no double checkout)" >&2
-  echo "Run 'bash <SKILL_SCRIPTS>/worktree-list.sh' to see existing worktrees." >&2
+  echo "Run 'bash \"$SCRIPT_DIR/worktree-list.sh\"' to see existing worktrees." >&2
   exit 1
 fi
 

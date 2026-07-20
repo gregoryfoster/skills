@@ -52,21 +52,21 @@ class Skill:
     def referenced_scripts(self) -> set[str]:
         """Extract script filenames the SKILL.md invokes from its own scripts/ dir.
 
-        Three forms are recognized, all scoped to the skill's own context (never
+        Two forms are recognized, both scoped to the skill's own context (never
         cross-skill references):
 
         - `bash "<SKILL_SCRIPTS>/filename.sh"` — the canonical placeholder form
           (see issue #63); `<SKILL_SCRIPTS>` is substituted with the literal path
           printed by the skill's resolution block.
         - `S=filename.sh` — the resolution block's target/sentinel script.
-        - `bash scripts/filename.sh` — the legacy cwd-relative form. Retained so
-          the existence check still applies if one is ever reintroduced;
-          TestNoBareScriptPaths is what forbids it.
+
+        The legacy `bash scripts/filename.sh` form is deliberately NOT matched:
+        TestNoBareScriptPaths forbids it outright, so matching it here would
+        encode two opposing expectations about the same string.
         """
         patterns = (
             r'bash\s+"<SKILL_SCRIPTS>/([^"\s]+\.sh)"',
             r"(?m)^\s*(?:N=\S+\s+)?S=([^\s\n]+\.sh)\b",
-            r"bash\s+scripts/([^\s\n]+\.sh)",
         )
         return {
             m.group(1) for p in patterns for m in re.finditer(p, self.body)

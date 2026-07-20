@@ -10,7 +10,7 @@ set -euo pipefail
 # still prints help rather than running the command.
 for arg in "$@"; do
   if [[ "$arg" == "--help" ]]; then
-    echo "Usage: bash <SKILL_SCRIPTS>/worktree-list.sh [--porcelain]"
+    echo "Usage: bash \"$0\" [--porcelain]"
     echo ""
     echo "Lists all worktrees for the current repo. First row is always the main checkout."
     echo ""

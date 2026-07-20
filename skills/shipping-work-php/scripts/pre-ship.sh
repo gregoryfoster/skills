@@ -15,7 +15,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
+  echo "Usage: bash \"$0\""
   echo ""
   echo "Runs composer validate at each composer.json, php -l on every tracked"
   echo "PHP file (parallel; PRE_SHIP_PHP_LINT_JOBS=N to tune, default 4), and"
