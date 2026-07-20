@@ -45,12 +45,20 @@ Determine which GitHub issue(s) to close (priority order):
 ### Step 1 — Run pre-ship checks
 
 ```bash
-{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && bash scripts/pre-ship.sh
+N=shipping-work-php S=pre-ship.sh
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
+for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+  [ -f "$d/$S" ] && { SD="$d"; break; }
+done
+echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
+bash "$SD/$S"
 ```
 
-The leading group is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. The `&&` chain skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message.
+The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves the script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/` copy still wins if one exists; `${SD:?…}` fails loudly with the searched paths when no candidate resolves. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
-> Lint runs 4 parallel `php -l` workers by default; tune via `PRE_SHIP_PHP_LINT_JOBS=N bash scripts/pre-ship.sh` for very large monorepos.
+Step 1 prints `SKILL_SCRIPTS=<path>`. In every later step `<SKILL_SCRIPTS>` is a **placeholder** for that literal path — substitute the value printed here (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so the shell variable itself is not inherited.
+
+> Lint runs 4 parallel `php -l` workers by default; tune via `PRE_SHIP_PHP_LINT_JOBS=N bash "<SKILL_SCRIPTS>/pre-ship.sh"` for very large monorepos.
 
 ```
 NO CONTINUATION IF CHECKS FAIL
@@ -61,7 +69,7 @@ If checks fail: stop, report the failure, fix before proceeding. Do not push fai
 ### Step 1.5 — Documentation spot-check
 
 ```bash
-bash scripts/doc-check.sh
+bash "<SKILL_SCRIPTS>/doc-check.sh"
 ```
 
 `doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's `SENSITIVE_PATHS` array (AGENTS.md, README.md, composer files, theme/plugin dirs, ACF JSON, `.env.example`). When sensitive paths change, the matching doc sections may need updates too.
@@ -71,7 +79,7 @@ If the script exits 1: review the listed files, decide whether each requires a d
 ### Step 2 — Ensure a clean working tree
 
 ```bash
-bash scripts/check-status.sh
+bash "<SKILL_SCRIPTS>/check-status.sh"
 ```
 
 If uncommitted changes exist, commit them following the project convention. Check AGENTS.md for project-specific overrides. Default format:
@@ -92,7 +100,7 @@ If on a feature branch, merge to `main` first. Then continue.
 ### Step 4 — Push
 
 ```bash
-bash scripts/push.sh
+bash "<SKILL_SCRIPTS>/push.sh"
 ```
 
 Confirm push succeeded before proceeding.
@@ -102,7 +110,7 @@ Confirm push succeeded before proceeding.
 For each issue in scope:
 
 ```bash
-bash scripts/comment-issue.sh <number> "<summary>"
+bash "<SKILL_SCRIPTS>/comment-issue.sh" <number> "<summary>"
 ```
 
 Comment must include:
@@ -120,7 +128,7 @@ Before closing any issue, verify the original requirements against what was impl
 </HARD-GATE>
 
 ```bash
-bash scripts/close-issue.sh <number>
+bash "<SKILL_SCRIPTS>/close-issue.sh" <number>
 ```
 
 ### Step 7 — Report

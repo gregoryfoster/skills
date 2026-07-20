@@ -11,11 +11,11 @@
 #       (git status, diff, log) intentionally degrade silently and do not
 #       map to exit 2.
 #
-# Usage: bash scripts/gather-context.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/gather-context.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/gather-context.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, changed files,"
   echo "then runs composer validate at each composer.json location and php -l on"

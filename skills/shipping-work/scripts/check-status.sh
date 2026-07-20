@@ -3,11 +3,11 @@
 # Reports working tree state. Exits 0 if clean, 1 if there are uncommitted changes.
 # Detects the git project root automatically; safe to invoke from any directory.
 #
-# Usage: bash scripts/check-status.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/check-status.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/check-status.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/check-status.sh"
   echo ""
   echo "Reports branch, working tree status, and recent commits."
   echo "Exits 0 if clean, 1 if uncommitted changes are present."

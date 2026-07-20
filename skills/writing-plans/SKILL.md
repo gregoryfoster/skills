@@ -34,6 +34,20 @@ If the work is non-trivial (see Phase 1) and there is no plan committed to the p
 
 Trigger phrases may include the plan topic inline — e.g., `write a plan for auth rotation`, `plan this migration`, `let's plan the index rebuild`. Apply the appended topic as the explicit subject; skip the "what should we plan?" fallback.
 
+## Script path resolution
+
+The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve it once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
+
+```bash
+N=writing-plans S=resolve-plans-dir.sh
+for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+  [ -f "$d/$S" ] && { SD="$d"; break; }
+done
+echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
+```
+
+A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a **placeholder** for the literal path printed here, not an inherited shell variable — each Bash invocation runs in a fresh shell.
+
 ## Plans directory resolution
 
 Every plan write resolves the target directory in this order (first match wins):
@@ -42,7 +56,7 @@ Every plan write resolves the target directory in this order (first match wins):
 2. **`.skills/plans_dir` file** — single-line file under the repo root; project's persistent default
 3. **`<repo-root>/docs/plans/`** — fallback when neither of the above is set
 
-Invoke `bash scripts/resolve-plans-dir.sh` to print the resolved directory. The plan filename is `YYYY-MM-DD-<topic-slug>.md`, where `<topic-slug>` is the topic lowercased with non-alphanumerics replaced by `-`.
+Invoke `bash "<SKILL_SCRIPTS>/resolve-plans-dir.sh"` to print the resolved directory. The plan filename is `YYYY-MM-DD-<topic-slug>.md`, where `<topic-slug>` is the topic lowercased with non-alphanumerics replaced by `-`.
 
 ## Procedure
 

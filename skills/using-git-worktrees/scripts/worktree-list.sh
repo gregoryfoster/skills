@@ -3,14 +3,14 @@
 # Lists all worktrees for the current repo. Thin wrapper around `git worktree list`
 # that ensures consistent invocation regardless of caller's working directory.
 #
-# Usage: bash scripts/worktree-list.sh [--porcelain] [--help]
+# Usage: bash <SKILL_SCRIPTS>/worktree-list.sh [--porcelain] [--help]
 set -euo pipefail
 
 # Scan all args for --help first so any combination (e.g. `--porcelain --help`)
 # still prints help rather than running the command.
 for arg in "$@"; do
   if [[ "$arg" == "--help" ]]; then
-    echo "Usage: bash scripts/worktree-list.sh [--porcelain]"
+    echo "Usage: bash <SKILL_SCRIPTS>/worktree-list.sh [--porcelain]"
     echo ""
     echo "Lists all worktrees for the current repo. First row is always the main checkout."
     echo ""

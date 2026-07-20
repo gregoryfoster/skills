@@ -38,6 +38,20 @@ If the target branch is already checked out in another worktree (visible in `git
 
 Trigger phrases may include the target branch inline — e.g., `create worktree feature/foo`, `wt feature/foo`, `destroy worktree feature/foo`. Apply the appended branch as the explicit target; skip the "ask for branch name" fallback.
 
+## Script path resolution
+
+The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve it once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
+
+```bash
+N=using-git-worktrees S=resolve-worktree-root.sh
+for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+  [ -f "$d/$S" ] && { SD="$d"; break; }
+done
+echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
+```
+
+A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a **placeholder** for the literal path printed here, not an inherited shell variable — each Bash invocation runs in a fresh shell.
+
 ## Worktree root resolution
 
 Every operation resolves the worktree directory in this order (first match wins):
@@ -46,7 +60,7 @@ Every operation resolves the worktree directory in this order (first match wins)
 2. **`.skills/worktree_root` file** — single-line file under the repo root; project's persistent default
 3. **`<repo-root>/.worktrees/`** — fallback when neither of the above is set
 
-Invoke `bash scripts/resolve-worktree-root.sh` to print the resolved root. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
+Invoke `bash "<SKILL_SCRIPTS>/resolve-worktree-root.sh"` to print the resolved root. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
 
 ## Procedure
 
@@ -67,8 +81,8 @@ If none apply, stop. Don't create a worktree just because the trigger phrase fir
 ### Phase 2 — Create the worktree
 
 ```bash
-bash scripts/worktree-create.sh <branch>          # existing branch
-bash scripts/worktree-create.sh --new <branch>    # create the branch too
+bash "<SKILL_SCRIPTS>/worktree-create.sh" <branch>          # existing branch
+bash "<SKILL_SCRIPTS>/worktree-create.sh" --new <branch>    # create the branch too
 ```
 
 The script:
@@ -100,7 +114,7 @@ If any check fails, fix before proceeding. Work in the wrong checkout silently l
 When the branch is ready:
 
 1. Commit and push from inside the worktree
-2. `cd` to the main checkout — its path is the first row of `bash scripts/worktree-list.sh` (or `git worktree list | head -n1 | awk '{print $1}'`)
+2. `cd` to the main checkout — its path is the first row of `bash "<SKILL_SCRIPTS>/worktree-list.sh"` (or `git worktree list | head -n1 | awk '{print $1}'`)
 3. `git switch main` (or the project's default branch)
 4. `git merge <branch>` — or open a PR if the project requires review; consult AGENTS.md for the project's PR-vs-direct-merge policy
 5. Confirm the merge succeeded before Phase 5
@@ -110,10 +124,10 @@ If the branch is **descoped** (will not be merged), document why before Phase 5:
 ### Phase 5 — Destroy the worktree
 
 ```bash
-bash scripts/worktree-destroy.sh <branch>
-bash scripts/worktree-destroy.sh <branch> --descoped "<reason>"
-bash scripts/worktree-destroy.sh <branch> --base <ref>   # verify merge into <ref> instead of project default
-bash scripts/worktree-destroy.sh <branch> --force        # required when the worktree contains submodules
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch>
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --descoped "<reason>"
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --base <ref>   # verify merge into <ref> instead of project default
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --force        # required when the worktree contains submodules
 ```
 
 The script:

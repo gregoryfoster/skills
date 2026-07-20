@@ -13,11 +13,11 @@
 # on which directories contain the test suite, so the resolution logic
 # lives in one place.
 #
-# Usage: bash scripts/detect-test-dirs.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/detect-test-dirs.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/detect-test-dirs.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/detect-test-dirs.sh"
   echo ""
   echo "Emits one existing test directory per line to stdout."
   echo "Resolution: tests/ > pyproject.toml [tool.pytest.ini_options].testpaths."

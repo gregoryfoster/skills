@@ -8,11 +8,11 @@
 # project substitution. (Eliminates the historical copy-paste bug class where
 # a stamp like `/tmp/watcher-tests-clean-<sha>` leaked into a sibling repo.)
 #
-# Usage: bash scripts/pre-ship.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/pre-ship.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
   echo ""
   echo "Runs 'uv run ruff check .' and 'uv run pytest -x -m \"not integration\"'"
   echo "(with --no-cov auto-applied when pytest-cov is installed)."

@@ -15,11 +15,11 @@
 # pre-ship.sh (shipping-work-python-click) — review and ship must agree
 # on the import target, so the resolution logic lives in one place.
 #
-# Usage: bash scripts/detect-import-targets.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/detect-import-targets.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/detect-import-targets.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/detect-import-targets.sh"
   echo ""
   echo "Emits one Python package name per line to stdout."
   echo "Resolution: .skills/import-targets > pyproject.toml [project] name."

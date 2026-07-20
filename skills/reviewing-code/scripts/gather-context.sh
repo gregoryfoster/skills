@@ -3,11 +3,11 @@
 # Prints a structured summary of current repo state for use during code review.
 # Detects the git project root automatically; safe to invoke from any directory.
 #
-# Usage: bash scripts/gather-context.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/gather-context.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/gather-context.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, and changed files."
   echo "Automatically resolves the git project root regardless of invocation directory."

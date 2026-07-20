@@ -2,12 +2,12 @@
 # comment-issue.sh <issue-number> <comment-body>
 # Posts a comment to a GitHub issue via gh CLI.
 #
-# Usage: bash scripts/comment-issue.sh [--help]
-#        bash scripts/comment-issue.sh <number> <body>
+# Usage: bash <SKILL_SCRIPTS>/comment-issue.sh [--help]
+#        bash <SKILL_SCRIPTS>/comment-issue.sh <number> <body>
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/comment-issue.sh <issue-number> <comment-body>"
+  echo "Usage: bash <SKILL_SCRIPTS>/comment-issue.sh <issue-number> <comment-body>"
   echo ""
   echo "Posts a comment to a GitHub issue via the gh CLI."
   echo ""
@@ -16,7 +16,7 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "  comment-body   Comment text (quote multi-word strings)"
   echo ""
   echo "Example:"
-  echo "  bash scripts/comment-issue.sh 19 \"Implemented X. Commits: abc123..def456\""
+  echo "  bash <SKILL_SCRIPTS>/comment-issue.sh 19 \"Implemented X. Commits: abc123..def456\""
   echo ""
   echo "Exit codes:"
   echo "  0  Comment posted successfully"

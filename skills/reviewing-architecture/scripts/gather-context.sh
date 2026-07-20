@@ -3,11 +3,11 @@
 # Prints a structured architectural snapshot of the repo.
 # Detects the git project root automatically; safe to invoke from any directory.
 #
-# Usage: bash scripts/gather-context.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/gather-context.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/gather-context.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
   echo ""
   echo "Prints directory tree, source file sizes, dependency manifests, and recent commits."
   echo "Automatically resolves the git project root regardless of invocation directory."

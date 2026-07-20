@@ -3,11 +3,11 @@
 # Destroys the worktree for <branch>. Refuses if the branch is NOT merged
 # into the base ref AND --descoped <reason> was not supplied (Iron Law).
 #
-# Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force] [--help]
+# Usage: bash <SKILL_SCRIPTS>/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force] [--help]
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash scripts/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force]"
+  echo "Usage: bash <SKILL_SCRIPTS>/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force]"
   echo ""
   echo "Destroys the worktree for <branch> (resolved via the same path scheme"
   echo "as worktree-create.sh). Iron Law: refuses if the branch has NOT been"

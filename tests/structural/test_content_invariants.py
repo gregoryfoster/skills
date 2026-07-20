@@ -1239,38 +1239,86 @@ class TestPhase1DoctorPreflight:
     )
     def skill_and_script(self, request):
         skill_name, script_name = request.param
-        return skill(skill_name).body, script_name
+        return skill(skill_name).body, skill_name, script_name
 
     def test_doctor_preflight_chain_present(self, skill_and_script):
-        body, script_name = skill_and_script
-        # Match the canonical chain form including the phase-1 script name.
-        # The `&&` is the load-bearing part: it skips gather/pre-ship when
-        # the doctor reports unrecoverable state.
+        body, skill_name, script_name = skill_and_script
+        # Pin the head of the Phase 1 block: the doctor preflight, the
+        # `|| exit 1` that skips gather/pre-ship when the doctor reports
+        # unrecoverable state, and the skill-relative resolution loop.
+        # The loop must come *after* the doctor so a freshly healed symlink
+        # chain is visible to it (issue #63).
         expected = (
-            "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } && "
-            f"bash scripts/{script_name}"
+            f"N={skill_name} S={script_name}\n"
+            "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1\n"
+            'for d in scripts ".claude/skills/$N/scripts" '
+            '"$HOME/.claude/skills/$N/scripts"; do'
         )
         assert expected in body, (
-            f"SKILL.md Phase 1 must invoke the doctor preflight as:\n  {expected}\n"
-            "See skills/managing-skills/scripts/doctor.sh and "
-            "https://github.com/gregoryfoster/skills/issues/46."
+            f"SKILL.md Phase 1 must open with:\n  {expected}\n"
+            "See skills/managing-skills/scripts/doctor.sh, "
+            "https://github.com/gregoryfoster/skills/issues/46 and "
+            "https://github.com/gregoryfoster/skills/issues/63."
         )
 
     def test_doctor_preflight_paragraph_present(self, skill_and_script):
-        body, script_name = skill_and_script
-        # Pin the explanatory paragraph that follows the chain — same wording
+        body, _skill_name, script_name = skill_and_script
+        # Pin the explanatory paragraph that follows the block — same wording
         # across the family with only the phase-1 script name varying.
         expected = (
-            "The leading group is a preflight: when `.skills/doctor.sh` is "
-            "present, it heals any dangling vendor symlinks (or reports an "
-            "actionable error); when absent, the group is a no-op. The `&&` "
-            f"chain skips `{script_name}` if the doctor reports unrecoverable "
-            "state so the original \"No such file or directory\" noise "
-            "doesn't drown out the doctor's message."
+            "The first line is a preflight: when `.skills/doctor.sh` is present, "
+            "it heals any dangling vendor symlinks (or reports an actionable "
+            "error); when absent, the group is a no-op. `|| exit 1` skips "
+            f"`{script_name}` if the doctor reports unrecoverable state so the "
+            'original "No such file or directory" noise doesn\'t drown out the '
+            "doctor's message. The loop then resolves the script against the "
+            "skill directory rather than the cwd"
         )
         assert expected in body, (
             "SKILL.md Phase 1 must include the explanatory paragraph below "
-            "the doctor preflight chain so future readers don't have to "
-            "reverse-engineer the dense one-liner. Expected:\n\n  "
+            "the doctor preflight block so future readers don't have to "
+            "reverse-engineer the dense snippet. Expected to start with:\n\n  "
             + expected
+        )
+
+
+# ---------------------------------------------------------------------------
+# Skill-relative script paths (regression guard)
+# ---------------------------------------------------------------------------
+
+
+class TestNoBareScriptPaths:
+    """No SKILL.md may invoke a helper via a bare `bash scripts/X.sh`.
+
+    Scripts ship inside the skill directory, but a bare `scripts/` path
+    resolves relative to the agent's cwd — the *project* root — where the
+    script does not exist. Every invocation therefore failed with
+    "No such file or directory" unless the consuming project happened to
+    have its own scripts/ copy (issue #63).
+
+    The replacement is the `<SKILL_SCRIPTS>` placeholder: a resolution block
+    prints the resolved directory once, and later steps substitute the
+    literal path. This test pins the absence of the old form so a future
+    edit can't quietly reintroduce it — the failure mode is invisible in
+    any project that does have a root scripts/ directory.
+    """
+
+    @pytest.fixture(
+        params=sorted(SKILLS_DIR.glob("*/SKILL.md")), ids=lambda p: p.parent.name
+    )
+    def skill_md(self, request):
+        return request.param
+
+    def test_no_bare_scripts_path(self, skill_md):
+        offenders = [
+            line.strip()
+            for line in skill_md.read_text().splitlines()
+            if re.search(r"bash\s+scripts/\S+\.sh", line)
+        ]
+        assert not offenders, (
+            f"{skill_md.parent.name}/SKILL.md invokes a script via a bare "
+            "cwd-relative path:\n  "
+            + "\n  ".join(offenders)
+            + '\n\nUse the resolved placeholder form instead: bash "<SKILL_SCRIPTS>/X.sh"'
+            "\nSee https://github.com/gregoryfoster/skills/issues/63."
         )

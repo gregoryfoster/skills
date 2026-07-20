@@ -16,10 +16,14 @@
 # clear actionable error if self-healing fails.
 #
 # Designed for use as a Phase 1 preflight in every reviewing-* / shipping-*
-# SKILL.md invocation:
+# SKILL.md invocation. The doctor runs first so that the resolution loop that
+# follows sees a freshly healed symlink chain (issue #63):
 #
-#   bash .skills/doctor.sh
-#   bash scripts/gather-context.sh
+#   { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
+#   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+#     [ -f "$d/$S" ] && { SD="$d"; break; }
+#   done
+#   bash "$SD/$S"
 #
 # Usage: bash .skills/doctor.sh [--check-only] [--verbose] [--no-preflight] [--help]
 set -euo pipefail

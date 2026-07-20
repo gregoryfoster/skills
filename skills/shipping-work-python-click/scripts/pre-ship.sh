@@ -12,7 +12,7 @@
 # so a single canonical pre-ship.sh works across every consumer without per-
 # project substitution.
 #
-# Usage: bash scripts/pre-ship.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
 set -euo pipefail
 
 # Capture the script's own directory *before* any cd, so helper lookups
@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/pre-ship.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
   echo ""
   echo "Runs 'uv run ruff check .', an import check (auto-detected from"
   echo "pyproject.toml or .skills/import-targets via detect-import-targets.sh),"

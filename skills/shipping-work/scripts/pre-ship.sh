@@ -5,11 +5,11 @@
 # This script must be overridden by the consuming project's local skill override.
 # The global shipping-work skill cannot know the project's test runner.
 #
-# Usage: bash scripts/pre-ship.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/pre-ship.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/pre-ship.sh"
   echo ""
   echo "Runs the project test suite. Must be overridden in the consuming project."
   echo "The global skill provides this stub only — replace with your test runner."

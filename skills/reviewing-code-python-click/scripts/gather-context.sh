@@ -12,7 +12,7 @@
 # detect-test-dirs.sh (also shared with pre-ship.sh), so review and ship
 # always agree on what to import-check and where the test suite lives.
 #
-# Usage: bash scripts/gather-context.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/gather-context.sh [--help]
 set -euo pipefail
 
 # Capture the script's own directory *before* any cd, so helper lookups
@@ -20,7 +20,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/gather-context.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, changed files,"
   echo "then runs 'uv run ruff check .', an import check (auto-detected from"

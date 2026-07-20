@@ -5,11 +5,11 @@
 # gather-context errors. Does NOT run pytest; full-suite runs belong in
 # pre-ship.sh, not in review-time context gathering.
 #
-# Usage: bash scripts/gather-context.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/gather-context.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/gather-context.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/gather-context.sh"
   echo ""
   echo "Prints git status, staged/unstaged diffs, recent commits, changed files,"
   echo "then runs 'uv run ruff check .' informationally. Does not run pytest."

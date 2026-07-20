@@ -3,11 +3,11 @@
 # Prints the resolved worktree root for the current repo on stdout.
 # Resolution order: WORKTREE_ROOT env var → .skills/worktree_root file → <repo>/.worktrees/
 #
-# Usage: bash scripts/resolve-worktree-root.sh [--help]
+# Usage: bash <SKILL_SCRIPTS>/resolve-worktree-root.sh [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/resolve-worktree-root.sh"
+  echo "Usage: bash <SKILL_SCRIPTS>/resolve-worktree-root.sh"
   echo ""
   echo "Prints the resolved worktree root for the current repo on stdout."
   echo ""

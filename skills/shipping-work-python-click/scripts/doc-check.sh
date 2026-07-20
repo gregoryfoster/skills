@@ -12,7 +12,7 @@
 # thin local fork. Exits 0 if no sensitive paths changed, 1 if any did, or
 # 2 on an infra/tooling failure that prevented the check from running.
 #
-# Usage: bash scripts/doc-check.sh [--help] [--base <ref>]
+# Usage: bash <SKILL_SCRIPTS>/doc-check.sh [--help] [--base <ref>]
 set -euo pipefail
 
 # --- Project-configurable section ---------------------------------------------
@@ -34,7 +34,7 @@ DOC_SECTIONS=(
 # ------------------------------------------------------------------------------
 
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash scripts/doc-check.sh [--base <ref>]"
+  echo "Usage: bash <SKILL_SCRIPTS>/doc-check.sh [--base <ref>]"
   echo ""
   echo "Lists files changed on the current branch vs the upstream default branch"
   echo "and flags any that match the project's SENSITIVE_PATHS list."

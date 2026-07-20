@@ -152,6 +152,28 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Use `set -euo pipefail` in bash scripts
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
 
+### Invoking a skill's own scripts (`<SKILL_SCRIPTS>`)
+
+**Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path resolves to a file that doesn't exist — the invocation fails with "No such file or directory" in every project that doesn't happen to carry its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
+
+Instead, resolve once and substitute. Each skill's SKILL.md carries one resolution block — for `reviewing-*` / `shipping-*` this is folded into the Phase 1 / Step 1 doctor preflight; other skills get a standalone "Script path resolution" section:
+
+```bash
+N=<skill-name> S=<sentinel-script>.sh
+for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+  [ -f "$d/$S" ] && { SD="$d"; break; }
+done
+echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
+```
+
+Notes on the shape:
+
+- **Probe for the sentinel file, not the directory.** `[ -d "$d" ]` would falsely match any project that has an unrelated root `scripts/` — this repo does.
+- **Project-local `scripts/` wins.** Preserves consumers that already worked around #63 with their own copy.
+- **`$HOME/.claude/skills/…` last** covers user-level and plugin installs.
+- **Resolution must run *after* `.skills/doctor.sh`,** so a freshly healed vendor symlink chain is visible to the probe.
+- **`<SKILL_SCRIPTS>` is a placeholder, not a shell variable** — same convention as `init-project-fastapi` Phase 0's `<SKILL_DIR>`. Each Bash tool call is a fresh shell, so nothing is inherited between steps; later steps substitute the literal path printed above and are written `bash "<SKILL_SCRIPTS>/X.sh"`.
+
 ### Gate-script discipline (pre-ship, doc-check)
 
 Scripts whose output drives a control-flow decision (will-we-ship vs. will-we-skip) must never silently swallow stderr from the tool that produces that output. The two-bucket rule:
