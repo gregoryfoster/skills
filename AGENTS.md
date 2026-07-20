@@ -156,14 +156,27 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 
 **Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path resolves to a file that doesn't exist — the invocation fails with "No such file or directory" in every project that doesn't happen to carry its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
 
-Instead, resolve once and substitute. Each skill's SKILL.md carries one resolution block — for `reviewing-*` / `shipping-*` this is folded into the Phase 1 / Step 1 doctor preflight; other skills get a standalone "Script path resolution" section:
+Instead, resolve once and substitute. Each skill's SKILL.md carries one resolution block — for `reviewing-*` / `shipping-*` this is folded into the Phase 1 / Step 1 doctor preflight; other skills get a standalone "Script path resolution" section. The header, loop, probe, and `done` are common to all 11 skills; the doctor preflight and the final two lines are conditional, as annotated:
 
 ```bash
 N=<skill-name> S=<sentinel-script>.sh SD=
+
+# reviewing-* / shipping-* only — resolution follows the doctor so a freshly
+# healed symlink chain is visible to the probe.
+{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
+
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
   [ -f "$d/$S" ] && { SD="$d"; break; }
 done
+
+# Only when later steps substitute <SKILL_SCRIPTS> — shipping-*,
+# using-git-worktrees, writing-plans. Omit for reviewing-*, which has a
+# single call site and no later steps to feed.
 echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
+
+# Only when this block also runs the script — reviewing-*, shipping-*. Omit
+# for using-git-worktrees and writing-plans, which publish the path but
+# invoke their scripts from later steps.
 bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 ```
 
@@ -176,6 +189,8 @@ Notes on the shape:
 - **`$HOME/.claude/skills/…` last** covers user-level and plugin installs.
 - **Resolution must run *after* `.skills/doctor.sh`,** so a freshly healed vendor symlink chain is visible to the probe.
 - **`<SKILL_SCRIPTS>` is a placeholder, not a shell variable** — same convention as `init-project-fastapi` Phase 0's `<SKILL_DIR>`. Each Bash tool call is a fresh shell, so nothing is inherited between steps; later steps substitute the literal path printed above and are written `bash "<SKILL_SCRIPTS>/X.sh"`.
+
+`TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) enforces the four common lines across every skill carrying a block, and fails the suite if a skill uses `<SKILL_SCRIPTS>` without publishing it.
 
 ### Gate-script discipline (pre-ship, doc-check)
 
