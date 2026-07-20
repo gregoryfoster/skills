@@ -54,7 +54,7 @@ Determine what to review (priority order):
 ### Phase 1 — Gather context
 
 ```bash
-N=reviewing-code-python-fastapi S=gather-context.sh
+N=reviewing-code-python-fastapi S=gather-context.sh SD=
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
   [ -f "$d/$S" ] && { SD="$d"; break; }

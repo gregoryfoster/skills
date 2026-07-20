@@ -1249,7 +1249,10 @@ class TestPhase1DoctorPreflight:
         # The loop must come *after* the doctor so a freshly healed symlink
         # chain is visible to it (issue #63).
         expected = (
-            f"N={skill_name} S={script_name}\n"
+            # `SD=` clears any value inherited from the environment or from an
+            # earlier block in the same shell, which would otherwise survive
+            # the loop and defeat the ${SD:?…} guard below.
+            f"N={skill_name} S={script_name} SD=\n"
             "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1\n"
             'for d in scripts ".claude/skills/$N/scripts" '
             '"$HOME/.claude/skills/$N/scripts"; do\n'
@@ -1270,17 +1273,18 @@ class TestPhase1DoctorPreflight:
         # leaving the Iron Law gating on a script that never executes, which
         # is the #63 failure class. Pin the invocation separately.
         #
-        # Two legitimate shapes: reviewing-* guard inline at the call site,
-        # while shipping-* publish SKILL_SCRIPTS first (so later steps can
-        # substitute it) and invoke off the already-guarded $SD.
-        invocations = (
+        # One canonical shape across both families. shipping-* additionally
+        # publish SKILL_SCRIPTS beforehand (so later steps can substitute it),
+        # but the invocation itself guards at the call site rather than
+        # relying on that earlier line having aborted first — so an `any()`
+        # over per-family variants is no longer needed here.
+        invocation = (
             'bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, '
-            'or ~/.claude/skills/$N/scripts/}/$S"',
-            'bash "$SD/$S"',
+            'or ~/.claude/skills/$N/scripts/}/$S"'
         )
-        assert any(form in body for form in invocations), (
-            "SKILL.md Phase 1 resolves the script but never invokes it. "
-            "Expected one of:\n  " + "\n  ".join(invocations)
+        assert invocation in body, (
+            "SKILL.md Phase 1 resolves the script but never invokes it "
+            f"(or invokes it unguarded). Expected:\n  {invocation}"
         )
 
     def test_doctor_preflight_guards_unresolved_path(self, skill_and_script):

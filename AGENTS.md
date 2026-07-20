@@ -159,16 +159,19 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 Instead, resolve once and substitute. Each skill's SKILL.md carries one resolution block — for `reviewing-*` / `shipping-*` this is folded into the Phase 1 / Step 1 doctor preflight; other skills get a standalone "Script path resolution" section:
 
 ```bash
-N=<skill-name> S=<sentinel-script>.sh
+N=<skill-name> S=<sentinel-script>.sh SD=
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
   [ -f "$d/$S" ] && { SD="$d"; break; }
 done
 echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
+bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 ```
 
 Notes on the shape:
 
 - **Probe for the sentinel file, not the directory.** `[ -d "$d" ]` would falsely match any project that has an unrelated root `scripts/` — this repo does.
+- **Clear `SD` on the header line.** Without it, a value inherited from the environment — or left by an earlier block in the same shell — survives the loop and defeats `${SD:?…}`, silently reproducing the #63 "No such file or directory" symptom against a misleading path.
+- **Guard at the call site, not just once.** Every expansion that feeds a path uses the full `${SD:?…}` form, so no invocation depends on an earlier line having aborted first.
 - **Project-local `scripts/` wins.** Preserves consumers that already worked around #63 with their own copy.
 - **`$HOME/.claude/skills/…` last** covers user-level and plugin installs.
 - **Resolution must run *after* `.skills/doctor.sh`,** so a freshly healed vendor symlink chain is visible to the probe.
