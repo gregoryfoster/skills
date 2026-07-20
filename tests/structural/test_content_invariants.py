@@ -1390,6 +1390,58 @@ def _skills_with_resolution_block():
     )
 
 
+# Skills that ship a scripts/ directory but deliberately carry no resolution
+# block. Each resolves script paths another way, so the cwd-relative bug #63
+# fixed does not apply:
+#   - init-*: Phase 0 clones the skill repo and captures <SKILL_DIR>, so paths
+#     are absolute from the start (see init-project-fastapi / init-socraticode).
+#   - managing-skills: runs during bootstrap, before the .claude/skills symlinks
+#     it installs exist, so it uses full vendor paths.
+# test_resolution_block_roster pins this set so a NEW skill that ships scripts/
+# and forgets a block fails loudly instead of silently escaping coverage.
+SKILLS_EXEMPT_FROM_RESOLUTION_BLOCK = {
+    "init-project-fastapi",
+    "init-socraticode",
+    "managing-skills",
+}
+
+
+def test_resolution_block_roster():
+    """Every skill that ships scripts/ either carries a resolution block or is
+    a documented exemption — nothing escapes coverage silently.
+
+    TestScriptResolutionBlock discovers its subjects by matching the loop
+    line, so a corrupted loop line (or a new skill missing a block entirely)
+    would drop out of the parameter list with no visible failure. This roster
+    check is the backstop: it keys on the scripts/ directory, not on the block
+    text the other class asserts.
+    """
+    ships_scripts = {
+        p.parent.name
+        for p in SKILLS_DIR.glob("*/SKILL.md")
+        if (p.parent / "scripts").is_dir()
+    }
+    has_block = {p.parent.name for p in _skills_with_resolution_block()}
+    missing = ships_scripts - has_block - SKILLS_EXEMPT_FROM_RESOLUTION_BLOCK
+    assert not missing, (
+        "These skills ship a scripts/ directory but carry neither a resolution "
+        f"block nor an entry in SKILLS_EXEMPT_FROM_RESOLUTION_BLOCK: {sorted(missing)}.\n"
+        "Add the block (see AGENTS.md 'Invoking a skill's own scripts'), or — if "
+        "the skill resolves paths another way — document why in the exemption set."
+    )
+    # Keep the exemption set honest: a skill that gained a block, or dropped
+    # its scripts/ dir, should be removed rather than lingering as dead config.
+    stale = {
+        name
+        for name in SKILLS_EXEMPT_FROM_RESOLUTION_BLOCK
+        if name in has_block or name not in ships_scripts
+    }
+    assert not stale, (
+        "SKILLS_EXEMPT_FROM_RESOLUTION_BLOCK lists skills that no longer need an "
+        f"exemption (they gained a block or dropped scripts/): {sorted(stale)}."
+    )
+
+
 class TestScriptResolutionBlock:
     """Every skill that resolves its own scripts/ must do so identically.
 
@@ -1442,13 +1494,18 @@ class TestScriptResolutionBlock:
         # earlier step printed the path the reader substitutes. Six skills
         # carry 30 such sites between them; deleting the single publishing
         # line would strand all of them.
-        body = skill_md.read_text()
-        uses = body.count('bash "<SKILL_SCRIPTS>/')
+        #
+        # references/*.md is scanned alongside SKILL.md (matching the surface
+        # TestNoBareScriptPaths already covers): a reference file may carry a
+        # substitution site, but only SKILL.md's block publishes the path.
+        skill_dir = skill_md.parent
+        docs = [skill_md, *sorted(skill_dir.glob("references/*.md"))]
+        uses = sum(p.read_text().count('bash "<SKILL_SCRIPTS>/') for p in docs)
         if not uses:
             pytest.skip("skill has no <SKILL_SCRIPTS> substitution sites")
-        assert 'echo "SKILL_SCRIPTS=' in body, (
-            f"{skill_md.parent.name}/SKILL.md has {uses} "
-            '`bash "<SKILL_SCRIPTS>/…"` site(s) but never prints the path to '
+        assert 'echo "SKILL_SCRIPTS=' in skill_md.read_text(), (
+            f"{skill_dir.name} has {uses} `bash \"<SKILL_SCRIPTS>/…\"` site(s) "
+            "(SKILL.md + references/) but SKILL.md never prints the path to "
             'substitute. The resolution block must publish it:\n  echo '
             f'"SKILL_SCRIPTS={RESOLUTION_GUARD}"'
         )
