@@ -16,6 +16,14 @@ SDK's lockfile (a shared/floating toolchain would yield spurious formatting
 diffs). ``regen.sh`` writes both the snapshot and the tree from the live
 producer, so running it leaves this check a no-op.
 
+For a *filtered* client (``FILTER_SPEC=yes``), set ``filter_keep_prefix`` on the
+``Client``: ``spec_path`` is then the committed RAW snapshot, and this checker
+filters it to the consumed surface (via ``scripts/filter_openapi_spec.py``)
+before generating — exactly as ``regen.sh`` does. That makes the gate prove the
+whole raw → filtered → tree chain, so a stale filtered spec or a changed
+keep-prefix surfaces as drift (parity with the generated-tree layout, whose
+Makefile filters then diffs both artifacts).
+
 This is a hermetic, PR-blocking consistency gate. It does NOT detect drift of
 the snapshot itself vs the live producer: a skipped regen after a producer API
 change leaves snapshot and tree *consistently* stale, and this hermetic gate
@@ -44,6 +52,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# Filter script (copied here in Phase 2 when FILTER_SPEC=yes). Only consulted
+# for clients that set ``filter_keep_prefix``; unfiltered clients never need it.
+_FILTER_SCRIPT = REPO_ROOT / "scripts" / "filter_openapi_spec.py"
+
 # Directory names that are build/cache artifacts, never part of the contract.
 IGNORE_DIRS = {"__pycache__", ".ruff_cache"}
 
@@ -64,6 +76,9 @@ class Client:
     sdk_dir: Path  # SDK package root (holds pyproject.toml + uv.lock + scripts/regen.sh)
     generated_dir: Path  # committed generated tree, the diff target
     spec_path: Path  # committed OpenAPI snapshot the tree is regenerated from
+    # When set (FILTER_SPEC=yes): spec_path is the RAW snapshot, filtered to
+    # this path prefix (e.g. "/api/v1/") before generation. None = unfiltered.
+    filter_keep_prefix: str | None = None
 
 
 # Registry of vendored clients this repo carries. EDIT ME: one entry per
@@ -78,6 +93,8 @@ class Client:
 #         sdk_dir=_EXAMPLE_SDK,
 #         generated_dir=_EXAMPLE_SDK / "src" / "<producer>_client" / "generated",
 #         spec_path=_EXAMPLE_SDK / "<producer>-openapi.json",
+#         # FILTER_SPEC=yes only — spec_path above is then the RAW snapshot:
+#         # filter_keep_prefix="/api/v1/",
 #     ),
 # }
 CLIENTS: dict[str, Client] = {}
@@ -163,6 +180,31 @@ def _regenerate(client: Client, dest: Path) -> None:
     wraps borderline imports the committed tree leaves on one line — spurious
     drift.) ``check_client`` and ``write_client`` both pass in-tree paths.
     """
+    gen_input = client.spec_path
+    if client.filter_keep_prefix is not None:
+        # Filtered client: spec_path is the RAW snapshot. Filter it to the
+        # consumed surface into an in-tmp file (sibling of ``dest``, cleaned up
+        # with it), then generate from that — mirroring regen.sh's uncommented
+        # filter step so the gate proves raw -> filtered -> tree. The filter is
+        # stdlib-only, so run it under this interpreter rather than a uv env.
+        if not _FILTER_SCRIPT.is_file():
+            raise DriftCheckError(
+                f"client {client.name!r} sets filter_keep_prefix but "
+                f"{_FILTER_SCRIPT.relative_to(REPO_ROOT)} is missing "
+                "(copy assets/filter_openapi_spec.py there)"
+            )
+        gen_input = dest.parent / "filtered-openapi.json"
+        _run(
+            [
+                sys.executable,
+                str(_FILTER_SCRIPT),
+                str(client.spec_path),
+                str(gen_input),
+                "--keep-prefix",
+                client.filter_keep_prefix,
+            ],
+            cwd=client.sdk_dir,
+        )
     _run(
         [
             "uv",
@@ -170,7 +212,7 @@ def _regenerate(client: Client, dest: Path) -> None:
             "openapi-python-client",
             "generate",
             "--path",
-            str(client.spec_path),
+            str(gen_input),
             "--meta",
             "none",
             "--output-path",

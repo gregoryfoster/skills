@@ -20,6 +20,13 @@ environment, so the generator + ruff versions come from that SDK's lockfile —
 byte-stable across machines. It also serves as the local remediation tool
 (`--write` regenerates the committed tree from the snapshot in place).
 
+For a filtered SDK (`FILTER_SPEC=yes`), set `filter_keep_prefix` on its
+`Client` entry and point `spec_path` at the committed **raw** snapshot: the
+checker then filters raw → surface before generating (via the Phase 2
+`scripts/filter_openapi_spec.py`), so the one gate proves the whole
+raw → filtered → tree chain — a stale filtered spec or a changed keep-prefix
+is caught, matching the generated-tree layout's coverage.
+
 Add a job to the consumer's CI workflow:
 
 ```yaml
