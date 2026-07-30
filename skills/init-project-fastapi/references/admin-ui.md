@@ -40,7 +40,7 @@ cp "<SKILL_DIR>/assets/htmx.min.js" src/static/vendor/htmx.min.js
 
 The asset is a pinned, reviewed copy of the htmx **2.x** minified dist (the version string is embedded in the file: `grep -oE '"2\.[0-9]+\.[0-9]+"' src/static/vendor/htmx.min.js`). Provenance rides the Phase 0 `SKILL_SHA` recorded in the bootstrap GH issue — the same reproducibility story as `alembic-env.py`. The copy is refreshed on skill releases; never replace it with a CDN `<script src>` — the admin surface must work air-gapped and under a strict CSP.
 
-> **Refresh policy: latest *stable 2.x* only.** GitHub's `latest` release tag on bigskysoftware/htmx already points at 4.0 betas (not API-flagged as prereleases), so "grab the latest release" vendors a beta with different attribute and header semantics than this scaffold's code and tests assume (`HX-Request`, `HX-Redirect`). A major-version bump is a design change requiring its own review — pick the newest `v2.*` tag when refreshing.
+> **Refresh policy: latest *stable 2.x* only.** GitHub's `latest` release tag on bigskysoftware/htmx already points at 4.0 betas (not API-flagged as prereleases), so "grab the latest release" vendors a beta whose compatibility with the semantics this scaffold's code and tests assume (`HX-Request`, `HX-Redirect`) cannot be assumed. A major-version bump is a design change requiring its own review — pick the newest `v2.*` tag when refreshing.
 
 ## `src/api/admin/router.py`
 

@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
