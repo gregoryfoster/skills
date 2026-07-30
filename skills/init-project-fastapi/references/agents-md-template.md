@@ -136,7 +136,7 @@ Currently defined:
 > Include when DB_BACKED=yes:
 - `DATABASE_URL` — PostgreSQL connection string
 - `TEST_DATABASE_URL` — PostgreSQL connection string for the test database (name must end `_test`)
-- `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB` — set to `1` only by the production systemd unit; the app refuses to boot against a non-`_dev`/`_test` database without it
+- `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB` — set to `1` only via `Environment=` in the production systemd unit, **never in an env file** (systemd env files override `Environment=`, which would defeat the guard); the app refuses to boot against a non-`_dev`/`_test` database without it
 > end include
 > Include when AUTH_STYLE=header-token:
 - `API_AUTH_TOKEN` — shared secret for `X-API-Key` on `/api/v1/*`; unset = all authed routes return 503 (fail-closed)

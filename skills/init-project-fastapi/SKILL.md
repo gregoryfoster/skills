@@ -163,7 +163,7 @@ Create these files, substituting parameters throughout:
 
 ### Phase 4 — AGENTS.md
 
-Adapt the template in [`references/agents-md-template.md`](references/agents-md-template.md) for the project. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<API_PORT_DEV>` (= `<API_PORT> + 1`) throughout.
+Adapt the template in [`references/agents-md-template.md`](references/agents-md-template.md) for the project. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<API_PORT_DEV>` (= `<API_PORT> + 1`), and `<PROJECT_UNDERSCORE_UPPER>` (= project name with hyphens → underscores, uppercased — e.g. `usa-wa` → `USA_WA`; same derivation as Phase 5c's `<PROJECT_UNDERSCORE>`) throughout.
 
 **Conditional-block syntax.** The template (and several other references) uses a blockquote pattern to gate content on branch-point values:
 

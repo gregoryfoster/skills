@@ -40,7 +40,7 @@ dev = [
     "pytest-cov>=7.0,<8",
     "pytest-timeout>=2.3,<3",
     "ruff>=0.16,<0.17",
-    "ty",
+    "ty",  # beta — deliberately unpinned; non-gating advisory checker (see notes)
 ]
 ```
 
@@ -49,6 +49,7 @@ Notes on the dev group:
 - **`pytest-timeout`** backstops silent hangs — observo lost a ~51-minute CI run to a leaked `idle in transaction` backend before adopting it (observo #377). The `timeout`/`timeout_method` keys in the pytest config below activate it.
 - **`ty`** (astral's type checker, beta) is deliberately **non-gating**: run `uv run ty check` ad hoc; no pre-commit hook, no CI gate. None of the cohort services gate on a type checker — this keeps the option cheap without imposing one.
 - **`pytest-xdist` is opt-in, not scaffolded.** Parallel runs against a shared test database require per-worker databases (`<db>_test_gw0`, …) and advisory-lock overlap guards (see observo `tests/db_bootstrap.py`). Add it only when suite duration hurts, together with that isolation machinery.
+- **Pin-compat caveat.** The `pytest-asyncio>=1.0,<2` range is assumed to resolve alongside pytest 9 but has not been verified against a live index from this repo. If the first bootstrap's `uv sync` fails resolution on the pytest ceiling, widen or adjust the `pytest` pin and report back to the skill.
 
 ### Pytest config — session loop scope reflects the cohort majority
 

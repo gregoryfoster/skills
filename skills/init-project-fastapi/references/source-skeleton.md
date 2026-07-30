@@ -87,7 +87,19 @@ from fastapi import Depends
 from src.api.deps import require_api_key
 
 v1_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
-# Register feature routers on v1_router as they are added.
+
+
+@v1_router.get("/ping")
+async def ping() -> dict:
+    """Authed smoke route — proves the auth gate end-to-end.
+
+    Router-level dependencies only run when a route matches, so an empty
+    router would 404 before auth executes; this route keeps the gate (and
+    tests/api/test_auth.py) exercising real behavior. Replace with feature
+    routers as they are added.
+    """
+    return {"status": "ok"}
+
 
 app.include_router(v1_router)
 ```
@@ -98,6 +110,7 @@ app.include_router(v1_router)
 """Header-token auth. Fail-closed: unset token means no access, not open access."""
 
 import secrets
+from typing import Annotated
 
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -107,7 +120,9 @@ from src.core.config import get_api_auth_token
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-async def require_api_key(api_key: str | None = Security(_api_key_header)) -> None:
+async def require_api_key(
+    api_key: Annotated[str | None, Security(_api_key_header)],
+) -> None:
     """Reject the request unless X-API-Key matches API_AUTH_TOKEN."""
     expected = get_api_auth_token()
     if not expected:

@@ -137,7 +137,7 @@ async def test_health_returns_ok(client):
 
 ## `tests/api/test_auth.py` — only when `AUTH_STYLE=header-token`
 
-Exercises the `require_api_key` gate on the versioned router. A 404 (not 401) with the correct key proves the request cleared auth and reached routing.
+Exercises the `require_api_key` gate through the scaffolded `/api/v1/ping` route. The route must exist: router-level dependencies only run when a route matches, so an unmatched path would 404 before auth executes and prove nothing.
 
 ```python
 """Auth gate: /api/v1/* rejects missing/wrong keys, admits the configured key."""
@@ -158,13 +158,19 @@ def _configure_token(monkeypatch):
 
 
 async def test_missing_key_rejected(client):
-    response = await client.get("/api/v1/anything")
+    response = await client.get("/api/v1/ping")
     assert response.status_code == 401
 
 
-async def test_valid_key_clears_auth(client):
-    response = await client.get("/api/v1/anything", headers={"X-API-Key": TOKEN})
-    assert response.status_code == 404  # cleared auth, no such route yet
+async def test_wrong_key_rejected(client):
+    response = await client.get("/api/v1/ping", headers={"X-API-Key": "wrong"})
+    assert response.status_code == 401
+
+
+async def test_valid_key_admitted(client):
+    response = await client.get("/api/v1/ping", headers={"X-API-Key": TOKEN})
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 ```
 
 For `SETTINGS_STYLE=os.environ` drop both `cache_clear()` lines and the `get_settings` import — `os.environ.get` reads live.

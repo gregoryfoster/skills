@@ -173,7 +173,14 @@ def assert_database_safety() -> None:
     """Raise unless the DB name carries a safe suffix or production is opted into."""
     if os.environ.get(_ALLOW_ENV) == "1":
         return
-    db_name = get_database_url().rsplit("/", 1)[-1].split("?")[0]
+    try:
+        url = get_database_url()
+    except RuntimeError:
+        # DATABASE_URL unset — nothing to guard. The app still boots (liveness
+        # /health works during DB-less bring-up); the first real DB use raises
+        # get_database_url's helpful error.
+        return
+    db_name = url.rsplit("/", 1)[-1].split("?")[0]
     if not db_name.endswith(_SAFE_SUFFIXES):
         raise ProductionDatabaseRefused(
             f"database {db_name!r} looks like production; "

@@ -34,8 +34,11 @@ EnvironmentFile=/etc/<PROJECT_NAME>/.env
 EnvironmentFile=-<DEPLOY_HOME>/.env
 
 # Production opt-in for the db_safety boot guard (DB_BACKED=yes only — drop
-# otherwise). Environment= after the EnvironmentFile lines so an env file
-# can never override the explicit opt-in.
+# otherwise). NOTE: systemd gives EnvironmentFile= precedence over
+# Environment= regardless of textual order (systemd.exec: "Settings from
+# these files override settings made with Environment="), so the guard
+# holds only because the env files never define this variable — keep it
+# out of /etc/<PROJECT_NAME>/.env and the repo .env.
 Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1
 
 # --frozen --no-sync: serve exactly the committed lockfile; dependency sync
