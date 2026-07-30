@@ -29,30 +29,42 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if not TEST_DATABASE_URL:
     raise RuntimeError(
         "TEST_DATABASE_URL is not set. "
-        "Load env: export $(cat /etc/<PROJECT_NAME>/.env .env 2>/dev/null | xargs)"
+        "Load env: set -a; . /etc/<PROJECT_NAME>/.env; . .env; set +a"
     )
 
 
 def _check_test_url_safety(test_url: str) -> None:
-    """Raise if test_url matches the production DATABASE_URL.
+    """Raise unless test_url names a *_test database distinct from DATABASE_URL.
 
-    Prevents Base.metadata.drop_all from destroying production data when
-    TEST_DATABASE_URL is accidentally set to the production connection string.
-    drop_all only drops model-mapped tables, not literally every table — but
-    any production table mapped to Base.metadata is still at risk.
+    Two layers, both incident-driven across the cohort:
+    1. Positive name check — the database name must end in `_test`. An
+       inequality check alone still lets a mistyped production DSN through.
+    2. Inequality check — TEST_DATABASE_URL must not equal DATABASE_URL,
+       because teardown drops all model-mapped tables (Base.metadata.drop_all).
     """
+    db_name = test_url.rsplit("/", 1)[-1].split("?")[0]
+    if not db_name.endswith("_test"):
+        raise RuntimeError(
+            f"TEST_DATABASE_URL database {db_name!r} must end in '_test'. "
+            "Test teardown drops all model-mapped tables; refusing a "
+            "production-looking name."
+        )
     prod_url = os.environ.get("DATABASE_URL")
     if prod_url and test_url == prod_url:
         raise RuntimeError(
             "TEST_DATABASE_URL must not equal DATABASE_URL. "
             "Test teardown drops all model-mapped tables (Base.metadata.drop_all) "
-            "and would destroy matching production data. "
-            "Set TEST_DATABASE_URL to a dedicated test database "
-            "(database name should include '_test')."
+            "and would destroy matching production data."
         )
 
 
 _check_test_url_safety(TEST_DATABASE_URL)
+
+# Pin the environment: from here on, ANY code path that reads DATABASE_URL —
+# including the app imported inside the client fixture, bypassing dependency
+# overrides — resolves to the test database. Archiver adopted this defense
+# after a dev process silently shared the production DB.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 
 @pytest.fixture(scope="session")
@@ -122,6 +134,63 @@ async def test_health_returns_ok(client):
     assert body["status"] == "ok"
     assert "build" in body
 ```
+
+## `tests/api/test_auth.py` — only when `AUTH_STYLE=header-token`
+
+Exercises the `require_api_key` gate on the versioned router. A 404 (not 401) with the correct key proves the request cleared auth and reached routing.
+
+```python
+"""Auth gate: /api/v1/* rejects missing/wrong keys, admits the configured key."""
+
+import pytest
+
+from src.core.config import get_settings
+
+TOKEN = "test-token"
+
+
+@pytest.fixture(autouse=True)
+def _configure_token(monkeypatch):
+    monkeypatch.setenv("API_AUTH_TOKEN", TOKEN)
+    get_settings.cache_clear()  # SETTINGS_STYLE=os.environ: drop this line
+    yield
+    get_settings.cache_clear()  # SETTINGS_STYLE=os.environ: drop this line
+
+
+async def test_missing_key_rejected(client):
+    response = await client.get("/api/v1/anything")
+    assert response.status_code == 401
+
+
+async def test_valid_key_clears_auth(client):
+    response = await client.get("/api/v1/anything", headers={"X-API-Key": TOKEN})
+    assert response.status_code == 404  # cleared auth, no such route yet
+```
+
+For `SETTINGS_STYLE=os.environ` drop both `cache_clear()` lines and the `get_settings` import — `os.environ.get` reads live.
+
+## Alternative: migration-driven test schema (adopt once real migrations exist)
+
+The default `test_engine` uses `create_all`/`drop_all` — right for a fresh project with zero revisions. The mature cohort services flipped to **alembic as the only schema source**: archiver's conftest runs `alembic upgrade head` instead of `create_all`, and observo replays `DROP SCHEMA public CASCADE` + `alembic upgrade head` per session as a migration-ordering regression test. Adopt that shape once the first real migrations land:
+
+```python
+@pytest.fixture(scope="session")
+async def test_engine():
+    """Session-scoped engine; schema comes from migrations, not create_all."""
+    engine = create_async_engine(TEST_DATABASE_URL)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+    # Alembic's env.py calls asyncio.run internally — run it in a worker
+    # thread so it doesn't collide with the session-scoped event loop.
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: command.upgrade(Config("alembic.ini"), "head")
+    )
+    yield engine
+    await engine.dispose()
+```
+
+(`from alembic import command`, `from alembic.config import Config`, `import asyncio`, `from sqlalchemy import text`. The savepoint `db_session` fixture is unchanged.) This also removes the `drop_all` teardown — the next session's `DROP SCHEMA` replay supersedes it.
 
 ## `tests/conftest.py` (DB_BACKED=no variant)
 

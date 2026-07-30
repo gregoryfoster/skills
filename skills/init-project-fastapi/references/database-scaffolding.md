@@ -61,12 +61,24 @@ Create `src/core/models.py`:
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from ulid import ULID
+
+
+def generate_ulid() -> str:
+    """Return a new ULID string — sortable, 26 chars, cohort-standard row id."""
+    return str(ULID())
 
 
 class Base(DeclarativeBase):
     """Declarative base for all models."""
+
+
+class UlidPkMixin:
+    """Mixin adding a ULID primary key (CHAR(26), lexicographically time-ordered)."""
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=generate_ulid)
 
 
 class TimestampMixin:
@@ -85,10 +97,13 @@ class TimestampMixin:
     )
 
 
-# Add table classes below as the schema grows.
-# Promote to a `models/` package (MODELS_LAYOUT=package) when crossing ~5 tables
-# or natural domain boundaries.
+# Add table classes below as the schema grows; default shape is
+# `class Foo(UlidPkMixin, TimestampMixin, Base)`. Promote to a `models/`
+# package (MODELS_LAYOUT=package) when crossing ~5 tables or natural
+# domain boundaries.
 ```
+
+ULID PKs are a 4/4 cohort convergence (archiver/power-map/observo via `python-ulid`, usa-wa via a custom column type) — time-ordered so B-tree inserts stay append-mostly, and safe to generate client-side.
 
 ### `MODELS_LAYOUT=package` (matches notifier)
 
@@ -130,6 +145,44 @@ Edit `alembic.ini`:
 
 > The asset [`alembic-env.py`](../assets/alembic-env.py) imports `Base` from `src.core.models`. The package re-export in `MODELS_LAYOUT=package` and the monolithic `models.py` both expose `Base` at that path, so no env.py edit is needed for either layout.
 
+### Optional hardening (adopt as the schema grows)
+
+- **Boot-time head guard.** Once real migrations exist, refuse to serve behind schema: observo's `assert_db_at_head` runs in `lifespan` and raises if `alembic_version` trails the script head (observo #192 — added after removing `create_all` from startup). Not scaffolded by default because a fresh project has no revisions to compare.
+- **Autogenerate-drift tripwire.** `uv run alembic check` fails when models changed but no migration was generated. Phase 12 runs it once at bootstrap; wire it into CI (`GITHUB_CI=yes`) so the drift class from observo #202 can't land silently.
+
+## `src/core/db_safety.py`
+
+Startup guard against pointing a dev/test process at a production database. Positive assertion (name must look non-production), not just an inequality check — modeled on archiver's `db_safety.py`, added after a 2026-07 incident where a dev server on the dev port silently shared the production database. Called from `lifespan` before any resource is built (see [`source-skeleton.md`](source-skeleton.md)).
+
+```python
+"""Refuse to start against a production-looking database without explicit consent."""
+
+import os
+
+from src.core.config import get_database_url
+
+_ALLOW_ENV = "<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB"
+_SAFE_SUFFIXES = ("_test", "_dev")
+
+
+class ProductionDatabaseRefused(RuntimeError):
+    """Raised when the configured database looks like production."""
+
+
+def assert_database_safety() -> None:
+    """Raise unless the DB name carries a safe suffix or production is opted into."""
+    if os.environ.get(_ALLOW_ENV) == "1":
+        return
+    db_name = get_database_url().rsplit("/", 1)[-1].split("?")[0]
+    if not db_name.endswith(_SAFE_SUFFIXES):
+        raise ProductionDatabaseRefused(
+            f"database {db_name!r} looks like production; "
+            f"set {_ALLOW_ENV}=1 (production deploys only) or point at a *_dev/*_test database"
+        )
+```
+
+`<PROJECT_UNDERSCORE_UPPER>` = `<PROJECT_UNDERSCORE>` uppercased (e.g. `usa-wa` → `USA_WA`). The production systemd unit sets `Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1` **after** its `EnvironmentFile` lines so env files can't override the opt-in (see [`systemd-deploy.md`](systemd-deploy.md)). Skip this module when `DB_BACKED=no`.
+
 ## `src/api/deps.py`
 
 FastAPI dependency that yields a database session:
@@ -150,3 +203,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession]:
     async with factory() as session:
         yield session
 ```
+
+> **FastAPI ≥0.118 cleanup timing.** The code after `yield` in a dependency now runs **after the response is sent** — the session stays open during response serialization but any post-yield commit/rollback happens post-response. Don't rely on post-yield code to affect the response; commit inside the handler when the result must be durable before the client sees 200.
+
+When `AUTH_STYLE=header-token`, this file also carries `require_api_key` — see [`source-skeleton.md`](source-skeleton.md) § AUTH_STYLE for the template.

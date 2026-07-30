@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
@@ -51,11 +51,14 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 
 | Parameter | Default | Choices | Drives |
 |---|---|---|---|
-| `DB_BACKED` | `yes` | `yes` \| `no` | Phase 3 deps, Phase 5c (database + models + alembic + deps.py), Phase 6 conftest savepoint fixture, Phase 12 alembic smoke check |
+| `DB_BACKED` | `yes` | `yes` \| `no` | Phase 3 deps, Phase 5c (database + models + alembic + deps.py + db_safety), Phase 6 conftest savepoint fixture, Phase 12 alembic smoke check |
 | `PROVISION_POSTGRES` | `yes` | `yes` \| `no` | Phase 5d (apt-install Postgres, create role + databases, write `DATABASE_URL`/`TEST_DATABASE_URL` to `.env`); gated on `DB_BACKED=yes`. Set to `no` when an external Postgres is already wired up. |
 | `SETTINGS_STYLE` | `pydantic-settings` | `pydantic-settings` \| `os.environ` | Phase 3 deps, Phase 5b (`src/core/config.py` shape) |
 | `MODELS_LAYOUT` | `monolithic` | `monolithic` \| `package` | Phase 5c (`src/core/models.py` vs `src/core/models/`) |
+| `AUTH_STYLE` | `header-token` | `header-token` \| `none` | Phase 5 (`require_api_key` dep + authed `/api/v1` router), Phase 5b (token accessor), Phase 6 (`tests/api/test_auth.py`) |
 | `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
+| `LAYOUT` | `single` | `single` \| `workspace` | uv workspace monorepo — Phase 3/5 shape per [`references/workspace-layout.md`](references/workspace-layout.md) (`single` is the fully-templated path) |
+| `GITHUB_CI` | `no` | `no` \| `yes` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
 | `DEPLOY_TARGET` | `systemd` | `systemd` \| `none` | Phase 7b (`deploy/<PROJECT_NAME>.service`), Phase 3 `.gitignore`, README "Deploy" section |
 
 **Sub-parameters of `DEPLOY_TARGET=systemd`** (skipped entirely when `DEPLOY_TARGET=none`):
@@ -67,14 +70,19 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 
 ### Cohort context (informational; show to the user when they ask "why this default?")
 
-- **`DB_BACKED=yes`**: 6/7 use SQLAlchemy[asyncio] + asyncpg. Power-map is the lone exception (raw asyncpg, no ORM).
-- **`PROVISION_POSTGRES=yes`**: a fresh Ubuntu/Debian VM with no Postgres is the assumed CannObserv host (the canonical systemd unit's `After=postgresql.service` reflects this). Set to `no` when the host already has Postgres or when Postgres lives on a separate machine — Phase 5d then prints the manual provisioning checklist instead.
-- **`SETTINGS_STYLE=pydantic-settings`**: 3/7 newer services (power-map, address-validator, observo) converged here. Older services (notifier, archiver, watcher) still use explicit `os.environ` guard functions — both work, the newer pattern is the recommended default.
-- **`MODELS_LAYOUT=monolithic`**: 6/7 use a single `models.py`. Promote to a `models/` package when crossing ~5 tables or natural domain boundaries (notifier did this).
-- **`LINT_PROFILE=minimal`**: 5/7 stick to `E,F,I,W,UP`. Address-validator alone enabled the full strict profile (`ANN,S,SIM,RUF,PL,TCH,…`); offered as a branch point but not the default.
-- **`DEPLOY_TARGET=systemd`**: notifier is the only production-deployed service today, and its systemd pattern (BUILD_ID via `ExecStartPre`, two-tier `EnvironmentFile`) is canonical. 0/7 use Docker.
+Stats refreshed 2026-07 from the 8-service cohort (address-validator, wslcb-licensing-tracker, power-map, archiver, watcher, notifier, observo, usa-wa), with deep analysis of the 4 mature services (archiver, power-map, observo, usa-wa — see [#65](https://github.com/gregoryfoster/skills/issues/65)).
 
-**Async task queue (not a branch point yet).** Only notifier and watcher use [procrastinate](https://procrastinate.readthedocs.io/) for background work, and each wires its workers project-specifically (notifier's Apprise dispatcher, watcher's domain rate-limit poller). Until a third project converges on a shared shape, the skill does not scaffold procrastinate — promote it deliberately when you actually need a worker, following notifier's wiring as the reference.
+- **`DB_BACKED=yes`**: 7/8 use SQLAlchemy[asyncio] + asyncpg. Power-map is the lone exception (raw asyncpg + hand-parsed `schema.sql`, no ORM/alembic).
+- **`PROVISION_POSTGRES=yes`**: a fresh Ubuntu/Debian VM with no Postgres is the assumed CannObserv host (the canonical systemd unit's `After=postgresql.service` reflects this). Set to `no` when the host already has Postgres or when Postgres lives on a separate machine — Phase 5d then prints the manual provisioning checklist instead.
+- **`SETTINGS_STYLE=pydantic-settings`**: observo, usa-wa, and address-validator use pydantic-settings; archiver/power-map/notifier/watcher read `os.environ` directly. Both work; the typed default remains recommended.
+- **`MODELS_LAYOUT=monolithic`**: most start monolithic; archiver and notifier promoted to a `models/` package at ~5+ tables — the documented promotion path.
+- **`AUTH_STYLE=header-token`**: all 4 mature services hand-rolled header auth (archiver `X-API-Key`, observo worker token, usa-wa `X-Operator-Token`, power-map API keys) — the scaffold now ships the shared fail-closed core.
+- **`LINT_PROFILE=minimal`**: the historical `E,F,I,W,UP` core plus the rules the cohort added after being bitten (`B904`, `PLC0415` — archiver #97/observo) and the now-stable `FAST`/`ASYNC` groups. Address-validator alone runs strict.
+- **`LAYOUT=single`**: usa-wa (full workspace) and observo (one member) adopted `[tool.uv.workspace]`; pick `workspace` only for genuinely multi-package architectures.
+- **`GITHUB_CI=no`**: archiver and observo run CI (identical shape: Postgres service, ruff+format, alembic upgrade+check, pytest); power-map and usa-wa gate locally only. Off by default; recommended once PRs flow.
+- **`DEPLOY_TARGET=systemd`**: power-map, usa-wa, archiver, observo all production-deploy via systemd; power-map/usa-wa grew oneshot+timer fleets (see [`references/systemd-deploy.md`](references/systemd-deploy.md)). 0/8 use Docker for the app itself.
+
+**Async task queue (not a branch point yet).** Notifier/watcher use [procrastinate](https://procrastinate.readthedocs.io/); observo runs bespoke asyncio lifespan tasks + Redis Streams; usa-wa a custom outbox + sidecar. No convergent shape — promote deliberately when a worker is actually needed.
 
 Confirm all core parameters AND all branch-point parameters (or their defaults) before proceeding.
 
@@ -150,68 +158,8 @@ git config user.email  # should echo GIT_USER_EMAIL
 
 Create these files, substituting parameters throughout:
 
-**`.python-version`**
-```
-3.12
-```
-
-**`.gitignore`** — standard Python + project ignores:
-```
-# Python
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
-# Environment / secrets
-.env
-env
-
-# Coverage
-htmlcov/
-.coverage
-coverage.xml
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Git worktrees
-.worktrees/
-
-# Runtime (BUILD_ID stamp target — DEPLOY_TARGET=systemd writes /run/<PROJECT_NAME>/build-id)
-/run/
-```
-
-**`pyproject.toml`** — assemble from the templates in [`references/pyproject-toml.md`](references/pyproject-toml.md). The reference covers the `[project]` table (with `DB_BACKED` and `SETTINGS_STYLE` conditional deps spliced in via prose instructions), the pytest + coverage + build-system blocks (always present), and both ruff profiles (`minimal` default vs `strict` opt-in).
-
-**`.pre-commit-config.yaml`**
-
-Use the latest stable rev from `https://github.com/astral-sh/ruff-pre-commit/releases`:
-
-```yaml
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.6  # update to latest stable
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-```
-
-**`CLAUDE.md`**
-```
-@AGENTS.md
-```
-
-**`README.md`** — setup, dev server, test commands; link to docs/COMMANDS.md
+- **`.python-version`**, **`.gitignore`**, **`.pre-commit-config.yaml`**, **`CLAUDE.md`** (`@AGENTS.md`), **`README.md`** — literal contents in [`references/core-config-files.md`](references/core-config-files.md).
+- **`pyproject.toml`** — assemble from [`references/pyproject-toml.md`](references/pyproject-toml.md): the `[project]` table (with `DB_BACKED` and `SETTINGS_STYLE` conditional deps spliced in via prose instructions), pytest + coverage + uv_build blocks (always present), and both ruff profiles (`minimal` default vs `strict` opt-in). When `LAYOUT=workspace`, apply the deltas in [`references/workspace-layout.md`](references/workspace-layout.md) instead of the single-package `[project]` shape.
 
 ### Phase 4 — AGENTS.md
 
@@ -233,7 +181,7 @@ Sections in the template: Project Overview, Development Methodology, Environment
 
 Create the empty `__init__.py` files (`src/`, `src/api/`, `src/core/`), then copy the templates from [`references/source-skeleton.md`](references/source-skeleton.md):
 
-- `src/api/main.py` — FastAPI app with lifespan, `/health`, and (when `DB_BACKED=yes`) `/ready`. The reference's "Adjustments for non-default branch points" subsection lists the edits to make for `SETTINGS_STYLE=os.environ` and `DB_BACKED=no`.
+- `src/api/main.py` — FastAPI app with lifespan (calls `assert_database_safety()` when `DB_BACKED=yes`), version from package metadata, `/health`, (when `DB_BACKED=yes`) `/ready`, and (when `AUTH_STYLE=header-token`) the authed `/api/v1` router + `require_api_key` dep. The reference's "Adjustments" subsection lists the edits for each non-default branch point.
 - `src/core/logging.py` — verbatim JSON logging utility (`configure_logging` + `get_logger`).
 
 ### Phase 5b — Settings (`src/core/config.py`)
@@ -256,12 +204,13 @@ echo "PROJECT_UNDERSCORE=$PROJECT_UNDERSCORE"
 
 For hyphen-free project names `PROJECT_UNDERSCORE == PROJECT_NAME`.
 
-Then follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers four artifacts:
+Then follow [`references/database-scaffolding.md`](references/database-scaffolding.md), which covers five artifacts:
 
 1. **`src/core/database.py`** — async engine + session factory (`get_engine`, `get_session_factory`, `reset_engine`). Reads via `get_database_url` from `src/core/config.py`.
-2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`.
-3. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN — substitute `<PROJECT_UNDERSCORE>` derived above).
-4. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
+2. **Models** — `src/core/models.py` (monolithic, default) or `src/core/models/` package (`__init__.py` re-exports + `base.py`), per `MODELS_LAYOUT`. Ships `UlidPkMixin` (ULID string PKs — 4/4 cohort convergence) + `TimestampMixin`.
+3. **`src/core/db_safety.py`** — boot guard refusing production-looking databases without `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1` (incident-driven; called from lifespan).
+4. **Alembic** — run `uv run alembic init alembic`, then overwrite `alembic/env.py` with the asset: `cp "<SKILL_DIR>/assets/alembic-env.py" alembic/env.py`. Then edit `alembic.ini` (script_location, prepend_sys_path, offline-fallback DSN — substitute `<PROJECT_UNDERSCORE>` derived above).
+5. **`src/api/deps.py`** — `get_db_session` async generator that yields an `AsyncSession`. This is the FastAPI dependency the conftest overrides for test isolation.
 
 ### Phase 5d — Provision PostgreSQL
 
@@ -275,8 +224,9 @@ Follow [`references/postgres-provisioning.md`](references/postgres-provisioning.
 
 Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then copy the templates from [`references/tests-scaffolding.md`](references/tests-scaffolding.md):
 
-- `tests/conftest.py` — default (DB_BACKED=yes) includes session-scoped event loop fixture, `_check_test_url_safety` guard, `test_engine` (create_all/drop_all), savepoint-isolated `db_session`, and `client` AsyncClient with `get_db_session` dependency override. The reference also ships a no-DB variant for `DB_BACKED=no`.
+- `tests/conftest.py` — default (DB_BACKED=yes) includes session-scoped event loop fixture, `_check_test_url_safety` guard (name-based `_test` check + inequality) with `DATABASE_URL` env pinning, `test_engine` (create_all/drop_all; migration-driven alternative documented for later), savepoint-isolated `db_session`, and `client` AsyncClient with `get_db_session` dependency override. The reference also ships a no-DB variant for `DB_BACKED=no`.
 - `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `build` keys. Always created.
+- `tests/api/test_auth.py` — auth-gate test. Only when `AUTH_STYLE=header-token`.
 
 ### Phase 7 — Docs
 
@@ -292,21 +242,34 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 
 Copy the templates from [`references/systemd-deploy.md`](references/systemd-deploy.md):
 
-- `deploy/<PROJECT_NAME>.service` — systemd unit lifted from `notifier`'s canonical pattern: BUILD_ID stamping via `ExecStartPre`, three-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env` → repo `.env`). Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments (PostgreSQL `After=`, `uv` install path).
+- `deploy/<PROJECT_NAME>.service` — systemd unit: BUILD_ID stamping via `ExecStartPre`, three-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env` → repo `.env`), bounded restarts, `--frozen --no-sync` serve, and (when `DB_BACKED=yes`) the `ALLOW_PRODUCTION_DB` opt-in. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments and ships the fleet patterns (oneshot+timer pairs, `OnFailure=` notify template, main-checkout guard) to adopt as scheduled jobs appear.
 - README **"Deploy"** section — append the `systemctl` install/restart/journalctl recipe to `README.md`.
 
-### Phase 8 — `.claude/settings.json`
+### Phase 7c — CI workflow
+
+> Skip this entire phase when `GITHUB_CI=no` (default).
+
+Create `.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md) — lint job (ruff check + format), test job with a Postgres 16 service, `alembic upgrade` + `alembic check` drift tripwire, pytest. The convergent archiver/observo shape.
+
+### Phase 8 — `.claude/` settings and hooks
+
+The submodule-refresh hook ships as a **script file**, not an inline JSON one-liner — the script (from `managing-skills`) is lock-gated once per UTC day, log-bounded, auto-commits **only on `main`** (the old inline form happily committed submodule bumps onto feature branches), and opportunistically re-installs `.skills/doctor.sh` each session:
+
+```bash
+mkdir -p .claude/hooks
+cp "<SKILL_DIR>/../managing-skills/scripts/skills-submodule-update.sh" .claude/hooks/
+chmod +x .claude/hooks/skills-submodule-update.sh
+```
+
+**`.claude/settings.json`**
 
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "LOCK=\"/tmp/<PROJECT_NAME>-submodule-update-$(date +%Y%m%d)\"; if [ ! -f \"$LOCK\" ]; then git submodule update --remote --merge skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers && touch \"$LOCK\" && if ! git diff --quiet HEAD skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers 2>/dev/null; then git add skills-vendor/gregoryfoster-skills skills-vendor/obra-superpowers && git commit -m 'chore: update skills submodules'; fi; fi"
-          }
+          { "type": "command", "command": "bash .claude/hooks/skills-submodule-update.sh" }
         ]
       }
     ]
@@ -353,6 +316,12 @@ for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; d
     ln -sfn "../$repo/skills/$skill_name" "skills/$skill_name"
   done
 done
+```
+
+**Install the symlink doctor.** The `reviewing-*` / `shipping-*` skills preflight via `.skills/doctor.sh` (self-heals dangling vendor symlinks); without this step that preflight is a silent no-op ([#65](https://github.com/gregoryfoster/skills/issues/65) found it missing in all four consumer repos):
+
+```bash
+bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-doctor.sh
 ```
 
 **Local overrides (1):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10's vendor loop above selects only the `-python-fastapi` variants of these workflows) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
@@ -405,6 +374,9 @@ When `DB_BACKED=yes`, also run:
 # Confirm Alembic can introspect models and report current revision.
 # Output should be empty (no revisions yet) or list the head revision.
 uv run alembic current 2>&1 | grep -Ev "^(INFO|$)" || true
+# Autogenerate-drift tripwire (needs a reachable DATABASE_URL; skip + note in
+# the GH issue if the DB isn't provisioned yet). Clean on a fresh scaffold.
+uv run alembic check
 ```
 
 If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database via Phase 5d or out-of-band), also run the smoke test. Use `--no-cov` for subset runs — a fresh project has one test exercising one file (~63% coverage in practice), which trips the `fail_under=80` coverage gate from `pyproject.toml`. This matches the AGENTS.md template's "Common Commands" section, which already documents `--no-cov` for subset runs:
@@ -485,15 +457,18 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 |---|---|
 | SSH deploy key | Configured |
 | Git remote | `git@github-<PROJECT_NAME>:<GITHUB_ORG>/<PROJECT_NAME>.git` |
-| Python tooling | uv, pytest, ruff, hatchling |
-| FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready]), `src/core/logging.py` |
+| Python tooling | uv, pytest (+timeout), ruff, ty (non-gating), uv_build |
+| FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready][+/api/v1 authed]), `src/core/logging.py` |
 | Settings | `src/core/config.py` (`<SETTINGS_STYLE>`) |
-| Database | `<DB_BACKED>` — when yes: `src/core/database.py`, `src/core/models[.py\|/]` (`<MODELS_LAYOUT>`), `alembic/` |
+| Auth | `<AUTH_STYLE>` — when header-token: `require_api_key` + `tests/api/test_auth.py` |
+| Database | `<DB_BACKED>` — when yes: `src/core/database.py`, `src/core/db_safety.py`, `src/core/models[.py\|/]` (`<MODELS_LAYOUT>`, ULID PKs), `alembic/` |
 | Lint profile | `<LINT_PROFILE>` |
+| Layout | `<LAYOUT>` |
+| CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml` |
 | Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/api/`, `tests/core/` |
 | Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
-| Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + matching `.claude/skills/` discovery symlinks |
+| Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |
 | GH issue | #1 closed |
 | Phase 0 scratch | Cleaned up (`<SKILL_TMP>` removed) |
 

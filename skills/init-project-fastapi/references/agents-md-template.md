@@ -19,7 +19,7 @@ TDD required. Red → Green → Refactor. No production code without a failing t
 
 ## Environment & Tooling
 
-Python ≥3.12, uv, pytest, ruff.
+Python ≥3.13, uv, pytest, ruff. `ty` is available as a **non-gating** type checker (`uv run ty check`) — advisory only; no pre-commit or CI gate.
 
 ## Code Exploration Policy
 
@@ -89,7 +89,7 @@ deploy/         — Systemd unit + deployment config
 **Dev server workflow.** Run on port `<API_PORT_DEV>` so the live service stays up. Load env first:
 
 ​```bash
-export $(cat /etc/<PROJECT_NAME>/.env .env 2>/dev/null | xargs)
+set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a
 uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload
 ​```
 
@@ -119,7 +119,7 @@ Two env files, loaded in order (later values override):
 The systemd service loads both automatically. For shell commands:
 
 ​```bash
-export $(cat /etc/<PROJECT_NAME>/.env .env 2>/dev/null | xargs)
+set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a
 ​```
 > end include
 
@@ -127,7 +127,7 @@ export $(cat /etc/<PROJECT_NAME>/.env .env 2>/dev/null | xargs)
 **`.env`** (repo root, git-ignored): all secrets. Never commit.
 
 ​```bash
-export $(cat .env | xargs)
+set -a; . .env; set +a
 ​```
 > end include
 
@@ -135,7 +135,11 @@ Currently defined:
 - `GH_TOKEN` — GitHub personal access token (used by `gh` CLI)
 > Include when DB_BACKED=yes:
 - `DATABASE_URL` — PostgreSQL connection string
-- `TEST_DATABASE_URL` — PostgreSQL connection string for the test database
+- `TEST_DATABASE_URL` — PostgreSQL connection string for the test database (name must end `_test`)
+- `<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB` — set to `1` only by the production systemd unit; the app refuses to boot against a non-`_dev`/`_test` database without it
+> end include
+> Include when AUTH_STYLE=header-token:
+- `API_AUTH_TOKEN` — shared secret for `X-API-Key` on `/api/v1/*`; unset = all authed routes return 503 (fail-closed)
 > end include
 > Include when DEPLOY_TARGET=systemd:
 - `BUILD_ID` — git SHA stamped by the systemd unit's `ExecStartPre`; defaults to `"dev"` outside systemd
@@ -148,8 +152,8 @@ Currently defined:
 uv sync
 
 # Load environment (required before running server, migrations, or gh)
-export $(cat /etc/<PROJECT_NAME>/.env .env 2>/dev/null | xargs)   # DEPLOY_TARGET=systemd
-# export $(cat .env | xargs)                                       # DEPLOY_TARGET=none
+set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a   # DEPLOY_TARGET=systemd
+# set -a; . .env; set +a                                       # DEPLOY_TARGET=none
 
 # Run tests
 uv run pytest
