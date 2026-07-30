@@ -14,7 +14,8 @@ set -euo pipefail
 if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash \"$0\""
   echo ""
-  echo "Runs 'uv run ruff check .' and 'uv run pytest -x -m \"not integration\"'"
+  echo "Runs 'uv run ruff check .', 'uv run ruff format --check .', and"
+  echo "'uv run pytest -x -m \"not integration\"'"
   echo "(with --no-cov auto-applied when pytest-cov is installed)."
   echo "If package.json is present, also runs npm lint/format/test scripts."
   echo "Exits non-zero on any failure. Must pass before committing or pushing."
@@ -68,6 +69,12 @@ trap 'rm -f "$STATUS_OUT" "$STATUS_ERR" "$REV_ERR"' EXIT
 
 echo "=== Lint (ruff) ==="
 uv run ruff check .
+
+echo ""
+echo "=== Format check (ruff) ==="
+# Ship gate must match the review gate (Phase 3.5 runs ruff format --check);
+# without this, format violations land on main and surface later (power-map #166).
+uv run ruff format --check .
 
 echo ""
 echo "=== Tests (Python) ==="

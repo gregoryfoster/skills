@@ -22,9 +22,12 @@ set -euo pipefail
 SENSITIVE_PATHS=(
   "AGENTS.md"
   "README.md"
+  "CHANGELOG.md"
   "pyproject.toml"
   "uv.lock"
   "schema.sql"
+  "alembic/versions/"
+  "deploy/"
   "src/api/"
   "src/models/"
   "src/core/"

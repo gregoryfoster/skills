@@ -4,7 +4,7 @@ description: "For Python/FastAPI projects (uv + ruff + pytest): finalizes work b
 compatibility: Designed for Python FastAPI projects using uv, ruff, pytest. Requires git, gh, uv. pytest-cov is optional — pre-ship.sh auto-detects it and adds --no-cov when present.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -70,7 +70,7 @@ If checks fail: stop, report the failure, fix before proceeding. Do not push fai
 bash "<SKILL_SCRIPTS>/doc-check.sh"
 ```
 
-`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's `SENSITIVE_PATHS` array (AGENTS.md, README.md, pyproject.toml, uv.lock, schema.sql, route/model/core dirs, `.env.example`). When sensitive paths change, the matching doc sections may need updates too.
+`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's `SENSITIVE_PATHS` array (AGENTS.md, README.md, CHANGELOG.md, pyproject.toml, uv.lock, schema.sql, `alembic/versions/`, `deploy/`, route/model/core dirs, `.env.example`). When sensitive paths change, the matching doc sections may need updates too.
 
 If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2: an infra/tooling problem prevented the doc check from running — investigate the underlying error rather than proceeding.
 
@@ -154,7 +154,8 @@ After the summary table, review commits and changes shipped to identify any post
 
 | Category | Trigger | Example action |
 |---|---|---|
-| DB migration | `schema.sql` changed | `apply_schema` or `systemctl restart <project>` |
+| DB migration (alembic) | `alembic/versions/` changed | `uv run alembic upgrade head` (or the project's `migrate.sh`), then `systemctl restart <project>` |
+| DB migration (raw SQL) | `schema.sql` changed | `apply_schema` or `systemctl restart <project>` |
 | Service restart | Code change (no auto-reload in prod) | `systemctl restart <project>` |
 | Integration tests | New `@pytest.mark.integration` tests | `uv run pytest -m integration` on a real env |
 | Env var / secret | New config key | Add to `/etc/<project>/env` and restart |
