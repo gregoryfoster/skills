@@ -5,6 +5,10 @@ and the generated tree is always produced FROM the snapshot (never directly
 from the live producer), so snapshot and tree move in lockstep and the CI
 drift gate can prove their consistency hermetically.
 
+The `<SPEC_DIR>` / `<SNAPSHOT_PATH>` filename conventions used below are
+defined once in the [provenance-sidecar Path conventions table](provenance-sidecar.md#path-conventions-per-layout) —
+the literal paths in this doc's templates are that table resolved per layout.
+
 ## `sdk-package` (default)
 
 A standalone SDK directory with its own `pyproject.toml` + `uv.lock`, wired
@@ -19,7 +23,7 @@ clients/<PRODUCER_NAME>-python/
   uv.lock
   README.md                 # what this is + the regen command
   <PRODUCER_NAME>-openapi.json      # committed snapshot (contract-of-record)
-  <SPEC_DIR>/openapi.meta.json      # provenance sidecar (same dir as snapshot)
+  openapi.meta.json         # provenance sidecar (beside the snapshot)
   scripts/regen.sh
   src/<CLIENT_PACKAGE>/
     __init__.py             # curated re-exports from generated/
@@ -28,6 +32,10 @@ clients/<PRODUCER_NAME>-python/
 ```
 
 ### SDK `pyproject.toml` template
+
+`<GENERATOR_MINOR>` is the `openapi-python-client` minor the pin targets
+(e.g. `0.29.0` → the `~=0.29.0` spec below allows `0.29.*`); the exact version
+the lockfile resolves is what the sidecar records as `<GENERATOR_VERSION>`.
 
 ```toml
 [project]
@@ -109,6 +117,9 @@ generated tree lands inside the consumer's own source package. Fewer moving
 parts, but the generator pin lives in the consumer's root dev dependency
 group, and the generated tree needs explicit carve-outs at every tool that
 walks `src/` (see [carve-outs.md](carve-outs.md)).
+
+`<CONSUMER_PACKAGE>` is the consumer repo's own top-level `src/` package
+(e.g. `observo`); the generated tree lands inside it.
 
 ```
 vendor/<PRODUCER_NAME>/

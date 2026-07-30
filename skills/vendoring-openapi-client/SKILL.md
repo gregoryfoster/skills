@@ -29,13 +29,19 @@ and CI config throughout — getting them wrong means manual cleanup.
 
 ## Mode detection (before collecting parameters)
 
-Search the consumer repo for an existing provenance sidecar
-(`**/openapi.meta.json`).
+Search the consumer repo for existing provenance sidecars
+(`**/openapi.meta.json`) and read each one's `producer` field. A repo can
+carry several vendored clients (archiver vendors two), so the presence of
+*a* sidecar is not by itself a refresh signal — match on producer:
 
-- **Found** → this is a **refresh** run: read the sidecar, skip parameter
-  collection (everything needed is recorded), and jump to
-  [Refresh mode](#refresh-mode).
-- **Not found** → **bootstrap** run: collect parameters below.
+- **A sidecar whose `producer` matches the requested producer** (or the user
+  explicitly asked to refresh that client) → **refresh** run: read that
+  sidecar, skip parameter collection (everything needed is recorded), and jump
+  to [Refresh mode](#refresh-mode).
+- **Sidecars exist but none names the requested producer** (or the user named
+  no producer and more than one sidecar exists) → ask which producer this run
+  targets before deciding; a new producer is a **bootstrap** run.
+- **No sidecar at all** → **bootstrap** run: collect parameters below.
 
 ## Parameters to collect
 
@@ -49,7 +55,15 @@ Ask the user (one at a time if not provided upfront).
 | `PRODUCER_UNDERSCORE` | `power_map` (derived: hyphens→underscores) | Python package/module names |
 | `SPEC_SOURCE` | `https://power-map.example.com/openapi.json` or a path in a local producer checkout | Phase 1 snapshot |
 | `PRODUCER_BASE_URL_ENV` | `CO_OBSERVO_POWER_MAP_BASE_URL` | refresh script, live-drift workflow |
-| `CLIENT_PACKAGE` | `power_map_client` | generated/SDK package name |
+| `CLIENT_PACKAGE` | `power_map_client` | sdk-package import/package name |
+| `CONSUMER_PACKAGE` | `observo` (the consumer repo's own top-level `src/` package) | generated-tree import path + carve-out paths |
+
+Two more placeholders appear only in the reference templates, both derived
+from the generator pin (not asked of the user): `<GENERATOR_MINOR>` is the
+`openapi-python-client` minor the pin targets (e.g. `0.29`, used in the
+`~=0.29.0` dependency spec), and `<GENERATOR_VERSION>` is the exact version the
+lockfile resolves that pin to (e.g. `0.29.1`, recorded in the sidecar's
+`generator` field). The minor is the intent; the version is what shipped.
 
 ### Branch-point parameters (defaults reflect CannObserv cohort majority)
 
@@ -115,31 +129,37 @@ uv run python scripts/filter_openapi_spec.py <SPEC_PATH> <FILTERED_PATH> --keep-
 The filtered spec is committed beside the raw snapshot and becomes the
 generator input; the raw snapshot remains the fetch target of record.
 
-### Phase 3 — Scaffold the output layout
+### Phase 3 — Scaffold the output layout + regen entry point
 
 Follow [references/layouts.md](references/layouts.md) for the chosen
-`OUTPUT_LAYOUT`: SDK `pyproject.toml` with the generator + ruff pinned in its
-dev group (sdk-package), or the root dev-group pin + generator config
-(generated-tree). Record the resolved exact generator version — it goes in
-the sidecar's `generator` field.
+`OUTPUT_LAYOUT`:
+
+1. Scaffold the layout: SDK `pyproject.toml` with the generator + ruff pinned
+   in its dev group (sdk-package), or the root dev-group pin + generator config
+   (generated-tree). Record the resolved exact generator version — it goes in
+   the sidecar's `generator` field.
+2. Write the regen entry point (`scripts/regen.sh` in the SDK, or a Makefile
+   target) from [references/layouts.md](references/layouts.md). It must exist
+   before Phase 4 runs it.
 
 ### Phase 4 — Generate
 
-Run the layout's regen command (Phase 5 script/target) once. Verify the
-generated tree imports:
+Run the regen entry point written in Phase 3 once, then verify the generated
+tree imports:
 
 ```bash
-uv run python -c "import <CLIENT_PACKAGE_IMPORT>; print('client imports OK')"
+# sdk-package:
+uv run python -c "import <CLIENT_PACKAGE>; print('client imports OK')"
+# generated-tree:
+uv run python -c "import <CONSUMER_PACKAGE>.shared.<PRODUCER_UNDERSCORE>_generated; print('client imports OK')"
 ```
 
-### Phase 5 — Regen command + carve-outs
+### Phase 5 — Carve-outs + document the update flow
 
-1. Write the layout's regen entry point (`scripts/regen.sh` in the SDK, or a
-   Makefile target) from [references/layouts.md](references/layouts.md).
-2. Apply every applicable exclusion from
+1. Apply every applicable exclusion from
    [references/carve-outs.md](references/carve-outs.md): ruff, coverage,
    pre-commit, mypy/ty, `.gitattributes` `linguist-generated`.
-3. Document the two-command update flow (refresh script → regen command) in
+2. Document the two-command update flow (refresh script → regen command) in
    the SDK README or the consumer's docs.
 
 ### Phase 6 — Drift guards (`DRIFT_GUARD` tier)

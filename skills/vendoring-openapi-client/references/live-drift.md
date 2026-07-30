@@ -51,17 +51,28 @@ jobs:
         run: |
           curl --fail --silent --show-error --max-time 30 \
             "${<PRODUCER_BASE_URL_ENV>%/}/openapi.json" > /tmp/live-openapi.json
-      # When FILTER_SPEC=yes: filter the live spec identically to the vendored
-      # flow and diff filtered-vs-filtered; otherwise canonicalize (the same
-      # order-preserving pretty-print as the refresh script) and diff raw.
-      - name: Canonicalize / filter to the consumed surface
+      # Reduce the live spec to the exact bytes the vendored snapshot holds,
+      # so the diff below compares like with like. Use ONE of the two steps —
+      # whichever matches FILTER_SPEC. Both must mirror the refresh script's
+      # canonicalization exactly (see references/layouts.md "Canonicalization").
+      #
+      # FILTER_SPEC=no (default) — canonicalize raw, order-preserving:
+      - name: Canonicalize live spec (FILTER_SPEC=no)
         run: |
-          uv run python scripts/filter_openapi_spec.py \
-            /tmp/live-openapi.json /tmp/live-openapi.filtered.json \
-            --keep-prefix "<KEEP_PREFIX>"
+          uv run python -c "import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],'w').write(json.dumps(d, indent=2)+'\n')" \
+            /tmp/live-openapi.json /tmp/live-openapi.canonical.json
+      # FILTER_SPEC=yes — filter to the consumed surface instead of the step above:
+      # - name: Filter live spec (FILTER_SPEC=yes)
+      #   run: |
+      #     uv run python scripts/filter_openapi_spec.py \
+      #       /tmp/live-openapi.json /tmp/live-openapi.canonical.json \
+      #       --keep-prefix "<KEEP_PREFIX>"
       - name: Diff against vendored snapshot
+        # Diff target: the raw snapshot (<SNAPSHOT_PATH>) for FILTER_SPEC=no,
+        # or the committed filtered spec (<SPEC_DIR>/…-openapi.filtered.json)
+        # for FILTER_SPEC=yes.
         run: |
-          if ! diff -u "<SPEC_DIR>/openapi.filtered.json" /tmp/live-openapi.filtered.json; then
+          if ! diff -u "<SNAPSHOT_PATH>" /tmp/live-openapi.canonical.json; then
             echo "::warning::<PRODUCER_NAME> spec has drifted from the vendored snapshot."
             echo "::warning::Refresh (scripts/refresh-<PRODUCER_NAME>-spec.sh), regenerate,"
             echo "::warning::run the adapter tests, and PR the bundle."

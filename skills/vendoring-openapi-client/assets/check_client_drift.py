@@ -19,8 +19,8 @@ producer, so running it leaves this check a no-op.
 This is a hermetic, PR-blocking consistency gate. It does NOT detect drift of
 the snapshot itself vs the live producer: a skipped regen after a producer API
 change leaves snapshot and tree *consistently* stale, and this hermetic gate
-passes. That gap is covered separately by a live-drift guard (see the
-vendoring-openapi-client skill's references/live-drift.md).
+passes. That gap is covered separately by a live-drift guard (see
+https://github.com/gregoryfoster/skills/blob/main/skills/vendoring-openapi-client/references/live-drift.md).
 
 Usage::
 

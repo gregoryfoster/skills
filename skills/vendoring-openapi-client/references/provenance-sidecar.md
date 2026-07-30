@@ -5,6 +5,25 @@ generated from. The sidecar (`<SPEC_DIR>/openapi.meta.json`, committed beside
 the snapshot) records where the snapshot came from and what produced the
 generated tree, so refresh mode and drift guards are deterministic.
 
+## Path conventions (per layout)
+
+Two placeholders name the vendored files; substitute both consistently across
+the refresh script, the regen command, and every drift guard:
+
+| Placeholder | `sdk-package` (default) | `generated-tree` |
+|---|---|---|
+| `<SPEC_DIR>` (holds snapshot + sidecar) | `clients/<PRODUCER_NAME>-python` | `vendor/<PRODUCER_NAME>` |
+| `<SNAPSHOT_PATH>` (raw committed snapshot) | `<SPEC_DIR>/<PRODUCER_NAME>-openapi.json` | `<SPEC_DIR>/openapi.json` |
+
+The sidecar is always `<SPEC_DIR>/openapi.meta.json`. The filtered spec (when
+`FILTER_SPEC=yes`) sits beside the snapshot: `<PRODUCER_NAME>-openapi.filtered.json`
+(sdk-package) or `openapi.filtered.json` (generated-tree). The snapshot
+filename differs by layout because a `generated-tree` `vendor/<PRODUCER_NAME>/`
+dir is already producer-scoped by its parent, whereas an `sdk-package`
+snapshot sits in the SDK root alongside other files and needs the producer
+prefix to read unambiguously — this matches the drift checker's `spec_path`
+(`<PRODUCER_NAME>-openapi.json`) and the `regen.sh` `SNAPSHOT` variable.
+
 ## Schema
 
 ```json
@@ -54,7 +73,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 : "${<PRODUCER_BASE_URL_ENV>:?set <PRODUCER_BASE_URL_ENV> to the producer base URL}"
 SPEC_URL="${<PRODUCER_BASE_URL_ENV>%/}/openapi.json"
-SPEC_PATH="<SPEC_DIR>/openapi.json"
+SPEC_PATH="<SNAPSHOT_PATH>"          # see Path conventions above (differs by layout)
 META_PATH="<SPEC_DIR>/openapi.meta.json"
 
 mkdir -p "$(dirname "$SPEC_PATH")"
