@@ -18,6 +18,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-06-28 | cannabis.observer-wordpress | **Cross-layer followup backlog → CR-like disjointness** (4th followup recurrence, but the followups span one-bug-per-layer instead of clustering on the producing file → high parallelism, single doc-file overlap); grep narrowed two issues' footprints below their issue-body claims (#407 → 1 transformer, #399 → 2 commands) |
 | 2026-06-29 | address-validator | **Foundation ×3** (first Foundation-leading weight — confirms the variable-weight escape hatch covers it, not just Correctness); aggressive same-file bundling (9 issues → 5 agents); single issue whose blast intersects **multiple** parallel agents → isolate in its own gated batch (blast ≠ priority refinement, verify call sites by grep); sub-score commit order inverts for define-then-use |
 | 2026-07-19 | CannObserv/archiver | **Version-freshness hard edge**: a metadata fix (#85 pyproject bump) must precede the issue that *snapshots* it (#92 commits `archiver-openapi.json`, which embeds `info.version`) — a dependency invisible to file-overlap analysis; **route new CI checks to an uncontested job** (lockstep check → lint job, away from the two jobs Batch B edits); shared-test-DB ceiling **2nd recurrence** (after 2026-06-16 usa-wa) — resolved by serializing full-suite runs, orchestrator's batch-branch run authoritative; validator-merges-last ordering (#85 last in batch so its lockstep check validates the batch's final state) |
+| 2026-07-23 | CannObserv/cli | **Followup-derived across-the-stack backlog** (5th followup recurrence — CR-like disjointness, single contested file); Shape B for a same-file pair that differs in kind (contained correctness fix #849 in parallel batch, wider design-discovery guard refactor #851 gated behind it); **guard-placement constraint drove the read-only decision** (`LegislativeSessionParamType` off-limits — other consumers legitimately pass child sessions); lightweight-worktree project → no binding ceiling |
 | 2026-07-08 | CannObserv/power-map | **Shared test infrastructure is a soft conflict zone** — a test-suite-optimization issue (#283) with zero *source*-file overlap still sequenced **last & solo** because it mutates `conftest.py`/session fixtures every other worker's TDD tests depend on; **stability-critical deploy context split a fully-disjoint backlog into 3 gated batches** even though all 6 could run at once (correctness-first won over max-parallelism); closed-in-fact catch via `git log -S` (#20 → resolved by #210) closed **before** the interview; standard equal-weight rubric (no flex) |
 
 ---
@@ -524,3 +525,35 @@ followups from the #82/#86/#87 cycles — #88/#89 (from #86 CR), #85 (from #82 C
 - **Validator-merges-last worked as designed**: #85's lockstep check fired on the batch branch (4.2.2 vs the siblings' new v4.2.3 heading) and the planned one-line orchestrator bump resolved it — the check's failure message doubling as the fix instruction paid off immediately.
 - **Worker prompt fences held**: both Batch B workers were told exactly which ci.yml jobs they owned; zero contested-file conflicts materialized (and #92's job needed no ci.yml edit at all — the no-arg checker invocation already covered new registry entries).
 - **A worker exceeded its brief usefully**: #91's worker added the job-level `pull-requests: read` permission grant the label lookup needed — omitted from the issue and the worker prompt; without it the fix would have silently 403'd into fail-open. Verification-by-stub (extracting the workflow `run:` block, executing against a stubbed `gh` across 7 scenarios) is a reusable pattern for CI-only logic.
+
+---
+
+## Session 2026-07-23 — CannObserv/cli
+
+First orchestration session in the `cli` repo. Five CR/followup carve-outs from the just-merged #843 historical-biennia (#732) repair cycle (#847, #849, #851, #852, #853).
+
+**Interview answers:**
+- Q0 Dups: none — each issue distinct (the #849/#851 same-file relationship is a Step 7 batch-shape question, not a duplicate).
+- Q1 Quality: **correctness** (data-integrity guards; correctness breaks score ties).
+- Q2 Deploy: **active production** (the #843/#732 backfill runs against prod data now).
+- Q3 Defer: none — all 5 in scope.
+- Q4 Parallelism: **hybrid**; worktrees yes.
+- Q5 Ceiling: **none binding.** `scripts/setup-worktree.sh` is lightweight (cannobserv symlink + `uv sync`) — no port pool / nginx / DB clone. Parallelism bounded only by disjointness + Agent concurrency cap. Contrast with the WordPress/Postgres sibling projects whose ceilings were the whole story.
+- Q6 Merge: regular merge commit (batch→main; project preference — squash collapses the per-issue commits `cli` keeps separate, per repo memory); intra-batch fixed FF/regular.
+
+**Shape:** 5 issues → **5 agents across 2 batches.** Batch A (4 parallel, disjoint): #847 `ext/click/logging.py`, #849 `update/legislation_session.py`, #852 `ext/wa_leg/legislation.py`+fixture, #853 docs plan. Batch B (1 agent, gated): #851.
+
+**Backlog provenance confirmed the geometry — followup-derived, across-the-stack.** 5th recurrence of the followup-backlog mode. Like 2026-06-28 (and unlike the one-partial-cluster 2026-05-11), the #843 cycle spread its CR defects one-per-surface — observability / command robustness / guard refactor / test hygiene / docs — so the backlog is near-fully disjoint (CR-like), single contested file. Compressed Steps 5/6 to "confirm the one contested file"; the grep held (no under/overstatement this round — footprints matched issue bodies).
+
+**Non-obvious decisions captured:**
+
+- **Shape B chosen on the "differ in kind" signal, not just file-sharing.** #849 and #851 both touch `update/legislation_session.py` (different regions: house_of_origin ~L74 vs guard L51–58). Bundling (Shape A) was tempting on the shared file, but #849 is a contained correctness fix + test while #851 is a wider design-discovery refactor spanning `add/legislation.py` + a new shared helper + a multi-command audit. Dependent dwarfs prerequisite AND they differ in kind → split. #849 rides the parallel batch; #851 gates behind it and refactors the guard on top of #849's stabilized file. Textbook "correctness fix leads refactor" at the batch-boundary granularity.
+
+- **The refactor target ruled a shared file read-only.** #851's tempting home for the extracted guard is `LegislativeSessionParamType` (every session option inherits it). But that ParamType is also consumed by commands that *legitimately* pass regular-session children (`add legislative_session` resolves a `parent_session`). Putting the biennium guard there would break them. So the guard routes through a shared helper only the *Legislation*-linking commands call, and the design doc's Key Decisions declares `LegislativeSessionParamType` read-only for #851's worker. A read-only-shared-file call (cf. 2026-06-08's foundation-file rule) driven by *consumer semantics*, not by concurrent-edit risk.
+
+- **`add legislation` gap verified before scoring, not assumed.** #851's audit checklist asks "does `add legislation` validate the session is a biennium?" — grepped it (line 133 passes `session=session` with no guard; line 28 uses the plain option). Confirmed the gap is real, which is what lifted #851's Correctness to 3 (silent WSOD reintroduction) and its score to 13. The issue-body checklist item became a verified fact, not a maybe.
+
+**Tactical confirmations:**
+- `gh issue create --body-file` from the scratchpad (apostrophe-safe); precedent (a) for the doc commit — committed on `main` without the `#<n>` prefix, then opened #855.
+- **The `.claude/skills/…` path is a double symlink into the `gregoryfoster-skills` submodule**, despite CLAUDE.md labelling this skill a "local override." `.claude/skills/orchestrating-issue-backlog` → `../../skills/orchestrating-issue-backlog` → `skills-vendor/gregoryfoster-skills/skills/…`. Editing the process-log from the `cli` working session is a direct edit to *another repo* — the maintainer's rule is **file an issue in that repo instead** (this issue), not commit across the submodule boundary.
+- Pre-commit hook runs full pytest (~2 min) even on a docs-only commit; budget the Bash timeout accordingly (repo memory).
