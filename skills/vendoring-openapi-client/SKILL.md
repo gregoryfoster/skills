@@ -123,11 +123,14 @@ Copy the filter into the consumer repo and run it:
 
 ```bash
 cp "<SKILL_DIR>/assets/filter_openapi_spec.py" scripts/filter_openapi_spec.py
-uv run python scripts/filter_openapi_spec.py <SPEC_PATH> <FILTERED_PATH> --keep-prefix "<KEEP_PREFIX>"
+uv run python scripts/filter_openapi_spec.py <SNAPSHOT_PATH> <FILTERED_SNAPSHOT_PATH> --keep-prefix "<KEEP_PREFIX>"
 ```
 
-The filtered spec is committed beside the raw snapshot and becomes the
-generator input; the raw snapshot remains the fetch target of record.
+Input is the raw snapshot (`<SNAPSHOT_PATH>`); output is the filtered spec,
+named per the [Path conventions table](references/provenance-sidecar.md#path-conventions-per-layout)
+(`<PRODUCER_NAME>-openapi.filtered.json` for sdk-package, `openapi.filtered.json`
+for generated-tree). The filtered spec is committed beside the raw snapshot and
+becomes the generator input; the raw snapshot remains the fetch target of record.
 
 ### Phase 3 — Scaffold the output layout + regen entry point
 

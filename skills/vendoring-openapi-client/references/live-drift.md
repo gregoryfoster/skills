@@ -87,7 +87,8 @@ GitHub runner can't reach it — run the check on the VM that co-hosts the
 producer. This flavor is inherently deployment-specific: the templates below
 are the generic shape; user names, paths, env files, and the deploy-checkout
 convention belong to the consuming project (a project-level skill override or
-the project's deploy docs), not to this skill.
+the project's deploy docs), not to this skill. `<CONSUMER_NAME>` in the unit
+filenames below is the consumer service's name (the systemd unit prefix).
 
 Three pieces:
 
