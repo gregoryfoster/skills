@@ -40,7 +40,7 @@ dev = [
     "pytest-cov>=7.0,<8",
     "pytest-timeout>=2.3,<3",
     "ruff>=0.16,<0.17",
-    "ty",  # beta — deliberately unpinned; non-gating advisory checker (see notes)
+    "ty",  # beta — deliberately unpinned; non-gating advisory checker
 ]
 ```
 

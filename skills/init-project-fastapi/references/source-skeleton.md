@@ -79,10 +79,10 @@ app.include_router(health_router)
 
 ### `AUTH_STYLE=header-token` — versioned router
 
-Every mature cohort service hand-rolled header auth (archiver `require_api_key`, observo `require_worker_token`, usa-wa `require_operator`, power-map API keys); this scaffolds the shared core. Add to `src/api/main.py`:
+Every mature cohort service hand-rolled header auth (archiver `require_api_key`, observo `require_worker_token`, usa-wa `require_operator`, power-map API keys); this scaffolds the shared core. Add to `src/api/main.py` — extend the base template's existing `from fastapi import …` line with `Depends` (a second separate `from fastapi import` line trips ruff `I001` at Phase 12):
 
 ```python
-from fastapi import Depends
+from fastapi import APIRouter, Depends, FastAPI  # merged with the base template's import
 
 from src.api.deps import require_api_key
 

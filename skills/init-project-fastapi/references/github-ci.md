@@ -52,9 +52,9 @@ jobs:
         env: { DATABASE_URL: "${{ env.TEST_DATABASE_URL }}" }
       - run: uv run alembic check
         env: { DATABASE_URL: "${{ env.TEST_DATABASE_URL }}" }
-      # --no-cov on a fresh scaffold: the pyproject fail_under=80 gate can't
-      # be met by the bootstrap suite (~63% — see Phase 12). Once the first
-      # real feature + tests land, drop --no-cov to activate the gate.
+      # --no-cov on a fresh scaffold: the bootstrap suite covers ~63% of src/,
+      # under the pyproject fail_under=80 gate. Once the first real feature
+      # + tests land, drop --no-cov to activate the gate.
       - run: uv run pytest --no-cov
 ```
 
