@@ -76,6 +76,7 @@ app.include_router(health_router)
 - **`SETTINGS_STYLE=os.environ`**: replace `from src.core.config import get_settings` with `from src.core.config import get_build_id`; in `/health`, replace `get_settings().build_id` with `get_build_id()`.
 - **`DB_BACKED=no`**: remove the three `sqlalchemy`/`src.core.database` imports, the `db_safety` import + `assert_database_safety()` call, and the entire `/ready` route. Keep `/health`.
 - **`AUTH_STYLE=header-token`**: add the versioned, authenticated API router (below) after the health router. Health probes stay unauthenticated at root level.
+- **`ADMIN_UI=htmx`**: add the `/static` mount + `admin_router` include from [`admin-ui.md`](admin-ui.md) § main.py adjustments after the health router. Merge its `from fastapi.staticfiles import StaticFiles` / `from pathlib import Path` imports at the top.
 
 ### `AUTH_STYLE=header-token` — versioned router
 

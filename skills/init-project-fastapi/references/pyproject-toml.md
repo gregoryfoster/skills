@@ -12,6 +12,7 @@ Start from the block below. Then, before writing the file, splice in the optiona
 
 - When `DB_BACKED=yes`: insert `"sqlalchemy[asyncio]>=2.0,<3"`, `"asyncpg>=0.30.0,<1"`, `"alembic>=1.15.0,<2"` into the `dependencies` array.
 - When `SETTINGS_STYLE=pydantic-settings`: insert `"pydantic-settings>=2.5.0,<3"` into the `dependencies` array.
+- When `ADMIN_UI=htmx`: insert `"jinja2>=3.1,<4"`, `"python-multipart>=0.0.18,<0.1"` into the `dependencies` array. (`aiofiles` is **not** needed — Starlette ≥0.15 serves `StaticFiles`/`FileResponse` via anyio worker threads.)
 
 Floors reflect hard ecosystem boundaries: FastAPI 0.126 dropped Pydantic v1 support entirely (and requires pydantic ≥2.9), so the explicit `pydantic` floor keeps the resolver from ever considering a v1-compatible range. `python-ulid` is a base dependency (not DB-gated) — all four mature cohort services use ULIDs as identifiers, DB-backed or not.
 

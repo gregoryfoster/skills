@@ -47,6 +47,11 @@ Prefetch query — run via `ToolSearch` at session start:
 src/api/        — FastAPI app (ASGI, routes, schemas); /api/v1/ versioned; /health, /ready root-level
 src/api/main.py — App factory, lifespan, router registration
 src/api/deps.py — FastAPI dependencies (DB session, auth)
+> Include when ADMIN_UI=htmx:
+src/api/admin/  — Server-rendered admin surface (HTMX + Jinja2); /admin/ gated by trusted-proxy header
+src/templates/  — Jinja2 templates (base.html + admin pages/partials)
+src/static/     — Static assets; vendor/htmx.min.js is vendored (no CDN, no Node toolchain)
+> end include
 src/core/       — Shared domain logic, logging, config
 src/core/logging.py  — configure_logging() + get_logger()
 src/core/config.py   — Settings / env access (see Environment Variables)
@@ -140,6 +145,10 @@ Currently defined:
 > end include
 > Include when AUTH_STYLE=header-token:
 - `API_AUTH_TOKEN` — shared secret for `X-API-Key` on `/api/v1/*`; unset = all authed routes return 503 (fail-closed)
+> end include
+> Include when ADMIN_UI=htmx:
+- `ADMIN_AUTH_HEADER` — name of the trusted-proxy identity header gating `/admin/*` (exe.dev pattern); unset = admin routes return 503 (fail-closed)
+- `ADMIN_LOGIN_URL` — redirect target for unauthenticated admin requests (307 for browsers, `HX-Redirect` for htmx); unset = plain 401
 > end include
 > Include when DEPLOY_TARGET=systemd:
 - `BUILD_ID` — git SHA stamped by the systemd unit's `ExecStartPre`; defaults to `"dev"` outside systemd

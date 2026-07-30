@@ -5,6 +5,8 @@ Detailed `src/core/config.py` templates for the `init-project-fastapi` skill (Ph
 > **Both variants assume `DB_BACKED=yes`.** When `DB_BACKED=no`, drop **both** the `database_url` field **and** the `get_database_url()` shim function from the pydantic-settings variant; or omit the `get_database_url()` function entirely from the os.environ variant — those are the only DB-conditional lines in each template.
 >
 > **`AUTH_STYLE=header-token`** adds one field/function per variant, marked `[AUTH_STYLE=header-token]` below. Drop those lines when `AUTH_STYLE=none`.
+>
+> **`ADMIN_UI=htmx`** adds two fields/functions per variant, marked `[ADMIN_UI=htmx]` below. Drop those lines when `ADMIN_UI=none`. Consumed by `require_admin` in [`admin-ui.md`](admin-ui.md).
 
 ## `SETTINGS_STYLE=pydantic-settings` (default)
 
@@ -29,6 +31,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     build_id: str = "dev"
     api_auth_token: str | None = None  # [AUTH_STYLE=header-token]
+    admin_auth_header: str | None = None  # [ADMIN_UI=htmx]
+    admin_login_url: str | None = None  # [ADMIN_UI=htmx]
 
 
 @lru_cache
@@ -40,6 +44,16 @@ def get_settings() -> Settings:
 def get_api_auth_token() -> str | None:  # [AUTH_STYLE=header-token]
     """Return API_AUTH_TOKEN or None when auth is unconfigured (fail-closed)."""
     return get_settings().api_auth_token
+
+
+def get_admin_auth_header() -> str | None:  # [ADMIN_UI=htmx]
+    """Return ADMIN_AUTH_HEADER or None when admin auth is unconfigured (fail-closed)."""
+    return get_settings().admin_auth_header
+
+
+def get_admin_login_url() -> str | None:  # [ADMIN_UI=htmx]
+    """Return ADMIN_LOGIN_URL or None (no redirect target — plain 401 instead)."""
+    return get_settings().admin_login_url
 
 
 def get_database_url() -> str:
@@ -89,4 +103,14 @@ def get_build_id() -> str:
 def get_api_auth_token() -> str | None:  # [AUTH_STYLE=header-token]
     """Return API_AUTH_TOKEN or None when auth is unconfigured (fail-closed)."""
     return os.environ.get("API_AUTH_TOKEN")
+
+
+def get_admin_auth_header() -> str | None:  # [ADMIN_UI=htmx]
+    """Return ADMIN_AUTH_HEADER or None when admin auth is unconfigured (fail-closed)."""
+    return os.environ.get("ADMIN_AUTH_HEADER")
+
+
+def get_admin_login_url() -> str | None:  # [ADMIN_UI=htmx]
+    """Return ADMIN_LOGIN_URL or None (no redirect target — plain 401 instead)."""
+    return os.environ.get("ADMIN_LOGIN_URL")
 ```

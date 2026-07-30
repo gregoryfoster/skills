@@ -56,6 +56,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | `SETTINGS_STYLE` | `pydantic-settings` | `pydantic-settings` \| `os.environ` | Phase 3 deps, Phase 5b (`src/core/config.py` shape) |
 | `MODELS_LAYOUT` | `monolithic` | `monolithic` \| `package` | Phase 5c (`src/core/models.py` vs `src/core/models/`) |
 | `AUTH_STYLE` | `header-token` | `header-token` \| `none` | Phase 5 (`require_api_key` dep + authed `/api/v1` router), Phase 5b (token accessor), Phase 6 (`tests/api/test_auth.py`) |
+| `ADMIN_UI` | `none` | `none` \| `htmx` | Phase 3 deps (jinja2 + python-multipart), Phase 5 (`/static` mount + admin router include), Phase 5b (admin accessors), Phase 5e (templates + vendored htmx + `src/api/admin/` + `require_admin`), Phase 6 (`tests/api/test_admin.py`) — all per [`references/admin-ui.md`](references/admin-ui.md) |
 | `LINT_PROFILE` | `minimal` | `minimal` \| `strict` | Phase 3 (ruff `select` rules + per-file ignores) |
 | `LAYOUT` | `single` | `single` \| `workspace` | uv workspace monorepo — Phase 3/5 shape per [`references/workspace-layout.md`](references/workspace-layout.md) (`single` is the fully-templated path) |
 | `GITHUB_CI` | `no` | `no` \| `yes` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
@@ -77,6 +78,7 @@ Stats refreshed 2026-07 from the 8-service cohort (address-validator, wslcb-lice
 - **`SETTINGS_STYLE=pydantic-settings`**: observo, usa-wa, and address-validator use pydantic-settings; archiver/power-map/notifier/watcher read `os.environ` directly. Both work; the typed default remains recommended.
 - **`MODELS_LAYOUT=monolithic`**: most start monolithic; archiver and notifier promoted to a `models/` package at ~5+ tables — the documented promotion path.
 - **`AUTH_STYLE=header-token`**: all 4 mature services hand-rolled header auth (archiver `X-API-Key`, observo worker token, usa-wa `X-Operator-Token`, power-map API keys) — the scaffold now ships the shared fail-closed core.
+- **`ADMIN_UI=none`**: 3/4 mature services grew a server-rendered HTMX + Jinja2 admin surface (archiver: sub-app `src/dashboard/`; power-map: `src/api/admin/` same-app router, ~80 modules; observo: Jinja routers + Vite frontend) — but none started with one, so the default stays off. Opting in scaffolds the convergent core (same-app router, vendored htmx, fail-closed trusted-proxy admin auth — [#67](https://github.com/gregoryfoster/skills/issues/67)); the JS toolchains are fully divergent across the three and deliberately **not** scaffolded — see the promotion paths in [`references/admin-ui.md`](references/admin-ui.md).
 - **`LINT_PROFILE=minimal`**: the historical `E,F,I,W,UP` core plus the rules the cohort added after being bitten (`B904`, `PLC0415` — archiver #97/observo) and the now-stable `FAST`/`ASYNC` groups. Address-validator alone runs strict.
 - **`LAYOUT=single`**: usa-wa (full workspace) and observo (one member) adopted `[tool.uv.workspace]`; pick `workspace` only for genuinely multi-package architectures.
 - **`GITHUB_CI=no`**: archiver and observo run CI (identical shape: Postgres service, ruff+format, alembic upgrade+check, pytest); power-map and usa-wa gate locally only. Off by default; recommended once PRs flow.
@@ -181,7 +183,7 @@ Sections in the template: Project Overview, Development Methodology, Environment
 
 Create the empty `__init__.py` files (`src/`, `src/api/`, `src/core/`), then copy the templates from [`references/source-skeleton.md`](references/source-skeleton.md):
 
-- `src/api/main.py` — FastAPI app with lifespan (calls `assert_database_safety()` when `DB_BACKED=yes`), version from package metadata, `/health`, (when `DB_BACKED=yes`) `/ready`, and (when `AUTH_STYLE=header-token`) the authed `/api/v1` router + `require_api_key` dep. The reference's "Adjustments" subsection lists the edits for each non-default branch point.
+- `src/api/main.py` — FastAPI app with lifespan (calls `assert_database_safety()` when `DB_BACKED=yes`), version from package metadata, `/health`, (when `DB_BACKED=yes`) `/ready`, (when `AUTH_STYLE=header-token`) the authed `/api/v1` router + `require_api_key` dep, and (when `ADMIN_UI=htmx`) the `/static` mount + admin router include. The reference's "Adjustments" subsection lists the edits for each non-default branch point.
 - `src/core/logging.py` — verbatim JSON logging utility (`configure_logging` + `get_logger`).
 
 ### Phase 5b — Settings (`src/core/config.py`)
@@ -220,6 +222,18 @@ Then follow [`references/database-scaffolding.md`](references/database-scaffoldi
 
 Follow [`references/postgres-provisioning.md`](references/postgres-provisioning.md): detect existing install, `apt-get install postgresql`, generate a random password, create the role + two databases (using `<PROJECT_UNDERSCORE>` from Phase 5c so SQL identifiers stay unquoted), append `DATABASE_URL` + `TEST_DATABASE_URL` to `./.env`, and verify TCP+password connectivity. Fix any verification failure before proceeding to Phase 12.
 
+### Phase 5e — Admin UI (HTMX + Jinja2)
+
+> Skip this entire phase when `ADMIN_UI=none` (default).
+
+Follow [`references/admin-ui.md`](references/admin-ui.md), which covers the full set:
+
+1. **Vendored htmx** — `mkdir -p src/static/vendor && cp "<SKILL_DIR>/assets/htmx.min.js" src/static/vendor/htmx.min.js` (pinned 2.x from this skill's assets; never a CDN reference).
+2. **Templates** — `src/templates/` (`base.html`, `admin/index.html`, `admin/partials/status.html`).
+3. **`src/api/admin/`** — same-app router package (`include_in_schema=False`): one full-page route + one HTMX partial route.
+4. **Auth** — `is_htmx` helper + fail-closed `require_admin` (trusted-proxy header, redirect split browser-307 vs `HX-Redirect`) in `src/api/deps.py`; admin accessors in `src/core/config.py` (the `[ADMIN_UI=htmx]`-marked lines in [`references/settings-scaffolding.md`](references/settings-scaffolding.md)).
+5. **`src/api/main.py` additions** — `/static` mount + `admin_router` include (also listed in the source-skeleton Adjustments).
+
 ### Phase 6 — Tests scaffold
 
 Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then copy the templates from [`references/tests-scaffolding.md`](references/tests-scaffolding.md):
@@ -228,6 +242,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 - `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `build` keys. Always created.
 - `tests/core/test_logging.py` — pins the JSON log field contract (`timestamp`, `level`, `logger`, `message`); a bare `JsonFormatter()` would drop all but `message` (skills#69). Always created.
 - `tests/api/test_auth.py` — auth-gate test. Only when `AUTH_STYLE=header-token`.
+- `tests/api/test_admin.py` — admin gate + rendering tests (browser 307 vs htmx `HX-Redirect`, fail-closed 503, full page vs fragment). Only when `ADMIN_UI=htmx`; template in [`references/admin-ui.md`](references/admin-ui.md).
 
 ### Phase 7 — Docs
 
@@ -462,6 +477,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready][+/api/v1 authed]), `src/core/logging.py` |
 | Settings | `src/core/config.py` (`<SETTINGS_STYLE>`) |
 | Auth | `<AUTH_STYLE>` — when header-token: `require_api_key` + `tests/api/test_auth.py` |
+| Admin UI | `<ADMIN_UI>` — when htmx: `src/api/admin/`, `src/templates/`, `src/static/vendor/htmx.min.js` (vendored), `require_admin` + `tests/api/test_admin.py` |
 | Database | `<DB_BACKED>` — when yes: `src/core/database.py`, `src/core/db_safety.py`, `src/core/models[.py\|/]` (`<MODELS_LAYOUT>`, ULID PKs), `alembic/` |
 | Lint profile | `<LINT_PROFILE>` |
 | Layout | `<LAYOUT>` |
@@ -482,4 +498,5 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 - `configure_logging()` is called once inside the FastAPI `lifespan` context manager — never at module import time, and never in library modules.
 - When `DEPLOY_TARGET=systemd`: the unit must declare its `ExecStartPre` BUILD_ID write **before** the `EnvironmentFile=-/run/<PROJECT_NAME>/build-id` line (the file must exist when systemd loads it). The `EnvironmentFile` order itself follows systemd convention — later entries override earlier ones — so BUILD_ID (read-only state from `ExecStartPre`) goes first as the lowest-precedence layer, then `/etc/<PROJECT_NAME>/.env`, then the repo `.env`.
 - When `DB_BACKED=yes`: `tests/conftest.py` must reject `TEST_DATABASE_URL == DATABASE_URL` (production-URL safety check) — `Base.metadata.drop_all` runs on teardown and would destroy any production table mapped to the project's models.
+- When `ADMIN_UI=htmx`: `require_admin` fails closed (unconfigured `ADMIN_AUTH_HEADER` → 503, never open); the admin router mounts with `include_in_schema=False`; `htmx.min.js` is copied from this skill's assets (provenance = `<SKILL_SHA>`) — never hot-linked from a CDN.
 - `uv.lock` must be committed alongside `pyproject.toml`.
