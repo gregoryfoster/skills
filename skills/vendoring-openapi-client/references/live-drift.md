@@ -51,33 +51,38 @@ jobs:
         run: |
           curl --fail --silent --show-error --max-time 30 \
             "${<PRODUCER_BASE_URL_ENV>%/}/openapi.json" > /tmp/live-openapi.json
-      # Reduce the live spec to the exact bytes the vendored snapshot holds,
-      # so the diff below compares like with like. Use ONE of the two steps —
-      # whichever matches FILTER_SPEC. Both must mirror the refresh script's
-      # canonicalization exactly (see references/layouts.md "Canonicalization").
+      # Compare like with like: reduce BOTH the live spec and the committed raw
+      # snapshot the same way, then diff. Use ONE variant — whichever matches
+      # FILTER_SPEC. Both mirror the refresh script's canonicalization exactly
+      # (see references/layouts.md "Canonicalization").
       #
-      # FILTER_SPEC=no (default) — canonicalize raw, order-preserving:
-      - name: Canonicalize live spec (FILTER_SPEC=no)
+      # FILTER_SPEC=no (default) — canonicalize live; diff vs the committed raw
+      # snapshot (already canonical from the refresh script):
+      - name: Diff live vs vendored snapshot (FILTER_SPEC=no)
         run: |
           uv run python -c "import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],'w').write(json.dumps(d, indent=2)+'\n')" \
-            /tmp/live-openapi.json /tmp/live-openapi.canonical.json
-      # FILTER_SPEC=yes — filter to the consumed surface instead of the step above:
-      # - name: Filter live spec (FILTER_SPEC=yes)
-      #   run: |
-      #     uv run python scripts/filter_openapi_spec.py \
-      #       /tmp/live-openapi.json /tmp/live-openapi.canonical.json \
-      #       --keep-prefix "<KEEP_PREFIX>"
-      - name: Diff against vendored snapshot
-        # Diff target: the raw snapshot (<SNAPSHOT_PATH>) for FILTER_SPEC=no,
-        # or the committed filtered spec (<SPEC_DIR>/…-openapi.filtered.json)
-        # for FILTER_SPEC=yes.
-        run: |
-          if ! diff -u "<SNAPSHOT_PATH>" /tmp/live-openapi.canonical.json; then
+            /tmp/live-openapi.json /tmp/live.reduced.json
+          if ! diff -u "<SNAPSHOT_PATH>" /tmp/live.reduced.json; then
             echo "::warning::<PRODUCER_NAME> spec has drifted from the vendored snapshot."
             echo "::warning::Refresh (scripts/refresh-<PRODUCER_NAME>-spec.sh), regenerate,"
             echo "::warning::run the adapter tests, and PR the bundle."
             exit 1
           fi
+      # FILTER_SPEC=yes — replace the step above with this. Filter BOTH sides to
+      # the consumed surface: the live spec, AND the committed RAW snapshot
+      # (sdk-package commits no filtered file, so re-derive it here; this is
+      # also correct for generated-tree). Diffing raw-vs-raw would flag surfaces
+      # the client never consumes.
+      # - name: Diff live vs vendored snapshot (FILTER_SPEC=yes)
+      #   run: |
+      #     uv run python scripts/filter_openapi_spec.py \
+      #       /tmp/live-openapi.json /tmp/live.reduced.json --keep-prefix "<KEEP_PREFIX>"
+      #     uv run python scripts/filter_openapi_spec.py \
+      #       "<SNAPSHOT_PATH>" /tmp/committed.reduced.json --keep-prefix "<KEEP_PREFIX>"
+      #     if ! diff -u /tmp/committed.reduced.json /tmp/live.reduced.json; then
+      #       echo "::warning::<PRODUCER_NAME> consumed surface has drifted; refresh + regen + PR."
+      #       exit 1
+      #     fi
 ```
 
 ## Flavor B — on-VM systemd timer + auto-PR (producer not publicly reachable)

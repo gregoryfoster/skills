@@ -119,18 +119,28 @@ Snapshot/sidecar location: `clients/<PRODUCER_NAME>-python/` (sdk-package) or
 
 ### Phase 2 — Optional surface filter (`FILTER_SPEC=yes` only)
 
-Copy the filter into the consumer repo and run it:
+Copy the filter into the consumer repo — the regen command and the drift
+checker both invoke it:
 
 ```bash
 cp "<SKILL_DIR>/assets/filter_openapi_spec.py" scripts/filter_openapi_spec.py
-uv run python scripts/filter_openapi_spec.py <SNAPSHOT_PATH> <FILTERED_SNAPSHOT_PATH> --keep-prefix "<KEEP_PREFIX>"
 ```
 
-Input is the raw snapshot (`<SNAPSHOT_PATH>`); output is the filtered spec,
-named per the [Path conventions table](references/provenance-sidecar.md#path-conventions-per-layout)
-(`<PRODUCER_NAME>-openapi.filtered.json` for sdk-package, `openapi.filtered.json`
-for generated-tree). The filtered spec is committed beside the raw snapshot and
-becomes the generator input; the raw snapshot remains the fetch target of record.
+The filter's input is always the raw snapshot (`<SNAPSHOT_PATH>`), reduced to
+the `<KEEP_PREFIX>` surface. Where its output lives depends on the layout (see
+the [Path conventions table](references/provenance-sidecar.md#path-conventions-per-layout)):
+
+- **generated-tree** — commit the filtered spec as `openapi.filtered.json`
+  beside the raw snapshot; it's the committed generator input and the CI
+  `git diff` gates it. Produce it now:
+  `uv run python scripts/filter_openapi_spec.py <SNAPSHOT_PATH> <SPEC_DIR>/openapi.filtered.json --keep-prefix "<KEEP_PREFIX>"`.
+- **sdk-package** — do **not** commit a filtered file. `regen.sh` and
+  `check_client_drift.py` each re-filter the raw snapshot transiently and
+  generate from that, so the raw snapshot stays the sole committed spec (set
+  the client's `filter_keep_prefix` in Phase 6). Nothing to produce here beyond
+  copying the script above.
+
+The raw snapshot remains the fetch target of record in both layouts.
 
 ### Phase 3 — Scaffold the output layout + regen entry point
 

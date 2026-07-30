@@ -15,14 +15,24 @@ the refresh script, the regen command, and every drift guard:
 | `<SPEC_DIR>` (holds snapshot + sidecar) | `clients/<PRODUCER_NAME>-python` | `vendor/<PRODUCER_NAME>` |
 | `<SNAPSHOT_PATH>` (raw committed snapshot) | `<SPEC_DIR>/<PRODUCER_NAME>-openapi.json` | `<SPEC_DIR>/openapi.json` |
 
-The sidecar is always `<SPEC_DIR>/openapi.meta.json`. The filtered spec (when
-`FILTER_SPEC=yes`) sits beside the snapshot: `<PRODUCER_NAME>-openapi.filtered.json`
-(sdk-package) or `openapi.filtered.json` (generated-tree). The snapshot
-filename differs by layout because a `generated-tree` `vendor/<PRODUCER_NAME>/`
-dir is already producer-scoped by its parent, whereas an `sdk-package`
-snapshot sits in the SDK root alongside other files and needs the producer
-prefix to read unambiguously — this matches the drift checker's `spec_path`
+The sidecar is always `<SPEC_DIR>/openapi.meta.json`. The snapshot filename
+differs by layout because a `generated-tree` `vendor/<PRODUCER_NAME>/` dir is
+already producer-scoped by its parent, whereas an `sdk-package` snapshot sits
+in the SDK root alongside other files and needs the producer prefix to read
+unambiguously — this matches the drift checker's `spec_path`
 (`<PRODUCER_NAME>-openapi.json`) and the `regen.sh` `SNAPSHOT` variable.
+
+Filtered spec (when `FILTER_SPEC=yes`) — the two layouts differ on purpose:
+
+- `generated-tree` **commits** it as `openapi.filtered.json` beside the raw
+  snapshot; the `make` target rewrites it and the CI `git diff` covers both it
+  and the tree, so raw→filtered is gated by the diff.
+- `sdk-package` **does not commit** it. Both `regen.sh` and
+  `check_client_drift.py` re-filter the raw snapshot transiently (`mktemp` /
+  in-tmp) and generate from that, so the raw snapshot is the sole committed
+  spec. A committed filtered file here would be an unguarded second source the
+  tree-diffing checker never validates — and could let `regen.sh` (remediation)
+  and the checker (detection) filter from different bytes.
 
 ## Schema
 

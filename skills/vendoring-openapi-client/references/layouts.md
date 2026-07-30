@@ -91,12 +91,17 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 SDK_DIR="${REPO_ROOT}/clients/<PRODUCER_NAME>-python"
 GEN_DIR="${SDK_DIR}/src/<CLIENT_PACKAGE>/generated"
 SNAPSHOT="${SDK_DIR}/<PRODUCER_NAME>-openapi.json"
-# When FILTER_SPEC=yes, filter the snapshot to the consumed surface first and
-# generate from the filtered file:
+# When FILTER_SPEC=yes, filter the RAW snapshot to the consumed surface into an
+# EPHEMERAL file and generate from that — the raw snapshot stays the sole
+# committed spec. Filtering transiently (not into a committed file) keeps this
+# in lockstep with scripts/check_client_drift.py, which likewise re-filters raw
+# in-tmp; a committed filtered file would be an unguarded second source the
+# checker never validates. Uncomment for FILTER_SPEC=yes:
+#   FILTERED="$(mktemp -t <PRODUCER_NAME>-openapi.filtered.XXXXXX.json)"
+#   trap 'rm -f "${FILTERED}"' EXIT
 #   uv run python "${REPO_ROOT}/scripts/filter_openapi_spec.py" \
-#       "${SNAPSHOT}" "${SDK_DIR}/<PRODUCER_NAME>-openapi.filtered.json" \
-#       --keep-prefix "<KEEP_PREFIX>"
-#   SNAPSHOT="${SDK_DIR}/<PRODUCER_NAME>-openapi.filtered.json"
+#       "${SNAPSHOT}" "${FILTERED}" --keep-prefix "<KEEP_PREFIX>"
+#   SNAPSHOT="${FILTERED}"
 
 cd "${SDK_DIR}"
 rm -rf "${GEN_DIR}"
