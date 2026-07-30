@@ -11,6 +11,10 @@ anyone's to fix.
 `src/<CONSUMER_PACKAGE>/shared/<PRODUCER_UNDERSCORE>_generated/`
 (generated-tree).
 
+`<GENERATED_PATH_REGEX>` is that same path as an anchored regex, for tools
+whose exclude takes a regex rather than a glob (pre-commit, mypy) — e.g.
+`^src/<CONSUMER_PACKAGE>/shared/<PRODUCER_UNDERSCORE>_generated/`.
+
 ## ruff (consumer root `pyproject.toml`)
 
 ```toml

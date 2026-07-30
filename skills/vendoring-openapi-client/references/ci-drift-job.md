@@ -63,11 +63,19 @@ committed snapshot and `git diff --exit-code` the generated tree.
           python-version: "3.12"
       - run: uv sync --frozen --group dev   # dev group carries the pinned generator
       - name: regenerate from committed snapshot and diff
+        # Diff the generated tree, plus — only when FILTER_SPEC=yes — the
+        # committed filtered spec the regen target rewrites. For the default
+        # (FILTER_SPEC=no) there is no filtered file; diff the raw snapshot the
+        # target reads instead. Use ONE pathspec set, matching FILTER_SPEC.
         run: |
           make regenerate-<PRODUCER_NAME>-client
+          # FILTER_SPEC=no (default):
           git diff --exit-code -- \
             src/<CONSUMER_PACKAGE>/shared/<PRODUCER_UNDERSCORE>_generated \
-            vendor/<PRODUCER_NAME>/openapi.filtered.json
+            vendor/<PRODUCER_NAME>/openapi.json
+          # FILTER_SPEC=yes — replace the pathspec above with:
+          #   src/<CONSUMER_PACKAGE>/shared/<PRODUCER_UNDERSCORE>_generated \
+          #   vendor/<PRODUCER_NAME>/openapi.filtered.json
 ```
 
 `--frozen` matters: it resolves the generator to the exact locked version, so
