@@ -4,13 +4,15 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.3.1"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
 # Initialize FastAPI Project — CannObserv Foundation
 
 Bootstraps a new CannObserv FastAPI service from an empty git repo to a fully wired foundation: SSH deploy key, Python tooling, FastAPI skeleton, agent skills, and a closed GitHub issue.
+
+When the new service will consume a sibling service's REST API, follow the bootstrap with the [`vendoring-openapi-client`](../vendoring-openapi-client/) skill — client vendoring and its drift guards are deliberately out of scope here.
 
 <HARD-GATE>
 Do NOT create files in the bootstrapped project's working tree or run project-mutating commands until you have collected all required parameters from the user and confirmed them. (Phase 0 below clones this skill's source to a scratch dir under `/tmp`; that does not touch the project tree.) The project name drives file content, package names, and git remotes throughout — getting it wrong means manual cleanup.

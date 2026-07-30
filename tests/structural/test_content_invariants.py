@@ -286,6 +286,64 @@ class TestInitProjectFastapi:
 
 
 # ---------------------------------------------------------------------------
+# vendoring-openapi-client
+# ---------------------------------------------------------------------------
+
+
+class TestVendoringOpenapiClient:
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.s = skill("vendoring-openapi-client")
+
+    def test_hard_gate_xml_block_present(self):
+        assert "<HARD-GATE>" in self.s.body, (
+            "<HARD-GATE> XML block must be present in vendoring-openapi-client"
+        )
+
+    def test_hard_gate_collect_params_first(self):
+        expected = "Do NOT create or modify files in the consumer repo until you have collected"
+        assert expected in self.s.body, (
+            f"Hard gate text {expected!r} must be present verbatim"
+        )
+
+    def test_branch_point_parameters_listed(self):
+        for param in ["OUTPUT_LAYOUT", "FILTER_SPEC", "DRIFT_GUARD"]:
+            assert param in self.s.body, f"Branch-point parameter '{param}' must be documented"
+
+    def test_contract_of_record_invariant(self):
+        assert "contract-of-record" in self.s.body, (
+            "The snapshot-is-contract-of-record invariant must be stated — it is the "
+            "load-bearing rule (generate from the snapshot, never from the live producer)"
+        )
+
+    def test_hermetic_gate_limitation_stated(self):
+        assert "cannot detect snapshot-vs-live staleness" in self.s.body, (
+            "The skill must state the hermetic CI gate's blind spot verbatim — "
+            "removing it invites claiming coverage the gate doesn't provide"
+        )
+
+    def test_live_drift_never_merge_blocker(self):
+        assert "never merge" in self.s.body, (
+            "Live-drift guards must be documented as never being merge blockers"
+        )
+
+    def test_refresh_mode_present(self):
+        assert "## Refresh mode" in self.s.body, (
+            "Refresh mode (update path for an existing vendored client) must be present — "
+            "it is a first-class flow, not an afterthought (#66 review point 3)"
+        )
+
+    def test_asset_scripts_exist_and_referenced(self):
+        for asset in ["filter_openapi_spec.py", "check_client_drift.py"]:
+            assert (self.s.directory / "assets" / asset).exists(), (
+                f"assets/{asset} must ship with the skill"
+            )
+            assert asset in self.s.body, (
+                f"assets/{asset} must be referenced from SKILL.md"
+            )
+
+
+# ---------------------------------------------------------------------------
 # using-git-worktrees
 # ---------------------------------------------------------------------------
 
