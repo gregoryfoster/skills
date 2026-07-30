@@ -135,6 +135,35 @@ async def test_health_returns_ok(client):
     assert "build" in body
 ```
 
+## `tests/core/test_logging.py` — always created
+
+Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line.
+
+```python
+"""Regression test: JSON log records carry timestamp, level, and logger name."""
+
+import json
+import logging
+
+from src.core.logging import configure_logging, get_logger
+
+
+def test_log_record_includes_structured_fields(capsys):
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        configure_logging()
+        get_logger("src.some.module").warning("hello %s", "world")
+    finally:
+        root.handlers, root.level = saved_handlers, saved_level
+
+    record = json.loads(capsys.readouterr().out)
+    assert record["message"] == "hello world"
+    assert record["level"] == "WARNING"
+    assert record["logger"] == "src.some.module"
+    assert "timestamp" in record
+```
+
 ## `tests/api/test_auth.py` — only when `AUTH_STYLE=header-token`
 
 Exercises the `require_api_key` gate through the scaffolded `/api/v1/ping` route. The route must exist: router-level dependencies only run when a route matches, so an unmatched path would 404 before auth executes and prove nothing.

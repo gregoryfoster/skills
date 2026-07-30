@@ -153,7 +153,15 @@ from pythonjsonlogger.json import JsonFormatter
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure root logger with JSON formatting. Call once at entry points."""
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
+    # Keys must be named in fmt: a bare JsonFormatter() defaults to
+    # "%(message)s" and emits records with no level, logger, or timestamp.
+    handler.setFormatter(
+        JsonFormatter(
+            "%(levelname)s %(name)s %(message)s",
+            timestamp=True,
+            rename_fields={"levelname": "level", "name": "logger"},
+        )
+    )
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers = [handler]
@@ -163,3 +171,5 @@ def get_logger(name: str) -> logging.Logger:
     """Return a named logger. Use in modules as: logger = get_logger(__name__)"""
     return logging.getLogger(name)
 ```
+
+The key set (`timestamp`, `level`, `logger`, `message`) matches structlog's defaults, so a later structlog migration (#68) won't churn downstream log consumers. `timestamp=True` emits ISO-8601 UTC rather than `asctime`'s comma-millisecond local time. `tests/core/test_logging.py` (see [`tests-scaffolding.md`](tests-scaffolding.md)) pins this field set.
