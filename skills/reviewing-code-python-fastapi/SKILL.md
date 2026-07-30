@@ -4,7 +4,7 @@ description: "For Python/FastAPI projects (uv + ruff + pytest + Pydantic v2): pe
 compatibility: Designed for Python FastAPI projects using uv, ruff, pytest, Pydantic v2. Requires git, gh, uv.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: CR, code review, perform a review
 ---
 
@@ -80,11 +80,15 @@ Evaluate against these dimensions:
 
 - **Correctness** — bugs, logic errors, edge cases, off-by-ones
 - **Data integrity** — schema constraints, migration safety, transactional boundaries
+- **Migration safety** — new alembic revisions are idempotent/replayable from empty (`upgrade head` on a fresh DB); model changes have a matching generated migration (`uv run alembic check` clean); no bare `create_all` reintroduced at startup
 - **Convention compliance** — AGENTS.md patterns (logging, naming, style); `uv.lock` committed alongside `pyproject.toml`; ruff rule set
 - **Documentation** — do AGENTS.md, README.md, docstrings, and OpenAPI descriptions reflect changes?
-- **Robustness** — error handling, idempotency, graceful degradation; FastAPI exception handlers cover new failure modes
+- **Robustness** — error handling, idempotency, graceful degradation; FastAPI exception handlers cover new failure modes; **no blocking calls in async handlers** (sync httpx, `time.sleep`, `open()`, subprocess — the ruff `ASYNC` rules catch most, but flag any that slip through)
 - **TDD discipline** — red commit present before green commit (`git log --oneline` evidence of failing-test-first commits); new behavior has corresponding tests
 - **API contract** — Pydantic model changes flagged as breaking vs. non-breaking (field renames, removed fields, tightened validation = breaking; added optional fields = non-breaking); field names, types, validation, defaults reviewed for consistency
+- **Generated-code drift** — when a change touches an OpenAPI spec, a vendored spec snapshot, or models a generated client consumes: was the client regenerated? Stale vendored clients shipped real bugs (archiver #66)
+- **Deploy artifacts** — when `deploy/` changes: unit ordering (`After=`/`Before=`), `OnFailure=` wiring intact, bounded restarts (`StartLimit*`) preserved, main-checkout guard not removed, `EnvironmentFile` precedence unchanged
+- **Version lockstep** — `pyproject.toml` version vs any mirrored version (package.json, CHANGELOG, hardcoded FastAPI `version=`) still agree
 - **Logging convention** — `get_logger(__name__)` from `src.core.logging`; `configure_logging()` only at entry points (project entrypoint module, never in library code)
 - **Datetime convention** — ISO 8601, UTC only; no naive datetimes; `datetime.now(timezone.utc)` not `datetime.now()`
 - **Pydantic v2 idioms** — `X | None` syntax over `Optional[X]`; mutable default footgun (use `Field(default_factory=list)` not `= []`); type hints on every signature; `model_config` not `Config` inner class
@@ -120,6 +124,7 @@ NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
   - `uv run ruff check .`
   - `uv run ruff format --check .`
 - Lint/format violations are 🟡 by default, 🔴 if they signal a real bug (e.g., undefined name, unreachable code, unused import shadowing intent)
+- `FAST`/`ASYNC` rule findings are 🟡 minimum — a blocking call in an async handler (`ASYNC2xx`) that sits on a hot path is 🔴
 
 ### Phase 4 — Wait for feedback
 
