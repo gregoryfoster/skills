@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18 <26, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -40,6 +40,7 @@ Ask the user; each has a default they can accept silently.
 | `EMBEDDING_BACKEND` | `ollama-docker` | `ollama-docker` \| `ollama-native` \| `openai` \| `google` | Phase 1 backend env, index speed — see [`references/embedding-backends.md`](references/embedding-backends.md) |
 | `POLICY_FILE` | `AGENTS.md` | `AGENTS.md` \| `CLAUDE.md` | Phase 3 — where the Code Exploration Policy block lands |
 | `INSTALL_HOOK` | `yes` | `yes` \| `no` | Phase 3 — install the SessionStart prefetch hook |
+| `LINKED_PROJECTS` | none | comma-separated abs paths | Phase 3 — cross-repo search over sibling checkouts via `SOCRATICODE_LINKED_PROJECTS` |
 
 **Backend note (do not silently default for large repos).** `ollama-docker` needs
 no key but is **CPU-only and slow** (`usa-wa`: ~1105 files / 6019 chunks / ~75
@@ -123,6 +124,13 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    `.claude/settings.json` (create if absent). Dedupe by the `socraticode-prefetch`
    marker string; preserve existing `hooks`/`permissions`/other keys. Never
    clobber the file.
+3. **Linked projects** (when `LINKED_PROJECTS` is set) → write
+   `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
+   of `.claude/settings.local.json` (gitignored — paths are machine-specific;
+   create the file if absent, merge if present). Enables cross-repo
+   `codebase_search` over sibling service checkouts — archiver links watcher +
+   notifier this way. Each linked project must itself be indexed to contribute
+   results.
 
 ### Phase 4 — Configure context artifacts
 
@@ -191,6 +199,17 @@ Present a completion table:
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts) |
 | Index | embeddings 100% · graph READY · artifacts N/N |
 | Sample search | returns hits |
+
+## Re-run on an existing project (audit/repair)
+
+Running this skill on a project that already has SocratiCode is **safe and is
+the audit**: every file edit is idempotent (Phase 3's policy block replaces
+between markers, the hook merge dedupes, Phase 4 verifies globs), and Phase 6
+re-verifies the three completion signals. Use a re-run to repair partial
+installs — the common drift found across the cohort ([#65](https://github.com/gregoryfoster/skills/issues/65)):
+a manifest with **no policy block or prefetch hook** (observo), or hook docs
+that drifted from `settings.json` (archiver). Phases 1–2 are read-only when
+already satisfied; Phase 5 re-indexes only if the index is missing or stale.
 
 ## Key invariants
 
