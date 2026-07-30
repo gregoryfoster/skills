@@ -38,7 +38,7 @@ mkdir -p src/static/vendor
 cp "<SKILL_DIR>/assets/htmx.min.js" src/static/vendor/htmx.min.js
 ```
 
-The asset is a pinned, reviewed copy of the htmx **2.x** minified dist (the version string is embedded in the file: `grep -oE '"2\.0\.[0-9]+"' src/static/vendor/htmx.min.js`). Provenance rides the Phase 0 `SKILL_SHA` recorded in the bootstrap GH issue — the same reproducibility story as `alembic-env.py`. The copy is refreshed on skill releases; never replace it with a CDN `<script src>` — the admin surface must work air-gapped and under a strict CSP.
+The asset is a pinned, reviewed copy of the htmx **2.x** minified dist (the version string is embedded in the file: `grep -oE '"2\.[0-9]+\.[0-9]+"' src/static/vendor/htmx.min.js`). Provenance rides the Phase 0 `SKILL_SHA` recorded in the bootstrap GH issue — the same reproducibility story as `alembic-env.py`. The copy is refreshed on skill releases; never replace it with a CDN `<script src>` — the admin surface must work air-gapped and under a strict CSP.
 
 ## `src/api/admin/router.py`
 
@@ -95,9 +95,13 @@ async def status_partial(request: Request) -> HTMLResponse:
 
 `ADMIN_UI` is **orthogonal to `AUTH_STYLE`**: `AUTH_STYLE=header-token` protects the machine-facing `/api/v1` (browsers can't send `X-API-Key`); the admin surface authenticates via the power-map exe.dev pattern — a fronting proxy authenticates the browser session and stamps the identity into a trusted header. Without that proxy the admin surface is **intentionally unreachable** (fail-closed, like `require_api_key`).
 
-When `DB_BACKED=no` and `AUTH_STYLE=none`, `src/api/deps.py` doesn't exist yet — create it containing only the block below.
+**Security preconditions.** The header is only trustworthy when both hold: (1) the proxy **strips or overwrites** any client-supplied value of the `ADMIN_AUTH_HEADER` header before forwarding, and (2) the app port is **reachable only through the proxy** (firewall or bind rules) — the scaffold's systemd unit binds `0.0.0.0:<API_PORT>`, so anyone who can reach the port directly can forge the header and is fully authenticated. exe.dev's topology provides both; verify both before enabling `ADMIN_UI=htmx` on any other infrastructure.
+
+When `DB_BACKED=no` and `AUTH_STYLE=none`, `src/api/deps.py` doesn't exist yet — create it containing only the block below, docstring included. When appending to an existing `deps.py`, drop the module docstring line (the file already has one).
 
 ```python
+"""Admin-surface auth. Fail-closed: unconfigured proxy header means no access."""
+
 from fastapi import HTTPException, Request
 
 from src.core.config import get_admin_auth_header, get_admin_login_url
@@ -123,19 +127,33 @@ async def require_admin(request: Request) -> str:
         return user
     login_url = get_admin_login_url()
     if is_htmx(request):
-        # A 307 on an htmx request would swap the login page INTO the
-        # hx-target element; HX-Redirect makes htmx do a full-page
-        # navigation instead. This split is why is_htmx exists.
+        # An HTTP redirect on an htmx request would swap the login page
+        # INTO the hx-target element; HX-Redirect makes htmx do a
+        # full-page navigation instead. This split is why is_htmx exists.
         headers = {"HX-Redirect": login_url} if login_url else None
         raise HTTPException(status_code=401, detail="Not authenticated", headers=headers)
     if login_url:
+        # 303 See Other: an unauthenticated POST (expired session mid-form)
+        # must become a GET at the login page, not replay as a POST there.
         raise HTTPException(
-            status_code=307, detail="Redirecting to login", headers={"Location": login_url}
+            status_code=303, detail="Redirecting to login", headers={"Location": login_url}
         )
     raise HTTPException(status_code=401, detail="Not authenticated")
 ```
 
-Merge the `fastapi` import line with any existing one in `deps.py` (a second `from fastapi import` line trips ruff `I001`). The `get_admin_auth_header()` / `get_admin_login_url()` accessors are the `[ADMIN_UI=htmx]`-marked lines in [`settings-scaffolding.md`](settings-scaffolding.md).
+**Import merging.** A second from-import of a module already imported trips ruff `I001` at Phase 12. With the default `AUTH_STYLE=header-token`, `deps.py` already imports from both modules — merge into single lines:
+
+```python
+from fastapi import HTTPException, Request, Security
+
+from src.core.config import (
+    get_admin_auth_header,
+    get_admin_login_url,
+    get_api_auth_token,
+)
+```
+
+The `get_admin_auth_header()` / `get_admin_login_url()` accessors are the `[ADMIN_UI=htmx]`-marked lines in [`settings-scaffolding.md`](settings-scaffolding.md).
 
 ## `src/api/main.py` adjustments
 
@@ -195,7 +213,7 @@ app.include_router(admin_router)
 
 Same conventions as `test_auth.py`: the example routes must exist for the gate to prove anything; `asyncio_mode = "auto"` means no decorators. For `SETTINGS_STYLE=os.environ` drop the three `cache_clear()` lines and the `get_settings` import — `os.environ.get` reads live.
 
-Use the trailing-slash path `/admin/` in tests: `/admin` triggers FastAPI's redirect-slashes 307 first, which would false-pass the browser-redirect assertion.
+Use the trailing-slash path `/admin/` in tests: `/admin` hits FastAPI's redirect-slashes 307 first, so the assertions would exercise the slash redirect instead of the auth gate.
 
 ```python
 """Admin gate + rendering: /admin rejects unauthenticated, renders page + fragment."""
@@ -220,7 +238,7 @@ def _configure_admin_auth(monkeypatch):
 
 async def test_unauthenticated_browser_redirected_to_login(client):
     response = await client.get("/admin/")
-    assert response.status_code == 307
+    assert response.status_code == 303
     assert response.headers["location"] == LOGIN_URL
 
 

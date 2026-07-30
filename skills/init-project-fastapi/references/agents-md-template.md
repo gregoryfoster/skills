@@ -148,7 +148,7 @@ Currently defined:
 > end include
 > Include when ADMIN_UI=htmx:
 - `ADMIN_AUTH_HEADER` — name of the trusted-proxy identity header gating `/admin/*` (exe.dev pattern); unset = admin routes return 503 (fail-closed)
-- `ADMIN_LOGIN_URL` — redirect target for unauthenticated admin requests (307 for browsers, `HX-Redirect` for htmx); unset = plain 401
+- `ADMIN_LOGIN_URL` — redirect target for unauthenticated admin requests (303 for browsers, `HX-Redirect` for htmx); unset = plain 401
 > end include
 > Include when DEPLOY_TARGET=systemd:
 - `BUILD_ID` — git SHA stamped by the systemd unit's `ExecStartPre`; defaults to `"dev"` outside systemd

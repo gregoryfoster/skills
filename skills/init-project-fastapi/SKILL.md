@@ -231,7 +231,7 @@ Follow [`references/admin-ui.md`](references/admin-ui.md), which covers the full
 1. **Vendored htmx** — `mkdir -p src/static/vendor && cp "<SKILL_DIR>/assets/htmx.min.js" src/static/vendor/htmx.min.js` (pinned 2.x from this skill's assets; never a CDN reference).
 2. **Templates** — `src/templates/` (`base.html`, `admin/index.html`, `admin/partials/status.html`).
 3. **`src/api/admin/`** — same-app router package (`include_in_schema=False`): one full-page route + one HTMX partial route.
-4. **Auth** — `is_htmx` helper + fail-closed `require_admin` (trusted-proxy header, redirect split browser-307 vs `HX-Redirect`) in `src/api/deps.py`; admin accessors in `src/core/config.py` (the `[ADMIN_UI=htmx]`-marked lines in [`references/settings-scaffolding.md`](references/settings-scaffolding.md)).
+4. **Auth** — `is_htmx` helper + fail-closed `require_admin` (trusted-proxy header, redirect split browser-303 vs `HX-Redirect`) in `src/api/deps.py`; admin accessors in `src/core/config.py` (the `[ADMIN_UI=htmx]`-marked lines in [`references/settings-scaffolding.md`](references/settings-scaffolding.md)).
 5. **`src/api/main.py` additions** — `/static` mount + `admin_router` include (also listed in the source-skeleton Adjustments).
 
 ### Phase 6 — Tests scaffold
@@ -242,7 +242,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 - `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `build` keys. Always created.
 - `tests/core/test_logging.py` — pins the JSON log field contract (`timestamp`, `level`, `logger`, `message`); a bare `JsonFormatter()` would drop all but `message` (skills#69). Always created.
 - `tests/api/test_auth.py` — auth-gate test. Only when `AUTH_STYLE=header-token`.
-- `tests/api/test_admin.py` — admin gate + rendering tests (browser 307 vs htmx `HX-Redirect`, fail-closed 503, full page vs fragment). Only when `ADMIN_UI=htmx`; template in [`references/admin-ui.md`](references/admin-ui.md).
+- `tests/api/test_admin.py` — admin gate + rendering tests (browser 303 vs htmx `HX-Redirect`, fail-closed 503, full page vs fragment). Only when `ADMIN_UI=htmx`; template in [`references/admin-ui.md`](references/admin-ui.md).
 
 ### Phase 7 — Docs
 
