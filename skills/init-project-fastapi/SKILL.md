@@ -413,7 +413,7 @@ uv run pytest
 
 Expected: green. The always-scaffolded `test_health.py` + `test_logging.py` + `test_config.py` exercise `main.py`, `logging.py`, and `config.py` — a no-DB scaffold clears `fail_under=80` comfortably. If a given config lands under 80, fall back to `--no-cov` and note it in the GH issue.
 
-If any of the above fails, fix the underlying issue before proceeding.
+If any of the above fails, fix the underlying issue before proceeding — **except** a coverage-gate shortfall (`pytest` exiting non-zero solely because measured coverage is under `fail_under=80`). That is not a failure to fix here: take the documented `--no-cov` fallback above and record the shortfall in the GH issue (Phase 15). Writing filler tests to clear the gate during bootstrap is out of scope; the gate activates naturally once the first feature tests land.
 
 ### Phase 13 — Commit
 

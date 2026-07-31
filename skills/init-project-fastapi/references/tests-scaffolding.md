@@ -166,7 +166,7 @@ def test_log_record_includes_structured_fields(capsys):
 
 ## `tests/core/test_config.py` — always created
 
-Pins the settings contract: defaults and env-override behaviour for the single source of env access (`src/core/config.py`). A regression that hard-codes a default or stops reading an env var becomes a failure here. Asserts only the fields present in **every** branch-point combination (`log_level`, `build_id`); `DATABASE_URL` / auth / admin fields are exercised by their own gated tests (`test_health.py`, `test_auth.py`, `test_admin.py`). Cheap (~3 tests, no DB or client fixture), and it lifts a fresh scaffold's coverage materially — replicator's bootstrap landed at 91% with this file present, clearing the `fail_under=80` gate outright.
+Pins the settings contract: defaults and env-override behaviour for the single source of env access (`src/core/config.py`). A regression that hard-codes a default or stops reading an env var becomes a failure here. Asserts only the fields present in **every** branch-point combination (`log_level`, `build_id`); `DATABASE_URL` / auth / admin fields are exercised by their own gated tests (`test_health.py`, `test_auth.py`, `test_admin.py`). Cheap (~3 tests, no DB or client fixture), and it contributes to a fresh scaffold clearing `fail_under=80` (replicator's full bootstrap — health + logging + config together — landed at 91%).
 
 ### `SETTINGS_STYLE=pydantic-settings` (default)
 
@@ -176,6 +176,11 @@ Pins the settings contract: defaults and env-override behaviour for the single s
 Constructs fresh Settings() instances (not the lru_cached get_settings) so each
 test sees the monkeypatched environment. Only branch-point-invariant fields are
 asserted; DB / auth / admin fields have their own tests.
+
+Assumes the scaffolded Settings reads env only (no `env_file=` in its
+model_config). If a project later adds `env_file=".env"`, the repo-root .env
+that Phase 5d writes would feed these fields, so test_defaults must then
+monkeypatch that file away (or assert against its values) instead.
 """
 
 from src.core.config import Settings, get_settings
