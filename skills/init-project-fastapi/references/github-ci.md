@@ -52,10 +52,12 @@ jobs:
         env: { DATABASE_URL: "${{ env.TEST_DATABASE_URL }}" }
       - run: uv run alembic check
         env: { DATABASE_URL: "${{ env.TEST_DATABASE_URL }}" }
-      # --no-cov on a fresh scaffold: the bootstrap suite covers ~63% of src/,
-      # under the pyproject fail_under=80 gate. Once the first real feature
-      # + tests land, drop --no-cov to activate the gate.
-      - run: uv run pytest --no-cov
+      # Coverage gate is active. The scaffolded suite (health + logging +
+      # config) clears fail_under=80 on a typical bootstrap (replicator: 91%).
+      # If a given branch-point mix lands under 80 (DB_BACKED / ADMIN_UI add
+      # thinly-covered modules), add `--no-cov` here until the first feature
+      # tests land — and note the shortfall in the bootstrap issue.
+      - run: uv run pytest
 ```
 
 ## Notes

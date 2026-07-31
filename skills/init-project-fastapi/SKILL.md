@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.3.3"
+  version: "1.3.4"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
@@ -228,6 +228,7 @@ Create empty `__init__.py` files (`tests/`, `tests/api/`, `tests/core/`), then c
 - `tests/conftest.py` — default (DB_BACKED=yes) includes session-scoped event loop fixture, `_check_test_url_safety` guard (name-based `_test` check + inequality) with `DATABASE_URL` env pinning, `test_engine` (create_all/drop_all; migration-driven alternative documented for later), savepoint-isolated `db_session`, and `client` AsyncClient with `get_db_session` dependency override. The reference also ships a no-DB variant for `DB_BACKED=no`.
 - `tests/test_health.py` — minimal smoke test that asserts `/health` returns 200 with `status` and `build` keys. Always created.
 - `tests/core/test_logging.py` — pins the JSON log field contract (`timestamp`, `level`, `logger`, `message`); a bare `JsonFormatter()` would drop all but `message` (skills#69). Always created.
+- `tests/core/test_config.py` — pins the settings contract (defaults + env-override for `log_level`/`build_id`, the branch-point-invariant fields). Always created; the `SETTINGS_STYLE` variant matches Phase 5b. Cheap, and it lifts a fresh scaffold well clear of the coverage floor (see Phase 12).
 - `tests/api/test_auth.py` — auth-gate test. Only when `AUTH_STYLE=header-token`.
 - `tests/api/test_admin.py` — admin gate + rendering tests (browser 303 vs htmx `HX-Redirect`, fail-closed 503, full page vs fragment). Only when `ADMIN_UI=htmx`; template in [`references/admin-ui.md`](references/admin-ui.md).
 
@@ -388,21 +389,29 @@ uv run alembic current 2>&1 | grep -Ev "^(INFO|$)" || true
 uv run alembic check
 ```
 
-If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database via Phase 5d or out-of-band), also run the smoke test. Use `--no-cov` for subset runs — a fresh project has one test exercising one file (~63% coverage in practice), which trips the `fail_under=80` coverage gate from `pyproject.toml`. This matches the AGENTS.md template's "Common Commands" section, which already documents `--no-cov` for subset runs:
+If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database via Phase 5d or out-of-band), run the full suite with the coverage gate active and **measure the number**:
 
 ```bash
-uv run pytest --no-cov tests/test_health.py tests/core/test_logging.py
+uv run pytest
 ```
+
+With `test_health.py` + `test_logging.py` + `test_config.py` all scaffolded, a fresh project typically lands well above the old one-test baseline — replicator's bootstrap came in at **91%**, clearing the `fail_under=80` gate outright, so CI can run with the gate on from commit one. It is not guaranteed for every branch-point combination (`DB_BACKED=yes` and `ADMIN_UI=htmx` add thinly-smoke-covered modules, and CI-vs-local install-set skew can move the number across 80 — see [`references/github-ci.md`](references/github-ci.md) notes). So: run the gated command above, and **only if it reports under 80** for this config fall back to a `--no-cov` subset run and note the shortfall in the GH issue:
+
+```bash
+uv run pytest --no-cov tests/test_health.py tests/core/test_logging.py tests/core/test_config.py
+```
+
+`--no-cov` remains the right tool for genuine subset runs during development, as the AGENTS.md template's "Common Commands" section documents.
 
 If `TEST_DATABASE_URL` is **not** set on a fresh bootstrap, skip the pytest smoke step — the conftest raises at import time without it. Note this clearly in the GH issue body (Phase 15) so the smoke test runs before the first feature PR lands.
 
-When `DB_BACKED=no`, run:
+When `DB_BACKED=no`, the suite runs without a database (the conftest's `client` fixture binds to the app directly). Run it gated and measure:
 
 ```bash
-uv run pytest --no-cov
+uv run pytest
 ```
 
-Expected: pytest exits 0 or 5 (no tests collected — acceptable on empty suite). The conftest's `client` fixture binds to the app even without a database.
+Expected: green. The always-scaffolded `test_health.py` + `test_logging.py` + `test_config.py` exercise `main.py`, `logging.py`, and `config.py` — a no-DB scaffold clears `fail_under=80` comfortably. If a given config lands under 80, fall back to `--no-cov` and note it in the GH issue.
 
 If any of the above fails, fix the underlying issue before proceeding.
 
@@ -475,7 +484,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | Lint profile | `<LINT_PROFILE>` |
 | Layout | `<LAYOUT>` |
 | CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml` |
-| Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/core/test_logging.py`, `tests/api/` |
+| Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/core/test_logging.py`, `tests/core/test_config.py`, `tests/api/` |
 | Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
 | Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |

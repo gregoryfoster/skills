@@ -164,6 +164,67 @@ def test_log_record_includes_structured_fields(capsys):
     assert "timestamp" in record
 ```
 
+## `tests/core/test_config.py` — always created
+
+Pins the settings contract: defaults and env-override behaviour for the single source of env access (`src/core/config.py`). A regression that hard-codes a default or stops reading an env var becomes a failure here. Asserts only the fields present in **every** branch-point combination (`log_level`, `build_id`); `DATABASE_URL` / auth / admin fields are exercised by their own gated tests (`test_health.py`, `test_auth.py`, `test_admin.py`). Cheap (~3 tests, no DB or client fixture), and it lifts a fresh scaffold's coverage materially — replicator's bootstrap landed at 91% with this file present, clearing the `fail_under=80` gate outright.
+
+### `SETTINGS_STYLE=pydantic-settings` (default)
+
+```python
+"""Contract test: Settings reads its defaults and honours env overrides.
+
+Constructs fresh Settings() instances (not the lru_cached get_settings) so each
+test sees the monkeypatched environment. Only branch-point-invariant fields are
+asserted; DB / auth / admin fields have their own tests.
+"""
+
+from src.core.config import Settings, get_settings
+
+
+def test_defaults(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("BUILD_ID", raising=False)
+    settings = Settings()
+    assert settings.log_level == "INFO"
+    assert settings.build_id == "dev"
+
+
+def test_env_override(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("BUILD_ID", "abc123")
+    settings = Settings()
+    assert settings.log_level == "DEBUG"
+    assert settings.build_id == "abc123"
+
+
+def test_get_settings_is_cached():
+    get_settings.cache_clear()
+    assert get_settings() is get_settings()
+    get_settings.cache_clear()
+```
+
+### `SETTINGS_STYLE=os.environ`
+
+```python
+"""Contract test: config accessors read their defaults and honour env overrides."""
+
+from src.core.config import get_build_id, get_log_level
+
+
+def test_defaults(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("BUILD_ID", raising=False)
+    assert get_log_level() == "INFO"
+    assert get_build_id() == "dev"
+
+
+def test_env_override(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("BUILD_ID", "abc123")
+    assert get_log_level() == "DEBUG"
+    assert get_build_id() == "abc123"
+```
+
 ## `tests/api/test_auth.py` — only when `AUTH_STYLE=header-token`
 
 Exercises the `require_api_key` gate through the scaffolded `/api/v1/ping` route. The route must exist: router-level dependencies only run when a route matches, so an unmatched path would 404 before auth executes and prove nothing.
