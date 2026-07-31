@@ -162,8 +162,11 @@ skills/
 .claude/skills/
 ```
 
-Adapt to the project's own vendored trees; add any large generated/data dirs that
-aren't already in `.gitignore`.
+Here `skills/` and `.claude/skills/` are the `managing-skills` symlink dirs (all
+vendored content). **If the project authors first-party skills under `skills/`,
+exclude `skills-vendor/` (and `.claude/skills/`) only** — don't drop the project's
+own skills from the index. Otherwise adapt to the project's own vendored trees;
+add any large generated/data dirs that aren't already in `.gitignore`.
 
 ### Phase 5 — Run the index and block until *fully* done
 

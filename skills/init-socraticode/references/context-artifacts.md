@@ -37,19 +37,23 @@ Phase 4 fails outright if the shape is wrong.
 
 ## Canonical categories (cohort-converged)
 
+Where a row lists more than one path, they are **alternatives or separate
+entries** — pick whichever the project has and give each its own artifact. A
+comma never means "combine into one `path`"; there is no multi-path `path`.
+
 | Category | Typical path (file or dir) | Include when |
 |---|---|---|
 | `agent-guidelines` | `./AGENTS.md` | always (every cohort repo registers it) |
 | `commands` | `./docs/COMMANDS.md` | the project keeps a command reference |
 | `skills-doc` | `./docs/SKILLS.md` | the project vendors skills |
 | `design-plans` | `./docs/plans/` (dir) | plans dir exists (writing-plans default) |
-| `design-specs` | `./docs/specs/`, `./docs/research/` (dirs) | separate spec/research trajectories exist |
-| `architecture` | `./docs/ARCHITECTURE.md`, `./README.md` | an architecture doc exists |
+| `design-specs` | `./docs/specs/` and/or `./docs/research/` (dirs; one entry each) | separate spec/research trajectories exist |
+| `architecture` | `./docs/ARCHITECTURE.md` and/or `./README.md` (one entry each) | an architecture doc exists |
 | `schema-migrations` | `./alembic/versions/` (dir) | DB-backed (whichever is the schema source of truth) |
-| `api-contracts` | `./openapi.yaml`, vendored spec snapshot file | the project consumes/publishes specs |
+| `api-contracts` | `./openapi.yaml` or a vendored spec snapshot file | the project consumes/publishes specs |
 | `systemd-unit` | `./deploy/` (dir) or a specific `./deploy/app.service` | DEPLOY_TARGET=systemd |
 | `infrastructure` | `./terraform/` or `./k8s/` (dirs) | IaC exists |
-| `env-example` | `./.env.example`, `./pyproject.toml` (one entry each) | env contract documented (never real secrets) |
+| `project-config` | `./pyproject.toml`, `./.env.example` (one entry each; never real secrets) | dep/tool config or env contract documented |
 | `style-guide` | `./docs/STYLE.md` | a style doc exists |
 
 ## Template
@@ -103,6 +107,11 @@ Phase 4 fails outright if the shape is wrong.
   walks it recursively. Prefer a specific subtree (`./alembic/versions/`) over a
   broad top-level dir — a directory artifact pulls *every* file under it,
   including any vendored deps that live there, and inflates index time.
+- **A directory artifact is pruned only of `node_modules`/`.git`.** The artifact
+  walk uses its own hardcoded ignore — it does **not** honor `.socraticodeignore`
+  or `.gitignore` (those govern the *code* index, not artifacts). So the
+  `.socraticodeignore` you add in Phase 4 won't shrink an over-broad artifact
+  dir; keep each artifact path scoped to the subtree you actually want embedded.
 - **Never point at real secrets.** Include `.env.example`, never `.env`. If the
   project keeps secrets in a tracked file, don't add it as an artifact.
 - **Exact schema shape may drift** between SocratiCode versions. If
