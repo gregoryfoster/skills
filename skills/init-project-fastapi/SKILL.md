@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.3.1"
+  version: "1.3.2"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
@@ -385,6 +385,12 @@ uv run ruff check .
 ```
 
 Expected: ruff clean.
+
+Also run the advisory type checker — non-gating, so report diagnostics but do not block the bootstrap. `skills-vendor/` is excluded via `[tool.ty.src]` in `pyproject.toml`, so output is project code only; a fresh scaffold may still surface one genuine `src`-import diagnostic (seen on the `CannObserv/replicator` bootstrap) — note anything real in the GH issue rather than fixing it here.
+
+```bash
+uv run ty check
+```
 
 When `DB_BACKED=yes`, also run:
 

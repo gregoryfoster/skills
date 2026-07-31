@@ -176,6 +176,9 @@ uv run pytest -m integration
 # Run linter
 uv run ruff check .
 
+# Type check (advisory, non-gating; skills-vendor/ excluded)
+uv run ty check
+
 # Database migrations [DB_BACKED=yes]
 uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "description"

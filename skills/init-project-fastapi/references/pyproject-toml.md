@@ -151,3 +151,14 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
 ```
+
+## ty config — mirror ruff's `skills-vendor/` exclude
+
+Always-present, regardless of `LINT_PROFILE`. `ty` walks the whole tree by default; without this, its advisory output is dominated by unresolved-import noise from the vendored third-party skill content under `skills-vendor/` (added in Phase 9), and a non-gating checker whose signal is 90% noise gets ignored on first run and never consulted again. Mirroring ruff's `extend-exclude` keeps the output actionable. The exclude is harmless before Phase 9 — `ty` ignores an exclude for a path that does not exist yet.
+
+```toml
+# ty walks the whole tree by default. skills-vendor/ is read-only third-party
+# skill content; mirror ruff's extend-exclude so advisory output stays signal.
+[tool.ty.src]
+exclude = ["skills-vendor/"]
+```
