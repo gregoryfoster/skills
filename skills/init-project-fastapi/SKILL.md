@@ -4,7 +4,7 @@ description: Bootstraps a new FastAPI project with the full CannObserv agent too
 compatibility: Designed for Claude. Requires git, gh CLI, ssh-keygen, uv. Must run inside an initialized git repository.
 metadata:
   author: gregoryfoster
-  version: "1.3.4"
+  version: "1.4.0"
   triggers: init project, bootstrap project, new fastapi project, set up foundation
 ---
 
@@ -63,6 +63,7 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 | `LAYOUT` | `single` | `single` \| `workspace` | uv workspace monorepo — Phase 3/5 shape per [`references/workspace-layout.md`](references/workspace-layout.md) (`single` is the fully-templated path) |
 | `GITHUB_CI` | `no` | `no` \| `yes` | Phase 7c (`.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md)) |
 | `DEPLOY_TARGET` | `systemd` | `systemd` \| `none` | Phase 7b (`deploy/<PROJECT_NAME>.service`), Phase 3 `.gitignore`, README "Deploy" section |
+| `PRIVATE_WHEELHOUSE` | `no` | `no` \| `find-links` | Phase 3 (`[tool.uv] find-links` + `.gitignore`), Phase 3b (`scripts/sync_wheelhouse.py` + `.wheelhouse/.gitkeep` + README sync obligation + env row), Phase 7b (non-fatal `ExecStartPre` sync), Phase 7c (WIF auth step — CI only), Phase 12 (import smoke), Phase 16 (WIF repo-access checklist) — all per [`references/private-wheelhouse.md`](references/private-wheelhouse.md) |
 
 **Sub-parameters of `DEPLOY_TARGET=systemd`** (skipped entirely when `DEPLOY_TARGET=none`):
 
@@ -70,6 +71,8 @@ Each has a default the user can accept silently. Defaults come from comparing 7 
 |---|---|---|
 | `DEPLOY_USER` | `exedev` | systemd unit `User=` + `chown` in `ExecStartPre` |
 | `DEPLOY_HOME` | `/home/<DEPLOY_USER>/<PROJECT_NAME>` | systemd unit `WorkingDirectory=` + repo-`.env` `EnvironmentFile` path |
+
+**Sub-parameters of `PRIVATE_WHEELHOUSE=find-links`** (skipped when `no`): `WHEELHOUSE_BUCKET` (required; GCS bucket, no `gs://`), `WHEELHOUSE_PREFIX` (default `wheels/`, trailing slash required), `WHEELHOUSE_SA` (required when `GITHUB_CI=yes`; WIF `service_account` email), `WHEELHOUSE_PACKAGES` (required; the **import lines** for the Phase 12 smoke, not dist names). Full legend, plus the `<PROJECT_UNDERSCORE_UPPER>`-namespaced env overrides and the `GCP_WIF_PROVIDER` org-variable prerequisite, in [`references/private-wheelhouse.md`](references/private-wheelhouse.md).
 
 Each default reflects the CannObserv cohort majority. When the user asks "why this default?", the per-parameter rationale (which sibling services chose what, and why) lives in [`references/cohort-context.md`](references/cohort-context.md) — informational only; it gates no phase.
 
@@ -149,6 +152,14 @@ Create these files, substituting parameters throughout:
 
 - **`.python-version`**, **`.gitignore`**, **`.pre-commit-config.yaml`**, **`CLAUDE.md`** (`@AGENTS.md`), **`README.md`** — literal contents in [`references/core-config-files.md`](references/core-config-files.md).
 - **`pyproject.toml`** — assemble from [`references/pyproject-toml.md`](references/pyproject-toml.md): the `[project]` table (with `DB_BACKED` and `SETTINGS_STYLE` conditional deps spliced in via prose instructions), pytest + coverage + uv_build blocks (always present), and both ruff profiles (`minimal` default vs `strict` opt-in). When `LAYOUT=workspace`, apply the deltas in [`references/workspace-layout.md`](references/workspace-layout.md) instead of the single-package `[project]` shape.
+
+When `PRIVATE_WHEELHOUSE=find-links`: splice the private dependency floor(s) into `dependencies` and add `[tool.uv] find-links = ["./.wheelhouse"]` (plain version floors, **no hashes** — find-links locks by filename), and emit the `.wheelhouse/*` + `!.wheelhouse/.gitkeep` block into `.gitignore` (glob is `.wheelhouse/*`, **not** `.wheelhouse/` — a directory-level ignore makes the negation a no-op) — both per call sites (a)/(b) in [`references/private-wheelhouse.md`](references/private-wheelhouse.md). Phase 3b creates the placeholder + sync script.
+
+### Phase 3b — Private wheelhouse sync
+
+> Skip this entire phase when `PRIVATE_WHEELHOUSE=no` (the default).
+
+Per [`references/private-wheelhouse.md`](references/private-wheelhouse.md): copy `scripts/sync_wheelhouse.py` verbatim (substituting `<WHEELHOUSE_BUCKET>`, `<WHEELHOUSE_PREFIX>`, `<PROJECT_UNDERSCORE_UPPER>`); create the load-bearing `.wheelhouse/.gitkeep` (`uv` errors on a missing `find-links` path, so a fresh clone can't `uv sync` without it); emit the `sync_wheelhouse.py` → `uv sync` ordering into the README Setup block **regardless of `DEPLOY_TARGET`** (with `none` there is no `ExecStartPre` to run it, so the README is the only record — not optional, mirroring `PROVISION_POSTGRES=no`); and add the `GOOGLE_APPLICATION_CREDENTIALS` row (SA key path) to the Environment Variables table.
 
 ### Phase 4 — AGENTS.md
 
@@ -249,11 +260,15 @@ Copy the templates from [`references/systemd-deploy.md`](references/systemd-depl
 - `deploy/<PROJECT_NAME>.service` — systemd unit: BUILD_ID stamping via `ExecStartPre`, three-tier `EnvironmentFile` chain (`/run/<PROJECT_NAME>/build-id` → `/etc/<PROJECT_NAME>/.env` → repo `.env`), bounded restarts, `--frozen --no-sync` serve, and (when `DB_BACKED=yes`) the `ALLOW_PRODUCTION_DB` opt-in. Substitute `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<DEPLOY_USER>`, `<DEPLOY_HOME>`. The reference notes per-host adjustments and ships the fleet patterns (oneshot+timer pairs, `OnFailure=` notify template, main-checkout guard) to adopt as scheduled jobs appear.
 - README **"Deploy"** section — append the `systemctl` install/restart/journalctl recipe to `README.md`.
 
+When `PRIVATE_WHEELHOUSE=find-links`: insert the non-fatal `ExecStartPre=-…sync_wheelhouse.py` line just **before** the unit's `ExecStart`, per call site (c) in [`references/private-wheelhouse.md`](references/private-wheelhouse.md). Absolute `uv` path, relative script path (resolved against `WorkingDirectory=`); `GOOGLE_APPLICATION_CREDENTIALS` comes from the already-loaded `/etc/<PROJECT_NAME>/.env`. Keep `ExecStart` on `--frozen --no-sync` — the deploy step still runs `uv sync --frozen` after the sync (reference's ordering invariant).
+
 ### Phase 7c — CI workflow
 
 > Skip this entire phase when `GITHUB_CI=no` (default).
 
 Create `.github/workflows/ci.yml` from [`references/github-ci.md`](references/github-ci.md) — lint job (ruff check + format), test job with a Postgres 16 service, `alembic upgrade` + `alembic check` drift tripwire, pytest. The convergent archiver/observo shape.
+
+When `PRIVATE_WHEELHOUSE=find-links` (CI-only — the one call site gated on *both* `GITHUB_CI=yes` and the wheelhouse): add the WIF auth block to **every** job that runs `uv sync` (lint and test) — `id-token: write`, the "assert `GCP_WIF_PROVIDER` visible" step, `google-github-actions/auth@v2` with `service_account: <WHEELHOUSE_SA>`, then the sync step, all **before** `uv sync`, per call site (d) in [`references/private-wheelhouse.md`](references/private-wheelhouse.md). Prerequisite: `GCP_WIF_PROVIDER` (org variable) must grant this repo access (Phase 16 checklist).
 
 ### Phase 8 — `.claude/` settings and hooks
 
@@ -362,6 +377,8 @@ done
 
 ### Phase 12 — Verify
 
+When `PRIVATE_WHEELHOUSE=find-links`, **populate the wheelhouse before the `uv sync` below** — find-links cannot resolve from an empty `./.wheelhouse`, so `uv sync` hard-fails without it. Run the Phase 12 bootstrap recipe in [`references/private-wheelhouse.md`](references/private-wheelhouse.md): probe for a **readable** ADC key file (not merely a set var); if readable, `sync_wheelhouse.py` → the "Always run" block → the `<WHEELHOUSE_PACKAGES>` import smoke; if not, skip the uv-sync-dependent steps and record the **mandatory** GH-issue follow-up (the repo looks complete but is not installable).
+
 Always run:
 
 ```bash
@@ -389,31 +406,7 @@ uv run alembic current 2>&1 | grep -Ev "^(INFO|$)" || true
 uv run alembic check
 ```
 
-If `TEST_DATABASE_URL` is already set (i.e. the user has provisioned a test database via Phase 5d or out-of-band), run the full suite with the coverage gate active and **measure the number**:
-
-```bash
-uv run pytest
-```
-
-With `test_health.py` + `test_logging.py` + `test_config.py` all scaffolded, a fresh project typically lands well above the old one-test baseline — replicator's bootstrap came in at **91%**, clearing the `fail_under=80` gate outright, so CI can run with the gate on from commit one. It is not guaranteed for every branch-point combination (`DB_BACKED=yes` and `ADMIN_UI=htmx` add thinly-smoke-covered modules, and CI-vs-local install-set skew can move the number across 80 — see [`references/github-ci.md`](references/github-ci.md) notes). So: run the gated command above, and **only if it reports under 80** for this config fall back to a `--no-cov` subset run and note the shortfall in the GH issue:
-
-```bash
-uv run pytest --no-cov tests/test_health.py tests/core/test_logging.py tests/core/test_config.py
-```
-
-`--no-cov` remains the right tool for genuine subset runs during development, as the AGENTS.md template's "Common Commands" section documents.
-
-If `TEST_DATABASE_URL` is **not** set on a fresh bootstrap, skip the pytest smoke step — the conftest raises at import time without it. Note this clearly in the GH issue body (Phase 15) so the smoke test runs before the first feature PR lands.
-
-When `DB_BACKED=no`, the suite runs without a database (the conftest's `client` fixture binds to the app directly). Run it gated and measure:
-
-```bash
-uv run pytest
-```
-
-Expected: green. The always-scaffolded `test_health.py` + `test_logging.py` + `test_config.py` exercise `main.py`, `logging.py`, and `config.py` — a no-DB scaffold clears `fail_under=80` comfortably. If a given config lands under 80, fall back to `--no-cov` and note it in the GH issue.
-
-If any of the above fails, fix the underlying issue before proceeding — **except** a coverage-gate shortfall (`pytest` exiting non-zero solely because measured coverage is under `fail_under=80`). That is not a failure to fix here: take the documented `--no-cov` fallback above and record the shortfall in the GH issue (Phase 15). Writing filler tests to clear the gate during bootstrap is out of scope; the gate activates naturally once the first feature tests land.
+Run the full suite gated and **measure** — `uv run pytest` (when `DB_BACKED=yes`, only after `TEST_DATABASE_URL` is set via Phase 5d/out-of-band; the conftest raises at import without it — if unset, skip and note in the GH issue). The scaffolded suite (health + logging + config) clears `fail_under=80` on a typical bootstrap (replicator: 91%), so keep the gate on; **only if it reports under 80** for a given mix (`DB_BACKED=yes`/`ADMIN_UI=htmx` add thinly-covered modules; CI-vs-local skew — see [`references/github-ci.md`](references/github-ci.md)) fall back to a `--no-cov` subset run (`uv run pytest --no-cov tests/test_health.py tests/core/test_logging.py tests/core/test_config.py`) plus a GH note. Everything above must pass before proceeding — **except** that coverage shortfall, which takes the fallback, not filler tests (the gate activates naturally once feature tests land).
 
 ### Phase 13 — Commit
 
@@ -452,6 +445,8 @@ gh issue create \
 
 Body must include: Summary (1–2 sentences), Design doc (N/A), Scope (bulleted list of all scaffold components), and a `## Bootstrap provenance` line citing the Phase 0 clone (`gregoryfoster/skills@<SKILL_SHA>`) so future bootstraps are reproducible against the same skill revision. When Phase 12's pytest smoke step was skipped because `TEST_DATABASE_URL` wasn't set on the fresh bootstrap, add a `## Follow-ups` section noting that the smoke test must run before the first feature PR lands.
 
+When `PRIVATE_WHEELHOUSE=find-links`, add to `## Follow-ups`: (1) if Phase 12's wheelhouse sync was skipped for unreadable ADC, the "wheelhouse never populated; `uv sync` fails until `sync_wheelhouse.py` runs with ADC" note; (2) when `GITHUB_CI=yes`, **"add this repo to the `GCP_WIF_PROVIDER` org variable's repository-access list"** — a new repo does not inherit org variables until granted, and CI's wheelhouse auth fails until it is.
+
 Post a completion comment referencing the commit SHA, then close:
 
 ```bash
@@ -486,6 +481,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml` |
 | Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/core/test_logging.py`, `tests/core/test_config.py`, `tests/api/` |
 | Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
+| Private wheelhouse | `<PRIVATE_WHEELHOUSE>` — when find-links: `scripts/sync_wheelhouse.py`, `[tool.uv] find-links`, `.wheelhouse/.gitkeep`, ExecStartPre/WIF sync (per `DEPLOY_TARGET`/`GITHUB_CI`) |
 | Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
 | Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |
 | GH issue | #1 closed |
@@ -502,3 +498,4 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 - When `DB_BACKED=yes`: `tests/conftest.py` must reject `TEST_DATABASE_URL == DATABASE_URL` (production-URL safety check) — `Base.metadata.drop_all` runs on teardown and would destroy any production table mapped to the project's models.
 - When `ADMIN_UI=htmx`: `require_admin` fails closed (unconfigured `ADMIN_AUTH_HEADER` → 503, never open); the admin router mounts with `include_in_schema=False`; `htmx.min.js` is copied from this skill's assets (provenance = `<SKILL_SHA>`) — never hot-linked from a CDN.
 - `uv.lock` must be committed alongside `pyproject.toml`.
+- When `PRIVATE_WHEELHOUSE=find-links`: the order is always `auth → sync_wheelhouse.py → uv sync --frozen`. `uv.lock` records find-links wheels by filename with **no hash**, so a wheel of that exact filename must be present in `./.wheelhouse` *before* `uv sync --frozen` runs (syncing after is a hard resolution error), and the publish policy must be **immutable — never re-publish a filename, bump the version** (the sync script's same-size skip depends on it). The SA key is referenced by path via `GOOGLE_APPLICATION_CREDENTIALS` and never committed; CI is keyless WIF. See [`references/private-wheelhouse.md`](references/private-wheelhouse.md).

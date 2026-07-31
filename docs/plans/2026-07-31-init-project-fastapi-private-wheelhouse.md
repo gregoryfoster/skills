@@ -1,7 +1,7 @@
 ---
 title: Add a PRIVATE_WHEELHOUSE branch point to init-project-fastapi (find-links from GCS)
 date: 2026-07-31
-status: draft
+status: accepted
 ---
 
 # init-project-fastapi — `PRIVATE_WHEELHOUSE` branch point
@@ -98,9 +98,10 @@ the whole feature is inert unless the user opts in.
   `references/*.md` is linked from SKILL.md and vice-versa; the new reference and its links must satisfy
   whatever that suite checks. Risk is low (it's the same shape as every existing reference) but the suite
   is the arbiter — step 8 gates on it.
-- **Transcription fidelity of `sync_wheelhouse.py`.** The script is contributed verbatim; the three
-  properties the author flagged as load-bearing (same-size skip, temp-file + `os.replace`, broad
-  `except`) must survive transcription unchanged. I will not "improve" it.
+- **Transcription fidelity of `sync_wheelhouse.py`.** Behaviorally-identical improvements are welcome
+  (per review directive) — it will undergo its own code review. The three properties the author flagged
+  as load-bearing (same-size skip, temp-file + `os.replace`, broad `except`) must remain behaviorally
+  intact; refinements that preserve them are fair game.
 - **No live end-to-end test here.** This repo cannot exercise a real GCS bucket + WIF, so correctness of
   the wired mechanism rests on replicator's proven bootstrap, not a test in this repo. The structural
   suite validates the skill *document*, not the runtime behavior it describes — same as every other
