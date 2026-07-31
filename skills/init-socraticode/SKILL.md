@@ -124,7 +124,9 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    (`.claude/hooks/socraticode-reminder.sh`) and **merge** its hook entry into
    `.claude/settings.json` (create if absent). Dedupe by scanning existing
    command strings for `socraticode-prefetch` **or** `socraticode-reminder` (the
-   latter matches legacy script-file installs); preserve existing
+   latter matches legacy script-file installs); when a match isn't already the
+   canonical command, upgrade that one command string in place (propagates the
+   `${CLAUDE_PROJECT_DIR:-.}` fallback to legacy installs). Preserve existing
    `hooks`/`permissions`/other keys. Never clobber the file.
 3. **Linked projects** (when `LINKED_PROJECTS` is set) → write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block

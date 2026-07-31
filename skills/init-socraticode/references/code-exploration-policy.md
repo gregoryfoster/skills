@@ -69,7 +69,7 @@ this form.
 
 **Step A — write the reminder script** at `.claude/hooks/socraticode-reminder.sh`
 (create if absent; overwrite in place if present — it carries no per-project
-state) and mark it executable (`chmod +x`):
+state):
 
 ```bash
 #!/usr/bin/env bash
@@ -100,10 +100,11 @@ preserve any existing `permissions`/other keys. **Never clobber the file.**
 
 Two deliberate details in that command string:
 
-- **`${CLAUDE_PROJECT_DIR:-.}`** — SessionStart hooks run with cwd = project
-  root, so `.` is a correct free fallback for any environment that fires the
-  hook without `CLAUDE_PROJECT_DIR` set. Without it, an unset variable degrades
-  to `bash "/.claude/hooks/..."` and errors on every session start.
+- **`${CLAUDE_PROJECT_DIR:-.}`** — a best-effort fallback (cwd is the launch
+  directory, normally the project root) for any environment that fires the hook
+  without `CLAUDE_PROJECT_DIR` set. Without it, an unset variable degrades to
+  `bash "/.claude/hooks/..."` and errors on every session start; with it, the
+  worst case resolves relative to the launch dir instead of erroring outright.
 - **trailing `# socraticode-prefetch`** — puts the dedupe marker in the
   *command string itself*, not just inside the script file, so the merge check
   below can recognize the entry by scanning settings.json alone.
@@ -112,10 +113,18 @@ Two deliberate details in that command string:
 `hooks.SessionStart` command strings and skip the append if any already contains
 `socraticode-prefetch` **or** `socraticode-reminder`. The second alias matches
 legacy installs whose command references `socraticode-reminder.sh` without the
-trailing marker comment — those are already-present and must be left untouched,
-not duplicated. A verbatim single-echo inline install (older canonical form) is
-likewise equivalent: recognize it by the `socraticode-prefetch` marker and do
-not add a second entry.
+trailing marker comment; a verbatim single-echo inline install (older canonical
+form) is recognized by the `socraticode-prefetch` marker. Either way, do not add
+a second entry.
+
+**Upgrade the matched entry in place.** If the matched command string is not
+already the canonical `bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh" # socraticode-prefetch`
+— e.g. a fallback-less `bash "$CLAUDE_PROJECT_DIR/…"`, or the legacy inline echo
+— replace **just that one command string** with the canonical form, leaving all
+other entries and keys untouched. This is a targeted upgrade, not a clobber: it
+propagates the `${CLAUDE_PROJECT_DIR:-.}` fallback to existing sibling installs
+on re-run, which a skip-only dedupe would leave stranded on the old, erroring
+command. (Step A has already written the script the canonical command points at.)
 
 > **Duplicate-config trap.** If a session shows BOTH
 > `mcp__plugin_socraticode_socraticode__*` and a standalone
