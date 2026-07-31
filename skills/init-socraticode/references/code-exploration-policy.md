@@ -118,13 +118,16 @@ form) is recognized by the `socraticode-prefetch` marker. Either way, do not add
 a second entry.
 
 **Upgrade the matched entry in place.** If the matched command string is not
-already the canonical `bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh" # socraticode-prefetch`
-— e.g. a fallback-less `bash "$CLAUDE_PROJECT_DIR/…"`, or the legacy inline echo
-— replace **just that one command string** with the canonical form, leaving all
-other entries and keys untouched. This is a targeted upgrade, not a clobber: it
-propagates the `${CLAUDE_PROJECT_DIR:-.}` fallback to existing sibling installs
-on re-run, which a skip-only dedupe would leave stranded on the old, erroring
-command. (Step A has already written the script the canonical command points at.)
+already the canonical command from Step B — e.g. a fallback-less
+`bash "$CLAUDE_PROJECT_DIR/…"`, or the legacy inline echo — replace **just that
+one command string** with the canonical form, leaving all other entries and keys
+untouched. If **more than one** matching entry exists (a duplicate left by a
+prior verbatim re-run), remove the extras and keep a single canonical entry.
+This is a targeted upgrade, not a clobber: it propagates the
+`${CLAUDE_PROJECT_DIR:-.}` fallback to existing sibling installs on re-run — and
+collapses any prior duplication — which a skip-only dedupe would leave stranded
+on the old, erroring command. (Step A has already written the script the
+canonical command points at.)
 
 > **Duplicate-config trap.** If a session shows BOTH
 > `mcp__plugin_socraticode_socraticode__*` and a standalone
