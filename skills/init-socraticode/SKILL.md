@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18 <26, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -142,8 +142,28 @@ Author `.socraticodecontextartifacts.json` at the repo root from
 [`references/context-artifacts.md`](references/context-artifacts.md). Point it at
 the project's **non-code** knowledge (SQL schemas, OpenAPI/Protobuf, Terraform/k8s,
 architecture docs, env *examples*). **Adapt paths per project — do not copy the
-template verbatim.** Verify each glob matches at least one tracked file
-(`git ls-files '<glob>'`) and drop categories the project lacks.
+template verbatim.** Each artifact is `{name, path, description}` with `path` a
+single **literal file or directory** (globs do **not** work — the server `stat()`s
+the value; a directory indexes recursively). Verify each path resolves
+(`test -e '<path>'`) and drop categories the project lacks.
+
+**Also write `.socraticodeignore` (repo root).** It's layered on the built-in
+defaults + `.gitignore` (gitignore syntax) and is essentially mandatory for any
+repo that vendors skills via `managing-skills` — the submodule trees dominate the
+index otherwise (on replicator: 301 files/1038 chunks → 28 files/42 chunks, ~70
+min → 84 s once excluded). Every repo bootstrapped by `init-project-fastapi`
+(Phase 9 adds those submodules) needs this. Mirror the `extend-exclude` that
+`ruff`/`ty` already carry:
+
+```gitignore
+# .socraticodeignore — semantic-index exclusions (layered on defaults + .gitignore)
+skills-vendor/
+skills/
+.claude/skills/
+```
+
+Adapt to the project's own vendored trees; add any large generated/data dirs that
+aren't already in `.gitignore`.
 
 ### Phase 5 — Run the index and block until *fully* done
 
@@ -200,7 +220,8 @@ Present a completion table:
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited) |
 | Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` → `.claude/hooks/socraticode-reminder.sh` |
-| Context artifacts | `.socraticodecontextartifacts.json` (N artifacts) |
+| Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
+| Index exclusions | `.socraticodeignore` (vendored skill trees excluded) |
 | Index | embeddings 100% · graph READY · artifacts N/N |
 | Sample search | returns hits |
 
@@ -208,7 +229,8 @@ Present a completion table:
 
 Running this skill on a project that already has SocratiCode is **safe and is
 the audit**: every file edit is idempotent (Phase 3's policy block replaces
-between markers, the hook merge dedupes, Phase 4 verifies globs), and Phase 6
+between markers, the hook merge dedupes, Phase 4 verifies each artifact path
+resolves), and Phase 6
 re-verifies the three completion signals. Use a re-run to repair partial
 installs — the common drift found across the cohort ([#65](https://github.com/gregoryfoster/skills/issues/65)):
 a manifest with **no policy block or prefetch hook** (observo), or hook docs
@@ -231,6 +253,13 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
   after a restart. It owns its child process — no `pkill -f`.
 - **Artifacts are project-adapted, not verbatim.** Both the policy block and
   `.socraticodecontextartifacts.json` must name this project's real files/paths.
+  Each artifact is `{name, path, description}` — `path` is a **single literal
+  file or directory**, never an array and never a glob (the server `stat()`s it;
+  a directory indexes recursively).
+- **Exclude vendored skill trees.** Any repo that vendors skills via
+  `managing-skills` must ship a `.socraticodeignore` (`skills-vendor/`, `skills/`,
+  `.claude/skills/`) or the submodule content dominates the index. Every
+  `init-project-fastapi` repo qualifies.
 - **The file watcher is ephemeral.** Don't promise persistent auto-update from a
   one-shot run; it needs the plugin daemon live in an interactive session
   (gotcha E). Don't leave an orphaned node process to fake it.
