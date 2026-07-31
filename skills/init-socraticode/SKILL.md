@@ -120,10 +120,12 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    `<!-- END socraticode-policy -->` pair already exists, **replace between the
    markers** — never append a second copy. Adapt the last tool-table row and any
    path examples to this project's real layout.
-2. **SessionStart hook** (when `INSTALL_HOOK=yes`) → **merge** the hook into
-   `.claude/settings.json` (create if absent). Dedupe by the `socraticode-prefetch`
-   marker string; preserve existing `hooks`/`permissions`/other keys. Never
-   clobber the file.
+2. **SessionStart hook** (when `INSTALL_HOOK=yes`) → write the reminder script
+   (`.claude/hooks/socraticode-reminder.sh`) and **merge** its hook entry into
+   `.claude/settings.json` (create if absent). Dedupe by scanning existing
+   command strings for `socraticode-prefetch` **or** `socraticode-reminder` (the
+   latter matches legacy script-file installs); preserve existing
+   `hooks`/`permissions`/other keys. Never clobber the file.
 3. **Linked projects** (when `LINKED_PROJECTS` is set) → write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
    of `.claude/settings.local.json` (gitignored — paths are machine-specific;
@@ -195,7 +197,7 @@ Present a completion table:
 | Plugin | `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited) |
-| Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` |
+| Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` → `.claude/hooks/socraticode-reminder.sh` |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts) |
 | Index | embeddings 100% · graph READY · artifacts N/N |
 | Sample search | returns hits |

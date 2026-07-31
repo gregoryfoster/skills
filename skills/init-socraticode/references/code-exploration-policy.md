@@ -54,17 +54,32 @@ Prefetch query — run via `ToolSearch` at session start:
 <!-- END socraticode-policy -->
 ```
 
-## 2. SessionStart hook (`.claude/settings.json`)
+## 2. SessionStart hook (script file + `.claude/settings.json`)
 
 Re-emits the prefetch instruction each session so a fresh Claude Code session
 loads the deferred `codebase_*` schemas without the operator remembering to.
 The hook prints to stdout; Claude Code injects SessionStart stdout as session
 context.
 
-**Merge, do not clobber.** If `.claude/settings.json` already has a
-`hooks.SessionStart` array, append this entry to it (dedupe by the marker string
-`socraticode-prefetch` so re-runs are idempotent). If the file doesn't exist,
-create it with just this block. Preserve any existing `permissions`/other keys.
+The org convention (archiver, power-map, usa-wa, observo) is a **script-file
+hook**: the echo lives in `.claude/hooks/socraticode-reminder.sh`, referenced
+from settings.json. This keeps the ~600-char `select:` string out of
+JSON-escaping and makes later edits a plain shell-file change. Standardize on
+this form.
+
+**Step A — write the reminder script** at `.claude/hooks/socraticode-reminder.sh`
+(create if absent; overwrite in place if present — it carries no per-project
+state) and mark it executable (`chmod +x`):
+
+```bash
+#!/usr/bin/env bash
+# socraticode-prefetch
+echo 'socraticode-prefetch: SocratiCode codebase_* tools are deferred. Before broad code exploration, run ToolSearch "select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search" to load their schemas. Prefer codebase_search over grep for semantic questions.'
+```
+
+**Step B — merge the hook into `.claude/settings.json`** (create if absent).
+If a `hooks.SessionStart` array already exists, append this entry to it;
+preserve any existing `permissions`/other keys. **Never clobber the file.**
 
 ```json
 {
@@ -74,7 +89,7 @@ create it with just this block. Preserve any existing `permissions`/other keys.
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'socraticode-prefetch: SocratiCode codebase_* tools are deferred. Before broad code exploration, run ToolSearch \"select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search\" to load their schemas. Prefer codebase_search over grep for semantic questions.'"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh\" # socraticode-prefetch"
           }
         ]
       }
@@ -82,6 +97,25 @@ create it with just this block. Preserve any existing `permissions`/other keys.
   }
 }
 ```
+
+Two deliberate details in that command string:
+
+- **`${CLAUDE_PROJECT_DIR:-.}`** — SessionStart hooks run with cwd = project
+  root, so `.` is a correct free fallback for any environment that fires the
+  hook without `CLAUDE_PROJECT_DIR` set. Without it, an unset variable degrades
+  to `bash "/.claude/hooks/..."` and errors on every session start.
+- **trailing `# socraticode-prefetch`** — puts the dedupe marker in the
+  *command string itself*, not just inside the script file, so the merge check
+  below can recognize the entry by scanning settings.json alone.
+
+**Dedupe (idempotent re-runs).** Before appending, scan the existing
+`hooks.SessionStart` command strings and skip the append if any already contains
+`socraticode-prefetch` **or** `socraticode-reminder`. The second alias matches
+legacy installs whose command references `socraticode-reminder.sh` without the
+trailing marker comment — those are already-present and must be left untouched,
+not duplicated. A verbatim single-echo inline install (older canonical form) is
+likewise equivalent: recognize it by the `socraticode-prefetch` marker and do
+not add a second entry.
 
 > **Duplicate-config trap.** If a session shows BOTH
 > `mcp__plugin_socraticode_socraticode__*` and a standalone
