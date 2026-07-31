@@ -207,10 +207,10 @@ uv run --no-project python scripts/check_client_drift.py   # sdk-package
 
 ### Phase 8 — Commit + report
 
-Commit snapshot, sidecar, generated tree, scripts, carve-outs, and CI changes
-together (one reviewable bundle). Clean up: `rm -rf "<SKILL_TMP>"`. Report a
-summary table: layout, spec source, filter, drift tier, regen command, and
-the sidecar path.
+Commit snapshot (+ the committed filtered spec for generated-tree), sidecar,
+generated tree, scripts, carve-outs, and CI changes together (one reviewable
+bundle). Clean up: `rm -rf "<SKILL_TMP>"`. Report a summary table: layout, spec
+source, filter, drift tier, regen command, and the sidecar path.
 
 ## Refresh mode
 
@@ -221,9 +221,10 @@ When a sidecar already exists:
 2. Run the recorded refresh script (or re-fetch from the sidecar's
    `source_url` / `source_path`) — snapshot + sidecar update together.
 3. `git diff` the snapshot. No change → report "no drift" and stop.
-4. Re-run the filter with the sidecar's recorded `filter` args (when set),
-   then the regen command. The generator version comes from the lockfile pin;
-   if the pin has been bumped since capture, update the sidecar's `generator`
+4. Run the regen command; it re-filters the raw snapshot using the recorded
+   `filter` keep_prefix (both layouts filter inside the regen command) and
+   regenerates the tree. The generator version comes from the lockfile pin; if
+   the pin has been bumped since capture, update the sidecar's `generator`
    field.
 5. Run the consumer suite + drift check; summarize the contract diff (paths /
    schemas touched) for the PR description; commit the bundle.
