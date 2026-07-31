@@ -159,7 +159,7 @@ When `PRIVATE_WHEELHOUSE=find-links`: splice the private dependency floor(s) int
 
 > Skip this entire phase when `PRIVATE_WHEELHOUSE=no` (the default).
 
-Per [`references/private-wheelhouse.md`](references/private-wheelhouse.md): copy `scripts/sync_wheelhouse.py` verbatim (substituting `<WHEELHOUSE_BUCKET>`, `<WHEELHOUSE_PREFIX>`, `<PROJECT_UNDERSCORE_UPPER>`); create the load-bearing `.wheelhouse/.gitkeep` (`uv` errors on a missing `find-links` path, so a fresh clone can't `uv sync` without it); emit the `sync_wheelhouse.py` → `uv sync` ordering into the README Setup block **regardless of `DEPLOY_TARGET`** (with `none` there is no `ExecStartPre` to run it, so the README is the only record — not optional, mirroring `PROVISION_POSTGRES=no`); and add the `GOOGLE_APPLICATION_CREDENTIALS` row (SA key path) to the Environment Variables table.
+Per [`references/private-wheelhouse.md`](references/private-wheelhouse.md): copy `scripts/sync_wheelhouse.py` verbatim (substituting `<WHEELHOUSE_BUCKET>`, `<WHEELHOUSE_PREFIX>`, `<PROJECT_UNDERSCORE_UPPER>`, and `<PROJECT_NAME>` in the docstring); create the load-bearing `.wheelhouse/.gitkeep` (`uv` errors on a missing `find-links` path, so a fresh clone can't `uv sync` without it); emit the `sync_wheelhouse.py` → `uv sync` ordering into the README Setup block **regardless of `DEPLOY_TARGET`** (with `none` there is no `ExecStartPre` to run it, so the README is the only record — not optional, mirroring `PROVISION_POSTGRES=no`); and add the `GOOGLE_APPLICATION_CREDENTIALS` row (SA key path) to the Environment Variables table.
 
 ### Phase 4 — AGENTS.md
 

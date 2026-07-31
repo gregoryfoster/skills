@@ -21,7 +21,7 @@ The script's bucket/prefix env overrides are **namespaced with `<PROJECT_UNDERSC
 
 ## `scripts/sync_wheelhouse.py`
 
-Copy verbatim into the project (substituting the two literal fallbacks and the env prefix). Three properties are load-bearing and must survive any refactor: the **same-size skip** (makes re-runs free, so it is safe as an `ExecStartPre` on every start), the **temp-file + `os.replace`** (an interrupted run never leaves a partial wheel that the size check would then accept forever), and the **broad `except`** (auth, network, and missing-bucket all degrade to the same non-fatal outcome the unit's `-` prefix depends on).
+Copy verbatim into the project (substituting the two literal fallbacks, the `<PROJECT_UNDERSCORE_UPPER>` env prefix, and `<PROJECT_NAME>` in the docstring). Three properties are load-bearing and must survive any refactor: the **same-size skip** (makes re-runs free, so it is safe as an `ExecStartPre` on every start), the **temp-file + `os.replace`** (an interrupted run never leaves a partial wheel that the size check would then accept forever), and the **broad `except`** (auth, network, and missing-bucket all degrade to the same non-fatal outcome the unit's `-` prefix depends on).
 
 ```python
 """Mirror the private package index into the local wheelhouse.
@@ -164,18 +164,15 @@ Two systemd traps: `uv` needs an **absolute path** (`ExecStartPre` does no `PATH
 
 ### (d) CI — Phase 7c (only when `GITHUB_CI=yes AND PRIVATE_WHEELHOUSE=find-links`)
 
-The WIF block is **CI-only**: when `GITHUB_CI=no`, nothing here applies and the wheelhouse is exercised solely by 3b (local dev) + 7b (VM). Add `id-token: write` **per job** and the ordering from Invariants (`auth → sync → uv sync`). Every job that runs `uv sync` needs it — both lint and test.
+The WIF block is **CI-only**: when `GITHUB_CI=no`, nothing here applies and the wheelhouse is exercised solely by 3b (local dev) + 7b (VM). This is a **delta** on the base workflow in [`github-ci.md`](github-ci.md) — keep that file's step versions (`actions/checkout@v4`, `astral-sh/setup-uv@v5`, `uv sync --frozen`) and add only the pieces below to **every** job that runs `uv sync` (both lint and test): the job-level `permissions` block, and the three steps inserted **between `setup-uv` and `uv sync --frozen`** (the ordering from Invariants: `auth → sync → uv sync`).
 
 ```yaml
+    # add at job level:
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - run: uv python install 3.14
+      # ... existing checkout + setup-uv steps unchanged ...
 
       # Fail fast and legibly when the org variable is not visible to this repo.
       # google-github-actions/auth validates its own inputs before contacting
@@ -202,8 +199,7 @@ The WIF block is **CI-only**: when `GITHUB_CI=no`, nothing here applies and the 
       - name: Sync wheelhouse
         run: uv run --no-project --with 'google-cloud-storage>=2,<4' python scripts/sync_wheelhouse.py
 
-      - name: uv sync
-        run: uv sync --frozen --group dev
+      # ... then the base workflow's `uv sync --frozen` and the rest, unchanged ...
 ```
 
 The assert step earned its place: a new repo does **not** inherit org variables until it is added to that variable's repository-access list, and the native failure misdirects to GCP IAM. Phase 16 carries the matching checklist line ("add the new repo to `GCP_WIF_PROVIDER`'s repository access").
@@ -257,8 +253,8 @@ With a skipped sync the repo *looks* complete but is not installable, so the GH-
 
 - **Ordering: `auth → sync_wheelhouse.py → uv sync --frozen`.** `uv.lock` records a `find-links` wheel by filename and version, with **no hash**. The lock is only satisfiable if a wheel of that exact filename is already present in `./.wheelhouse` when `uv sync --frozen` runs; syncing the wheelhouse *after* `uv sync` is a hard resolution error, not a slow path. This holds identically on the VM (`sync_wheelhouse.py` → `uv sync --frozen` as a **deploy step**, with `ExecStart` using `--frozen --no-sync` so service start never resolves deps) and in CI.
 - **Never re-publish a wheel filename; bump the version.** Because the lock carries no hash, it does not pin *contents*. The same-size skip in `sync_wheelhouse.py` is safe only against an immutable publish policy — the bucket must never overwrite a published filename.
-- **The `setup-uv` cache does not rescue a mis-ordered sync.** It is keyed on the lockfile and caches the resolved environment, not the wheelhouse. Keep `enable-cache: true`; it is orthogonal to the ordering above.
-- **Secrets are referenced by path, never committed.** `GOOGLE_APPLICATION_CREDENTIALS` points at the SA key; the key itself is never committed, never inlined into a unit file or workflow. On the VM it lives beside the production env file (e.g. `/etc/<PROJECT_NAME>/co-pypi-reader.json`, mode `0400`, owned by the service user) — **outside** the repo, so a repo reset or worktree switch cannot strand or expose it. CI is keyless (WIF only; no `credentials_json`, no long-lived key in Actions secrets). The SA holds `roles/storage.objectViewer` on the one bucket and nothing else; publishing is a different identity, out of scope here.
+- **The `setup-uv` cache (if the base workflow enables it) does not rescue a mis-ordered sync.** It caches the resolved environment keyed on the lockfile, not the wheelhouse — so enabling it is orthogonal to the ordering above, never a substitute for syncing the wheelhouse first.
+- **Secrets are referenced by path, never committed.** `GOOGLE_APPLICATION_CREDENTIALS` points at the SA key; the key itself is never committed, never inlined into a unit file or workflow. On the VM it lives beside the production env file (e.g. `/etc/<PROJECT_NAME>/co-pypi-reader.json`, mode `0400`, owned by the service user) — **outside** the repo, so a repo reset or worktree switch cannot strand or expose it. CI is keyless (WIF only; no `credentials_json`, no long-lived key in Actions secrets). The SA holds `roles/storage.objectViewer` on the one bucket and nothing else; publishing is a different identity, out of scope here. Deliberately **no blanket `*.json` `.gitignore` guard** — it would wrongly untrack legitimate config (`package.json`, `tsconfig.json`, …); the guarantee is key-outside-the-repo, not a catch-all ignore. If a project must keep the key in-tree, ignore its *specific* filename, not `*.json`.
 
 ## Prerequisites (surface to the user when enabling)
 

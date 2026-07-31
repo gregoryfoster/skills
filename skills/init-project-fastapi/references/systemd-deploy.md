@@ -53,6 +53,7 @@ WantedBy=multi-user.target
 
 ### Per-host adjustments
 
+- **Private wheelhouse.** When `PRIVATE_WHEELHOUSE=find-links`, Phase 7b inserts a non-fatal wheelhouse-sync `ExecStartPre` (`-` prefix) just **above** the `ExecStart` line above — see call site (c) in [`private-wheelhouse.md`](private-wheelhouse.md). `ExecStart` stays on `--frozen --no-sync`.
 - **PostgreSQL dependency.** The `After=network.target postgresql.service` line assumes a local Postgres. Remove `postgresql.service` from `After=` when the DB lives on another host, or drop the line entirely when `DB_BACKED=no`.
 - **`uv` path.** `/usr/local/bin/uv` is the standard install location for the deploy host. If `uv` lives elsewhere on a given VM, edit before deploying or symlink it into `/usr/local/bin`.
 - **Deploy step.** Because `ExecStart` runs `--frozen --no-sync`, run `uv sync --frozen` as part of the deploy (before `systemctl restart`) — the service no longer installs dependencies for you.
