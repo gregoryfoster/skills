@@ -149,10 +149,21 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    to contribute results.
    These are absolute paths to one VM's checkouts, so the file must stay out of
    version control. Don't assume an upstream template ignored it: if
-   `git check-ignore -q .claude/settings.local.json` fails, append
-   `.claude/settings.local.json` to `.gitignore` (create it if absent). Repos
-   bootstrapped by `init-project-fastapi` already carry this rule; the guard
-   covers repos indexed standalone.
+   `git check-ignore -q .claude/settings.local.json` fails, append a
+   newline-safe block to `.gitignore` (create it if absent) — matching the
+   `init-project-fastapi` template's header:
+
+   ```gitignore
+   # Machine-specific Claude Code settings (local permissions, env, linked projects)
+   .claude/settings.local.json
+   ```
+
+   Ensure a preceding blank line so the block can't fuse onto a
+   trailing-newline-less last rule (e.g. `printf '\n%s\n%s\n' '# Machine-specific
+   Claude Code settings (local permissions, env, linked projects)'
+   '.claude/settings.local.json' >> .gitignore`). Repos bootstrapped by
+   `init-project-fastapi` already carry this rule; the guard covers repos indexed
+   standalone.
 
 ### Phase 4 — Configure context artifacts
 
