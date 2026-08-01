@@ -118,8 +118,13 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
 1. **Policy block** → insert the marker-delimited `## Code Exploration Policy`
    section into `<POLICY_FILE>`. If a `<!-- BEGIN socraticode-policy -->` …
    `<!-- END socraticode-policy -->` pair already exists, **replace between the
-   markers** — never append a second copy. Adapt the last tool-table row and any
-   path examples to this project's real layout.
+   markers** — never append a second copy. **Fallback:** if no marker pair exists
+   but an unmarked `## Code Exploration Policy` heading does (repos bootstrapped
+   before the markers existed — e.g. by `init-project-fastapi`), **replace that
+   whole section in place** (heading through the line before the next `##`) with
+   the marked block rather than appending. Only when neither is present do you
+   append a fresh block. Adapt the last tool-table row and any path examples to
+   this project's real layout.
 2. **SessionStart hook** (when `INSTALL_HOOK=yes`) → write the reminder script
    (`.claude/hooks/socraticode-reminder.sh`) and **merge** its hook entry into
    `.claude/settings.json` (create if absent). Dedupe by scanning existing

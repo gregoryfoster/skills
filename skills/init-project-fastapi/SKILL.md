@@ -173,7 +173,9 @@ Adapt the template in [`references/agents-md-template.md`](references/agents-md-
 > end include
 ```
 
-When the condition is satisfied, write the inner content with placeholders substituted but **drop the `> Include when …:` and `> end include` marker lines**. When the condition is not satisfied, drop the entire block (markers + content). The markers must never appear in the rendered project file.
+When the condition is satisfied, write the inner content with placeholders substituted but **drop the `> Include when …:` and `> end include` marker lines**. When the condition is not satisfied, drop the entire block (markers + content). These blockquote markers must never appear in the rendered project file.
+
+**Keep the `<!-- BEGIN socraticode-policy -->` / `<!-- END socraticode-policy -->` comments** around the Code Exploration Policy section — they are literal content, not conditional-block syntax, and **must** survive into the rendered `AGENTS.md`. They are the shared dedupe contract with `init-socraticode`: without them a later `init-socraticode` run appends a second policy section (see #74).
 
 Sections in the template: Project Overview, Development Methodology, Environment & Tooling, Code Exploration Policy, Project Layout, Infrastructure, Server Lifecycle, Environment Variables, Common Commands, Agent Skills, Conventions.
 
