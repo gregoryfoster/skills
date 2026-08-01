@@ -144,9 +144,15 @@ The server treats these differently, and the fix differs:
   is logged and skipped, and the *other* artifacts still index. It surfaces not as
   a hard error but as a **short count** — `artifacts N/N` reports fewer indexed
   than configured. This is exactly why Phase 5 gates on `artifacts N/N` matching.
+  Under the **driver fallback** it's worse than a quiet undercount: the driver
+  only completes when `indexed >= configured` and keeps re-nudging context
+  indexing while artifacts lag, so a permanently-missing path never satisfies the
+  predicate and the run **blocks until `INDEX_TIMEOUT_MS` (2h default)** — another
+  reason to verify paths first.
 
-So: get the *shape* right or Phase 4 dies; get every *path* right or Phase 5's
-count silently comes up short. Verify each path resolves before committing:
+So: get the *shape* right or Phase 4 dies; get every *path* right or Phase 5
+quietly comes up short — no error, but `artifacts N/N` never reaches parity.
+Verify each path resolves before committing:
 
 ```bash
 # Each path in the manifest should exist:
