@@ -117,17 +117,20 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
 
 1. **Policy block** → land exactly one marker-delimited `## Code Exploration
    Policy` section in `<POLICY_FILE>`. Apply in order, so a repo in any prior
-   state converges to a single marked block:
-   a. If a `<!-- BEGIN socraticode-policy -->` … `<!-- END socraticode-policy -->`
-      pair already exists, **replace between the markers**. Otherwise append a
-      fresh marked block.
+   state converges to a single marked block, in place where one already exists:
+   a. **Write the block, preferring the existing position:**
+      - marker pair (`<!-- BEGIN socraticode-policy -->` … `<!-- END
+        socraticode-policy -->`) already exists → **replace between the markers**;
+      - else an unmarked `## Code Exploration Policy` section exists → **replace
+        that section in place** (its heading through the line before the next
+        `##`, or end of file if none follows) with the marked block;
+      - else → **append** a fresh marked block.
    b. **Then, unconditionally,** delete any *other* `## Code Exploration Policy`
-      section **not** enclosed by the marker pair (its heading through the line
-      before the next `##`, or end of file if none follows). This clears the
-      duplicate on repos bootstrapped before the markers existed (e.g. by
-      `init-project-fastapi`) — including repos where an earlier `init-socraticode`
-      run already appended a marked block beside the original unmarked one, so
-      step (a) alone would leave the unmarked copy behind.
+      section **not** enclosed by the marker pair (same heading-to-next-`##`
+      span). Step (a) fixes at most one location; this sweeps any remaining stray
+      copy — e.g. a repo where an earlier `init-socraticode` run appended a marked
+      block beside the original unmarked one, where step (a) takes the marker-pair
+      branch and would otherwise leave the unmarked copy behind.
    Never leave more than one policy section. Adapt the last tool-table row and any
    path examples to this project's real layout.
 2. **SessionStart hook** (when `INSTALL_HOOK=yes`) → write the reminder script
