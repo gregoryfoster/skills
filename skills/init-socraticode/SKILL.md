@@ -143,11 +143,16 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    `hooks`/`permissions`/other keys. Never clobber the file.
 3. **Linked projects** (when `LINKED_PROJECTS` is set) → write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
-   of `.claude/settings.local.json` (gitignored — paths are machine-specific;
-   create the file if absent, merge if present). Enables cross-repo
-   `codebase_search` over sibling service checkouts — archiver links watcher +
-   notifier this way. Each linked project must itself be indexed to contribute
-   results.
+   of `.claude/settings.local.json` (create the file if absent, merge if present).
+   Enables cross-repo `codebase_search` over sibling service checkouts — archiver
+   links watcher + notifier this way. Each linked project must itself be indexed
+   to contribute results.
+   These are absolute paths to one VM's checkouts, so the file must stay out of
+   version control. Don't assume an upstream template ignored it: if
+   `git check-ignore -q .claude/settings.local.json` fails, append
+   `.claude/settings.local.json` to `.gitignore` (create it if absent). Repos
+   bootstrapped by `init-project-fastapi` already carry this rule; the guard
+   covers repos indexed standalone.
 
 ### Phase 4 — Configure context artifacts
 
