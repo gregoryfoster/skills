@@ -39,6 +39,9 @@ coverage.xml
 *.swp
 *.swo
 
+# Machine-specific Claude Code settings (local permissions, env, linked projects)
+.claude/settings.local.json
+
 # Git worktrees
 .worktrees/
 
