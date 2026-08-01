@@ -19,8 +19,12 @@ the last table row and any path examples to the project's actual layout.
 
 Insert this into `AGENTS.md`. If a `<!-- BEGIN socraticode-policy -->` /
 `<!-- END socraticode-policy -->` pair already exists, **replace the content
-between the markers** rather than appending a second copy. If no `AGENTS.md`
-exists, create one and add the block.
+between the markers** rather than appending a second copy. **Fallback:** if no
+marker pair exists but an unmarked `## Code Exploration Policy` heading does
+(repos bootstrapped before the markers existed — e.g. by `init-project-fastapi`),
+**replace that whole section in place** (the heading through the line before the
+next `##`) with the marked block below, rather than appending a duplicate. If no
+`AGENTS.md` exists, create one and add the block.
 
 ```markdown
 <!-- BEGIN socraticode-policy -->
