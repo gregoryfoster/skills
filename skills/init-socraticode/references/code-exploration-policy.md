@@ -17,14 +17,22 @@ the last table row and any path examples to the project's actual layout.
 
 ## 1. AGENTS.md block (marker-delimited — idempotent)
 
-Insert this into `AGENTS.md`. If a `<!-- BEGIN socraticode-policy -->` /
-`<!-- END socraticode-policy -->` pair already exists, **replace the content
-between the markers** rather than appending a second copy. **Fallback:** if no
-marker pair exists but an unmarked `## Code Exploration Policy` heading does
-(repos bootstrapped before the markers existed — e.g. by `init-project-fastapi`),
-**replace that whole section in place** (the heading through the line before the
-next `##`) with the marked block below, rather than appending a duplicate. If no
-`AGENTS.md` exists, create one and add the block.
+Land exactly one marker-delimited block in `AGENTS.md`, applying these steps in
+order so a repo in any prior state converges to a single marked block:
+
+1. If a `<!-- BEGIN socraticode-policy -->` / `<!-- END socraticode-policy -->`
+   pair already exists, **replace the content between the markers**. Otherwise
+   append the marked block below. (If no `AGENTS.md` exists, create one and add
+   the block.)
+2. **Then, unconditionally,** delete any *other* `## Code Exploration Policy`
+   section **not** enclosed by the marker pair (its heading through the line
+   before the next `##`, or end of file if none follows). This clears the
+   duplicate on repos bootstrapped before the markers existed (e.g. by
+   `init-project-fastapi`) — including repos where an earlier `init-socraticode`
+   run already appended a marked block beside the original unmarked one, so step 1
+   alone would leave the unmarked copy behind.
+
+Never leave more than one policy section.
 
 ```markdown
 <!-- BEGIN socraticode-policy -->
