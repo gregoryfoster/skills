@@ -53,7 +53,7 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 | `api-contracts` | `./openapi.yaml` or a vendored spec snapshot file | the project consumes/publishes specs |
 | `systemd-unit` | `./deploy/` (dir) or a specific `./deploy/app.service` | DEPLOY_TARGET=systemd |
 | `infrastructure` | `./terraform/` or `./k8s/` (dirs) | IaC exists |
-| `project-config` | `./pyproject.toml`, `./.env.example` (one entry each; never real secrets) | dep/tool config or env contract documented |
+| `project-config` | `./pyproject.toml` and/or `./.env.example` (one entry each; never real secrets) | dep/tool config or env contract documented |
 | `style-guide` | `./docs/STYLE.md` | a style doc exists |
 
 ## Template
@@ -112,6 +112,10 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
   or `.gitignore` (those govern the *code* index, not artifacts). So the
   `.socraticodeignore` you add in Phase 4 won't shrink an over-broad artifact
   dir; keep each artifact path scoped to the subtree you actually want embedded.
+- **Each `name` must be unique** (case-insensitive) — the server rejects
+  duplicates at parse time, aborting the whole run. When you split one category
+  into multiple entries, give each a distinct name (as the template's
+  `env-example`/`pyproject` do), not the shared category label twice.
 - **Never point at real secrets.** Include `.env.example`, never `.env`. If the
   project keeps secrets in a tracked file, don't add it as an artifact.
 - **Exact schema shape may drift** between SocratiCode versions. If
@@ -125,14 +129,24 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 | Stack | Likely artifact sources (files / dirs) |
 |---|---|
 | FastAPI (this org) | `./alembic/versions/`, `./AGENTS.md`, `./docs/`, `./deploy/app.service`, `./pyproject.toml` |
-| Click CLI | `./AGENTS.md`, `./docs/`, `./pyproject.toml`, any `*.toml`/`*.yaml` config schema file |
-| PHP / WordPress (Bedrock) | `./composer.json`, `./config/`, a specific `*.sql` dump, `./docs/`, a theme layout `*.blade.php` file |
+| Click CLI | `./AGENTS.md`, `./docs/`, `./pyproject.toml`, a named config file (e.g. `./ruff.toml`) |
+| PHP / WordPress (Bedrock) | `./composer.json`, `./config/`, a named SQL dump (e.g. `./db/schema.sql`), `./docs/`, a named theme layout (e.g. `./resources/views/layouts/app.blade.php`) |
 
-## Verify each path before committing it
+## Two failure modes — shape aborts, a bad path skips
 
-Every artifact `path` must resolve to a real file or directory (the server
-`stat()`s it — a path that matches nothing errors out and aborts the whole
-`codebase_context_index` run):
+The server treats these differently, and the fix differs:
+
+- **Shape errors abort the whole run.** A `paths` array, an empty/missing/
+  non-string `path`, or a duplicate `name` throws at manifest-parse time — nothing
+  indexes, `codebase_context_index` fails outright. This is the #76 bug.
+- **A well-formed but non-resolving `path` skips only that artifact.** The server
+  `stat()`s each path inside a per-artifact `try/catch`; a path that doesn't exist
+  is logged and skipped, and the *other* artifacts still index. It surfaces not as
+  a hard error but as a **short count** — `artifacts N/N` reports fewer indexed
+  than configured. This is exactly why Phase 5 gates on `artifacts N/N` matching.
+
+So: get the *shape* right or Phase 4 dies; get every *path* right or Phase 5's
+count silently comes up short. Verify each path resolves before committing:
 
 ```bash
 # Each path in the manifest should exist:
@@ -142,4 +156,4 @@ done
 ```
 
 Any `MISS` → drop that category from the manifest rather than shipping a path
-that doesn't resolve.
+that skips at index time and leaves `artifacts N/N` short.
