@@ -4,7 +4,7 @@ description: Performs a high-level architectural review evaluating structural he
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: AR, architecture review, architectural review
 ---
 
@@ -62,29 +62,38 @@ bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skil
 
 The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `gather-context.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves the script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/` copy still wins if one exists; `${SD:?…}` fails loudly with the searched paths when no candidate resolves. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
+`gather-context.sh` prints more than a file listing: internal import **fan-in** (which modules the system leans on), **churn hotspots**, and **temporal coupling** (files that change together) mined from the git log. Read those sections — they are the coupling and decay evidence the rest of the review cites.
+
+**When SocratiCode is indexed for this project, use its graph tools for real dependency edges the static snapshot cannot give** — `codebase_graph_circular` (import cycles), `codebase_graph_query` (fan-in/fan-out for a module), `codebase_impact` (blast radius of a change), `codebase_graph_visualize` (layering overview). A coupling or dependency-direction finding backed by graph output is evidence; one backed by eyeballing a file tree is an opinion.
+
 Also:
-- Read AGENTS.md, README.md, and project layout documentation
+- Read AGENTS.md, README.md, and project layout documentation — note the *documented* architecture so Phase 2 can check the real one against it (drift)
 - Survey the full directory tree; identify all modules, apps, and layers
 - Read key files: settings, routing, models, entry points, service configs
-- Note dependency graph between modules (imports, shared state, coupling)
-- Check file sizes (`wc -l`) across all source files to flag oversized modules
 - Review dependency manifest (`pyproject.toml`, `package.json`, etc.) for health
 
 ### Phase 2 — Analyze
 
-Evaluate against these dimensions. See [references/dimensions.md](references/dimensions.md) for detail on each.
+Evaluate against these dimensions. See [references/dimensions.md](references/dimensions.md) for the **Look for / How to find it / Example finding** detail on each — use it; it is what keeps findings evidence-backed.
 
-- DRY — duplicated logic, parallel structures that should be unified
-- Module size & cohesion — files mixing unrelated concerns; >300 lines deserves scrutiny, >500 is a strong signal to split
-- Separation of concerns — business logic leaking into handlers or templates
-- Coupling & dependency direction — circular imports, layering violations
-- Efficiency & performance — N+1 queries, missing indexes, unoptimized loops
-- Configuration & environment — secrets management, hardcoded values
-- Error handling patterns — inconsistent strategies, bare excepts, swallowed errors
-- Naming & discoverability — module names that obscure purpose
-- Schema & data model health — missing constraints, orphaned tables
-- Scalability — patterns that break at 10×, missing pagination, sync work that should be async
-- Test architecture — isolation, fixture reuse, coverage gaps by layer
+**Altitude rule (what makes this not a code review):** *Could a reviewer find it by reading one file?* If yes, it belongs to [`reviewing-code`](../reviewing-code/SKILL.md), not here. Report the structural cousin — duplicated *responsibility* not duplicated lines, resilience *architecture* not a bare `except`, a data-access *pattern* not a single N+1.
+
+- Separation of concerns & boundaries — logic leaking across layers; missing domain seams
+- Coupling & dependency direction — cycles, layering violations, poor evolvability
+- Service contracts & interface stability — breaking API/schema changes at boundaries, client/spec drift
+- Module size & cohesion — size as a proxy for a module doing too many jobs (>300 scrutinize, >500 split)
+- Resilience & failure architecture — timeouts, retries, circuit breakers, blast radius of one failure
+- Scalability & data-access patterns — pagination, async offload, patterns that break at 10×/100×
+- Observability — correlation IDs, structured logs, metrics/tracing at boundaries
+- Trust boundaries & security architecture — where authz lives, tenant isolation, secrets flow (structural slice only; line-level → `security-review`)
+- Configuration & environment — secrets management, config flow, 12-factor
+- Schema & data-model health — constraints, normalization, migration hygiene
+- DRY of responsibility — the same decision owned in two places that must change together
+- Naming & discoverability — layout that lets a newcomer predict where things live
+- Test architecture — isolation seams, coverage by layer, missing unit tier
+- Architecture drift — does the real structure match AGENTS.md's documented one?
+
+Where a coupling/layering/contract finding is accepted, consider whether it can graduate into an **executable fitness function** (import-linter, dependency-cruiser, an OpenAPI diff gate) so it can't silently regress — see the end of [references/dimensions.md](references/dimensions.md). Surface it as the finding's suggested approach; never adopt one unprompted.
 
 ### Phase 3 — Present findings
 
@@ -100,9 +109,9 @@ Required report structure:
 
 Each finding within `### Findings` must follow this format:
 
-> N. **[module/file]** What: \<precise description with file/module reference\>. Why it matters: \<architectural impact: maintainability? performance? correctness?\>. Suggested approach: \<concrete refactoring direction — name new modules, describe the split, sketch the pattern\>.
+> N. **[module/file]** What: \<precise description with file/module reference\>. Why it matters: \<architectural impact: maintainability? performance? correctness?\>. Suggested approach: \<concrete refactoring direction — name new modules, describe the split, sketch the pattern\>. Effort/Blast radius: \<rough cost and reach of the fix: how many modules move, and is it reversible or a one-way door\>.
 
-All three labels (`What:`, `Why it matters:`, `Suggested approach:`) are required in every finding, verbatim.
+All four labels (`What:`, `Why it matters:`, `Suggested approach:`, `Effort/Blast radius:`) are required in every finding, verbatim. The severity marker (🔴/🟡/💭) ranks *how bad the problem is*; `Effort/Blast radius:` is a separate axis for *how expensive and risky the fix is* — a user triaging refactors needs both, because "severe but cheap and reversible" and "severe but a risky migration" warrant different decisions.
 
 ### Phase 3.5 — Verify before reporting
 
@@ -127,6 +136,7 @@ Accept terse directives referencing item numbers:
 | `5: fix, but use X approach` | Refactor with the user's preferred approach |
 | `2: document as TODO` | Add a code comment or AGENTS.md note instead of fixing |
 | `7: investigate further` | Gather more information before deciding |
+| `8: ADR` | Record the decision as an Architecture Decision Record (capture the *why*, not just the change) |
 | `10: GH` | Create or update a corresponding GitHub issue |
 
 After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table:
@@ -147,3 +157,4 @@ If the review leads to structural changes:
 - AGENTS.md project layout and architecture sections
 - README.md if module boundaries or service topology changed
 - Module-level docstrings affected by refactoring
+- An ADR (if directed) capturing *why* the change was made — the decision, the alternatives, the tradeoff — so the next reviewer inherits the reasoning, not just the result
