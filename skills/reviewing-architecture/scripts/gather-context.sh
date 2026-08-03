@@ -79,15 +79,22 @@ if [ "${local_set:-0}" -eq 0 ]; then
   echo " or use the SocratiCode graph tools)"
 else
   # Build a regex alternation of first-party top-level names, then count how
-  # often each is the import target across all .py files.
-  names=$(printf '%s\n%s\n' "$local_pkgs" "$top_py" | grep -v '^$' | sort -u | paste -sd'|' -)
-  grep -rhoE "^[[:space:]]*(from|import)[[:space:]]+($names)\b" \
-    --include='*.py' \
-    --exclude-dir=.venv --exclude-dir=node_modules \
-    --exclude-dir=.git --exclude-dir=__pycache__ . 2>/dev/null \
-    | sed -E "s/^[[:space:]]*(from|import)[[:space:]]+//; s/[[:space:]].*//; s/\..*//" \
-    | sort | uniq -c | sort -rn | capped "modules" 25 \
-    || echo "(no first-party imports found)"
+  # often each is the import target across all .py files. `-Ex '<ident>'` keeps
+  # only valid Python identifiers, so a stray non-module filename can't inject a
+  # regex metacharacter into the alternation below (also drops blank lines).
+  names=$(printf '%s\n%s\n' "$local_pkgs" "$top_py" \
+    | grep -Ex '[A-Za-z_][A-Za-z0-9_]*' | sort -u | paste -sd'|' - || true)
+  if [ -z "$names" ]; then
+    echo "(no first-party imports found)"
+  else
+    grep -rhoE "^[[:space:]]*(from|import)[[:space:]]+($names)\b" \
+      --include='*.py' \
+      --exclude-dir=.venv --exclude-dir=node_modules \
+      --exclude-dir=.git --exclude-dir=__pycache__ . 2>/dev/null \
+      | sed -E "s/^[[:space:]]*(from|import)[[:space:]]+//; s/[[:space:]].*//; s/\..*//" \
+      | sort | uniq -c | sort -rn | capped "modules" 25 \
+      || echo "(no first-party imports found)"
+  fi
 fi
 
 echo ""
