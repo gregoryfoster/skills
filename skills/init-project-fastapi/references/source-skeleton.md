@@ -151,18 +151,35 @@ import sys
 from pythonjsonlogger.json import JsonFormatter
 
 
-def configure_logging(level: int = logging.INFO) -> None:
-    """Configure root logger with JSON formatting. Call once at entry points."""
-    handler = logging.StreamHandler(sys.stdout)
-    # Keys must be named in fmt: a bare JsonFormatter() defaults to
-    # "%(message)s" and emits records with no level, logger, or timestamp.
-    handler.setFormatter(
-        JsonFormatter(
-            "%(levelname)s %(name)s %(message)s",
-            timestamp=True,
-            rename_fields={"levelname": "level", "name": "logger"},
-        )
+def build_json_formatter() -> JsonFormatter:
+    """The single JSON formatter definition for the whole process.
+
+    Referenced by BOTH `configure_logging()` (non-uvicorn entry points) and
+    `src/core/log_config.json` (uvicorn's `--log-config`, via the dictConfig
+    `"()"` factory key), so app records and uvicorn's own access/error lines
+    serialize with one identical schema — no drift, one place to change.
+
+    Keys must be named in the fmt: a bare JsonFormatter() defaults to
+    "%(message)s" and emits records with no level, logger, or timestamp
+    (skills#69).
+    """
+    return JsonFormatter(
+        "%(levelname)s %(name)s %(message)s",
+        timestamp=True,
+        rename_fields={"levelname": "level", "name": "logger"},
     )
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    """Configure the root logger with JSON formatting. Call once at entry
+    points that do NOT run under uvicorn (CLI scripts, alembic env, cron
+    oneshots, tests). Under uvicorn, `--log-config src/core/log_config.json`
+    configures the whole logging tree at boot instead; this call is then a
+    harmless no-op-equivalent (it reinstalls an identical root handler), which
+    keeps app logs JSON even if someone launches uvicorn without --log-config.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(build_json_formatter())
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers = [handler]
@@ -174,3 +191,34 @@ def get_logger(name: str) -> logging.Logger:
 ```
 
 The key set (`timestamp`, `level`, `logger`, `message`) matches structlog's defaults, so a later structlog migration (#68) won't churn downstream log consumers. `timestamp=True` emits ISO-8601 UTC rather than `asctime`'s comma-millisecond local time. `tests/core/test_logging.py` (see [`tests-scaffolding.md`](tests-scaffolding.md)) pins this field set.
+
+## `src/core/log_config.json`
+
+Copy verbatim. This is uvicorn's logging config, passed via `--log-config src/core/log_config.json` in every uvicorn invocation (systemd `ExecStart` and the dev-server commands in [`agents-md-template.md`](agents-md-template.md)). Without it, uvicorn's own loggers (`uvicorn`, `uvicorn.access`, `uvicorn.error`) ship with `propagate=False` and their own plain-text handlers, so `configure_logging()` — which only touches the root logger — never reaches them, and the service emits **mixed-format** logs in journald: plain-text access/error lines interleaved with JSON app records (skills#81, surfaced in observo#395). This file routes all three uvicorn loggers through the same JSON formatter, from the first boot line onward.
+
+```json
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": { "()": "src.core.logging.build_json_formatter" }
+  },
+  "handlers": {
+    "stdout": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "root": { "level": "INFO", "handlers": ["stdout"] },
+  "loggers": {
+    "uvicorn": { "level": "INFO", "handlers": ["stdout"], "propagate": false },
+    "uvicorn.error": { "level": "INFO", "handlers": ["stdout"], "propagate": false },
+    "uvicorn.access": { "level": "INFO", "handlers": ["stdout"], "propagate": false }
+  }
+}
+```
+
+The `"()"` factory key makes dictConfig call `build_json_formatter()`, so this file carries **no** duplicate copy of the fmt string or field renames — the formatter stays single-sourced in `logging.py`. uvicorn's `AccessFormatter` is deliberately not used: a standard `%(message)s` render of an access record already interpolates its `%s`-args into the request line (`127.0.0.1:0 - "GET /health HTTP/1.1" 200`), which lands in the JSON `message` field. Because the app's own loggers still propagate to `root`, and uvicorn's three loggers keep `propagate: false` with their own handler, every record is emitted exactly once. This dictConfig shape is also the seam a later structlog `ProcessorFormatter` migration (#68) would reuse. `tests/core/test_logging.py` pins that this file stays valid and keeps sharing the formatter.
+
+> **`LAYOUT=workspace`:** adjust the `"()"` import path and the `--log-config` path to the package that owns `core/logging.py` (e.g. `packages/<name>/src/...`), matching the `src.*` → package rewrite applied elsewhere in this reference.

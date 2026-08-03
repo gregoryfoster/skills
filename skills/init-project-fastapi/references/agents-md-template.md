@@ -88,7 +88,7 @@ deploy/         — Systemd unit + deployment config
 | Situation | Action |
 |---|---|
 | Code committed to main | `sudo systemctl restart <PROJECT_NAME>` |
-| Testing a worktree/branch | `uv run uvicorn ... --port <API_PORT_DEV> --reload` |
+| Testing a worktree/branch | `uv run uvicorn ... --port <API_PORT_DEV> --reload --log-config src/core/log_config.json` |
 | Debugging the live service | `sudo journalctl -u <PROJECT_NAME> -f` |
 | After editing `deploy/<PROJECT_NAME>.service` | `sudo systemctl daemon-reload && sudo systemctl restart <PROJECT_NAME>` |
 | After DB model changes [DB_BACKED=yes] | `uv run alembic upgrade head` then restart |
@@ -97,7 +97,7 @@ deploy/         — Systemd unit + deployment config
 
 ​```bash
 set -a; . /etc/<PROJECT_NAME>/.env 2>/dev/null; . .env 2>/dev/null; set +a
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload
+uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json
 ​```
 
 **After finishing work.** Always restart the systemd service to pick up changes merged to main:
@@ -111,7 +111,7 @@ sudo systemctl restart <PROJECT_NAME>
 No production deployment yet. Run dev server on port <API_PORT>:
 
 ​```bash
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload
+uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload --log-config src/core/log_config.json
 ​```
 > end include
 

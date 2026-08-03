@@ -184,7 +184,8 @@ Sections in the template: Project Overview, Development Methodology, Environment
 Create the empty `__init__.py` files (`src/`, `src/api/`, `src/core/`), then copy the templates from [`references/source-skeleton.md`](references/source-skeleton.md):
 
 - `src/api/main.py` — FastAPI app with lifespan (calls `assert_database_safety()` when `DB_BACKED=yes`), version from package metadata, `/health`, (when `DB_BACKED=yes`) `/ready`, (when `AUTH_STYLE=header-token`) the authed `/api/v1` router + `require_api_key` dep, and (when `ADMIN_UI=htmx`) the `/static` mount + admin router include. The reference's "Adjustments" subsection lists the edits for each non-default branch point.
-- `src/core/logging.py` — verbatim JSON logging utility (`configure_logging` + `get_logger`).
+- `src/core/logging.py` — verbatim JSON logging utility (`build_json_formatter` + `configure_logging` + `get_logger`).
+- `src/core/log_config.json` — verbatim uvicorn `--log-config` file; routes uvicorn's own `uvicorn`/`uvicorn.access`/`uvicorn.error` loggers through the shared JSON formatter so journald doesn't get mixed plain+JSON lines (skills#81). Wired into the systemd `ExecStart` and the dev-server commands.
 
 ### Phase 5b — Settings (`src/core/config.py`)
 
@@ -473,7 +474,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 | SSH deploy key | Configured |
 | Git remote | `git@github-<PROJECT_NAME>:<GITHUB_ORG>/<PROJECT_NAME>.git` |
 | Python tooling | uv, pytest (+timeout), ruff, ty (non-gating), uv_build |
-| FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready][+/api/v1 authed]), `src/core/logging.py` |
+| FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready][+/api/v1 authed]), `src/core/logging.py`, `src/core/log_config.json` |
 | Settings | `src/core/config.py` (`<SETTINGS_STYLE>`) |
 | Auth | `<AUTH_STYLE>` — when header-token: `require_api_key` + `tests/api/test_auth.py` |
 | Admin UI | `<ADMIN_UI>` — when htmx: `src/api/admin/`, `src/templates/`, `src/static/vendor/htmx.min.js` (vendored), `require_admin` + `tests/api/test_admin.py` |

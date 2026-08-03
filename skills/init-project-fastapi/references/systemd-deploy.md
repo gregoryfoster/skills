@@ -43,7 +43,9 @@ Environment=<PROJECT_UNDERSCORE_UPPER>_ALLOW_PRODUCTION_DB=1
 
 # --frozen --no-sync: serve exactly the committed lockfile; dependency sync
 # is a deploy step, not a service-start side effect.
-ExecStart=/usr/local/bin/uv run --frozen --no-sync uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT>
+# --log-config: route uvicorn's own access/error loggers through the app's
+# JSON formatter (skills#81) — without it journald gets mixed plain+JSON lines.
+ExecStart=/usr/local/bin/uv run --frozen --no-sync uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --log-config src/core/log_config.json
 Restart=on-failure
 RestartSec=5
 

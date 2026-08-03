@@ -137,15 +137,21 @@ async def test_health_returns_ok(client):
 
 ## `tests/core/test_logging.py` — always created
 
-Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line.
+Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line. The last two tests guard the uvicorn `--log-config` unification (skills#81): that `src/core/log_config.json` stays valid and single-sources its formatter, and that the shared formatter renders a uvicorn *access* record with the same field set — so uvicorn's own lines never regress to plain text alongside JSON app logs.
 
 ```python
-"""Regression test: JSON log records carry timestamp, level, and logger name."""
+"""Regression tests: JSON log records carry timestamp, level, and logger name,
+and uvicorn's own loggers share the app's JSON formatter (skills#69, skills#81).
+"""
 
 import json
 import logging
+import logging.config
+from pathlib import Path
 
-from src.core.logging import configure_logging, get_logger
+from src.core.logging import build_json_formatter, configure_logging, get_logger
+
+LOG_CONFIG_PATH = Path("src/core/log_config.json")
 
 
 def test_log_record_includes_structured_fields(capsys):
@@ -162,6 +168,54 @@ def test_log_record_includes_structured_fields(capsys):
     assert record["level"] == "WARNING"
     assert record["logger"] == "src.some.module"
     assert "timestamp" in record
+
+
+def test_uvicorn_log_config_is_valid_and_shares_formatter():
+    """The uvicorn --log-config file wires uvicorn's loggers through the same
+    formatter as the app, and dictConfig accepts it (a malformed file would
+    fail the service at boot, not in review)."""
+    config = json.loads(LOG_CONFIG_PATH.read_text())
+
+    # Single source of truth: the file builds its formatter from the factory
+    # configure_logging() also uses, not a duplicated fmt string.
+    assert any(
+        f.get("()") == "src.core.logging.build_json_formatter"
+        for f in config["formatters"].values()
+    )
+    # All three uvicorn loggers must be present, else they keep the plain default.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        assert name in config["loggers"]
+
+    names = ("", "uvicorn", "uvicorn.error", "uvicorn.access")
+    saved = {
+        n: (logging.getLogger(n).handlers[:], logging.getLogger(n).propagate)
+        for n in names
+    }
+    try:
+        logging.config.dictConfig(config)  # raises on a malformed config
+    finally:
+        for n, (handlers, propagate) in saved.items():
+            lg = logging.getLogger(n)
+            lg.handlers, lg.propagate = handlers, propagate
+
+
+def test_shared_formatter_renders_uvicorn_access_record():
+    """A uvicorn.access record formats to JSON with the same fields as app logs
+    — the request line lands in `message`, not a plain-text handler."""
+    record = logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:0", "GET", "/health", "1.1", 200),
+        exc_info=None,
+    )
+    parsed = json.loads(build_json_formatter().format(record))
+    assert parsed["logger"] == "uvicorn.access"
+    assert parsed["level"] == "INFO"
+    assert parsed["message"] == '127.0.0.1:0 - "GET /health HTTP/1.1" 200'
+    assert "timestamp" in parsed
 ```
 
 ## `tests/core/test_config.py` — always created
