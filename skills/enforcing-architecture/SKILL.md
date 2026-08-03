@@ -100,8 +100,12 @@ only runs once the tree already satisfies the rule (Phase 6 would otherwise fail
 
 ## Commit & summary
 
-After wiring, commit the config + dev-dependency + AGENTS.md changes together (the CI wiring rides the
-same commit or the user's `shipping-work`/CR flow). Present a summary:
+After wiring, commit the config + dev-dependency + AGENTS.md changes together. The commit boundary
+depends on how the skill was invoked: **standalone** (user asked directly) — commit all of it,
+including the CI wiring, here. **Mid-review** (handed off from `reviewing-architecture` Phase 4) — do
+**not** open a separate commit; leave the changes staged so they land through the review's own commit
+gate (or the user's `shipping-work`/CR flow), keeping one reviewed boundary for the whole session.
+Present a summary:
 
 | Rule | Tool | Config | Wired into |
 |---|---|---|---|

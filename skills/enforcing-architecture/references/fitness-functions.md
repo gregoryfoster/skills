@@ -120,9 +120,10 @@ When the finding is "module X does too many jobs; keep it under N lines", prefer
 fall back to a portable CI gate.
 
 - **JS/TS** — eslint: `"max-lines": ["error", { "max": <N>, "skipComments": true }]`.
-- **Python** — pylint: `[tool.pylint.format] max-module-lines = <N>` (add pylint dev dep, or a scoped
-  invocation limited to the target module to avoid a full pylint adoption).
-- **PHP / portable fallback** — a shell gate in CI (no new dependency):
+- **Python** — use the portable gate below (the CannObserv Python stack is ruff-based, and ruff has no
+  per-file line rule; pulling in pylint just for a line ceiling is an out-of-stack dependency). Reach
+  for pylint's `[tool.pylint.format] max-module-lines = <N>` **only** if the project already runs pylint.
+- **PHP / portable fallback / anything else** — a shell gate in CI (no new dependency):
 
   ```bash
   # fail (non-zero exit) if any tracked file in <dir> exceeds <N> lines
@@ -151,7 +152,8 @@ Before wiring, detect what the project actually uses (don't assume `.github/work
 ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null   # GitHub Actions
 test -f .pre-commit-config.yaml && echo pre-commit
 test -f grumphp.yml -o -f grumphp.yml.dist && echo grumphp        # PHP local gate
-command -v jq >/dev/null && jq -e '.scripts' package.json 2>/dev/null   # npm scripts
+{ command -v jq >/dev/null && jq -e '.scripts' package.json >/dev/null 2>&1; } \
+  || grep -q '"scripts"' package.json 2>/dev/null && echo npm-scripts   # jq-optional
 grep -q '"scripts"' composer.json 2>/dev/null && echo composer-scripts
 ```
 
