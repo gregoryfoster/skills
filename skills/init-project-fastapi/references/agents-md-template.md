@@ -186,8 +186,8 @@ uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "description"
 
 # FastAPI dev server
-uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload   # DEPLOY_TARGET=systemd
-# uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload     # DEPLOY_TARGET=none
+uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT_DEV> --reload --log-config src/core/log_config.json   # DEPLOY_TARGET=systemd
+# uv run uvicorn src.api.main:app --host 0.0.0.0 --port <API_PORT> --reload --log-config src/core/log_config.json     # DEPLOY_TARGET=none
 ​```
 
 Full reference: `docs/COMMANDS.md`

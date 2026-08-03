@@ -188,15 +188,21 @@ def test_uvicorn_log_config_is_valid_and_shares_formatter():
 
     names = ("", "uvicorn", "uvicorn.error", "uvicorn.access")
     saved = {
-        n: (logging.getLogger(n).handlers[:], logging.getLogger(n).propagate)
+        n: (
+            logging.getLogger(n).handlers[:],
+            logging.getLogger(n).propagate,
+            logging.getLogger(n).level,
+        )
         for n in names
     }
     try:
         logging.config.dictConfig(config)  # raises on a malformed config
     finally:
-        for n, (handlers, propagate) in saved.items():
+        # Restore level too: dictConfig sets root + uvicorn loggers to INFO,
+        # and leaking that into later tests would be an order-dependent flake.
+        for n, (handlers, propagate, level) in saved.items():
             lg = logging.getLogger(n)
-            lg.handlers, lg.propagate = handlers, propagate
+            lg.handlers, lg.propagate, lg.level = handlers, propagate, level
 
 
 def test_shared_formatter_renders_uvicorn_access_record():
