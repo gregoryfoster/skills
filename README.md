@@ -12,7 +12,7 @@ Skills are folders of instructions, scripts, and references that agents can disc
 | [`reviewing-code-php`](skills/reviewing-code-php/) | CR, code review, perform a review | PHP/WordPress/Bedrock/Sage 11 variant of `reviewing-code` |
 | [`reviewing-code-python-fastapi`](skills/reviewing-code-python-fastapi/) | CR, code review, perform a review | Python/FastAPI variant of `reviewing-code` (uv + ruff + pytest + Pydantic v2) |
 | [`reviewing-code-python-click`](skills/reviewing-code-python-click/) | CR, code review, perform a review | Python/Click CLI variant of `reviewing-code` (uv + ruff + pytest + Pydantic v2) |
-| [`reviewing-architecture`](skills/reviewing-architecture/) | AR, architecture review, architectural review | High-level architectural review across 11 structural dimensions |
+| [`reviewing-architecture`](skills/reviewing-architecture/) | AR, architecture review, architectural review | High-level architectural review across 14 structural dimensions |
 | [`shipping-work`](skills/shipping-work/) | ship it, push GH, close GH, wrap up | Commit, push, comment, and close GitHub issues |
 | [`shipping-work-php`](skills/shipping-work-php/) | ship it, push GH, close GH, wrap up | PHP/WordPress/Bedrock/Sage 11 variant of `shipping-work` |
 | [`shipping-work-python-fastapi`](skills/shipping-work-python-fastapi/) | ship it, push GH, close GH, wrap up | Python/FastAPI variant of `shipping-work` (uv + ruff + pytest) |
