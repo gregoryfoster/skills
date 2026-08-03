@@ -119,7 +119,7 @@ else
   for c in tsconfig.json jsconfig.json; do
     [ -f "$c" ] && { tsconf="$c"; break; }
   done
-  alias_pairs=""            # lines of "<prefix>\t<dir>" fed to awk before the hits
+  alias_pairs=""            # lines of "<prefix>\t<dir>\t<star>" fed to awk before hits
   if [ -n "$tsconf" ]; then
     base=$(grep -oE '"baseUrl"[[:space:]]*:[[:space:]]*"[^"]*"' "$tsconf" 2>/dev/null \
              | head -1 | sed -E 's/.*"([^"]*)"[[:space:]]*$/\1/' || true)
@@ -135,15 +135,23 @@ else
       tgt=$(printf '%s' "$line" | sed -E 's/.*\[[[:space:]]*"([^"]+)".*/\1/')
       case "$key" in *[/*@]*) : ;; *) continue ;; esac
       case "$tgt" in *[/*]*) : ;; *) continue ;; esac
+      # star=1 only for wildcard keys ("@/*") — those may prefix-match; an exact
+      # key ("@app") must match a specifier verbatim, else it bleeds into
+      # unrelated third-party names (@application/...) it happens to prefix.
+      star=0; case "$key" in *\*) star=1 ;; esac
       kp=${key%\*}; tp=${tgt%\*}; tp=${tp#./}
       [ "$base" != "." ] && [ -n "$base" ] && tp="$base/$tp"
-      alias_pairs="$alias_pairs$kp"$'\t'"$tp"$'\n'
+      alias_pairs="$alias_pairs$kp"$'\t'"$tp"$'\t'"$star"$'\n'
     done <<<"$entries"
   fi
   alias_n=$(printf '%s' "$alias_pairs" | grep -c . || true)
   # --- Tier 1 (core): every import/require/export-from specifier + its file --
   # -H keeps the source path (needed to resolve relative specifiers); -o isolates
   # each `from '…'` / `import('…')` / `require('…')` / bare `import '…'` clause.
+  # Not anchored to line start (the Python pass is) so mid-line dynamic import()/
+  # require() and re-exports are caught; the cost is minor false positives from
+  # commented-out imports and `.from('./x')` calls (e.g. Array.from) — acceptable
+  # noise for a heuristic snapshot.
   raw=$(grep -rHoE "(from|import|require)[[:space:]]*\(?[[:space:]]*['\"][^'\"]+['\"]" \
           --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
           --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.venv \
@@ -152,7 +160,7 @@ else
   # before the sentinel populate the alias map; lines after are resolved hits.
   fanin=$( { printf '%s' "$alias_pairs"; printf '\037SEP\n'; printf '%s\n' "$raw"; } \
     | awk '
-        function norm(p,   m,sg,i,s,tp,r) {           # collapse . and .. segments
+        function norm(p,   m,sg,i,s,tp,r,stk) {       # collapse . and .. segments
           m = split(p, sg, "/"); tp = 0
           for (i = 1; i <= m; i++) {
             s = sg[i]
@@ -165,9 +173,12 @@ else
           return r
         }
         $0 == "\037SEP" { mode = 1; next }
-        mode != 1 {                                   # alias pair: prefix \t dir
+        mode != 1 {                                   # alias pair: prefix \t dir \t star
           ti = index($0, "\t"); if (ti == 0) next
-          apref[++na] = substr($0, 1, ti - 1); adir[na] = substr($0, ti + 1)
+          apref[++na] = substr($0, 1, ti - 1)
+          rest2 = substr($0, ti + 1); tj = index(rest2, "\t")
+          if (tj == 0) { adir[na] = rest2; astar[na] = 0 }
+          else { adir[na] = substr(rest2, 1, tj - 1); astar[na] = substr(rest2, tj + 1) }
           next
         }
         {
@@ -182,7 +193,9 @@ else
           } else {                                     # else try the alias map
             for (i = 1; i <= na; i++) {
               if (spec == apref[i]) { resolved = norm(adir[i]); break }
-              if (index(spec, apref[i]) == 1) {
+              # prefix-match only wildcard aliases, and never an empty prefix (a
+              # "*" catch-all) which would swallow every bare third-party import.
+              if (astar[i] == 1 && apref[i] != "" && index(spec, apref[i]) == 1) {
                 resolved = norm(adir[i] "/" substr(spec, length(apref[i]) + 1)); break
               }
             }

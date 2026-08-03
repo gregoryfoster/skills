@@ -17,8 +17,8 @@ Clear boundaries between layers (models, services, handlers, serialization) and 
 ## Coupling & dependency direction
 Circular imports, layering violations (lower layers importing higher ones), and modules that should be independent but aren't. Direction matters more than count: dependencies should point toward stable abstractions.
 - **Look for:** import cycles; `models/` importing `services/`; two "sibling" services that import each other; a change in one module forcing edits across many (poor evolvability).
-- **How to find it:** `codebase_graph_circular` for cycles and `codebase_impact` for blast radius when SocratiCode is indexed; otherwise the `=== Import edges ===` block from gather-context. Fan-in/fan-out ratios flag instability.
-- **Example finding:** *`services/billing.py` ↔ `services/accounts.py` form an import cycle (gather-context, Import edges). Extract the shared `Invoice` type into `models/invoice.py` so both depend on it and neither on each other.*
+- **How to find it:** `codebase_graph_circular` for cycles and `codebase_impact` for blast radius when SocratiCode is indexed; otherwise the `=== Internal import fan-in ===` blocks (Python and JS/TS) from gather-context. Fan-in/fan-out ratios flag instability.
+- **Example finding:** *`services/billing.py` ↔ `services/accounts.py` form an import cycle (gather-context, Internal import fan-in). Extract the shared `Invoice` type into `models/invoice.py` so both depend on it and neither on each other.*
 
 ## Service contracts & interface stability
 For multi-service repos: the API/schema surface other services depend on, its versioning, and backward compatibility. A breaking change at a boundary is an architectural event, not a code change.
