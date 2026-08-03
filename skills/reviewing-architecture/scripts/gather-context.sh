@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--help" ]]; then
   echo ""
   echo "Prints, for the enclosing git repo:"
   echo "  - directory tree, source file sizes, dependency manifests, recent commits"
-  echo "  - internal import fan-in (which modules everything depends on)"
+  echo "  - internal import fan-in, per stack (which modules everything depends on)"
   echo "  - churn hotspots and temporal coupling mined from git history"
   echo "Every truncated list discloses the omitted count. Resolves the git root"
   echo "regardless of invocation directory."
@@ -75,8 +75,7 @@ local_pkgs=$(find . -maxdepth 2 -name '__init__.py' \
 top_py=$(find . -maxdepth 1 -name '*.py' 2>/dev/null | sed -E 's#^\./##; s#\.py$##' || true)
 local_set=$(printf '%s\n%s\n' "$local_pkgs" "$top_py" | grep -c . || true)
 if [ "${local_set:-0}" -eq 0 ]; then
-  echo "(no Python packages detected — for other stacks, inspect imports manually"
-  echo " or use the SocratiCode graph tools)"
+  echo "(no Python packages detected)"
 else
   # Build a regex alternation of first-party top-level names, then count how
   # often each is the import target across all .py files. `-Ex '<ident>'` keeps
@@ -94,6 +93,115 @@ else
       | sed -E "s/^[[:space:]]*(from|import)[[:space:]]+//; s/[[:space:]].*//; s/\..*//" \
       | sort | uniq -c | sort -rn | capped "modules" 25 \
       || echo "(no first-party imports found)"
+  fi
+fi
+
+echo ""
+echo "=== Internal import fan-in (JS/TS) ==="
+# JS/TS analogue of the Python pass. First-party dependence here is expressed as
+# relative imports (./ ../) or tsconfig path aliases (@/...), NOT bare package
+# names — bare specifiers resolve to node_modules (third-party) and are excluded,
+# mirroring the stdlib/third-party exclusion above. Unlike Python's absolute
+# package names, a relative specifier resolves against EACH importing file's
+# directory, so we carry the source path and normalize `.`/`..` per hit, then
+# bucket by resolved module. When SocratiCode is indexed, prefer its graph tools.
+js_count=$(find . \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) \
+             -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/.venv/*' \
+             -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null | grep -c . || true)
+if [ "${js_count:-0}" -eq 0 ]; then
+  echo "(no JS/TS sources detected)"
+else
+  # --- Tier 2 (best-effort): tsconfig/jsconfig path aliases -----------------
+  # tsconfig is routinely JSONC (comments, trailing commas) which rejects `jq`,
+  # so parse the two tokens we need with grep/sed instead. Whatever we cannot
+  # parse is disclosed below, never silently dropped.
+  tsconf=""
+  for c in tsconfig.json jsconfig.json; do
+    [ -f "$c" ] && { tsconf="$c"; break; }
+  done
+  alias_pairs=""            # lines of "<prefix>\t<dir>" fed to awk before the hits
+  if [ -n "$tsconf" ]; then
+    base=$(grep -oE '"baseUrl"[[:space:]]*:[[:space:]]*"[^"]*"' "$tsconf" 2>/dev/null \
+             | head -1 | sed -E 's/.*"([^"]*)"[[:space:]]*$/\1/' || true)
+    base=${base:-.}; base=${base#./}; base=${base%/}
+    # Each paths entry looks like  "@/*": ["src/*", ...] — take the first target.
+    # Require both sides to be path-like (contain / * or @) so non-path arrays
+    # such as "lib": ["ES2020"] or "types": ["node"] cannot masquerade as aliases.
+    entries=$(grep -oE '"[^"]+"[[:space:]]*:[[:space:]]*\[[[:space:]]*"[^"]+"' \
+                "$tsconf" 2>/dev/null || true)
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      key=$(printf '%s' "$line" | sed -E 's/^"([^"]+)".*/\1/')
+      tgt=$(printf '%s' "$line" | sed -E 's/.*\[[[:space:]]*"([^"]+)".*/\1/')
+      case "$key" in *[/*@]*) : ;; *) continue ;; esac
+      case "$tgt" in *[/*]*) : ;; *) continue ;; esac
+      kp=${key%\*}; tp=${tgt%\*}; tp=${tp#./}
+      [ "$base" != "." ] && [ -n "$base" ] && tp="$base/$tp"
+      alias_pairs="$alias_pairs$kp"$'\t'"$tp"$'\n'
+    done <<<"$entries"
+  fi
+  alias_n=$(printf '%s' "$alias_pairs" | grep -c . || true)
+  # --- Tier 1 (core): every import/require/export-from specifier + its file --
+  # -H keeps the source path (needed to resolve relative specifiers); -o isolates
+  # each `from '…'` / `import('…')` / `require('…')` / bare `import '…'` clause.
+  raw=$(grep -rHoE "(from|import|require)[[:space:]]*\(?[[:space:]]*['\"][^'\"]+['\"]" \
+          --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+          --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.venv \
+          --exclude-dir=dist --exclude-dir=build . 2>/dev/null || true)
+  # Feed alias pairs, a sentinel, then the raw hits into one awk pass. Lines
+  # before the sentinel populate the alias map; lines after are resolved hits.
+  fanin=$( { printf '%s' "$alias_pairs"; printf '\037SEP\n'; printf '%s\n' "$raw"; } \
+    | awk '
+        function norm(p,   m,sg,i,s,tp,r) {           # collapse . and .. segments
+          m = split(p, sg, "/"); tp = 0
+          for (i = 1; i <= m; i++) {
+            s = sg[i]
+            if (s == "" || s == ".") continue
+            else if (s == "..") { if (tp > 0) tp-- }
+            else stk[++tp] = s
+          }
+          r = ""
+          for (i = 1; i <= tp; i++) r = r (i > 1 ? "/" : "") stk[i]
+          return r
+        }
+        $0 == "\037SEP" { mode = 1; next }
+        mode != 1 {                                   # alias pair: prefix \t dir
+          ti = index($0, "\t"); if (ti == 0) next
+          apref[++na] = substr($0, 1, ti - 1); adir[na] = substr($0, ti + 1)
+          next
+        }
+        {
+          ci = index($0, ":"); if (ci == 0) next      # split PATH:MATCH on 1st :
+          file = substr($0, 1, ci - 1); rest = substr($0, ci + 1)
+          if (!match(rest, /['\''"][^'\''"]+['\''"]/)) next
+          spec = substr(rest, RSTART + 1, RLENGTH - 2)
+          resolved = ""
+          if (spec ~ /^\.\.?\//) {                     # relative → resolve vs file dir
+            dir = file; sub(/\/[^\/]*$/, "", dir); if (dir == file) dir = "."
+            resolved = norm(dir "/" spec)
+          } else {                                     # else try the alias map
+            for (i = 1; i <= na; i++) {
+              if (spec == apref[i]) { resolved = norm(adir[i]); break }
+              if (index(spec, apref[i]) == 1) {
+                resolved = norm(adir[i] "/" substr(spec, length(apref[i]) + 1)); break
+              }
+            }
+            if (resolved == "") next                   # bare specifier = third-party
+          }
+          sub(/\.(ts|tsx|js|jsx)$/, "", resolved); sub(/\/index$/, "", resolved)
+          if (resolved != "") count[resolved]++
+        }
+        END { for (k in count) print count[k] "\t" k }
+      ' 2>/dev/null | sort -rn || true)
+  if [ -n "$fanin" ]; then
+    printf '%s\n' "$fanin" | capped "modules" 25
+  else
+    echo "(no first-party (relative/alias) imports found)"
+  fi
+  if [ "${alias_n:-0}" -gt 0 ]; then
+    echo "(resolved $alias_n tsconfig path alias(es) from $tsconf)"
+  elif [ -n "$tsconf" ] && grep -q '"paths"' "$tsconf" 2>/dev/null; then
+    echo "(note: $tsconf declares compilerOptions.paths but none parsed — alias imports excluded)"
   fi
 fi
 
