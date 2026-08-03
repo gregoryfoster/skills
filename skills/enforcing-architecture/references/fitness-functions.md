@@ -106,8 +106,8 @@ deptrac:
     Providers: ~     # Providers may depend on nothing above
 ```
 
-Dev dependency: `composer require --dev qossmic/deptrac-shim` (or the phar). Run:
-`vendor/bin/deptrac analyse`.
+Dev dependency: `composer require --dev deptrac/deptrac` (the maintained package; the older
+`qossmic/deptrac-shim` still installs but is legacy — or use the phar). Run: `vendor/bin/deptrac analyse`.
 
 Wiring: add a composer script `"deptrac": "deptrac analyse"`, then reference it from the CI job and/or
 a GrumPHP task if GrumPHP is the local pre-commit surface.
@@ -125,8 +125,8 @@ fall back to a portable CI gate.
 - **PHP / portable fallback** — a shell gate in CI (no new dependency):
 
   ```bash
-  # fail if any tracked file in <dir> exceeds <N> lines
-  ! git ls-files '<dir>/**' | xargs wc -l | awk -v n=<N> '$1>n && $2!="total"{print; bad=1} END{exit bad}'
+  # fail (non-zero exit) if any tracked file in <dir> exceeds <N> lines
+  git ls-files -z '<dir>' | xargs -0r wc -l | awk -v n=<N> '$1>n && $2!="total"{print; bad=1} END{exit bad}'
   ```
 
 Wiring: the eslint/pylint rule rides the existing lint job; the portable gate becomes a named CI step.
