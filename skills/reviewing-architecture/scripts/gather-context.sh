@@ -29,8 +29,13 @@ cd "$PROJECT_ROOT"
 capped() {
   local label="$1" limit="$2" buf total
   buf=$(cat)
+  [ -n "$buf" ] || return 0          # empty section: emit nothing, not a blank line
   total=$(printf '%s\n' "$buf" | grep -c . || true)
-  printf '%s\n' "$buf" | head -n "$limit"
+  # Here-string, not `printf | head`: a pipe lets head close the read end after
+  # $limit lines while the writer is mid-stream, and the resulting SIGPIPE under
+  # `set -o pipefail` would abort the whole script on any repo larger than the
+  # pipe buffer — silently truncating the very snapshot this is meant to disclose.
+  head -n "$limit" <<<"$buf"
   if [ "$total" -gt "$limit" ]; then
     echo "... ($((total - limit)) more $label omitted; $total total)"
   fi
@@ -77,7 +82,9 @@ else
   # often each is the import target across all .py files.
   names=$(printf '%s\n%s\n' "$local_pkgs" "$top_py" | grep -v '^$' | sort -u | paste -sd'|' -)
   grep -rhoE "^[[:space:]]*(from|import)[[:space:]]+($names)\b" \
-    --include='*.py' . 2>/dev/null \
+    --include='*.py' \
+    --exclude-dir=.venv --exclude-dir=node_modules \
+    --exclude-dir=.git --exclude-dir=__pycache__ . 2>/dev/null \
     | sed -E "s/^[[:space:]]*(from|import)[[:space:]]+//; s/[[:space:]].*//; s/\..*//" \
     | sort | uniq -c | sort -rn | capped "modules" 25 \
     || echo "(no first-party imports found)"
