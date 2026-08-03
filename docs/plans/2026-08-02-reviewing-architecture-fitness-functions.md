@@ -1,7 +1,7 @@
 ---
 title: Generate & wire fitness functions from accepted architecture findings (issue #80)
 date: 2026-08-02
-status: draft
+status: accepted
 ---
 
 # Fitness functions from accepted architecture findings
@@ -29,13 +29,16 @@ recognition and a hand-off of `{stack, the specific rule, scope}`.
 
 The new skill carries a `references/fitness-functions.md` playbook of **vetted per-tool config
 snippets** (import-linter contract types, dependency-cruiser `forbidden` rules) — mirroring how
-`dimensions.md` and vendoring's `references/` already work — because import-linter and
-dependency-cruiser schemas are fiddly enough that inline reconstruction ships checks that silently
-pass. Stack detection keys off the manifest (`pyproject.toml` → import-linter; `package.json` →
-dependency-cruiser). The **OpenAPI contract case delegates to `vendoring-openapi-client`'s existing
-tiered drift guard** rather than reimplementing a differ. Config + dev dependency + an AGENTS.md
-contract note are always written; the CI wiring is generated as a **reviewable diff** that lands
-through the normal `shipping-work`/CR commit path, never silently applied.
+`dimensions.md` and vendoring's `references/` already work — because import-linter,
+dependency-cruiser, and deptrac schemas are fiddly enough that inline reconstruction ships checks that
+silently pass. Stack detection keys off the manifest (`pyproject.toml` → import-linter; `package.json`
+→ dependency-cruiser; `composer.json` → **deptrac** for the PHP/WordPress case), plus a per-language
+**module-size** gate. The **OpenAPI contract case delegates to `vendoring-openapi-client`'s existing
+tiered drift guard** rather than reimplementing a differ. The skill **detects the project's check
+surface** (composer scripts, `.github/workflows/`, pre-commit, GrumPHP) rather than assuming one.
+Config + dev dependency + an AGENTS.md contract note are always written; the CI wiring is generated as
+a **reviewable diff** that lands through the normal `shipping-work`/CR commit path, never silently
+applied.
 
 Directive grammar extends the existing terse table with both a compound flag and a bare verb:
 `N: fix + fitness` (refactor, then lock it) and bare `N: fitness` (architecture already correct —
@@ -87,18 +90,23 @@ encode the invariant without a refactor; common for the drift dimension).
 8. **Docs & version bumps.** README skill list, `reviewing-architecture` version bump, and any family
    index that enumerates skills.
 
+## Resolved decisions (2026-08-02)
+
+- **Skill name** → `enforcing-architecture`.
+- **Module-size fitness function** → in scope for v1 (fourth check type alongside import-linter,
+  dependency-cruiser, deptrac).
+- **Language coverage** → Python (import-linter), JS/TS (dependency-cruiser), **PHP (deptrac** — the
+  `cannabis.observer-wordpress` repo), OpenAPI (delegate to `vendoring-openapi-client`), plus a
+  per-language module-size gate.
+- **CI wiring** → **detect the surface** (composer scripts / `.github/workflows/` / pre-commit /
+  GrumPHP), don't assume a fixed one.
+- **Delegation mechanics** → `reviewing-architecture` invokes `enforcing-architecture` via the **Skill
+  tool** mid-Phase-4.
+
 ## Open questions / risks
 
-- **Skill name.** `enforcing-architecture` vs `wiring-fitness-functions` vs `fitness-functions`. Plan
-  assumes `enforcing-architecture`; confirm before scaffolding (directory + symlinks are cheap to
-  rename now, costly later).
-- **Module-size fitness function.** #78's dimensions.md also lists a module-size lint threshold as a
-  candidate fitness function. In scope for v1, or defer? (import-linter/dep-cruiser + OpenAPI are the
-  three named in #80; module-size is a fourth.)
-- **Language coverage for v1.** Python (import-linter) + JS/TS (dependency-cruiser) + OpenAPI covers the
-  named cases. Any other stack expected at launch?
-- **How prescriptive the CI wiring is.** Do we assume a `.github/workflows/` + pre-commit surface (as
-  the CR/shipping skills model), or detect the surface? Detection is more robust but larger.
-- **Delegation mechanics.** Does `reviewing-architecture` invoke the new skill via the Skill tool
-  mid-Phase-4, or emit an instruction the user re-triggers? First is smoother; second keeps the
-  review's commit boundary clean.
+- PHP `deptrac` config lives at repo root as `deptrac.yaml`; confirm the WordPress monorepo's layer
+  boundaries (themes/plugins/app) map cleanly to deptrac layers, or whether per-package configs are
+  needed. Resolve during Step 2 against the actual repo.
+- Module-size gate has no single portable linter across all four stacks; plan uses linter-native rules
+  where they exist (eslint `max-lines`) and a portable line-count CI gate elsewhere.

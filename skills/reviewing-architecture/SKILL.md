@@ -4,7 +4,7 @@ description: Performs a high-level architectural review evaluating structural he
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: AR, architecture review, architectural review
 ---
 
@@ -93,7 +93,7 @@ Evaluate against these dimensions. See [references/dimensions.md](references/dim
 - Test architecture — isolation seams, coverage by layer, missing unit tier
 - Architecture drift — does the real structure match AGENTS.md's documented one?
 
-Where a coupling/layering/contract finding is accepted, consider whether it can graduate into an **executable fitness function** (import-linter, dependency-cruiser, an OpenAPI diff gate) so it can't silently regress — see the end of [references/dimensions.md](references/dimensions.md). Surface it as the finding's suggested approach; never adopt one unprompted.
+Where a coupling/layering/contract finding is accepted, consider whether it can graduate into an **executable fitness function** (import-linter, dependency-cruiser, deptrac, a module-size gate, or an OpenAPI diff gate) so it can't silently regress — see the end of [references/dimensions.md](references/dimensions.md). Surface it as the finding's suggested approach; never adopt one unprompted. When the user opts in (see the `fitness` directives below), delegate the actual generation and wiring to [`enforcing-architecture`](../enforcing-architecture/SKILL.md) via the Skill tool, handing off the finding's rule, scope, and stack.
 
 ### Phase 3 — Present findings
 
@@ -134,10 +134,14 @@ Accept terse directives referencing item numbers:
 | `1: fix` | Implement the suggested refactoring |
 | `3: stet` | Leave as-is (acknowledged, no action) |
 | `5: fix, but use X approach` | Refactor with the user's preferred approach |
+| `4: fix + fitness` | Refactor, then graduate the rule into an executable fitness function (delegates to [`enforcing-architecture`](../enforcing-architecture/SKILL.md)) |
+| `6: fitness` | Encode the rule as a fitness function without a refactor — the architecture is already correct, just lock it so it can't regress (delegates to `enforcing-architecture`) |
 | `2: document as TODO` | Add a code comment or AGENTS.md note instead of fixing |
 | `7: investigate further` | Gather more information before deciding |
 | `8: ADR` | Record the decision as an Architecture Decision Record (capture the *why*, not just the change) |
 | `10: GH` | Create or update a corresponding GitHub issue |
+
+For `fix + fitness` and bare `fitness`, invoke the [`enforcing-architecture`](../enforcing-architecture/SKILL.md) skill (Skill tool) once the tree satisfies the rule, handing off the finding's rule, scope, and stack. For `fix + fitness`, complete the refactor first.
 
 After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table:
 

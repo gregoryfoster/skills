@@ -96,8 +96,8 @@ Does the real structure match the documented one? The cheapest high-value check 
 
 ## Turning findings into fitness functions
 Architecture rots between reviews because nothing enforces the fixes. When a coupling, layering, or contract finding is accepted (`fix`), consider whether it can graduate into an **executable check** so it can't regress:
-- **Layering / no-cycles:** an [import-linter](https://import-linter.readthedocs.io/) contract (Python) or [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) rule (JS/TS) in CI.
+- **Layering / no-cycles:** an [import-linter](https://import-linter.readthedocs.io/) contract (Python), [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) rule (JS/TS), or [deptrac](https://github.com/qossmic/deptrac) ruleset (PHP) in CI.
 - **Contract stability:** an OpenAPI diff gate against the last release (see [`vendoring-openapi-client`](../../vendoring-openapi-client) for the drift-guard pattern).
 - **Module size:** a lint threshold that fails the build past an agreed ceiling.
 
-A fitness function is optional, not automatic — surface it as the `Suggested approach` for the relevant finding so the user can opt in. A one-time refactor fixes today; a fitness function keeps it fixed.
+A fitness function is optional, not automatic — surface it as the `Suggested approach` for the relevant finding so the user can opt in. When they do (`fix + fitness` or bare `fitness`), the [`enforcing-architecture`](../../enforcing-architecture/SKILL.md) skill generates the config, adds the dev dependency, documents the contract in AGENTS.md, and wires it into the detected check surface. A one-time refactor fixes today; a fitness function keeps it fixed.
