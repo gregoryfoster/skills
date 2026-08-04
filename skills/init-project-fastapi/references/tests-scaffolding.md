@@ -137,11 +137,12 @@ async def test_health_returns_ok(client):
 
 ## `tests/core/test_logging.py` — always created
 
-Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line. The last two tests guard the uvicorn `--log-config` unification (skills#81): that `src/core/log_config.json` stays valid and single-sources its formatter, and that the shared formatter renders a uvicorn *access* record with the same field set — so uvicorn's own lines never regress to plain text alongside JSON app logs.
+Pins the structured-log field contract. A bare `JsonFormatter()` derives its keys from the default `"%(message)s"` fmt and silently drops level, logger name, and timestamp (skills#69) — this test turns that regression into a failure. No DB or client fixture needed; `configure_logging()` binds to `sys.stdout` at call time, so pytest's `capsys` captures the emitted line. The last three tests guard the uvicorn `--log-config` unification (skills#81, skills#82): that `src/core/log_config.json` stays valid and single-sources its formatter, that the shared formatter renders a uvicorn *access* record with the same field set — so uvicorn's own lines never regress to plain text alongside JSON app logs — and that uvicorn's `color_message` extra is stripped from the record itself. The `color_message` test asserts on the record, not only the rendered JSON, and the dictConfig test asserts the filter's **placement** on the three loggers: an output-only assertion still passes if the filter is moved to the stdout handler, and that is the variant that silently breaks under a sink that reads `record.__dict__` directly.
 
 ```python
 """Regression tests: JSON log records carry timestamp, level, and logger name,
-and uvicorn's own loggers share the app's JSON formatter (skills#69, skills#81).
+and uvicorn's own loggers share the app's JSON formatter and drop uvicorn's
+ANSI `color_message` extra (skills#69, skills#81, skills#82).
 """
 
 import json
@@ -149,9 +150,39 @@ import logging
 import logging.config
 from pathlib import Path
 
-from src.core.logging import build_json_formatter, configure_logging, get_logger
+from src.core.logging import (
+    ColorMessageFilter,
+    build_json_formatter,
+    configure_logging,
+    get_logger,
+)
 
 LOG_CONFIG_PATH = Path("src/core/log_config.json")
+
+# dictConfig() mutates live loggers; leaking that into later tests is an
+# order-dependent flake, so every attribute it touches is saved and restored.
+_SAVED_ATTRS = ("handlers", "filters", "propagate", "level")
+
+
+def _snapshot(names):
+    """Capture mutable logger state so a dictConfig() call can be rolled back."""
+    saved = {}
+    for name in names:
+        logger = logging.getLogger(name)
+        saved[name] = {
+            "handlers": logger.handlers[:],
+            "filters": logger.filters[:],
+            "propagate": logger.propagate,
+            "level": logger.level,
+        }
+    return saved
+
+
+def _restore(saved):
+    for name, attrs in saved.items():
+        logger = logging.getLogger(name)
+        for attr, value in attrs.items():
+            setattr(logger, attr, value)
 
 
 def test_log_record_includes_structured_fields(capsys):
@@ -182,27 +213,20 @@ def test_uvicorn_log_config_is_valid_and_shares_formatter():
         f.get("()") == "src.core.logging.build_json_formatter"
         for f in config["formatters"].values()
     )
-    # All three uvicorn loggers must be present, else they keep the plain default.
+    # All three uvicorn loggers must be present, else they keep the plain
+    # default — and each must carry the color_message strip. Asserting
+    # placement, not just effect: moving the filter to the stdout handler still
+    # produces clean JSON today, and that is the variant that breaks silently
+    # under a sink reading record.__dict__ directly (skills#82).
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         assert name in config["loggers"]
+        assert "strip_color_message" in config["loggers"][name]["filters"]
 
-    names = ("", "uvicorn", "uvicorn.error", "uvicorn.access")
-    saved = {
-        n: (
-            logging.getLogger(n).handlers[:],
-            logging.getLogger(n).propagate,
-            logging.getLogger(n).level,
-        )
-        for n in names
-    }
+    saved = _snapshot(("", "uvicorn", "uvicorn.error", "uvicorn.access"))
     try:
         logging.config.dictConfig(config)  # raises on a malformed config
     finally:
-        # Restore level too: dictConfig sets root + uvicorn loggers to INFO,
-        # and leaking that into later tests would be an order-dependent flake.
-        for n, (handlers, propagate, level) in saved.items():
-            lg = logging.getLogger(n)
-            lg.handlers, lg.propagate, lg.level = handlers, propagate, level
+        _restore(saved)
 
 
 def test_shared_formatter_renders_uvicorn_access_record():
@@ -222,6 +246,32 @@ def test_shared_formatter_renders_uvicorn_access_record():
     assert parsed["level"] == "INFO"
     assert parsed["message"] == '127.0.0.1:0 - "GET /health HTTP/1.1" 200'
     assert "timestamp" in parsed
+
+
+def test_color_message_filter_strips_extra_at_the_record_source():
+    """uvicorn's ANSI-duplicate `color_message` extra never reaches a payload.
+
+    Asserts on the record itself, not only the rendered JSON: the strip has to
+    hold for any sink, including handlers that read `record.__dict__` directly
+    rather than going through a `logging.Formatter` (skills#82).
+    """
+    record = logging.LogRecord(
+        name="uvicorn.error",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="Started server process [%d]",
+        args=(4066888,),
+        exc_info=None,
+    )
+    record.color_message = "Started server process [\x1b[36m%d\x1b[0m]"
+
+    assert ColorMessageFilter().filter(record) is True  # never drops a record
+    assert not hasattr(record, "color_message")
+
+    parsed = json.loads(build_json_formatter().format(record))
+    assert "color_message" not in parsed
+    assert parsed["message"] == "Started server process [4066888]"
 ```
 
 ## `tests/core/test_config.py` — always created
