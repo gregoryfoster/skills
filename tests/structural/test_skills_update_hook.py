@@ -88,15 +88,8 @@ def repo(tmp_path: Path) -> Path:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "init")
 
-    bin_dir = _shim_dir(repo)
-    bin_dir.mkdir()
-    real_git = shutil.which("git") or "/usr/bin/git"
-    (bin_dir / "git").write_text(
-        "#!/usr/bin/env bash\n"
-        'if [ "$1" = "submodule" ]; then exit 0; fi\n'
-        f'exec {real_git} "$@"\n'
-    )
-    (bin_dir / "git").chmod(0o755)
+    _shim_dir(repo).mkdir()
+    _write_git_shim(repo)
     return repo
 
 
@@ -104,6 +97,26 @@ def _shim_dir(repo: Path) -> Path:
     """Shim location derived from the repo path rather than carried on it —
     Path instances reject attribute assignment."""
     return repo.parent / "bin"
+
+
+def _write_git_shim(repo: Path, extra_arms: str = "") -> None:
+    """Install a fake `git` on the hook's PATH.
+
+    `submodule` is always intercepted with a silent success — the hook's real
+    submodule update needs a network remote and no test here is about that.
+    `extra_arms` injects further subcommand interceptions (each a complete
+    `if` statement) ahead of the delegation to real git, so a test can make a
+    specific subcommand fail without restating the base shim.
+    """
+    real_git = shutil.which("git") or "/usr/bin/git"
+    shim = _shim_dir(repo) / "git"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "submodule" ]; then exit 0; fi\n'
+        f"{extra_arms}"
+        f'exec {real_git} "$@"\n'
+    )
+    shim.chmod(0o755)
 
 
 def _run_hook(repo: Path) -> subprocess.CompletedProcess:
@@ -242,20 +255,48 @@ class TestCommitScopeIsNarrow:
         assert _commit_count(repo) == before
 
 
+class TestStatusFailureIsDiagnosable:
+    """The status check drives the commit branch. A git that fails for an
+    unexpected reason must not read as "nothing to commit" — that would
+    silently stop this hook committing forever with no trace anywhere."""
+
+    def test_failure_is_logged_and_skipped(self, repo):
+        _write_git_shim(
+            repo,
+            extra_arms=(
+                'if [ "$1" = "status" ]; then '
+                'echo "fatal: simulated index corruption" >&2; exit 128; fi\n'
+            ),
+        )
+        before = _commit_count(repo)
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0, "the hook must never block a session"
+        log = (repo / ".git" / "skills-update.log").read_text()
+        assert "git status failed (rc=128)" in log
+        assert "simulated index corruption" in log, (
+            "git's own stderr must reach the log — the rc alone doesn't say why"
+        )
+        assert _commit_count(repo) == before, "must skip the commit, not guess"
+        assert not (repo / ".git" / "skills-status.err").exists(), (
+            "the stderr scratch file must be cleaned up"
+        )
+
+
 class TestFailedCommitLeavesNoResidue:
     """`git add` may stage a previously untracked .skills/doctor.sh. Leaving a
     file the operator never touched sitting in their index is worse than
     leaving the commit undone — the next run retries cleanly either way."""
 
     def test_failed_commit_unstages(self, repo):
-        real_git = shutil.which("git") or "/usr/bin/git"
-        (_shim_dir(repo) / "git").write_text(
-            "#!/usr/bin/env bash\n"
-            'if [ "$1" = "submodule" ]; then exit 0; fi\n'
-            'if [ "$1" = "commit" ]; then echo "shim: commit refused" >&2; exit 1; fi\n'
-            f'exec {real_git} "$@"\n'
+        _write_git_shim(
+            repo,
+            extra_arms=(
+                'if [ "$1" = "commit" ]; then '
+                'echo "shim: commit refused" >&2; exit 1; fi\n'
+            ),
         )
-        (_shim_dir(repo) / "git").chmod(0o755)
 
         result = _run_hook(repo)
 

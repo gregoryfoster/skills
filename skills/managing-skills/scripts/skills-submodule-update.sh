@@ -103,18 +103,14 @@ if ! {
 fi
 
 # Paths this hook is allowed to stage. Enumerated explicitly, and NEVER
-# `.skills/` wholesale: that directory also holds operator config
-# (.skills/plans_dir, .skills/worktree_root) which this hook has no business
-# committing. Matching the diff scope to the add scope is what keeps
-# unrelated dirty work from being absorbed and empty commits from being
-# created — extending one without the other breaks that invariant.
+# `.skills/` wholesale: that directory also holds operator config (plans_dir,
+# worktree_root) this hook has no business committing. Matching diff scope to
+# add scope is what keeps unrelated dirty work out and empty commits from
+# being created; extending one without the other breaks it.
 #
-# .skills/doctor.sh is here because the opportunistic install above writes it
-# into the working tree and nothing else ever commits it, leaving it untracked
-# in perpetuity. Four of twelve audited consumers had a doctor that had been
-# reinstalled on every session for weeks and never once committed, so their
-# fresh worktrees and CI clones had no doctor at all and the Phase 1 preflight
-# silently short-circuited (#86; same symptom as #65).
+# .skills/doctor.sh is here because the install above writes it and nothing
+# else ever commits it — the drift that left four of twelve audited consumers
+# with no doctor in CI at all (#86).
 COMMIT_PATHS=(skills-vendor/)
 # Guarded on existence — `git add` errors on a path that isn't there, and
 # consumers that don't use the doctor must stay unaffected.
@@ -132,11 +128,23 @@ fi
 # discipline: a SessionStart hook must never block a session, so the failure
 # is made diagnosable instead of fatal. RC pre-init is required under `set -u`
 # — a success path never fires `|| RC=$?`.
+#
+# stderr goes to a scratch file rather than straight to $LOG so it can be
+# emitted *under* a timestamped header. Every other write to $LOG is
+# timestamped, and $LOG is this hook's only diagnostic surface — an
+# unattributed fragment there is hard to pin to a session.
+STATUS_ERR="$gitdir/skills-status.err"
 STATUS_RC=0
-STATUS_OUT="$(git status --porcelain -- "${COMMIT_PATHS[@]}" 2>>"$LOG")" || STATUS_RC=$?
+STATUS_OUT="$(git status --porcelain -- "${COMMIT_PATHS[@]}" 2>"$STATUS_ERR")" || STATUS_RC=$?
 if [ "$STATUS_RC" -ne 0 ]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] git status failed (rc=$STATUS_RC) — skipping commit this run" >>"$LOG"
-elif [ -n "$STATUS_OUT" ]; then
+  {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] git status failed (rc=$STATUS_RC) — skipping commit this run"
+    cat "$STATUS_ERR"
+  } >>"$LOG" 2>/dev/null || true
+fi
+rm -f "$STATUS_ERR"
+
+if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
   {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] commit skills update:"
     # `|| true` is load-bearing in two distinct cases, not just the obvious
