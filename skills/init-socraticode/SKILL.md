@@ -308,12 +308,14 @@ Present a completion table:
 
 Running this skill on a project that already has SocratiCode is **safe and is
 the audit**: every file edit is idempotent (Phase 3's policy block replaces
-between markers, the hook merge dedupes, Phase 4 verifies each artifact path
-resolves), and Phase 6
+between markers, the hook merge dedupes, Phase 4 migrates a legacy array
+manifest in place and re-validates every artifact path), and Phase 6
 re-verifies the three completion signals. Use a re-run to repair partial
 installs — the common drift found across the cohort ([#65](https://github.com/gregoryfoster/skills/issues/65)):
 a manifest with **no policy block or prefetch hook** (observo), or hook docs
-that drifted from `settings.json` (archiver). Phases 1–2 are read-only when
+that drifted from `settings.json` (archiver). A re-run is also how a repo whose
+manifest was silently rejected gets caught — it has been reporting `artifacts
+0/0` as if healthy (gotcha K). Phases 1–2 are read-only when
 already satisfied; Phase 5 re-indexes only if the index is missing or stale.
 
 ## Key invariants

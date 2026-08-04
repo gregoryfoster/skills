@@ -632,8 +632,8 @@ const USAGE = `mcp-driver.mjs — fenced fallback that drives the SocratiCode st
 Usage: node mcp-driver.mjs <command> [projectPath]
 
 Commands:
-  index    run a full fresh index; block until embeddings 100%, graph READY,
-           and context artifacts complete
+  index    run a full fresh index; block until the run reports complete, the
+           graph is READY, and context artifacts are all indexed
   status   print codebase_status once and exit
   verify   sample codebase_search + graph_status + list_projects; exit 0/1
   resolve  print the resolved server launch command as JSON and exit — does not
