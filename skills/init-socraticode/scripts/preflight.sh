@@ -53,6 +53,30 @@ elif ! docker info >/dev/null 2>&1; then
   hint "Start Docker Desktop (macOS) or: sudo systemctl start docker (Linux)"
 else
   pass "Docker installed and daemon reachable"
+
+  # Boot persistence (advisory; systemd hosts only). SocratiCode creates both
+  # containers with `--restart unless-stopped`, so they come back on their own
+  # once the daemon is up — the only thing that doesn't survive a reboot is a
+  # daemon that was never enabled at boot. Symptom if missed: search silently
+  # returns nothing after a restart (troubleshooting gotcha L).
+  if command -v systemctl >/dev/null 2>&1; then
+    DOCKER_BOOT="$(systemctl is-enabled docker 2>/dev/null || true)"
+    DOCKER_SOCKET_BOOT="$(systemctl is-enabled docker.socket 2>/dev/null || true)"
+    case "${DOCKER_BOOT}${DOCKER_SOCKET_BOOT}" in
+      '')
+        : # no systemd docker unit (Docker Desktop, rootless, snap) — nothing to assert
+        ;;
+      *enabled* | *static* | *indirect*)
+        # Matches enabled / enabled-runtime on either unit; socket activation
+        # counts, and "disabled" contains no "enabled" substring.
+        pass "Docker starts at boot (index survives a reboot)"
+        ;;
+      *)
+        printf '  \033[33m•\033[0m %s\n' "Docker is not enabled at boot — after a reboot the daemon stays down, Qdrant never starts, and codebase_search returns nothing"
+        hint "sudo systemctl enable docker"
+        ;;
+    esac
+  fi
 fi
 
 # ── Gate 2: Node present and in the supported range >=18 <26 ─────────────────
@@ -89,12 +113,23 @@ fi
 # wired into the session (gotcha A). Reported so the operator knows which path
 # they are on. `claude` may be absent when preflight runs outside Claude Code.
 if command -v claude >/dev/null 2>&1; then
+  # Marketplace first: `socraticode@socraticode` is plugin@marketplace, so the
+  # install in Phase 2 cannot resolve until the marketplace is registered.
+  # Reported separately from the connection check so a fresh host doesn't read
+  # its missing marketplace as "just needs a restart".
+  if claude plugin marketplace list 2>/dev/null | grep -q 'socraticode'; then
+    pass "Marketplace 'socraticode' registered"
+  else
+    printf '  \033[33m•\033[0m %s\n' "Marketplace 'socraticode' not registered — 'claude plugin install socraticode@socraticode' will fail"
+    hint "claude plugin marketplace add giancarloerra/socraticode"
+  fi
+
   MCP_LIST="$(claude mcp list 2>/dev/null || true)"
   if printf '%s\n' "$MCP_LIST" | grep -q 'plugin:socraticode:socraticode.*Connected'; then
     pass "Plugin MCP server connected (plugin:socraticode:socraticode)"
   else
     printf '  \033[33m•\033[0m %s\n' "Plugin MCP server not confirmed connected (native path may need a restart)"
-    hint "Install/enable: claude plugin install socraticode@socraticode"
+    hint "Install/enable: claude plugin marketplace add giancarloerra/socraticode && claude plugin install socraticode@socraticode"
     hint "Fallback works regardless: scripts/mcp-driver.mjs drives the server directly"
   fi
   # Duplicate-config trap: a standalone 'socraticode' server (its list entry

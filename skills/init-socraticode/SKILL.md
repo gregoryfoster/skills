@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18 <26, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -81,7 +81,14 @@ bash "<SKILL_DIR>/scripts/preflight.sh"
 
 Gates: Docker installed + daemon running; Node `>=18 <26` (**26+ hard-refused** —
 undici v6 vs Node 26 bundled undici makes the server exit on start); `npx`
-reachable; and an advisory check that the plugin MCP server is Connected.
+reachable; and advisory checks that Docker starts at boot, the `socraticode`
+marketplace is registered, and the plugin MCP server is Connected.
+
+The boot-persistence advisory is the one whose absence bites later rather than
+now: on a systemd host where `systemctl is-enabled docker` is `disabled`, the
+index works today and vanishes after the next reboot — the daemon never comes
+back, so Qdrant never starts and `codebase_search` quietly returns nothing
+(gotcha L).
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix command
 (`nvm install 22`, start Docker, …) and exits non-zero. Do **not** auto-install
@@ -98,9 +105,17 @@ environment where the MCP server / driver will run, before Phase 5.
 ### Phase 2 — Install/enable the plugin
 
 ```bash
-claude plugin install socraticode@socraticode      # user scope
-claude mcp list                                     # expect: plugin:socraticode:socraticode ✓ Connected
+claude plugin marketplace add giancarloerra/socraticode   # once per host
+claude plugin install socraticode@socraticode             # user scope
+claude mcp list                                            # expect: plugin:socraticode:socraticode ✓ Connected
 ```
+
+**The marketplace step is not optional on a fresh host.** `socraticode@socraticode`
+is `plugin@marketplace`; with no marketplace registered the install has nothing to
+resolve against and fails. `giancarloerra/socraticode` is the canonical source
+(per the plugin-hub listing); forks exist, so if a project has standardized on one,
+add that instead — deliberately, not by accident. Preflight Gate 4 reports whether
+the marketplace is registered, separately from whether the server is Connected.
 
 **Duplicate-config trap.** If `claude mcp list` (or the session toolset) shows
 BOTH `mcp__plugin_socraticode_socraticode__*` and a standalone
@@ -279,8 +294,8 @@ Present a completion table:
 
 | Component | Status |
 |---|---|
-| Preflight | Docker ✓ · Node `<version>` (>=18 <26) ✓ · npx ✓ |
-| Plugin | `plugin:socraticode:socraticode` Connected |
+| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) · Node `<version>` (>=18 <26) ✓ · npx ✓ |
+| Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited) |
 | Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` → `.claude/hooks/socraticode-reminder.sh` |
@@ -331,4 +346,4 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
   (gotcha E). Don't leave an orphaned node process to fake it.
 
 See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
-gotcha matrix (A–H) and the native-vs-fallback decision tree.
+gotcha matrix (A–L) and the native-vs-fallback decision tree.
