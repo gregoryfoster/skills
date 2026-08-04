@@ -14,7 +14,9 @@
 #      this script routinely rewrites a doctor.sh that is executing right
 #      now — see the write step at the bottom for why the rename matters.
 #
-# Idempotent: copies only when the vendor copy is newer or content differs.
+# Idempotent: copies only when content differs — never mtime. Git stamps
+# checkout times, so an mtime test misreads both a freshly-initialized
+# submodule (always looks "newer") and a deliberate rollback ("older").
 # Refuses to overwrite an existing .skills/doctor.sh that does not look
 # like a doctor (header check), so user-authored files at that path
 # cannot be silently clobbered.
@@ -65,6 +67,14 @@ DEST_DIR="$DEST_ROOT/.skills"
 DEST="$DEST_DIR/doctor.sh"
 
 mkdir -p "$DEST_DIR"
+
+# Sweep temp files orphaned by a hard kill — SIGKILL and machine loss both
+# bypass the EXIT trap installed further down. Runs before the no-op check so
+# orphans are still collected on runs that have nothing to install. The age
+# floor is what makes this safe: a concurrent installer's in-flight temp file
+# is minutes old at most, so it can never be swept out from under it.
+find "$DEST_DIR" -maxdepth 1 -name '.doctor.sh.tmp.*' -mmin +1440 -delete \
+  2>/dev/null || true
 
 # If destination exists and isn't recognizably a doctor, refuse to clobber.
 # Grep for the stable marker comment that doctor.sh carries near the top of

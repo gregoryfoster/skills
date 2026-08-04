@@ -17,7 +17,10 @@ Coverage:
 - installer present but failing                   → exit unaffected, no message
 - destination is a user file (no doctor marker)   → left alone, exit unaffected
 - vendor only readable after submodule init       → synced at call site 2
+- --check-only                                    → no write at all
+- failure diagnostics                             → silent by default, shown under --verbose
 - install-doctor.sh replaces by rename, not truncate (the running-script case)
+- install-doctor.sh sweeps temp files orphaned by a hard kill
 """
 
 import os
@@ -113,13 +116,17 @@ def healthy_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _run_installed_doctor(repo: Path, extra_path: Path | None = None):
+def _run_installed_doctor(
+    repo: Path,
+    extra_path: Path | None = None,
+    extra_args: list[str] | None = None,
+):
     """Run the repo's own .skills/doctor.sh, the way a preflight does."""
     env = _clean_env()
     if extra_path is not None:
         env["PATH"] = f"{extra_path}:{env.get('PATH', '/usr/bin:/bin')}"
     return subprocess.run(
-        ["bash", ".skills/doctor.sh"],
+        ["bash", ".skills/doctor.sh", *(extra_args or [])],
         capture_output=True,
         text=True,
         cwd=repo,
@@ -161,6 +168,48 @@ class TestSelfSyncHealthyPath:
         assert dest.stat().st_ino == before, "no-op must not rewrite the file"
 
 
+class TestCheckOnlyMakesNoWrites:
+    """`--check-only` is the mode a CI health probe reaches for, and
+    .skills/doctor.sh is a tracked file. A write there would dirty the working
+    tree on the next submodule bump and trip a `git diff --exit-code` gate,
+    with nothing connecting the failure back to the bump."""
+
+    def test_stale_copy_is_left_alone(self, healthy_repo):
+        _install_vendor(healthy_repo)
+        stale = _stale_doctor_text()
+        dest = _install_doctor_copy(healthy_repo, stale)
+
+        result = _run_installed_doctor(healthy_repo, extra_args=["--check-only"])
+
+        assert result.returncode == 0, result.stderr
+        assert dest.read_text() == stale
+        assert "refreshed" not in result.stderr
+
+    def test_working_tree_stays_clean(self, healthy_repo):
+        """The end-to-end property, asserted the way CI would observe it."""
+        _install_vendor(healthy_repo)
+        _install_doctor_copy(healthy_repo, _stale_doctor_text())
+        env = _clean_env()
+        for args in (
+            ["add", "-A"],
+            ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
+        ):
+            subprocess.run(
+                ["git", *args], cwd=healthy_repo, check=True,
+                capture_output=True, env=env,
+            )
+
+        _run_installed_doctor(healthy_repo, extra_args=["--check-only"])
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=healthy_repo, check=True, capture_output=True, text=True, env=env,
+        )
+        assert status.stdout == "", (
+            f"--check-only dirtied the working tree: {status.stdout!r}"
+        )
+
+
 class TestSelfSyncIsNonFatal:
     """Preflights invoke the doctor with `|| exit 1`. No self-sync failure may
     change the exit code — that would block a review over a cosmetic concern."""
@@ -198,6 +247,33 @@ class TestSelfSyncIsNonFatal:
         result = _run_installed_doctor(healthy_repo)
 
         assert result.returncode == 0, result.stderr
+
+    def test_failure_is_diagnosable_under_verbose(self, healthy_repo):
+        """A permanently-failing sync must not be invisible. The default path
+        stays quiet, but --verbose surfaces the installer's own explanation —
+        otherwise a consumer whose .skills/doctor.sh can never be updated has
+        no way to find out why."""
+        _install_vendor(
+            healthy_repo,
+            installer_body=(
+                "#!/usr/bin/env bash\n"
+                "echo 'install-doctor: something specific went wrong' >&2\n"
+                "exit 1\n"
+            ),
+        )
+        _install_doctor_copy(healthy_repo, _stale_doctor_text())
+
+        quiet = _run_installed_doctor(healthy_repo)
+        loud = _run_installed_doctor(healthy_repo, extra_args=["--verbose"])
+
+        assert quiet.returncode == 0 and loud.returncode == 0
+        assert "something specific went wrong" not in quiet.stderr, (
+            "default path must not add per-preflight noise"
+        )
+        assert "self-sync failed" in loud.stderr
+        assert "something specific went wrong" in loud.stderr, (
+            "the installer's own stderr must be relayed, not just a generic line"
+        )
 
     def test_user_file_at_destination_is_left_alone(self, healthy_repo):
         """install-doctor.sh's no-clobber guard still holds under sync_self:
@@ -300,3 +376,30 @@ class TestInstallerReplacesByRename:
 
         leftovers = sorted(p.name for p in (repo / ".skills").glob(".doctor.sh.tmp.*"))
         assert leftovers == [], f"temp files not cleaned up: {leftovers}"
+
+    def test_orphaned_temp_files_are_swept(self, tmp_path: Path):
+        """SIGKILL and machine loss both bypass the EXIT trap, stranding a temp
+        file that git then reports as untracked noise forever."""
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        vendor = _install_vendor(repo)
+        _install_doctor_copy(repo, DOCTOR.read_text())  # identical → no-op path
+
+        orphan = repo / ".skills" / ".doctor.sh.tmp.12345"
+        orphan.write_text("stranded by a hard kill\n")
+        two_days_ago = 2 * 24 * 3600
+        stat = orphan.stat()
+        os.utime(orphan, (stat.st_atime - two_days_ago, stat.st_mtime - two_days_ago))
+        fresh = repo / ".skills" / ".doctor.sh.tmp.67890"
+        fresh.write_text("a concurrent installer's in-flight write\n")
+
+        subprocess.run(
+            ["bash", str(vendor / "install-doctor.sh")],
+            check=True, capture_output=True, text=True, cwd=repo, env=_clean_env(),
+        )
+
+        assert not orphan.exists(), "aged temp file should have been swept"
+        assert fresh.exists(), (
+            "the age floor is what makes the sweep safe — a concurrent "
+            "installer's in-flight temp file must never be removed"
+        )
