@@ -26,9 +26,13 @@ invocation as a Claude Code SessionStart hook — never blocks a session.
 Behaviour:
   - Runs at most once per UTC day (.git/skills-update.lock).
   - Runs only on the main branch.
-  - Scopes update + diff + add to skills-vendor/ — never touches other
+  - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
-  - Auto-commits pointer bumps as 'chore: update skills submodules'.
+  - Stages and commits exactly two paths: skills-vendor/ and, when it
+    exists, .skills/doctor.sh. Never .skills/ wholesale, which would
+    absorb operator config (plans_dir, worktree_root).
+  - Commit message names what changed: 'chore: update skills submodules',
+    'chore: refresh .skills/doctor.sh', or both.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every non-fatal condition.
 
@@ -54,6 +58,11 @@ LOG="$gitdir/skills-update.log"
 # (not gated by the once-per-day lock) so accidental deletions self-heal
 # at the next session start. install-doctor.sh is a no-op when content
 # matches, so the cost is one file compare per session.
+#
+# Deliberately ahead of the lock and main-branch gates: this is the
+# working-tree repair, and it should happen on every branch and every
+# session. Committing the result is a separate concern and stays behind
+# both gates, further down (#86).
 for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
   [ -x "$installer" ] || continue
   if ! bash "$installer" --quiet >>"$LOG" 2>&1; then
@@ -93,15 +102,47 @@ if ! {
   exit 0
 fi
 
-# Commit only if skills-vendor/ specifically changed. Match the diff scope
-# to the add scope so unrelated dirty work cannot be absorbed and empty
-# commits cannot be created.
-if ! git diff --quiet HEAD -- skills-vendor/ 2>/dev/null; then
+# Paths this hook is allowed to stage. Enumerated explicitly, and NEVER
+# `.skills/` wholesale: that directory also holds operator config
+# (.skills/plans_dir, .skills/worktree_root) which this hook has no business
+# committing. Matching the diff scope to the add scope is what keeps
+# unrelated dirty work from being absorbed and empty commits from being
+# created — extending one without the other breaks that invariant.
+#
+# .skills/doctor.sh is here because the opportunistic install above writes it
+# into the working tree and nothing else ever commits it, leaving it untracked
+# in perpetuity. Four of twelve audited consumers had a doctor that had been
+# reinstalled on every session for weeks and never once committed, so their
+# fresh worktrees and CI clones had no doctor at all and the Phase 1 preflight
+# silently short-circuited (#86; same symptom as #65).
+COMMIT_PATHS=(skills-vendor/)
+# Guarded on existence — `git add` errors on a path that isn't there, and
+# consumers that don't use the doctor must stay unaffected.
+if [ -f .skills/doctor.sh ]; then
+  COMMIT_PATHS+=(.skills/doctor.sh)
+fi
+
+# `git status --porcelain`, not `git diff HEAD`: a diff against HEAD does not
+# report an *untracked* file, which is exactly the state this is here to fix.
+if [ -n "$(git status --porcelain -- "${COMMIT_PATHS[@]}" 2>/dev/null)" ]; then
   {
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] commit submodule bump:"
-    git add skills-vendor/ 2>&1 || true
-    if ! git diff --cached --quiet -- skills-vendor/ 2>/dev/null; then
-      git commit -m 'chore: update skills submodules' 2>&1 || true
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] commit skills update:"
+    git add -- "${COMMIT_PATHS[@]}" 2>&1 || true
+    if ! git diff --cached --quiet -- "${COMMIT_PATHS[@]}" 2>/dev/null; then
+      # Name what actually changed. A doctor-only refresh recorded as
+      # "update skills submodules" is wrong in both the log and git history.
+      STAGED_SUB=0
+      STAGED_DOC=0
+      git diff --cached --quiet -- skills-vendor/ 2>/dev/null || STAGED_SUB=1
+      git diff --cached --quiet -- .skills/doctor.sh 2>/dev/null || STAGED_DOC=1
+      if [ "$STAGED_SUB" = "1" ] && [ "$STAGED_DOC" = "1" ]; then
+        MSG='chore: update skills submodules and refresh .skills/doctor.sh'
+      elif [ "$STAGED_DOC" = "1" ]; then
+        MSG='chore: refresh .skills/doctor.sh'
+      else
+        MSG='chore: update skills submodules'
+      fi
+      git commit -m "$MSG" 2>&1 || true
     fi
   } >>"$LOG" || true
 fi

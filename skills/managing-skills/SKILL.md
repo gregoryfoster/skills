@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.6"
+  version: "1.7"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -152,8 +152,10 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Skips silently if the project has no `skills-vendor/` directory.
 - Scopes updates to `skills-vendor/` — never touches other submodules a project may have.
 - Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
-- Matches diff scope to add scope (`skills-vendor/`), so unrelated dirty work cannot be absorbed and empty commits cannot be created.
+- Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
+- Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
 - **Opportunistically installs/updates `.skills/doctor.sh`** on every session (not gated by the once-per-day lock) so the doctor self-heals if accidentally deleted, and so consumers added before the doctor existed pick it up automatically on the next session start.
+- **Commits the doctor it installed** ([#86](https://github.com/gregoryfoster/skills/issues/86)). The install is a working-tree repair and runs on every branch; the commit stays behind the `main`-only and once-per-day gates. Without this the hook wrote a file nothing ever tracked — four of twelve audited consumers had been reinstalling an untracked doctor for weeks, so their fresh worktrees and CI clones had none and the Phase 1 preflight silently short-circuited.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
 
 #### Step 0 — Skip if already installed
