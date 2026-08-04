@@ -228,6 +228,13 @@ during indexing (gotcha B), and blocks on the same three-signal predicate before
 returning. It **owns its child process and kills by PID** — no `pkill -f`
 self-match (gotcha G) — and parses status strings loosely (gotcha H).
 
+> **If the driver can't find the server**, run `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
+> resolve` — it prints the launch command it would use and exits without
+> starting anything (no Docker, no network). It reads the plugin's own
+> `mcp.json` first, so a plugin-only host resolves to the same `npx -y
+> socraticode` the session runs (gotcha I). Override with `SOCRATICODE_ENTRY`
+> only if that chain comes up empty.
+
 > **Timeouts.** First index is slow and one-time (gotcha D). The driver's ceiling
 > is `INDEX_TIMEOUT_MS` (default 2h). For a large repo on CPU Ollama, raise it or
 > switch backends rather than letting it abort a live build.

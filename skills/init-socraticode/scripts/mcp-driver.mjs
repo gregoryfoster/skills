@@ -18,17 +18,17 @@
 //       cmdline, so there is no self-match footgun.
 //   H — status strings are parsed loosely (regex, both artifact shapes).
 //
-// Wire contract verified against: socraticode (npx -y socraticode) as of
-// 2026-07. If the server's tool names or status strings change, update the
-// PARSERS and TOOL NAMES sections below.
+// Wire contract exercised end-to-end against socraticode 1.6.x (the build the
+// plugin runs via `npx -y socraticode`) during the #85 field report. Confirmed
+// live: `query` is codebase_search's argument name, protocolVersion
+// '2024-11-05' is accepted, and every tool takes its target as `projectPath`.
+// If the server's tool names or status strings change, update the PARSERS and
+// TOOL NAMES sections below.
 //
-// VALIDATE ON FIRST USE — these assumptions have NOT been exercised end-to-end
-// against a live server; confirm them the first time you actually run this:
-//   - codebase_search's argument name is `query` (check the server's tools/list)
-//   - initialize protocolVersion '2024-11-05' is accepted by the installed server
-//   - every tool takes its target as `projectPath`
-//   - require.resolve('socraticode') resolves the stdio server entry (else set
-//     SOCRATICODE_ENTRY)
+// Server entry resolution is NOT one path (#85/3b). The plugin launches the
+// server as `npx -y socraticode`, so on a plugin-only host the package lives in
+// the npx cache — reachable by neither require.resolve() nor `npm root`. See
+// resolveServerLaunch(), which follows the plugin's own launch chain.
 //
 // Usage:
 //   node mcp-driver.mjs index  <projectPath>   # full fresh index, blocks til done
@@ -42,47 +42,127 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve as resolvePath, join as joinPath } from 'node:path';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15000);
 const INDEX_TIMEOUT_MS = Number(process.env.INDEX_TIMEOUT_MS || 7200000);
 
-// ── entrypoint resolution (never hard-code dist/index.js) ───────────────────
-function resolveServerEntry() {
+// ── server launch resolution (never hard-code dist/index.js) ────────────────
+// Returns { command, args, env, source } rather than a bare path: the plugin
+// launches the server through npx with its own node binary and PATH, and only a
+// command+args pair can express that (#85/3b).
+
+function nodeLaunch(entry, source) {
+  return { command: process.execPath, args: [entry], env: {}, source };
+}
+
+// Newest-first directory listing — used to prefer the latest plugin version and
+// the most recently populated npx cache entry.
+function subdirsNewestFirst(dir) {
+  let names;
+  try { names = readdirSync(dir); } catch { return []; }
+  return names
+    .map((n) => joinPath(dir, n))
+    .map((p) => { try { return { p, mtime: statSync(p).mtimeMs }; } catch { return null; } })
+    .filter(Boolean)
+    .sort((a, b) => b.mtime - a.mtime)
+    .map((e) => e.p);
+}
+
+// The plugin's own mcp.json is authoritative: it records the exact command,
+// args, and PATH the session uses to start this server. Reusing it verbatim is
+// the only resolution that cannot drift from what the plugin actually runs.
+function launchFromPluginConfig() {
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR || joinPath(homedir(), '.claude');
+  const cacheDir = joinPath(claudeDir, 'plugins', 'cache', 'socraticode', 'socraticode');
+  for (const versionDir of subdirsNewestFirst(cacheDir)) {
+    const cfgPath = joinPath(versionDir, 'mcp.json');
+    if (!existsSync(cfgPath)) continue;
+    try {
+      const server = JSON.parse(readFileSync(cfgPath, 'utf8'))?.mcpServers?.socraticode;
+      if (server?.command && Array.isArray(server.args)) {
+        return {
+          command: server.command,
+          args: server.args,
+          env: server.env && typeof server.env === 'object' ? server.env : {},
+          source: `plugin mcp.json (${cfgPath})`,
+        };
+      }
+    } catch { /* malformed config — keep looking */ }
+  }
+  return null;
+}
+
+// `npx -y socraticode` unpacks into ~/.npm/_npx/<hash>/node_modules/. Neither
+// require.resolve() nor `npm root` sees it, so a plugin-only host resolves here.
+function launchFromNpxCache() {
+  const npmCache = process.env.npm_config_cache || joinPath(homedir(), '.npm');
+  for (const hashDir of subdirsNewestFirst(joinPath(npmCache, '_npx'))) {
+    const entry = joinPath(hashDir, 'node_modules', 'socraticode', 'dist', 'index.js');
+    if (existsSync(entry)) return nodeLaunch(entry, 'npx cache');
+  }
+  return null;
+}
+
+function resolveServerLaunch() {
   if (process.env.SOCRATICODE_ENTRY) {
     const p = resolvePath(process.env.SOCRATICODE_ENTRY);
     if (!existsSync(p)) die(`SOCRATICODE_ENTRY does not exist: ${p}`);
-    return p;
+    return nodeLaunch(p, 'SOCRATICODE_ENTRY');
   }
-  // 1) require.resolve from this module's context (works if socraticode is a dep).
+
+  // 1) The plugin's recorded launch command — the documented install path.
+  const fromPlugin = launchFromPluginConfig();
+  if (fromPlugin) return fromPlugin;
+
+  // 2) require.resolve from this module's context (works if socraticode is a dep).
   try {
     const req = createRequire(import.meta.url);
-    return req.resolve('socraticode');
+    return nodeLaunch(req.resolve('socraticode'), 'require.resolve');
   } catch { /* fall through */ }
-  // 2) resolve the package root, then read its package.json "main"/"bin".
+
+  // 3) resolve the package root, then read its package.json "main"/"bin".
   for (const args of [['root', '-g'], ['root']]) {
     const out = spawnSync('npm', args, { encoding: 'utf8' });
     if (out.status === 0 && out.stdout) {
       const base = out.stdout.trim();
       const req = createRequire(resolvePath(base, 'x'));
-      try { return req.resolve('socraticode'); } catch { /* keep trying */ }
+      try { return nodeLaunch(req.resolve('socraticode'), `npm ${args.join(' ')}`); } catch { /* keep trying */ }
       const guess = resolvePath(base, 'socraticode', 'dist', 'index.js');
-      if (existsSync(guess)) return guess;
+      if (existsSync(guess)) return nodeLaunch(guess, `npm ${args.join(' ')}`);
     }
   }
+
+  // 4) npx cache, populated by any prior plugin run.
+  const fromNpx = launchFromNpxCache();
+  if (fromNpx) return fromNpx;
+
+  // 5) Last resort: let npx fetch it, exactly as the plugin does. Costs a
+  //    network round-trip on a cold cache but never fails to resolve.
+  if (spawnSync('npx', ['--version'], { encoding: 'utf8' }).status === 0) {
+    return { command: 'npx', args: ['-y', 'socraticode'], env: {}, source: 'npx -y (fallback)' };
+  }
+
   die(
-    'Could not resolve the socraticode server entrypoint.\n' +
+    'Could not resolve the socraticode server.\n' +
     '  Set SOCRATICODE_ENTRY=/abs/path/to/socraticode/dist/index.js, or\n' +
-    '  install it first:  npm i -g socraticode   (or `npx -y socraticode` once to populate the npx cache)'
+    '  install it first:  claude plugin install socraticode@socraticode\n' +
+    '  (locate a plugin-run server with: find ~/.npm/_npx -path "*socraticode/dist/index.js")'
   );
 }
 
 // ── minimal JSON-RPC 2.0 stdio client ───────────────────────────────────────
 class RpcClient {
-  constructor(entry) {
+  constructor(launch) {
     // We own this child. On our exit we kill it by child.pid — never pkill.
-    this.child = spawn(process.execPath, [entry], { stdio: ['pipe', 'pipe', 'inherit'] });
+    // launch.env carries the plugin's PATH when we resolved from its mcp.json;
+    // merging over process.env keeps that authoritative without dropping ours.
+    this.child = spawn(launch.command, launch.args, {
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: { ...process.env, ...launch.env },
+    });
     this.nextId = 1;
     this.pending = new Map();
     this.buf = '';
@@ -210,15 +290,28 @@ function expectedArtifactCount(projectPath) {
 function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 
 async function withClient(fn) {
-  const entry = resolveServerEntry();
-  console.error(`[driver] server entry: ${entry}`);
-  const client = new RpcClient(entry);
+  const launch = resolveServerLaunch();
+  console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);
+  const client = new RpcClient(launch);
   try {
     await client.handshake();
     return await fn(client);
   } finally {
     client.kill();
   }
+}
+
+// Print how the server would be launched, without launching it. The cheap probe
+// for #85/3b: it answers "can this host find the server at all" with no Docker,
+// no Qdrant, and no network.
+function cmdResolve() {
+  const launch = resolveServerLaunch();
+  process.stdout.write(JSON.stringify({
+    source: launch.source,
+    command: launch.command,
+    args: launch.args,
+    env: launch.env,
+  }, null, 2) + '\n');
 }
 
 async function cmdStatus(projectPath) {
@@ -336,6 +429,8 @@ Commands:
            and context artifacts complete
   status   print codebase_status once and exit
   verify   sample codebase_search + graph_status + list_projects; exit 0/1
+  resolve  print the resolved server launch command as JSON and exit — does not
+           start the server (no Docker, no network); use it to debug resolution
 
 projectPath defaults to the current working directory.
 
@@ -351,6 +446,7 @@ switch (cmd) {
   case 'index': await cmdIndex(projectPath); break;
   case 'status': await cmdStatus(projectPath); break;
   case 'verify': await cmdVerify(projectPath); break;
+  case 'resolve': cmdResolve(); break;
   case '--help': case '-h': console.log(USAGE); break;
   default:
     console.error(USAGE);
