@@ -242,6 +242,7 @@ Skills may carry supplementary `references/*.md` files for content that exceeds 
 - **Flat directory.** No subdirectories under `references/`. The structural no-orphan check compares link targets against `references/*.md` (non-recursive); nested layouts would be silently missed.
 - **No length cap.** The whole point of a references file is escaping the SKILL.md body recommendation — don't reimpose one.
 - **Naming:** `lowercase-kebab.md`, matching the broader skill naming convention.
+- **Conditional blocks are delimited.** A reference that gates content on a branch-point parameter opens the block with `> Include when <COND>:` and closes it with `> end include` — always both. Conditions may be `AND`-joined. The renderer drops the whole block when the condition is false, so an unterminated open has no boundary and silently takes following prose with it. `TestConditionalBlockMarkers` in [tests/structural/test_references.py](tests/structural/test_references.py) fails the suite on an unterminated open or a stray close ([#82](https://github.com/gregoryfoster/skills/issues/82)).
 
 The same conventions apply to `assets/` (templates, schemas, copy-into-place artifacts), with the obvious adjustment that `assets/` files are typically not markdown.
 
