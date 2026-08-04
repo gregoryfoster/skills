@@ -251,10 +251,10 @@ git add .claude/settings.json
 git commit -m "chore: disable skills auto-refresh hook"
 ```
 
-You may also want to delete the lock and log files in `.git/` if you don't plan to reinstall:
+You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. `skills-status.err` is a transient stderr scratch file the hook removes itself — it only survives a run that died mid-flight:
 
 ```bash
-rm -f .git/skills-update.lock .git/skills-update.log
+rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err
 ```
 
 ### Creating a local override

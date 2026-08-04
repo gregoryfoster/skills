@@ -19,6 +19,12 @@ Coverage:
 - no .skills/doctor.sh at all                → unaffected, still exits 0
 - commit message names what actually changed
 - non-main branch                            → installs but does not commit
+- `git status` fails                         → logged with git's own stderr,
+                                               commit skipped, scratch cleaned
+- `git commit` fails                         → index unstaged, install kept
+
+Keep this list current — it is the file's index, and it undercounted for two
+rounds while tests were added around it.
 """
 
 import os
