@@ -205,12 +205,27 @@ class TestCommitScopeIsNarrow:
     def test_no_empty_commit_when_nothing_changed(self, repo):
         _run_hook(repo)
         settled = _commit_count(repo)
-        # Second run: doctor already current, submodule shimmed to no-op. The
-        # once-per-day lock is already stamped, so this also covers the
-        # lock-hit path leaving no residue.
+
+        # The lock MUST be cleared before the second run. The first run stamps
+        # it with today's UTC date, so a second run would exit at the lock
+        # check and never reach the commit block — making this assertion pass
+        # no matter what the commit logic does.
+        lock = repo / ".git" / "skills-update.lock"
+        assert lock.exists(), "first run should have stamped the once-daily lock"
+        lock.unlink()
+        log_before = (repo / ".git" / "skills-update.log").read_text()
+
         _run_hook(repo)
 
-        assert _commit_count(repo) == settled
+        log_after = (repo / ".git" / "skills-update.log").read_text()
+        assert log_after != log_before, (
+            "second run must actually reach the update/commit block — if the "
+            "log is unchanged it exited early and this test proves nothing"
+        )
+        assert _commit_count(repo) == settled, "no empty commit"
+        assert "commit skills update:" not in log_after[len(log_before):], (
+            "the commit block should not even have been entered on a clean tree"
+        )
 
     def test_consumer_without_a_doctor_is_unaffected(self, repo):
         """A consumer whose vendor tree ships no installer must not error —
@@ -225,6 +240,31 @@ class TestCommitScopeIsNarrow:
         assert result.returncode == 0, result.stderr
         assert not (repo / ".skills" / "doctor.sh").exists()
         assert _commit_count(repo) == before
+
+
+class TestFailedCommitLeavesNoResidue:
+    """`git add` may stage a previously untracked .skills/doctor.sh. Leaving a
+    file the operator never touched sitting in their index is worse than
+    leaving the commit undone — the next run retries cleanly either way."""
+
+    def test_failed_commit_unstages(self, repo):
+        real_git = shutil.which("git") or "/usr/bin/git"
+        (_shim_dir(repo) / "git").write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "submodule" ]; then exit 0; fi\n'
+            'if [ "$1" = "commit" ]; then echo "shim: commit refused" >&2; exit 1; fi\n'
+            f'exec {real_git} "$@"\n'
+        )
+        (_shim_dir(repo) / "git").chmod(0o755)
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0, "the hook must never block a session"
+        staged = _git(repo, "diff", "--cached", "--name-only").stdout
+        assert staged == "", f"index left dirty after a failed commit: {staged!r}"
+        assert (repo / ".skills" / "doctor.sh").exists(), (
+            "the working-tree install must survive — only the staging is undone"
+        )
 
 
 class TestCommitMessageNamesWhatChanged:

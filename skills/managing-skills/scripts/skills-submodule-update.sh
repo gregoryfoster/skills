@@ -124,9 +124,27 @@ fi
 
 # `git status --porcelain`, not `git diff HEAD`: a diff against HEAD does not
 # report an *untracked* file, which is exactly the state this is here to fix.
-if [ -n "$(git status --porcelain -- "${COMMIT_PATHS[@]}" 2>/dev/null)" ]; then
+#
+# Exit code captured rather than swallowed. This drives the commit branch, so
+# a git that fails for an unexpected reason would otherwise be indistinguish-
+# able from "nothing to commit" and the hook would silently stop committing
+# forever. The remedy is log-and-skip, not the exit-2 of AGENTS.md's gate
+# discipline: a SessionStart hook must never block a session, so the failure
+# is made diagnosable instead of fatal. RC pre-init is required under `set -u`
+# — a success path never fires `|| RC=$?`.
+STATUS_RC=0
+STATUS_OUT="$(git status --porcelain -- "${COMMIT_PATHS[@]}" 2>>"$LOG")" || STATUS_RC=$?
+if [ "$STATUS_RC" -ne 0 ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] git status failed (rc=$STATUS_RC) — skipping commit this run" >>"$LOG"
+elif [ -n "$STATUS_OUT" ]; then
   {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] commit skills update:"
+    # `|| true` is load-bearing in two distinct cases, not just the obvious
+    # one. (a) A path that isn't there — already excluded by the -f guard
+    # above. (b) A consumer who gitignores `.skills/`: git then exits 1 for
+    # the ignored path but still stages everything else, so submodule bumps
+    # keep getting committed there. Tightening this into a hard failure
+    # would silently strand those consumers.
     git add -- "${COMMIT_PATHS[@]}" 2>&1 || true
     if ! git diff --cached --quiet -- "${COMMIT_PATHS[@]}" 2>/dev/null; then
       # Name what actually changed. A doctor-only refresh recorded as
@@ -142,7 +160,14 @@ if [ -n "$(git status --porcelain -- "${COMMIT_PATHS[@]}" 2>/dev/null)" ]; then
       else
         MSG='chore: update skills submodules'
       fi
-      git commit -m "$MSG" 2>&1 || true
+      # On failure, unstage what we staged. `git add` above may have staged a
+      # previously *untracked* .skills/doctor.sh, and leaving a file the
+      # operator never touched sitting in their index is worse than leaving
+      # the commit undone — the next run retries cleanly either way.
+      git commit -m "$MSG" 2>&1 || {
+        echo "commit failed — unstaging to leave the index as we found it"
+        git reset -q -- "${COMMIT_PATHS[@]}" 2>&1 || true
+      }
     fi
   } >>"$LOG" || true
 fi
