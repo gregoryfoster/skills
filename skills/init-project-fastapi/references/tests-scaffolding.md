@@ -159,13 +159,14 @@ from src.core.logging import (
 
 LOG_CONFIG_PATH = Path("src/core/log_config.json")
 
-# dictConfig() mutates live loggers; leaking that into later tests is an
-# order-dependent flake, so every attribute it touches is saved and restored.
-_SAVED_ATTRS = ("handlers", "filters", "propagate", "level")
-
 
 def _snapshot(names):
-    """Capture mutable logger state so a dictConfig() call can be rolled back."""
+    """Capture mutable logger state so a dictConfig() call can be rolled back.
+
+    dictConfig() and configure_logging() both mutate live loggers; leaking that
+    into later tests is an order-dependent flake, so every attribute they touch
+    is saved and restored.
+    """
     saved = {}
     for name in names:
         logger = logging.getLogger(name)
@@ -186,13 +187,12 @@ def _restore(saved):
 
 
 def test_log_record_includes_structured_fields(capsys):
-    root = logging.getLogger()
-    saved_handlers, saved_level = root.handlers[:], root.level
+    saved = _snapshot(("",))
     try:
         configure_logging()
         get_logger("src.some.module").warning("hello %s", "world")
     finally:
-        root.handlers, root.level = saved_handlers, saved_level
+        _restore(saved)
 
     record = json.loads(capsys.readouterr().out)
     assert record["message"] == "hello world"

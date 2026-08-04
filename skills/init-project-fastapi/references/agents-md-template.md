@@ -2,7 +2,7 @@
 
 Full `AGENTS.md` template for the `init-project-fastapi` skill (Phase 4). Adapt for the project. Replace `<PROJECT_NAME>`, `<PROJECT_DESCRIPTION>`, `<API_PORT>`, `<API_PORT_DEV>` (= `<API_PORT> + 1`) throughout.
 
-Conditional blocks are gated on branch-point parameters and marked `> Include when <PARAM>=<value>`. Drop the block when the condition is false; otherwise write the rendered contents (with placeholders substituted).
+Conditional blocks are gated on branch-point parameters, opened with `> Include when <PARAM>=<value>:` and closed with `> end include` — always both, so the block's extent is unambiguous. Conditions may be `AND`-joined (`> Include when A=x AND B=y:`), in which case every clause must hold. Drop the block when the condition is false; otherwise write the rendered contents (with placeholders substituted).
 
 ```markdown
 # <PROJECT_NAME> — Agent Guidelines
@@ -217,6 +217,8 @@ The app's own records — including uvicorn's access/error lines, via `--log-con
 > Include when PRIVATE_WHEELHOUSE=find-links AND DEPLOY_TARGET=systemd:
 
 One exception: the `ExecStartPre` wheelhouse sync writes a **plain-text** line to journald on every service start (`wheelhouse in sync: …`). It runs before the project is importable, so it cannot share the JSON formatter — a pipeline that `json.loads` every `MESSAGE` must tolerate it.
+
+> end include
 
 **Date & Time:**
 - All UTC
