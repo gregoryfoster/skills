@@ -187,7 +187,7 @@ def _restore(saved):
 
 
 def test_log_record_includes_structured_fields(capsys):
-    saved = _snapshot(("",))
+    saved = _snapshot(("",))  # "" is the root logger — configure_logging() rebinds it
     try:
         configure_logging()
         get_logger("src.some.module").warning("hello %s", "world")

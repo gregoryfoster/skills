@@ -163,7 +163,7 @@ ExecStartPre=-/usr/local/bin/uv run --no-project --with 'google-cloud-storage>=2
 
 This line writes **plain text** to journald on every service start: `wheelhouse in sync: N downloaded, M already present -> …` on the happy path, and `error: could not sync gs://…` on the non-fatal failure path (stderr, which journald captures the same way). That is deliberate — it is the one documented exception to the JSON-only log stream `--log-config` establishes (skills#81, skills#83).
 
-It cannot comply. The script runs `--no-project` in an ephemeral environment holding `google-cloud-storage` and nothing else, *before* `uv sync`, so importing `src.core.logging` is structurally impossible. Emitting JSON would mean a second, hand-maintained copy of the `{level, logger, message, timestamp}` schema in a file that cannot share `build_json_formatter()` — the exact drift skills#81/#82 exist to prevent, spent on one boot line. Scope matters too: this is deploy-step output, not the application's log stream.
+The script cannot comply. It runs `--no-project` in an ephemeral environment holding `google-cloud-storage` and nothing else, *before* `uv sync`, so importing `src.core.logging` is structurally impossible. Emitting JSON would mean a second, hand-maintained copy of the `{level, logger, message, timestamp}` schema in a file that cannot share `build_json_formatter()` — the exact drift skills#81/#82 exist to prevent, spent on one boot line. Scope matters too: this is deploy-step output, not the application's log stream.
 
 Whether it affects you depends on how the logs are read. A shipper reading journald natively is unaffected — the entry still carries `_SYSTEMD_UNIT`, `_PID`, `SYSLOG_IDENTIFIER`. The pipeline that trips is one that `json.loads` every `MESSAGE`.
 

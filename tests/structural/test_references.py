@@ -30,6 +30,14 @@ from tests.utils.skill_loader import Skill, all_skills
 _LINK_RE = re.compile(r"\((references|assets)/([^) ]+)")
 
 
+# Conditional-block markers in reference templates. A block opens with
+# `> Include when <COND>:` and closes with `> end include`; the renderer drops
+# the whole block when the condition is false, so an unterminated open has no
+# boundary and silently swallows whatever follows (skills#82/#83 CR round 1).
+_INCLUDE_OPEN = "> Include when"
+_INCLUDE_CLOSE = "> end include"
+
+
 @pytest.fixture(params=all_skills(), ids=lambda s: s.dir_name)
 def skill(request) -> Skill:
     return request.param
@@ -69,4 +77,44 @@ class TestReferences:
             assert ref.name in linked_names, (
                 f"{skill.dir_name}: references/{ref.name} exists but is not linked "
                 f"as a markdown link `[label](references/{ref.name})` from SKILL.md"
+            )
+
+
+class TestConditionalBlockMarkers:
+    """Every `> Include when …:` block in a reference must be terminated.
+
+    These markers gate branch-point content that an agent renders mechanically.
+    An unterminated open leaves the block's extent undefined, so dropping it on
+    a false condition takes an arbitrary amount of following prose with it —
+    a silent deletion, with nothing failing to report it. That is exactly how
+    an unterminated `PRIVATE_WHEELHOUSE` block reached main (skills#82/#83).
+    """
+
+    def test_include_markers_are_balanced(self, skill: Skill) -> None:
+        ref_dir = skill.directory / "references"
+        if not ref_dir.is_dir():
+            pytest.skip("no references/ directory")
+        for ref in sorted(ref_dir.glob("*.md")):
+            open_line = None
+            for lineno, raw in enumerate(ref.read_text().splitlines(), 1):
+                line = raw.strip()
+                # startswith, not `in`: prose documenting the convention quotes
+                # the marker mid-sentence and must not count as an occurrence.
+                if line.startswith(_INCLUDE_OPEN):
+                    assert open_line is None, (
+                        f"{skill.dir_name}: references/{ref.name} line {lineno} opens a "
+                        f"'{_INCLUDE_OPEN}' block while line {open_line} is still open — "
+                        f"add '{_INCLUDE_CLOSE}' to close the earlier one"
+                    )
+                    open_line = lineno
+                elif line == _INCLUDE_CLOSE:
+                    assert open_line is not None, (
+                        f"{skill.dir_name}: references/{ref.name} line {lineno} has a stray "
+                        f"'{_INCLUDE_CLOSE}' with no matching '{_INCLUDE_OPEN}'"
+                    )
+                    open_line = None
+            assert open_line is None, (
+                f"{skill.dir_name}: references/{ref.name} line {open_line} opens a "
+                f"'{_INCLUDE_OPEN}' block that is never closed with '{_INCLUDE_CLOSE}' — "
+                f"the renderer has no boundary for what to drop when the condition is false"
             )
