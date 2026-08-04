@@ -12,8 +12,12 @@
 //
 // Design guarantees (see the issue's gotchas):
 //   B — indexing runs INSIDE the server process, so we keep it alive and poll.
-//   C — "100% embedded" is NOT done; we gate on embeddings 100% AND graph READY
-//       AND context artifacts N/N before returning success.
+//   C — "100% embedded" is NOT done; we gate on the index run having completed
+//       AND graph READY AND context artifacts N/N before returning success.
+//   J — completion is NOT keyed on a parsed "100%". The server prints its
+//       progress percentage only while indexing is in flight, so the line is
+//       gone by the time the run is done and `pct === 100` was only ever
+//       observable by winning a race with the poll interval (#85).
 //   G — we OWN the child and kill it by child.pid on exit. We never pkill by
 //       cmdline, so there is no self-match footgun.
 //   H — status strings are parsed loosely (regex, both artifact shapes).
@@ -45,6 +49,7 @@ import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve as resolvePath, join as joinPath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15000);
 const INDEX_TIMEOUT_MS = Number(process.env.INDEX_TIMEOUT_MS || 7200000);
@@ -245,13 +250,64 @@ class RpcClient {
 }
 
 // ── PARSERS (loose — tolerate string-shape drift; gotcha H) ─────────────────
+// Dashes vary by server build (hyphen / en / em), so every "Last operation"
+// matcher accepts all three rather than pinning the one seen today.
+
 function parseEmbedPercent(text) {
   // "Progress: 6019/6019 chunks embedded (100%)"  → 100
+  // PROGRESS DISPLAY ONLY — never a completion signal. The server emits this
+  // line exclusively inside its "indexing in progress" branch, so it vanishes
+  // the moment the run finishes and this returns null forever after. Gating
+  // completion on `=== 100` made success a race against the poll interval
+  // (gotcha J); use indexSettled() instead.
   const pct = text.match(/embedded\s*\((\d+)%\)/i);
   if (pct) return Number(pct[1]);
   const frac = text.match(/(\d+)\s*\/\s*(\d+)\s*chunks?\s*embedded/i);
   if (frac && Number(frac[2]) > 0) return Math.floor((Number(frac[1]) / Number(frac[2])) * 100);
   return null;
+}
+
+// "⚠ Full index in progress" / "⚠ Incremental update in progress"
+function indexingInProgress(text) {
+  return /(full index|incremental update) in progress/i.test(text);
+}
+
+// "Last operation: Full index — completed"
+function lastOperationCompleted(text) {
+  return /Last operation:[^\n]*[-—–]\s*completed/i.test(text);
+}
+
+// "Last operation: Full index — FAILED" followed by "  Error: <msg>"
+function lastOperationFailed(text) {
+  return /Last operation:[^\n]*[-—–]\s*FAILED/i.test(text);
+}
+
+function parseLastOpError(text) {
+  const m = text.match(/Last operation:[^\n]*FAILED[^\n]*\n\s*Error:\s*([^\n]*)/i);
+  return m ? m[1].trim() : null;
+}
+
+// "⚠ INDEX IS INCOMPLETE — a previous indexing run was interrupted…"
+function indexIncomplete(text) {
+  return /INDEX IS INCOMPLETE/i.test(text);
+}
+
+// "⚠ ANOTHER PROCESS (PID 12345) IS ACTIVELY INDEXING this project."
+function anotherProcessIndexing(text) {
+  const m = text.match(/ANOTHER PROCESS \(PID\s*(\d+)\)/i);
+  return m ? m[1] : null;
+}
+
+// Embeddings (and the server-side graph build that follows them) are done when
+// the in-progress block is gone AND the server reports a completed run.
+//
+// `Last operation` is in-process state and this server child is OURS, so a
+// completed record can only describe the run we just started — there is no
+// cross-run staleness to guard against. Deliberately NOT keyed on
+// "Indexed chunks: N": that count comes from Qdrant and survives across runs,
+// so it reads as already-done on the first poll of a re-index.
+function indexSettled(text) {
+  return !indexingInProgress(text) && lastOperationCompleted(text);
 }
 
 function parseArtifacts(text) {
@@ -338,7 +394,15 @@ async function cmdIndex(projectPath) {
     let contextKicked = false;
     let contextKickFails = 0;
     const MAX_CONTEXT_KICKS = 3;
-    let nullPolls = 0;
+    // Some terminal-looking states show transiently while a run spins up (file
+    // discovery hasn't counted anything yet; a resume hasn't taken the lock
+    // yet). Require them to persist across this many consecutive polls before
+    // treating them as real.
+    const CONFIRM_POLLS = 3;
+    let incompletePolls = 0;
+    let zeroWorkPolls = 0;
+    let announcedOtherProcess = false;
+
     for (;;) {
       if (Date.now() - started > INDEX_TIMEOUT_MS) {
         die(`index did not complete within ${Math.round(INDEX_TIMEOUT_MS / 60000)} min`);
@@ -346,41 +410,72 @@ async function cmdIndex(projectPath) {
       await sleep(POLL_INTERVAL_MS);
 
       const status = await client.callTool('codebase_status', { projectPath });
-      const pct = parseEmbedPercent(status);
-      const art = parseArtifacts(status);
 
-      // Early terminal: 0/0 chunks means there is nothing to embed — abort with a
-      // clear message instead of hanging until the 2h timeout.
-      if (/\b0\s*\/\s*0\b[^\n]*chunks?/i.test(status)) {
-        die('codebase_status reports 0/0 chunks — nothing to embed (empty repo or no indexable files).');
+      // ── fail fast on states that would otherwise burn the full timeout ─────
+      if (lastOperationFailed(status)) {
+        die(`indexing FAILED — ${parseLastOpError(status) || 'run codebase_status for details'}`);
       }
-      // Status string couldn't be parsed for a percentage: warn once after a few
-      // polls so a server string change surfaces as a hint, not a silent 2h hang.
-      if (pct == null) {
-        if (++nullPolls === 3) {
-          console.error('[driver] WARNING: cannot parse an embedding % from codebase_status — the server string may have changed; check the PARSERS section of this file. Still polling.');
+
+      const inProgress = indexingInProgress(status);
+
+      // Another process holds the index lock. Ours won't advance, but the index
+      // it produces is the one we want — report once and keep waiting.
+      const otherPid = anotherProcessIndexing(status);
+      if (otherPid && !announcedOtherProcess) {
+        announcedOtherProcess = true;
+        console.error(`[driver] NOTE: PID ${otherPid} is already indexing this project; waiting for that run to finish.`);
+      }
+
+      // Persisted-incomplete with nothing running: our codebase_index call did
+      // not take, so polling would never converge.
+      if (indexIncomplete(status) && !inProgress && !otherPid) {
+        if (++incompletePolls >= CONFIRM_POLLS) {
+          die(
+            'index is persisted-incomplete and no run is active — a previous run was interrupted and codebase_index did not resume it.\n' +
+            '  Re-run this command, or codebase_stop first if a stale lock is held.'
+          );
         }
       } else {
-        nullPolls = 0;
+        incompletePolls = 0;
       }
+
+      // Nothing to embed. Transient at startup, so confirm across polls.
+      if (/\b0\s*\/\s*0\b[^\n]*(chunks?|files)/i.test(status)) {
+        if (++zeroWorkPolls >= CONFIRM_POLLS) {
+          die('codebase_status reports 0/0 — nothing to embed (empty repo, or everything is excluded by .socraticodeignore / .gitignore).');
+        }
+      } else {
+        zeroWorkPolls = 0;
+      }
+
+      // ── the three completion signals ──────────────────────────────────────
+      const settled = indexSettled(status);
+      const pct = parseEmbedPercent(status);   // display only — see parser note
+      const art = parseArtifacts(status);
 
       let graph = '';
       try { graph = await client.callTool('codebase_graph_status', { projectPath }); } catch { /* older server */ }
+      // codebase_status renders the graph as "Code graph: N files, M edges" and
+      // never the literal READY, so graph_status is the only real source here;
+      // the status fallback stays as drift insurance, not a working path.
       const gReady = graphReady(graph) || graphReady(status);
 
       // Expected count: manifest is authoritative; otherwise trust the status line.
       const wantArtifacts = expectedArtifacts != null ? expectedArtifacts : art.total;
 
       console.error(
-        `[driver] embeddings=${pct == null ? '?' : pct + '%'} ` +
+        `[driver] embeddings=${pct != null ? pct + '%' : settled ? 'done' : 'working'} ` +
         `graph=${gReady ? 'READY' : 'building'} ` +
         `artifacts=${art.done}/${wantArtifacts}`
       );
 
-      // Once embeddings are done, nudge context indexing if artifacts lag (gotcha C).
-      // Retry on transient failure (leave contextKicked false) rather than
-      // spinning to the timeout; give up loudly after MAX_CONTEXT_KICKS.
-      if (pct === 100 && !contextKicked && wantArtifacts > 0 && art.done < wantArtifacts) {
+      // Once the index run is over, nudge context indexing if artifacts lag
+      // (gotcha C). Keyed on `settled`, NOT on a parsed 100% — that percentage
+      // is gone by the time the run completes, which is why artifacts never
+      // started for the #85 reporter. Retry on transient failure (leave
+      // contextKicked false) rather than spinning to the timeout; give up
+      // loudly after MAX_CONTEXT_KICKS.
+      if (settled && !contextKicked && wantArtifacts > 0 && art.done < wantArtifacts) {
         try {
           await client.callTool('codebase_context_index', { projectPath });
           contextKicked = true;
@@ -394,8 +489,8 @@ async function cmdIndex(projectPath) {
       }
 
       const artifactsDone = wantArtifacts === 0 || art.done >= wantArtifacts;
-      if (pct === 100 && gReady && artifactsDone) {
-        console.error('[driver] DONE — embeddings 100%, graph READY, artifacts complete.');
+      if (settled && gReady && artifactsDone) {
+        console.error('[driver] DONE — index run completed, graph READY, artifacts complete.');
         return;
       }
     }
@@ -439,16 +534,29 @@ Env:
   POLL_INTERVAL_MS    status poll cadence (default 15000)
   INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)`;
 
-const [cmd, projectPathArg] = process.argv.slice(2);
-const projectPath = projectPathArg ? resolvePath(projectPathArg) : process.cwd();
+// Only dispatch when run as a script. Importing the module (to exercise the
+// PARSERS against captured status strings) must not spawn a server or exit.
+const RUN_AS_SCRIPT = process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.meta.url);
 
-switch (cmd) {
-  case 'index': await cmdIndex(projectPath); break;
-  case 'status': await cmdStatus(projectPath); break;
-  case 'verify': await cmdVerify(projectPath); break;
-  case 'resolve': cmdResolve(); break;
-  case '--help': case '-h': console.log(USAGE); break;
-  default:
-    console.error(USAGE);
-    process.exit(2);
+if (RUN_AS_SCRIPT) {
+  const [cmd, projectPathArg] = process.argv.slice(2);
+  const projectPath = projectPathArg ? resolvePath(projectPathArg) : process.cwd();
+
+  switch (cmd) {
+    case 'index': await cmdIndex(projectPath); break;
+    case 'status': await cmdStatus(projectPath); break;
+    case 'verify': await cmdVerify(projectPath); break;
+    case 'resolve': cmdResolve(); break;
+    case '--help': case '-h': console.log(USAGE); break;
+    default:
+      console.error(USAGE);
+      process.exit(2);
+  }
 }
+
+export {
+  parseEmbedPercent, parseArtifacts, graphReady,
+  indexingInProgress, lastOperationCompleted, lastOperationFailed,
+  parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
+  expectedArtifactCount, resolveServerLaunch,
+};

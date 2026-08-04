@@ -206,10 +206,13 @@ first):
 
 1. `codebase_index { projectPath: <PROJECT_PATH> }` — returns immediately; work
    runs in the server process.
-2. Poll `codebase_status` until embeddings reach **100%**, **and**
-   `codebase_graph_status` is **READY**, **and** context artifacts are **N/N**.
-   "100% embedded" alone is NOT done (gotcha C — the graph is still building and
-   artifacts are unindexed at 100%).
+2. Poll `codebase_status` until the run reports **`Last operation: Full index —
+   completed`** with no "in progress" block, **and** `codebase_graph_status` is
+   **READY**, **and** context artifacts are **N/N**. "100% embedded" alone is NOT
+   done (gotcha C — the graph is still building and artifacts are unindexed at
+   100%), and don't *wait* to see 100% either: the server prints its progress
+   percentage only while indexing is in flight, so a finished run shows no
+   percentage at all (gotcha J).
 3. If artifacts aren't auto-indexed, run `codebase_context_index { projectPath }`.
 4. Confirm the file watcher registered (`codebase_watch` / status). Note it's
    **ephemeral** — it lives only while a server is running (gotcha E); persistent
@@ -246,7 +249,7 @@ Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PAT
 - A sample `codebase_search` returns hits.
 - `codebase_graph_status` is READY.
 - `codebase_list_projects` shows the project.
-- `codebase_status`: embeddings 100%, artifacts N/N.
+- `codebase_status`: last operation completed, artifacts N/N.
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 
@@ -261,7 +264,7 @@ Present a completion table:
 | Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` → `.claude/hooks/socraticode-reminder.sh` |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
 | Index exclusions | `.socraticodeignore` (vendored skill trees excluded) |
-| Index | embeddings 100% · graph READY · artifacts N/N |
+| Index | index run completed · graph READY · artifacts N/N |
 | Sample search | returns hits |
 
 ## Re-run on an existing project (audit/repair)
@@ -279,8 +282,10 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
 ## Key invariants
 
 - **Completion is three signals, not one.** Never declare done at "100%
-  embedded" — require embeddings 100% AND graph READY AND artifacts N/N
-  (troubleshooting gotcha C).
+  embedded" — require the index run reported complete AND graph READY AND
+  artifacts N/N (troubleshooting gotcha C). None of the three is a percentage:
+  the progress line disappears when the run finishes, so waiting to observe
+  "100%" is waiting for something that will never arrive (gotcha J).
 - **Never mutate the host toolchain.** Preflight detects and instructs; it does
   not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
 - **All file edits are idempotent.** The AGENTS.md policy block is
