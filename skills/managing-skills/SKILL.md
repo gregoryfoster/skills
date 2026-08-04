@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.5"
+  version: "1.6"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -83,6 +83,14 @@ bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.
 
 This is idempotent — re-running is a no-op when the destination already matches. The installer refuses to clobber a file at `.skills/doctor.sh` that doesn't look like a doctor, so a user-authored file at that path is never silently overwritten.
 
+**The doctor is a copy, not a symlink** — deliberately. A symlink into `skills-vendor/` would itself dangle in exactly the uninitialized-submodule state the doctor exists to repair. The copy stays reachable there; the price is that upstream fixes don't arrive by submodule bump alone. Three things close that gap, in order of how much they ask of the consumer:
+
+- **The doctor re-syncs itself.** On every run it compares `.skills/doctor.sh` against the vendored `doctor.sh` and re-installs when they differ ([#84](https://github.com/gregoryfoster/skills/issues/84)). Since Phase 1 of every `reviewing-*` / `shipping-*` skill invokes the doctor, this reaches consumers that declined the auto-refresh hook. Content decides, not mtime — git stamps checkout times, so an mtime comparison would misread both a fresh init and a deliberate rollback. The re-sync is best-effort and never changes the doctor's exit code.
+- **The auto-refresh hook re-installs it** on every session, outside the once-per-day lock.
+- **A manual `install-doctor.sh`** run, for consumers with neither.
+
+Two consequences worth knowing. A refresh applies from the *next* run — the instance that performs the copy is the one already in memory. And a consumer running a doctor predating this behaviour doesn't self-heal into it: getting the self-syncing doctor takes one pass through the hook or one manual install, after which it is permanent.
+
 #### Step 3 — Update the project's AGENTS.md
 
 Add or update the `<available_skills>` block to list the newly available skills. Document which skills are symlinked (global) vs local overrides.
@@ -128,7 +136,7 @@ git add skills-vendor/
 git commit -m "chore: update skill submodules"
 ```
 
-After updating, re-run `install-doctor.sh` to pick up any new doctor version — the auto-refresh hook does this automatically on session start, but a manual refresh is useful when iterating outside a session:
+No follow-up step is needed to refresh `.skills/doctor.sh` — the doctor re-syncs itself from the vendored source on its next run, and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
 
 ```bash
 bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh
@@ -325,5 +333,6 @@ Pass `--no-preflight` to skip the SSH ping if the operator already knows the age
 
 - Always use relative symlink paths so they work regardless of where the repo is cloned
 - If a symlink is broken (target missing), run `bash .skills/doctor.sh` — it auto-runs `git submodule update --init --recursive` and reports an actionable error if self-healing fails
+- `bash .skills/doctor.sh --version` prints the installed copy's stamp — worth including in a bug report, since the installed doctor and the vendored one can differ for one run after a submodule bump
 - The `skills-vendor/` directory should be treated as read-only — make changes upstream
 - The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed

@@ -6,9 +6,13 @@
 # doctor would itself be unreachable in the exact failure mode it's
 # meant to repair.
 #
-# This script is invoked in two contexts:
+# This script is invoked in three contexts:
 #   1. From the managing-skills 'add skill repo' procedure (one-time setup).
 #   2. From the auto-refresh hook on every run (opportunistic backport).
+#   3. From doctor.sh's own sync_self, which re-syncs the installed copy
+#      from the vendored source on every doctor run (issue #84). That means
+#      this script routinely rewrites a doctor.sh that is executing right
+#      now — see the write step at the bottom for why the rename matters.
 #
 # Idempotent: copies only when the vendor copy is newer or content differs.
 # Refuses to overwrite an existing .skills/doctor.sh that does not look
@@ -78,8 +82,25 @@ if [ -f "$DEST" ] && cmp -s "$SRC" "$DEST"; then
   exit 0
 fi
 
-# Copy via install(1) for atomic mode-preserving write.
-install -m 755 "$SRC" "$DEST"
+# Write to a temp file in the destination directory, then rename into place.
+#
+# The destination may be executing right now: doctor.sh re-syncs itself from
+# the vendored source (sync_self), and the SessionStart hook can fire while a
+# preflight-invoked doctor is mid-run. Bash reads a script incrementally from
+# an open fd, so a truncating in-place write makes the running instance resume
+# at a byte offset into new content and execute garbage. rename(2) is atomic
+# within a filesystem and leaves the running instance holding the old inode,
+# which it reads to completion undisturbed.
+#
+# `install -m 755` is NOT a safe substitute here: BSD install (macOS) renames,
+# but GNU coreutils install opens the destination O_TRUNC. Consumers run both.
+TMP="$DEST_DIR/.doctor.sh.tmp.$$"
+# Trap covers the window between cp and mv; after a successful mv the rm is a
+# harmless no-op on a path that no longer exists.
+trap 'rm -f "$TMP"' EXIT
+cp "$SRC" "$TMP"
+chmod 755 "$TMP"
+mv -f "$TMP" "$DEST"
 
 log "installed $DEST"
 exit 0
