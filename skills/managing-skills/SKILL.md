@@ -89,9 +89,7 @@ This is idempotent — re-running is a no-op when the destination already matche
 - **The auto-refresh hook re-installs it** on every session, outside the once-per-day lock.
 - **A manual `install-doctor.sh`** run, for consumers with neither.
 
-Two consequences worth knowing. A refresh applies from the *next* run — the running instance keeps reading the copy it started from. And a consumer running a doctor predating this behaviour doesn't self-heal into it: getting the self-syncing doctor takes one pass through the hook or one manual install, after which it is permanent.
-
-`--check-only` skips the re-sync, so it stays safe for a CI health probe that asserts a clean working tree.
+Three consequences worth knowing. A refresh applies from the *next* run — the running instance keeps reading the copy it started from. `--check-only` skips the re-sync entirely, so that mode stays safe for a CI health probe that asserts a clean working tree. And a consumer running a doctor predating this behaviour doesn't self-heal into it: getting the self-syncing doctor takes one pass through the hook or one manual install, after which it is permanent.
 
 #### Step 3 — Update the project's AGENTS.md
 

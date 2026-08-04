@@ -73,8 +73,12 @@ mkdir -p "$DEST_DIR"
 # orphans are still collected on runs that have nothing to install. The age
 # floor is what makes this safe: a concurrent installer's in-flight temp file
 # is minutes old at most, so it can never be swept out from under it.
-find "$DEST_DIR" -maxdepth 1 -name '.doctor.sh.tmp.*' -mmin +1440 -delete \
-  2>/dev/null || true
+#
+# stderr is deliberately NOT silenced. `|| true` already makes this
+# non-blocking, so a find that fails for an unexpected reason (permissions,
+# an exotic filesystem) costs nothing by printing — whereas swallowing it
+# would make "swept nothing" and "could not look" indistinguishable.
+find "$DEST_DIR" -maxdepth 1 -name '.doctor.sh.tmp.*' -mmin +1440 -delete || true
 
 # If destination exists and isn't recognizably a doctor, refuse to clobber.
 # Grep for the stable marker comment that doctor.sh carries near the top of

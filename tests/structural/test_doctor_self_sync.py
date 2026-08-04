@@ -379,7 +379,14 @@ class TestInstallerReplacesByRename:
 
     def test_orphaned_temp_files_are_swept(self, tmp_path: Path):
         """SIGKILL and machine loss both bypass the EXIT trap, stranding a temp
-        file that git then reports as untracked noise forever."""
+        file that git then reports as untracked noise forever.
+
+        Deliberately exercises the *no-op* path (destination already identical),
+        because the property under test is that the sweep runs even when there
+        is nothing to install — the common case for the SessionStart hook. The
+        no-op assertion below pins that path: without it, fixture drift could
+        route this through the install path and silently lose the coverage.
+        """
         repo = tmp_path / "repo"
         _init_repo(repo)
         vendor = _install_vendor(repo)
@@ -393,11 +400,16 @@ class TestInstallerReplacesByRename:
         fresh = repo / ".skills" / ".doctor.sh.tmp.67890"
         fresh.write_text("a concurrent installer's in-flight write\n")
 
-        subprocess.run(
+        # No --quiet, so the installer names the path it took.
+        result = subprocess.run(
             ["bash", str(vendor / "install-doctor.sh")],
             check=True, capture_output=True, text=True, cwd=repo, env=_clean_env(),
         )
 
+        assert "no-op" in result.stdout, (
+            "this test must exercise the no-op path — the sweep has to run on "
+            f"runs with nothing to install. Installer said: {result.stdout!r}"
+        )
         assert not orphan.exists(), "aged temp file should have been swept"
         assert fresh.exists(), (
             "the age floor is what makes the sweep safe — a concurrent "
