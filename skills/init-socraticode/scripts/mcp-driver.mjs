@@ -327,19 +327,116 @@ function graphReady(text) {
   return /READY/i.test(text);
 }
 
+// ── manifest validation ─────────────────────────────────────────────────────
+const MANIFEST_NAME = '.socraticodecontextartifacts.json';
+
+// Mirrors the server's own manifest checks (services/context-artifacts.ts) plus
+// path resolution, so a bad manifest is caught BEFORE a multi-hour index rather
+// than after. Returns { present, errors, count }.
+//
+// Why this has to be strict: the server throws on a bad manifest, but
+// codebase_status swallows that throw ("non-critical") and simply omits the
+// `Context artifacts:` line. An invalid manifest is therefore indistinguishable
+// from "no artifacts configured" in every status reading — it reports a
+// contented `artifacts 0/0` while context search is completely absent (#85).
+function validateManifest(projectPath) {
+  const manifestPath = joinPath(projectPath, MANIFEST_NAME);
+  const result = { path: manifestPath, present: false, errors: [], count: 0 };
+  if (!existsSync(manifestPath)) return result;
+  result.present = true;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch (e) {
+    result.errors.push(`not valid JSON: ${e.message}`);
+    return result;
+  }
+
+  // The legacy top-level array. The server requires an object and rejects this
+  // outright; it is the single most likely shape to inherit from an older repo.
+  if (Array.isArray(parsed)) {
+    result.errors.push(
+      'top level is a JSON array, but the server requires an object — wrap it:\n' +
+      '      {"artifacts": [ …the existing array… ]}'
+    );
+    return result;
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    result.errors.push('top level must be a JSON object');
+    return result;
+  }
+
+  const artifacts = parsed.artifacts;
+  if (artifacts === undefined) {
+    result.errors.push('no "artifacts" key — the manifest declares nothing to index');
+    return result;
+  }
+  if (!Array.isArray(artifacts)) {
+    result.errors.push('"artifacts" must be an array');
+    return result;
+  }
+  result.count = artifacts.length;
+  if (artifacts.length === 0) {
+    result.errors.push('"artifacts" is empty — delete the manifest or declare entries');
+    return result;
+  }
+
+  const seen = new Map();
+  artifacts.forEach((a, i) => {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) {
+      result.errors.push(`artifacts[${i}] must be an object`);
+      return;
+    }
+    for (const field of ['name', 'path', 'description']) {
+      if (typeof a[field] !== 'string' || !a[field].trim()) {
+        result.errors.push(`artifacts[${i}].${field} must be a non-empty string`);
+      }
+    }
+    if (a.paths !== undefined) {
+      result.errors.push(`artifacts[${i}] has a "paths" key — there is no plural field; one artifact = one "path" string`);
+    }
+    if (typeof a.name === 'string' && a.name.trim()) {
+      const key = a.name.trim().toLowerCase();
+      if (seen.has(key)) {
+        result.errors.push(`artifacts[${i}].name "${a.name}" duplicates artifacts[${seen.get(key)}] — names are compared case-insensitively`);
+      } else {
+        seen.set(key, i);
+      }
+    }
+    if (typeof a.path === 'string' && a.path.trim()) {
+      if (/[*?]/.test(a.path)) {
+        result.errors.push(`artifacts[${i}].path "${a.path}" looks like a glob — the server stat()s the value verbatim; point at a literal file or directory`);
+      } else if (!existsSync(resolvePath(projectPath, a.path))) {
+        // Not merely cosmetic: the server skips a non-resolving path silently,
+        // so artifacts N/N never reaches parity and the driver blocks to the
+        // full timeout waiting for a count that cannot arrive.
+        result.errors.push(`artifacts[${i}].path does not resolve: ${a.path}`);
+      }
+    }
+  });
+
+  return result;
+}
+
 // Authoritative expected artifact count from the repo's manifest. The status
 // line can't distinguish "no artifacts configured" (0 expected) from "artifacts
 // not reported yet" (line absent) — both parse to 0/0 — so we read the manifest
 // instead. Returns the declared count, or null when there is no manifest.
+// A manifest that EXISTS but is invalid aborts: degrading to "0 expected" is
+// what let a rejected manifest pass as green.
 function expectedArtifactCount(projectPath) {
-  const manifest = joinPath(projectPath, '.socraticodecontextartifacts.json');
-  if (!existsSync(manifest)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(manifest, 'utf8'));
-    return Array.isArray(parsed.artifacts) ? parsed.artifacts.length : null;
-  } catch {
-    return null; // malformed manifest → fall back to trusting the status line
+  const m = validateManifest(projectPath);
+  if (!m.present) return null;
+  if (m.errors.length) {
+    die(
+      `${MANIFEST_NAME} is invalid — the server will reject it, and codebase_status omits the\n` +
+      'artifact line entirely when it does, so this would otherwise pass as a green "artifacts 0/0"\n' +
+      'with no context search at all:\n' +
+      m.errors.map((e) => `  - ${e}`).join('\n')
+    );
   }
+  return m.count;
 }
 
 // ── high-level flows ─────────────────────────────────────────────────────────
@@ -368,6 +465,21 @@ function cmdResolve() {
     args: launch.args,
     env: launch.env,
   }, null, 2) + '\n');
+}
+
+// Phase 4 gate: validate the manifest before paying for an index.
+function cmdValidateManifest(projectPath) {
+  const m = validateManifest(projectPath);
+  if (!m.present) {
+    console.error(`[driver] no ${MANIFEST_NAME} at ${projectPath} — 0 context artifacts expected`);
+    return;
+  }
+  if (m.errors.length) {
+    console.error(`[driver] ${m.path} — INVALID:`);
+    for (const e of m.errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+  console.error(`[driver] ${m.path} — OK: ${m.count} artifact(s), every path resolves`);
 }
 
 async function cmdStatus(projectPath) {
@@ -526,6 +638,9 @@ Commands:
   verify   sample codebase_search + graph_status + list_projects; exit 0/1
   resolve  print the resolved server launch command as JSON and exit — does not
            start the server (no Docker, no network); use it to debug resolution
+  validate-manifest
+           check .socraticodecontextartifacts.json (shape, unique names, every
+           path resolves) and exit 0/1; no server, no network. Run before index.
 
 projectPath defaults to the current working directory.
 
@@ -547,6 +662,7 @@ if (RUN_AS_SCRIPT) {
     case 'status': await cmdStatus(projectPath); break;
     case 'verify': await cmdVerify(projectPath); break;
     case 'resolve': cmdResolve(); break;
+    case 'validate-manifest': cmdValidateManifest(projectPath); break;
     case '--help': case '-h': console.log(USAGE); break;
     default:
       console.error(USAGE);
@@ -555,6 +671,7 @@ if (RUN_AS_SCRIPT) {
 }
 
 export {
+  validateManifest, MANIFEST_NAME,
   parseEmbedPercent, parseArtifacts, graphReady,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,

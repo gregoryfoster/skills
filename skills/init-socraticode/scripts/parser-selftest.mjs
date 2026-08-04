@@ -17,12 +17,14 @@
 //
 // No flags, no network, no server: pure string parsing.
 // <<< usage
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseEmbedPercent, parseArtifacts, graphReady, indexingInProgress,
   lastOperationFailed, parseLastOpError, indexIncomplete,
-  anotherProcessIndexing, indexSettled,
+  anotherProcessIndexing, indexSettled, validateManifest, MANIFEST_NAME,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -160,6 +162,45 @@ eq('durable chunks+graph must NOT read as settled', indexSettled(REINDEX_FIRST_P
 console.log('— artifact shapes (gotcha H) —');
 eq('partial 2/7', parseArtifacts(PARTIAL_ARTIFACTS), { done: 2, total: 7 });
 eq('no line → 0/0', parseArtifacts('Project: /repo\nStatus: green'), { done: 0, total: 0 });
+
+console.log('— manifest validation —');
+const tmp = mkdtempSync(join(tmpdir(), 'socraticode-selftest-'));
+const write = (obj) => {
+  writeFileSync(join(tmp, 'AGENTS.md'), '# real file\n');
+  writeFileSync(join(tmp, MANIFEST_NAME), typeof obj === 'string' ? obj : JSON.stringify(obj));
+  return validateManifest(tmp);
+};
+try {
+  const ok = write({ artifacts: [{ name: 'agent-guidelines', path: './AGENTS.md', description: 'conventions' }] });
+  eq('well-formed manifest passes', [ok.errors.length, ok.count], [0, 1]);
+
+  // The #85 shape: a bare top-level array. The server rejects it and
+  // codebase_status then omits the artifact line, so anything that treats this
+  // as "0 configured" reports green with no context search at all.
+  const legacy = write([{ name: 'agent-guidelines', path: './AGENTS.md', description: 'conventions' }]);
+  eq('legacy top-level array is rejected', legacy.errors.length > 0, true);
+  eq('…with a migration hint', /wrap it/.test(legacy.errors[0]), true);
+
+  const missingPath = write({ artifacts: [{ name: 'x', path: './nope.md', description: 'd' }] });
+  eq('non-resolving path is an error', missingPath.errors.length, 1);
+
+  const dupe = write({ artifacts: [
+    { name: 'x', path: './AGENTS.md', description: 'd' },
+    { name: 'X', path: './AGENTS.md', description: 'd' },
+  ] });
+  eq('duplicate name is case-insensitive', /duplicates/.test(dupe.errors.join()), true);
+
+  const plural = write({ artifacts: [{ name: 'x', paths: ['./AGENTS.md'], description: 'd' }] });
+  eq('plural "paths" key is caught', /there is no plural field/.test(plural.errors.join()), true);
+
+  const glob = write({ artifacts: [{ name: 'x', path: './docs/**/*.md', description: 'd' }] });
+  eq('glob path is caught', /looks like a glob/.test(glob.errors.join()), true);
+
+  rmSync(join(tmp, MANIFEST_NAME));
+  eq('absent manifest is not an error', validateManifest(tmp).present, false);
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
 process.exit(fails ? 1 : 0);

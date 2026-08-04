@@ -173,8 +173,30 @@ the project's **non-code** knowledge (SQL schemas, OpenAPI/Protobuf, Terraform/k
 architecture docs, env *examples*). **Adapt paths per project — do not copy the
 template verbatim.** Each artifact is `{name, path, description}` with `path` a
 single **literal file or directory** (globs do **not** work — the server `stat()`s
-the value; a directory indexes recursively). Verify each path resolves
-(`test -e '<path>'`) and drop categories the project lacks.
+the value; a directory indexes recursively). Drop categories the project lacks.
+
+**Migrate a legacy top-level array first (idempotent audit).** The server
+requires a top-level **object**; a bare array is rejected outright. If the repo
+already carries a manifest whose first non-whitespace character is `[`, rewrite
+it as `{"artifacts": [ …the existing array… ]}` before going further, preserving
+the entries as-is. This is the same normalize-in-place discipline Phase 3 applies
+to the policy block, and it matters more than it looks: when the server rejects a
+manifest, `codebase_status` silently omits the artifact line, so the repo indexes
+"successfully" and reports `artifacts 0/0` while having **no context search at
+all** (gotcha K).
+
+**Then gate on the validator** — cheap, and it runs before the expensive index:
+
+```bash
+node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest "<PROJECT_PATH>"
+```
+
+It checks the top-level shape, the `{name, path, description}` triple, unique
+(case-insensitive) names, the absent-`paths`-plural rule, globs, and that **every
+path resolves** — exiting non-zero with one line per problem. A non-resolving path
+is not cosmetic: the server skips it silently, so `artifacts N/N` never reaches
+parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every reported line, or
+drop the category, before indexing.
 
 **Also write `.socraticodeignore` (repo root).** It's layered on the built-in
 defaults + `.gitignore` (gitignore syntax) and is essentially mandatory for any

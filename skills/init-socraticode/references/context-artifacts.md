@@ -18,10 +18,25 @@ After `codebase_index` finishes embeddings + graph, run `codebase_context_index`
 
 ## Manifest shape — one `path` string per artifact
 
+**The top level must be an object with an `artifacts` array. A bare top-level
+array is rejected** — the server throws `.socraticodecontextartifacts.json must
+be a JSON object`. Legacy manifests written as a naked `[ … ]` are the common
+inherited form, and they fail in the worst possible way (see below); migrate to:
+
+```json
+{ "artifacts": [ …the existing array… ] }
+```
+
 Each artifact is `{ "name", "path", "description" }` — all three **required
 non-empty strings**. The server (`dist/services/context-artifacts.js`) validates
 this on the first `codebase_context_index` call and rejects anything else, so
 Phase 4 fails outright if the shape is wrong.
+
+Validate before indexing rather than discovering this afterwards:
+
+```bash
+node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest "<PROJECT_PATH>"
+```
 
 - **`path` is a single string, not an array.** There is no `paths` field. One
   artifact = one path.
@@ -132,13 +147,22 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 | Click CLI | `./AGENTS.md`, `./docs/`, `./pyproject.toml`, a named config file (e.g. `./ruff.toml`) |
 | PHP / WordPress (Bedrock) | `./composer.json`, `./config/`, a named SQL dump (e.g. `./db/schema.sql`), `./docs/`, a named theme layout (e.g. `./resources/views/layouts/app.blade.php`) |
 
-## Two failure modes — shape aborts, a bad path skips
+## Three failure modes — shape aborts, shape aborts *silently*, a bad path skips
 
 The server treats these differently, and the fix differs:
 
 - **Shape errors abort the whole run.** A `paths` array, an empty/missing/
   non-string `path`, or a duplicate `name` throws at manifest-parse time — nothing
   indexes, `codebase_context_index` fails outright. This is the #76 bug.
+- **…and the abort is invisible from `codebase_status`.** The status handler
+  wraps its artifact block in a `try/catch` marked "non-critical", and
+  `getArtifactStatusSummary()` returns null whenever `artifacts` is missing or
+  empty — which is exactly what a rejected manifest looks like. So the
+  `Context artifacts:` line is **omitted entirely**: `codebase_index` completes,
+  `codebase_context_index` throws where nobody is looking, and the repo reads as
+  a contented `artifacts 0/0` with zero context search. A legacy top-level array
+  lands precisely here. Run `validate-manifest` (above) rather than trusting a
+  green status — this is #85's gotcha K.
 - **A well-formed but non-resolving `path` skips only that artifact.** The server
   `stat()`s each path inside a per-artifact `try/catch`; a path that doesn't exist
   is logged and skipped, and the *other* artifacts still index. It surfaces not as
