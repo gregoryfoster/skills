@@ -212,6 +212,12 @@ logger = get_logger(__name__)
 ​```
 Entry points only: `configure_logging()` is called once inside the FastAPI `lifespan`. Never in library modules.
 
+The app's own records — including uvicorn's access/error lines, via `--log-config src/core/log_config.json` — are JSON, one object per line, keyed `{level, logger, message, timestamp}`.
+
+> Include when PRIVATE_WHEELHOUSE=find-links AND DEPLOY_TARGET=systemd:
+
+One exception: the `ExecStartPre` wheelhouse sync writes a **plain-text** line to journald on every service start (`wheelhouse in sync: …`). It runs before the project is importable, so it cannot share the JSON formatter — a pipeline that `json.loads` every `MESSAGE` must tolerate it.
+
 **Date & Time:**
 - All UTC
 - ISO 8601: `YYYY-MM-DDTHH:MM:SS.ffffffZ` (timestamps), `YYYY-MM-DD` (dates)
