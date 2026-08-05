@@ -195,16 +195,14 @@ NOW=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
 # uncommitted changes add N tokens" rather than "this file is big" — which is
 # what makes it actionable rather than ambient. A file with no committed version
 # compares against 0, so a brand-new over-budget doc is flagged once.
+# One call returning both halves: the byte count, and the reason there isn't one.
+# Without the reason, "prev=0" on a file that plainly has history is the kind of
+# number someone reasonably distrusts.
 PREV=0
-PREV_BYTES="$(ctx_prev_bytes HEAD "$REL")" || PREV_BYTES=""
-# A command substitution runs in a subshell, so CTX_PREV_NOTE set inside it does
-# not reach here — ask again in this shell, cheaply, only when there is a zero to
-# explain. Without the note, "prev=0" on a file that plainly has history is the
-# kind of number someone reasonably distrusts.
-if [ -z "$PREV_BYTES" ]; then
-  ctx_prev_bytes HEAD "$REL" >/dev/null 2>&1 || true
-  [ -z "$CTX_PREV_NOTE" ] || log "note: $CTX_PREV_NOTE"
-fi
+PREV_OUT="$(ctx_prev_bytes HEAD "$REL")" || PREV_OUT=""
+PREV_BYTES="${PREV_OUT%%	*}"
+PREV_NOTE="${PREV_OUT#*	}"
+[ -z "$PREV_NOTE" ] || log "note: $PREV_NOTE"
 case "$PREV_BYTES" in
   ''|*[!0-9]*) PREV=0 ;;
   *) PREV=$(ctx_est_from_bytes "$PREV_BYTES") ;;

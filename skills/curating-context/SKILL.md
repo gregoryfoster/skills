@@ -96,6 +96,15 @@ A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a
 **placeholder** for the literal path printed here, not an inherited shell
 variable — each Bash invocation runs in a fresh shell.
 
+`scripts/` also holds **`_context-lib.sh`**, which is sourced rather than run.
+`measure-context.sh`, `context-budget-guard.sh`, and `context-delta.sh` all read
+the bytes-per-token ratio, the archival matcher, the docs-dir knob, and the
+symlink/git comparison from it, so the weekly run and both continuous surfaces
+cannot disagree about a number. It must travel with them: vendor the whole
+`scripts/` directory, never individual files. `install-guard.sh` refuses to
+install a guard whose library is missing, because that combination wires up
+cleanly and then does nothing, silently.
+
 ## Phase 1 — Measure
 
 ```bash

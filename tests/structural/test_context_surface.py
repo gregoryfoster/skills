@@ -135,12 +135,19 @@ class TestSymlinkedPolicyFile:
         assert all(m is not None for m in messages.values()), messages
         # Both names describe the same file, so both must report the same numbers.
         assert messages["AGENTS.md"] == messages["CLAUDE.md"], messages
-        # 400 added lines at ~2.7 bytes/token is ~8.6k, nowhere near the ~51k the
-        # whole file measures. The bug reported the latter.
-        whole_file = len((repo / "AGENTS.md").read_text().encode()) // 3
-        delta = int(messages["AGENTS.md"].split("(+")[1].split(" ")[0])
-        assert delta < whole_file // 2, (
-            f"delta {delta} looks like the whole file, not the change since HEAD"
+        # Assert the relationship, not a threshold derived from a hardcoded
+        # bytes/token divisor: a second copy of the ratio here would be the very
+        # duplication the shared library exists to remove, and it would drift
+        # silently rather than fail if the default moved. The message carries
+        # both numbers, so compare them directly — the file grew by a fifth, so a
+        # delta anywhere near the total means the previous size was read as ~0,
+        # which is precisely the symlink bug.
+        msg = messages["AGENTS.md"]
+        now = int(msg.split("is now ~")[1].split(" ")[0])
+        delta = int(msg.split("(+")[1].split(" ")[0])
+        assert 0 < delta < now // 2, (
+            f"delta {delta} against a total of {now} looks like the whole file "
+            "rather than the change since HEAD"
         )
 
     def test_symlink_redirect_is_logged(self, repo: Path):

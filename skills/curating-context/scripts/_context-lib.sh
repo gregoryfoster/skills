@@ -53,9 +53,10 @@ Provides:
       chain leaves the repo.
 
   ctx_prev_bytes <ref> <repo-relative-path>
-      Byte count of the committed version at <ref>, or empty when there is no
-      comparable one — notably when the blob is a symlink, whose content is a
-      path rather than the file.
+      "<bytes>" for the committed version at <ref>, or "<TAB><reason>" when
+      there is no comparable one — notably when the blob is a symlink, whose
+      content is a path rather than the file. Split on the tab: field 1 is the
+      count, field 2 the reason a caller can log.
 
 Exit codes:
   0  always (this help)
@@ -185,28 +186,25 @@ ctx_resolve_rel() {
   esac
 }
 
-# Set by ctx_prev_bytes when it declined to compare, so a caller with somewhere
-# to put diagnostics can explain the zero. A return channel rather than a print:
-# the library cannot know whether its caller's stdout is a JSON hook reply, a
-# report table, or a log file.
-CTX_PREV_NOTE=""
-
-# CTX_PREV_NOTE is this function's second return value, read by callers and
-# never within this file — which is exactly what SC2034 reports. A directive
-# cannot sit in front of an individual case branch (SC1124), and putting one
-# there silently breaks parsing of the whole library, so it goes here.
-# shellcheck disable=SC2034
 ctx_prev_bytes() {
+  # Emits "<bytes><TAB><reason>", either side possibly empty. Both values come
+  # back on stdout rather than one through a global: a caller reads this in a
+  # command substitution, whose subshell cannot set a variable in the caller's
+  # shell, so a global would have forced a second invocation — two `git ls-tree`
+  # calls on a path the hook runs for every edit, with a window for the two to
+  # disagree if the index moved between them.
+  #
   # A 120000-mode blob is a symlink, whose content is the target path rather
   # than the file — the mirror of the case ctx_resolve_rel handles, reached when
   # a path was a symlink at the ref and is a real file now. Report no comparable
   # version rather than eleven bytes of content.
-  local ref="$1" rel="$2" mode
-  CTX_PREV_NOTE=""
-  mode="$(git ls-tree "$ref" -- "$rel" 2>/dev/null | awk '{print $1; exit}')" || return 0
+  local ref="$1" rel="$2" mode bytes="" note=""
+  mode="$(git ls-tree "$ref" -- "$rel" 2>/dev/null | awk '{print $1; exit}')" || mode=""
   case "$mode" in
-    100644|100755) git show "$ref:$rel" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ' ;;
+    100644|100755)
+      bytes="$(git show "$ref:$rel" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || bytes="" ;;
     '') ;;
-    *) CTX_PREV_NOTE="$ref:$rel is mode $mode, not a regular file; treating as uncommitted" ;;
+    *) note="$ref:$rel is mode $mode, not a regular file; treating as uncommitted" ;;
   esac
+  printf '%s\t%s' "$bytes" "$note"
 }

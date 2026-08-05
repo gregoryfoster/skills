@@ -142,6 +142,7 @@ while IFS="$(printf '\t')" read -r kind f; do
   [ -f "$f" ] && now=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)")
   prev=0
   pb="$(ctx_prev_bytes "$BASE" "$f")" || pb=""
+  pb="${pb%%	*}"
   case "$pb" in
     ''|*[!0-9]*) prev=0 ;;
     *) prev=$(ctx_est_from_bytes "$pb") ;;
