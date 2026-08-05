@@ -52,6 +52,11 @@ Provides:
       Follow a symlink chain to its real repo-relative path. Empty when the
       chain leaves the repo.
 
+  ctx_skill_version <libdir>
+      Print "<version>\t<short-commit>" for the skill owning <libdir>, read from
+      the sibling SKILL.md frontmatter and the skill repo's git HEAD. Either
+      field may be empty.
+
   ctx_api_key_from_env_file <root> [names...]
       Print ANTHROPIC_API_KEY read from the first secrets file found at <root>
       (default names: .env, then env). Empty when absent. PARSED, never
@@ -197,6 +202,38 @@ ctx_resolve_rel() {
   case "$abs" in
     "$root"/*) printf '%s' "${abs#"$root"/}" ;;
   esac
+}
+
+ctx_skill_version() {
+  # Which version of the skill produced a measurement. Without this the ledger
+  # records what a repo did but not what made it do that, so no skill change can
+  # ever be attributed to an outcome — which is the precondition for gating
+  # changes on the cohort rather than on judgement.
+  #
+  # Two values, because each covers the other's gap. The declared `version` is
+  # human-comparable and is what an A/B across the cohort groups by; it is only as
+  # good as the discipline of bumping it. The short commit is automatic and exact,
+  # so an unbumped version is still debuggable after the fact.
+  # Separate statements: under `set -u`, a later assignment in the same `local`
+  # cannot read an earlier one from the same statement.
+  local libdir="$1"
+  local skill version="" commit=""
+  skill="$libdir/../SKILL.md"
+  if [ -f "$skill" ]; then
+    # Frontmatter only: stop at the closing delimiter so a `version:` mentioned in
+    # the body cannot be mistaken for the declaration.
+    version="$(LC_ALL=C awk '
+      NR == 1 && $0 == "---" { infm = 1; next }
+      infm && $0 == "---" { exit }
+      infm && /^[[:space:]]*version:[[:space:]]*/ {
+        sub(/^[[:space:]]*version:[[:space:]]*/, "")
+        gsub(/^"|"$|^'"'"'|'"'"'$/, "")
+        print; exit
+      }
+    ' "$skill" 2>/dev/null)" || version=""
+  fi
+  commit="$(git -C "$libdir" rev-parse --short HEAD 2>/dev/null)" || commit=""
+  printf '%s\t%s' "$version" "$commit"
 }
 
 ctx_api_key_from_env_file() {

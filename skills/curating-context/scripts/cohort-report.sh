@@ -194,7 +194,7 @@ for name in order:
         records.append({
             "repo": name, "status": info["status"], "latest": None, "tokens": None,
             "net": None, "net_from": None, "net_why": None, "runs": 0,
-            "orphans": None, "dead": None,
+            "orphans": None, "dead": None, "skill_version": None,
             "best_actions": None, "best_delta": None,
         })
         continue
@@ -244,6 +244,7 @@ for name in order:
         "runs": len(rows),
         "orphans": latest.get("docs_orphaned"),
         "dead": latest.get("links_dead"),
+        "skill_version": latest.get("skill_version"),
         "best_actions": ", ".join(best.get("actions") or []) or "(untagged)" if best else None,
         "best_delta": best.get("delta_tokens") if best else None,
     })
@@ -256,11 +257,11 @@ records.sort(key=lambda r: -(r["tokens"] or 0))
 
 if fmt == "tsv":
     print("repo\tlatest\ttokens\tnet\tnet_from\tnet_why\truns\torphans\tdead"
-          "\tbest_delta\tbest_actions")
+          "\tskill_version\tbest_delta\tbest_actions")
     for r in records:
         print("\t".join("" if r[k] is None else str(r[k]) for k in
               ("repo", "latest", "tokens", "net", "net_from", "net_why", "runs",
-               "orphans", "dead", "best_delta", "best_actions")))
+               "orphans", "dead", "skill_version", "best_delta", "best_actions")))
     sys.exit(0)
 
 def cell(v, dash="-"):
@@ -294,6 +295,22 @@ if stale:
     print(f"\nno usable ledger: {', '.join(stale)}")
 # A dash in `net` has two very different causes. Say which, rather than letting a
 # suppressed comparison read as "no change recorded yet".
+# An A/B needs at least two versions in play; a uniform cohort is a baseline, not
+# an experiment. Say which is which rather than leaving it to be inferred.
+versions = {}
+for r in records:
+    if r["skill_version"]:
+        versions.setdefault(r["skill_version"], []).append(r["repo"])
+if versions:
+    print("\nskill versions in play:")
+    for v in sorted(versions):
+        print(f"  {v}: {', '.join(sorted(versions[v]))}")
+    if len(versions) == 1:
+        print("  one version across the cohort — a baseline, not a comparison.")
+untagged = [r["repo"] for r in records if r["runs"] and not r["skill_version"]]
+if untagged:
+    print(f"\nno skill_version recorded (rows predate the field): {', '.join(untagged)}")
+
 unexplained = [r for r in records if r["net"] is None and r["net_why"]]
 if unexplained:
     print("\nnet not comparable:")

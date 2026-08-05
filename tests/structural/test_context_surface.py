@@ -727,3 +727,345 @@ class TestDryRunDescribesTheRealCommand:
         assert result.returncode == 0, result.stderr
         assert "would be REFUSED" not in result.stderr, result.stderr
         assert "would_be_refused" not in result.stdout
+
+
+class TestProveNoLoss:
+    """prove-no-loss.sh exists because the obvious check is not strong enough.
+
+    Phase 6 originally said "grep a distinctive phrase from each moved block".
+    On the first real run of the skill that check PASSED over a real defect: a
+    line had been moved and simultaneously recombined into a longer sentence, so
+    the phrase was present and the line was not. The fixture below is that exact
+    text, not an invented one.
+    """
+
+    PROVE = SCRIPTS / "prove-no-loss.sh"
+
+    ORIGINAL = (
+        "The [`managing-skills`](skills/managing-skills/) skill teaches agents "
+        "how to perform these operations."
+    )
+    # What the paraphrase-in-transit actually produced.
+    RECOMBINED = (
+        "The [`managing-skills`](../skills/managing-skills/) skill teaches agents "
+        "how to perform these operations; this file is the reference a human or "
+        "an audit needs."
+    )
+
+    def _repo(self, tmp_path: Path, policy_body: str) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text(policy_body)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        return repo
+
+    def _run(self, repo: Path, *extra: str):
+        return subprocess.run(
+            ["bash", str(self.PROVE), "--base", "HEAD", *extra],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+
+    def test_clean_relocation_passes(self, tmp_path: Path):
+        repo = self._repo(tmp_path, f"# P\n\n## A\n\nkeep me\n\n### B\n\n{self.ORIGINAL}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nkeep me\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n")
+        (repo / "docs").mkdir()
+        # Heading promoted ### -> ##, link depth adjusted: both normalised away.
+        (repo / "docs" / "SKILLS.md").write_text(f"# S\n\n## B\n\n{self.RECOMBINED.replace('; this file is the reference a human or an audit needs', '')}\n")
+        result = self._run(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
+
+    def test_paraphrase_in_transit_is_caught(self, tmp_path: Path):
+        """The defect from the first real run, reproduced verbatim."""
+        repo = self._repo(tmp_path, f"# P\n\n## A\n\n{self.ORIGINAL}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "SKILLS.md").write_text(f"# S\n\n{self.RECOMBINED}\n")
+        result = self._run(repo)
+        assert result.returncode == 3, (
+            f"the paraphrase was not caught (exit {result.returncode})"
+        )
+        # The whole report, LOST list included, is on stdout — see the
+        # one-stream fix, so a piped report stays in order.
+        assert "LOST" in result.stdout and "managing-skills" in result.stdout
+
+    def test_a_phrase_grep_would_have_passed_the_same_input(self, tmp_path: Path):
+        """Pins the reason this script exists. If this ever fails, the phrase-grep
+        method became sufficient and Phase 6 could be simplified."""
+        assert "teaches agents how to perform these operations" in self.RECOMBINED
+        assert self.ORIGINAL not in self.RECOMBINED
+
+    def test_append_after_the_sentence_terminator_is_caught(self, tmp_path: Path):
+        """The variant substring matching could not see.
+
+        RECOMBINED above changes `operations.` to `operations;`, so the original
+        line stopped being a substring and the old implementation caught it by
+        luck. Appending a whole new sentence after the period leaves the original
+        line intact as a substring — that passed until matching became
+        whole-line.
+        """
+        appended = (
+            "The [`managing-skills`](../skills/managing-skills/) skill teaches "
+            "agents how to perform these operations. This file is the reference "
+            "a human needs."
+        )
+        assert self.ORIGINAL.replace("](skills/", "](../skills/") in appended, (
+            "fixture must keep the original line as a substring, or it proves nothing"
+        )
+        repo = self._repo(tmp_path, f"# P\n\n## A\n\n{self.ORIGINAL}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/S.md](docs/S.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "S.md").write_text(f"# S\n\n{appended}\n")
+        result = self._run(repo)
+        assert result.returncode == 3, (
+            f"append-after-terminator not caught (exit {result.returncode})"
+        )
+
+    def test_a_fragment_inside_unrelated_prose_is_not_a_relocation(self, tmp_path: Path):
+        """Short and common lines — fence markers, numbered list items — were
+        effectively unchecked under substring matching. Measured on this exact
+        input, four of five dropped lines reported as "relocated verbatim"."""
+        repo = self._repo(
+            tmp_path,
+            "# P\n\n## A\n\n```bash\nrun the thing\n```\n\n## B\n\n1. Commit and push\n",
+        )
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/X.md](docs/X.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "X.md").write_text(
+            "# X\n\nYou should always run the thing carefully.\n"
+            "Step 9: 1. Commit and push when ready.\n"
+            "Inline ```bash``` is fine.\n"
+        )
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout
+        for dropped in ("```bash", "run the thing", "## B", "1. Commit and push"):
+            assert dropped in result.stdout, (
+                f"{dropped!r} was dropped but not reported: {result.stdout}"
+            )
+        assert "relocated verbatim" not in result.stdout, (
+            "a fragment match was still counted as a relocation"
+        )
+
+    def test_a_code_comment_does_not_match_a_prose_line(self, tmp_path: Path):
+        """Heading text is tagged, not merely stripped of its hashes: stripping
+        alone lets `# cleanup` in a fenced block satisfy the prose line
+        `cleanup`, a false match in the direction that hides loss."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\ncleanup\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/X.md](docs/X.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "X.md").write_text("# X\n\n```bash\n# cleanup\n```\n")
+        assert self._run(repo).returncode == 3
+
+    def test_report_is_ordered_on_one_stream(self, tmp_path: Path):
+        """Summary and LOST list split across stdout/stderr interleaved through a
+        pipe, printing the failures above the counts that explain them."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\ndropped line\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        result = self._run(repo)
+        assert result.returncode == 3
+        assert "UNACCOUNTED FOR" in result.stdout and "LOST" in result.stdout
+        assert result.stdout.index("UNACCOUNTED FOR") < result.stdout.index("LOST")
+
+    def test_outright_deletion_is_caught(self, tmp_path: Path):
+        repo = self._repo(tmp_path, "# P\n\n## A\n\nload-bearing constraint\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout
+        assert "load-bearing constraint" in result.stdout
+
+    def test_also_searches_an_extra_destination(self, tmp_path: Path):
+        """A block demoted somewhere other than the docs tree."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\nmoved into a skill reference\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        target = repo / "skills" / "x" / "references"
+        target.mkdir(parents=True)
+        (target / "n.md").write_text("moved into a skill reference\n")
+        assert self._run(repo).returncode == 3, "should fail without --also"
+        ok = self._run(repo, "--also", "skills/x/references/n.md")
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+
+    def test_archival_docs_are_not_a_valid_destination(self, tmp_path: Path):
+        """Demoting live guidance into docs/plans/ would hide it in a dated
+        snapshot; the archival exclusion must apply here too."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\nlive guidance\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        (repo / "docs" / "plans").mkdir(parents=True)
+        (repo / "docs" / "plans" / "old.md").write_text("live guidance\n")
+        assert self._run(repo).returncode == 3, "an archival doc was accepted"
+
+    def test_symlink_policy_blob_at_base_is_refused(self, tmp_path: Path):
+        """A symlink blob's content is a path, not the file — comparing against it
+        would report the whole file as lost."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nbody\n")
+        (repo / "CLAUDE.md").symlink_to("./AGENTS.md")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        result = subprocess.run(
+            ["bash", str(self.PROVE), "--base", "HEAD", "--file", "CLAUDE.md"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "mode 120000" in result.stderr, result.stderr
+
+
+class TestCensusInvariant:
+    """`sections[]` rows must sum to the policy file's byte count — that is what
+    makes `share` trustworthy, and the census comment advertises it."""
+
+    def _measure(self, repo: Path) -> dict:
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def _repo(self, tmp_path: Path, body: str) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / "AGENTS.md").write_text(body)
+        return repo
+
+    def test_h3_before_any_h2_does_not_lose_bytes(self, tmp_path: Path):
+        """A `### ` preceding both the first `## ` and the first body line used to
+        add its bytes to an unnamed section, which the preamble initialiser then
+        reset to zero: 71 bytes of file, 49 in the rows."""
+        m = self._measure(self._repo(
+            tmp_path,
+            "### Orphan subsection\n\nsome body text here\n\n## Real section\n\nmore body\n",
+        ))
+        assert sum(s["bytes"] for s in m["sections"]) == m["policy"]["bytes"]
+        assert [s["title"] for s in m["subsections"]] == ["Orphan subsection"]
+
+    def test_normal_file_sums_exactly(self, tmp_path: Path):
+        m = self._measure(self._repo(
+            tmp_path,
+            "# T\n\nintro\n\n## A\n\nbody\n\n### A1\n\nmore\n\n## B\n\ntail\n",
+        ))
+        assert sum(s["bytes"] for s in m["sections"]) == m["policy"]["bytes"]
+
+    def test_subsection_bytes_never_exceed_the_parent(self, tmp_path: Path):
+        m = self._measure(self._repo(
+            tmp_path,
+            "# T\n\n## A\n\nbody\n\n### A1\n\nmore text here\n\n### A2\n\nand more\n",
+        ))
+        parents = {s["title"]: s["bytes"] for s in m["sections"]}
+        for sub in m["subsections"]:
+            assert sub["bytes"] <= parents[sub["parent"]], sub
+
+    def test_deeper_headings_are_not_reported_separately(self, tmp_path: Path):
+        """`#### ` belongs to its enclosing `### ` — it is not independently
+        demotable, and reporting it would invite splitting below the useful unit."""
+        m = self._measure(self._repo(
+            tmp_path, "# T\n\n## A\n\n### A1\n\n#### A1a\n\ndeep body\n",
+        ))
+        assert [s["title"] for s in m["subsections"]] == ["A1"]
+
+
+class TestSkillVersionAttribution:
+    """Without a version on the row, the ledger records what a repo did but not
+    what made it do that — so no skill change can ever be attributed to an
+    outcome, which is the precondition for gating changes on the cohort."""
+
+    def test_measure_emits_the_declared_version(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        skill = json.loads(result.stdout)["skill"]
+        assert skill["name"] == "curating-context"
+        # Must match the frontmatter, not a hardcoded copy.
+        declared = None
+        for line in (SCRIPTS.parent / "SKILL.md").read_text().splitlines():
+            if line.strip() == "---" and declared is not None:
+                break
+            if line.strip().startswith("version:"):
+                declared = line.split(":", 1)[1].strip().strip('"').strip("'")
+        assert skill["version"] == declared, (
+            f"emitted {skill['version']!r} but SKILL.md declares {declared!r}"
+        )
+
+    def test_row_carries_the_version_through(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        measured = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        ).stdout
+        row = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
+            input=measured, capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        assert row.returncode == 0, row.stderr
+        parsed = json.loads(row.stdout)
+        assert parsed["skill_version"], parsed
+        assert parsed["skill_commit"], parsed
+
+    def test_a_measurement_predating_the_field_yields_null_not_a_guess(
+        self, tmp_path: Path
+    ):
+        """A wrong attribution is worse than a missing one when the whole point is
+        to A/B skill changes."""
+        repo = _repo(tmp_path, policy_lines=50)
+        measured = json.loads(subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        ).stdout)
+        del measured["skill"]
+        row = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
+            input=json.dumps(measured), capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        assert row.returncode == 0, row.stderr
+        parsed = json.loads(row.stdout)
+        assert parsed["skill_version"] is None and parsed["skill_commit"] is None
+
+    def test_rollup_names_the_versions_in_play(self, tmp_path: Path):
+        """An A/B needs at least two versions; a uniform cohort is a baseline."""
+        for name, ver in (("a", "1.0"), ("b", "1.1")):
+            d = tmp_path / name / ".skills"
+            d.mkdir(parents=True)
+            (d / "context-metrics.jsonl").write_text(json.dumps({
+                "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+                "tokens_exact": True, "skill_version": ver,
+            }) + "\n")
+        result = subprocess.run(
+            ["bash", str(COHORT), "--local", f"{tmp_path/'a'} {tmp_path/'b'}"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "skill versions in play:" in result.stdout
+        assert "1.0: a" in result.stdout and "1.1: b" in result.stdout
+        assert "a baseline, not a comparison" not in result.stdout
+
+    def test_rollup_says_when_the_cohort_is_uniform(self, tmp_path: Path):
+        d = tmp_path / "a" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text(json.dumps({
+            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+            "tokens_exact": True, "skill_version": "1.1",
+        }) + "\n")
+        result = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "a")],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert "a baseline, not a comparison" in result.stdout, result.stdout

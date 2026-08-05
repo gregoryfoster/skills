@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -161,7 +161,13 @@ Read the baseline before touching anything. Four numbers drive the whole run:
 - `docs[].over_budget` — reference docs too large to be worth loading.
 
 `totals.tokens_live` is the ceiling on what one session can pull in from this
-repo's guidance. That is the number the telemetry trend follows.
+repo's guidance — a number to **watch**, not the one to optimise. A successful
+demotion *raises* it: this repo's first curation moved it 8,462 -> 9,862 while
+halving the always-paid cost, because the index and the new documents' own headers
+are real bytes. The trend follows **`policy.tokens`**, which is what every
+invocation actually pays. Treating `tokens_live` as the success metric would make
+every good run read as a regression, and would push an autonomous run toward
+deleting content instead of routing it.
 
 Archival subtrees (`docs/plans/`, `specs/`, `research/`, `audits/`, `archive/`, at
 any depth) are excluded by default. Plans and audits are dated snapshots — a
@@ -207,6 +213,22 @@ Classification is where the value is. Compressing a class-B section is wasted
 work; deleting a class-A section is damage. Do the classification before writing
 a single edit.
 
+**Most large sections split A+B rather than taking one class.** On this repo's
+first run, three of four demotions were splits: the `##` section stayed and its
+`###` subsections moved. So classify at `##` level first, then check
+`subsections[]` for any child over ~5% of the file — that array exists because a
+`##`-only census hides the unit the decision is actually made on. The measured
+example:
+
+| Section | Total | Kept inline | Demoted subsection |
+|---|---:|---:|---|
+| `Scripts` | 2,670 | 390 | `<SKILL_SCRIPTS>` 1,315 + gate-script discipline 1,215 |
+| `Project-level superseding` | 1,351 | 384 | `Required override frontmatter` 789 |
+
+Note the counter-example in the same run: `Self-discovery` (176) was a *child of a
+demoted parent* and stayed inline, because the `../skills` vs `../../skills`
+footgun is class A. A parent's class does not descend to its children.
+
 ## Phase 4 — Plan to the budget
 
 Sum the projected tokens. If the plan does not reach `policy.budget`, keep
@@ -233,16 +255,49 @@ clean file:
    filenames to align with.
 4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text;
    do not paraphrase it in transit. A paraphrase during a move is an
-   unreviewable content change wearing a refactor's clothes.
+   unreviewable content change wearing a refactor's clothes — and it is the one
+   thing a reader skimming the diff will not notice, because the words are all
+   still there.
+
+   Two mechanical adjustments come with every move, and only these two:
+
+   - **Relative links gain a level.** A block moving from the repo root into
+     `docs/` turns every `](tests/x.py)` into `](../tests/x.py)`. Skip this and
+     Phase 6 reports a wave of dead links — the check catches it, but the run
+     fails rather than succeeding.
+   - **A `###` subsection becomes `##`** at the top of its own document.
+
+   `prove-no-loss.sh` normalises exactly these two and nothing else, so any other
+   difference is reported as content loss.
+
+   When the repo has **no `docs/` tree at all** — as this one did — the run is
+   creating it. Take filenames from the frequency table in
+   [references/cohort-patterns.md](references/cohort-patterns.md) rather than
+   inventing them; a thirteenth distinct name for the same concept is how the
+   cohort loses its shared shape. This is a different starting state from the six
+   members that have `docs/` but no index: there, step 2 is the whole job.
 5. **Tighten class C**, then **delete class D**.
 
 ## Phase 6 — Prove no loss
 
 Re-run Phase 1 and assert, before committing:
 
-- Every demoted block is present at its destination. Grep a distinctive phrase
-  from each moved block; a demotion that silently dropped content is the one
-  failure mode of this skill that a token count cannot detect.
+- **Nothing was dropped.** Run the check; do not eyeball it:
+
+  ```bash
+  bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point>
+  ```
+
+  Every non-blank line of the policy file as it was at `--base` must still be
+  present verbatim, inline or in a destination. Exit 3 lists what is not.
+
+  A distinctive-phrase grep is **not** sufficient, which is why this is a script.
+  On this skill's first real run the phrase check passed over a genuine defect: a
+  line had been moved *and* recombined into a longer sentence, so the phrase was
+  present and the line was not. One line out of 226, invisible in the diff, and
+  exactly the paraphrase-in-transit Phase 5 forbids. A dropped line is the one
+  failure mode of this skill that a token count cannot detect — the count looks
+  better for it.
 - `links.dead` is empty, and no new orphan appeared.
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes, if it asserts on policy-file content.
@@ -261,6 +316,17 @@ Tag `--actions` honestly and specifically. The tags are the only thing that lets
 a later run — or the cohort roll-up — attribute a token delta to what caused it.
 `"cleanup"` teaches nothing; `"demote:Project Layout"` does. Schema and budget
 rationale: [references/budget-and-metrics.md](references/budget-and-metrics.md).
+
+Rows also carry `skill_version` and `skill_commit`, so an outcome can be
+attributed to a *skill* change and not just a repo one. Bump the frontmatter
+`version` whenever a change would plausibly alter what a run does — an unbumped
+version makes the cohort look uniform when it isn't, and the roll-up's
+`skill versions in play` footer is what surfaces that.
+
+When a change to this skill is tried and abandoned, record it in
+[references/rejected-changes.md](references/rejected-changes.md) with what refuted
+it. A rejection is negative feedback: without the record the same plausible idea
+returns every few runs and is re-litigated from scratch.
 
 Commit the ledger with the edits, on a branch, and open a PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated

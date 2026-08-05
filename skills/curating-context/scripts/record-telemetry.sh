@@ -38,6 +38,10 @@ Row schema (one JSON object per line):
   file              policy file path
   tokens            policy-file tokens (exact when tokens_exact is true)
   tokens_exact      whether the count came from the count_tokens endpoint
+  skill_version     declared version of the skill that produced this row — what a
+                    cohort A/B groups by. Null for rows predating the field.
+  skill_commit      short commit of the skill repo, so an unbumped version is
+                    still attributable after the fact
   lines, bytes      policy-file size
   budget            budget in force for this run
   over_budget       tokens > budget
@@ -123,6 +127,11 @@ except (ValueError, KeyError) as exc:
     print(f"ERROR stdin is not measure-context.sh JSON: {exc}", file=sys.stderr)
     sys.exit(1)
 
+# Which skill version produced this row. Absent from measurements taken before
+# the field existed, and null rather than guessed in that case — a wrong
+# attribution is worse than a missing one when the point is to A/B skill changes.
+skill = m.get("skill") or {}
+
 sections = m.get("sections") or []
 top = sections[0] if sections else {}
 
@@ -132,6 +141,8 @@ row = {
     "file": policy["path"],
     "tokens": policy["tokens"],
     "tokens_exact": policy["tokens_exact"],
+    "skill_version": skill.get("version") or None,
+    "skill_commit": skill.get("commit") or None,
     "lines": policy["lines"],
     "bytes": policy["bytes"],
     "budget": policy["budget"],
@@ -258,11 +269,27 @@ else:
 if trend == "1":
     series = history + [row]
     print(f"\ntrend for {row['file']} ({len(series)} runs):", file=sys.stderr)
+    # Action tags are the point of the ledger, so a real run carries several and a
+    # single-line format stops being readable at about three. Wrap onto
+    # continuation lines aligned under the first tag rather than truncating: the
+    # tag that got cut is exactly the one someone is reading the trend to find.
+    LABEL_W = 30
     for r in series[-8:]:
         d = r.get("delta_tokens")
         mark = "" if d is None else f"  ({d:+d})"
-        acts = ", ".join(r.get("actions") or []) or "-"
-        print(f"  {r['ts']}  {r['tokens']:>7} tok{mark:<12} {acts}", file=sys.stderr)
+        head = f"  {r['ts']}  {r['tokens']:>7} tok{mark:<12}"
+        acts = r.get("actions") or ["-"]
+        line, rest = head, []
+        for tag in acts:
+            candidate = f"{line}{'' if line == head else ', '}{tag}"
+            if len(candidate) > len(head) + LABEL_W and line != head:
+                rest.append(line)
+                line = f"{' ' * len(head)}{tag}"
+            else:
+                line = candidate
+        rest.append(line)
+        for out in rest:
+            print(out, file=sys.stderr)
     # Net is only meaningful over rows measured the same way. Walk back from the
     # newest row while the method matches and anchor there — otherwise the net
     # silently spans the same method change delta_tokens just refused to report.

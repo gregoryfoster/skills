@@ -29,7 +29,7 @@ class B demotion). Read them together; gate on tokens.
 |---|---:|---|
 | Policy file | **6,000 tokens** | The initial cohort figure, chosen to be reachable — see below. Ratchets down. |
 | Reference doc | **10,000 tokens** | The point of demotion is that loading the doc costs less than carrying it inline everywhere. Past ~10k that stops being true; split on top-level headings. |
-| Live surface | reported, not gated | `totals.tokens_live` is the ceiling on what one session can pull in. Gating it would penalise a repo for having thorough, well-routed docs — which is the goal. Track the trend instead. |
+| Live surface | reported, watched, never gated | `totals.tokens_live` is the ceiling on what one session can pull in. Gating it would penalise a repo for having thorough, well-routed docs — which is the goal. It *rises* on a successful demotion (this repo: 8,462 → 9,862 while the always-paid cost halved), so it is not the trend metric either — `policy.tokens` is. Watch `tokens_live` for a doc tree growing without being read. |
 
 ### Where 6,000 came from, and where it goes
 
@@ -63,7 +63,9 @@ Against 6,000, the current standing is **10 of 12 over**:
 |---|---|
 | usa-wa 52,953 · wordpress 49,103 · observo 28,110 · cannobserv 25,949 · watcher 19,715 · replicator 14,633 · archiver 14,358 · power-map 13,298 · address-validator 6,322 · cli 6,013 | wslcb-licensing-tracker 5,331 · notifier 5,468 |
 
-`gregoryfoster/skills` itself is at 8,376 — over, and curating it is the dogfood.
+`gregoryfoster/skills` itself was at 8,462 and is now **4,273** — the first repo
+under the budget by curation rather than by luck. The run is written up in
+[cohort-patterns.md](cohort-patterns.md).
 
 If a repo's file is genuinely irreducible, raise **that repo's** budget explicitly
 and record why, rather than failing every week.
