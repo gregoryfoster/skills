@@ -727,3 +727,120 @@ class TestDryRunDescribesTheRealCommand:
         assert result.returncode == 0, result.stderr
         assert "would be REFUSED" not in result.stderr, result.stderr
         assert "would_be_refused" not in result.stdout
+
+
+class TestProveNoLoss:
+    """prove-no-loss.sh exists because the obvious check is not strong enough.
+
+    Phase 6 originally said "grep a distinctive phrase from each moved block".
+    On the first real run of the skill that check PASSED over a real defect: a
+    line had been moved and simultaneously recombined into a longer sentence, so
+    the phrase was present and the line was not. The fixture below is that exact
+    text, not an invented one.
+    """
+
+    PROVE = SCRIPTS / "prove-no-loss.sh"
+
+    ORIGINAL = (
+        "The [`managing-skills`](skills/managing-skills/) skill teaches agents "
+        "how to perform these operations."
+    )
+    # What the paraphrase-in-transit actually produced.
+    RECOMBINED = (
+        "The [`managing-skills`](../skills/managing-skills/) skill teaches agents "
+        "how to perform these operations; this file is the reference a human or "
+        "an audit needs."
+    )
+
+    def _repo(self, tmp_path: Path, policy_body: str) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text(policy_body)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        return repo
+
+    def _run(self, repo: Path, *extra: str):
+        return subprocess.run(
+            ["bash", str(self.PROVE), "--base", "HEAD", *extra],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+
+    def test_clean_relocation_passes(self, tmp_path: Path):
+        repo = self._repo(tmp_path, f"# P\n\n## A\n\nkeep me\n\n### B\n\n{self.ORIGINAL}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nkeep me\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n")
+        (repo / "docs").mkdir()
+        # Heading promoted ### -> ##, link depth adjusted: both normalised away.
+        (repo / "docs" / "SKILLS.md").write_text(f"# S\n\n## B\n\n{self.RECOMBINED.replace('; this file is the reference a human or an audit needs', '')}\n")
+        result = self._run(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
+
+    def test_paraphrase_in_transit_is_caught(self, tmp_path: Path):
+        """The defect from the first real run, reproduced verbatim."""
+        repo = self._repo(tmp_path, f"# P\n\n## A\n\n{self.ORIGINAL}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "SKILLS.md").write_text(f"# S\n\n{self.RECOMBINED}\n")
+        result = self._run(repo)
+        assert result.returncode == 3, (
+            f"the paraphrase was not caught (exit {result.returncode})"
+        )
+        assert "LOST" in result.stderr and "managing-skills" in result.stderr
+
+    def test_a_phrase_grep_would_have_passed_the_same_input(self, tmp_path: Path):
+        """Pins the reason this script exists. If this ever fails, the phrase-grep
+        method became sufficient and Phase 6 could be simplified."""
+        assert "teaches agents how to perform these operations" in self.RECOMBINED
+        assert self.ORIGINAL not in self.RECOMBINED
+
+    def test_outright_deletion_is_caught(self, tmp_path: Path):
+        repo = self._repo(tmp_path, "# P\n\n## A\n\nload-bearing constraint\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout
+        assert "load-bearing constraint" in result.stderr
+
+    def test_also_searches_an_extra_destination(self, tmp_path: Path):
+        """A block demoted somewhere other than the docs tree."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\nmoved into a skill reference\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        target = repo / "skills" / "x" / "references"
+        target.mkdir(parents=True)
+        (target / "n.md").write_text("moved into a skill reference\n")
+        assert self._run(repo).returncode == 3, "should fail without --also"
+        ok = self._run(repo, "--also", "skills/x/references/n.md")
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+
+    def test_archival_docs_are_not_a_valid_destination(self, tmp_path: Path):
+        """Demoting live guidance into docs/plans/ would hide it in a dated
+        snapshot; the archival exclusion must apply here too."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\nlive guidance\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        (repo / "docs" / "plans").mkdir(parents=True)
+        (repo / "docs" / "plans" / "old.md").write_text("live guidance\n")
+        assert self._run(repo).returncode == 3, "an archival doc was accepted"
+
+    def test_symlink_policy_blob_at_base_is_refused(self, tmp_path: Path):
+        """A symlink blob's content is a path, not the file — comparing against it
+        would report the whole file as lost."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nbody\n")
+        (repo / "CLAUDE.md").symlink_to("./AGENTS.md")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        result = subprocess.run(
+            ["bash", str(self.PROVE), "--base", "HEAD", "--file", "CLAUDE.md"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "mode 120000" in result.stderr, result.stderr

@@ -113,6 +113,36 @@ routing benefit is not, and the content silently rots because nothing points at
 it. Fix by adding the Detail Docs index — or by deleting the doc, if nothing
 should point at it.
 
+**A repo with no `docs/` tree at all is a different starting state**, and needs
+more work rather than less. `gregoryfoster/skills` was in it: seven archival plans
+and zero live docs, so there was nothing to relink and the run had to *create* the
+tree. Phase 5 step 2 is then a no-op and step 3 is the whole job. Take filenames
+from the table above; the temptation to invent one is strongest precisely when
+there is no existing tree to be consistent with.
+
+### Worked example: `gregoryfoster/skills`, 2026-08-05
+
+The first real run of this skill, kept here because a measured example argues
+better than a rationale.
+
+| | Before | After |
+|---|---:|---:|
+| `AGENTS.md` | 8,462 | **4,273** |
+| Lines | 328 | 231 |
+| Largest section share | 31% | 9% |
+| Live docs | 0 | 3 |
+
+Four sections demoted, three of them A+B splits: `Scripts` (2,670 → 390) lost its
+`<SKILL_SCRIPTS>` template (1,315) and gate-script discipline (1,215) to
+`docs/STYLE.md`; `Project-level superseding` (1,351 → 384) lost its override
+frontmatter spec (789) to `docs/CONVENTIONS.md`; `How downstream projects consume
+this repo` (1,030) went almost whole to `docs/SKILLS.md`; `References convention`
+(657) kept its two enforced rules and demoted the rest.
+
+Zero deletions — Phase 2 found no FALSE verdicts, so no warrant existed. All three
+destinations landed well under the 10k per-doc budget (2,774 / 1,753 / 1,061), so
+the demotion removed cost rather than relocating it.
+
 ### 2. Runaway reference docs
 
 Demotion without a per-doc budget just relocates the cost. Live docs over the 10k
@@ -202,5 +232,7 @@ Note how weakly lines predict tokens — the entire case for gating on tokens:
 - `wslcb-licensing-tracker` (205 lines, 5,331) and `cannabis.observer-wordpress`
   (332 lines, 49,103) differ by 1.6× on lines and **9.2×** on tokens.
 
-`gregoryfoster/skills` itself measures 324 lines / **8,376 tokens** exact — over
-budget, with `## Scripts` at 31%. Dogfood before sweeping the cohort.
+`gregoryfoster/skills` itself measured 328 lines / **8,462 tokens** exact — over
+budget, with `## Scripts` at 31%. It has since been curated to **4,273**; see the
+worked example above. Dogfooding it first is what produced the `subsections[]`
+census and `prove-no-loss.sh`, both of which came out of that single run.

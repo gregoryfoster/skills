@@ -258,11 +258,27 @@ else:
 if trend == "1":
     series = history + [row]
     print(f"\ntrend for {row['file']} ({len(series)} runs):", file=sys.stderr)
+    # Action tags are the point of the ledger, so a real run carries several and a
+    # single-line format stops being readable at about three. Wrap onto
+    # continuation lines aligned under the first tag rather than truncating: the
+    # tag that got cut is exactly the one someone is reading the trend to find.
+    LABEL_W = 30
     for r in series[-8:]:
         d = r.get("delta_tokens")
         mark = "" if d is None else f"  ({d:+d})"
-        acts = ", ".join(r.get("actions") or []) or "-"
-        print(f"  {r['ts']}  {r['tokens']:>7} tok{mark:<12} {acts}", file=sys.stderr)
+        head = f"  {r['ts']}  {r['tokens']:>7} tok{mark:<12}"
+        acts = r.get("actions") or ["-"]
+        line, rest = head, []
+        for tag in acts:
+            candidate = f"{line}{'' if line == head else ', '}{tag}"
+            if len(candidate) > len(head) + LABEL_W and line != head:
+                rest.append(line)
+                line = f"{' ' * len(head)}{tag}"
+            else:
+                line = candidate
+        rest.append(line)
+        for out in rest:
+            print(out, file=sys.stderr)
     # Net is only meaningful over rows measured the same way. Walk back from the
     # newest row while the method matches and anchor there — otherwise the net
     # silently spans the same method change delta_tokens just refused to report.

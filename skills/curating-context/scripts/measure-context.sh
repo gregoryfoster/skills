@@ -55,7 +55,12 @@ Options:
 Output (stdout, JSON):
   policy    { path, lines, bytes, tokens, tokens_exact, bytes_per_token,
               budget, over_budget }
-  sections  [ { title, lines, bytes, tokens, share } ]  descending by size
+  sections  [ { title, lines, bytes, tokens, share } ]  `##`, descending by size
+              A section's bytes INCLUDE its subsections, so share is
+              share-of-file and the rows sum to the policy total.
+  subsections [ { title, parent, lines, bytes, tokens, share } ]  `###`, ditto
+              The unit most demotions actually act on: a large `##` section is
+              usually kept-plus-demoted rather than moved whole.
   docs      [ { path, lines, bytes, tokens, linked, over_budget } ]  live only
   links     { refs, dead, orphans }
   totals    { tokens_policy, tokens_docs, tokens_live, files_docs, archival_skipped }
@@ -300,20 +305,51 @@ fi
 [ "$P_BYTES" -gt 0 ] || P_BYTES=1
 
 # --- section census -------------------------------------------------------
+# Two levels, because the section is not reliably the unit of demotion. Measured
+# on this repo's first real run, three of four demotions were A+B splits: the `##`
+# section stayed and its `###` subsections moved. A `##`-only census hides the
+# unit the decision is actually made on, and leaves the run estimating the split
+# by eye.
+#
+# `##` rows keep their full byte total INCLUDING their subsections, so `share`
+# still means share-of-file and the rows still sum to wc -c. `###` rows are
+# reported separately, each naming its parent.
+#
+# `/^### /` cannot match `#### x` (### then #, not a space), so deeper headings
+# fall through to the body of their enclosing `###` — which is correct: they are
+# not independently demotable.
+#
 # LC_ALL=C makes awk's length() byte-based rather than character-based, so the
 # per-section bytes sum to wc -c.
 AWK_RC=0
 LC_ALL=C awk -v tab="$TAB" '
-  function flush() { if (started) printf "%d%s%d%s%s\n", lines, tab, bytes, tab, title }
-  /^## / { flush(); started=1; title=substr($0, 4); lines=1; bytes=length($0)+1; next }
-  { if (!started) { started=1; title="(preamble)"; lines=0; bytes=0 }
-    lines++; bytes += length($0)+1 }
-  END { flush() }
-' "$POLICY" >"$TMP/sections.tsv" || AWK_RC=$?
+  function flush2() { if (h2 != "") printf "2%s%d%s%d%s%s%s\n", tab, l2, tab, b2, tab, h2, tab }
+  function flush3() { if (h3 != "") printf "3%s%d%s%d%s%s%s%s\n", tab, l3, tab, b3, tab, h3, tab, h2 }
+  /^## / {
+    flush3(); flush2()
+    h2 = substr($0, 4); l2 = 1; b2 = length($0) + 1
+    h3 = ""; l3 = 0; b3 = 0
+    next
+  }
+  /^### / {
+    flush3()
+    h3 = substr($0, 5); l3 = 1; b3 = length($0) + 1
+    l2++; b2 += length($0) + 1
+    next
+  }
+  {
+    if (h2 == "") { h2 = "(preamble)"; l2 = 0; b2 = 0 }
+    l2++; b2 += length($0) + 1
+    if (h3 != "") { l3++; b3 += length($0) + 1 }
+  }
+  END { flush3(); flush2() }
+' "$POLICY" >"$TMP/census.tsv" || AWK_RC=$?
 if [ "$AWK_RC" -ne 0 ]; then
   echo "ERROR section census failed (awk exit $AWK_RC)" >&2
   exit 2
 fi
+awk -F"$TAB" -v OFS="$TAB" '$1 == 2 { print $2, $3, $4 }' "$TMP/census.tsv" >"$TMP/sections.tsv"
+awk -F"$TAB" -v OFS="$TAB" '$1 == 3 { print $2, $3, $4, $5 }' "$TMP/census.tsv" >"$TMP/subsections.tsv"
 
 # --- link graph -----------------------------------------------------------
 # Reachability from the policy file over relative markdown links, computed
@@ -464,6 +500,7 @@ elif [ "$EXACT_OK" -eq 1 ]; then
 fi
 
 sort -t"$TAB" -k2,2nr "$TMP/sections.tsv" >"$TMP/sections.sorted"
+sort -t"$TAB" -k2,2nr "$TMP/subsections.tsv" >"$TMP/subsections.sorted"
 sort -t"$TAB" -k3,3nr "$TMP/docs.tsv" >"$TMP/docs.sorted"
 awk -F"$TAB" '$4 == "false" { print $5 }' "$TMP/docs.tsv" | sort >"$TMP/orphans"
 sort -u "$TMP/refs" >"$TMP/refs.sorted"
@@ -517,6 +554,21 @@ while IFS="$TAB" read -r sl sb st; do
   printf '    {"title": "%s", "lines": %s, "bytes": %s, "tokens": %s, "share": %s}' \
     "$(jesc "$st")" "$sl" "$sb" "$(( sb * 100 / RATIO_X100 ))" "$(( sb * 100 / P_BYTES ))"
 done <"$TMP/sections.sorted"
+[ "$first" -eq 1 ] || printf '\n'
+printf '  ],\n'
+
+printf '  "subsections": [\n'
+first=1
+while IFS="$TAB" read -r sl sb st sp; do
+  [ -n "${sl:-}" ] || continue
+  [ "$first" -eq 1 ] || printf ',\n'
+  first=0
+  # `share` is of the whole file, same denominator as sections, so a subsection
+  # and its parent are directly comparable — which is the comparison a demotion
+  # decision actually needs.
+  printf '    {"title": "%s", "parent": "%s", "lines": %s, "bytes": %s, "tokens": %s, "share": %s}' \
+    "$(jesc "$st")" "$(jesc "$sp")" "$sl" "$sb" "$(( sb * 100 / RATIO_X100 ))" "$(( sb * 100 / P_BYTES ))"
+done <"$TMP/subsections.sorted"
 [ "$first" -eq 1 ] || printf '\n'
 printf '  ],\n'
 

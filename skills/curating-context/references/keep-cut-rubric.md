@@ -113,13 +113,31 @@ The keep list, binding at equal strength to the rest of this rubric:
 6. **A one-line role statement is fine.** Flag identity text only when it is the
    *only* context the file provides.
 
-## Applying it to a section, not a line
+## Applying it to a section, then a subsection — not a line
 
-Classify at section granularity first — that is what the Phase 1 census gives
-you and what the budget arithmetic needs. Only descend to lines inside a section
-you have already called class C. Line-by-line classification of a file that
-should lose three whole sections is how a run burns its effort and reaches the
-budget by shaving class A.
+Classify at `##` granularity first: that is what the budget arithmetic needs, and
+line-by-line classification of a file that should lose three whole sections is how
+a run burns its effort and reaches the budget by shaving class A.
+
+But **the section is usually not the unit of the edit.** A large `##` section
+typically splits: the rule stays inline and the reference implementation moves.
+Phase 1 reports `subsections[]` for exactly this, each naming its parent; check
+any child over ~5% of the file. Measured on this skill's first real run, three of
+four demotions were A+B splits, and the two largest single wins were `###` blocks
+(1,315 and 1,215 tokens) that a `##`-only census could not see.
+
+Two rules for the split:
+
+- **A parent's class does not descend to its children.** In the same run,
+  `Self-discovery` (176 tokens) sat inside a section demoted almost whole and
+  stayed inline, because the `../skills` vs `../../skills` footgun is class A. Its
+  parent being class B said nothing about it.
+- **When you split, leave a signpost.** A demoted subsection gets one inline
+  bullet naming the rule and the test that enforces it. The rule stays
+  discoverable at a fraction of the tokens; without it, an agent has no reason to
+  open the doc.
+
+Only descend to individual lines inside something already called class C.
 
 ## Evidence behind these classes
 
