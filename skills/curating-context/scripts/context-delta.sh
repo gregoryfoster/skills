@@ -64,111 +64,47 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Informational contract: never fail a review because this could not run.
-trap 'exit 0' EXIT
+# Informational contract: never fail a review because this could not run. TMP is
+# created immediately so a single trap covers cleanup and the exit-0 guarantee —
+# installing 'exit 0' here and replacing it with the combined handler after
+# mktemp would leave a window in which a failure exits non-zero, and this script
+# is called from four gather-context.sh files that must not fail.
+TMP="$(mktemp -d 2>/dev/null)" || { trap 'exit 0' EXIT; exit 0; }
+trap 'rm -rf "$TMP"; exit 0' EXIT
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd -P)" || exit 0
 cd "$ROOT" 2>/dev/null || exit 0
 
-read_knob() {
-  local override="$1" envval="$2" file="$3" fallback="$4" v=""
-  if [ -n "$override" ]; then v="$override"
-  elif [ -n "$envval" ]; then v="$envval"
-  elif [ -f "$file" ]; then v="$(head -1 "$file" 2>/dev/null | tr -dc '0-9')"; fi
-  case "$v" in
-    ''|*[!0-9]*) printf '%s' "$fallback" ;;
-    *) printf '%s' "$v" ;;
+# --- shared library -------------------------------------------------------
+# Resolve through a symlink chain: this script may be reached through a symlinked
+# vendor tree, and ${BASH_SOURCE[0]}'s dirname would then hold no library.
+_self="${BASH_SOURCE[0]}"
+_n=0
+while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
+  _t="$(readlink "$_self" 2>/dev/null)" || break
+  case "$_t" in
+    /*) _self="$_t" ;;
+    *) _self="$(dirname "$_self")/$_t" ;;
   esac
-}
-BUDGET="$(read_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
-DOC_BUDGET="$(read_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
-
-# Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:
-# measured across 16 markdown files in this cohort (policy files, references,
-# READMEs) the real ratio sits between 2.40 and 2.69, tightly enough that one
-# constant serves. The conventional bytes/4 heuristic under-reports this content
-# by ~60% — it is calibrated for prose, not for markdown dense with paths, code
-# fences and tables — and a budget checked against it is 60% too lenient.
-# `measure-context.sh --exact` writes the repo's observed ratio to
-# .skills/context-token-ratio; when present it wins.
-BYTES_PER_TOKEN_X100=270
-if [ -f "$ROOT/.skills/context-token-ratio" ]; then
-  _r="$(head -1 "$ROOT/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
-  case "$_r" in
-    ''|.*|*.*.*) ;;
-    *.*) _w="${_r%%.*}"; _f="${_r#*.}00"
-         BYTES_PER_TOKEN_X100=$(( ${_w:-0} * 100 + 1${_f:0:2} - 100 )) ;;
-    *) BYTES_PER_TOKEN_X100=$(( _r * 100 )) ;;
-  esac
-  [ "$BYTES_PER_TOKEN_X100" -ge 100 ] || BYTES_PER_TOKEN_X100=270
+  _n=$(( _n + 1 ))
+done
+_libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
+if [ -z "$_libdir" ] || [ ! -f "$_libdir/_context-lib.sh" ]; then
+  echo "context-delta: _context-lib.sh not found next to $_self; skipping" >&2
+  exit 0
 fi
+# shellcheck source=_context-lib.sh
+. "$_libdir/_context-lib.sh"
 
-est_from_bytes() { echo $(( $1 * 100 / BYTES_PER_TOKEN_X100 )); }
+BUDGET="$(ctx_read_num_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
+DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 
-ARCHIVAL="plans specs research audits archive"
-is_archival() {
-  local name
-  for name in $ARCHIVAL; do
-    case "/$1/" in */"$name"/*) return 0 ;; esac
-  done
-  return 1
-}
-
-# Reference-doc root, so a repo that does not keep references under docs/ gets a
-# delta that works rather than one that silently reports nothing. Same knob
-# measure-context.sh takes as its --docs-dir default.
-read_str_knob() {
-  local envval="$1" file="$2" fallback="$3" v=""
-  if [ -n "$envval" ]; then v="$envval"
-  elif [ -f "$file" ]; then v="$(head -1 "$file" 2>/dev/null | tr -d '[:space:]')"; fi
-  [ -n "$v" ] || v="$fallback"
-  v="${v#./}"; v="${v%/}"
-  case "$v" in
-    ''|/*) printf '%s' "$fallback" ;;
-    *) printf '%s' "$v" ;;
-  esac
-}
-DOCS_DIR="$(read_str_knob "${CONTEXT_DOCS_DIR-}" "$ROOT/.skills/context-docs-dir" docs)"
-
-# A symlinked policy file is the cohort norm (CLAUDE.md -> ./AGENTS.md). `wc -c`
-# follows the link but `git show BASE:CLAUDE.md` does not — it yields the link
-# target STRING, which would fabricate a delta of the whole file. Resolve to the
-# real path and measure that; sort -u then collapses AGENTS.md and a CLAUDE.md
-# pointing at it into one row.
-resolve_rel() {
-  # resolve_rel <repo-relative path> -> repo-relative real path, or empty when
-  # the chain leaves this repo.
-  local p="$1" t d abs n=0
-  while [ -L "$p" ] && [ "$n" -lt 10 ]; do
-    t="$(readlink "$p" 2>/dev/null)" || break
-    case "$t" in
-      /*) p="$t" ;;
-      *) d="$(dirname "$p")"; p="${d%/}/$t" ;;
-    esac
-    n=$(( n + 1 ))
-  done
-  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 0
-  abs="$d/$(basename "$p")"
-  case "$abs" in
-    "$ROOT"/*) printf '%s' "${abs#"$ROOT"/}" ;;
-  esac
-}
-
-# Bytes of the committed version, or empty when there is no comparable one. A
-# 120000-mode blob is a symlink whose content is a path, not the file.
-prev_bytes_of() {
-  local rel="$1" mode
-  mode="$(git ls-tree "$BASE" -- "$rel" 2>/dev/null | awk '{print $1; exit}')" || return 0
-  case "$mode" in
-    100644|100755) git show "$BASE:$rel" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ' ;;
-  esac
-}
-
-TMP="$(mktemp -d)" || exit 0
-# Two traps would replace each other, so the cleanup and the exit-0 contract
-# share one handler.
-trap 'rm -rf "$TMP"; exit 0' EXIT
+# Offline by design, same estimate the write guard uses — enough to decide
+# whether a section belongs in docs/. measure-context.sh --exact is the
+# authoritative count, and also recalibrates the ratio for this repo.
+CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
+DOCS_DIR="$(ctx_docs_dir "$ROOT")"
 
 # Changed files vs BASE, staged and unstaged, plus untracked. Deleted paths are
 # included on purpose: removing a doc changes the surface too. Untracked files
@@ -187,11 +123,11 @@ while IFS= read -r f; do
   kind=""
   case "$f" in
     AGENTS.md|CLAUDE.md) kind="policy" ;;
-    "$DOCS_DIR"/*.md) is_archival "$f" || kind="doc" ;;
+    "$DOCS_DIR"/*.md) ctx_is_archival "$f" || kind="doc" ;;
   esac
   [ -n "$kind" ] || continue
   if [ -L "$f" ]; then
-    t="$(resolve_rel "$f")"
+    t="$(ctx_resolve_rel "$ROOT" "$f")"
     [ -n "$t" ] || continue
     f="$t"
   fi
@@ -203,12 +139,12 @@ sort -u "$TMP/surface" >"$TMP/surface.u"
 while IFS="$(printf '\t')" read -r kind f; do
   [ -n "$f" ] || continue
   now=0
-  [ -f "$f" ] && now=$(est_from_bytes "$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)")
+  [ -f "$f" ] && now=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)")
   prev=0
-  pb="$(prev_bytes_of "$f")" || pb=""
+  pb="$(ctx_prev_bytes "$BASE" "$f")" || pb=""
   case "$pb" in
     ''|*[!0-9]*) prev=0 ;;
-    *) prev=$(est_from_bytes "$pb") ;;
+    *) prev=$(ctx_est_from_bytes "$pb") ;;
   esac
 
   if [ "$kind" = "policy" ]; then b="$BUDGET"; else b="$DOC_BUDGET"; fi

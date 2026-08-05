@@ -42,6 +42,15 @@ something committed it unannounced is a bad surprise.
    When the skill is installed at user level (`~/.claude/skills/…`) no relative
    path exists — the installer falls back to an absolute link and says so, since
    that link will not resolve for a collaborator.
+
+   Because it is a symlink, the guard cannot find its library by
+   `dirname "$0"` — that yields `.claude/hooks/`, which holds no library. It
+   resolves the link chain to the real file first and sources
+   `_context-lib.sh` from beside *that*. `install-guard.sh` refuses to install
+   when the library is absent, and `--check` verifies it beside the resolved
+   target: a guard missing its library wires up cleanly and then exits 0 on every
+   edit, and not even an `ok:` line appears, because logging starts after the
+   source.
 2. A `PostToolUse` entry in `.claude/settings.json` matching
    `Edit|Write|MultiEdit`, with a 10s timeout. The jq merge strips any prior
    entry for this command before appending, and defaults `.hooks` /
@@ -141,6 +150,16 @@ reports "the guard never fires".
 
 ## Deliberate limits
 
+- **One measurement library, not three copies.** The ratio, the archival matcher,
+  the docs-dir knob, and the symlink/git comparison live in
+  `scripts/_context-lib.sh`, sourced by the guard, `context-delta.sh`, and
+  `measure-context.sh`. They previously existed as copies and drifted: the
+  `bytes/4` correction had to land in three places, a fourth copy in the section
+  census was missed, and the parts then contradicted the whole by 38%. The skill's
+  own rubric calls verbatim duplication warrant #1 for deletion — this is that
+  rule applied to its scripts. A missing library is fatal for
+  `measure-context.sh` (exit 2: a measurement that quietly used different
+  constants is worse than none) and silent-but-logged for the hook.
 - **Offline estimate, never `count_tokens`.** A hook runs on every edit and must
   be fast, so it divides bytes by a calibrated ratio rather than calling the API.
   The default is 2.7 bytes/token and `measure-context.sh --exact` refines it per

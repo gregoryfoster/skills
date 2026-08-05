@@ -75,15 +75,34 @@ HOOK="$HOOK_DIR/context-budget-guard.sh"
 SETTINGS="$ROOT/.claude/settings.json"
 COMMAND='bash .claude/hooks/context-budget-guard.sh'
 
+LIB="$SRC_DIR/_context-lib.sh"
+
 if [ "$MODE" = "check" ]; then
   ok=0
   [ -e "$HOOK" ] || ok=1
   [ -f "$SETTINGS" ] && grep -qF "$COMMAND" "$SETTINGS" || ok=1
+  # The guard sources _context-lib.sh from beside its resolved target. A vendored
+  # tree missing the library leaves a hook that looks installed and exits 0 on
+  # every edit, which is the one failure mode the ok:/WARN: log cannot reveal
+  # because nothing is logged before the library loads.
+  lib_ok=yes
+  if [ -e "$HOOK" ]; then
+    hook_target="$(cd "$(dirname "$HOOK")" && pwd -P)/$(basename "$HOOK")"
+    while [ -L "$hook_target" ]; do
+      t="$(readlink "$hook_target")" || break
+      case "$t" in
+        /*) hook_target="$t" ;;
+        *) hook_target="$(dirname "$hook_target")/$t" ;;
+      esac
+    done
+    [ -f "$(dirname "$hook_target")/_context-lib.sh" ] || { lib_ok=no; ok=1; }
+  fi
   if [ "$ok" -eq 0 ]; then
     echo "installed: $HOOK, and referenced in .claude/settings.json"
+    echo "library:   $(cd "$(dirname "$hook_target")" && pwd -P)/_context-lib.sh"
     exit 0
   fi
-  echo "not installed (hook symlink present: $([ -e "$HOOK" ] && echo yes || echo no); settings entry: $([ -f "$SETTINGS" ] && grep -qF "$COMMAND" "$SETTINGS" && echo yes || echo no))"
+  echo "not installed (hook symlink present: $([ -e "$HOOK" ] && echo yes || echo no); settings entry: $([ -f "$SETTINGS" ] && grep -qF "$COMMAND" "$SETTINGS" && echo yes || echo no); library beside target: $lib_ok)"
   exit 3
 fi
 
@@ -126,6 +145,14 @@ if [ "$MODE" = "uninstall" ]; then
 fi
 
 [ -f "$SRC" ] || { echo "ERROR guard script not found at $SRC" >&2; exit 1; }
+# Refuse to install a guard whose library is missing. Without this the hook wires
+# up cleanly and then exits 0 on every edit forever, and nothing is logged
+# because the log line that would say so lives past the source.
+[ -f "$LIB" ] || {
+  echo "ERROR _context-lib.sh not found at $LIB" >&2
+  echo "      The guard sources it at run time; installing without it yields a" >&2
+  echo "      hook that silently does nothing. Refresh the vendored skill." >&2
+  exit 1; }
 
 mkdir -p "$HOOK_DIR"
 

@@ -100,22 +100,33 @@ done
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
 
-# Reference-doc root: --docs-dir, then the shared knob, then docs. The knob is
-# what keeps the write guard and context-delta.sh — which have no flags — looking
-# at the same tree this does. Without it a repo that keeps references elsewhere
-# gets a correct weekly measurement and two continuous surfaces that silently
-# classify nothing.
-if [ -z "$DOCS_DIR" ]; then
-  if [ -n "${CONTEXT_DOCS_DIR:-}" ]; then
-    DOCS_DIR="$CONTEXT_DOCS_DIR"
-  elif [ -f "$ROOT/.skills/context-docs-dir" ]; then
-    DOCS_DIR="$(head -1 "$ROOT/.skills/context-docs-dir" 2>/dev/null | tr -d '[:space:]')"
-  fi
-fi
-DOCS_DIR="${DOCS_DIR#./}"; DOCS_DIR="${DOCS_DIR%/}"
-case "$DOCS_DIR" in
-  ''|/*) DOCS_DIR="docs" ;;
-esac
+# --- shared library -------------------------------------------------------
+# Resolve through a symlink chain first: this script may be reached through a
+# symlinked vendor tree, and ${BASH_SOURCE[0]}'s dirname would then hold no
+# library. Unlike the hook, a missing library here is fatal — a measurement that
+# silently fell back to different constants is worse than no measurement.
+_self="${BASH_SOURCE[0]}"
+_n=0
+while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
+  _t="$(readlink "$_self" 2>/dev/null)" || break
+  case "$_t" in
+    /*) _self="$_t" ;;
+    *) _self="$(dirname "$_self")/$_t" ;;
+  esac
+  _n=$(( _n + 1 ))
+done
+_libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
+[ -n "$_libdir" ] && [ -f "$_libdir/_context-lib.sh" ] || {
+  echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
+# shellcheck source=_context-lib.sh
+. "$_libdir/_context-lib.sh"
+
+# Reference-doc root: --docs-dir, then CONTEXT_DOCS_DIR, then the .skills knob,
+# then docs. The write guard and context-delta.sh read the same knob, so setting
+# it once points all three at one tree.
+DOCS_DIR="$(ctx_docs_dir "$ROOT" "$DOCS_DIR")"
+# --archival feeds the library's matcher, which both continuous surfaces use too.
+CTX_ARCHIVAL="$ARCHIVAL"
 
 if [ -z "$POLICY" ]; then
   for cand in AGENTS.md CLAUDE.md; do
@@ -200,27 +211,12 @@ except (urllib.error.URLError, KeyError, ValueError, OSError) as exc:
 PY
 fi
 
-# Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:
-# measured across 16 markdown files in this cohort (policy files, references,
-# READMEs) the real ratio sits between 2.40 and 2.69, tightly enough that one
-# constant serves. The conventional bytes/4 heuristic under-reports this content
-# by ~60% — it is calibrated for prose, not for markdown dense with paths, code
-# fences and tables — and a budget checked against it is 60% too lenient.
-# `measure-context.sh --exact` writes the repo's observed ratio to
-# .skills/context-token-ratio; when present it wins.
-BYTES_PER_TOKEN_X100=270
-if [ -f "$ROOT/.skills/context-token-ratio" ]; then
-  _r="$(head -1 "$ROOT/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
-  case "$_r" in
-    ''|.*|*.*.*) ;;
-    *.*) _w="${_r%%.*}"; _f="${_r#*.}00"
-         BYTES_PER_TOKEN_X100=$(( ${_w:-0} * 100 + 1${_f:0:2} - 100 )) ;;
-    *) BYTES_PER_TOKEN_X100=$(( _r * 100 )) ;;
-  esac
-  [ "$BYTES_PER_TOKEN_X100" -ge 100 ] || BYTES_PER_TOKEN_X100=270
-fi
+# Offline token estimate, used unless --exact supplies a real count. The ratio
+# and its calibration live in the library so the guard and context-delta.sh
+# cannot disagree with this script about it.
+CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
 
-est_from_bytes() { echo $(( $1 * 100 / BYTES_PER_TOKEN_X100 )); }
+est_from_bytes() { ctx_est_from_bytes "$1"; }
 
 est_tokens() { est_from_bytes "$(LC_ALL=C wc -c <"$1" | tr -d ' ')"; }
 
@@ -314,21 +310,6 @@ extract_links() {
     | grep -vE '[<>*]|, ' || true
 }
 
-is_archival() {
-  # True when any path component of <path> is an archival directory name. Matched
-  # at any depth, not just directly under DOCS_DIR: vendored skill trees nest
-  # them (docs/superpowers/plans/, docs/superpowers/specs/), and a depth-1-only
-  # test reports every one of those snapshots as a live orphan.
-  local p="$1" name
-  for name in $ARCHIVAL; do
-    [ -n "$name" ] || continue
-    case "/$p/" in
-      */"$name"/*) return 0 ;;
-    esac
-  done
-  return 1
-}
-
 in_scope() {
   # The curated surface: the policy file, plus live reference docs under
   # DOCS_DIR. Only these are traversed and only their links are reported as
@@ -338,7 +319,7 @@ in_scope() {
   local p="$1"
   [ "$p" = "$POLICY" ] && return 0
   case "$p" in
-    "$DOCS_DIR"/*) is_archival "$p" && return 1; return 0 ;;
+    "$DOCS_DIR"/*) ctx_is_archival "$p" && return 1; return 0 ;;
   esac
   return 1
 }
@@ -390,7 +371,7 @@ if [ -d "$DOCS_DIR" ]; then
   ARCHIVAL_SKIPPED=0
   while IFS= read -r d; do
     [ -n "$d" ] || continue
-    if is_archival "$d"; then
+    if ctx_is_archival "$d"; then
       ARCHIVAL_SKIPPED=$(( ARCHIVAL_SKIPPED + 1 ))
       continue
     fi

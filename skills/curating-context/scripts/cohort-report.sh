@@ -37,7 +37,12 @@ Columns:
   the latest one, not at the first run ever recorded — an exact count and an
   offline estimate differ by ~60% on this content, so a net spanning that change
   would report a large move for a file that never changed. When no comparable
-  anchor exists the cell is "-" and a footer names the repo.
+  anchor exists the cell is "-" and a footer names the repo and the reason.
+
+  tsv and json carry two more fields than the table has room for:
+    net_from   the date of the run `net` is measured against
+    net_why    why `net` is absent: the method changed since the previous run,
+               or a row is missing its token count
 
 A repo with no ledger is reported as "no ledger" rather than skipped silently —
 missing telemetry is itself the finding on a weekly cadence.

@@ -93,6 +93,29 @@ log() {
   fi
 }
 
+# --- shared library -------------------------------------------------------
+# This script is installed as a SYMLINK at .claude/hooks/, so ${BASH_SOURCE[0]}
+# is the link path and its dirname holds no library — resolve the chain to the
+# real file first. Sourced after log() so a missing library is recorded rather
+# than silent; a hook that cannot measure stays quiet and exits 0.
+_self="${BASH_SOURCE[0]}"
+_n=0
+while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
+  _t="$(readlink "$_self" 2>/dev/null)" || break
+  case "$_t" in
+    /*) _self="$_t" ;;
+    *) _self="$(dirname "$_self")/$_t" ;;
+  esac
+  _n=$(( _n + 1 ))
+done
+_libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
+if [ -z "$_libdir" ] || [ ! -f "$_libdir/_context-lib.sh" ]; then
+  log "skip: _context-lib.sh not found next to $_self — reinstall with install-guard.sh"
+  exit 0
+fi
+# shellcheck source=_context-lib.sh
+. "$_libdir/_context-lib.sh"
+
 PAYLOAD="$(cat 2>/dev/null)" || exit 0
 [ -n "$PAYLOAD" ] || exit 0
 
@@ -128,35 +151,10 @@ case "$ABS" in
 esac
 [ -f "$REL" ] || exit 0
 
-# --- follow a symlinked policy file --------------------------------------
-# The cohort norm is CLAUDE.md -> ./AGENTS.md in every member repo, and Claude
-# Code's `#` memory shortcut writes by the CLAUDE.md name. `wc -c` follows the
-# link but `git show HEAD:CLAUDE.md` does NOT: it returns the link target STRING
-# ("./AGENTS.md", 11 bytes). Comparing live content against that makes every edit
-# look like growth from ~4 tokens, so the quiet-on-reduction branch below becomes
-# unreachable and a successful curation gets reported as runaway growth.
-# Resolve to the real path first and measure that.
-resolve_rel() {
-  # resolve_rel <repo-relative path> -> repo-relative real path, or empty when
-  # the chain leaves this repo (in which case it is not our surface).
-  local p="$1" t d abs n=0
-  while [ -L "$p" ] && [ "$n" -lt 10 ]; do
-    t="$(readlink "$p" 2>/dev/null)" || break
-    case "$t" in
-      /*) p="$t" ;;
-      *) d="$(dirname "$p")"; p="${d%/}/$t" ;;
-    esac
-    n=$(( n + 1 ))
-  done
-  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 0
-  abs="$d/$(basename "$p")"
-  case "$abs" in
-    "$ROOT"/*) printf '%s' "${abs#"$ROOT"/}" ;;
-  esac
-}
-
+# Follow a symlinked policy file to its real path before measuring — see
+# ctx_resolve_rel for why comparing a symlink against git fabricates growth.
 if [ -L "$REL" ]; then
-  TARGET="$(resolve_rel "$REL")"
+  TARGET="$(ctx_resolve_rel "$ROOT" "$REL")"
   if [ -z "$TARGET" ]; then
     log "skip: $REL is a symlink resolving outside the repo"
     exit 0
@@ -167,107 +165,49 @@ if [ -L "$REL" ]; then
 fi
 
 # --- is this file part of the context surface? ----------------------------
-ARCHIVAL="plans specs research audits archive"
-is_archival() {
-  local name
-  for name in $ARCHIVAL; do
-    case "/$1/" in */"$name"/*) return 0 ;; esac
-  done
-  return 1
-}
-
-# Reference-doc root, so a repo that does not keep references under docs/ gets a
-# guard that works rather than one that silently classifies nothing. Matches
-# measure-context.sh's --docs-dir default, which reads the same knob.
-read_str_knob() {
-  # read_str_knob <env-value> <file> <default>
-  local envval="$1" file="$2" fallback="$3" v=""
-  if [ -n "$envval" ]; then v="$envval"
-  elif [ -f "$file" ]; then v="$(head -1 "$file" 2>/dev/null | tr -d '[:space:]')"; fi
-  [ -n "$v" ] || v="$fallback"
-  v="${v#./}"; v="${v%/}"
-  case "$v" in
-    ''|/*) printf '%s' "$fallback" ;;
-    *) printf '%s' "$v" ;;
-  esac
-}
-DOCS_DIR="$(read_str_knob "${CONTEXT_DOCS_DIR-}" "$ROOT/.skills/context-docs-dir" docs)"
+DOCS_DIR="$(ctx_docs_dir "$ROOT")"
 
 KIND=""
 case "$REL" in
   AGENTS.md|CLAUDE.md) KIND="policy" ;;
   # `*` in a case pattern matches `/`, unlike filename globbing — so this one
   # pattern already covers <docs>/a/b/deep.md at any depth.
-  "$DOCS_DIR"/*.md) is_archival "$REL" || KIND="doc" ;;
+  "$DOCS_DIR"/*.md) ctx_is_archival "$REL" || KIND="doc" ;;
 esac
 [ -n "$KIND" ] || exit 0
 
 # --- budget ---------------------------------------------------------------
-read_knob() {
-  # read_knob <env-value> <file> <default>
-  local envval="$1" file="$2" fallback="$3" v=""
-  if [ -n "$envval" ]; then v="$envval"
-  elif [ -f "$file" ]; then v="$(head -1 "$file" 2>/dev/null | tr -dc '0-9')"; fi
-  case "$v" in
-    ''|*[!0-9]*) printf '%s' "$fallback" ;;
-    *) printf '%s' "$v" ;;
-  esac
-}
-
 if [ "$KIND" = "policy" ]; then
-  BUDGET="$(read_knob "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
+  BUDGET="$(ctx_read_num_knob "" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
 else
-  BUDGET="$(read_knob "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
+  BUDGET="$(ctx_read_num_knob "" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 fi
-
-# Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:
-# measured across 16 markdown files in this cohort (policy files, references,
-# READMEs) the real ratio sits between 2.40 and 2.69, tightly enough that one
-# constant serves. The conventional bytes/4 heuristic under-reports this content
-# by ~60% — it is calibrated for prose, not for markdown dense with paths, code
-# fences and tables — and a budget checked against it is 60% too lenient.
-# `measure-context.sh --exact` writes the repo's observed ratio to
-# .skills/context-token-ratio; when present it wins.
-BYTES_PER_TOKEN_X100=270
-if [ -f "$ROOT/.skills/context-token-ratio" ]; then
-  _r="$(head -1 "$ROOT/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
-  case "$_r" in
-    ''|.*|*.*.*) ;;
-    *.*) _w="${_r%%.*}"; _f="${_r#*.}00"
-         BYTES_PER_TOKEN_X100=$(( ${_w:-0} * 100 + 1${_f:0:2} - 100 )) ;;
-    *) BYTES_PER_TOKEN_X100=$(( _r * 100 )) ;;
-  esac
-  [ "$BYTES_PER_TOKEN_X100" -ge 100 ] || BYTES_PER_TOKEN_X100=270
-fi
-
-est_from_bytes() { echo $(( $1 * 100 / BYTES_PER_TOKEN_X100 )); }
 
 # --- measure --------------------------------------------------------------
-# Offline by design: a hook must be fast. The estimate only decides whether to
-# speak; the authoritative count is measure-context.sh --exact.
-NOW=$(est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
+# Offline by design: a hook must be fast, so it never calls count_tokens. The
+# estimate only decides whether to speak; the authoritative count is
+# measure-context.sh --exact, which also recalibrates the ratio for this repo.
+CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
+NOW=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
 [ "$NOW" -gt 0 ] || exit 0
 
 # The committed version is the comparison point, so the advisory reads as "your
 # uncommitted changes add N tokens" rather than "this file is big" — which is
 # what makes it actionable rather than ambient. A file with no committed version
 # compares against 0, so a brand-new over-budget doc is flagged once.
-#
-# A 120000-mode blob is a symlink, whose content is the target path rather than
-# the file — the same trap resolve_rel closes above, reached the other way when a
-# path was a symlink at HEAD and is a real file now. Treat it as "no comparable
-# committed version" rather than as 11 bytes of content.
 PREV=0
-PREV_BYTES=""
-PREV_MODE="$(git ls-tree HEAD -- "$REL" 2>/dev/null | awk '{print $1; exit}')" || PREV_MODE=""
-case "$PREV_MODE" in
-  100644|100755)
-    PREV_BYTES="$(git show "HEAD:$REL" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || PREV_BYTES="" ;;
-  ?*) log "note: HEAD:$REL is mode $PREV_MODE, not a regular file; treating as uncommitted" ;;
-esac
+PREV_BYTES="$(ctx_prev_bytes HEAD "$REL")" || PREV_BYTES=""
+# A command substitution runs in a subshell, so CTX_PREV_NOTE set inside it does
+# not reach here — ask again in this shell, cheaply, only when there is a zero to
+# explain. Without the note, "prev=0" on a file that plainly has history is the
+# kind of number someone reasonably distrusts.
+if [ -z "$PREV_BYTES" ]; then
+  ctx_prev_bytes HEAD "$REL" >/dev/null 2>&1 || true
+  [ -z "$CTX_PREV_NOTE" ] || log "note: $CTX_PREV_NOTE"
+fi
 case "$PREV_BYTES" in
   ''|*[!0-9]*) PREV=0 ;;
-  *) PREV=$(est_from_bytes "$PREV_BYTES") ;;
+  *) PREV=$(ctx_est_from_bytes "$PREV_BYTES") ;;
 esac
 
 # --- decide ---------------------------------------------------------------
