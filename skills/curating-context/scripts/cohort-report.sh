@@ -28,10 +28,16 @@ Options:
   -h, --help         Show this help and exit 0.
 
 Columns:
-  repo, latest run date, current tokens, net change since the first recorded
-  run, runs recorded, orphaned docs, dead links, and the action tags that
-  accompanied this repo's largest single reduction. That last column is the
-  point of the roll-up: it names which optimisation actually paid, per repo.
+  repo, latest run date, current tokens, net change, runs recorded, orphaned
+  docs, dead links, and the action tags that accompanied this repo's largest
+  single reduction. That last column is the point of the roll-up: it names which
+  optimisation actually paid, per repo.
+
+  `net` is anchored at the oldest run that used the SAME measurement method as
+  the latest one, not at the first run ever recorded — an exact count and an
+  offline estimate differ by ~60% on this content, so a net spanning that change
+  would report a large move for a file that never changed. When no comparable
+  anchor exists the cell is "-" and a footer names the repo.
 
 A repo with no ledger is reported as "no ledger" rather than skipped silently —
 missing telemetry is itself the finding on a weekly cadence.
@@ -182,7 +188,8 @@ for name in order:
     if not rows:
         records.append({
             "repo": name, "status": info["status"], "latest": None, "tokens": None,
-            "net": None, "runs": 0, "orphans": None, "dead": None,
+            "net": None, "net_from": None, "net_why": None, "runs": 0,
+            "orphans": None, "dead": None,
             "best_actions": None, "best_delta": None,
         })
         continue
@@ -194,13 +201,41 @@ for name in order:
         d = r.get("delta_tokens")
         if isinstance(d, int) and d < 0 and (best is None or d < best.get("delta_tokens", 0)):
             best = r
+    # `net` must not span a measurement-method change. record-telemetry.sh
+    # suppresses delta_tokens across one because an exact count and an offline
+    # estimate are incomparable — the uncalibrated heuristic under-reported this
+    # cohort by ~60%, so a mixed net invents a change of that size for a file
+    # that never moved. Anchor at the OLDEST row contiguously matching the latest
+    # row's method: the same walk-back --print-trend performs. Both operands are
+    # checked, so an odd-but-parseable row (a badly resolved merge conflict in
+    # the committed ledger) degrades one cell instead of raising.
+    net = None
+    net_from = None
+    net_why = None
+    if not isinstance(latest.get("tokens"), int):
+        net_why = "latest row has no token count"
+    elif len(rows) > 1:
+        anchor = None
+        for r in reversed(rows[:-1]):
+            if r.get("tokens_exact") != latest.get("tokens_exact"):
+                break
+            anchor = r
+        if anchor is None:
+            net_why = "measurement method changed since the previous run"
+        elif not isinstance(anchor.get("tokens"), int):
+            net_why = "anchor row has no token count"
+        else:
+            net = latest["tokens"] - anchor["tokens"]
+            net_from = anchor.get("ts")
+
     records.append({
         "repo": name,
         "status": info["status"],
         "latest": latest.get("ts"),
         "tokens": latest.get("tokens"),
-        "net": (latest.get("tokens") - rows[0].get("tokens"))
-        if len(rows) > 1 and isinstance(rows[0].get("tokens"), int) else None,
+        "net": net,
+        "net_from": net_from,
+        "net_why": net_why,
         "runs": len(rows),
         "orphans": latest.get("docs_orphaned"),
         "dead": latest.get("links_dead"),
@@ -215,11 +250,12 @@ if fmt == "json":
 records.sort(key=lambda r: -(r["tokens"] or 0))
 
 if fmt == "tsv":
-    print("repo\tlatest\ttokens\tnet\truns\torphans\tdead\tbest_delta\tbest_actions")
+    print("repo\tlatest\ttokens\tnet\tnet_from\tnet_why\truns\torphans\tdead"
+          "\tbest_delta\tbest_actions")
     for r in records:
         print("\t".join("" if r[k] is None else str(r[k]) for k in
-              ("repo", "latest", "tokens", "net", "runs", "orphans", "dead",
-               "best_delta", "best_actions")))
+              ("repo", "latest", "tokens", "net", "net_from", "net_why", "runs",
+               "orphans", "dead", "best_delta", "best_actions")))
     sys.exit(0)
 
 def cell(v, dash="-"):
@@ -251,4 +287,13 @@ print(f"{'cohort':<{w}}  {'':<10} {total:>8} tokens across {len(measured)} "
 stale = [r["repo"] for r in records if r["status"] != "ok"]
 if stale:
     print(f"\nno usable ledger: {', '.join(stale)}")
+# A dash in `net` has two very different causes. Say which, rather than letting a
+# suppressed comparison read as "no change recorded yet".
+unexplained = [r for r in records if r["net"] is None and r["net_why"]]
+if unexplained:
+    print("\nnet not comparable:")
+    for r in unexplained:
+        print(f"  {r['repo']}: {r['net_why']}")
+    print("  a method change makes the newest row that repo's baseline; net "
+          "returns once two rows share a method.")
 PY

@@ -16,10 +16,13 @@ Usage:
 
 Options:
   --file PATH        Policy file to measure. Default: AGENTS.md, else CLAUDE.md.
-  --docs-dir DIR     Reference-doc root. Default: docs
+  --docs-dir DIR     Reference-doc root. Default: CONTEXT_DOCS_DIR, then
+                     .skills/context-docs-dir, then docs. The write guard and
+                     context-delta.sh read the same knob, so setting it once
+                     keeps all three looking at the same tree.
   --budget N         Token budget for the policy file (default 6000).
   --doc-budget N     Token budget per reference doc (default 10000).
-  --archival NAMES   Space-separated docs/ subdirectory names treated as an
+  --archival NAMES   Space-separated <docs-dir> subdirectory names treated as an
                      archive rather than live context: excluded from the doc
                      inventory, and not traversed for links. Default:
                      "plans specs research audits archive". Pass "" to measure
@@ -61,7 +64,7 @@ USAGE
 }
 
 POLICY=""
-DOCS_DIR="docs"
+DOCS_DIR=""
 BUDGET=6000
 DOC_BUDGET=10000
 ARCHIVAL="plans specs research audits archive"
@@ -69,13 +72,21 @@ EXACT=0
 NO_WRITE=0
 MODEL="claude-opus-5"
 
+# An option that legitimately accepts an EMPTY value cannot use ${2:?...} to
+# check arity, and a bare `shift 2` at the end of the argv fails under `set -e`
+# with no message at all. Check the count explicitly.
+need_arg() {
+  [ "$1" -ge 2 ] || { echo "ERROR $2 needs a value${3:+ ($3)}" >&2; exit 1; }
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
     --budget) BUDGET="${2:?--budget needs a number}"; shift 2 ;;
     --doc-budget) DOC_BUDGET="${2:?--doc-budget needs a number}"; shift 2 ;;
-    --archival) ARCHIVAL="${2-}"; shift 2 ;;
+    --archival) need_arg "$#" --archival 'pass "" to measure everything'
+                ARCHIVAL="$2"; shift 2 ;;
     --exact) EXACT=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
     --model) MODEL="${2:?--model needs an id}"; shift 2 ;;
@@ -88,6 +99,23 @@ done
 # fallback to cwd covers running outside a git repo at all.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
+
+# Reference-doc root: --docs-dir, then the shared knob, then docs. The knob is
+# what keeps the write guard and context-delta.sh — which have no flags — looking
+# at the same tree this does. Without it a repo that keeps references elsewhere
+# gets a correct weekly measurement and two continuous surfaces that silently
+# classify nothing.
+if [ -z "$DOCS_DIR" ]; then
+  if [ -n "${CONTEXT_DOCS_DIR:-}" ]; then
+    DOCS_DIR="$CONTEXT_DOCS_DIR"
+  elif [ -f "$ROOT/.skills/context-docs-dir" ]; then
+    DOCS_DIR="$(head -1 "$ROOT/.skills/context-docs-dir" 2>/dev/null | tr -d '[:space:]')"
+  fi
+fi
+DOCS_DIR="${DOCS_DIR#./}"; DOCS_DIR="${DOCS_DIR%/}"
+case "$DOCS_DIR" in
+  ''|/*) DOCS_DIR="docs" ;;
+esac
 
 if [ -z "$POLICY" ]; then
   for cand in AGENTS.md CLAUDE.md; do
@@ -221,6 +249,16 @@ jesc() {
 P_LINES=$(LC_ALL=C wc -l <"$POLICY" | tr -d ' ')
 P_BYTES=$(LC_ALL=C wc -c <"$POLICY" | tr -d ' ')
 P_TOKENS=$(count_tokens "$POLICY")
+# An empty policy file yields zero tokens, which the bytes-per-token ratio below
+# divides by. Refuse it here, before a single byte of JSON is emitted: falling
+# through printed a bare "{" to stdout and exited 1, so a caller piping into
+# record-telemetry.sh saw "stdin is not measure-context.sh JSON" and never the
+# real cause. Exit 2 — this is an infrastructure failure, not a usage error.
+# Checked before the clamp below so the message reports the true byte count.
+if [ "$P_TOKENS" -le 0 ]; then
+  echo "ERROR $POLICY has no measurable content ($P_BYTES bytes, $P_TOKENS tokens)" >&2
+  exit 2
+fi
 [ "$P_BYTES" -gt 0 ] || P_BYTES=1
 
 # --- section census -------------------------------------------------------

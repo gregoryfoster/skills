@@ -60,11 +60,18 @@ NOTE=""
 DRY=0
 TREND=0
 
+# --actions and --note accept an empty value deliberately, so they cannot use
+# ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
+# `set -e` with no message at all.
+need_arg() {
+  [ "$1" -ge 2 ] || { echo "ERROR $2 needs a value" >&2; exit 1; }
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
-    --actions) ACTIONS="${2-}"; shift 2 ;;
-    --note) NOTE="${2-}"; shift 2 ;;
+    --actions) need_arg "$#" --actions; ACTIONS="$2"; shift 2 ;;
+    --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
     -h|--help) usage; exit 0 ;;

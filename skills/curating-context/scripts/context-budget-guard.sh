@@ -39,9 +39,13 @@ Budget resolution (first match wins, matching the repo's other knobs):
   3. 6000
 
 Watched files:
-  - the policy file: AGENTS.md or CLAUDE.md at the repo root
-  - live reference docs: docs/**/*.md, excluding archival subtrees
+  - the policy file: AGENTS.md or CLAUDE.md at the repo root. A symlinked
+    CLAUDE.md is followed to its target, which is the cohort norm.
+  - live reference docs: <docs-dir>/**/*.md, excluding archival subtrees
     (plans, specs, research, audits, archive) at any depth
+
+The reference-doc root is CONTEXT_DOCS_DIR, then .skills/context-docs-dir, then
+docs — the same knob measure-context.sh takes as its --docs-dir default.
 
 Reference docs are measured against a 10k budget (CONTEXT_DOC_BUDGET, or
 .skills/context-doc-budget), since their cost is paid on load rather than on
@@ -124,6 +128,44 @@ case "$ABS" in
 esac
 [ -f "$REL" ] || exit 0
 
+# --- follow a symlinked policy file --------------------------------------
+# The cohort norm is CLAUDE.md -> ./AGENTS.md in every member repo, and Claude
+# Code's `#` memory shortcut writes by the CLAUDE.md name. `wc -c` follows the
+# link but `git show HEAD:CLAUDE.md` does NOT: it returns the link target STRING
+# ("./AGENTS.md", 11 bytes). Comparing live content against that makes every edit
+# look like growth from ~4 tokens, so the quiet-on-reduction branch below becomes
+# unreachable and a successful curation gets reported as runaway growth.
+# Resolve to the real path first and measure that.
+resolve_rel() {
+  # resolve_rel <repo-relative path> -> repo-relative real path, or empty when
+  # the chain leaves this repo (in which case it is not our surface).
+  local p="$1" t d abs n=0
+  while [ -L "$p" ] && [ "$n" -lt 10 ]; do
+    t="$(readlink "$p" 2>/dev/null)" || break
+    case "$t" in
+      /*) p="$t" ;;
+      *) d="$(dirname "$p")"; p="${d%/}/$t" ;;
+    esac
+    n=$(( n + 1 ))
+  done
+  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 0
+  abs="$d/$(basename "$p")"
+  case "$abs" in
+    "$ROOT"/*) printf '%s' "${abs#"$ROOT"/}" ;;
+  esac
+}
+
+if [ -L "$REL" ]; then
+  TARGET="$(resolve_rel "$REL")"
+  if [ -z "$TARGET" ]; then
+    log "skip: $REL is a symlink resolving outside the repo"
+    exit 0
+  fi
+  log "note: $REL is a symlink; measuring $TARGET"
+  REL="$TARGET"
+  [ -f "$REL" ] || exit 0
+fi
+
 # --- is this file part of the context surface? ----------------------------
 ARCHIVAL="plans specs research audits archive"
 is_archival() {
@@ -134,12 +176,29 @@ is_archival() {
   return 1
 }
 
+# Reference-doc root, so a repo that does not keep references under docs/ gets a
+# guard that works rather than one that silently classifies nothing. Matches
+# measure-context.sh's --docs-dir default, which reads the same knob.
+read_str_knob() {
+  # read_str_knob <env-value> <file> <default>
+  local envval="$1" file="$2" fallback="$3" v=""
+  if [ -n "$envval" ]; then v="$envval"
+  elif [ -f "$file" ]; then v="$(head -1 "$file" 2>/dev/null | tr -d '[:space:]')"; fi
+  [ -n "$v" ] || v="$fallback"
+  v="${v#./}"; v="${v%/}"
+  case "$v" in
+    ''|/*) printf '%s' "$fallback" ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+DOCS_DIR="$(read_str_knob "${CONTEXT_DOCS_DIR-}" "$ROOT/.skills/context-docs-dir" docs)"
+
 KIND=""
 case "$REL" in
   AGENTS.md|CLAUDE.md) KIND="policy" ;;
   # `*` in a case pattern matches `/`, unlike filename globbing — so this one
-  # pattern already covers docs/a/b/deep.md at any depth.
-  docs/*.md) is_archival "$REL" || KIND="doc" ;;
+  # pattern already covers <docs>/a/b/deep.md at any depth.
+  "$DOCS_DIR"/*.md) is_archival "$REL" || KIND="doc" ;;
 esac
 [ -n "$KIND" ] || exit 0
 
@@ -193,8 +252,19 @@ NOW=$(est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
 # uncommitted changes add N tokens" rather than "this file is big" — which is
 # what makes it actionable rather than ambient. A file with no committed version
 # compares against 0, so a brand-new over-budget doc is flagged once.
+#
+# A 120000-mode blob is a symlink, whose content is the target path rather than
+# the file — the same trap resolve_rel closes above, reached the other way when a
+# path was a symlink at HEAD and is a real file now. Treat it as "no comparable
+# committed version" rather than as 11 bytes of content.
 PREV=0
-PREV_BYTES="$(git show "HEAD:$REL" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || PREV_BYTES=""
+PREV_BYTES=""
+PREV_MODE="$(git ls-tree HEAD -- "$REL" 2>/dev/null | awk '{print $1; exit}')" || PREV_MODE=""
+case "$PREV_MODE" in
+  100644|100755)
+    PREV_BYTES="$(git show "HEAD:$REL" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || PREV_BYTES="" ;;
+  ?*) log "note: HEAD:$REL is mode $PREV_MODE, not a regular file; treating as uncommitted" ;;
+esac
 case "$PREV_BYTES" in
   ''|*[!0-9]*) PREV=0 ;;
   *) PREV=$(est_from_bytes "$PREV_BYTES") ;;

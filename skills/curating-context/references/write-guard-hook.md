@@ -77,15 +77,42 @@ than "this edit" for that reason.
 | Path | Budget | Knob |
 |---|---:|---|
 | `AGENTS.md` / `CLAUDE.md` at the repo root | 6,000 | `CONTEXT_BUDGET`, then `.skills/context-budget` |
-| `docs/**/*.md`, excluding archival subtrees | 10,000 | `CONTEXT_DOC_BUDGET`, then `.skills/context-doc-budget` |
+| `<docs-dir>/**/*.md`, excluding archival subtrees | 10,000 | `CONTEXT_DOC_BUDGET`, then `.skills/context-doc-budget` |
 
 Archival subtrees (`plans`, `specs`, `research`, `audits`, `archive`) are ignored
 at any depth, matching `measure-context.sh` — including the nested
 `docs/superpowers/plans/` that vendored skill trees create. Reference docs get a
 higher budget because their cost is paid on load rather than on every invocation.
 
+The reference-doc root is itself a knob: `CONTEXT_DOCS_DIR`, then
+`.skills/context-docs-dir`, then `docs`. `measure-context.sh` takes the same knob
+as its `--docs-dir` default, so setting it once points the weekly run and both
+continuous surfaces at one tree. It needs setting only in a repo that keeps
+references somewhere other than `docs/` — every cohort member uses the default —
+but without the knob such a repo would get a correct weekly measurement and a
+guard that silently classified nothing.
+
 Env var, then `.skills/` file, then default — the same three-step lookup the repo
 already uses for `worktree_root` and `plans_dir`.
+
+### Symlinked policy files
+
+`CLAUDE.md` is a symlink to `./AGENTS.md` in every cohort member, and Claude
+Code's `#` memory shortcut writes by the `CLAUDE.md` name. That matters because
+`wc -c` follows a symlink and **`git show HEAD:CLAUDE.md` does not** — it returns
+the link target *string*, `./AGENTS.md`, eleven bytes.
+
+Left alone, that puts `PREV` at about four tokens forever, which makes the
+`NOW <= PREV` branch unreachable and turns the guard's central promise inside
+out: a measured 60% reduction of a still-over-budget file reported as
+`+17,181 since HEAD`. The guard resolves a symlinked path to its real target
+before measuring, logs `note: … measuring …` when it does, and skips a chain
+that leaves the repo.
+
+The mirror case is covered too: a path that was a symlink at `HEAD` and is a real
+file now. A `120000`-mode blob is treated as *no comparable committed version*
+rather than as eleven bytes of content, so the first edit after such a conversion
+reports honestly instead of claiming the whole file as growth.
 
 ## How it reports
 

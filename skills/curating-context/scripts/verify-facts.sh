@@ -52,14 +52,16 @@ USAGE
 }
 
 POLICY=""
-EXTRA=""
+# An array, not a space-joined string: a --also path containing a space would
+# word-split into two nonexistent files and be silently skipped with a WARN.
+EXTRA=()
 CHECK_ISSUES=0
 REPO=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
-    --also) EXTRA="$EXTRA ${2:?--also needs a path}"; shift 2 ;;
+    --also) EXTRA+=("${2:?--also needs a path}"); shift 2 ;;
     --issues) CHECK_ISSUES=1; shift ;;
     --repo) REPO="${2:?--repo needs owner/repo}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -272,7 +274,9 @@ check_issues() {
   done <"$TMP/issues"
 }
 
-for f in $POLICY $EXTRA; do
+# ${EXTRA[@]+...} guards the empty-array case, which `set -u` treats as unbound
+# on bash 3.2 (still the system bash on macOS).
+for f in "$POLICY" ${EXTRA[@]+"${EXTRA[@]}"}; do
   [ -f "$f" ] || { echo "WARN skipping $f — not a file" >&2; continue; }
   check_paths "$f"
   check_links "$f"

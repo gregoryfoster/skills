@@ -198,6 +198,14 @@ prints current tokens, net change, run count, orphan and dead-link counts, and
 last column is the cross-repo learning: after a few weeks it names which
 optimisation actually pays, and the same one usually pays everywhere.
 
+`net` obeys the same comparability rule as `delta_tokens`: it is anchored at the
+oldest run contiguously matching the *latest* run's method, not at the first run
+ever recorded. Anchoring at the first row instead reported **+2,743** for this
+repo's own ledger, whose three rows record an identical 22,533-byte file — the
+whole figure was the estimate→exact transition. When no comparable anchor exists
+the cell reads `-` and a footer names the repo and says why, so a suppressed
+comparison cannot be mistaken for "no change yet".
+
 Roster in `.skills/cohort`, one `owner/repo` slug or local path per line; `#`
 comments allowed. Repos with no ledger are reported rather than skipped.
 

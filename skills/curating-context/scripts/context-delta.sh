@@ -28,9 +28,11 @@ Options:
   -h, --help     Show this help and exit 0.
 
 Scope — the agent-context surface:
-  - AGENTS.md / CLAUDE.md at the repo root (cost paid on every invocation)
-  - docs/**/*.md, excluding archival subtrees (plans, specs, research, audits,
-    archive) at any depth
+  - AGENTS.md / CLAUDE.md at the repo root (cost paid on every invocation). A
+    symlinked CLAUDE.md is followed to its target and reported once.
+  - <docs-dir>/**/*.md, excluding archival subtrees (plans, specs, research,
+    audits, archive) at any depth. The root is CONTEXT_DOCS_DIR, then
+    .skills/context-docs-dir, then docs.
 
 Why this differs from the write-guard hook: the hook sees one edit at a time and
 cannot tell a 400-token addition that replaced 600 tokens elsewhere from a
@@ -113,6 +115,56 @@ is_archival() {
   return 1
 }
 
+# Reference-doc root, so a repo that does not keep references under docs/ gets a
+# delta that works rather than one that silently reports nothing. Same knob
+# measure-context.sh takes as its --docs-dir default.
+read_str_knob() {
+  local envval="$1" file="$2" fallback="$3" v=""
+  if [ -n "$envval" ]; then v="$envval"
+  elif [ -f "$file" ]; then v="$(head -1 "$file" 2>/dev/null | tr -d '[:space:]')"; fi
+  [ -n "$v" ] || v="$fallback"
+  v="${v#./}"; v="${v%/}"
+  case "$v" in
+    ''|/*) printf '%s' "$fallback" ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+DOCS_DIR="$(read_str_knob "${CONTEXT_DOCS_DIR-}" "$ROOT/.skills/context-docs-dir" docs)"
+
+# A symlinked policy file is the cohort norm (CLAUDE.md -> ./AGENTS.md). `wc -c`
+# follows the link but `git show BASE:CLAUDE.md` does not — it yields the link
+# target STRING, which would fabricate a delta of the whole file. Resolve to the
+# real path and measure that; sort -u then collapses AGENTS.md and a CLAUDE.md
+# pointing at it into one row.
+resolve_rel() {
+  # resolve_rel <repo-relative path> -> repo-relative real path, or empty when
+  # the chain leaves this repo.
+  local p="$1" t d abs n=0
+  while [ -L "$p" ] && [ "$n" -lt 10 ]; do
+    t="$(readlink "$p" 2>/dev/null)" || break
+    case "$t" in
+      /*) p="$t" ;;
+      *) d="$(dirname "$p")"; p="${d%/}/$t" ;;
+    esac
+    n=$(( n + 1 ))
+  done
+  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 0
+  abs="$d/$(basename "$p")"
+  case "$abs" in
+    "$ROOT"/*) printf '%s' "${abs#"$ROOT"/}" ;;
+  esac
+}
+
+# Bytes of the committed version, or empty when there is no comparable one. A
+# 120000-mode blob is a symlink whose content is a path, not the file.
+prev_bytes_of() {
+  local rel="$1" mode
+  mode="$(git ls-tree "$BASE" -- "$rel" 2>/dev/null | awk '{print $1; exit}')" || return 0
+  case "$mode" in
+    100644|100755) git show "$BASE:$rel" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ' ;;
+  esac
+}
+
 TMP="$(mktemp -d)" || exit 0
 # Two traps would replace each other, so the cleanup and the exit-0 contract
 # share one handler.
@@ -127,20 +179,33 @@ trap 'rm -rf "$TMP"; exit 0' EXIT
   git ls-files --others --exclude-standard 2>/dev/null || true
 } | sort -u >"$TMP/changed"
 
-: >"$TMP/rows"
+# Classify and follow symlinks first, then dedupe: a branch touching both
+# AGENTS.md and a CLAUDE.md that points at it must produce one row, not two.
+: >"$TMP/surface"
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   kind=""
   case "$f" in
     AGENTS.md|CLAUDE.md) kind="policy" ;;
-    docs/*.md) is_archival "$f" || kind="doc" ;;
+    "$DOCS_DIR"/*.md) is_archival "$f" || kind="doc" ;;
   esac
   [ -n "$kind" ] || continue
+  if [ -L "$f" ]; then
+    t="$(resolve_rel "$f")"
+    [ -n "$t" ] || continue
+    f="$t"
+  fi
+  printf '%s\t%s\n' "$kind" "$f" >>"$TMP/surface"
+done <"$TMP/changed"
+sort -u "$TMP/surface" >"$TMP/surface.u"
 
+: >"$TMP/rows"
+while IFS="$(printf '\t')" read -r kind f; do
+  [ -n "$f" ] || continue
   now=0
   [ -f "$f" ] && now=$(est_from_bytes "$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)")
   prev=0
-  pb="$(git show "$BASE:$f" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || pb=""
+  pb="$(prev_bytes_of "$f")" || pb=""
   case "$pb" in
     ''|*[!0-9]*) prev=0 ;;
     *) prev=$(est_from_bytes "$pb") ;;
@@ -148,7 +213,7 @@ while IFS= read -r f; do
 
   if [ "$kind" = "policy" ]; then b="$BUDGET"; else b="$DOC_BUDGET"; fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$f" "$now" "$prev" "$b" >>"$TMP/rows"
-done <"$TMP/changed"
+done <"$TMP/surface.u"
 
 [ -s "$TMP/rows" ] || exit 0
 
