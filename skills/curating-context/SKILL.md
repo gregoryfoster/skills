@@ -127,17 +127,24 @@ cause rather than record the row. `--allow-method-change` overrides it and
 deliberately starts a new baseline.
 
 This matters most in an interactive session, which is the case least likely to
-have a key: a Claude Code session exports no `ANTHROPIC_API_KEY`, and `ant` is
-often not on PATH, so the `ant auth` fallback may not exist. Three sources are
-tried in order — the environment, an `ant auth login` profile, then
-`ANTHROPIC_API_KEY` **parsed** out of a repo-root secrets file (`.env`, then
-bare `env`). Parsed, never sourced: a measurement script must not execute a
-secrets file to obtain a token count. `--no-env-file` refuses that source when
-the key must come only from the environment.
+have a key: a Claude Code session exports no `ANTHROPIC_API_KEY`. Three sources
+are tried in order — the environment, then `ANTHROPIC_API_KEY` **parsed** out of a
+repo-root secrets file (`.env`, then bare `env`), then an `ant auth login`
+profile. Parsed, never sourced: a measurement script must not execute a secrets
+file to obtain a token count. `--no-env-file` refuses that source when the key
+must come only from the environment.
+
+The `ant auth` profile is last on purpose — `count_tokens` currently rejects JWT
+auth, so it authenticates and then 401s. Don't rely on it.
+
+And `tokens_exact` reports whether the **numbers** are exact, not whether a
+credential was found: if any count falls back, the run says `false` and the
+observed ratio is not persisted. So a warning from `--exact` means the row is an
+estimate no matter what credential was accepted — prefer stopping to recording an
+incomparable row.
 
 So an interactive run in a repo whose `.env` holds the key needs nothing extra.
-Elsewhere, export the key first — and if `--exact` still warns, prefer stopping to
-recording an incomparable row.
+Elsewhere, export the key first.
 
 An exact run also writes the repo's observed bytes-per-token ratio to
 `.skills/context-token-ratio`, which is what keeps the offline estimators (the

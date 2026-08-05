@@ -200,8 +200,15 @@ NOW=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
 # number someone reasonably distrusts.
 PREV=0
 PREV_OUT="$(ctx_prev_bytes HEAD "$REL")" || PREV_OUT=""
-PREV_BYTES="${PREV_OUT%%	*}"
-PREV_NOTE="${PREV_OUT#*	}"
+# The delimiter comes from the library that emits it, as $CTX_TAB, rather than
+# being typed literally into the expansions below. A literal tab there is
+# invisible in review and in most editors, and any tab-to-space conversion would
+# silently turn the split into a no-op — PREV_BYTES would take the whole string,
+# fail the digit test, and leave PREV at 0, so every edit would look like growth
+# from nothing. That is the exact symptom of the symlink bug these lines exist to
+# prevent, which is a poor thing to reintroduce by way of whitespace.
+PREV_BYTES="${PREV_OUT%%"$CTX_TAB"*}"
+PREV_NOTE="${PREV_OUT#*"$CTX_TAB"}"
 [ -z "$PREV_NOTE" ] || log "note: $PREV_NOTE"
 case "$PREV_BYTES" in
   ''|*[!0-9]*) PREV=0 ;;

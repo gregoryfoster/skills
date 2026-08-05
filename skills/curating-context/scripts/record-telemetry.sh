@@ -193,7 +193,27 @@ if history:
         # resets the trend baseline, and blanks `net` in the cohort roll-up. The
         # cause is almost always a missing credential, and the fix is to supply
         # one — not to keep the row.
-        if allow_method != "1" and dry != "1":
+        would_refuse = allow_method != "1"
+        if would_refuse and dry == "1":
+            # A preview must describe what the real command would do, not what
+            # --allow-method-change would do. Without this, --dry-run printed
+            # "This row is the new baseline" and a clean row, and then the actual
+            # append refused with exit 4 — the preview answering for the wrong
+            # branch of the very decision it was consulted about.
+            row["would_be_refused"] = (
+                "the real append would exit 4: measurement method differs from "
+                f"the last row for {row['file']} ({last.get('ts')}). "
+                "Supply a credential, or pass --allow-method-change."
+            )
+            print(
+                "WARN --dry-run: the real append would be REFUSED (exit 4) — this "
+                "row is tokens_exact="
+                f"{row['tokens_exact']} and the last row for {row['file']} is "
+                f"tokens_exact={last.get('tokens_exact')}. Fix the cause (supply a "
+                "credential) or pass --allow-method-change to start a new baseline.",
+                file=sys.stderr,
+            )
+        if would_refuse and dry != "1":
             print(
                 "ERROR refusing to append: this row is "
                 f"tokens_exact={row['tokens_exact']} but the last row for "

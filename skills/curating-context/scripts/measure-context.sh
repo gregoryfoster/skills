@@ -160,14 +160,33 @@ TAB="$(printf '\t')"
 # messages/count_tokens, the only accurate tokenizer for Claude models (tiktoken
 # is OpenAI's and undercounts Claude text by 15-20%, more on code).
 # Counting is free, so --exact costs nothing but a credential. An unset API key
-# does NOT mean there are no credentials: an `ant auth login` profile works too,
-# via a short-lived Bearer token. Try the key first, then the profile.
+# does NOT mean there are no credentials.
+#
+# Order matters, and it is not the obvious one. An API key is first. A repo-root
+# secrets file is SECOND, ahead of `ant auth`, because the OAuth path is
+# currently non-functional against this endpoint: it authenticates fine and then
+# count_tokens answers
+#   HTTP 401 "jwt auth is not yet supported on count_tokens"
+# so trying it first meant that on a machine with the `ant` CLI installed the
+# broken credential won and a perfectly good key in .env was never reached. It is
+# kept, last, because the endpoint may support JWT later — and it announces the
+# known limitation rather than looking like a working choice.
 EXACT_OK=0
 if [ "$EXACT" -eq 1 ]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "WARN --exact requires python3; using offline estimate" >&2
   elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     EXACT_OK=1
+  elif [ "$NO_ENV_FILE" -eq 0 ] \
+    && ANTHROPIC_API_KEY="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" \
+    && [ -n "$ANTHROPIC_API_KEY" ]; then
+    # The source that makes an interactive run match a scheduled one: a Claude
+    # Code session exports no key and usually has no `ant` CLI, so without this
+    # the interactive path writes an estimate row into a ledger of exact rows and
+    # every delta afterwards is null.
+    export ANTHROPIC_API_KEY
+    EXACT_OK=1
+    echo "INFO --exact read ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES); pass --no-env-file to refuse" >&2
   elif command -v ant >/dev/null 2>&1 \
     && ANTHROPIC_OAUTH_TOKEN="$(ant auth print-credentials --access-token 2>/dev/null)" \
     && [ -n "$ANTHROPIC_OAUTH_TOKEN" ]; then
@@ -175,19 +194,11 @@ if [ "$EXACT" -eq 1 ]; then
     # oauth beta header — converting from a key is a header change, not a swap.
     export ANTHROPIC_OAUTH_TOKEN
     EXACT_OK=1
-    echo "INFO --exact using the active \`ant auth\` profile (no API key set)" >&2
-  elif [ "$NO_ENV_FILE" -eq 0 ] \
-    && ANTHROPIC_API_KEY="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" \
-    && [ -n "$ANTHROPIC_API_KEY" ]; then
-    # Last resort, and the one that makes an interactive run match a scheduled
-    # one: a Claude Code session exports no key and usually has no `ant` CLI, so
-    # without this the interactive path silently writes an estimate row into a
-    # ledger of exact rows and every delta afterwards is null.
-    export ANTHROPIC_API_KEY
-    EXACT_OK=1
-    echo "INFO --exact read ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES); pass --no-env-file to refuse" >&2
+    echo "WARN --exact falling back to the \`ant auth\` profile; count_tokens does not" >&2
+    echo "     yet accept JWT auth, so this will very likely 401 and degrade to the" >&2
+    echo "     offline estimate. Set ANTHROPIC_API_KEY or put it in .env instead." >&2
   else
-    echo "WARN --exact needs ANTHROPIC_API_KEY, an \`ant auth login\` profile, or the key in a repo-root .env; using offline estimate" >&2
+    echo "WARN --exact needs ANTHROPIC_API_KEY, the key in a repo-root .env, or an \`ant auth login\` profile; using offline estimate" >&2
     echo "WARN the resulting row records tokens_exact=false, which suppresses every delta against an exact row" >&2
   fi
 fi
@@ -253,6 +264,13 @@ count_tokens() {
   out="$(python3 "$TMP/count.py" "$f" "$MODEL" 2>"$TMP/ct.err")" || rc=$?
   if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -qE '^[0-9]+$'; then
     echo "WARN exact count failed for $f ($(tr -d '\n' <"$TMP/ct.err")); using estimate" >&2
+    # Record the fallback for the caller. A marker FILE, not a variable: this
+    # function is invoked in a command substitution, so its subshell cannot set
+    # anything in the parent. Holding a credential is not the same as having
+    # counted — without this, an accepted-but-rejected credential (see the `ant`
+    # note above) reported tokens_exact=true over numbers that were entirely
+    # estimates, which is the one lie the whole comparability chain cannot survive.
+    : >"$TMP/count_fell_back"
     printf '%s' "$est"
   else
     printf '%s' "$out"
@@ -430,8 +448,20 @@ json_list() {
 
 over_policy=false
 [ "$P_TOKENS" -gt "$BUDGET" ] && over_policy=true
+# tokens_exact reports whether the numbers ARE exact, not whether a credential was
+# found. If any count_tokens call fell back, the file's total is a blend at best
+# and an estimate at worst, and a blend must not be compared against a true exact
+# row — so the whole run is reported as an estimate.
 exact_flag=false
-[ "$EXACT_OK" -eq 1 ] && exact_flag=true
+COUNT_FELL_BACK=0
+[ -f "$TMP/count_fell_back" ] && COUNT_FELL_BACK=1
+if [ "$EXACT_OK" -eq 1 ] && [ "$COUNT_FELL_BACK" -eq 0 ]; then
+  exact_flag=true
+elif [ "$EXACT_OK" -eq 1 ]; then
+  echo "WARN a credential was accepted but at least one count_tokens call failed;" >&2
+  echo "     reporting tokens_exact=false, because a partially-estimated total is" >&2
+  echo "     not comparable with an exact one. See the WARN lines above for the cause." >&2
+fi
 
 sort -t"$TAB" -k2,2nr "$TMP/sections.tsv" >"$TMP/sections.sorted"
 sort -t"$TAB" -k3,3nr "$TMP/docs.tsv" >"$TMP/docs.sorted"
@@ -440,10 +470,13 @@ sort -u "$TMP/refs" >"$TMP/refs.sorted"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
 
 printf '{\n'
-# Observed bytes-per-token, and — on an exact run — persist it so the offline
-# estimators (the write guard, context-delta.sh) stop guessing for this repo.
-# Written only when exact, since deriving a calibration from an estimate would
-# just re-record the default and freeze whatever error it carries.
+# Observed bytes-per-token, and — on a genuinely exact run — persist it so the
+# offline estimators (the write guard, context-delta.sh) stop guessing for this
+# repo. Gated on exact_flag rather than on EXACT_OK: deriving a calibration from
+# an estimate re-derives the divisor it was computed with, so a credential that
+# authenticated and then failed every count produced exactly 2.70 — a
+# self-confirming fake measurement, comfortably inside the plausibility band,
+# which would then be trusted by every later offline estimate in the repo.
 RATIO_X100=$(( P_BYTES * 100 / P_TOKENS ))
 # Persist only a plausible ratio. Real markdown measures 2.0-4.0 bytes/token; a
 # value outside 1.5-6.0 means the file is degenerate or unrepresentative (a
@@ -451,7 +484,7 @@ RATIO_X100=$(( P_BYTES * 100 / P_TOKENS ))
 # every later offline estimate. The reader has a matching floor, but writing
 # nonsense and relying on the reader to reject it is worse than not writing it.
 if [ "$RATIO_X100" -lt 150 ] || [ "$RATIO_X100" -gt 600 ]; then
-  if [ "$EXACT_OK" -eq 1 ]; then
+  if [ "$exact_flag" = true ]; then
     echo "WARN observed ratio $(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))) bytes/token is outside the plausible 1.50-6.00 band; not persisting it" >&2
   fi
   RATIO_PERSISTABLE=0
@@ -459,12 +492,12 @@ else
   RATIO_PERSISTABLE=1
 fi
 
-if [ "$EXACT_OK" -eq 1 ] && [ "$P_TOKENS" -gt 0 ] && [ "$NO_WRITE" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+if [ "$exact_flag" = true ] && [ "$P_TOKENS" -gt 0 ] && [ "$NO_WRITE" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   mkdir -p "$ROOT/.skills" 2>/dev/null || true
   printf '%d.%02d\n' $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) \
     >"$ROOT/.skills/context-token-ratio" 2>/dev/null \
     || echo "WARN could not write .skills/context-token-ratio" >&2
-elif [ "$EXACT_OK" -eq 1 ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the observed ratio ($(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))))" >&2
 fi
 

@@ -81,13 +81,44 @@ than earlier ones, so a mixed-model ledger is as incomparable as a mixed-method 
 
 **Counting is free.** The endpoint consumes no tokens and is billed nothing; it is
 rate-limited per usage tier (2,000–8,000 RPM), with limits independent of message
-creation. So `--exact` has no cost argument against it — run it always. What it
-does need is a credential, and an unset `ANTHROPIC_API_KEY` does not mean there
-isn't one: the script falls back to an `ant auth login` profile, sending the
-short-lived token as `Authorization: Bearer` with the `oauth-2025-04-20` beta
-header (OAuth tokens are rejected on `x-api-key`). A zero credit balance blocks
-the whole API including free endpoints, which surfaces as a 400 whose body names
-the reason — the script prints that body rather than just the status line.
+creation. So `--exact` has no cost argument against it — run it always. A zero
+credit balance blocks the whole API including free endpoints, which surfaces as a
+400 whose body names the reason — the script prints that body rather than just the
+status line.
+
+### Credential order, and why it is not the obvious one
+
+1. `ANTHROPIC_API_KEY` from the environment.
+2. `ANTHROPIC_API_KEY` **parsed** out of a repo-root `.env` (then bare `env`, the
+   cohort's pre-2026-08-05 name). Parsed rather than sourced: sourcing a secrets
+   file executes whatever it contains, which is not a thing a measurement script
+   should do to obtain a token count. `--no-env-file` declines this source;
+   `--env-file NAMES` changes which files are searched.
+3. An `ant auth login` profile, sent as `Authorization: Bearer` with the
+   `oauth-2025-04-20` beta header (OAuth tokens are rejected on `x-api-key`).
+
+**The OAuth path is last because it does not currently work here.** It
+authenticates, and then `count_tokens` answers `401 "jwt auth is not yet supported
+on count_tokens"`. It was originally tried second, which meant that on a machine
+with the `ant` CLI installed the broken credential won and a perfectly good key in
+`.env` was never reached. It is kept, last, in case the endpoint gains JWT support,
+and it announces the limitation rather than looking like a working choice.
+
+### `tokens_exact` describes the numbers, not the credential
+
+A credential that is accepted and then rejected by the endpoint is the reason
+`tokens_exact` is computed from whether counts *succeeded*, not from whether a
+credential was *found*. Getting this wrong was worse than having no credential at
+all: every per-file count fell back to the estimate, and the run reported
+`tokens_exact: true` over numbers that were entirely estimates — so the ledger
+accepted them as comparable with real counts and the whole single-method
+discipline below became decorative.
+
+Any fallback now marks the run, `tokens_exact` reports `false`, and a WARN says
+so. The observed ratio is not persisted either: derived from an estimate it simply
+re-derives the divisor it was computed with, producing exactly `2.70` — a
+self-confirming fake measurement, comfortably inside the plausibility band, which
+every later offline estimate in the repo would then trust.
 
 **Never use `tiktoken`.** It is OpenAI's tokenizer; it undercounts Claude text by
 15–20% and by considerably more on code and non-English input. There is no

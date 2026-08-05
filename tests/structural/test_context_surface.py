@@ -22,6 +22,7 @@ No API calls: every path here uses the offline estimate.
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -414,9 +415,26 @@ class TestCredentialParity:
     records estimate rows while the scheduled run records exact ones — and the
     two cannot be compared."""
 
-    def _env_without_key(self) -> dict:
+    def _env_without_key(self, bin_dir: Path | None = None) -> dict:
+        """No API key, and — when bin_dir is given — a PATH with no `ant` on it.
+
+        The credential order is env key, then secrets file, then `ant auth`. A
+        test asserting the estimate fallback has to close all three, or it passes
+        only on machines without the ant CLI installed and fails elsewhere for a
+        reason unrelated to what it tests.
+        """
         env = _clean_env()
         env.pop("ANTHROPIC_API_KEY", None)
+        if bin_dir is not None:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            # Keep the real tools the script needs; drop everything else.
+            for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc",
+                         "sort", "find", "head", "tr", "dirname", "basename",
+                         "mktemp", "date", "cat", "rm", "mkdir", "printf"):
+                real = shutil.which(tool)
+                if real and not (bin_dir / tool).exists():
+                    (bin_dir / tool).symlink_to(real)
+            env["PATH"] = str(bin_dir)
         return env
 
     def test_key_is_parsed_from_the_secrets_file_not_sourced(self, tmp_path: Path):
@@ -474,7 +492,7 @@ class TestCredentialParity:
         result = subprocess.run(
             ["bash", str(MEASURE), "--exact", "--no-write", "--no-env-file"],
             capture_output=True, text=True, cwd=str(repo),
-            env=self._env_without_key(), timeout=60,
+            env=self._env_without_key(tmp_path / "bin"), timeout=60,
         )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["policy"]["tokens_exact"] is False
@@ -565,3 +583,147 @@ class TestLedgerStaysSingleMethod:
         result = self._record(repo, self._measure(repo), "--dry-run")
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["tokens_exact"] is False
+
+
+def _bin_with_real_tools(bin_dir: Path) -> Path:
+    """A PATH directory holding the real tools measure-context.sh needs, so a
+    caller can then override exactly one of them."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc", "sort",
+                 "find", "head", "tr", "dirname", "basename", "mktemp", "date",
+                 "cat", "rm", "mkdir", "printf", "ls", "cut", "tail", "uniq"):
+        real = shutil.which(tool)
+        if real and not (bin_dir / tool).exists():
+            (bin_dir / tool).symlink_to(real)
+    return bin_dir
+
+
+class TestExactFlagReflectsCountsNotCredentials:
+    """Holding a credential is not the same as having counted.
+
+    The `ant auth` path authenticates and then count_tokens answers
+    401 "jwt auth is not yet supported on count_tokens", so every per-file count
+    fell back to the estimate while the run still reported tokens_exact=true —
+    labelling pure estimates as exact, which is the one lie the comparability
+    chain cannot survive. Forced here offline with a python3 that always fails,
+    which is the only thing count.py needs and nothing else in the script does.
+    """
+
+    @pytest.fixture
+    def env_with_failing_counter(self, tmp_path: Path) -> dict:
+        bin_dir = _bin_with_real_tools(tmp_path / "bin")
+        (bin_dir / "python3").unlink()
+        (bin_dir / "python3").write_text("#!/bin/sh\necho 'boom' >&2\nexit 1\n")
+        (bin_dir / "python3").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = str(bin_dir)
+        env["ANTHROPIC_API_KEY"] = "sk-ant-test-not-used-offline"
+        return env
+
+    def test_tokens_exact_is_false_when_every_count_fell_back(
+        self, tmp_path: Path, env_with_failing_counter: dict
+    ):
+        repo = _repo(tmp_path, policy_lines=200)
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--exact"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=env_with_failing_counter, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["policy"]["tokens_exact"] is False, (
+            "a credential was accepted but no count succeeded — reporting exact "
+            "would label an estimate as exact"
+        )
+        assert "at least one count_tokens call failed" in result.stderr, result.stderr
+
+    def test_no_ratio_is_persisted_from_a_fallback_run(
+        self, tmp_path: Path, env_with_failing_counter: dict
+    ):
+        """The ratio would be derived from the divisor it was computed with — a
+        self-confirming 2.70 that then poisons every later offline estimate."""
+        repo = _repo(tmp_path, policy_lines=200)
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--exact"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=env_with_failing_counter, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert not (repo / ".skills" / "context-token-ratio").exists(), (
+            "persisted a calibration derived from estimates"
+        )
+
+    def test_such_a_row_cannot_be_appended_to_an_exact_ledger(
+        self, tmp_path: Path, env_with_failing_counter: dict
+    ):
+        """The two halves meeting: an honest tokens_exact=false is what lets the
+        ledger refuse the row. Mislabelled as exact, it would have been accepted
+        and silently compared against real counts."""
+        repo = _repo(tmp_path, policy_lines=200)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
+            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+            "tokens_exact": True, "budget": 6000,
+        }) + "\n")
+        measured = subprocess.run(
+            ["bash", str(MEASURE), "--exact", "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=env_with_failing_counter, timeout=60,
+        )
+        assert measured.returncode == 0, measured.stderr
+        recorded = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh")],
+            input=measured.stdout, capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        assert recorded.returncode == 4, (
+            f"expected the ledger to refuse it, got {recorded.returncode}"
+        )
+
+
+class TestDryRunDescribesTheRealCommand:
+    def test_dry_run_announces_the_refusal_it_would_hit(self, tmp_path: Path):
+        """A preview consulted about a decision must answer for the branch the
+        real command takes, not for the one --allow-method-change would take."""
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
+            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+            "tokens_exact": True, "budget": 6000,
+        }) + "\n")
+        measured = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
+            input=measured.stdout, capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        # A preview is not a failure, so it still exits 0 …
+        assert result.returncode == 0, result.stderr
+        # … but it must say what the real append would do, and mark the row.
+        assert "would be REFUSED" in result.stderr, result.stderr
+        assert "--allow-method-change" in result.stderr, result.stderr
+        assert "would exit 4" in json.loads(result.stdout)["would_be_refused"]
+
+    def test_dry_run_is_silent_about_refusal_when_methods_match(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
+            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+            "tokens_exact": False, "budget": 6000,
+        }) + "\n")
+        measured = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        result = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
+            input=measured.stdout, capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "would be REFUSED" not in result.stderr, result.stderr
+        assert "would_be_refused" not in result.stdout

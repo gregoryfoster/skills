@@ -61,7 +61,7 @@ Provides:
       "<bytes>" for the committed version at <ref>, or "<TAB><reason>" when
       there is no comparable one — notably when the blob is a symlink, whose
       content is a path rather than the file. Split on the tab: field 1 is the
-      count, field 2 the reason a caller can log.
+      count, field 2 the reason a caller can log. Split on $CTX_TAB.
 
 Exit codes:
   0  always (this help)
@@ -83,6 +83,14 @@ esac
 # correct historical record, so counting these as orphans or dead links buries
 # the live signal. Matched at any depth, because vendored skill trees nest them
 # (docs/superpowers/plans/) and a depth-1 test reports every one as a live orphan.
+# The delimiter ctx_prev_bytes emits, published so callers split on a named value
+# rather than a literal tab typed into a parameter expansion — invisible in review,
+# and silently destroyed by any tab-to-space conversion.
+#
+# Read only by callers, never within this file, which is what SC2034 reports.
+# shellcheck disable=SC2034
+CTX_TAB="$(printf '\t')"
+
 CTX_ARCHIVAL_DEFAULT="plans specs research audits archive"
 CTX_ARCHIVAL="${CTX_ARCHIVAL:-$CTX_ARCHIVAL_DEFAULT}"
 

@@ -305,6 +305,10 @@ pytest tests/structural/ -v              # fast, no API key needed
 pytest tests/integration/ -v -m integration  # requires ANTHROPIC_API_KEY
 ```
 
+`ANTHROPIC_API_KEY` lives in the gitignored `.env` at the repo root. Load it with
+`set -a && source .env && set +a`; `run-integration-tests.sh` and
+`measure-context.sh --exact` find it themselves.
+
 ## Adding a new skill
 
 1. Create `skills/<skill-name>/SKILL.md` with valid frontmatter
