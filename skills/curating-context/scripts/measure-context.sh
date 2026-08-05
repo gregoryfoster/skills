@@ -33,10 +33,18 @@ Options:
                      instead of the calibrated offline estimate. The endpoint is FREE — it
                      is rate-limited per usage tier but consumes no tokens and
                      is billed nothing, with limits independent of message
-                     creation. Requires python3 plus a credential: ANTHROPIC_API_KEY,
-                     or an `ant auth login` profile (used as a Bearer token).
+                     creation. Requires python3 plus a credential, tried in
+                     order: ANTHROPIC_API_KEY, an `ant auth login` profile (as a
+                     Bearer token), then ANTHROPIC_API_KEY parsed out of a
+                     repo-root secrets file (see --env-file / --no-env-file).
                      Falls back to the estimate with a WARN on any failure.
   --model ID         Model for --exact token counting. Default: claude-opus-5
+  --no-env-file      Never read a credential from a repo-root secrets file. Use
+                     when the key must come only from the environment.
+  --env-file NAMES   Space-separated secrets-file names to search, relative to
+                     the repo root. Default: ".env env" (bare `env` is the name
+                     this cohort used before 2026-08-05). Only
+                     ANTHROPIC_API_KEY is read, by parsing — never by sourcing.
   --no-write         Touch nothing. Suppresses the one side effect an --exact run
                      otherwise has: writing the observed bytes-per-token ratio to
                      .skills/context-token-ratio. Required when measuring a repo
@@ -70,6 +78,8 @@ DOC_BUDGET=10000
 ARCHIVAL="plans specs research audits archive"
 EXACT=0
 NO_WRITE=0
+NO_ENV_FILE=0
+ENV_FILES=".env env"
 MODEL="claude-opus-5"
 
 # An option that legitimately accepts an EMPTY value cannot use ${2:?...} to
@@ -89,6 +99,9 @@ while [ $# -gt 0 ]; do
                 ARCHIVAL="$2"; shift 2 ;;
     --exact) EXACT=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
+    --no-env-file) NO_ENV_FILE=1; shift ;;
+    --env-file) need_arg "$#" --env-file 'space-separated names, relative to the repo root'
+                ENV_FILES="$2"; shift 2 ;;
     --model) MODEL="${2:?--model needs an id}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -163,8 +176,19 @@ if [ "$EXACT" -eq 1 ]; then
     export ANTHROPIC_OAUTH_TOKEN
     EXACT_OK=1
     echo "INFO --exact using the active \`ant auth\` profile (no API key set)" >&2
+  elif [ "$NO_ENV_FILE" -eq 0 ] \
+    && ANTHROPIC_API_KEY="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" \
+    && [ -n "$ANTHROPIC_API_KEY" ]; then
+    # Last resort, and the one that makes an interactive run match a scheduled
+    # one: a Claude Code session exports no key and usually has no `ant` CLI, so
+    # without this the interactive path silently writes an estimate row into a
+    # ledger of exact rows and every delta afterwards is null.
+    export ANTHROPIC_API_KEY
+    EXACT_OK=1
+    echo "INFO --exact read ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES); pass --no-env-file to refuse" >&2
   else
-    echo "WARN --exact needs ANTHROPIC_API_KEY or an \`ant auth login\` profile; using offline estimate" >&2
+    echo "WARN --exact needs ANTHROPIC_API_KEY, an \`ant auth login\` profile, or the key in a repo-root .env; using offline estimate" >&2
+    echo "WARN the resulting row records tokens_exact=false, which suppresses every delta against an exact row" >&2
   fi
 fi
 

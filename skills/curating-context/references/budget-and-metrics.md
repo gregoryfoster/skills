@@ -123,13 +123,31 @@ Two mechanisms fix it:
 
 The estimate is still an estimate: use it to rank sections against each other and
 to decide whether the guard should speak, and use `--exact` for anything that lands
-in the ledger or a budget decision. When the method changes between
-rows, `record-telemetry.sh` leaves `delta_tokens` **null** and records
-`delta_unavailable` saying why — it does not record the number and warn, because
-every downstream reader (the trend printout, the roll-up's "best reduction"
-column) treats a present delta as a measurement. The trend's net anchors at the
-most recent same-method row for the same reason. Keep a repo's ledger on one
-method; where it changes, the new row is a new baseline.
+in the ledger or a budget decision.
+
+### Keeping a ledger single-method
+
+`record-telemetry.sh` **refuses** to append a row whose method differs from the
+ledger's latest row for that file, exiting 4 and naming the fix. Warning and
+writing anyway was the earlier behaviour and it put the burden on every future
+reader: `delta_tokens` null, `delta_unavailable` set, the trend's net re-anchored,
+`net` blank in the cohort roll-up — all correct, all downstream of a problem that
+was cheap to fix at the source. The usual cause is a missing credential, and the
+usual fix is to supply one. `--allow-method-change` records it anyway and starts a
+new baseline, which is the honest thing to do when the method genuinely changed.
+
+This is mostly a guard on **interactive** runs, the case least likely to hold a
+key: a Claude Code session exports no `ANTHROPIC_API_KEY` and often has no `ant`
+CLI, so the OAuth fallback may not exist either. `measure-context.sh` therefore
+tries a third source — `ANTHROPIC_API_KEY` **parsed** out of a repo-root `.env`
+(then bare `env`, the cohort's pre-2026-08-05 name). Parsed rather than sourced:
+sourcing a secrets file executes whatever it contains, which is not a thing a
+measurement script should do to obtain a token count. `--no-env-file` declines
+that source; `--env-file NAMES` changes which files are searched.
+
+With all three sources, an interactive run and a scheduled run produce the same
+`tokens_exact: true` rows, which is the whole point — a weekly cadence and an
+ad-hoc `curate context` must land in one comparable series.
 
 ## Telemetry
 

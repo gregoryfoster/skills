@@ -406,3 +406,162 @@ class TestSharedLibrary:
         )
         assert result.returncode == 3, result.stdout
         assert "library beside target: no" in result.stdout, result.stdout
+
+
+class TestCredentialParity:
+    """An interactive Claude Code session exports no ANTHROPIC_API_KEY and often
+    has no `ant` CLI, so without a third credential source an interactive run
+    records estimate rows while the scheduled run records exact ones — and the
+    two cannot be compared."""
+
+    def _env_without_key(self) -> dict:
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        return env
+
+    def test_key_is_parsed_from_the_secrets_file_not_sourced(self, tmp_path: Path):
+        """Sourcing a secrets file executes whatever it contains. The canary is a
+        command substitution that would create a file if the value were ever run
+        through the shell."""
+        repo = _repo(tmp_path, policy_lines=50)
+        canary = tmp_path / "canary"
+        (repo / ".env").write_text(
+            "# a comment\n"
+            f"OTHER=$(touch {canary})\n"
+            "export ANTHROPIC_API_KEY=sk-ant-from-dotenv\n"
+        )
+        script = (
+            f'set -euo pipefail\n. "{LIB}"\n'
+            f'ctx_api_key_from_env_file "{repo}"\n'
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True,
+            env=self._env_without_key(), timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "sk-ant-from-dotenv", repr(result.stdout)
+        assert not canary.exists(), (
+            "the secrets file was sourced, not parsed — it executed a substitution"
+        )
+
+    def test_dotenv_wins_over_the_legacy_name(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / "env").write_text("ANTHROPIC_API_KEY=sk-legacy\n")
+        (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-current\n")
+        script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True,
+            env=self._env_without_key(), timeout=30,
+        )
+        assert result.stdout == "sk-current", repr(result.stdout)
+
+    def test_legacy_name_still_read(self, tmp_path: Path):
+        """The cohort used a bare `env` before 2026-08-05; an older checkout must
+        still work."""
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / "env").write_text("ANTHROPIC_API_KEY='sk-legacy'\n")
+        script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True,
+            env=self._env_without_key(), timeout=30,
+        )
+        assert result.stdout == "sk-legacy", repr(result.stdout)
+
+    def test_no_env_file_refuses_that_source(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-unused\n")
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--exact", "--no-write", "--no-env-file"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=self._env_without_key(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["policy"]["tokens_exact"] is False
+        assert "using offline estimate" in result.stderr, result.stderr
+
+    def test_a_value_with_whitespace_is_rejected(self, tmp_path: Path):
+        """A placeholder or a mangled line is not a usable key."""
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / ".env").write_text("ANTHROPIC_API_KEY=your key here\n")
+        script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True,
+            env=self._env_without_key(), timeout=30,
+        )
+        assert result.stdout == "", repr(result.stdout)
+
+
+class TestLedgerStaysSingleMethod:
+    """One credential-less run appended to a ledger of exact rows nulls its own
+    delta, resets the trend baseline, and blanks `net` in the roll-up. Refuse it
+    at the source instead."""
+
+    def _repo_with_ledger(self, tmp_path: Path, exact: bool) -> Path:
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
+            "ts": "2026-08-01", "repo": "repo", "file": "AGENTS.md",
+            "tokens": 5000, "tokens_exact": exact, "budget": 6000,
+        }) + "\n")
+        return repo
+
+    def _measure(self, repo: Path) -> str:
+        """An estimate measurement — no credential available."""
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["policy"]["tokens_exact"] is False
+        return result.stdout
+
+    def _record(self, repo: Path, measurement: str, *extra: str):
+        return subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), *extra],
+            input=measurement, capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+
+    def test_refuses_an_estimate_row_after_an_exact_row(self, tmp_path: Path):
+        repo = self._repo_with_ledger(tmp_path, exact=True)
+        ledger = repo / ".skills" / "context-metrics.jsonl"
+        before = ledger.read_text()
+        result = self._record(repo, self._measure(repo))
+        assert result.returncode == 4, (
+            f"expected exit 4, got {result.returncode}: {result.stderr}"
+        )
+        assert "refusing to append" in result.stderr
+        assert "--allow-method-change" in result.stderr, (
+            "the refusal must name its own override"
+        )
+        assert ledger.read_text() == before, "a refused append still wrote"
+
+    def test_allow_method_change_records_a_new_baseline(self, tmp_path: Path):
+        repo = self._repo_with_ledger(tmp_path, exact=True)
+        ledger = repo / ".skills" / "context-metrics.jsonl"
+        result = self._record(repo, self._measure(repo), "--allow-method-change")
+        assert result.returncode == 0, result.stderr
+        rows = [json.loads(ln) for ln in ledger.read_text().splitlines() if ln.strip()]
+        assert len(rows) == 2
+        assert rows[-1]["delta_tokens"] is None
+        assert "method changed" in rows[-1]["delta_unavailable"]
+
+    def test_same_method_append_is_unaffected(self, tmp_path: Path):
+        repo = self._repo_with_ledger(tmp_path, exact=False)
+        result = self._record(repo, self._measure(repo))
+        assert result.returncode == 0, result.stderr
+        rows = [
+            json.loads(ln)
+            for ln in (repo / ".skills" / "context-metrics.jsonl").read_text().splitlines()
+            if ln.strip()
+        ]
+        assert isinstance(rows[-1]["delta_tokens"], int), rows[-1]
+
+    def test_dry_run_previews_without_refusing(self, tmp_path: Path):
+        """A preview writes nothing, so it has nothing to protect."""
+        repo = self._repo_with_ledger(tmp_path, exact=True)
+        result = self._record(repo, self._measure(repo), "--dry-run")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["tokens_exact"] is False

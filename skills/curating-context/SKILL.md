@@ -116,6 +116,29 @@ tokenizer for Claude models, and **free to call**. Run it always; without a
 credential it degrades to a calibrated offline estimate with a WARN. Never
 substitute `tiktoken` — it is OpenAI's tokenizer and undercounts Claude badly.
 
+### A credential is not optional, even interactively
+
+The measurement is the same either way, but the *ledger row* is not: an estimate
+records `tokens_exact: false`, and a row recorded by one method cannot be compared
+against a row recorded by the other. One credential-less run appended to a ledger
+of exact rows nulls its own delta and resets the trend baseline — so
+`record-telemetry.sh` **refuses** that append and exits 4, telling you to fix the
+cause rather than record the row. `--allow-method-change` overrides it and
+deliberately starts a new baseline.
+
+This matters most in an interactive session, which is the case least likely to
+have a key: a Claude Code session exports no `ANTHROPIC_API_KEY`, and `ant` is
+often not on PATH, so the `ant auth` fallback may not exist. Three sources are
+tried in order — the environment, an `ant auth login` profile, then
+`ANTHROPIC_API_KEY` **parsed** out of a repo-root secrets file (`.env`, then
+bare `env`). Parsed, never sourced: a measurement script must not execute a
+secrets file to obtain a token count. `--no-env-file` refuses that source when
+the key must come only from the environment.
+
+So an interactive run in a repo whose `.env` holds the key needs nothing extra.
+Elsewhere, export the key first — and if `--exact` still warns, prefer stopping to
+recording an incomparable row.
+
 An exact run also writes the repo's observed bytes-per-token ratio to
 `.skills/context-token-ratio`, which is what keeps the offline estimators (the
 write guard, `context-delta.sh`) honest between runs. The conventional `bytes/4`

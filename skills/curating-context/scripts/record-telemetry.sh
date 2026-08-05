@@ -21,6 +21,13 @@ Options:
                    Recorded verbatim so a later run can correlate a token
                    delta with what produced it.
   --note TEXT      Free-text note for this row (one line).
+  --allow-method-change
+                   Append even when this row's measurement method differs from
+                   the ledger's latest row for the same file. Refused by default:
+                   an estimate row and an exact row are not comparable, so mixing
+                   them leaves every delta null and resets the trend baseline.
+                   The usual cause is a missing credential, and the usual fix is
+                   to supply one rather than to record the row.
   --dry-run        Print the row to stdout; do not write the ledger.
   --print-trend    After appending, print the trend for this file to stderr.
   -h, --help       Show this help and exit 0.
@@ -51,6 +58,8 @@ Exit codes:
   0  row appended (or printed, with --dry-run)
   1  usage error, or stdin was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
+  4  refused: measurement method differs from the previous row for this file
+     (pass --allow-method-change to record it anyway)
 USAGE
 }
 
@@ -59,6 +68,7 @@ ACTIONS=""
 NOTE=""
 DRY=0
 TREND=0
+ALLOW_METHOD_CHANGE=0
 
 # --actions and --note accept an empty value deliberately, so they cannot use
 # ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
@@ -72,6 +82,7 @@ while [ $# -gt 0 ]; do
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
     --actions) need_arg "$#" --actions; ACTIONS="$2"; shift 2 ;;
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
+    --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -98,12 +109,12 @@ mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGE
 [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" <<'PY' || RC=$?
 import datetime as dt
 import json
 import sys
 
-src, ledger, today, repo, actions, note, dry, trend = sys.argv[1:9]
+src, ledger, today, repo, actions, note, dry, trend, allow_method = sys.argv[1:10]
 
 try:
     m = json.load(open(src, encoding="utf-8"))
@@ -175,13 +186,37 @@ if history:
     # be recorded at all, because every downstream reader — the trend printout,
     # the cohort roll-up's "best reduction" column — treats it as a measurement.
     if last.get("tokens_exact") != row["tokens_exact"]:
+        # Refuse by default rather than record an uncomparable row. Warning and
+        # writing anyway was the earlier behaviour, and it made the mismatch a
+        # thing every future reader had to notice: one interactive run without a
+        # credential, appended to a ledger of exact rows, nulls its own delta,
+        # resets the trend baseline, and blanks `net` in the cohort roll-up. The
+        # cause is almost always a missing credential, and the fix is to supply
+        # one — not to keep the row.
+        if allow_method != "1" and dry != "1":
+            print(
+                "ERROR refusing to append: this row is "
+                f"tokens_exact={row['tokens_exact']} but the last row for "
+                f"{row['file']} ({last.get('ts')}) is "
+                f"tokens_exact={last.get('tokens_exact')}. An exact count and an "
+                "offline estimate are not comparable, so recording this would "
+                "null every delta from here on.\n"
+                "  Fix the cause: run measure-context.sh --exact with a "
+                "credential (ANTHROPIC_API_KEY, an `ant auth login` profile, or "
+                "the key in a repo-root .env).\n"
+                "  Or record it deliberately: re-run with --allow-method-change, "
+                "which starts a new baseline.",
+                file=sys.stderr,
+            )
+            sys.exit(4)
         row["delta_unavailable"] = (
             f"method changed: previous row tokens_exact={last.get('tokens_exact')}, "
             f"this row tokens_exact={row['tokens_exact']}"
         )
         print(
             "WARN measurement method changed since the previous row; delta_tokens "
-            "left null (an exact count and an offline estimate are not comparable)",
+            "left null (an exact count and an offline estimate are not comparable). "
+            "This row is the new baseline.",
             file=sys.stderr,
         )
     elif isinstance(last.get("tokens"), int):

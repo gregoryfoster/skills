@@ -52,6 +52,11 @@ Provides:
       Follow a symlink chain to its real repo-relative path. Empty when the
       chain leaves the repo.
 
+  ctx_api_key_from_env_file <root> [names...]
+      Print ANTHROPIC_API_KEY read from the first secrets file found at <root>
+      (default names: .env, then env). Empty when absent. PARSED, never
+      sourced, and only this one variable is extracted.
+
   ctx_prev_bytes <ref> <repo-relative-path>
       "<bytes>" for the committed version at <ref>, or "<TAB><reason>" when
       there is no comparable one — notably when the blob is a symlink, whose
@@ -184,6 +189,43 @@ ctx_resolve_rel() {
   case "$abs" in
     "$root"/*) printf '%s' "${abs#"$root"/}" ;;
   esac
+}
+
+ctx_api_key_from_env_file() {
+  # An interactive Claude Code session has no ANTHROPIC_API_KEY exported and, in
+  # practice, no `ant` CLI either — so without this an interactive run silently
+  # falls back to the offline estimate and writes a row that cannot be compared
+  # against the scheduled run's exact rows. The cohort keeps the key in `.env` at
+  # the repo root (bare `env` before 2026-08-05).
+  #
+  # PARSED, not sourced, and only ANTHROPIC_API_KEY is extracted. Sourcing a
+  # secrets file executes whatever it contains, which is not a thing a
+  # measurement script should ever do to obtain a token count.
+  local root="$1"; shift
+  local names="${*:-.env env}" f line val
+  for f in $names; do
+    [ -f "$root/$f" ] || continue
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line#export }"
+      case "$line" in
+        ANTHROPIC_API_KEY=*) ;;
+        *) continue ;;
+      esac
+      val="${line#ANTHROPIC_API_KEY=}"
+      val="${val%$'\r'}"
+      case "$val" in
+        \"*\") val="${val#\"}"; val="${val%\"}" ;;
+        \'*\') val="${val#\'}"; val="${val%\'}" ;;
+      esac
+      # A value with whitespace or a shell metacharacter is not a usable key and
+      # is far more likely to be a placeholder or a mangled line.
+      case "$val" in
+        ''|*[[:space:]]*|*'$'*|*'`'*) continue ;;
+      esac
+      printf '%s' "$val"
+      return 0
+    done <"$root/$f"
+  done
 }
 
 ctx_prev_bytes() {
