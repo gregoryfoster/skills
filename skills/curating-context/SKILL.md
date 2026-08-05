@@ -211,3 +211,28 @@ bash "<SKILL_SCRIPTS>/cohort-report.sh" --cohort-file .skills/cohort
 The `best reduction` column names which optimisation actually paid, per repo.
 Repos with no ledger are reported rather than skipped — on a weekly cadence,
 missing telemetry is itself the finding.
+
+## Phase 8 — Install the write guard
+
+Offer this once per repo, after the first successful curation:
+
+> Install the context-budget write guard? It is a `PostToolUse` hook that flags an
+> edit which pushes `AGENTS.md` or a live reference doc further over budget. It
+> never blocks, and it stays silent when an edit *reduces* the count.
+
+On yes:
+
+```bash
+bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 4000 --doc-budget 10000
+```
+
+The guard and the weekly run are two halves of one ratchet: the guard stops
+regrowth, the run recovers ground. A repo with the run but no guard sawtooths —
+reduce, regrow, reduce — and no amount of curation fixes a file something else
+keeps appending to. Semantics, the reasoning behind the speak-only-on-both-
+conditions rule, and the uninstall path:
+[references/write-guard-hook.md](references/write-guard-hook.md).
+
+The installer prints its `git add` line rather than committing. Hook wiring lands
+through the project's normal gate — a hook that starts running because something
+committed it unannounced is a bad surprise.

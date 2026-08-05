@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/context-budget-guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
