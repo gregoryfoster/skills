@@ -15,7 +15,13 @@
 # .claude/hooks/, so ${BASH_SOURCE[0]}'s dirname holds no library.
 set -euo pipefail
 
-usage() {
+# Namespaced, unlike every other script's plain `usage`. Sourcing this file into
+# a caller that defines its own `usage` would otherwise silently replace it, and
+# the caller's --help would print the library's help instead of its own. That is
+# only invisible because all callers happen to parse arguments before sourcing;
+# the first one to call usage() afterwards — an unknown-argument branch, say —
+# would get the wrong text with nothing to indicate why.
+ctx_lib_usage() {
   cat <<'USAGE'
 _context-lib.sh — shared measurement primitives for curating-context
 
@@ -68,6 +74,17 @@ Provides:
       content is a path rather than the file. Split on the tab: field 1 is the
       count, field 2 the reason a caller can log. Split on $CTX_TAB.
 
+  ctx_read_roster <cohort-file>
+      Parse the cohort roster. Emits one line per entry, fields separated by
+      $CTX_US: "<kind><US><entry><US><wave><US><pair>", kind being repo or
+      local. wave and pair may be empty. Unknown annotations warn and are
+      ignored. Read it with: IFS="$CTX_US" read -r kind entry wave pair
+
+  ctx_fetch_ledger <kind> <entry> <ledger-path> <branch> <outfile>
+      Write one repo's ledger to <outfile>. Returns 0 fetched, 3 no ledger,
+      4 unreadable (with a WARN on stderr). Callers needing `repo` entries must
+      check for gh themselves; this reports its absence as unreadable.
+
 Exit codes:
   0  always (this help)
 USAGE
@@ -79,7 +96,7 @@ USAGE
 case "${0##*/}" in
   _context-lib.sh)
     case "${1-}" in
-      -h|--help) usage; exit 0 ;;
+      -h|--help) ctx_lib_usage; exit 0 ;;
     esac
     ;;
 esac
@@ -95,6 +112,15 @@ esac
 # Read only by callers, never within this file, which is what SC2034 reports.
 # shellcheck disable=SC2034
 CTX_TAB="$(printf '\t')"
+
+# The roster's field separator, and deliberately NOT a tab. A roster field may be
+# legitimately empty (an unassigned wave), and `IFS=$'\t' read` collapses runs of
+# tabs into one delimiter because tab is IFS whitespace — so "repo<T>x<T><T>3"
+# would land the pair value in the wave variable and silently mis-assign a repo to
+# the wrong arm of the experiment. A unit separator is not IFS whitespace, so
+# empty fields survive the read exactly as written.
+# shellcheck disable=SC2034
+CTX_US="$(printf '\037')"
 
 CTX_ARCHIVAL_DEFAULT="plans specs research audits archive"
 CTX_ARCHIVAL="${CTX_ARCHIVAL:-$CTX_ARCHIVAL_DEFAULT}"
@@ -294,4 +320,75 @@ ctx_prev_bytes() {
     *) note="$ref:$rel is mode $mode, not a regular file; treating as uncommitted" ;;
   esac
   printf '%s\t%s' "$bytes" "$note"
+}
+
+ctx_read_roster() {
+  # The roster is read by two scripts with different jobs — cohort-report.sh
+  # rolls every member up, score-cohort.sh compares two arms of it — and they
+  # must agree on which repo is in which arm. A second parser would be a second
+  # opinion about the experiment's own assignment.
+  #
+  # Annotations are whitespace-separated key:value fields after the entry:
+  #
+  #   CannObserv/usa-wa   wave:a pair:1
+  #
+  # Unknown keys warn rather than fail, so an older copy of this library reading
+  # a newer roster degrades to ignoring the field instead of refusing the file.
+  local file="$1" line entry rest field key val wave pair kind
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    entry="${line%%[[:space:]]*}"
+    rest="${line#"$entry"}"
+    wave=""
+    pair=""
+    for field in $rest; do
+      key="${field%%:*}"
+      val="${field#*:}"
+      case "$key" in
+        wave) wave="$(printf '%s' "$val" | tr '[:upper:]' '[:lower:]')" ;;
+        pair) pair="$val" ;;
+        *) printf 'WARN %s: unknown roster annotation "%s" (ignored)\n' \
+             "$entry" "$field" >&2 ;;
+      esac
+    done
+    case "$entry" in
+      /*|.*|~*) kind=local ;;
+      *) kind=repo ;;
+    esac
+    printf '%s%s%s%s%s%s%s\n' \
+      "$kind" "$CTX_US" "$entry" "$CTX_US" "$wave" "$CTX_US" "$pair"
+  done <"$file"
+}
+
+ctx_fetch_ledger() {
+  # `gh api` prints nothing AND exits non-zero on 404, so an empty-output test
+  # alone cannot tell "this repo has not adopted the skill" from "the request
+  # failed". Those two must stay distinguishable: the first is the expected state
+  # before adoption, the second is an error that would otherwise silently shrink
+  # the sample an A/B is computed over.
+  local kind="$1" entry="$2" ledger="$3" branch="$4" out="$5"
+  local ref="" rc=0 err=""
+  : >"$out" || return 4
+  if [ "$kind" = local ]; then
+    [ -f "$entry/$ledger" ] || return 3
+    cat "$entry/$ledger" >"$out" || return 4
+    [ -s "$out" ] || return 3
+    return 0
+  fi
+  [ -n "$branch" ] && ref="?ref=$branch"
+  err="$(gh api "repos/$entry/contents/$ledger$ref" \
+           -H "Accept: application/vnd.github.raw" 2>&1 >"$out")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$err" in
+      *404*) return 3 ;;
+    esac
+    printf 'WARN %s: gh api failed (exit %s): %s\n' "$entry" "$rc" \
+      "$(printf '%s' "$err" | tr -d '\n')" >&2
+    return 4
+  fi
+  [ -s "$out" ] || return 3
+  return 0
 }

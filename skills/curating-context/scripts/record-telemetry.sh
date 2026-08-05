@@ -21,6 +21,12 @@ Options:
                    Recorded verbatim so a later run can correlate a token
                    delta with what produced it.
   --note TEXT      Free-text note for this row (one line).
+  --no-loss V      Record prove-no-loss.sh's verdict for this run: ok, failed,
+                   or skipped. Omitted means "not run", recorded as null.
+                   This is a SAFETY field, not a score: a validation gate reads
+                   it to reject a skill change that reduced tokens by dropping
+                   content, which no token count can distinguish from a good
+                   run. A null is treated as unscorable, never as ok.
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:
@@ -49,6 +55,7 @@ Row schema (one JSON object per line):
   docs_total        live reference docs measured
   docs_orphaned     live docs not reachable from the policy file
   links_dead        broken relative links in the curated surface
+  no_loss           prove-no-loss.sh's verdict, from --no-loss; null if not run
   top_section       largest section title, and its share of the file
   delta_tokens      change vs the previous row for this file. Null on the first
                     row, and null when the measurement method changed since the
@@ -70,6 +77,7 @@ USAGE
 LEDGER=".skills/context-metrics.jsonl"
 ACTIONS=""
 NOTE=""
+NO_LOSS=""
 DRY=0
 TREND=0
 ALLOW_METHOD_CHANGE=0
@@ -86,6 +94,7 @@ while [ $# -gt 0 ]; do
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
     --actions) need_arg "$#" --actions; ACTIONS="$2"; shift 2 ;;
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
+    --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
     --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
@@ -93,6 +102,15 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# Reject an unrecognised verdict rather than storing it. A gate that reads this
+# field treats anything other than "ok" as not-ok, so a typo would silently be a
+# permanent failure recorded against the run — and a typo the other way ("OK"
+# normalised in by a lenient reader) would be a permanent false pass.
+case "$NO_LOSS" in
+  ''|ok|failed|skipped) ;;
+  *) echo "ERROR --no-loss must be ok, failed, or skipped (got '$NO_LOSS')" >&2; exit 1 ;;
+esac
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
@@ -113,12 +131,13 @@ mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGE
 [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" <<'PY' || RC=$?
 import datetime as dt
 import json
 import sys
 
-src, ledger, today, repo, actions, note, dry, trend, allow_method = sys.argv[1:10]
+(src, ledger, today, repo, actions, note, dry, trend, allow_method,
+ no_loss) = sys.argv[1:11]
 
 try:
     m = json.load(open(src, encoding="utf-8"))
@@ -151,6 +170,7 @@ row = {
     "docs_total": totals["files_docs"],
     "docs_orphaned": len(links["orphans"]),
     "links_dead": len(links["dead"]),
+    "no_loss": no_loss or None,
     "top_section": top.get("title"),
     "top_section_share": top.get("share"),
     "delta_tokens": None,

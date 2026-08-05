@@ -203,6 +203,8 @@ access to any other repo.
 | `tokens_live` | policy + reachable live reference docs |
 | `docs_total`, `docs_orphaned` | live doc count, and how many nothing links |
 | `links_dead` | broken relative links in the curated surface |
+| `no_loss` | `prove-no-loss.sh`'s verdict — `ok`, `failed`, `skipped`, or `null` when the check was not run. A safety field, not a score: [the validation gate](validation-gate.md) reads it to reject a change that reduced tokens by dropping content, which no token count can distinguish from a good run. `null` is unscorable, never a pass. |
+| `skill_version`, `skill_commit` | which version of this skill produced the row; `null` on rows predating the field |
 | `top_section`, `top_section_share` | largest section and its % of the file |
 | `delta_tokens`, `delta_days` | change since the previous row for this file; `null` on the first |
 | `actions` | action tags — see below |
@@ -259,6 +261,13 @@ comparison cannot be mistaken for "no change yet".
 
 Roster in `.skills/cohort`, one `owner/repo` slug or local path per line; `#`
 comments allowed. Repos with no ledger are reported rather than skipped.
+
+An entry may also carry `wave:` and `pair:` annotations. The roll-up prints the
+resulting split and how many members of each arm have adopted;
+`score-cohort.sh` is what acts on it. Both scripts read the roster through one
+parser in `_context-lib.sh`, so they cannot disagree about which repo is in which
+arm — a second opinion about the experiment's own assignment would be worse than
+no experiment. See [validation-gate.md](validation-gate.md).
 
 Before a repo adopts the skill it has no ledger, and that is the expected state —
 not a failure, and not something to fix by writing a ledger into it. Ledgers

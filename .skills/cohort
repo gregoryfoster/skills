@@ -1,4 +1,4 @@
-# Cohort roster for curating-context's cohort-report.sh.
+# Cohort roster for curating-context's cohort-report.sh and score-cohort.sh.
 #
 # One entry per line: an owner/repo slug (read over `gh api`, no clone needed) or
 # an absolute/relative local path. Blank lines and # comments are ignored.
@@ -6,16 +6,46 @@
 # These are the CannObserv repos built on the shared agent-tooling foundation
 # (init-project-fastapi scaffold, managing-skills vendoring, init-socraticode
 # indexing) — the same set that skill-family sweeps target.
+#
+# An entry may carry whitespace-separated key:value annotations:
+#
+#   wave:  which arm of the validation split this repo belongs to
+#   pair:  which matched pair, so an A/B compares like against like
+#
+# Wave A adopts first; wave B is held back so that a later proposal can be tried
+# on it while wave A keeps running the version before it. That staging is the
+# whole reason the roster carries these fields — adopting all twelve at once puts
+# the cohort on one version and forfeits the comparison permanently.
+#
+# Pairs are adjacent in the 2026-08-05 exact baseline, so the two members of a
+# pair started at a comparable size, and the wave assignment within each pair
+# balances the secondary axis (whether the repo already had a Detail Docs index):
+# two indexed repos in each arm. Rationale, metric, and adoption rule:
+# skills/curating-context/references/validation-gate.md
 
-CannObserv/archiver
-CannObserv/cannobserv
-CannObserv/cli
-CannObserv/notifier
-CannObserv/cannabis.observer-wordpress
-CannObserv/observo
-CannObserv/usa-wa
-CannObserv/address-validator
-CannObserv/wslcb-licensing-tracker
-CannObserv/power-map
-CannObserv/watcher
-CannObserv/replicator
+# pair 1 — 52,953 / 49,103
+CannObserv/usa-wa                        wave:a pair:1
+CannObserv/cannabis.observer-wordpress   wave:b pair:1
+
+# pair 2 — 28,110 / 25,949
+CannObserv/observo                       wave:a pair:2
+CannObserv/cannobserv                    wave:b pair:2
+
+# pair 3 — 14,633 / 19,715. The weakest match in the roster: 29% apart, where
+# every other pair is within 8%. `watcher` has no size neighbour.
+CannObserv/replicator                    wave:a pair:3
+CannObserv/watcher                       wave:b pair:3
+
+# pair 4 — 14,358 / 13,298
+CannObserv/archiver                      wave:a pair:4
+CannObserv/power-map                     wave:b pair:4
+
+# pair 5 — 6,013 / 6,322. Both within 6% of budget, so both arms will close
+# their gap completely and the pair is expected to be uninformative.
+CannObserv/cli                           wave:a pair:5
+CannObserv/address-validator             wave:b pair:5
+
+# pair 6 — 5,468 / 5,331. Both already under budget: no gap to close, so this
+# pair contributes to the safety gates only.
+CannObserv/notifier                      wave:a pair:6
+CannObserv/wslcb-licensing-tracker       wave:b pair:6

@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.1"
+  version: "1.2"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -65,7 +65,8 @@ Two mechanics enforce this:
   **Always pass it when surveying a repo you are not curating.** Without it, a
   read-only-looking survey leaves an untracked file behind in every repo it
   touched.
-- `cohort-report.sh` reads ledgers over `gh api` and never clones or writes.
+- `cohort-report.sh` and `score-cohort.sh` read ledgers over `gh api` and never
+  clone or write.
 
 A cohort ledger therefore fills in as each repo adopts the skill, not from one
 central sweep. `cohort-report.sh` reporting "no ledger" for a member is the
@@ -298,6 +299,10 @@ Re-run Phase 1 and assert, before committing:
   exactly the paraphrase-in-transit Phase 5 forbids. A dropped line is the one
   failure mode of this skill that a token count cannot detect — the count looks
   better for it.
+
+  Carry the verdict onto the ledger row in Phase 7 (`--no-loss ok`). The
+  validation gate treats a missing verdict as unscorable rather than as a pass,
+  so a run that skipped this phase cannot clear it by silence.
 - `links.dead` is empty, and no new orphan appeared.
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes, if it asserts on policy-file content.
@@ -309,7 +314,7 @@ Re-run Phase 1 and assert, before committing:
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
   | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
-      --print-trend
+      --no-loss ok --print-trend
 ```
 
 Tag `--actions` honestly and specifically. The tags are the only thing that lets
@@ -327,6 +332,13 @@ When a change to this skill is tried and abandoned, record it in
 [references/rejected-changes.md](references/rejected-changes.md) with what refuted
 it. A rejection is negative feedback: without the record the same plausible idea
 returns every few runs and is re-litigated from scratch.
+
+**A change to this skill is not adopted on judgement.** The cohort is a held-out
+validation split, and `score-cohort.sh` scores the arm running a proposal against
+the arm running the version before it. Adoption needs a win on every informative
+pair and a clean sweep of the safety gates; anything else, "no measurable
+difference" included, is a rejection. The split, the metric, and what the gate
+cannot see: [references/validation-gate.md](references/validation-gate.md).
 
 Commit the ledger with the edits, on a branch, and open a PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated
