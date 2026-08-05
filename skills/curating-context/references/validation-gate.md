@@ -38,6 +38,19 @@ first is a fair comparison. This is also why the staging matters: if all twelve
 repos adopt on the same day and the same version, every first curation is spent,
 and the only comparisons left are between maintenance runs.
 
+Two details decide whether that run is scored at all:
+
+- **The before-state must come from the same policy file.** A ledger may track
+  more than one — `record-telemetry.sh` computes its own deltas per file — and
+  taking whichever row happens to precede the curation produced a fabricated
+  closure: a repo that really went 50,000 → 9,000 scored **−2900%** against an
+  unrelated file's 6,100, and handed the pair to the other arm.
+- **An untagged run makes the repo unscorable.** `record-telemetry.sh` emits
+  `actions: []` when `--actions` was omitted, and such a row cannot be told from
+  a baseline. Scoring it as a curation would attribute its near-zero closure to
+  the skill version; skipping past it would hide the tagging gap. The gate says
+  "tag it and re-score" instead.
+
 ## Staging, and which arm is which
 
 Wave A adopts now. Wave B is held. When a change to the skill is proposed, wave B
@@ -45,9 +58,20 @@ adopts *on the proposed version* while wave A keeps running the version before i
 
 **Wave A therefore holds the older version, and the first experiment runs
 `--treatment b --control a`.** The script's defaults (`--treatment a`) suit later
-rounds, once A is the arm carrying a proposal. Getting the direction backwards
-turns a winning change into a losing one, which is why the flags are explicit
-rather than inferred from version strings — `1.10` sorts below `1.9`.
+rounds, once A is the arm carrying a proposal.
+
+Getting the direction backwards turns a winning change into a losing one, so the
+gate detects it: when the treatment arm's versions are all *older* than the
+control's, it prints a `WARN` naming the inversion and the flags that fix it.
+Comparison is by numeric component, not by string — `1.10` is newer than `1.9`
+and sorts below it lexically. That ordering drives only the warning, never the
+verdict: a non-numeric component reads as zero, which is fine for a hint and not
+fine for a decision.
+
+The verdict also refuses when **either arm is split across versions**. "Adopt
+only if strictly better" presumes one proposal; an arm running two names no
+coherent change, and a sweep could be carried by whichever version drew the
+easier pairs.
 
 ## The pairs
 
@@ -121,15 +145,23 @@ issue asked for, expressed as a veto rather than a weighted sum: a weighted sum
 lets a large enough token win pay for a small content loss, and there is no
 exchange rate at which that trade is acceptable.
 
-Two asymmetries are deliberate:
+Three asymmetries are deliberate:
 
 - **Missing data is never a pass.** A run with no `no_loss` field is unscorable,
   not ok. `record-telemetry.sh --no-loss` is what puts the verdict on the row, and
   a run that skipped Phase 6 should not be able to clear a Phase 6 gate by
   silence.
+- **A missing verdict is not a failure.** Both block adoption, but only a
+  *recorded* non-`ok` verdict is evidence that anything went wrong. An absent or
+  `skipped` one yields **INCONCLUSIVE**, not REJECT: nothing was refuted, the
+  experiment was run without its safety check, and filing that in
+  `rejected-changes.md` would record the idea as tested and beaten when it was
+  neither. Fix the run and re-score.
 - **A control-arm failure is reported, not fatal.** That is the *current* version
   failing — a finding about today, and worth acting on, but not a reason to refuse
-  tomorrow's proposal.
+  tomorrow's proposal. A missing verdict there is reported separately again,
+  because calling it a failure reads as the shipped skill having dropped content
+  when in fact nobody ran the check.
 
 ## The adoption rule
 
@@ -141,9 +173,14 @@ informative pairs, three-of-four happens 31% of the time by chance alone. The
 sweep requirement is the only threshold that carries any evidential weight here,
 and even it lands at p=0.062.
 
-`--min-pairs` (default 3) is the floor below which the verdict is INCONCLUSIVE
-rather than a rejection. INCONCLUSIVE is **not** a rejection and does not belong
-in `rejected-changes.md`: nothing has been decided, and the proposal is still
+`--min-pairs` (default 3, **minimum 1**) is the floor below which the verdict is
+INCONCLUSIVE rather than a rejection. Zero is refused rather than clamped: a
+verdict computed over no pairs is not a weaker verdict but no verdict, and the
+sweep test reads `0 == 0` as a win — it adopted on no evidence whatever until
+the branch was guarded on `informative` being non-empty as well.
+
+INCONCLUSIVE is **not** a rejection and does not belong in
+`rejected-changes.md`: nothing has been decided, and the proposal is still
 pending evidence. Recording it as a rejection would poison the buffer with
 non-results and teach a later reader that the idea was tested and failed.
 

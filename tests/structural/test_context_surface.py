@@ -1172,7 +1172,6 @@ class TestValidationGate:
 
     @pytest.mark.parametrize("kw,marker", [
         ({"no_loss": "failed"}, "no_loss=failed"),
-        ({"no_loss": None}, "no_loss=not recorded"),
         ({"links_dead": 2}, "links_dead=2"),
         ({"orph_before": 0, "orph_after": 4}, "docs_orphaned 0->4"),
     ])
@@ -1187,20 +1186,32 @@ class TestValidationGate:
         assert "safety gate tripped in the treatment arm" in r.stdout
         assert marker in r.stdout
 
-    def test_missing_no_loss_is_not_a_pass(self, tmp_path: Path):
-        """The pin for the asymmetry: a run that skipped Phase 6 must not clear
-        a Phase 6 gate by silence. Deliberately separate from the parametrised
-        case above, because this is the one an implementation is most likely to
-        get wrong by treating absent as fine."""
-        r = _score(_three_good_pairs(tmp_path, no_loss=None))
-        assert r.returncode == 3
-        assert "not recorded" in r.stdout
+    @pytest.mark.parametrize("verdict,marker", [
+        (None, "no_loss=not recorded"),
+        ("skipped", "no_loss=skipped"),
+    ])
+    def test_missing_no_loss_never_adopts(self, tmp_path: Path, verdict, marker):
+        """A run that skipped Phase 6 must not clear a Phase 6 gate by silence.
+
+        It blocks adoption like a failure, but it is INCONCLUSIVE rather than
+        REJECT: nothing was refuted, the experiment was run without its safety
+        check. Calling it a rejection would file the idea in
+        rejected-changes.md as tested and beaten when it was neither."""
+        r = _score(_three_good_pairs(tmp_path, no_loss=verdict))
+        assert r.returncode == 5, r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+        assert "safety could not be verified in the treatment arm" in r.stdout
+        assert marker in r.stdout
+        assert "re-run those curations with --no-loss" in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
 
     def test_control_arm_failure_is_reported_not_fatal(self, tmp_path: Path):
         """A gate tripping under the CURRENT version is a finding about today,
         not a reason to refuse tomorrow's proposal."""
         roster = _three_good_pairs(tmp_path)
         _arm(tmp_path, "ctl2", 28000, 12000, "1.1", no_loss="failed")
+        # A genuine recorded failure, not a missing verdict — see
+        # test_control_arm_missing_verdict_is_not_called_a_failure.
         # Pair 2 drops out as uninformative, so --min-pairs 2 keeps the run
         # decidable and the assertion stays on the claim being made: a failure
         # under the current version does not block adoption of the next one.
@@ -1414,3 +1425,179 @@ class TestNoLossOnTheRow:
         )
         assert out.returncode == 1
         assert "must be ok, failed, or skipped" in out.stderr
+
+
+class TestValidationGateRoundSix:
+    """Regressions found reviewing the gate: each of these produced a verdict
+    that was wrong rather than merely unhelpful."""
+
+    def test_before_state_comes_from_the_same_policy_file(self, tmp_path: Path):
+        """A ledger may track more than one policy file. Taking the row that
+        merely happens to precede the curation fabricated the before-state: a
+        repo that really went 50,000 -> 9,000 scored -2900% off an unrelated
+        file's 6,100 and handed the pair to the other arm."""
+        d = tmp_path / "ctl1" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="ctl1", tokens=50000, actions=["baseline:exact"]),
+            _ledger_row(repo="ctl1", tokens=6100, file="sub/AGENTS.md",
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="ctl1", tokens=9000, actions=["demote:X"],
+                        skill_version="1.1", no_loss="ok"),
+        ]) + "\n")
+        _arm(tmp_path, "trt1", 49000, 9500, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        ctl = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
+        assert ctl["before"] == 50000, ctl
+        # 50,000 -> 9,000 against a 6,000 budget is 93.2% closure, so the
+        # control wins this pair and the treatment must not be adopted.
+        assert round(ctl["closure"], 3) == round((44000 - 3000) / 44000, 3)
+        assert json.loads(r.stdout)["verdict"] == "REJECT"
+
+    def test_min_pairs_zero_is_refused(self, tmp_path: Path):
+        """`--min-pairs 0` let the sweep test read `0 == 0` and adopt on no
+        evidence whatever — a vacuous pass in the control that exists to
+        prevent them."""
+        r = _score(_three_good_pairs(tmp_path), "--min-pairs", "0")
+        assert r.returncode == 1
+        assert "at least 1" in r.stderr
+
+    def test_zero_informative_pairs_never_adopts(self, tmp_path: Path):
+        """Belt to --min-pairs' braces: the sweep branch is guarded on its own,
+        so the two failures cannot line up again."""
+        _arm(tmp_path, "ctl1", 6200, 5000, "1.1")
+        _arm(tmp_path, "trt1", 6100, 4000, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "no informative pairs" in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_control_arm_missing_verdict_is_not_called_a_failure(
+            self, tmp_path: Path):
+        """'Failure' in the control-arm report means the shipped version did
+        something wrong. A run nobody checked is not that, and labelling it so
+        is the sort of line that gets quoted in an issue."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "ctl2", 28000, 12000, "1.1", no_loss=None)
+        r = _score(roster, "--min-pairs", "2")
+        assert "control-arm runs with no safety verdict" in r.stdout, r.stdout
+        assert "not a failure" in r.stdout
+        assert "control-arm safety failures" not in r.stdout
+
+    def test_arm_split_across_versions_is_refused(self, tmp_path: Path):
+        """'Adopt only if strictly better' presumes ONE proposal. A sweep could
+        otherwise be carried by whichever version drew the easier pairs."""
+        for i, (cb, ca, tb, ta) in enumerate(
+                [(50000, 20000, 49000, 12000), (30000, 14000, 29000, 9000)],
+                start=1):
+            _arm(tmp_path, f"ctl{i}", cb, ca, "1.1")
+            _arm(tmp_path, f"trt{i}", tb, ta, "1.2" if i == 1 else "1.9")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1"),
+                                      ("ctl2", "a", "2"), ("trt2", "b", "2")]),
+                   "--min-pairs", "2")
+        assert r.returncode == 5, r.stdout
+        assert "split across versions" in r.stdout
+        assert "no single change to adopt" in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_basename_collision_keeps_repos_distinct(self, tmp_path: Path):
+        """OrgA/cli and OrgB/cli merged into one record, concatenating two
+        ledgers and reporting an arm as having no attributed run when it had
+        one — a diagnosis that sends someone hunting a ledger that exists."""
+        (tmp_path / "OrgA").mkdir()
+        (tmp_path / "OrgB").mkdir()
+        _arm(tmp_path, "OrgA/cli", 50000, 9000, "1.1")
+        _arm(tmp_path, "OrgB/cli", 49000, 12000, "1.2")
+        roster = _roster(tmp_path, [("OrgA/cli", "a", "1"),
+                                    ("OrgB/cli", "b", "1")])
+        r = _score(roster, "--min-pairs", "1", "--format", "json")
+        payload = json.loads(r.stdout)
+        assert len(payload["repos"]) == 2
+        assert payload["treatment_versions"] == ["1.2"]
+        assert payload["control_versions"] == ["1.1"]
+        # Ambiguous basenames are shown in full rather than identically.
+        assert {x["repo"] for x in payload["repos"]} == {
+            str(tmp_path / "OrgA/cli"), str(tmp_path / "OrgB/cli")}
+
+    def test_unambiguous_basenames_stay_short(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path), "--format", "json")
+        assert {x["repo"] for x in json.loads(r.stdout)["repos"]} == {
+            "ctl1", "ctl2", "ctl3", "trt1", "trt2", "trt3"}
+
+    def test_inverted_arms_are_detected(self, tmp_path: Path):
+        """Wave A adopts first and holds the OLDER version, so running the
+        script bare during round one inverts the comparison and reports REJECT
+        for a winning change. Documented in three places, which is itself the
+        signal it needed detecting."""
+        roster = _three_good_pairs(tmp_path)
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file", str(roster),
+             "--treatment", "a", "--control", "b"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert "arms look" in r.stdout, r.stdout
+        assert "--treatment b --control a" in r.stdout
+
+    def test_correctly_ordered_arms_are_not_warned_about(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path))
+        assert "arms look" not in r.stdout
+
+    def test_version_comparison_is_numeric_not_lexical(self, tmp_path: Path):
+        """1.10 is newer than 1.9. A string compare says otherwise, which is
+        why the verdict never uses this ordering and the warning does."""
+        _arm(tmp_path, "ctl1", 50000, 20000, "1.9")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.10")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "arms look" not in r.stdout, r.stdout
+        assert "verdict: ADOPT" in r.stdout
+
+    def test_untagged_attributed_run_is_unscorable(self, tmp_path: Path):
+        """record-telemetry.sh emits actions: [] when --actions was omitted.
+        Scoring that as a curation attributes its near-zero closure to the
+        skill version; skipping past it hides the tagging gap."""
+        d = tmp_path / "trt1" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="trt1", tokens=49000, actions=["baseline:exact"]),
+            _ledger_row(repo="trt1", tokens=48000, actions=[],
+                        skill_version="1.2", no_loss="ok"),
+        ]) + "\n")
+        _arm(tmp_path, "ctl1", 50000, 20000, "1.1")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "no action tags" in r.stdout
+        assert "tag it and re-score" in r.stdout
+
+
+class TestCohortReportSingleFile:
+    def test_net_does_not_span_two_policy_files(self, tmp_path: Path):
+        """Same defect as the gate's before-state, in the roll-up: `net` would
+        span two different files and report a change for one that never moved.
+        That is the class of error the method-change anchoring exists to
+        prevent, so it gets the same treatment."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", tokens=9000, actions=["baseline:exact"]),
+            _ledger_row(repo="one", tokens=500, file="sub/AGENTS.md",
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="one", tokens=9000, actions=["demote:X"],
+                        skill_version="1.1"),
+        ]) + "\n")
+        r = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
+             "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 0, r.stderr
+        header, row = r.stdout.splitlines()[0].split("\t"), \
+            r.stdout.splitlines()[1].split("\t")
+        cells = dict(zip(header, row))
+        # AGENTS.md never moved: 9000 both times. Against sub/AGENTS.md's 500 it
+        # would read +8500.
+        assert cells["net"] == "0", cells
+        assert cells["runs"] == "2", cells

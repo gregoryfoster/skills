@@ -145,22 +145,26 @@ for want in local repo; do
   while IFS="$CTX_US" read -r kind entry wave pair; do
     [ "$kind" = "$want" ] || continue
     # A ledger's own `repo` field is the basename recorded at write time, which
-    # drifts if a checkout is renamed. Stamp the roster's name on instead — and
+    # drifts if a checkout is renamed. Stamp the roster entry on instead — and
     # the wave and pair with it, so the arm a repo belongs to is visible in the
     # roll-up rather than only inside the gate.
-    name="$(basename "$entry")"
+    #
+    # The FULL entry, not its basename: two entries sharing one (OrgA/cli and
+    # OrgB/cli, or two checkouts of the same project) would merge into a single
+    # record whose rows come from both ledgers. The reader shortens it for
+    # display when no other entry shares the basename.
     RC=0
     ctx_fetch_ledger "$kind" "$entry" "$LEDGER" "$BRANCH" "$TMP/raw" || RC=$?
     case "$RC" in
-      3) printf '%s\t%s\t%s\t%s\n' "$name" "$wave" "$pair" "MISSING" >>"$TMP/all.jsonl"
+      3) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "MISSING" >>"$TMP/all.jsonl"
          continue ;;
       0) ;;
-      *) printf '%s\t%s\t%s\t%s\n' "$name" "$wave" "$pair" "ERROR" >>"$TMP/all.jsonl"
+      *) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "ERROR" >>"$TMP/all.jsonl"
          continue ;;
     esac
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      printf '%s\t%s\t%s\t%s\n' "$name" "$wave" "$pair" "$line" >>"$TMP/all.jsonl"
+      printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "$line" >>"$TMP/all.jsonl"
     done <"$TMP/raw"
   done <"$TMP/roster"
 done
@@ -177,21 +181,33 @@ for raw in open(src, encoding="utf-8"):
     raw = raw.rstrip("\n")
     if not raw or raw.count("\t") < 3:
         continue
-    name, wave, pair, payload = raw.split("\t", 3)
-    if name not in repos:
-        repos[name] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
-        order.append(name)
+    key, wave, pair, payload = raw.split("\t", 3)
+    if key not in repos:
+        repos[key] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
+        order.append(key)
     if payload in ("MISSING", "ERROR"):
-        repos[name]["status"] = "no ledger" if payload == "MISSING" else "unreadable"
+        repos[key]["status"] = "no ledger" if payload == "MISSING" else "unreadable"
         continue
     try:
-        repos[name]["rows"].append(json.loads(payload))
+        repos[key]["rows"].append(json.loads(payload))
     except ValueError:
-        repos[name]["status"] = "malformed rows"
+        repos[key]["status"] = "malformed rows"
+
+# Short display names, unless two roster entries share a basename — in which
+# case both are shown in full. A table naming two different repos identically is
+# worse than a wide one.
+basenames = {}
+for key in order:
+    basenames.setdefault(key.rstrip("/").rsplit("/", 1)[-1], []).append(key)
+display = {
+    key: (short if len(keys) == 1 else key)
+    for short, keys in basenames.items() for key in keys
+}
 
 records = []
-for name in order:
-    info = repos[name]
+for key in order:
+    info = repos[key]
+    name = display[key]
     rows = sorted(info["rows"], key=lambda r: r.get("ts") or "")
     if not rows:
         records.append({
@@ -203,6 +219,14 @@ for name in order:
         })
         continue
     latest = rows[-1]
+    # Everything below is about ONE policy file — the one measured most recently.
+    # A ledger may track more than one (record-telemetry.sh computes its own
+    # deltas per file), and mixing them makes `net` span two different files and
+    # report a change for a file that never moved. That is the same class of
+    # error the method-change anchoring exists to prevent, so it gets the same
+    # treatment. `runs` counts runs for this file, which is also the more useful
+    # number.
+    rows = [r for r in rows if r.get("file") == latest.get("file")]
     # The best single reduction and what accompanied it — the roll-up's reason
     # for existing: which optimisation actually moved the number, per repo.
     best = None

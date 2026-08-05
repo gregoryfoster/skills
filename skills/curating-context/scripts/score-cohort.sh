@@ -31,7 +31,7 @@ Options:
                       Default: .skills/context-metrics.jsonl
   --branch NAME       Branch to read for owner/repo entries.
   --min-pairs N       Fewest informative pairs that can produce a verdict
-                      other than INCONCLUSIVE. Default: 3
+                      other than INCONCLUSIVE. Minimum 1. Default: 3
   --format FMT        table (default) or json
   -h, --help          Show this help and exit 0.
 
@@ -41,6 +41,10 @@ What it scores
   `baseline*`. First runs are what get compared, because a repo's first curation
   and its fifth are not the same task, and the roster's pairs are matched on
   starting state precisely so that first-against-first is a fair comparison.
+
+  The before-state is the previous row FOR THE SAME POLICY FILE. A ledger may
+  track several, and an untagged run (actions: []) cannot be told from a
+  baseline, so it makes the repo unscorable rather than being guessed at.
 
   The effectiveness metric is budget-gap closure:
 
@@ -62,12 +66,19 @@ Safety gates (checked before any score)
 
   Any tripped gate in the treatment arm is an outright REJECT, whatever the token
   numbers say — a change that reduces tokens by losing content is the one failure
-  this skill exists to prevent, and no amount of closure buys it back. Missing
-  data is never a pass: a run with no `no_loss` field is unscorable, not ok.
+  this skill exists to prevent, and no amount of closure buys it back.
+
+  A RECORDED failure and a MISSING verdict are kept apart. Both block adoption;
+  only the first is evidence anything went wrong. A `no_loss` that is absent or
+  `skipped` yields INCONCLUSIVE, not REJECT — nothing was refuted, the experiment
+  was run without its safety check, and filing that in rejected-changes.md would
+  record the idea as tested and beaten when it was neither.
 
   A tripped gate in the CONTROL arm is reported but does not reject: that is the
   current version failing, which is a finding about today rather than a reason to
-  refuse tomorrow.
+  refuse tomorrow. A missing verdict there is reported separately again, because
+  "failure" would read as the shipped skill having dropped content when in fact
+  nobody ran the check.
 
 Adoption rule
   Adopt only if the treatment wins EVERY informative pair. Ties, mixed results,
@@ -82,8 +93,9 @@ Exit codes:
   0  ADOPT — treatment won every informative pair, no safety gate tripped
   1  usage error, or the roster carries no wave assignment
   2  infrastructure failure (python3 or gh missing, library missing)
-  3  REJECT — a safety gate tripped, or the treatment did not sweep
-  5  INCONCLUSIVE — too few informative pairs, or both arms ran the same version
+  3  REJECT — a recorded safety gate tripped, or the treatment did not sweep
+  5  INCONCLUSIVE — nothing was decided: too few informative pairs, safety
+     unverified, both arms on one version, or an arm split across versions
 USAGE
 }
 
@@ -114,8 +126,14 @@ case "$FORMAT" in
   *) echo "ERROR --format must be table or json" >&2; exit 1 ;;
 esac
 case "$MIN_PAIRS" in
-  ''|*[!0-9]*) echo "ERROR --min-pairs must be a non-negative integer" >&2; exit 1 ;;
+  ''|*[!0-9]*) echo "ERROR --min-pairs must be a positive integer" >&2; exit 1 ;;
 esac
+# Zero is refused rather than clamped. A verdict computed over no pairs is not a
+# weaker verdict, it is no verdict, and the sweep test reads `0 == 0` as a win.
+[ "$MIN_PAIRS" -ge 1 ] || {
+  echo "ERROR --min-pairs must be at least 1: a comparison over zero pairs" >&2
+  echo "      would adopt on no evidence at all" >&2
+  exit 1; }
 if [ "$TREATMENT" = "$CONTROL" ]; then
   echo "ERROR --treatment and --control name the same wave ('$TREATMENT')" >&2
   exit 1
@@ -124,8 +142,10 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
 # --- shared library -------------------------------------------------------
-# After argument parsing: the library defines no `usage`, but the four sibling
-# scripts all source here and matching them keeps the shape reviewable.
+# After argument parsing, matching the five sibling scripts. The library
+# namespaces its own help as ctx_lib_usage() precisely so that sourcing cannot
+# replace a caller's usage() — before that rename it did, and only the
+# convention of parsing arguments first kept anyone's --help working.
 _self="${BASH_SOURCE[0]}"
 _n=0
 while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
@@ -183,19 +203,21 @@ while IFS="$CTX_US" read -r kind entry wave pair; do
     "$TREATMENT"|"$CONTROL") ;;
     *) continue ;;
   esac
-  name="$(basename "$entry")"
+  # The FULL roster entry is the key, not its basename: OrgA/cli and OrgB/cli
+  # would otherwise merge into one record. The reader shortens it for display
+  # when it is unambiguous.
   RC=0
   ctx_fetch_ledger "$kind" "$entry" "$LEDGER" "$BRANCH" "$TMP/raw" || RC=$?
   case "$RC" in
-    3) printf '%s\t%s\t%s\t%s\n' "$name" "$wave" "$pair" "MISSING" >>"$TMP/all.jsonl"
+    3) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "MISSING" >>"$TMP/all.jsonl"
        continue ;;
     0) ;;
-    *) printf '%s\t%s\t%s\t%s\n' "$name" "$wave" "$pair" "ERROR" >>"$TMP/all.jsonl"
+    *) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "ERROR" >>"$TMP/all.jsonl"
        continue ;;
   esac
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    printf '%s\t%s\t%s\t%s\n' "$name" "$wave" "$pair" "$line" >>"$TMP/all.jsonl"
+    printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "$line" >>"$TMP/all.jsonl"
   done <"$TMP/raw"
 done <"$TMP/roster"
 
@@ -213,32 +235,55 @@ for raw in open(src, encoding="utf-8"):
     raw = raw.rstrip("\n")
     if not raw or raw.count("\t") < 3:
         continue
-    name, wave, pair, payload = raw.split("\t", 3)
-    if name not in repos:
-        repos[name] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
-        order.append(name)
+    key, wave, pair, payload = raw.split("\t", 3)
+    if key not in repos:
+        repos[key] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
+        order.append(key)
     if payload in ("MISSING", "ERROR"):
-        repos[name]["status"] = "no ledger" if payload == "MISSING" else "unreadable"
+        repos[key]["status"] = "no ledger" if payload == "MISSING" else "unreadable"
         continue
     try:
-        repos[name]["rows"].append(json.loads(payload))
+        repos[key]["rows"].append(json.loads(payload))
     except ValueError:
-        repos[name]["status"] = "malformed rows"
+        repos[key]["status"] = "malformed rows"
+
+# Repos are keyed by their full roster entry, not by basename: two entries
+# sharing a basename (OrgA/cli and OrgB/cli, or two local checkouts of the same
+# project) would otherwise merge into one record, concatenating two ledgers and
+# reporting one arm as having no attributed run when it has one. The display
+# name stays short unless it would be ambiguous, in which case the whole entry
+# is shown — a table row that names two different repos identically is worse
+# than a wide one.
+basenames = {}
+for key in order:
+    basenames.setdefault(key.rstrip("/").rsplit("/", 1)[-1], []).append(key)
+display = {
+    key: (short if len(keys) == 1 else key)
+    for short, keys in basenames.items() for key in keys
+}
 
 
-def is_baseline(row):
-    """A measurement, not a curation. Baseline rows establish the starting
-    number and must not be scored as though the skill had done work."""
+def classify_run(row):
+    """Which kind of run a ledger row records: a baseline measurement, a
+    curation, or something that cannot be told apart from either."""
     acts = row.get("actions") or []
-    return bool(acts) and all(a.split(":", 1)[0] == "baseline" for a in acts)
+    if not acts:
+        # record-telemetry.sh emits actions: [] when --actions was omitted. An
+        # untagged run cannot be distinguished from a baseline, and scoring one
+        # as a curation would attribute its near-zero closure to the skill
+        # version. Surface the tagging gap instead of guessing past it.
+        return "untagged"
+    if all(a.split(":", 1)[0] == "baseline" for a in acts):
+        return "baseline"
+    return "curation"
 
 
-def score_repo(name, info):
+def score_repo(key, info):
     rec = {
-        "repo": name, "wave": info["wave"], "pair": info["pair"],
-        "status": None, "why": None, "before": None, "after": None,
-        "budget": None, "closure": None, "no_loss": None,
-        "skill_version": None, "ts": None, "gates": [],
+        "repo": display[key], "entry": key, "wave": info["wave"],
+        "pair": info["pair"], "status": None, "why": None, "before": None,
+        "after": None, "budget": None, "closure": None, "no_loss": None,
+        "skill_version": None, "ts": None, "gates": [], "unverified": [],
     }
     if info["status"] != "ok":
         rec["status"] = "unscorable"
@@ -252,16 +297,34 @@ def score_repo(name, info):
         rec["why"] = "no ledger rows"
         return rec
 
-    scored = prev = None
-    for i, r in enumerate(rows):
-        if r.get("skill_version") and not is_baseline(r):
-            scored = r
-            prev = rows[i - 1] if i else None
-            break
+    scored = None
+    for r in rows:
+        if not r.get("skill_version"):
+            continue
+        kind = classify_run(r)
+        if kind == "baseline":
+            continue
+        if kind == "untagged":
+            rec["status"] = "unscorable"
+            rec["why"] = ("the first attributed run carries no action tags, so it "
+                          "cannot be told from a baseline; tag it and re-score")
+            return rec
+        scored = r
+        break
     if scored is None:
         rec["status"] = "unscorable"
         rec["why"] = "no attributed curation run yet (only baselines, or no skill_version)"
         return rec
+
+    # The before-state must come from the SAME policy file. A ledger may track
+    # more than one — record-telemetry.sh computes its own deltas per file — and
+    # taking the row that merely happens to precede this one produced a
+    # fabricated closure: a repo that actually went 50,000 -> 9,000 scored -2900%
+    # off an unrelated file's 6,100.
+    target = scored.get("file")
+    same_file = [r for r in rows if r.get("file") == target]
+    idx = same_file.index(scored)
+    prev = same_file[idx - 1] if idx else None
 
     rec["skill_version"] = scored.get("skill_version")
     rec["ts"] = scored.get("ts")
@@ -272,9 +335,18 @@ def score_repo(name, info):
     # Safety first, and independent of whether the run is scorable for
     # effectiveness: a run that dropped content is a failure even if its
     # before-row is missing and no closure can be computed.
-    if scored.get("no_loss") != "ok":
-        got = scored.get("no_loss") or "not recorded"
-        rec["gates"].append(f"no_loss={got}")
+    #
+    # A recorded non-ok verdict and an absent one are kept apart. Both block
+    # adoption, but only the first is evidence that anything went wrong, and
+    # calling a missing verdict a "failure" in the control-arm report reads as
+    # the shipped skill having dropped content when nobody ran the check.
+    nl = scored.get("no_loss")
+    if nl == "ok":
+        pass
+    elif nl in (None, "skipped"):
+        rec["unverified"].append(f"no_loss={nl or 'not recorded'}")
+    else:
+        rec["gates"].append(f"no_loss={nl}")
     dead = scored.get("links_dead")
     if isinstance(dead, int) and dead > 0:
         rec["gates"].append(f"links_dead={dead}")
@@ -286,6 +358,10 @@ def score_repo(name, info):
     if rec["gates"]:
         rec["status"] = "failed"
         rec["why"] = "; ".join(rec["gates"])
+        return rec
+    if rec["unverified"]:
+        rec["status"] = "unverified"
+        rec["why"] = "; ".join(rec["unverified"])
         return rec
 
     if prev is None:
@@ -314,7 +390,7 @@ def score_repo(name, info):
     return rec
 
 
-records = [score_repo(n, repos[n]) for n in order]
+records = [score_repo(k, repos[k]) for k in order]
 by_arm = {treatment: {}, control: {}}
 for r in records:
     if r["wave"] in by_arm and r["pair"]:
@@ -363,27 +439,86 @@ for pid in sorted(set(by_arm[treatment]) | set(by_arm[control]),
 
 informative = [p for p in pairs if p["informative"]]
 wins = [p for p in informative if p["winner"] == "treatment"]
-t_failures = [r for r in records if r["wave"] == treatment and r["status"] == "failed"]
-c_failures = [r for r in records if r["wave"] == control and r["status"] == "failed"]
 
-t_versions = sorted({r["skill_version"] for r in records
-                     if r["wave"] == treatment and r["skill_version"]})
-c_versions = sorted({r["skill_version"] for r in records
-                     if r["wave"] == control and r["skill_version"]})
+
+def arm(wave, status):
+    return [r for r in records if r["wave"] == wave and r["status"] == status]
+
+
+t_failures = arm(treatment, "failed")
+t_unverified = arm(treatment, "unverified")
+c_failures = arm(control, "failed")
+c_unverified = arm(control, "unverified")
+
+
+def versions_in(wave):
+    m = {}
+    for r in records:
+        if r["wave"] == wave and r["skill_version"]:
+            m.setdefault(r["skill_version"], []).append(r["repo"])
+    return m
+
+
+t_by_version, c_by_version = versions_in(treatment), versions_in(control)
+t_versions, c_versions = sorted(t_by_version), sorted(c_by_version)
+
+
+def version_key(v):
+    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only for the
+    inverted-arms warning, never for the verdict: a non-numeric component reads
+    as 0, which is fine for a hint and not fine for a decision."""
+    return tuple(int(p) if p.isdigit() else 0 for p in str(v).split("."))
+
+
+# Wave A adopts first and therefore holds the OLDER version, so the first
+# experiment runs `--treatment b --control a` — and running the script bare
+# inverts it, turning a winning change into a losing one. Detectable, so detect
+# it rather than relying on three places in the docs saying so.
+inverted = bool(t_versions and c_versions
+                and max(map(version_key, t_versions))
+                < min(map(version_key, c_versions)))
 
 verdict, code, reasons = None, 0, []
 if t_failures:
     verdict, code = "REJECT", 3
     reasons.append("a safety gate tripped in the treatment arm: "
                    + "; ".join(f"{r['repo']} ({r['why']})" for r in t_failures))
+elif t_unverified:
+    # Blocks adoption, like a failure, but is NOT a rejection: nothing was
+    # refuted, the experiment was run without its safety check. Filing that in
+    # rejected-changes.md would record the idea as tested and beaten when it was
+    # neither.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append("safety could not be verified in the treatment arm: "
+                   + "; ".join(f"{r['repo']} ({r['why']})" for r in t_unverified)
+                   + " — re-run those curations with --no-loss and re-score")
 elif not t_versions:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"no attributed curation run in the treatment arm (wave "
                    f"{treatment}) yet — nothing has been measured to compare")
+elif len(t_versions) > 1 or len(c_versions) > 1:
+    # "Adopt only if strictly better" presumes ONE proposal. An arm split across
+    # versions names no coherent change, and a sweep could be carried by
+    # whichever version happened to draw the easier pairs.
+    verdict, code = "INCONCLUSIVE", 5
+    split = t_by_version if len(t_versions) > 1 else c_by_version
+    which = treatment if len(t_versions) > 1 else control
+    reasons.append(
+        f"wave {which} is split across versions, so there is no single change to "
+        "adopt: "
+        + "; ".join(f"{v} ({', '.join(sorted(split[v]))})" for v in sorted(split))
+        + " — bring the arm onto one version and re-score")
 elif t_versions == c_versions:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"both arms ran the same version ({', '.join(t_versions)}); "
                    "this is a baseline, not a comparison")
+elif not informative:
+    # Independent of --min-pairs. With --min-pairs 0 the sweep test below reads
+    # `0 == 0` and adopts on no evidence whatever — a vacuous pass in the one
+    # control that exists to prevent them.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append("no informative pairs — every pair was uninformative, so "
+                   "nothing was measured")
 elif len(informative) < min_pairs:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"{len(informative)} informative pair(s), minimum {min_pairs}")
@@ -405,6 +540,14 @@ else:
     reasons.append(f"the treatment won {len(wins)} of {len(informative)} "
                    f"informative pairs; adoption requires all ({'; '.join(lost)})")
 
+inversion_warning = (
+    f"WARN wave {treatment} carries only older versions than wave {control} "
+    f"({', '.join(t_versions)} vs {', '.join(c_versions)}). The arms look "
+    f"inverted: wave A adopts first and holds the older version, so the first "
+    f"experiment runs --treatment {control} --control {treatment}. As scored "
+    f"here, a winning change reads as a losing one."
+) if inverted else None
+
 if fmt == "json":
     print(json.dumps({
         "treatment_wave": treatment, "control_wave": control,
@@ -413,6 +556,8 @@ if fmt == "json":
         "informative_pairs": len(informative), "treatment_wins": len(wins),
         "min_pairs": min_pairs, "verdict": verdict, "reasons": reasons,
         "control_arm_failures": [r["repo"] for r in c_failures],
+        "control_arm_unverified": [r["repo"] for r in c_unverified],
+        "arms_may_be_inverted": inverted,
     }, indent=2))
     sys.exit(code)
 
@@ -428,6 +573,9 @@ def num(v):
 w = max([len(r["repo"]) for r in records] + [4])
 print(f"treatment wave {treatment}: {', '.join(t_versions) or 'no attributed runs'}")
 print(f"control   wave {control}: {', '.join(c_versions) or 'no attributed runs'}")
+if inversion_warning:
+    print()
+    print(inversion_warning)
 print()
 print(f"{'pair':>4}  {'arm':<3} {'repo':<{w}} {'before':>8} {'after':>8} "
       f"{'budget':>7} {'closure':>8}  no_loss")
@@ -455,6 +603,14 @@ if c_failures:
     print("control-arm safety failures (reported, not a reason to reject the "
           "proposal):")
     for r in c_failures:
+        print(f"  {r['repo']}: {r['why']}")
+    print()
+if c_unverified:
+    # Kept out of the block above on purpose. "Failure" there means the current
+    # version did something wrong; this means nobody checked.
+    print("control-arm runs with no safety verdict (not a failure — the check "
+          "was not run):")
+    for r in c_unverified:
         print(f"  {r['repo']}: {r['why']}")
     print()
 
