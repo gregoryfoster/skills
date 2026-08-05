@@ -69,6 +69,7 @@ Also:
 - Identify all files touched and their roles (theme vs plugin vs `web/app/` infra)
 - Check the live site if UI changes are involved (browser screenshot)
 - Run the app to catch runtime errors (e.g., `wp acorn view:clear` after Blade changes)
+- If the script printed a **Context budget** block, treat an OVER row on `AGENTS.md` as a documentation finding when this branch is what pushed it over — the fix is usually to move the addition into a `docs/` reference doc rather than to shorten it. It is informational, never a blocker, and it prints nothing when the diff touches no context-surface file.
 
 ### Phase 2 — Analyze
 

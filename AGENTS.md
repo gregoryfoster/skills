@@ -65,49 +65,11 @@ Consequences:
 - Project skills must be fully self-contained (they cannot assume the global version exists)
 - When creating a project override, copy the global skill as a starting point
 
-### Signal that a project override is needed
-
-A project-level override is appropriate when the global skill would require project-specific knowledge to function correctly, such as:
-- Commit message format conventions
-- Deployment commands (`systemctl restart`, `fly deploy`, etc.)
-- Test runner invocation (`uv run pytest`, `go test ./...`, etc.)
-- Project-specific CI/CD steps
-- Custom severity criteria for that codebase
-
-### Required override frontmatter
-
-Every project-level override **must** declare two fields in its `metadata` block:
-
-- `overrides: <vendor>/<upstream-skill-name>` — the upstream skill being replaced, qualified by the vendor it comes from
-- `override-reason: <one-line rationale>` — why a full replacement was needed
-
-```yaml
-metadata:
-  author: gregoryfoster
-  version: "1.0"
-  overrides: gregoryfoster-skills/reviewing-code
-  override-reason: Adds project-specific commit convention and systemctl restart step
-```
-
-The `<vendor>` token matches the submodule directory name under `skills-vendor/` (e.g. `gregoryfoster-skills`, `obra-superpowers`). This is the same `<owner>-<repo>` convention documented in [`managing-skills`](skills/managing-skills/). When the same upstream skill name exists in two vendored sources (e.g. both `gregoryfoster-skills/writing-plans` and `obra-superpowers/writing-plans`), the vendor prefix is the only thing that disambiguates which parent the override is replacing — a reader (or audit tool) should never have to consult git history to figure that out.
-
-If the same upstream repo is vendored from two forks, the submodule directory name still disambiguates (e.g. `gregoryfoster-skills` vs `someone-else-skills`); the vendor token is whatever the project actually checked out, not the canonical upstream.
-
-These keys make it possible to audit divergence across downstream repos (e.g. "which overrides have drifted from upstream") without inspecting every SKILL.md by hand. Upstream skills in this repo do not carry these keys — they aren't overrides.
-
-#### Legacy unqualified form
-
-The earlier convention allowed bare `overrides: <skill-name>` without a vendor prefix. That form is **tolerated for existing downstream files** but should be migrated to the qualified form during the next routine touch (e.g., as part of a downstream sweep). New overrides must use the qualified form. Bare entries are ambiguous as soon as a second vendor ships a skill of the same name, so the tolerance window closes once the audited downstreams have been updated.
-
-### Project-name suffix on the H1
-
-When an override is active, suffix the `SKILL.md` body's top-level heading with the project name so users can tell at a glance which version is loaded:
-
-```markdown
-# Code & Documentation Review — Address Validator
-```
-
-The suffix is recommended (not required) and applies to the H1 only — not the skill `name` field (which must continue to match the directory name).
+An override **must** declare `overrides: <vendor>/<upstream-skill-name>` and
+`override-reason:` in its `metadata` block — the vendor prefix is what
+disambiguates which parent is being replaced when two vendored sources ship the
+same skill name. Authoring detail, the legacy unqualified form, and the H1 suffix:
+[docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## Spec compliance
 
@@ -152,66 +114,16 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Use `set -euo pipefail` in bash scripts
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
 
-### Invoking a skill's own scripts (`<SKILL_SCRIPTS>`)
+Two conventions here carry a full template and a rationale, and live in
+[docs/STYLE.md](docs/STYLE.md):
 
-**Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path resolves to a file that doesn't exist — the invocation fails with "No such file or directory" in every project that doesn't happen to carry its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
-
-Instead, resolve once and substitute. Each skill's SKILL.md carries one resolution block — for `reviewing-*` / `shipping-*` this is folded into the Phase 1 / Step 1 doctor preflight; other skills get a standalone "Script path resolution" section. The header, loop, probe, and `done` are common to all 11 skills; the doctor preflight and the final two lines are conditional, as annotated:
-
-```bash
-N=<skill-name> S=<sentinel-script>.sh SD=
-
-# reviewing-* / shipping-* only — resolution follows the doctor so a freshly
-# healed symlink chain is visible to the probe.
-{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
-
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
-done
-
-# Only when later steps substitute <SKILL_SCRIPTS> — shipping-*,
-# using-git-worktrees, writing-plans. Omit for reviewing-*, which has a
-# single call site and no later steps to feed.
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
-
-# Only when this block also runs the script — reviewing-*, shipping-*. Omit
-# for using-git-worktrees and writing-plans, which publish the path but
-# invoke their scripts from later steps.
-bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
-```
-
-Notes on the shape:
-
-- **Probe for the sentinel file, not the directory.** `[ -d "$d" ]` would falsely match any project that has an unrelated root `scripts/` — this repo does.
-- **Clear `SD` on the header line.** Without it, a value inherited from the environment — or left by an earlier block in the same shell — survives the loop and defeats `${SD:?…}`, silently reproducing the #63 "No such file or directory" symptom against a misleading path.
-- **Guard at the call site, not just once.** Every expansion that feeds a path uses the full `${SD:?…}` form, so no invocation depends on an earlier line having aborted first.
-- **Project-local `scripts/` wins.** Preserves consumers that already worked around #63 with their own copy.
-- **`$HOME/.claude/skills/…` last** covers user-level and plugin installs.
-- **Resolution must run *after* `.skills/doctor.sh`,** so a freshly healed vendor symlink chain is visible to the probe.
-- **`<SKILL_SCRIPTS>` is a placeholder, not a shell variable** — same convention as `init-project-fastapi` Phase 0's `<SKILL_DIR>`. Each Bash tool call is a fresh shell, so nothing is inherited between steps; later steps substitute the literal path printed above and are written `bash "<SKILL_SCRIPTS>/X.sh"`.
-
-`TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) enforces the four common lines across every skill carrying a block, and fails the suite if a skill uses `<SKILL_SCRIPTS>` without publishing it.
-
-### Gate-script discipline (pre-ship, doc-check)
-
-Scripts whose output drives a control-flow decision (will-we-ship vs. will-we-skip) must never silently swallow stderr from the tool that produces that output. The two-bucket rule:
-
-- **Gate-like commands** — output drives a `for` loop, a "did we find anything?" branch, a "is the tree clean?" check, or a stamp-write. Capture exit code explicitly and treat non-zero as ERROR + exit 2. Use a tempfile when the command runs inside a process substitution (`done < <(...)`), since process-substitution exit codes aren't visible in the parent shell.
-- **Reporting-only commands** — output is shown to the user as context (status output, log snippet, diff stat). Silent `2>/dev/null || true` is fine: degraded output is acceptable, false-success on a gate is not.
-
-Reference patterns — search by the named anchor below rather than line number, since line numbers drift. Each bullet calls out which reference script(s) carry the canonical implementation; the two canonical scripts are [skills/shipping-work-php/scripts/pre-ship.sh](skills/shipping-work-php/scripts/pre-ship.sh) and [skills/shipping-work/scripts/doc-check.sh](skills/shipping-work/scripts/doc-check.sh).
-
-All three exit-code-capture patterns below (`LS_RC`, `FIND_RC`, `DIFF_RC`) require an `RC=0` pre-init *before* the capturing line. Under `set -u`, a success path doesn't fire `|| RC=$?`, so any subsequent expansion of `$RC` would abort with `RC: unbound variable`. Don't omit the pre-init when adapting these patterns.
-
-- **Tempfile + exit-code capture for process substitution** — grep for `LS_RC` (pre-ship.sh). Use when a command runs inside `done < <(...)` and you need its exit status: capture stdout to a tempfile, capture `$?` into a scalar, branch on it.
-- **Three-case `find` handler** — grep for `FIND_RC` (pre-ship.sh). Non-zero exit → ERROR + exit 2; exit-0 with stderr → WARN + proceed; exit-0 silent → proceed.
-- **Command substitution + exit-code capture (simpler variant)** — grep for `DIFF_RC` (doc-check.sh). Use when the output fits in a scalar and there's no process substitution; `$?` is directly observable via `RC=0; OUT=$(cmd) || RC=$?`, no tempfile needed.
-- **Consolidated EXIT trap** — grep for `trap '` at the top of the file (pre-ship.sh). Multiple tempfile *scalars* (not an array) in one trap line for bash 3.2 + `set -u` compatibility.
-- **`--help` exit-code block** — search the `--help` block (pre-ship.sh, doc-check.sh). Enumerates which infra failures map to exit 2 (vs. silently degrading).
-
-Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2>/dev/null || pwd`) with a one-line comment describing what the fallback actually does, not the rationale you assume it has.
-
-This convention is enforced for `shipping-work*/scripts/pre-ship.sh` by [tests/structural/test_content_invariants.py](tests/structural/test_content_invariants.py) (`TestPreShipGateHardening`). Reverting a hardened site to `done < <(...)` form fails the structural suite. If process substitution is genuinely required, tag the loop with `# unhardened: <reason>` either on the `done` line itself or anywhere within the prior 10 lines as an opt-out.
+- **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a SKILL.md —
+  the agent's cwd is the *project* root, so a bare relative path resolves to a file
+  that does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)).
+  `TestNoBareScriptPaths` fails the suite if the form reappears.
+- **Gate-script discipline.** A script whose output drives a ship/skip decision
+  must never silently swallow the stderr of the tool producing that output.
+  `TestPreShipGateHardening` enforces it for `shipping-work*/scripts/pre-ship.sh`.
 
 ## Worktree root convention
 
@@ -235,16 +147,17 @@ The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the r
 
 ## References convention
 
-Skills may carry supplementary `references/*.md` files for content that exceeds the SKILL.md body cap (SKILL.md is recommended to stay under 500 lines). References files are loaded on demand by the agent, not on skill activation.
+Skills may carry supplementary `references/*.md` files for content that exceeds the
+SKILL.md body cap. They are loaded on demand, not on activation. Two rules are
+enforced by the structural suite:
 
-- **No frontmatter.** Plain markdown, no YAML preamble.
-- **Linked from the sibling SKILL.md.** Every `references/<name>.md` must appear as a `[label](references/<name>.md)` link in its sibling SKILL.md body. Orphans are blocked by [tests/structural/test_references.py](tests/structural/test_references.py).
-- **Flat directory.** No subdirectories under `references/`. The structural no-orphan check compares link targets against `references/*.md` (non-recursive); nested layouts would be silently missed.
-- **No length cap.** The whole point of a references file is escaping the SKILL.md body recommendation — don't reimpose one.
-- **Naming:** `lowercase-kebab.md`, matching the broader skill naming convention.
-- **Conditional blocks are delimited.** A reference that gates content on a branch-point parameter opens the block with `> Include when <COND>:` and closes it with `> end include` — always both. Conditions may be `AND`-joined. The renderer drops the whole block when the condition is false, so an unterminated open has no boundary and silently takes following prose with it. `TestConditionalBlockMarkers` in [tests/structural/test_references.py](tests/structural/test_references.py) fails the suite on an unterminated open or a stray close ([#82](https://github.com/gregoryfoster/skills/issues/82)).
+- **No frontmatter**, and **every `references/<name>.md` must be linked from its
+  sibling SKILL.md** — orphans fail [tests/structural/test_references.py](tests/structural/test_references.py).
+- **Flat directory**, `lowercase-kebab.md`. No length cap: escaping the body
+  recommendation is the point of a reference file.
 
-The same conventions apply to `assets/` (templates, schemas, copy-into-place artifacts), with the obvious adjustment that `assets/` files are typically not markdown.
+Conditional-block delimiters and the `assets/` equivalents:
+[docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## Commit conventions
 
@@ -258,31 +171,15 @@ Example: `feat: add reviewing-architecture-cursor variant`
 
 ## How downstream projects consume this repo
 
-Projects use the **git submodule + symlink** pattern:
+Projects vendor this repo as a git submodule at `skills-vendor/<owner>-<repo>/` and
+symlink individual skills into their own `skills/` directory with relative paths.
+Local overrides (committed directories) always win over symlinks, and
+`skills-vendor/` is read-only from the consuming project's side.
 
-1. Add this repo as a submodule at `skills-vendor/gregoryfoster-skills/`
-2. Symlink individual skills into the project's `skills/` directory using relative paths
-3. The agent framework auto-discovers skills by scanning `skills/` — symlinks make them visible
-
-Key rules:
-- Submodule path convention: `skills-vendor/<owner>-<repo>/` (e.g., `skills-vendor/gregoryfoster-skills/`)
-- Symlink paths must be relative: `../../skills-vendor/gregoryfoster-skills/skills/<skill-name>`
-- Local overrides (committed directories in `skills/`) always win over symlinks
-- The `skills-vendor/` directory is read-only from the consuming project's perspective
-- Install `.skills/doctor.sh` via `bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh` — Phase 1 of `reviewing-*` / `shipping-*` skills uses it to self-heal dangling vendor symlinks. The manual command is only needed before the first session: thereafter the doctor re-syncs itself from the vendored source on every run ([#84](https://github.com/gregoryfoster/skills/issues/84)), and the auto-refresh hook re-installs it opportunistically **and commits it** ([#86](https://github.com/gregoryfoster/skills/issues/86)) — so nobody has to remember to track a file a hook created. Consumers still need `.skills/doctor.sh` committed at least once; until it is, fresh worktrees and CI clones have no doctor and the Phase 1 preflight silently no-ops.
-- The doctor is the one **vendored skill artifact** copied rather than symlinked — a symlink would dangle in the exact state it exists to repair. (One-time scaffolding like `init-project-fastapi`'s is a different thing: it isn't expected to track upstream.) Any future artifact that must be a copy *and* track upstream faces the same drift problem, and gets the same answer: sync from the vendored source at a point guaranteed to run, compare content rather than mtime (git stamps checkout times), keep the sync best-effort so it can never fail a preflight, and skip it in read-only modes so a CI probe can't dirty a tracked file.
+The pattern, the `.skills/doctor.sh` install and self-sync rules, and this repo's
+own `.claude/skills` self-discovery symlink: [docs/SKILLS.md](docs/SKILLS.md).
 
 The [`managing-skills`](skills/managing-skills/) skill teaches agents how to perform these operations.
-
-### Self-discovery (`.claude/skills` in this repo)
-
-This repo's own `.claude/skills` is a symlink to `../skills`, so Claude Code auto-discovers the skills under `skills/` when this repo is opened as the working directory. Recreate with:
-
-```bash
-ln -sfn ../skills .claude/skills
-```
-
-The target must be `../skills` (one `..`), not `../../skills` — the latter resolves back to the repo root because the repo itself is named `skills`, which silently breaks discovery.
 
 ## Dev setup
 
@@ -305,6 +202,10 @@ pytest tests/structural/ -v              # fast, no API key needed
 pytest tests/integration/ -v -m integration  # requires ANTHROPIC_API_KEY
 ```
 
+`ANTHROPIC_API_KEY` lives in the gitignored `.env` at the repo root. Load it with
+`set -a && source .env && set +a`; `run-integration-tests.sh` and
+`measure-context.sh --exact` find it themselves.
+
 ## Adding a new skill
 
 1. Create `skills/<skill-name>/SKILL.md` with valid frontmatter
@@ -322,3 +223,9 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 2. Update the `name` field in `SKILL.md` to match the directory name
 3. Tune instructions, scripts, and references for the target stack or agent
 4. Validate and commit
+
+## Detail Docs
+
+- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, and the gate-script rules for `pre-ship.sh` / `doc-check.sh`
+- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, and the `references/` conditional-block delimiters
+- [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery

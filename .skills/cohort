@@ -1,0 +1,21 @@
+# Cohort roster for curating-context's cohort-report.sh.
+#
+# One entry per line: an owner/repo slug (read over `gh api`, no clone needed) or
+# an absolute/relative local path. Blank lines and # comments are ignored.
+#
+# These are the CannObserv repos built on the shared agent-tooling foundation
+# (init-project-fastapi scaffold, managing-skills vendoring, init-socraticode
+# indexing) — the same set that skill-family sweeps target.
+
+CannObserv/archiver
+CannObserv/cannobserv
+CannObserv/cli
+CannObserv/notifier
+CannObserv/cannabis.observer-wordpress
+CannObserv/observo
+CannObserv/usa-wa
+CannObserv/address-validator
+CannObserv/wslcb-licensing-tracker
+CannObserv/power-map
+CannObserv/watcher
+CannObserv/replicator

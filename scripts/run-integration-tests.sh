@@ -1,10 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Export vars from env file if present (provides ANTHROPIC_API_KEY etc.)
-if [[ -f env ]]; then
-  export $(xargs < env)
-fi
+# Export vars from the secrets file if present (provides ANTHROPIC_API_KEY etc.).
+# `.env` is the cohort-wide name; bare `env` is the name this repo used before
+# 2026-08-05 and is accepted so an older checkout still runs.
+#
+# Parsed, not sourced, and read line by line: the previous `export $(xargs < env)`
+# word-split every value, so a key containing a space or a `#` comment on the line
+# silently exported the wrong thing — and sourcing would execute whatever the file
+# contained.
+for _envfile in .env env; do
+  [ -f "$_envfile" ] || continue
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in
+      ''|\#*) continue ;;
+    esac
+    _line="${_line#export }"
+    case "$_line" in
+      *=*) ;;
+      *) continue ;;
+    esac
+    _name="${_line%%=*}"
+    _val="${_line#*=}"
+    case "$_name" in
+      ''|*[!A-Za-z0-9_]*) continue ;;
+    esac
+    # Strip one layer of matching quotes and any trailing CR from a CRLF file.
+    _val="${_val%$'\r'}"
+    case "$_val" in
+      \"*\") _val="${_val#\"}"; _val="${_val%\"}" ;;
+      \'*\') _val="${_val#\'}"; _val="${_val%\'}" ;;
+    esac
+    export "$_name=$_val"
+  done <"$_envfile"
+  break
+done
 
 source .venv/bin/activate
 exec pytest tests/integration/ -v -m integration
