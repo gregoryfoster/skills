@@ -341,9 +341,17 @@ function indexStarted(text) {
 }
 
 // codebase_index, concurrency guard: "⚠ Indexing is already in progress for: …"
-// Not a failure — the work we want is already underway, so the caller polls.
+// Not a failure — some run is underway, so the caller polls rather than aborts.
 function indexAlreadyRunning(text) {
   return /Indexing is already in progress/i.test(text);
+}
+
+// …but WHICH run matters. The guard's reply names it — "Operation: Full index"
+// or "Operation: Incremental update". Waiting on an incremental would be waiting
+// for a full-index completion that was never requested, i.e. a silent hang to
+// INDEX_TIMEOUT_MS, so the caller re-issues the index once the incremental clears.
+function runningOperationIsFullIndex(text) {
+  return /Operation:\s*Full index/i.test(text);
 }
 
 // codebase_context_index, success: "Context Artifacts — Indexing Complete"
@@ -578,8 +586,17 @@ async function cmdIndex(projectPath) {
     // concurrent run). That is a reason to poll, not to abort — the loop below
     // already knows how to wait for someone else's run.
     const startResponse = await client.callTool('codebase_index', { projectPath });
+    // Set when the guard fired for an INCREMENTAL update: that run won't produce
+    // the full-index completion we gate on, so the real index is issued below,
+    // once the incremental clears.
+    let awaitingIncremental = false;
     if (indexAlreadyRunning(startResponse)) {
-      console.error('[driver] an index is already in progress for this project — waiting on it rather than starting a second.');
+      if (runningOperationIsFullIndex(startResponse)) {
+        console.error('[driver] a full index is already in progress for this project — waiting on it rather than starting a second.');
+      } else {
+        awaitingIncremental = true;
+        console.error('[driver] an incremental update is in progress — will start the full index once it clears.');
+      }
     } else if (!indexStarted(startResponse)) {
       die(`codebase_index did not start indexing. The server replied:\n${startResponse}`);
     }
@@ -611,6 +628,20 @@ async function cmdIndex(projectPath) {
       }
 
       const inProgress = indexingInProgress(status);
+
+      // We were waiting out someone else's incremental update, not our index.
+      // Now that it has cleared, ask for the run we actually came for. Skip the
+      // rest of this poll — nothing of ours has started yet.
+      if (awaitingIncremental && !inProgress) {
+        const retry = await client.callTool('codebase_index', { projectPath });
+        if (indexStarted(retry)) {
+          awaitingIncremental = false;
+          console.error('[driver] incremental finished; full index started.');
+        } else if (!indexAlreadyRunning(retry)) {
+          die(`codebase_index did not start indexing. The server replied:\n${retry}`);
+        }
+        continue;
+      }
 
       // Another process holds the index lock. Ours won't advance, but the index
       // it produces is the one we want — report once and keep waiting.
@@ -711,7 +742,15 @@ async function cmdIndex(projectPath) {
 async function cmdVerify(projectPath) {
   await withClient(async (client) => {
     const list = await client.callTool('codebase_list_projects', {});
-    const graph = await client.callTool('codebase_graph_status', { projectPath }).catch(() => '');
+    // Keep the error rather than flattening it to '': "not-ready" would
+    // misreport a failed call as a still-building graph.
+    let graph = '';
+    let graphError = null;
+    try {
+      graph = await client.callTool('codebase_graph_status', { projectPath });
+    } catch (e) {
+      graphError = e.message;
+    }
     // minScore 0: this asserts that the index ANSWERS — retrieval, not
     // relevance. At the server's 0.10 default a small or unusual repo can
     // legitimately score nothing for a fixed sample query, which would fail
@@ -727,7 +766,7 @@ async function cmdVerify(projectPath) {
     const okSearch = searchHasHits(search);
     const okList = listHasProjects(list);
     console.error(`[driver] list_projects: ${okList ? 'ok' : 'empty'}`);
-    console.error(`[driver] graph_status: ${okGraph ? 'READY' : 'not-ready'}`);
+    console.error(`[driver] graph_status: ${okGraph ? 'READY' : graphError ? `ERROR — ${graphError}` : 'not-ready'}`);
     console.error(`[driver] sample search hits: ${okSearch ? 'yes' : 'none'}`);
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     console.error('[driver] verify OK');
@@ -790,6 +829,7 @@ export {
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
   expectedArtifactCount, resolveServerLaunch,
   // tool-reply predicates (gotcha M)
-  indexStarted, indexAlreadyRunning, contextIndexComplete, indexedZeroChunks,
+  indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
+  contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
 };

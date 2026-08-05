@@ -30,7 +30,8 @@ import {
   parseEmbedPercent, parseArtifacts, graphReady, indexingInProgress,
   lastOperationFailed, parseLastOpError, indexIncomplete,
   anotherProcessIndexing, indexSettled, validateManifest, MANIFEST_NAME,
-  indexStarted, indexAlreadyRunning, contextIndexComplete, indexedZeroChunks,
+  indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
+  contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
 } from './mcp-driver.mjs';
 
@@ -194,7 +195,7 @@ eq('other-process not flagged incomplete-and-idle', indexIncomplete(OTHER_PROCES
 console.log('— re-index false-positive guard —');
 eq('durable chunks+graph must NOT read as settled', indexSettled(REINDEX_FIRST_POLL), false);
 
-console.log('— infrastructure phase must not read as terminal (CR finding 1) —');
+console.log('— infrastructure phase must not read as terminal (gotcha D: image pulls report 0/0 files) —');
 eq('infra phase is in progress', indexingInProgress(INFRA_PHASE), true);
 eq('infra phase is not settled', indexSettled(INFRA_PHASE), false);
 eq('"0/0 files" carries no completed-chunk count', indexedZeroChunks(INFRA_PHASE), false);
@@ -202,11 +203,11 @@ eq('a settled run with an empty collection does read as zero-chunk',
   indexedZeroChunks('Status: green\nIndexed chunks: 0\n\nLast operation: Full index — completed'), true);
 eq('…and 950 chunks does not', indexedZeroChunks(COMPLETED), false);
 
-console.log('— watcher incremental must not satisfy the full-index gate (CR finding 5) —');
+console.log('— only a full-index completion settles; a watcher incremental must not (gotcha J) —');
 eq('incremental completion is not settled', indexSettled(WATCHER_INCREMENTAL), false);
 eq('full-index completion still settles', indexSettled(COMPLETED), true);
 
-console.log('— graph READY comes only from graph_status (CR finding 4) —');
+console.log('— the READY token comes only from graph_status, never from status text —');
 // Documents WHY the status-text fallback was removed rather than kept as
 // "drift insurance": the token is absent from a healthy status (asserted
 // above), while an unrelated path substring satisfies it.
@@ -221,11 +222,17 @@ eq('docker-unavailable is not a start', indexStarted('Docker is not available. S
 eq('already-running is not a start…', indexStarted('⚠ Indexing is already in progress for: /repo'), false);
 eq('…but is recognized as already running',
   indexAlreadyRunning('⚠ Indexing is already in progress for: /repo\nCannot run codebase_index — please wait'), true);
+// Which run is underway decides whether waiting on it can ever finish: only a
+// full index produces the completion the driver gates on.
+eq('guard naming a full index → wait on it',
+  runningOperationIsFullIndex('⚠ Indexing is already in progress for: /repo\n\nOperation: Full index\nPhase: embedding chunks'), true);
+eq('guard naming an incremental → re-issue the index once it clears',
+  runningOperationIsFullIndex('⚠ Indexing is already in progress for: /repo\n\nOperation: Incremental update\nPhase: scanning'), false);
 eq('context index success confirmed', contextIndexComplete('Context Artifacts — Indexing Complete\n\n✓ agent-guidelines'), true);
 eq('"No artifacts defined" is not success',
   contextIndexComplete('No artifacts defined in .socraticodecontextartifacts.json at /repo'), false);
 
-console.log('— sample-search and list verdicts (CR finding 3) —');
+console.log('— verification must be ABLE to fail: empty results are prose, not errors (gotchas K/L) —');
 eq('real hits pass',
   searchHasHits('Search results for "config" (2 matches):\n\n--- src/app.py (lines 10-20) [python] score: 0.7123 ---\ncode here'), true);
 eq('"No results found" fails',
