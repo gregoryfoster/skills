@@ -113,9 +113,11 @@ claude mcp list                                            # expect: plugin:socr
 **The marketplace step is not optional on a fresh host.** `socraticode@socraticode`
 is `plugin@marketplace`; with no marketplace registered the install has nothing to
 resolve against and fails. `giancarloerra/socraticode` is the canonical source
-(per the plugin-hub listing); forks exist, so if a project has standardized on one,
-add that instead — deliberately, not by accident. Preflight Gate 4 reports whether
-the marketplace is registered, separately from whether the server is Connected.
+(per the plugin-hub listing). Forks exist — `oltivex/socraticode` and
+`Flink-JP/socraticode` among them — so if a project has standardized on one, add
+that instead, deliberately rather than by accident; the plugin name stays
+`socraticode@socraticode` either way. Preflight Gate 4 reports whether the
+marketplace is registered, separately from whether the server is Connected.
 
 **Duplicate-config trap.** If `claude mcp list` (or the session toolset) shows
 BOTH `mcp__plugin_socraticode_socraticode__*` and a standalone
