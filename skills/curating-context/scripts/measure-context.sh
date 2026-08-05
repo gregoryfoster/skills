@@ -333,6 +333,12 @@ LC_ALL=C awk -v tab="$TAB" '
   }
   /^### / {
     flush3()
+    # Same lazy (preamble) init as the body rule, and it must run BEFORE the
+    # increment below. A `### ` heading preceding both the first `## ` and the
+    # first body line otherwise added its bytes to an unnamed h2, which the body
+    # rule then reset to 0 — losing them, and breaking the sum-to-wc-c invariant
+    # this census advertises (measured: 71 bytes of file, 49 in the rows).
+    if (h2 == "") { h2 = "(preamble)"; l2 = 0; b2 = 0 }
     h3 = substr($0, 5); l3 = 1; b3 = length($0) + 1
     l2++; b2 += length($0) + 1
     next

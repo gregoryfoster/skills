@@ -790,7 +790,9 @@ class TestProveNoLoss:
         assert result.returncode == 3, (
             f"the paraphrase was not caught (exit {result.returncode})"
         )
-        assert "LOST" in result.stderr and "managing-skills" in result.stderr
+        # The whole report, LOST list included, is on stdout — see the
+        # one-stream fix, so a piped report stays in order.
+        assert "LOST" in result.stdout and "managing-skills" in result.stdout
 
     def test_a_phrase_grep_would_have_passed_the_same_input(self, tmp_path: Path):
         """Pins the reason this script exists. If this ever fails, the phrase-grep
@@ -798,12 +800,83 @@ class TestProveNoLoss:
         assert "teaches agents how to perform these operations" in self.RECOMBINED
         assert self.ORIGINAL not in self.RECOMBINED
 
+    def test_append_after_the_sentence_terminator_is_caught(self, tmp_path: Path):
+        """The variant substring matching could not see.
+
+        RECOMBINED above changes `operations.` to `operations;`, so the original
+        line stopped being a substring and the old implementation caught it by
+        luck. Appending a whole new sentence after the period leaves the original
+        line intact as a substring — that passed until matching became
+        whole-line.
+        """
+        appended = (
+            "The [`managing-skills`](../skills/managing-skills/) skill teaches "
+            "agents how to perform these operations. This file is the reference "
+            "a human needs."
+        )
+        assert self.ORIGINAL.replace("](skills/", "](../skills/") in appended, (
+            "fixture must keep the original line as a substring, or it proves nothing"
+        )
+        repo = self._repo(tmp_path, f"# P\n\n## A\n\n{self.ORIGINAL}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/S.md](docs/S.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "S.md").write_text(f"# S\n\n{appended}\n")
+        result = self._run(repo)
+        assert result.returncode == 3, (
+            f"append-after-terminator not caught (exit {result.returncode})"
+        )
+
+    def test_a_fragment_inside_unrelated_prose_is_not_a_relocation(self, tmp_path: Path):
+        """Short and common lines — fence markers, numbered list items — were
+        effectively unchecked under substring matching. Measured on this exact
+        input, four of five dropped lines reported as "relocated verbatim"."""
+        repo = self._repo(
+            tmp_path,
+            "# P\n\n## A\n\n```bash\nrun the thing\n```\n\n## B\n\n1. Commit and push\n",
+        )
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/X.md](docs/X.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "X.md").write_text(
+            "# X\n\nYou should always run the thing carefully.\n"
+            "Step 9: 1. Commit and push when ready.\n"
+            "Inline ```bash``` is fine.\n"
+        )
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout
+        for dropped in ("```bash", "run the thing", "## B", "1. Commit and push"):
+            assert dropped in result.stdout, (
+                f"{dropped!r} was dropped but not reported: {result.stdout}"
+            )
+        assert "relocated verbatim" not in result.stdout, (
+            "a fragment match was still counted as a relocation"
+        )
+
+    def test_a_code_comment_does_not_match_a_prose_line(self, tmp_path: Path):
+        """Heading text is tagged, not merely stripped of its hashes: stripping
+        alone lets `# cleanup` in a fenced block satisfy the prose line
+        `cleanup`, a false match in the direction that hides loss."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\ncleanup\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/X.md](docs/X.md).\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "X.md").write_text("# X\n\n```bash\n# cleanup\n```\n")
+        assert self._run(repo).returncode == 3
+
+    def test_report_is_ordered_on_one_stream(self, tmp_path: Path):
+        """Summary and LOST list split across stdout/stderr interleaved through a
+        pipe, printing the failures above the counts that explain them."""
+        repo = self._repo(tmp_path, "# P\n\n## A\n\ndropped line\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
+        result = self._run(repo)
+        assert result.returncode == 3
+        assert "UNACCOUNTED FOR" in result.stdout and "LOST" in result.stdout
+        assert result.stdout.index("UNACCOUNTED FOR") < result.stdout.index("LOST")
+
     def test_outright_deletion_is_caught(self, tmp_path: Path):
         repo = self._repo(tmp_path, "# P\n\n## A\n\nload-bearing constraint\n")
         (repo / "AGENTS.md").write_text("# P\n\n## A\n\n")
         result = self._run(repo)
         assert result.returncode == 3, result.stdout
-        assert "load-bearing constraint" in result.stderr
+        assert "load-bearing constraint" in result.stdout
 
     def test_also_searches_an_extra_destination(self, tmp_path: Path):
         """A block demoted somewhere other than the docs tree."""
@@ -844,3 +917,59 @@ class TestProveNoLoss:
         )
         assert result.returncode == 2, result.stdout + result.stderr
         assert "mode 120000" in result.stderr, result.stderr
+
+
+class TestCensusInvariant:
+    """`sections[]` rows must sum to the policy file's byte count — that is what
+    makes `share` trustworthy, and the census comment advertises it."""
+
+    def _measure(self, repo: Path) -> dict:
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def _repo(self, tmp_path: Path, body: str) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / "AGENTS.md").write_text(body)
+        return repo
+
+    def test_h3_before_any_h2_does_not_lose_bytes(self, tmp_path: Path):
+        """A `### ` preceding both the first `## ` and the first body line used to
+        add its bytes to an unnamed section, which the preamble initialiser then
+        reset to zero: 71 bytes of file, 49 in the rows."""
+        m = self._measure(self._repo(
+            tmp_path,
+            "### Orphan subsection\n\nsome body text here\n\n## Real section\n\nmore body\n",
+        ))
+        assert sum(s["bytes"] for s in m["sections"]) == m["policy"]["bytes"]
+        assert [s["title"] for s in m["subsections"]] == ["Orphan subsection"]
+
+    def test_normal_file_sums_exactly(self, tmp_path: Path):
+        m = self._measure(self._repo(
+            tmp_path,
+            "# T\n\nintro\n\n## A\n\nbody\n\n### A1\n\nmore\n\n## B\n\ntail\n",
+        ))
+        assert sum(s["bytes"] for s in m["sections"]) == m["policy"]["bytes"]
+
+    def test_subsection_bytes_never_exceed_the_parent(self, tmp_path: Path):
+        m = self._measure(self._repo(
+            tmp_path,
+            "# T\n\n## A\n\nbody\n\n### A1\n\nmore text here\n\n### A2\n\nand more\n",
+        ))
+        parents = {s["title"]: s["bytes"] for s in m["sections"]}
+        for sub in m["subsections"]:
+            assert sub["bytes"] <= parents[sub["parent"]], sub
+
+    def test_deeper_headings_are_not_reported_separately(self, tmp_path: Path):
+        """`#### ` belongs to its enclosing `### ` — it is not independently
+        demotable, and reporting it would invite splitting below the useful unit."""
+        m = self._measure(self._repo(
+            tmp_path, "# T\n\n## A\n\n### A1\n\n#### A1a\n\ndeep body\n",
+        ))
+        assert [s["title"] for s in m["subsections"]] == ["A1"]

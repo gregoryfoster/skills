@@ -33,16 +33,22 @@ Options:
   -h, --help       Show this help and exit 0.
 
 What counts as "present":
-  A line matches if it appears verbatim in the current policy file or in any
-  destination, after normalising the two differences a move legitimately forces:
+  A line matches an entire line of the current policy file or of a destination —
+  not a fragment of one — after normalising the two differences a move
+  legitimately forces:
 
     heading level   `### Foo` in a policy file becomes `## Foo` at the top of its
                     own document.
     link depth      a relative link moving into docs/ gains one level, so
                     `](tests/x.py)` becomes `](../tests/x.py)`.
 
-  Nothing else is normalised. Reflowed prose, changed wording, and dropped
-  clauses all fail, which is the point.
+  Nothing else is normalised. Reflowed prose, changed wording, appended clauses,
+  and dropped lines all fail, which is the point. Whole-line matching is what
+  makes that true: substring matching passed a dropped `1. Commit and push`
+  because it appeared inside "Step 9: 1. Commit and push when ready." elsewhere.
+
+  The report goes to stdout in full, including the LOST list, so it stays in
+  order through a pipe.
 
 Exit codes:
   0  every line accounted for
@@ -124,11 +130,23 @@ git show "$BASE:$POLICY" >"$TMP/before" 2>/dev/null || {
 : >"$TMP/dests"
 printf '%s\n' "$POLICY" >>"$TMP/dests"
 if [ -d "$DOCS_DIR" ]; then
+  # Gate-like: this find populates the destination list, and a partial failure
+  # silently shrinks it — lines that WERE relocated then report as LOST and the
+  # run is blocked citing the wrong cause. Tempfile plus explicit exit-code
+  # capture, the FIND_RC pattern from measure-context.sh and docs/STYLE.md,
+  # because a process substitution's exit code is invisible to the parent shell.
+  FIND_RC=0
+  find "$DOCS_DIR" -type f -name '*.md' >"$TMP/docfiles" 2>"$TMP/find.err" || FIND_RC=$?
+  if [ "$FIND_RC" -ne 0 ]; then
+    echo "ERROR find over $DOCS_DIR failed (exit $FIND_RC): $(cat "$TMP/find.err")" >&2
+    exit 2
+  fi
+  [ -s "$TMP/find.err" ] && echo "WARN find over $DOCS_DIR: $(cat "$TMP/find.err")" >&2
   while IFS= read -r d; do
     [ -n "$d" ] || continue
     ctx_is_archival "$d" && continue
     printf '%s\n' "$d" >>"$TMP/dests"
-  done < <(find "$DOCS_DIR" -type f -name '*.md' 2>/dev/null)
+  done <"$TMP/docfiles"
 fi
 for e in ${EXTRA[@]+"${EXTRA[@]}"}; do
   if [ -f "$e" ]; then printf '%s\n' "$e" >>"$TMP/dests"
@@ -143,25 +161,49 @@ import sys
 
 before_path, policy, dests_path, show = sys.argv[1:5]
 
-def normalise(text):
-    # A relative link moving one directory deeper gains a `../`; undo that so the
-    # comparison is about content, not location.
-    text = re.sub(r"\]\(\.\./", "](", text)
-    # A `###` subsection promoted to its own document's `##` heading is the same
-    # content at a different depth.
-    return re.sub(r"^#+\s*", "", text.strip(), flags=re.MULTILINE)
+HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+
+def normalise(raw):
+    """One line -> its comparable form, or "" when it carries no content.
+
+    Exactly two differences a move legitimately forces are erased:
+
+      link depth    a block moving into docs/ gains a level, so
+                    `](tests/x.py)` becomes `](../tests/x.py)`.
+      heading level a `###` subsection promoted to its own document's `##`.
+
+    Heading text is tagged rather than merely stripped of its hashes. Stripping
+    alone would let a `# comment` inside a fenced block collide with the prose
+    line `comment`, which is a false match in the direction that hides loss.
+    """
+    line = raw.strip()
+    if not line:
+        return ""
+    line = line.replace("](../", "](")
+    m = HEADING.match(line)
+    return "H:" + m.group(1).strip() if m else line
 
 try:
     before = open(before_path, encoding="utf-8", errors="replace").read().splitlines()
     dest_paths = [p for p in open(dests_path, encoding="utf-8").read().splitlines() if p]
+    # A SET of whole lines per destination, not the raw text. Substring matching
+    # against the text was the original implementation and it was far weaker than
+    # it looked: a dropped line counted as "relocated verbatim" whenever it
+    # happened to appear as a fragment inside unrelated prose. Measured on a
+    # five-line deletion, four of the five passed — `1. Commit and push` matched
+    # inside "Step 9: 1. Commit and push when ready.", and a bare ``` matched
+    # almost anything. Short and common lines were effectively unchecked, and a
+    # policy file is mostly those.
     dests = {}
-    for p in dest_paths:
-        dests[p] = normalise(open(p, encoding="utf-8", errors="replace").read())
+    for path in dest_paths:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        dests[path] = {n for n in (normalise(l) for l in lines) if n}
 except OSError as exc:
     print(f"ERROR {exc}", file=sys.stderr)
     sys.exit(2)
 
-inline = dests.get(policy, "")
+inline = dests.get(policy, set())
+others = [p for p in dest_paths if p != policy]
 kept, relocated, lost = 0, {}, []
 
 for raw in before:
@@ -171,21 +213,24 @@ for raw in before:
     if line in inline:
         kept += 1
         continue
-    where = next((p for p in dest_paths if p != policy and line in dests[p]), None)
+    where = next((p for p in others if line in dests[p]), None)
     if where:
-        relocated.setdefault(where, []).append(line)
+        relocated.setdefault(where, []).append(raw.strip())
     else:
         lost.append(raw.strip())
 
+# One stream for the whole report. Split across stdout and stderr it interleaved
+# through a pipe, and the failure list printed above the counts explaining it.
+out = sys.stdout
 total = kept + sum(len(v) for v in relocated.values()) + len(lost)
-print(f"policy file at base: {total} non-blank lines")
-print(f"  still inline:               {kept}")
-for p in sorted(relocated):
-    print(f"  relocated verbatim -> {p}: {len(relocated[p])}")
+print(f"policy file at base: {total} non-blank lines", file=out)
+print(f"  still inline:               {kept}", file=out)
+for path in sorted(relocated):
+    print(f"  relocated verbatim -> {path}: {len(relocated[path])}", file=out)
     if show == "1":
-        for line in relocated[p]:
-            print(f"      {line[:120]}")
-print(f"  UNACCOUNTED FOR:            {len(lost)}")
+        for line in relocated[path]:
+            print(f"      {line[:120]}", file=out)
+print(f"  UNACCOUNTED FOR:            {len(lost)}", file=out)
 
 if lost:
     print(
@@ -194,13 +239,15 @@ if lost:
         "verbatim duplication\nelsewhere in the surface, a command that "
         "disproved it, or a trained default.\nOtherwise it was lost in transit; "
         "restore it verbatim.\n",
-        file=sys.stderr,
+        file=out,
     )
     for line in lost:
-        print(f"  LOST  {line[:160]}", file=sys.stderr)
+        print(f"  LOST  {line[:160]}", file=out)
+    out.flush()
     sys.exit(3)
 
-print("\nOK — every line is either still inline or relocated verbatim.")
+print("\nOK — every line is either still inline or relocated verbatim.", file=out)
+
 PY
 
 exit "$RC"
