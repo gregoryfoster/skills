@@ -36,7 +36,7 @@ Install with:
 Budget resolution (first match wins, matching the repo's other knobs):
   1. CONTEXT_BUDGET env var
   2. .skills/context-budget  (single line, token count)
-  3. 4000
+  3. 6000
 
 Watched files:
   - the policy file: AGENTS.md or CLAUDE.md at the repo root
@@ -156,7 +156,7 @@ read_knob() {
 }
 
 if [ "$KIND" = "policy" ]; then
-  BUDGET="$(read_knob "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 4000)"
+  BUDGET="$(read_knob "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
 else
   BUDGET="$(read_knob "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 fi

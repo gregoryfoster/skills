@@ -5,7 +5,12 @@ recur across it. Align a repo to these rather than inventing per-repo structure 
 a normalized surface is what makes a weekly automated run safe.
 
 Measurements below are the 2026-08-05 baseline across the twelve
-skills-vendoring members.
+skills-vendoring members, counted exactly with `count_tokens`.
+
+Gathered **read-only**: local checkouts measured with `measure-context.sh --exact
+--no-write`, GitHub-only members via `gh api`. Nothing was written to any member
+repo. Adoption and remediation go out as per-repo issues — this skill never
+commits across repos.
 
 ## The policy file
 
@@ -166,7 +171,7 @@ Counted with `count_tokens` against `claude-opus-5` — **exact, not estimated**
 The `est` column is what the old uncalibrated `bytes/4` heuristic reported, kept
 here because the gap is the point.
 
-| Repo | Lines | est (bytes/4) | **Exact** | Error | vs 4k |
+| Repo | Lines | est (bytes/4) | **Exact** | Error | vs 6k |
 |---|---:|---:|---:|---:|:--|
 | usa-wa | 535 | 33,028 | **52,953** | +60% | over |
 | cannabis.observer-wordpress | 332 | 30,510 | **49,103** | +60% | over |
@@ -178,17 +183,16 @@ here because the gap is the point.
 | power-map | 189 | 8,032 | **13,298** | +65% | over |
 | address-validator | 217 | 3,906 | **6,322** | +61% | over |
 | cli | 182 | 3,712 | **6,013** | +61% | over |
-| notifier | 210 | 3,353 | **5,468** | +63% | over |
-| wslcb-licensing-tracker | 205 | 3,245 | **5,331** | +64% | over |
+| notifier | 210 | 3,353 | **5,468** | +63% | **under** |
+| wslcb-licensing-tracker | 205 | 3,245 | **5,331** | +64% | **under** |
 | **cohort total** | | 150,134 | **241,253** | **+60%** | |
 
-**241,253 tokens** of policy file across the cohort, and **all twelve are over a
-4k budget** — not the eight the estimate suggested. The four that appeared to be
-under it (`cli`, `notifier`, `address-validator`, `wslcb-licensing-tracker`) are
-all between 5.3k and 6.3k. Anything measured before this table with `bytes/4`
-should be re-measured, not scaled: the error is consistent enough (+56% to +65%)
-to be worth knowing, but not so consistent that a blanket multiplier is a
-measurement.
+**241,253 tokens** of policy file across the cohort. Against the 6,000 budget,
+**ten of twelve are over**; only `wslcb-licensing-tracker` (5,331) and `notifier`
+(5,468) are under, with `cli` (6,013) and `address-validator` (6,322) within 6%.
+Anything measured before this table with `bytes/4` should be re-measured, not
+scaled: the error is consistent enough (+56% to +65%) to be worth knowing, but not
+so consistent that a blanket multiplier is a measurement.
 
 Note how weakly lines predict tokens — the entire case for gating on tokens:
 

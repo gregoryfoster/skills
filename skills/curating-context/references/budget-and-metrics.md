@@ -27,42 +27,46 @@ class B demotion). Read them together; gate on tokens.
 
 | Surface | Default | Rationale |
 |---|---:|---|
-| Policy file | **4,000 tokens** | Aspirational, and knowingly so — see below. |
+| Policy file | **6,000 tokens** | The initial cohort figure, chosen to be reachable — see below. Ratchets down. |
 | Reference doc | **10,000 tokens** | The point of demotion is that loading the doc costs less than carrying it inline everywhere. Past ~10k that stops being true; split on top-level headings. |
 | Live surface | reported, not gated | `totals.tokens_live` is the ceiling on what one session can pull in. Gating it would penalise a repo for having thorough, well-routed docs — which is the goal. Track the trend instead. |
 
-### The 4,000 figure is aspirational, not yet demonstrated
+### Where 6,000 came from, and where it goes
 
-An earlier version of this file justified 4,000 by saying four of twelve cohort
-repos already sat under it. **That was an artefact of a bad estimator.** Measured
-exactly, **zero of twelve are under 4,000** — the leanest is
-`wslcb-licensing-tracker` at 5,331 and the heaviest is `usa-wa` at 52,953.
+An earlier version of this file justified a 4,000 budget by saying four of twelve
+cohort repos already sat under it. **That was an artefact of a bad estimator** (see
+the offline-estimate section below). Measured exactly, zero of twelve were under
+4,000 — the leanest was `wslcb-licensing-tracker` at 5,331 and the heaviest
+`usa-wa` at 52,953.
 
-What survives that correction:
+6,000 is the corrected starting figure, and it is chosen to be *reachable*:
 
-- Published guidance converges on splitting a monolithic context file at roughly
-  150–200 lines of prose. In this cohort's writing style ~200 lines lands at
-  5.3–6.0k tokens, so a budget in that band is what "200 lines" actually means
-  here, and 4,000 is roughly one demotion tighter than that.
-- The leanest four repos are 33–58% over 4,000 while carrying **entirely unlinked
-  `docs/` trees** — for them the budget is reachable by routing what already
-  exists, not by writing anything new.
-- The heaviest four need real structural work regardless of where the line sits.
+- **Two repos are already under it** — `wslcb-licensing-tracker` (5,331) and
+  `notifier` (5,468) — so the first green run is real rather than symbolic.
+- **Two more are within 6%** — `cli` (6,013) and `address-validator` (6,322) — and
+  both carry entirely unlinked `docs/` trees, so they get under by *routing what
+  already exists*, not by writing anything new.
+- ~200 lines of this cohort's prose lands at 5.3–6.0k tokens, so 6,000 is what the
+  published "split at 150–200 lines" guidance actually means for this content.
+- The remaining eight need structural work regardless of where the line sits.
 
-So 4,000 is a target, not a floor anyone has hit. Two honest options, and the
-choice is the operator's:
+**It ratchets.** 6,000 is the entry gate, not the destination. Once a repo is
+comfortably under, lower that repo's `.skills/context-budget` — a budget that binds
+is doing work, and one nobody can reach is just noise. The reason to start where
+most repos can arrive is the same reason the budget must not become a CI fitness
+function until the repo is under it: a permanently-red gate is one everybody learns
+to ignore.
 
-1. **Keep 4,000** and accept that every repo has work. Defensible while the skill
-   is reducing; the risk is a gate nobody can go green on.
-2. **Set 6,000** as the initial cohort budget and ratchet down. Achievable for the
-   leanest four immediately, which makes the first green build real rather than
-   symbolic.
+Against 6,000, the current standing is **10 of 12 over**:
 
-If a repo's file is genuinely irreducible, raise **that repo's** budget in
-`.skills/context-budget` and record why. A permanently-red gate is one everybody
-learns to ignore — which is precisely why the budget must not be graduated into a
-CI fitness function until the repo is under it (see the sequencing note in the
-fitness-function issue).
+| Over | Under |
+|---|---|
+| usa-wa 52,953 · wordpress 49,103 · observo 28,110 · cannobserv 25,949 · watcher 19,715 · replicator 14,633 · archiver 14,358 · power-map 13,298 · address-validator 6,322 · cli 6,013 | wslcb-licensing-tracker 5,331 · notifier 5,468 |
+
+`gregoryfoster/skills` itself is at 8,376 — over, and curating it is the dogfood.
+
+If a repo's file is genuinely irreducible, raise **that repo's** budget explicitly
+and record why, rather than failing every week.
 
 Override per repo with `--budget` / `--doc-budget`, or inline via the trigger
 phrase (`context budget 6000`).
@@ -103,9 +107,9 @@ under-reported by **56% to 65%**; across a mixed sample of sixteen markdown file
 file is not that — it is dense with paths, flags, code fences, tables, and
 identifiers, all of which tokenize far worse than English.
 
-This mattered concretely rather than academically: with `bytes/4` and a 4,000
-budget, the write guard was enforcing an effective ceiling near 10,000 real tokens
-and staying silent the whole way there.
+This mattered concretely rather than academically: with `bytes/4` and a 6,000
+budget, the write guard would enforce an effective ceiling near 15,000 real tokens
+and stay silent the whole way there.
 
 Two mechanisms fix it:
 
@@ -195,8 +199,12 @@ last column is the cross-repo learning: after a few weeks it names which
 optimisation actually pays, and the same one usually pays everywhere.
 
 Roster in `.skills/cohort`, one `owner/repo` slug or local path per line; `#`
-comments allowed. Repos with no ledger are reported rather than skipped — on a
-weekly cadence, missing telemetry is the finding.
+comments allowed. Repos with no ledger are reported rather than skipped.
+
+Before a repo adopts the skill it has no ledger, and that is the expected state —
+not a failure, and not something to fix by writing a ledger into it. Ledgers
+appear as each repo adopts, driven by a per-repo adoption issue. After adoption,
+a member with no recent row *is* the finding.
 
 One caveat worth designing around: `gh api` prints nothing **and** exits non-zero
 on a 404, so a naive empty-output test reads a missing ledger as an empty one.

@@ -47,10 +47,34 @@ and the commit body names where it went.
 | "More context is safer" | Context is a finite resource with diminishing returns. Retrieval accuracy degrades as the window fills, so an unnecessary token is not neutral — it dilutes attention on the necessary ones. |
 | "Nothing changed this week, skip the run" | The run's cheapest output is the telemetry row. A flat week is a signal worth recording, and the fact checks still catch drift the repo caused elsewhere. |
 
+## Scope: one repo, and only this repo
+
+This skill edits **the repo it is invoked in**. It never writes to a sibling
+checkout, even one it just measured.
+
+Cross-repo work is filed as **issues**, not commits — the same convention the
+skill-family sweeps already follow. So a cohort pass is: measure each member
+read-only, then open an adoption issue per repo carrying that repo's numbers and
+findings. The repo's own maintainers (or an agent invoked inside it) run the
+curation.
+
+Two mechanics enforce this:
+
+- `measure-context.sh --no-write` suppresses the one side effect an `--exact` run
+  has — persisting the observed token ratio to `.skills/context-token-ratio`.
+  **Always pass it when surveying a repo you are not curating.** Without it, a
+  read-only-looking survey leaves an untracked file behind in every repo it
+  touched.
+- `cohort-report.sh` reads ledgers over `gh api` and never clones or writes.
+
+A cohort ledger therefore fills in as each repo adopts the skill, not from one
+central sweep. `cohort-report.sh` reporting "no ledger" for a member is the
+expected state before adoption, not a failure.
+
 ## Parameterized invocation
 
 Trigger phrases may carry scope inline — `curate context docs/`, `context budget
-4000`, `hone AGENTS.md --autonomous`. A path scopes the surface to that subtree; a
+6000`, `hone AGENTS.md --autonomous`. A path scopes the surface to that subtree; a
 bare number overrides the policy-file budget; `--autonomous` selects the
 unattended mode described in Phase 7. Otherwise defaults apply.
 
@@ -87,7 +111,7 @@ An exact run also writes the repo's observed bytes-per-token ratio to
 `.skills/context-token-ratio`, which is what keeps the offline estimators (the
 write guard, `context-delta.sh`) honest between runs. The conventional `bytes/4`
 heuristic under-reports this cohort's markdown by 56–65%, so an uncalibrated
-estimate would let a 4k budget pass a 10k file in silence.
+estimate would let a 6k budget pass a 15k file in silence.
 
 Read the baseline before touching anything. Four numbers drive the whole run:
 
@@ -248,7 +272,7 @@ Offer this once per repo, after the first successful curation:
 On yes:
 
 ```bash
-bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 4000 --doc-budget 10000
+bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
 ```
 
 The guard and the weekly run are two halves of one ratchet: the guard stops

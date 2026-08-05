@@ -21,7 +21,7 @@ Usage:
 Options:
   --base REF     Compare against REF instead of HEAD.
   --budget N     Policy-file budget. Default: CONTEXT_BUDGET, then
-                 .skills/context-budget, then 4000.
+                 .skills/context-budget, then 6000.
   --doc-budget N Per-reference-doc budget. Default: CONTEXT_DOC_BUDGET, then
                  .skills/context-doc-budget, then 10000.
   --quiet        Print only when something is over budget or growing.
@@ -79,7 +79,7 @@ read_knob() {
     *) printf '%s' "$v" ;;
   esac
 }
-BUDGET="$(read_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 4000)"
+BUDGET="$(read_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
 DOC_BUDGET="$(read_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 
 # Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:

@@ -20,7 +20,7 @@ Usage:
 
 Options:
   --budget N       Write N to .skills/context-budget (policy-file budget).
-                   Omit to leave the existing value, or the 4000 default.
+                   Omit to leave the existing value, or the 6000 default.
   --doc-budget N   Write N to .skills/context-doc-budget (per-reference-doc).
   --uninstall      Remove the settings.json entry and the hook symlink.
   --check          Report whether the hook is installed; change nothing.

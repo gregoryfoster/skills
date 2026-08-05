@@ -17,7 +17,7 @@ Usage:
 Options:
   --file PATH        Policy file to measure. Default: AGENTS.md, else CLAUDE.md.
   --docs-dir DIR     Reference-doc root. Default: docs
-  --budget N         Token budget for the policy file (default 4000).
+  --budget N         Token budget for the policy file (default 6000).
   --doc-budget N     Token budget per reference doc (default 10000).
   --archival NAMES   Space-separated docs/ subdirectory names treated as an
                      archive rather than live context: excluded from the doc
@@ -34,6 +34,11 @@ Options:
                      or an `ant auth login` profile (used as a Bearer token).
                      Falls back to the estimate with a WARN on any failure.
   --model ID         Model for --exact token counting. Default: claude-opus-5
+  --no-write         Touch nothing. Suppresses the one side effect an --exact run
+                     otherwise has: writing the observed bytes-per-token ratio to
+                     .skills/context-token-ratio. Required when measuring a repo
+                     you are only surveying — cohort remediation is filed as
+                     issues, never written across repos.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
@@ -57,10 +62,11 @@ USAGE
 
 POLICY=""
 DOCS_DIR="docs"
-BUDGET=4000
+BUDGET=6000
 DOC_BUDGET=10000
 ARCHIVAL="plans specs research audits archive"
 EXACT=0
+NO_WRITE=0
 MODEL="claude-opus-5"
 
 while [ $# -gt 0 ]; do
@@ -71,6 +77,7 @@ while [ $# -gt 0 ]; do
     --doc-budget) DOC_BUDGET="${2:?--doc-budget needs a number}"; shift 2 ;;
     --archival) ARCHIVAL="${2-}"; shift 2 ;;
     --exact) EXACT=1; shift ;;
+    --no-write) NO_WRITE=1; shift ;;
     --model) MODEL="${2:?--model needs an id}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -395,11 +402,27 @@ printf '{\n'
 # Written only when exact, since deriving a calibration from an estimate would
 # just re-record the default and freeze whatever error it carries.
 RATIO_X100=$(( P_BYTES * 100 / P_TOKENS ))
-if [ "$EXACT_OK" -eq 1 ] && [ "$P_TOKENS" -gt 0 ]; then
+# Persist only a plausible ratio. Real markdown measures 2.0-4.0 bytes/token; a
+# value outside 1.5-6.0 means the file is degenerate or unrepresentative (a
+# generated table, a wall of single-character lines), and freezing it would skew
+# every later offline estimate. The reader has a matching floor, but writing
+# nonsense and relying on the reader to reject it is worse than not writing it.
+if [ "$RATIO_X100" -lt 150 ] || [ "$RATIO_X100" -gt 600 ]; then
+  if [ "$EXACT_OK" -eq 1 ]; then
+    echo "WARN observed ratio $(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))) bytes/token is outside the plausible 1.50-6.00 band; not persisting it" >&2
+  fi
+  RATIO_PERSISTABLE=0
+else
+  RATIO_PERSISTABLE=1
+fi
+
+if [ "$EXACT_OK" -eq 1 ] && [ "$P_TOKENS" -gt 0 ] && [ "$NO_WRITE" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   mkdir -p "$ROOT/.skills" 2>/dev/null || true
   printf '%d.%02d\n' $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) \
     >"$ROOT/.skills/context-token-ratio" 2>/dev/null \
     || echo "WARN could not write .skills/context-token-ratio" >&2
+elif [ "$EXACT_OK" -eq 1 ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+  echo "INFO --no-write: not persisting the observed ratio ($(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))))" >&2
 fi
 
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \

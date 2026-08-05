@@ -12,7 +12,7 @@ the context surface and speaks only when an edit pushes it further over budget.
 ## Install
 
 ```bash
-bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 4000 --doc-budget 10000
+bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
 ```
 
 Idempotent — a re-run repairs partial state (symlink present, settings entry
@@ -60,9 +60,9 @@ Two conditions must **both** hold:
 - it is larger than its committed (`HEAD`) version.
 
 Requiring both is the whole design. Over-budget alone would fire on every edit to
-a file that is already over — which, measured exactly, is the state **all twelve**
-cohort repos are in today, and a hook that fires on every edit is one everybody
-turns off. An
+a file that is already over — which, measured exactly, is the state **ten of the
+twelve** cohort repos are in today, and a hook that fires on every edit is one
+everybody turns off. An
 increase alone would fire on healthy growth inside budget. Together they mean the
 guard speaks exactly when someone is making a known-bad number worse.
 
@@ -76,7 +76,7 @@ than "this edit" for that reason.
 
 | Path | Budget | Knob |
 |---|---:|---|
-| `AGENTS.md` / `CLAUDE.md` at the repo root | 4,000 | `CONTEXT_BUDGET`, then `.skills/context-budget` |
+| `AGENTS.md` / `CLAUDE.md` at the repo root | 6,000 | `CONTEXT_BUDGET`, then `.skills/context-budget` |
 | `docs/**/*.md`, excluding archival subtrees | 10,000 | `CONTEXT_DOC_BUDGET`, then `.skills/context-doc-budget` |
 
 Archival subtrees (`plans`, `specs`, `research`, `audits`, `archive`) are ignored
@@ -121,8 +121,8 @@ reports "the guard never fires".
   reproduces the exact count to the token. It is still an estimate — it only
   decides whether to speak, which is why the guard never gates anything. Note
   what the earlier `bytes/4` divisor cost: it under-reports this cohort's markdown
-  by 56–65%, so with a 4,000 budget the guard was silently tolerating a real file
-  of nearly 10,000 tokens.
+  by 56–65%, so with a 6,000 budget the guard would silently tolerate a real file
+  of nearly 15,000 tokens.
 - **No writes to the repo.** The guard measures and reports. Only the ledger and
   the skill's own phases mutate tracked files.
 - **Symlink resolution on both sides.** The repo root and the incoming
