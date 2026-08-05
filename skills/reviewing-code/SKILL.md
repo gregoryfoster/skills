@@ -67,6 +67,7 @@ Also:
 - Identify all files touched and their roles
 - Check the live app if UI changes are involved (browser screenshot)
 - Run the app/imports to catch syntax errors
+- If the script printed a **Context budget** block, treat an OVER row on `AGENTS.md` as a documentation finding when this branch is what pushed it over — the fix is usually to move the addition into a `docs/` reference doc rather than to shorten it. It is informational, never a blocker, and it prints nothing when the diff touches no context-surface file.
 
 ### Phase 2 — Analyze
 

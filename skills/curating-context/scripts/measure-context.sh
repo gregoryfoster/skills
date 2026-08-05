@@ -27,9 +27,12 @@ Options:
                      path inside one is a correct historical record, so counting
                      them as orphans or dead links buries the live signal.
   --exact            Count tokens via the Anthropic count_tokens endpoint
-                     instead of the bytes/4 estimate. Requires ANTHROPIC_API_KEY,
-                     curl, and python3. Falls back to the estimate with a WARN
-                     on any per-file failure.
+                     instead of the bytes/4 estimate. The endpoint is FREE — it
+                     is rate-limited per usage tier but consumes no tokens and
+                     is billed nothing, with limits independent of message
+                     creation. Requires python3 plus a credential: ANTHROPIC_API_KEY,
+                     or an `ant auth login` profile (used as a Bearer token).
+                     Falls back to the estimate with a WARN on any failure.
   --model ID         Model for --exact token counting. Default: claude-opus-5
   -h, --help         Show this help and exit 0.
 
@@ -96,14 +99,25 @@ TAB="$(printf '\t')"
 # Default is bytes/4 — a documented estimate, not a measurement. --exact calls
 # messages/count_tokens, the only accurate tokenizer for Claude models (tiktoken
 # is OpenAI's and undercounts Claude text by 15-20%, more on code).
+# Counting is free, so --exact costs nothing but a credential. An unset API key
+# does NOT mean there are no credentials: an `ant auth login` profile works too,
+# via a short-lived Bearer token. Try the key first, then the profile.
 EXACT_OK=0
 if [ "$EXACT" -eq 1 ]; then
-  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "WARN --exact requested but ANTHROPIC_API_KEY is unset; using bytes/4 estimate" >&2
-  elif ! command -v python3 >/dev/null 2>&1; then
+  if ! command -v python3 >/dev/null 2>&1; then
     echo "WARN --exact requires python3; using bytes/4 estimate" >&2
-  else
+  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     EXACT_OK=1
+  elif command -v ant >/dev/null 2>&1 \
+    && ANTHROPIC_OAUTH_TOKEN="$(ant auth print-credentials --access-token 2>/dev/null)" \
+    && [ -n "$ANTHROPIC_OAUTH_TOKEN" ]; then
+    # OAuth tokens go on `Authorization: Bearer`, not `x-api-key`, and need the
+    # oauth beta header — converting from a key is a header change, not a swap.
+    export ANTHROPIC_OAUTH_TOKEN
+    EXACT_OK=1
+    echo "INFO --exact using the active \`ant auth\` profile (no API key set)" >&2
+  else
+    echo "WARN --exact needs ANTHROPIC_API_KEY or an \`ant auth login\` profile; using bytes/4 estimate" >&2
   fi
 fi
 
@@ -118,14 +132,22 @@ body = json.dumps({
         {"role": "user", "content": open(path, encoding="utf-8", errors="replace").read()}
     ],
 }).encode()
+headers = {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+}
+if os.environ.get("ANTHROPIC_API_KEY"):
+    headers["x-api-key"] = os.environ["ANTHROPIC_API_KEY"]
+else:
+    # An OAuth profile token authenticates on Authorization: Bearer and needs the
+    # oauth beta header; /v1/messages* rejects it without one.
+    headers["authorization"] = "Bearer " + os.environ["ANTHROPIC_OAUTH_TOKEN"]
+    headers["anthropic-beta"] = "oauth-2025-04-20"
+
 req = urllib.request.Request(
     "https://api.anthropic.com/v1/messages/count_tokens",
     data=body,
-    headers={
-        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    },
+    headers=headers,
 )
 try:
     with urllib.request.urlopen(req, timeout=60) as resp:

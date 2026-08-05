@@ -73,6 +73,7 @@ Also:
 - Identify all files touched and their roles (route handler vs model vs core infra vs test)
 - Check the live app if UI changes are involved (browser screenshot of `/docs` if OpenAPI changed)
 - Run targeted imports/scripts to catch obvious syntax errors before reporting
+- If the script printed a **Context budget** block, treat an OVER row on `AGENTS.md` as a documentation finding when this branch is what pushed it over — the fix is usually to move the addition into a `docs/` reference doc rather than to shorten it. It is informational, never a blocker, and it prints nothing when the diff touches no context-surface file.
 
 ### Phase 2 — Analyze
 

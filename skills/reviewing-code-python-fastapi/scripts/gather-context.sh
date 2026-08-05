@@ -58,3 +58,16 @@ if command -v uv >/dev/null 2>&1; then
 else
   echo "uv not installed; skipping ruff. (uv is required by this variant.)"
 fi
+
+# --- Context-budget delta (informational) ------------------------------------
+# Delegates to curating-context so the measurement logic lives in one place.
+# Silent when that skill isn't vendored here, and never fails this script: a
+# context budget is a review signal, not a review gate.
+for _cc in "skills/curating-context/scripts" \
+           ".claude/skills/curating-context/scripts" \
+           "$HOME/.claude/skills/curating-context/scripts"; do
+  if [ -f "$_cc/context-delta.sh" ]; then
+    bash "$_cc/context-delta.sh" || true
+    break
+  fi
+done

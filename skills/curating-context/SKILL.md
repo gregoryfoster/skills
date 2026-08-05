@@ -212,7 +212,26 @@ The `best reduction` column names which optimisation actually paid, per repo.
 Repos with no ledger are reported rather than skipped — on a weekly cadence,
 missing telemetry is itself the finding.
 
-## Phase 8 — Install the write guard
+## Phase 8 — Wire the continuous surfaces
+
+Two places catch regrowth between weekly runs. Offer both once per repo, after the
+first successful curation.
+
+### Review-time delta
+
+`context-delta.sh` reports the branch's effect on the surface — token delta and
+budget position per changed file, nothing at all when the diff touches no
+context-surface file. The four `reviewing-code*` variants already call it from
+their `gather-context.sh` when this skill is vendored alongside them, so on those
+repos it needs no wiring. It is informational by construction and exits 0 on every
+path.
+
+It sees what the write guard cannot: the guard evaluates one edit at a time and
+cannot distinguish a 400-token addition that replaced 600 tokens elsewhere from a
+straight 400-token gain. Review sees the whole branch, and sees it while the
+tradeoff is still cheap to negotiate.
+
+### Write guard
 
 Offer this once per repo, after the first successful curation:
 

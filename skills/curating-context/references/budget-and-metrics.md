@@ -39,12 +39,26 @@ every week — a permanently-red gate is a gate everyone learns to ignore.
 
 `measure-context.sh --exact` calls `POST /v1/messages/count_tokens`. That endpoint
 is the only accurate tokenizer for Claude models, and counts are model-specific —
-`--model` defaults to `claude-opus-5`.
+`--model` defaults to `claude-opus-5`. Pin one model across the cohort; the
+tokenizer introduced with Opus 4.7 produces ~30% more tokens for the same text
+than earlier ones, so a mixed-model ledger is as incomparable as a mixed-method one.
+
+**Counting is free.** The endpoint consumes no tokens and is billed nothing; it is
+rate-limited per usage tier (2,000–8,000 RPM), with limits independent of message
+creation. So `--exact` has no cost argument against it — run it always. What it
+does need is a credential, and an unset `ANTHROPIC_API_KEY` does not mean there
+isn't one: the script falls back to an `ant auth login` profile, sending the
+short-lived token as `Authorization: Bearer` with the `oauth-2025-04-20` beta
+header (OAuth tokens are rejected on `x-api-key`). A zero credit balance blocks
+the whole API including free endpoints, which surfaces as a 400 whose body names
+the reason — the script prints that body rather than just the status line.
 
 **Never use `tiktoken`.** It is OpenAI's tokenizer; it undercounts Claude text by
-15–20% and by considerably more on code and non-English input.
+15–20% and by considerably more on code and non-English input. There is no
+accurate offline tokenizer for current Claude models, which is why `bytes/4`
+remains the documented fallback rather than a local library.
 
-Without a key the script falls back to `bytes/4` and sets
+Without any credential the script falls back to `bytes/4` and sets
 `policy.tokens_exact: false`. The estimate is fine for ranking sections against
 each other within one run — the error is roughly uniform across a single file —
 but it is **not** comparable to an exact count. `record-telemetry.sh` warns when a
