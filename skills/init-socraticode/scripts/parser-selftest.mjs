@@ -30,6 +30,8 @@ import {
   parseEmbedPercent, parseArtifacts, graphReady, indexingInProgress,
   lastOperationFailed, parseLastOpError, indexIncomplete,
   anotherProcessIndexing, indexSettled, validateManifest, MANIFEST_NAME,
+  indexStarted, indexAlreadyRunning, contextIndexComplete, indexedZeroChunks,
+  searchHasHits, listHasProjects,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -195,7 +197,10 @@ eq('durable chunks+graph must NOT read as settled', indexSettled(REINDEX_FIRST_P
 console.log('— infrastructure phase must not read as terminal (CR finding 1) —');
 eq('infra phase is in progress', indexingInProgress(INFRA_PHASE), true);
 eq('infra phase is not settled', indexSettled(INFRA_PHASE), false);
-eq('"0/0 files" carries no completed-chunk count', /Indexed chunks:\s*0\b/.test(INFRA_PHASE), false);
+eq('"0/0 files" carries no completed-chunk count', indexedZeroChunks(INFRA_PHASE), false);
+eq('a settled run with an empty collection does read as zero-chunk',
+  indexedZeroChunks('Status: green\nIndexed chunks: 0\n\nLast operation: Full index — completed'), true);
+eq('…and 950 chunks does not', indexedZeroChunks(COMPLETED), false);
 
 console.log('— watcher incremental must not satisfy the full-index gate (CR finding 5) —');
 eq('incremental completion is not settled', indexSettled(WATCHER_INCREMENTAL), false);
@@ -209,12 +214,26 @@ eq('status text of a healthy index yields no READY token', graphReady(COMPLETED)
 eq('…yet a path containing "already" would have matched — the false positive that retired the fallback',
   graphReady('Project: /srv/already-migrated/api\nCode graph: 120 files, 430 edges'), true);
 
-console.log('— sample-search verdict (CR finding 3) —');
-const hits = 'Search results for "config" (2 matches):\n\n--- src/app.py (lines 10-20) [python] score: 0.7123 ---\ncode here';
-const noHits = 'No results found for "config" in project /repo.\nMake sure the project has been indexed first using codebase_index.';
-const searchOk = (t) => !/^No results (found|above score threshold)/m.test(t) && /^--- .+ \(lines \d+-\d+\)/m.test(t);
-eq('real hits pass', searchOk(hits), true);
-eq('"No results found" fails', searchOk(noHits), false);
+console.log('— tool replies that report failure by returning a string (gotcha M) —');
+eq('index start confirmed', indexStarted('Indexing started in the background for: /repo\n\nIMPORTANT: …'), true);
+eq('infra failure is not a start', indexStarted('Infrastructure setup failed:\n\nDocker daemon unreachable'), false);
+eq('docker-unavailable is not a start', indexStarted('Docker is not available. Start Docker and retry.'), false);
+eq('already-running is not a start…', indexStarted('⚠ Indexing is already in progress for: /repo'), false);
+eq('…but is recognized as already running',
+  indexAlreadyRunning('⚠ Indexing is already in progress for: /repo\nCannot run codebase_index — please wait'), true);
+eq('context index success confirmed', contextIndexComplete('Context Artifacts — Indexing Complete\n\n✓ agent-guidelines'), true);
+eq('"No artifacts defined" is not success',
+  contextIndexComplete('No artifacts defined in .socraticodecontextartifacts.json at /repo'), false);
+
+console.log('— sample-search and list verdicts (CR finding 3) —');
+eq('real hits pass',
+  searchHasHits('Search results for "config" (2 matches):\n\n--- src/app.py (lines 10-20) [python] score: 0.7123 ---\ncode here'), true);
+eq('"No results found" fails',
+  searchHasHits('No results found for "config" in project /repo.\nMake sure the project has been indexed first using codebase_index.'), false);
+eq('"below score threshold" fails',
+  searchHasHits('No results above score threshold 0.10 for "config" in project /repo.\n2 results were below the threshold.'), false);
+eq('a populated project list passes', listHasProjects('Indexed projects (1):\n  - /repo\n    Collection: socraticode_abc'), true);
+eq('the empty-list sentence fails', listHasProjects('No projects have been indexed yet. Use codebase_index to index a project.'), false);
 
 console.log('— artifact shapes (gotcha H) —');
 eq('partial 2/7', parseArtifacts(PARTIAL_ARTIFACTS), { done: 2, total: 7 });

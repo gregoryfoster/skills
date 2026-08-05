@@ -14,13 +14,15 @@
 //   B — indexing runs INSIDE the server process, so we keep it alive and poll.
 //   C — "100% embedded" is NOT done; we gate on the index run having completed
 //       AND graph READY AND context artifacts N/N before returning success.
+//   G — we OWN the child and kill it by child.pid on exit. We never pkill by
+//       cmdline, so there is no self-match footgun.
+//   H — status strings are parsed loosely (regex, both artifact shapes).
 //   J — completion is NOT keyed on a parsed "100%". The server prints its
 //       progress percentage only while indexing is in flight, so the line is
 //       gone by the time the run is done and `pct === 100` was only ever
 //       observable by winning a race with the poll interval (#85).
-//   G — we OWN the child and kill it by child.pid on exit. We never pkill by
-//       cmdline, so there is no self-match footgun.
-//   H — status strings are parsed loosely (regex, both artifact shapes).
+//   M — tools report failure by RETURNING a string, not throwing. Every reply
+//       the driver acts on is classified explicitly; awaiting is not checking.
 //
 // Wire contract exercised end-to-end against socraticode 1.6.x (the build the
 // plugin runs via `npx -y socraticode`) during the #85 field report. Confirmed
@@ -327,6 +329,46 @@ function indexSettled(text) {
   return !indexingInProgress(text) && lastOperationCompleted(text);
 }
 
+// ── tool-reply predicates ───────────────────────────────────────────────────
+// Several server tools report failure by RETURNING a string rather than
+// throwing (gotcha M), so every reply the driver acts on is classified here —
+// named and exported so parser-selftest.mjs pins the shipped expression rather
+// than a copy of it.
+
+// codebase_index, success: "Indexing started in the background for: <path>"
+function indexStarted(text) {
+  return /Indexing started in the background/i.test(text);
+}
+
+// codebase_index, concurrency guard: "⚠ Indexing is already in progress for: …"
+// Not a failure — the work we want is already underway, so the caller polls.
+function indexAlreadyRunning(text) {
+  return /Indexing is already in progress/i.test(text);
+}
+
+// codebase_context_index, success: "Context Artifacts — Indexing Complete"
+function contextIndexComplete(text) {
+  return /Context Artifacts\s*[-—–]\s*Indexing Complete/i.test(text);
+}
+
+// "Indexed chunks: 0" — the collection exists but holds nothing. Meaningful
+// only once the run has settled (see the call site).
+function indexedZeroChunks(text) {
+  return /Indexed chunks:\s*0\b/.test(text);
+}
+
+// codebase_search: an empty result set is an ordinary sentence, not an error,
+// so require a result row — "--- src/app.py (lines 10-20) [python] score: …"
+function searchHasHits(text) {
+  return !/^No results (found|above score threshold)/m.test(text)
+    && /^--- .+ \(lines \d+-\d+\)/m.test(text);
+}
+
+// codebase_list_projects: "No projects have been indexed yet. …"
+function listHasProjects(text) {
+  return /\S/.test(text) && !/^No projects have been indexed/m.test(text);
+}
+
 function parseArtifacts(text) {
   // Two known shapes:
   //   "Context artifacts: 2/7 indexed"          → {done:2, total:7}
@@ -530,8 +572,15 @@ async function cmdIndex(projectPath) {
     // The server does NOT throw when it can't start: infra failure and "Docker
     // not available" come back as ordinary strings. Ignoring the response meant
     // polling a status that would never move until INDEX_TIMEOUT_MS.
+    //
+    // Three outcomes, not two: "already in progress" is the concurrency guard,
+    // meaning the work we want is underway (started by the watcher, or by a
+    // concurrent run). That is a reason to poll, not to abort — the loop below
+    // already knows how to wait for someone else's run.
     const startResponse = await client.callTool('codebase_index', { projectPath });
-    if (!/Indexing started in the background/i.test(startResponse)) {
+    if (indexAlreadyRunning(startResponse)) {
+      console.error('[driver] an index is already in progress for this project — waiting on it rather than starting a second.');
+    } else if (!indexStarted(startResponse)) {
       die(`codebase_index did not start indexing. The server replied:\n${startResponse}`);
     }
 
@@ -539,10 +588,11 @@ async function cmdIndex(projectPath) {
     let contextKicked = false;
     let contextKickFails = 0;
     const MAX_CONTEXT_KICKS = 3;
-    // Some terminal-looking states show transiently while a run spins up (file
-    // discovery hasn't counted anything yet; a resume hasn't taken the lock
-    // yet). Require them to persist across this many consecutive polls before
-    // treating them as real.
+    // The persisted-incomplete state shows transiently while a resume spins up:
+    // index-tools clears its infra progress just before indexProject() acquires
+    // the project lock and sets its own, and in that gap a previous run's
+    // "in-progress" metadata renders with nothing apparently running. Require
+    // the state to persist across this many consecutive polls before believing it.
     const CONFIRM_POLLS = 3;
     let incompletePolls = 0;
     let announcedOtherProcess = false;
@@ -594,17 +644,25 @@ async function cmdIndex(projectPath) {
       // Qdrant and Ollama images (gotcha D). Reading it as terminal aborts a
       // healthy cold-host run within a poll or two, so key on the finished
       // state instead.
-      if (settled && /Indexed chunks:\s*0\b/.test(status)) {
+      if (settled && indexedZeroChunks(status)) {
         die('index completed with 0 chunks — nothing was embedded (empty repo, or everything is excluded by .socraticodeignore / .gitignore).');
       }
 
-      let graph = '';
-      try { graph = await client.callTool('codebase_graph_status', { projectPath }); } catch { /* older server */ }
       // graph_status is the ONLY source of the READY token — codebase_status
       // renders the graph as "Code graph: N files, M edges". Matching against
       // the status text as a fallback could never succeed, but could falsely
       // succeed: status opens with "Project: <path>", so any path containing
       // "ready" or "already" would satisfy it.
+      //
+      // Hence no tolerance for a server without this tool: with the fallback
+      // gone, gReady could never be satisfied and the run would burn the full
+      // timeout. Fail with the reason instead of pretending to degrade.
+      let graph;
+      try {
+        graph = await client.callTool('codebase_graph_status', { projectPath });
+      } catch (e) {
+        die(`codebase_graph_status is unavailable (${e.message}). This driver requires it — it is the only source of the graph READY signal.`);
+      }
       const gReady = graphReady(graph);
 
       // Expected count: manifest is authoritative; otherwise trust the status line.
@@ -628,7 +686,7 @@ async function cmdIndex(projectPath) {
           // Positive confirmation only. Failures come back as ordinary strings
           // ("No artifacts defined in …"), so latching on "it didn't throw"
           // disables the retry below and blocks to the timeout.
-          if (!/Context Artifacts\s*[-—–]\s*Indexing Complete/i.test(kickResponse)) {
+          if (!contextIndexComplete(kickResponse)) {
             throw new Error(kickResponse.split('\n')[0] || 'unrecognized response');
           }
           contextKicked = true;
@@ -654,16 +712,20 @@ async function cmdVerify(projectPath) {
   await withClient(async (client) => {
     const list = await client.callTool('codebase_list_projects', {});
     const graph = await client.callTool('codebase_graph_status', { projectPath }).catch(() => '');
-    const search = await client.callTool('codebase_search', { projectPath, query: 'configuration and settings' });
+    // minScore 0: this asserts that the index ANSWERS — retrieval, not
+    // relevance. At the server's 0.10 default a small or unusual repo can
+    // legitimately score nothing for a fixed sample query, which would fail
+    // verification on a perfectly healthy index.
+    const search = await client.callTool('codebase_search', {
+      projectPath, query: 'configuration and settings', minScore: 0,
+    });
     const okGraph = graphReady(graph);
     // "Returns hits" has to mean hits. The server answers an empty search with
     // an ordinary sentence ("No results found for …"), so a non-empty-string
     // test passes in exactly the states verification exists to catch — a
     // rejected manifest (gotcha K) or a post-reboot dead Qdrant (gotcha L).
-    // Require a result row: "--- path/to/file.py (lines 10-20) [python] score: …"
-    const okSearch = !/^No results (found|above score threshold)/m.test(search)
-      && /^--- .+ \(lines \d+-\d+\)/m.test(search);
-    const okList = /\S/.test(list) && !/^No projects have been indexed/m.test(list);
+    const okSearch = searchHasHits(search);
+    const okList = listHasProjects(list);
     console.error(`[driver] list_projects: ${okList ? 'ok' : 'empty'}`);
     console.error(`[driver] graph_status: ${okGraph ? 'READY' : 'not-ready'}`);
     console.error(`[driver] sample search hits: ${okSearch ? 'yes' : 'none'}`);
@@ -727,4 +789,7 @@ export {
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
   expectedArtifactCount, resolveServerLaunch,
+  // tool-reply predicates (gotcha M)
+  indexStarted, indexAlreadyRunning, contextIndexComplete, indexedZeroChunks,
+  searchHasHits, listHasProjects,
 };
