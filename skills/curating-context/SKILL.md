@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -316,6 +316,17 @@ Tag `--actions` honestly and specifically. The tags are the only thing that lets
 a later run — or the cohort roll-up — attribute a token delta to what caused it.
 `"cleanup"` teaches nothing; `"demote:Project Layout"` does. Schema and budget
 rationale: [references/budget-and-metrics.md](references/budget-and-metrics.md).
+
+Rows also carry `skill_version` and `skill_commit`, so an outcome can be
+attributed to a *skill* change and not just a repo one. Bump the frontmatter
+`version` whenever a change would plausibly alter what a run does — an unbumped
+version makes the cohort look uniform when it isn't, and the roll-up's
+`skill versions in play` footer is what surfaces that.
+
+When a change to this skill is tried and abandoned, record it in
+[references/rejected-changes.md](references/rejected-changes.md) with what refuted
+it. A rejection is negative feedback: without the record the same plausible idea
+returns every few runs and is re-litigated from scratch.
 
 Commit the ledger with the edits, on a branch, and open a PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated

@@ -55,6 +55,8 @@ Options:
 Output (stdout, JSON):
   policy    { path, lines, bytes, tokens, tokens_exact, bytes_per_token,
               budget, over_budget }
+  skill     { name, version, commit }  which skill version measured this, so a
+              ledger row can be attributed to a skill change
   sections  [ { title, lines, bytes, tokens, share } ]  `##`, descending by size
               A section's bytes INCLUDE its subsections, so share is
               share-of-file and the rows sum to the policy total.
@@ -138,6 +140,12 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
+
+# Which version of the skill is producing this measurement — carried into the
+# ledger row so a later A/B can group by it.
+SKILL_META="$(ctx_skill_version "$_libdir")" || SKILL_META=""
+SKILL_VERSION="${SKILL_META%%"$CTX_TAB"*}"
+SKILL_COMMIT="${SKILL_META#*"$CTX_TAB"}"
 
 # Reference-doc root: --docs-dir, then CONTEXT_DOCS_DIR, then the .skills knob,
 # then docs. The write guard and context-delta.sh read the same knob, so setting
@@ -547,6 +555,9 @@ fi
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \
   "$(jesc "$POLICY")" "$P_LINES" "$P_BYTES" "$P_TOKENS" "$exact_flag" \
   $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) "$BUDGET" "$over_policy"
+
+printf '  "skill": {"name": "curating-context", "version": "%s", "commit": "%s"},\n' \
+  "$(jesc "$SKILL_VERSION")" "$(jesc "$SKILL_COMMIT")"
 
 printf '  "sections": [\n'
 first=1

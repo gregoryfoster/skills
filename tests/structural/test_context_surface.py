@@ -973,3 +973,99 @@ class TestCensusInvariant:
             tmp_path, "# T\n\n## A\n\n### A1\n\n#### A1a\n\ndeep body\n",
         ))
         assert [s["title"] for s in m["subsections"]] == ["A1"]
+
+
+class TestSkillVersionAttribution:
+    """Without a version on the row, the ledger records what a repo did but not
+    what made it do that — so no skill change can ever be attributed to an
+    outcome, which is the precondition for gating changes on the cohort."""
+
+    def test_measure_emits_the_declared_version(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        skill = json.loads(result.stdout)["skill"]
+        assert skill["name"] == "curating-context"
+        # Must match the frontmatter, not a hardcoded copy.
+        declared = None
+        for line in (SCRIPTS.parent / "SKILL.md").read_text().splitlines():
+            if line.strip() == "---" and declared is not None:
+                break
+            if line.strip().startswith("version:"):
+                declared = line.split(":", 1)[1].strip().strip('"').strip("'")
+        assert skill["version"] == declared, (
+            f"emitted {skill['version']!r} but SKILL.md declares {declared!r}"
+        )
+
+    def test_row_carries_the_version_through(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        measured = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        ).stdout
+        row = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
+            input=measured, capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        assert row.returncode == 0, row.stderr
+        parsed = json.loads(row.stdout)
+        assert parsed["skill_version"], parsed
+        assert parsed["skill_commit"], parsed
+
+    def test_a_measurement_predating_the_field_yields_null_not_a_guess(
+        self, tmp_path: Path
+    ):
+        """A wrong attribution is worse than a missing one when the whole point is
+        to A/B skill changes."""
+        repo = _repo(tmp_path, policy_lines=50)
+        measured = json.loads(subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        ).stdout)
+        del measured["skill"]
+        row = subprocess.run(
+            ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
+            input=json.dumps(measured), capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=30,
+        )
+        assert row.returncode == 0, row.stderr
+        parsed = json.loads(row.stdout)
+        assert parsed["skill_version"] is None and parsed["skill_commit"] is None
+
+    def test_rollup_names_the_versions_in_play(self, tmp_path: Path):
+        """An A/B needs at least two versions; a uniform cohort is a baseline."""
+        for name, ver in (("a", "1.0"), ("b", "1.1")):
+            d = tmp_path / name / ".skills"
+            d.mkdir(parents=True)
+            (d / "context-metrics.jsonl").write_text(json.dumps({
+                "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+                "tokens_exact": True, "skill_version": ver,
+            }) + "\n")
+        result = subprocess.run(
+            ["bash", str(COHORT), "--local", f"{tmp_path/'a'} {tmp_path/'b'}"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "skill versions in play:" in result.stdout
+        assert "1.0: a" in result.stdout and "1.1: b" in result.stdout
+        assert "a baseline, not a comparison" not in result.stdout
+
+    def test_rollup_says_when_the_cohort_is_uniform(self, tmp_path: Path):
+        d = tmp_path / "a" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text(json.dumps({
+            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
+            "tokens_exact": True, "skill_version": "1.1",
+        }) + "\n")
+        result = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "a")],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert "a baseline, not a comparison" in result.stdout, result.stdout

@@ -38,6 +38,10 @@ Row schema (one JSON object per line):
   file              policy file path
   tokens            policy-file tokens (exact when tokens_exact is true)
   tokens_exact      whether the count came from the count_tokens endpoint
+  skill_version     declared version of the skill that produced this row — what a
+                    cohort A/B groups by. Null for rows predating the field.
+  skill_commit      short commit of the skill repo, so an unbumped version is
+                    still attributable after the fact
   lines, bytes      policy-file size
   budget            budget in force for this run
   over_budget       tokens > budget
@@ -123,6 +127,11 @@ except (ValueError, KeyError) as exc:
     print(f"ERROR stdin is not measure-context.sh JSON: {exc}", file=sys.stderr)
     sys.exit(1)
 
+# Which skill version produced this row. Absent from measurements taken before
+# the field existed, and null rather than guessed in that case — a wrong
+# attribution is worse than a missing one when the point is to A/B skill changes.
+skill = m.get("skill") or {}
+
 sections = m.get("sections") or []
 top = sections[0] if sections else {}
 
@@ -132,6 +141,8 @@ row = {
     "file": policy["path"],
     "tokens": policy["tokens"],
     "tokens_exact": policy["tokens_exact"],
+    "skill_version": skill.get("version") or None,
+    "skill_commit": skill.get("commit") or None,
     "lines": policy["lines"],
     "bytes": policy["bytes"],
     "budget": policy["budget"],
