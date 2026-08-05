@@ -208,7 +208,8 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest "<PROJECT_PATH>"
 
 It checks the top-level shape, the `{name, path, description}` triple, unique
 (case-insensitive) names, the absent-`paths`-plural rule, globs, and that **every
-path resolves** — exiting non-zero with one line per problem. A non-resolving path
+path resolves** — exiting non-zero with one line per problem on stderr and a
+`{present, count, valid, errors}` verdict on stdout. A non-resolving path
 is not cosmetic: the server skips it silently, so `artifacts N/N` never reaches
 parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every reported line, or
 drop the category, before indexing.
@@ -348,4 +349,4 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
   (gotcha E). Don't leave an orphaned node process to fake it.
 
 See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
-gotcha matrix (A–L) and the native-vs-fallback decision tree.
+gotcha matrix (A–M) and the native-vs-fallback decision tree.

@@ -7,6 +7,11 @@
 // into a 2h hang (#85, gotchas H/J). This selftest is the tripwire: run it
 // after any server upgrade, or whenever a driver run behaves oddly.
 //
+// THIS IS A MANUAL CHECK. Nothing runs it automatically — the repo's
+// pre-commit hook runs the Python structural suite, which does not shell out
+// to node. Treat it as part of the "upgraded socraticode" checklist, not as
+// something CI will catch for you.
+//
 // Fixtures are synthesized line-for-line from the server's own formatter
 // (src/tools/query-tools.ts, socraticode 1.6.1). If the server changes its
 // strings, update BOTH the fixtures here and the PARSERS in mcp-driver.mjs.
@@ -133,6 +138,34 @@ Context artifacts: 7 artifacts indexed (131 chunks)`;
 const PARTIAL_ARTIFACTS = `Context artifacts: 2/7 indexed (40 chunks)
   Some artifacts are not yet indexed. Run codebase_context_index to index all.`;
 
+// A first index during infrastructure setup: the server reports 0/0 files for
+// however long the Qdrant/Ollama image pulls take (gotcha D). Nothing here may
+// read as "no work to do" or as complete.
+const INFRA_PHASE = `Project: /repo
+
+⚠ Full index in progress
+  Phase: preparing infrastructure
+  Progress: 0/0 files
+  Elapsed: 40s
+
+Code graph: pending — will be auto-built after indexing completes`;
+
+// The file watcher auto-starts on the first status call and records its own
+// completions in the same process. This must not satisfy a full-index gate.
+const WATCHER_INCREMENTAL = `Project: /repo
+Collection: socraticode_abc
+Status: green
+Indexed chunks: 950
+
+Last operation: Incremental update — completed
+  Files: 2, Chunks: 11
+  3s ago (took 0.4s)
+
+File watcher: active (auto-updating on changes)
+
+Code graph: 120 files, 430 edges
+  Last built: 10s ago`;
+
 console.log('— in-progress —');
 eq('inProgress', indexingInProgress(IN_PROGRESS), true);
 eq('pct parsed', parseEmbedPercent(IN_PROGRESS), 5);
@@ -158,6 +191,30 @@ eq('other-process not flagged incomplete-and-idle', indexIncomplete(OTHER_PROCES
 
 console.log('— re-index false-positive guard —');
 eq('durable chunks+graph must NOT read as settled', indexSettled(REINDEX_FIRST_POLL), false);
+
+console.log('— infrastructure phase must not read as terminal (CR finding 1) —');
+eq('infra phase is in progress', indexingInProgress(INFRA_PHASE), true);
+eq('infra phase is not settled', indexSettled(INFRA_PHASE), false);
+eq('"0/0 files" carries no completed-chunk count', /Indexed chunks:\s*0\b/.test(INFRA_PHASE), false);
+
+console.log('— watcher incremental must not satisfy the full-index gate (CR finding 5) —');
+eq('incremental completion is not settled', indexSettled(WATCHER_INCREMENTAL), false);
+eq('full-index completion still settles', indexSettled(COMPLETED), true);
+
+console.log('— graph READY comes only from graph_status (CR finding 4) —');
+// Documents WHY the status-text fallback was removed rather than kept as
+// "drift insurance": the token is absent from a healthy status (asserted
+// above), while an unrelated path substring satisfies it.
+eq('status text of a healthy index yields no READY token', graphReady(COMPLETED), false);
+eq('…yet a path containing "already" would have matched — the false positive that retired the fallback',
+  graphReady('Project: /srv/already-migrated/api\nCode graph: 120 files, 430 edges'), true);
+
+console.log('— sample-search verdict (CR finding 3) —');
+const hits = 'Search results for "config" (2 matches):\n\n--- src/app.py (lines 10-20) [python] score: 0.7123 ---\ncode here';
+const noHits = 'No results found for "config" in project /repo.\nMake sure the project has been indexed first using codebase_index.';
+const searchOk = (t) => !/^No results (found|above score threshold)/m.test(t) && /^--- .+ \(lines \d+-\d+\)/m.test(t);
+eq('real hits pass', searchOk(hits), true);
+eq('"No results found" fails', searchOk(noHits), false);
 
 console.log('— artifact shapes (gotcha H) —');
 eq('partial 2/7', parseArtifacts(PARTIAL_ARTIFACTS), { done: 2, total: 7 });

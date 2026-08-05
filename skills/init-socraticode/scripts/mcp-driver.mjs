@@ -34,15 +34,10 @@
 // the npx cache — reachable by neither require.resolve() nor `npm root`. See
 // resolveServerLaunch(), which follows the plugin's own launch chain.
 //
-// Usage:
-//   node mcp-driver.mjs index  <projectPath>   # full fresh index, blocks til done
-//   node mcp-driver.mjs status <projectPath>   # print status once and exit
-//   node mcp-driver.mjs verify <projectPath>   # sample search + list, exit 0/1
-//
-// Env:
-//   SOCRATICODE_ENTRY   explicit path to socraticode dist/index.js (skips resolution)
-//   POLL_INTERVAL_MS    status poll cadence (default 15000)
-//   INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h; first index is slow)
+// Commands and environment variables are documented in one place — the USAGE
+// constant at the bottom of this file. Run `node mcp-driver.mjs --help`.
+// (This header used to carry a second copy; it had already drifted a commit
+// after the interface changed.)
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -63,8 +58,9 @@ function nodeLaunch(entry, source) {
   return { command: process.execPath, args: [entry], env: {}, source };
 }
 
-// Newest-first directory listing — used to prefer the latest plugin version and
-// the most recently populated npx cache entry.
+// Most-recently-modified-first directory listing. A heuristic, not an ordering
+// by version — used only where no authoritative record exists (the npx cache),
+// and as the fallback scan when installed_plugins.json can't be read.
 function subdirsNewestFirst(dir) {
   let names;
   try { names = readdirSync(dir); } catch { return []; }
@@ -81,8 +77,21 @@ function subdirsNewestFirst(dir) {
 // the only resolution that cannot drift from what the plugin actually runs.
 function launchFromPluginConfig() {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || joinPath(homedir(), '.claude');
+
+  // installed_plugins.json records the install path of the version actually
+  // enabled. Prefer it over scanning the cache: with two versions cached, an
+  // mtime scan can pick the one the session ISN'T running, which is precisely
+  // the drift reading the plugin's own config exists to avoid.
+  const installed = [];
+  try {
+    const registry = JSON.parse(readFileSync(joinPath(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'));
+    for (const entry of registry?.plugins?.['socraticode@socraticode'] ?? []) {
+      if (entry?.installPath) installed.push(entry.installPath);
+    }
+  } catch { /* no registry, or unreadable — fall back to the cache scan */ }
+
   const cacheDir = joinPath(claudeDir, 'plugins', 'cache', 'socraticode', 'socraticode');
-  for (const versionDir of subdirsNewestFirst(cacheDir)) {
+  for (const versionDir of [...installed, ...subdirsNewestFirst(cacheDir)]) {
     const cfgPath = joinPath(versionDir, 'mcp.json');
     if (!existsSync(cfgPath)) continue;
     try {
@@ -273,8 +282,16 @@ function indexingInProgress(text) {
 }
 
 // "Last operation: Full index — completed"
+//
+// Pinned to "Full index" rather than any completed operation. codebase_index
+// always records a full index (indexProject() sets type: "full-index"
+// unconditionally, even re-indexing an existing project), while the file
+// watcher — which auto-starts on the first status call — records "Incremental
+// update" completions in this same process. Accepting either would let a
+// watcher's incremental satisfy our gate in the window before the full index
+// takes its lock.
 function lastOperationCompleted(text) {
-  return /Last operation:[^\n]*[-—–]\s*completed/i.test(text);
+  return /Last operation:\s*Full index\s*[-—–]\s*completed/i.test(text);
 }
 
 // "Last operation: Full index — FAILED" followed by "  Error: <msg>"
@@ -468,8 +485,18 @@ function cmdResolve() {
 }
 
 // Phase 4 gate: validate the manifest before paying for an index.
+// Machine-readable verdict on stdout, prose on stderr (AGENTS.md script
+// convention), so this can gate a shell pipeline as well as a human.
 function cmdValidateManifest(projectPath) {
   const m = validateManifest(projectPath);
+  process.stdout.write(JSON.stringify({
+    manifest: m.path,
+    present: m.present,
+    count: m.count,
+    valid: m.present && m.errors.length === 0,
+    errors: m.errors,
+  }, null, 2) + '\n');
+
   if (!m.present) {
     console.error(`[driver] no ${MANIFEST_NAME} at ${projectPath} — 0 context artifacts expected`);
     return;
@@ -500,7 +527,13 @@ async function cmdIndex(projectPath) {
 
   await withClient(async (client) => {
     console.error(`[driver] starting index of ${projectPath} (returns immediately; work runs in-server)`);
-    await client.callTool('codebase_index', { projectPath });
+    // The server does NOT throw when it can't start: infra failure and "Docker
+    // not available" come back as ordinary strings. Ignoring the response meant
+    // polling a status that would never move until INDEX_TIMEOUT_MS.
+    const startResponse = await client.callTool('codebase_index', { projectPath });
+    if (!/Indexing started in the background/i.test(startResponse)) {
+      die(`codebase_index did not start indexing. The server replied:\n${startResponse}`);
+    }
 
     const started = Date.now();
     let contextKicked = false;
@@ -512,7 +545,6 @@ async function cmdIndex(projectPath) {
     // treating them as real.
     const CONFIRM_POLLS = 3;
     let incompletePolls = 0;
-    let zeroWorkPolls = 0;
     let announcedOtherProcess = false;
 
     for (;;) {
@@ -551,26 +583,29 @@ async function cmdIndex(projectPath) {
         incompletePolls = 0;
       }
 
-      // Nothing to embed. Transient at startup, so confirm across polls.
-      if (/\b0\s*\/\s*0\b[^\n]*(chunks?|files)/i.test(status)) {
-        if (++zeroWorkPolls >= CONFIRM_POLLS) {
-          die('codebase_status reports 0/0 — nothing to embed (empty repo, or everything is excluded by .socraticodeignore / .gitignore).');
-        }
-      } else {
-        zeroWorkPolls = 0;
-      }
-
       // ── the three completion signals ──────────────────────────────────────
       const settled = indexSettled(status);
       const pct = parseEmbedPercent(status);   // display only — see parser note
       const art = parseArtifacts(status);
 
+      // Nothing to embed — only meaningful once the run is OVER. A progress line
+      // of "0/0 files" does NOT mean "no work": the server reports exactly that
+      // for the whole infrastructure phase of a first index, while it pulls the
+      // Qdrant and Ollama images (gotcha D). Reading it as terminal aborts a
+      // healthy cold-host run within a poll or two, so key on the finished
+      // state instead.
+      if (settled && /Indexed chunks:\s*0\b/.test(status)) {
+        die('index completed with 0 chunks — nothing was embedded (empty repo, or everything is excluded by .socraticodeignore / .gitignore).');
+      }
+
       let graph = '';
       try { graph = await client.callTool('codebase_graph_status', { projectPath }); } catch { /* older server */ }
-      // codebase_status renders the graph as "Code graph: N files, M edges" and
-      // never the literal READY, so graph_status is the only real source here;
-      // the status fallback stays as drift insurance, not a working path.
-      const gReady = graphReady(graph) || graphReady(status);
+      // graph_status is the ONLY source of the READY token — codebase_status
+      // renders the graph as "Code graph: N files, M edges". Matching against
+      // the status text as a fallback could never succeed, but could falsely
+      // succeed: status opens with "Project: <path>", so any path containing
+      // "ready" or "already" would satisfy it.
+      const gReady = graphReady(graph);
 
       // Expected count: manifest is authoritative; otherwise trust the status line.
       const wantArtifacts = expectedArtifacts != null ? expectedArtifacts : art.total;
@@ -589,7 +624,13 @@ async function cmdIndex(projectPath) {
       // loudly after MAX_CONTEXT_KICKS.
       if (settled && !contextKicked && wantArtifacts > 0 && art.done < wantArtifacts) {
         try {
-          await client.callTool('codebase_context_index', { projectPath });
+          const kickResponse = await client.callTool('codebase_context_index', { projectPath });
+          // Positive confirmation only. Failures come back as ordinary strings
+          // ("No artifacts defined in …"), so latching on "it didn't throw"
+          // disables the retry below and blocks to the timeout.
+          if (!/Context Artifacts\s*[-—–]\s*Indexing Complete/i.test(kickResponse)) {
+            throw new Error(kickResponse.split('\n')[0] || 'unrecognized response');
+          }
           contextKicked = true;
           console.error('[driver] kicked codebase_context_index');
         } catch (e) {
@@ -615,11 +656,18 @@ async function cmdVerify(projectPath) {
     const graph = await client.callTool('codebase_graph_status', { projectPath }).catch(() => '');
     const search = await client.callTool('codebase_search', { projectPath, query: 'configuration and settings' });
     const okGraph = graphReady(graph);
-    const okSearch = /\S/.test(search);
-    console.error(`[driver] list_projects: ${/\S/.test(list) ? 'ok' : 'empty'}`);
+    // "Returns hits" has to mean hits. The server answers an empty search with
+    // an ordinary sentence ("No results found for …"), so a non-empty-string
+    // test passes in exactly the states verification exists to catch — a
+    // rejected manifest (gotcha K) or a post-reboot dead Qdrant (gotcha L).
+    // Require a result row: "--- path/to/file.py (lines 10-20) [python] score: …"
+    const okSearch = !/^No results (found|above score threshold)/m.test(search)
+      && /^--- .+ \(lines \d+-\d+\)/m.test(search);
+    const okList = /\S/.test(list) && !/^No projects have been indexed/m.test(list);
+    console.error(`[driver] list_projects: ${okList ? 'ok' : 'empty'}`);
     console.error(`[driver] graph_status: ${okGraph ? 'READY' : 'not-ready'}`);
     console.error(`[driver] sample search hits: ${okSearch ? 'yes' : 'none'}`);
-    if (!(okGraph && okSearch)) die('verification failed — see lines above');
+    if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     console.error('[driver] verify OK');
   });
 }
@@ -646,6 +694,9 @@ projectPath defaults to the current working directory.
 
 Env:
   SOCRATICODE_ENTRY   explicit path to the socraticode server entry (skips resolution)
+  CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
+                      installed_plugins.json (default ~/.claude)
+  npm_config_cache    npm cache dir whose _npx/ subtree is searched (default ~/.npm)
   POLL_INTERVAL_MS    status poll cadence (default 15000)
   INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)`;
 
