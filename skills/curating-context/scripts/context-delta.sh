@@ -36,9 +36,10 @@ Why this differs from the write-guard hook: the hook sees one edit at a time and
 cannot tell a 400-token addition that replaced 600 tokens elsewhere from a
 straight 400-token gain. This sees the whole branch.
 
-Tokens are estimated as bytes/4 — the same estimate the guard uses, and enough to
-decide whether a section belongs in docs/. Run measure-context.sh --exact for an
-authoritative count.
+Tokens are estimated offline at ~2.7 bytes/token (see the note by
+BYTES_PER_TOKEN_X100), the same estimate the write guard uses. Enough to decide
+whether a section belongs in docs/; run measure-context.sh --exact for an
+authoritative count, which also recalibrates the ratio for this repo.
 
 Exit codes:
   0  always (informational)
@@ -81,6 +82,28 @@ read_knob() {
 BUDGET="$(read_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 4000)"
 DOC_BUDGET="$(read_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 
+# Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:
+# measured across 16 markdown files in this cohort (policy files, references,
+# READMEs) the real ratio sits between 2.40 and 2.69, tightly enough that one
+# constant serves. The conventional bytes/4 heuristic under-reports this content
+# by ~60% — it is calibrated for prose, not for markdown dense with paths, code
+# fences and tables — and a budget checked against it is 60% too lenient.
+# `measure-context.sh --exact` writes the repo's observed ratio to
+# .skills/context-token-ratio; when present it wins.
+BYTES_PER_TOKEN_X100=270
+if [ -f "$ROOT/.skills/context-token-ratio" ]; then
+  _r="$(head -1 "$ROOT/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
+  case "$_r" in
+    ''|.*|*.*.*) ;;
+    *.*) _w="${_r%%.*}"; _f="${_r#*.}00"
+         BYTES_PER_TOKEN_X100=$(( ${_w:-0} * 100 + 1${_f:0:2} - 100 )) ;;
+    *) BYTES_PER_TOKEN_X100=$(( _r * 100 )) ;;
+  esac
+  [ "$BYTES_PER_TOKEN_X100" -ge 100 ] || BYTES_PER_TOKEN_X100=270
+fi
+
+est_from_bytes() { echo $(( $1 * 100 / BYTES_PER_TOKEN_X100 )); }
+
 ARCHIVAL="plans specs research audits archive"
 is_archival() {
   local name
@@ -115,12 +138,12 @@ while IFS= read -r f; do
   [ -n "$kind" ] || continue
 
   now=0
-  [ -f "$f" ] && now=$(( $(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0) / 4 ))
+  [ -f "$f" ] && now=$(est_from_bytes "$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)")
   prev=0
   pb="$(git show "$BASE:$f" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || pb=""
   case "$pb" in
     ''|*[!0-9]*) prev=0 ;;
-    *) prev=$(( pb / 4 )) ;;
+    *) prev=$(est_from_bytes "$pb") ;;
   esac
 
   if [ "$kind" = "policy" ]; then b="$BUDGET"; else b="$DOC_BUDGET"; fi
@@ -167,5 +190,5 @@ NOTE
 fi
 
 echo ""
-echo "(estimate: bytes/4. For an authoritative count and a full section census,"
+echo "(offline estimate. For an authoritative count and a full section census,"
 echo " run curating-context's measure-context.sh --exact.)"

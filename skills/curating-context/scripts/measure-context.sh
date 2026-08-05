@@ -27,7 +27,7 @@ Options:
                      path inside one is a correct historical record, so counting
                      them as orphans or dead links buries the live signal.
   --exact            Count tokens via the Anthropic count_tokens endpoint
-                     instead of the bytes/4 estimate. The endpoint is FREE — it
+                     instead of the calibrated offline estimate. The endpoint is FREE — it
                      is rate-limited per usage tier but consumes no tokens and
                      is billed nothing, with limits independent of message
                      creation. Requires python3 plus a credential: ANTHROPIC_API_KEY,
@@ -37,7 +37,8 @@ Options:
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
-  policy    { path, lines, bytes, tokens, tokens_exact, budget, over_budget }
+  policy    { path, lines, bytes, tokens, tokens_exact, bytes_per_token,
+              budget, over_budget }
   sections  [ { title, lines, bytes, tokens, share } ]  descending by size
   docs      [ { path, lines, bytes, tokens, linked, over_budget } ]  live only
   links     { refs, dead, orphans }
@@ -96,7 +97,7 @@ trap 'rm -rf "$TMP"' EXIT
 TAB="$(printf '\t')"
 
 # --- token counting -------------------------------------------------------
-# Default is bytes/4 — a documented estimate, not a measurement. --exact calls
+# Default is the calibrated offline estimate, not a measurement. --exact calls
 # messages/count_tokens, the only accurate tokenizer for Claude models (tiktoken
 # is OpenAI's and undercounts Claude text by 15-20%, more on code).
 # Counting is free, so --exact costs nothing but a credential. An unset API key
@@ -105,7 +106,7 @@ TAB="$(printf '\t')"
 EXACT_OK=0
 if [ "$EXACT" -eq 1 ]; then
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "WARN --exact requires python3; using bytes/4 estimate" >&2
+    echo "WARN --exact requires python3; using offline estimate" >&2
   elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     EXACT_OK=1
   elif command -v ant >/dev/null 2>&1 \
@@ -117,7 +118,7 @@ if [ "$EXACT" -eq 1 ]; then
     EXACT_OK=1
     echo "INFO --exact using the active \`ant auth\` profile (no API key set)" >&2
   else
-    echo "WARN --exact needs ANTHROPIC_API_KEY or an \`ant auth login\` profile; using bytes/4 estimate" >&2
+    echo "WARN --exact needs ANTHROPIC_API_KEY or an \`ant auth login\` profile; using offline estimate" >&2
   fi
 fi
 
@@ -164,10 +165,32 @@ except (urllib.error.URLError, KeyError, ValueError, OSError) as exc:
 PY
 fi
 
-est_tokens() { echo $(( $(LC_ALL=C wc -c <"$1" | tr -d ' ') / 4 )); }
+# Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:
+# measured across 16 markdown files in this cohort (policy files, references,
+# READMEs) the real ratio sits between 2.40 and 2.69, tightly enough that one
+# constant serves. The conventional bytes/4 heuristic under-reports this content
+# by ~60% — it is calibrated for prose, not for markdown dense with paths, code
+# fences and tables — and a budget checked against it is 60% too lenient.
+# `measure-context.sh --exact` writes the repo's observed ratio to
+# .skills/context-token-ratio; when present it wins.
+BYTES_PER_TOKEN_X100=270
+if [ -f "$ROOT/.skills/context-token-ratio" ]; then
+  _r="$(head -1 "$ROOT/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
+  case "$_r" in
+    ''|.*|*.*.*) ;;
+    *.*) _w="${_r%%.*}"; _f="${_r#*.}00"
+         BYTES_PER_TOKEN_X100=$(( ${_w:-0} * 100 + 1${_f:0:2} - 100 )) ;;
+    *) BYTES_PER_TOKEN_X100=$(( _r * 100 )) ;;
+  esac
+  [ "$BYTES_PER_TOKEN_X100" -ge 100 ] || BYTES_PER_TOKEN_X100=270
+fi
+
+est_from_bytes() { echo $(( $1 * 100 / BYTES_PER_TOKEN_X100 )); }
+
+est_tokens() { est_from_bytes "$(LC_ALL=C wc -c <"$1" | tr -d ' ')"; }
 
 count_tokens() {
-  # count_tokens <file> -> token count on stdout. Falls back to bytes/4 on any
+  # count_tokens <file> -> token count on stdout. Falls back to the estimate on any
   # per-file failure, so one bad response degrades a number rather than the run.
   local f="$1" est out rc=0
   est="$(est_tokens "$f")"
@@ -367,8 +390,21 @@ sort -u "$TMP/refs" >"$TMP/refs.sorted"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
 
 printf '{\n'
-printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "budget": %s, "over_budget": %s},\n' \
-  "$(jesc "$POLICY")" "$P_LINES" "$P_BYTES" "$P_TOKENS" "$exact_flag" "$BUDGET" "$over_policy"
+# Observed bytes-per-token, and — on an exact run — persist it so the offline
+# estimators (the write guard, context-delta.sh) stop guessing for this repo.
+# Written only when exact, since deriving a calibration from an estimate would
+# just re-record the default and freeze whatever error it carries.
+RATIO_X100=$(( P_BYTES * 100 / P_TOKENS ))
+if [ "$EXACT_OK" -eq 1 ] && [ "$P_TOKENS" -gt 0 ]; then
+  mkdir -p "$ROOT/.skills" 2>/dev/null || true
+  printf '%d.%02d\n' $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) \
+    >"$ROOT/.skills/context-token-ratio" 2>/dev/null \
+    || echo "WARN could not write .skills/context-token-ratio" >&2
+fi
+
+printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \
+  "$(jesc "$POLICY")" "$P_LINES" "$P_BYTES" "$P_TOKENS" "$exact_flag" \
+  $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) "$BUDGET" "$over_policy"
 
 printf '  "sections": [\n'
 first=1
@@ -376,8 +412,11 @@ while IFS="$TAB" read -r sl sb st; do
   [ -n "${sl:-}" ] || continue
   [ "$first" -eq 1 ] || printf ',\n'
   first=0
+  # Section tokens are derived from THIS run's observed ratio, so they sum to the
+  # policy total above. Using bytes/4 here made the parts contradict the whole by
+  # ~60% on an exact run; using the persisted ratio would use the previous run's.
   printf '    {"title": "%s", "lines": %s, "bytes": %s, "tokens": %s, "share": %s}' \
-    "$(jesc "$st")" "$sl" "$sb" "$(( sb / 4 ))" "$(( sb * 100 / P_BYTES ))"
+    "$(jesc "$st")" "$sl" "$sb" "$(( sb * 100 / RATIO_X100 ))" "$(( sb * 100 / P_BYTES ))"
 done <"$TMP/sections.sorted"
 [ "$first" -eq 1 ] || printf '\n'
 printf '  ],\n'

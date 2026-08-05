@@ -39,8 +39,11 @@ Row schema (one JSON object per line):
   docs_orphaned     live docs not reachable from the policy file
   links_dead        broken relative links in the curated surface
   top_section       largest section title, and its share of the file
-  delta_tokens      change vs the previous row for this file (null if first)
+  delta_tokens      change vs the previous row for this file. Null on the first
+                    row, and null when the measurement method changed since the
+                    previous row — see delta_unavailable
   delta_days        days since the previous row (null if first)
+  delta_unavailable present only when delta_tokens was suppressed; says why
   actions           action tags from --actions
   note              --note text
 
@@ -152,23 +155,30 @@ if malformed:
 
 if history:
     last = history[-1]
-    if isinstance(last.get("tokens"), int):
-        row["delta_tokens"] = row["tokens"] - last["tokens"]
     try:
         row["delta_days"] = (
             dt.date.fromisoformat(today) - dt.date.fromisoformat(last["ts"])
         ).days
     except (ValueError, KeyError, TypeError):
         pass
-    # An exact count and an estimate are not comparable — bytes/4 runs 10-20%
-    # off on prose-heavy files, so a mixed delta reads as a change that never
-    # happened. Flag it rather than silently reporting the artefact.
+    # An exact count and an offline estimate are not comparable. Measured on this
+    # cohort the uncalibrated bytes/4 heuristic under-reported by ~60%, so a
+    # mixed-method delta can invent a change of that magnitude out of nothing.
+    # Leave delta_tokens null and say why: a number this untrustworthy should not
+    # be recorded at all, because every downstream reader — the trend printout,
+    # the cohort roll-up's "best reduction" column — treats it as a measurement.
     if last.get("tokens_exact") != row["tokens_exact"]:
+        row["delta_unavailable"] = (
+            f"method changed: previous row tokens_exact={last.get('tokens_exact')}, "
+            f"this row tokens_exact={row['tokens_exact']}"
+        )
         print(
-            "WARN delta_tokens compares an exact count against a bytes/4 estimate "
-            "— treat the magnitude as unreliable",
+            "WARN measurement method changed since the previous row; delta_tokens "
+            "left null (an exact count and an offline estimate are not comparable)",
             file=sys.stderr,
         )
+    elif isinstance(last.get("tokens"), int):
+        row["delta_tokens"] = row["tokens"] - last["tokens"]
 
 line_out = json.dumps(row, sort_keys=True, ensure_ascii=False)
 
@@ -191,10 +201,23 @@ if trend == "1":
         mark = "" if d is None else f"  ({d:+d})"
         acts = ", ".join(r.get("actions") or []) or "-"
         print(f"  {r['ts']}  {r['tokens']:>7} tok{mark:<12} {acts}", file=sys.stderr)
-    first = series[0]
-    if len(series) > 1 and isinstance(first.get("tokens"), int):
-        net = row["tokens"] - first["tokens"]
-        print(f"  net since {first['ts']}: {net:+d} tokens", file=sys.stderr)
+    # Net is only meaningful over rows measured the same way. Walk back from the
+    # newest row while the method matches and anchor there — otherwise the net
+    # silently spans the same method change delta_tokens just refused to report.
+    anchor = None
+    for r in reversed(series[:-1]):
+        if r.get("tokens_exact") != row["tokens_exact"]:
+            break
+        anchor = r
+    if anchor is not None and isinstance(anchor.get("tokens"), int):
+        net = row["tokens"] - anchor["tokens"]
+        print(f"  net since {anchor['ts']}: {net:+d} tokens", file=sys.stderr)
+    elif len(series) > 1:
+        print(
+            "  net: not comparable — every prior row used a different measurement "
+            "method. This row is the new baseline.",
+            file=sys.stderr,
+        )
 PY
 
 exit "$RC"

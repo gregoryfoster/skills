@@ -110,27 +110,34 @@ should point at it.
 
 ### 2. Runaway reference docs
 
-Demotion without a per-doc budget just relocates the cost. Live docs measured
-over 10k tokens:
+Demotion without a per-doc budget just relocates the cost. Live docs over the 10k
+budget, exact:
 
 | Doc | Tokens |
 |---|---:|
-| `cannabis.observer-wordpress/docs/API.md` | 44,924 |
-| `cannabis.observer-wordpress/docs/UI.md` | 31,690 |
-| `cannabis.observer-wordpress/docs/SCHEMA.md` | 28,400 |
-| `archiver/docs/UI.md` | 16,045 |
-| `cannabis.observer-wordpress/docs/TESTING.md` | 15,094 |
+| `cannabis.observer-wordpress/docs/API.md` | 71,317 |
+| `cannabis.observer-wordpress/docs/UI.md` | 50,116 |
+| `cannabis.observer-wordpress/docs/SCHEMA.md` | 46,124 |
+| `archiver/docs/UI.md` | 25,154 |
+| `cannabis.observer-wordpress/docs/TESTING.md` | 24,496 |
 
-`observo/docs/ARCHITECTURE.md` at 194 KB (~49k tokens) is the extreme. A doc that
-large is not progressive disclosure; loading it costs more than the policy file it
-was meant to relieve. Split on its top-level headings.
+`observo/docs/ARCHITECTURE.md` at 194 KB is the extreme — on the measured ratio
+that is around 72k tokens, more than the whole `cannabis.observer-wordpress`
+policy file. A doc that large is not progressive disclosure; loading it costs more
+than the policy file it was meant to relieve. Split on its top-level headings.
+
+Note that `cannabis.observer-wordpress` alone carries **192k tokens** of
+over-budget live docs plus a 49k policy file. Demoting more into that tree would
+be moving deck chairs; it needs splitting first.
 
 ### 3. One section dominating the file
 
-`cannabis.observer-wordpress`: `## Constraints & Working Rules` is **90% of
-`AGENTS.md` at 26,445 tokens**. `cannobserv`: `Constraints & Working Rules` 45% +
-`Architecture` 42%. When `sections[0].share` exceeds ~30%, that section is the
-finding — demote it wholesale rather than tightening the file around it.
+`cannabis.observer-wordpress`: `## Constraints & Working Rules` is **91% of
+`AGENTS.md` at 44,795 tokens** — one section larger than nine of the twelve repos'
+entire policy files. `cannobserv` splits it two ways: `Constraints & Working Rules`
+45% (11,835) plus `Architecture` 42% (11,040). When `sections[0].share` exceeds
+~30%, that section is the finding — demote it wholesale rather than tightening the
+file around it.
 
 ### 4. Rot-prone "Known Issues" sections
 
@@ -155,25 +162,41 @@ the sibling repo's GitHub URL, or inline the rule.
 
 ## Baseline: policy-file tokens, 2026-08-05
 
-| Repo | Lines | Tokens | vs 4k budget |
-|---|---:|---:|:--|
-| usa-wa | 535 | 33,028 | over |
-| cannabis.observer-wordpress | 332 | 29,183 | over |
-| observo | 560 | 17,388 | over |
-| cannobserv | 377 | 16,145 | over |
-| watcher | 536 | 12,381 | over |
-| replicator | 293 | 9,371 | over |
-| archiver | 527 | 9,063 | over |
-| power-map | 189 | 8,032 | over |
-| address-validator | 217 | 3,906 | under |
-| cli | 182 | 3,712 | under |
-| notifier | 210 | 3,353 | under |
-| wslcb-licensing-tracker | 205 | 3,245 | under |
+Counted with `count_tokens` against `claude-opus-5` — **exact, not estimated**.
+The `est` column is what the old uncalibrated `bytes/4` heuristic reported, kept
+here because the gap is the point.
 
-**~148,800 tokens** of policy file across the cohort. Note how weakly lines
-predict tokens: `power-map` is the second-smallest by lines and eighth by tokens;
-`watcher` and `usa-wa` have nearly identical line counts and differ by 20k
-tokens. This is the entire case for gating on tokens.
+| Repo | Lines | est (bytes/4) | **Exact** | Error | vs 4k |
+|---|---:|---:|---:|---:|:--|
+| usa-wa | 535 | 33,028 | **52,953** | +60% | over |
+| cannabis.observer-wordpress | 332 | 30,510 | **49,103** | +60% | over |
+| observo | 560 | 17,388 | **28,110** | +61% | over |
+| cannobserv | 377 | 16,145 | **25,949** | +60% | over |
+| watcher | 536 | 12,381 | **19,715** | +59% | over |
+| replicator | 293 | 9,371 | **14,633** | +56% | over |
+| archiver | 527 | 9,063 | **14,358** | +58% | over |
+| power-map | 189 | 8,032 | **13,298** | +65% | over |
+| address-validator | 217 | 3,906 | **6,322** | +61% | over |
+| cli | 182 | 3,712 | **6,013** | +61% | over |
+| notifier | 210 | 3,353 | **5,468** | +63% | over |
+| wslcb-licensing-tracker | 205 | 3,245 | **5,331** | +64% | over |
+| **cohort total** | | 150,134 | **241,253** | **+60%** | |
 
-`gregoryfoster/skills` itself measures 324 lines / 5,633 tokens — over budget,
-with `## Scripts` at 31%. Dogfood before sweeping the cohort.
+**241,253 tokens** of policy file across the cohort, and **all twelve are over a
+4k budget** — not the eight the estimate suggested. The four that appeared to be
+under it (`cli`, `notifier`, `address-validator`, `wslcb-licensing-tracker`) are
+all between 5.3k and 6.3k. Anything measured before this table with `bytes/4`
+should be re-measured, not scaled: the error is consistent enough (+56% to +65%)
+to be worth knowing, but not so consistent that a blanket multiplier is a
+measurement.
+
+Note how weakly lines predict tokens — the entire case for gating on tokens:
+
+- `power-map` is second-smallest by lines (189) and **eighth** by tokens (13,298).
+- `watcher` (536 lines) and `usa-wa` (535 lines) are within one line of each other
+  and **33,238 tokens apart**.
+- `wslcb-licensing-tracker` (205 lines, 5,331) and `cannabis.observer-wordpress`
+  (332 lines, 49,103) differ by 1.6× on lines and **9.2×** on tokens.
+
+`gregoryfoster/skills` itself measures 324 lines / **8,376 tokens** exact — over
+budget, with `## Scripts` at 31%. Dogfood before sweeping the cohort.

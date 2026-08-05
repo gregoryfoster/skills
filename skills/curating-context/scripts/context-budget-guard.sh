@@ -52,8 +52,10 @@ When it stays quiet:
   - the file is under budget
   - the edit REDUCED the token count — someone curating is never nagged
 
-Tokens are estimated as bytes/4. A hook must be fast and offline, so it never
-calls count_tokens; the estimate is only used to decide whether to speak.
+Tokens are estimated offline at ~2.7 bytes/token, refined per repo by
+.skills/context-token-ratio when measure-context.sh --exact has written one. A
+hook must be fast and offline, so it never calls count_tokens; the estimate only
+decides whether to speak.
 
 Logs every decision to .git/context-budget.log (truncated at 64 KiB).
 
@@ -159,10 +161,32 @@ else
   BUDGET="$(read_knob "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 fi
 
+# Offline token estimate. The divisor is bytes-per-token, defaulting to 2.7:
+# measured across 16 markdown files in this cohort (policy files, references,
+# READMEs) the real ratio sits between 2.40 and 2.69, tightly enough that one
+# constant serves. The conventional bytes/4 heuristic under-reports this content
+# by ~60% — it is calibrated for prose, not for markdown dense with paths, code
+# fences and tables — and a budget checked against it is 60% too lenient.
+# `measure-context.sh --exact` writes the repo's observed ratio to
+# .skills/context-token-ratio; when present it wins.
+BYTES_PER_TOKEN_X100=270
+if [ -f "$ROOT/.skills/context-token-ratio" ]; then
+  _r="$(head -1 "$ROOT/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
+  case "$_r" in
+    ''|.*|*.*.*) ;;
+    *.*) _w="${_r%%.*}"; _f="${_r#*.}00"
+         BYTES_PER_TOKEN_X100=$(( ${_w:-0} * 100 + 1${_f:0:2} - 100 )) ;;
+    *) BYTES_PER_TOKEN_X100=$(( _r * 100 )) ;;
+  esac
+  [ "$BYTES_PER_TOKEN_X100" -ge 100 ] || BYTES_PER_TOKEN_X100=270
+fi
+
+est_from_bytes() { echo $(( $1 * 100 / BYTES_PER_TOKEN_X100 )); }
+
 # --- measure --------------------------------------------------------------
-# bytes/4, deliberately: a hook must be fast and offline. The estimate only
-# decides whether to speak; the authoritative count is measure-context.sh --exact.
-NOW=$(( $(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0) / 4 ))
+# Offline by design: a hook must be fast. The estimate only decides whether to
+# speak; the authoritative count is measure-context.sh --exact.
+NOW=$(est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
 [ "$NOW" -gt 0 ] || exit 0
 
 # The committed version is the comparison point, so the advisory reads as "your
@@ -173,7 +197,7 @@ PREV=0
 PREV_BYTES="$(git show "HEAD:$REL" 2>/dev/null | LC_ALL=C wc -c 2>/dev/null | tr -d ' ')" || PREV_BYTES=""
 case "$PREV_BYTES" in
   ''|*[!0-9]*) PREV=0 ;;
-  *) PREV=$(( PREV_BYTES / 4 )) ;;
+  *) PREV=$(est_from_bytes "$PREV_BYTES") ;;
 esac
 
 # --- decide ---------------------------------------------------------------

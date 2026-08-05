@@ -60,8 +60,9 @@ Two conditions must **both** hold:
 - it is larger than its committed (`HEAD`) version.
 
 Requiring both is the whole design. Over-budget alone would fire on every edit to
-a file that is already over — which is the state eight of twelve cohort repos are
-in today, and a hook that fires on every edit is one everybody turns off. An
+a file that is already over — which, measured exactly, is the state **all twelve**
+cohort repos are in today, and a hook that fires on every edit is one everybody
+turns off. An
 increase alone would fire on healthy growth inside budget. Together they mean the
 guard speaks exactly when someone is making a known-bad number worse.
 
@@ -113,11 +114,15 @@ reports "the guard never fires".
 
 ## Deliberate limits
 
-- **`bytes/4`, never `count_tokens`.** A hook runs on every edit and must be fast
-  and offline. The estimate only decides whether to speak; `measure-context.sh
-  --exact` remains the authoritative count. This means the guard can be off by
-  10–20% at the margin — acceptable for a nudge, which is why it never gates
-  anything.
+- **Offline estimate, never `count_tokens`.** A hook runs on every edit and must
+  be fast, so it divides bytes by a calibrated ratio rather than calling the API.
+  The default is 2.7 bytes/token and `measure-context.sh --exact` refines it per
+  repo into `.skills/context-token-ratio`; on this repo the calibrated estimate
+  reproduces the exact count to the token. It is still an estimate — it only
+  decides whether to speak, which is why the guard never gates anything. Note
+  what the earlier `bytes/4` divisor cost: it under-reports this cohort's markdown
+  by 56–65%, so with a 4,000 budget the guard was silently tolerating a real file
+  of nearly 10,000 tokens.
 - **No writes to the repo.** The guard measures and reports. Only the ledger and
   the skill's own phases mutate tracked files.
 - **Symlink resolution on both sides.** The repo root and the incoming

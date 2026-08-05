@@ -39,8 +39,8 @@ and the commit body names where it went.
 
 | Thought | Reality |
 |---|---|
-| "It's under 200 lines, so it's fine" | Line count is not the budget. In this cohort `wslcb-licensing-tracker` is 205 lines / ~3.2k tokens and `cannabis.observer-wordpress` is 332 lines / ~29k. Both pass a line cap; one costs 9× the other. Gate on tokens. |
-| "I'll move the bloat into `docs/`" | Only helps if the doc is *smaller than the thing an agent would otherwise read*. Demoting 26k tokens into one `docs/API.md` moves the cost, it doesn't remove it. Demotion is paired with a per-doc budget. |
+| "It's under 200 lines, so it's fine" | Line count is not the budget. Measured exactly, `wslcb-licensing-tracker` is 205 lines / **5,331 tokens** and `cannabis.observer-wordpress` is 332 lines / **49,103**. Both pass a line cap; one costs 9.2× the other. `watcher` and `usa-wa` differ by one line and 33,238 tokens. Gate on tokens. |
+| "I'll move the bloat into `docs/`" | Only helps if the doc is *smaller than the thing an agent would otherwise read*. `cannabis.observer-wordpress` already carries 192k tokens of over-budget live docs; demoting its 44.8k `Constraints` section into one of them moves the cost, it doesn't remove it. Demotion is paired with a per-doc budget. |
 | "This section looks redundant, cutting it" | Redundant with *what*? Verbatim duplication is a warrant; "feels like boilerplate" is not. Quote both copies or relocate instead. |
 | "The path doesn't exist, so the claim is stale" | A policy file legitimately names paths that don't exist locally — illustrative templates, naming conventions, downstream consumer paths. `verify-facts.sh` marks those UNVERIFIABLE for exactly this reason. Deleting on UNVERIFIABLE is how real guidance gets destroyed. |
 | "I'll write the architecture overview more concisely" | The ETH Zurich evaluation found codebase overviews did **not** help agents reach relevant files faster. Tightening a section that shouldn't be inline at all is wasted work — classify it first. |
@@ -78,10 +78,16 @@ variable — each Bash invocation runs in a fresh shell.
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact > /tmp/context-baseline.json
 ```
 
-`--exact` counts via the Anthropic `count_tokens` endpoint, the only accurate
-tokenizer for Claude models; without a key it degrades to a `bytes/4` estimate
-with a WARN. Never substitute `tiktoken` — it is OpenAI's tokenizer and
-undercounts Claude by 15–20%, more on code.
+`--exact` counts via the Anthropic `count_tokens` endpoint — the only accurate
+tokenizer for Claude models, and **free to call**. Run it always; without a
+credential it degrades to a calibrated offline estimate with a WARN. Never
+substitute `tiktoken` — it is OpenAI's tokenizer and undercounts Claude badly.
+
+An exact run also writes the repo's observed bytes-per-token ratio to
+`.skills/context-token-ratio`, which is what keeps the offline estimators (the
+write guard, `context-delta.sh`) honest between runs. The conventional `bytes/4`
+heuristic under-reports this cohort's markdown by 56–65%, so an uncalibrated
+estimate would let a 4k budget pass a 10k file in silence.
 
 Read the baseline before touching anything. Four numbers drive the whole run:
 
