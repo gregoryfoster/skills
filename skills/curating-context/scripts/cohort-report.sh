@@ -19,7 +19,9 @@ Options:
   --repos LIST       Space-separated owner/repo slugs, read via gh api.
   --local LIST       Space-separated local repo roots, read from disk.
   --cohort-file PATH File of owner/repo slugs or local paths, one per line;
-                     blank lines and # comments ignored. Default, when no
+                     blank lines and # comments ignored. An entry may carry
+                     `wave:` and `pair:` annotations, which this script reports
+                     and score-cohort.sh acts on. Default, when no
                      --repos/--local is given: .skills/cohort
   --ledger PATH      Ledger path within each repo.
                      Default: .skills/context-metrics.jsonl
@@ -50,7 +52,8 @@ missing telemetry is itself the finding on a weekly cadence.
 Exit codes:
   0  report produced (repos without ledgers are reported, not fatal)
   1  usage error, or no repos resolved
-  2  infrastructure failure (gh missing when required, python3 missing)
+  2  infrastructure failure (gh missing when required, python3 missing,
+     _context-lib.sh missing)
 USAGE
 }
 
@@ -81,6 +84,26 @@ esac
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
+# --- shared library -------------------------------------------------------
+# After argument parsing, deliberately: the roster parser and the ledger fetch
+# are shared with score-cohort.sh so the two cannot disagree about which repo is
+# in which arm of the experiment.
+_self="${BASH_SOURCE[0]}"
+_n=0
+while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
+  _t="$(readlink "$_self" 2>/dev/null)" || break
+  case "$_t" in
+    /*) _self="$_t" ;;
+    *) _self="$(dirname "$_self")/$_t" ;;
+  esac
+  _n=$(( _n + 1 ))
+done
+_libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
+[ -n "$_libdir" ] && [ -f "$_libdir/_context-lib.sh" ] || {
+  echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
+# shellcheck source=_context-lib.sh
+. "$_libdir/_context-lib.sh"
+
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 
@@ -88,79 +111,63 @@ trap 'rm -rf "$TMP"' EXIT
 if [ -z "$REPOS" ] && [ -z "$LOCALS" ] && [ -z "$COHORT_FILE" ]; then
   COHORT_FILE=".skills/cohort"
 fi
+: >"$TMP/roster"
+for d in $LOCALS; do
+  printf 'local%s%s%s%s\n' "$CTX_US" "$d" "$CTX_US" "$CTX_US" >>"$TMP/roster"
+done
+for s in $REPOS; do
+  printf 'repo%s%s%s%s\n' "$CTX_US" "$s" "$CTX_US" "$CTX_US" >>"$TMP/roster"
+done
 if [ -n "$COHORT_FILE" ]; then
   if [ ! -f "$COHORT_FILE" ]; then
     echo "ERROR no cohort file at $COHORT_FILE (pass --repos or --local instead)" >&2
     exit 1
   fi
-  while IFS= read -r entry; do
-    entry="${entry%%#*}"
-    entry="$(printf '%s' "$entry" | tr -d '[:space:]')"
-    [ -n "$entry" ] || continue
-    case "$entry" in
-      /*|.*|~*) LOCALS="$LOCALS $entry" ;;
-      *) REPOS="$REPOS $entry" ;;
-    esac
-  done <"$COHORT_FILE"
+  ctx_read_roster "$COHORT_FILE" >>"$TMP/roster"
 fi
 
-if [ -z "$REPOS$LOCALS" ]; then
+if [ ! -s "$TMP/roster" ]; then
   echo "ERROR no repos resolved" >&2
   exit 1
 fi
 
+if grep -q "^repo$CTX_US" "$TMP/roster" && ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR gh is required to read owner/repo entries (use --local for on-disk repos)" >&2
+  exit 2
+fi
+
 : >"$TMP/all.jsonl"
 
-# Local ledgers first — no network, so a partial network failure still yields
-# whatever is on disk.
-for d in $LOCALS; do
-  name="$(basename "$d")"
-  if [ -f "$d/$LEDGER" ]; then
-    # Stamp the source repo onto each row: a ledger's own `repo` field is the
-    # basename recorded at write time, which drifts if a checkout is renamed.
+# Local entries first — no network, so a partial network failure still yields
+# whatever is on disk. Two passes rather than one, because a roster file
+# interleaves the two kinds in whatever order its author wrote them.
+for want in local repo; do
+  while IFS="$CTX_US" read -r kind entry wave pair; do
+    [ "$kind" = "$want" ] || continue
+    # A ledger's own `repo` field is the basename recorded at write time, which
+    # drifts if a checkout is renamed. Stamp the roster entry on instead — and
+    # the wave and pair with it, so the arm a repo belongs to is visible in the
+    # roll-up rather than only inside the gate.
+    #
+    # The FULL entry, not its basename: two entries sharing one (OrgA/cli and
+    # OrgB/cli, or two checkouts of the same project) would merge into a single
+    # record whose rows come from both ledgers. The reader shortens it for
+    # display when no other entry shares the basename.
+    RC=0
+    ctx_fetch_ledger "$kind" "$entry" "$LEDGER" "$BRANCH" "$TMP/raw" || RC=$?
+    case "$RC" in
+      3) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "MISSING" >>"$TMP/all.jsonl"
+         continue ;;
+      0) ;;
+      *) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "ERROR" >>"$TMP/all.jsonl"
+         continue ;;
+    esac
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      printf '%s\t%s\n' "$name" "$line" >>"$TMP/all.jsonl"
-    done <"$d/$LEDGER"
-  else
-    printf '%s\t%s\n' "$name" "MISSING" >>"$TMP/all.jsonl"
-  fi
-done
-
-if [ -n "$REPOS" ]; then
-  if ! command -v gh >/dev/null 2>&1; then
-    echo "ERROR gh is required for --repos (use --local for on-disk repos)" >&2
-    exit 2
-  fi
-  for slug in $REPOS; do
-    name="${slug##*/}"
-    ref=""
-    [ -n "$BRANCH" ] && ref="?ref=$BRANCH"
-    # gh api prints nothing AND exits non-zero on 404, so an empty-output test
-    # alone cannot tell "absent" from "empty". Capture both and grep the body
-    # for a 404 marker before deciding.
-    GH_RC=0
-    gh api "repos/$slug/contents/$LEDGER$ref" -H "Accept: application/vnd.github.raw" \
-      >"$TMP/raw" 2>"$TMP/gh.err" || GH_RC=$?
-    if [ "$GH_RC" -ne 0 ]; then
-      if grep -q '404' "$TMP/gh.err"; then
-        printf '%s\t%s\n' "$name" "MISSING" >>"$TMP/all.jsonl"
-      else
-        echo "WARN $slug: gh api failed (exit $GH_RC): $(tr -d '\n' <"$TMP/gh.err")" >&2
-        printf '%s\t%s\n' "$name" "ERROR" >>"$TMP/all.jsonl"
-      fi
-      continue
-    fi
-    if [ ! -s "$TMP/raw" ]; then
-      printf '%s\t%s\n' "$name" "MISSING" >>"$TMP/all.jsonl"
-      continue
-    fi
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      printf '%s\t%s\n' "$name" "$line" >>"$TMP/all.jsonl"
+      printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "$line" >>"$TMP/all.jsonl"
     done <"$TMP/raw"
-  done
-fi
+  done <"$TMP/roster"
+done
 
 python3 - "$TMP/all.jsonl" "$FORMAT" <<'PY'
 import json
@@ -172,32 +179,70 @@ repos = {}
 order = []
 for raw in open(src, encoding="utf-8"):
     raw = raw.rstrip("\n")
-    if not raw or "\t" not in raw:
+    if not raw or raw.count("\t") < 3:
         continue
-    name, payload = raw.split("\t", 1)
-    if name not in repos:
-        repos[name] = {"rows": [], "status": "ok"}
-        order.append(name)
+    key, wave, pair, payload = raw.split("\t", 3)
+    if key not in repos:
+        repos[key] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
+        order.append(key)
     if payload in ("MISSING", "ERROR"):
-        repos[name]["status"] = "no ledger" if payload == "MISSING" else "unreadable"
+        repos[key]["status"] = "no ledger" if payload == "MISSING" else "unreadable"
         continue
     try:
-        repos[name]["rows"].append(json.loads(payload))
+        repos[key]["rows"].append(json.loads(payload))
     except ValueError:
-        repos[name]["status"] = "malformed rows"
+        repos[key]["status"] = "malformed rows"
+
+# Short display names, unless two roster entries share a basename — in which
+# case both are shown in full. A table naming two different repos identically is
+# worse than a wide one.
+basenames = {}
+for key in order:
+    basenames.setdefault(key.rstrip("/").rsplit("/", 1)[-1], []).append(key)
+display = {
+    key: (short if len(keys) == 1 else key)
+    for short, keys in basenames.items() for key in keys
+}
 
 records = []
-for name in order:
-    info = repos[name]
+for key in order:
+    info = repos[key]
+    name = display[key]
     rows = sorted(info["rows"], key=lambda r: r.get("ts") or "")
     if not rows:
         records.append({
             "repo": name, "status": info["status"], "latest": None, "tokens": None,
             "net": None, "net_from": None, "net_why": None, "runs": 0,
             "orphans": None, "dead": None, "skill_version": None,
+            "wave": info["wave"] or None, "pair": info["pair"] or None,
             "best_actions": None, "best_delta": None,
         })
         continue
+    # PRIMARY POLICY FILE: the one with the most rows, ties broken by whichever
+    # was measured most recently. A ledger may track more than one
+    # (record-telemetry.sh keys its own deltas by file), and mixing them makes
+    # `net` span two files and report a change for one that never moved — the
+    # class of error the method-change anchoring exists to prevent.
+    #
+    # Most-recent alone was the first rule and it was too fragile: one incidental
+    # baseline row for docs/GUIDE.md collapsed a repo that had curated AGENTS.md
+    # 50,000 -> 6,800 to a headline of 4,000 tokens, 1 run and no net — and that
+    # 4,000 then fed the cohort total. Row count is what a stray append cannot
+    # flip.
+    #
+    # THIS RULE IS SHARED WITH score-cohort.sh AND MUST STAY IDENTICAL. When the
+    # two disagreed, one ledger produced two irreconcilable pictures of the same
+    # repo: the gate scored a 100-token prune on a secondary file while this
+    # reported the 43,000-token curation on the primary one. A test pins them.
+    #
+    # `runs` counts runs for this file, which is also the more useful number.
+    counts, last_seen = {}, {}
+    for i, r in enumerate(rows):
+        f = r.get("file")
+        counts[f] = counts.get(f, 0) + 1
+        last_seen[f] = i           # rows is ascending by ts, so later index wins
+    primary = max(counts, key=lambda f: (counts[f], last_seen[f]))
+    rows = [r for r in rows if r.get("file") == primary]
     latest = rows[-1]
     # The best single reduction and what accompanied it — the roll-up's reason
     # for existing: which optimisation actually moved the number, per repo.
@@ -245,6 +290,8 @@ for name in order:
         "orphans": latest.get("docs_orphaned"),
         "dead": latest.get("links_dead"),
         "skill_version": latest.get("skill_version"),
+        "wave": info["wave"] or None,
+        "pair": info["pair"] or None,
         "best_actions": ", ".join(best.get("actions") or []) or "(untagged)" if best else None,
         "best_delta": best.get("delta_tokens") if best else None,
     })
@@ -257,11 +304,12 @@ records.sort(key=lambda r: -(r["tokens"] or 0))
 
 if fmt == "tsv":
     print("repo\tlatest\ttokens\tnet\tnet_from\tnet_why\truns\torphans\tdead"
-          "\tskill_version\tbest_delta\tbest_actions")
+          "\tskill_version\twave\tpair\tbest_delta\tbest_actions")
     for r in records:
         print("\t".join("" if r[k] is None else str(r[k]) for k in
               ("repo", "latest", "tokens", "net", "net_from", "net_why", "runs",
-               "orphans", "dead", "skill_version", "best_delta", "best_actions")))
+               "orphans", "dead", "skill_version", "wave", "pair", "best_delta",
+               "best_actions")))
     sys.exit(0)
 
 def cell(v, dash="-"):
@@ -307,6 +355,28 @@ if versions:
         print(f"  {v}: {', '.join(sorted(versions[v]))}")
     if len(versions) == 1:
         print("  one version across the cohort — a baseline, not a comparison.")
+
+# The roster's wave assignment, if it carries one. Printed here rather than only
+# inside score-cohort.sh because the split is a property of the cohort, and the
+# roll-up is where someone looks to see what the cohort is doing.
+waves = {}
+for r in records:
+    if r["wave"]:
+        waves.setdefault(r["wave"], []).append(r["repo"])
+if waves:
+    print("\nvalidation split (roster wave assignment):")
+    for wv in sorted(waves):
+        arm = sorted(waves[wv])
+        adopted = sorted(
+            r["repo"] for r in records
+            if r["wave"] == wv and r["skill_version"]
+        )
+        print(f"  wave {wv}: {len(arm)} repos, {len(adopted)} adopted"
+              f"{' — ' + ', '.join(adopted) if adopted else ''}")
+    unassigned = [r["repo"] for r in records if not r["wave"]]
+    if unassigned:
+        print(f"  unassigned: {', '.join(sorted(unassigned))}")
+    print("  score the arms against each other with score-cohort.sh.")
 untagged = [r["repo"] for r in records if r["runs"] and not r["skill_version"]]
 if untagged:
     print(f"\nno skill_version recorded (rows predate the field): {', '.join(untagged)}")

@@ -38,8 +38,10 @@ GUARD = SCRIPTS / "context-budget-guard.sh"
 DELTA = SCRIPTS / "context-delta.sh"
 MEASURE = SCRIPTS / "measure-context.sh"
 COHORT = SCRIPTS / "cohort-report.sh"
+SCORE = SCRIPTS / "score-cohort.sh"
 INSTALL = SCRIPTS / "install-guard.sh"
 LIB = SCRIPTS / "_context-lib.sh"
+RECORD = SCRIPTS / "record-telemetry.sh"
 
 # ~2.7 bytes/token, so this is comfortably over the 6000 policy budget.
 POLICY_LINE = "- a policy line naming `some/path.py` and explaining why\n"
@@ -1069,3 +1071,924 @@ class TestSkillVersionAttribution:
             capture_output=True, text=True, env=_clean_env(), timeout=30,
         )
         assert "a baseline, not a comparison" in result.stdout, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# The validation gate (#94)
+# ---------------------------------------------------------------------------
+
+
+def _ledger_row(**kw) -> str:
+    row = {
+        "ts": "2026-08-05", "repo": kw.get("repo", "x"), "file": "AGENTS.md",
+        "tokens": None, "tokens_exact": True, "skill_version": None,
+        "skill_commit": None, "budget": 6000, "docs_orphaned": 0,
+        "links_dead": 0, "no_loss": None, "actions": [],
+    }
+    row.update(kw)
+    return json.dumps(row, sort_keys=True)
+
+
+def _arm(root: Path, name: str, before: int, after: int | None, version: str,
+         **kw) -> None:
+    """One cohort member with a baseline row and, optionally, a curation run."""
+    d = root / name / ".skills"
+    d.mkdir(parents=True, exist_ok=True)
+    rows = [_ledger_row(repo=name, tokens=before, actions=["baseline:exact"],
+                        docs_orphaned=kw.get("orph_before", 0))]
+    if after is not None:
+        rows.append(_ledger_row(
+            repo=name, tokens=after, actions=["demote:Big"],
+            skill_version=version, skill_commit="deadbee",
+            no_loss=kw.get("no_loss", "ok"),
+            links_dead=kw.get("links_dead", 0),
+            docs_orphaned=kw.get("orph_after", 0),
+        ))
+    (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
+
+
+def _roster(root: Path, spec: list[tuple[str, str, str]]) -> Path:
+    """spec entries are (name, wave, pair)."""
+    path = root / "cohort"
+    path.write_text("".join(
+        f"{root / name}  wave:{wave} pair:{pair}\n" for name, wave, pair in spec
+    ))
+    return path
+
+
+def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(SCORE), "--cohort-file", str(roster),
+         "--treatment", "b", "--control", "a", *args],
+        capture_output=True, text=True, env=_clean_env(), timeout=60,
+    )
+
+
+def _three_good_pairs(root: Path, **treatment_kw) -> Path:
+    """Three matched pairs where the treatment (wave b, v1.2) beats the
+    control (wave a, v1.1) on every one."""
+    # (control before, control after, treatment before, treatment after).
+    # Closures: 69.6/86.0, 72.7/85.0, 76.9/87.5 — the treatment takes all three.
+    pairs = [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000),
+             (19000, 9000, 14000, 7000)]
+    spec = []
+    for i, (cb, ca, tb, ta) in enumerate(pairs, start=1):
+        _arm(root, f"ctl{i}", cb, ca, "1.1")
+        _arm(root, f"trt{i}", tb, ta, "1.2", **treatment_kw)
+        spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
+    return _roster(root, spec)
+
+
+class TestValidationGate:
+    """score-cohort.sh is the mechanism #94 asked for: the cohort as a held-out
+    validation split, with a binary adopt/reject gate rather than judgement."""
+
+    def test_sweep_adopts(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "verdict: ADOPT" in r.stdout
+        assert "won all 3 informative pairs" in r.stdout
+
+    def test_one_lost_pair_rejects(self, tmp_path: Path):
+        """Adoption requires a win on EVERY informative pair. A majority rule at
+        this sample size is a rule for adopting noise."""
+        roster = _three_good_pairs(tmp_path)
+        # Make the treatment lose pair 3 outright.
+        _arm(tmp_path, "trt3", 14000, 13000, "1.2")
+        r = _score(roster)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "verdict: REJECT" in r.stdout
+        assert "won 2 of 3" in r.stdout
+        assert "pair 3 -> control" in r.stdout
+
+    def test_a_tie_is_not_a_win(self, tmp_path: Path):
+        """'No measurable difference' is a rejection, not a pass."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "ctl3", 19000, 7000, "1.1")
+        _arm(tmp_path, "trt3", 19000, 7000, "1.2")
+        r = _score(roster)
+        assert r.returncode == 3, r.stdout
+        assert "pair 3 -> tie" in r.stdout
+
+    @pytest.mark.parametrize("kw,marker", [
+        ({"no_loss": "failed"}, "no_loss=failed"),
+        ({"links_dead": 2}, "links_dead=2"),
+        ({"orph_before": 0, "orph_after": 4}, "docs_orphaned 0->4"),
+    ])
+    def test_safety_gate_vetoes_a_winning_score(self, tmp_path: Path, kw, marker):
+        """A change that reduces tokens by dropping content, breaking links, or
+        orphaning docs is rejected however good its numbers are. There is no
+        exchange rate at which that trade is acceptable, so the gate is a veto
+        rather than a term in a weighted sum."""
+        r = _score(_three_good_pairs(tmp_path, **kw))
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "verdict: REJECT" in r.stdout
+        assert "safety gate tripped in the treatment arm" in r.stdout
+        assert marker in r.stdout
+
+    @pytest.mark.parametrize("verdict,marker", [
+        (None, "no_loss=not recorded"),
+        ("skipped", "no_loss=skipped"),
+    ])
+    def test_missing_no_loss_never_adopts(self, tmp_path: Path, verdict, marker):
+        """A run that skipped Phase 6 must not clear a Phase 6 gate by silence.
+
+        It blocks adoption like a failure, but it is INCONCLUSIVE rather than
+        REJECT: nothing was refuted, the experiment was run without its safety
+        check. Calling it a rejection would file the idea in
+        rejected-changes.md as tested and beaten when it was neither."""
+        r = _score(_three_good_pairs(tmp_path, no_loss=verdict))
+        assert r.returncode == 5, r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+        assert "safety could not be verified in the treatment arm" in r.stdout
+        assert marker in r.stdout
+        assert "re-run those curations with --no-loss" in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
+
+    def test_control_arm_failure_is_reported_not_fatal(self, tmp_path: Path):
+        """A gate tripping under the CURRENT version is a finding about today,
+        not a reason to refuse tomorrow's proposal."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "ctl2", 28000, 12000, "1.1", no_loss="failed")
+        # A genuine recorded failure, not a missing verdict — see
+        # test_control_arm_missing_verdict_is_not_called_a_failure.
+        # Pair 2 drops out as uninformative, so --min-pairs 2 keeps the run
+        # decidable and the assertion stays on the claim being made: a failure
+        # under the current version does not block adoption of the next one.
+        r = _score(roster, "--min-pairs", "2")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "verdict: ADOPT" in r.stdout
+        assert "control-arm safety failures" in r.stdout
+        assert "ctl2" in r.stdout
+        assert "not a reason to reject the proposal" in r.stdout
+
+    def test_saturated_pair_is_uninformative_not_a_tie(self, tmp_path: Path):
+        """Closure caps at 1.0, so when both arms reach budget the metric cannot
+        express a difference. Scoring that as a tie would make the sweep rule
+        unsatisfiable for any pair starting close to budget."""
+        _arm(tmp_path, "ctl1", 6200, 5000, "1.1")
+        _arm(tmp_path, "trt1", 6100, 4000, "1.2")
+        roster = _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])
+        r = _score(roster, "--min-pairs", "1")
+        assert "saturates" in r.stdout, r.stdout
+        assert "-> tie" not in r.stdout
+        assert r.returncode == 5
+
+    def test_no_gap_pair_is_uninformative(self, tmp_path: Path):
+        """A repo already under budget has no gap to close; it is not a 0 or a 1."""
+        _arm(tmp_path, "ctl1", 5400, 5200, "1.1")
+        _arm(tmp_path, "trt1", 5300, 5100, "1.2")
+        roster = _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])
+        r = _score(roster, "--min-pairs", "1")
+        assert "no budget gap to close" in r.stdout, r.stdout
+        assert r.returncode == 5
+
+    def test_same_version_in_both_arms_is_inconclusive(self, tmp_path: Path):
+        """A uniform cohort is a baseline, not a comparison — and must not read
+        as a rejection of the thing it never tested."""
+        pairs = [(52000, 12000, 49000, 20000), (28000, 8000, 26000, 12000),
+                 (19000, 7000, 14000, 9000)]
+        spec = []
+        for i, (cb, ca, tb, ta) in enumerate(pairs, start=1):
+            _arm(tmp_path, f"ctl{i}", cb, ca, "1.1")
+            _arm(tmp_path, f"trt{i}", tb, ta, "1.1")
+            spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
+        r = _score(_roster(tmp_path, spec))
+        assert r.returncode == 5, r.stdout
+        assert "both arms ran the same version" in r.stdout
+
+    def test_inconclusive_is_not_filed_as_a_rejection(self, tmp_path: Path):
+        """Recording a non-result in rejected-changes.md would teach a later
+        reader that the idea was tested and failed."""
+        _arm(tmp_path, "ctl1", 52000, 12000, "1.1")
+        _arm(tmp_path, "trt1", 49000, 20000, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]))
+        assert r.returncode == 5
+        assert "does not belong in" in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
+
+    def test_reject_points_at_the_rejection_buffer(self, tmp_path: Path):
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "trt3", 14000, 13000, "1.2")
+        r = _score(roster)
+        assert "references/rejected-changes.md" in r.stdout
+
+    def test_baseline_only_repo_is_unscorable_not_scored(self, tmp_path: Path):
+        """A baseline row is a measurement, not a curation."""
+        _arm(tmp_path, "ctl1", 52000, None, "1.1")
+        _arm(tmp_path, "trt1", 49000, 20000, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "no attributed curation run" in r.stdout
+
+    def test_unannotated_roster_refuses_rather_than_reporting_nothing(
+            self, tmp_path: Path):
+        """An empty comparison must not read as an experiment that found nothing."""
+        path = tmp_path / "cohort"
+        path.write_text("CannObserv/archiver\nCannObserv/notifier\n")
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file", str(path)],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 1
+        assert "no wave assignment" in r.stderr
+        assert "wave:a pair:1" in r.stderr
+
+    def test_same_wave_for_both_arms_is_a_usage_error(self, tmp_path: Path):
+        r = subprocess.run(
+            ["bash", str(SCORE), "--treatment", "a", "--control", "a"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 1
+        assert "same wave" in r.stderr
+
+    def test_json_format_carries_the_verdict_and_the_pairs(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path), "--format", "json")
+        payload = json.loads(r.stdout)
+        assert payload["verdict"] == "ADOPT"
+        assert payload["treatment_versions"] == ["1.2"]
+        assert payload["control_versions"] == ["1.1"]
+        assert payload["informative_pairs"] == 3
+        assert len(payload["pairs"]) == 3
+
+    def test_sweep_below_significance_says_so(self, tmp_path: Path):
+        """Three pairs is p=0.125. The gate must not let a sweep read as proof."""
+        r = _score(_three_good_pairs(tmp_path))
+        assert "p=0.125" in r.stdout
+        assert "suggestive rather than significant" in r.stdout
+
+
+class TestRosterAnnotations:
+    """The roster is parsed by one function in the library, because two parsers
+    would be two opinions about the experiment's own assignment."""
+
+    def test_empty_wave_does_not_shift_the_pair_field(self, tmp_path: Path):
+        """The reason the roster is not tab-separated: `IFS=$'\\t' read` collapses
+        runs of tabs, so an unassigned wave would silently slide the pair value
+        into the wave variable and put a repo in the wrong arm."""
+        path = tmp_path / "cohort"
+        path.write_text("owner/one  pair:7\nowner/two  wave:b pair:7\n")
+        out = subprocess.run(
+            ["bash", "-c",
+             f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert out.stdout.splitlines() == ["repo|owner/one||7", "repo|owner/two|b|7"]
+
+    def test_unknown_annotation_warns_and_is_ignored(self, tmp_path: Path):
+        path = tmp_path / "cohort"
+        path.write_text("owner/one  wave:a cohort:x\n")
+        out = subprocess.run(
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert "unknown roster annotation" in out.stderr
+        assert out.stdout.strip() == "repo|owner/one|a|"
+
+    def test_comments_and_local_paths_still_parse(self, tmp_path: Path):
+        path = tmp_path / "cohort"
+        path.write_text("# a comment\n\n/abs/path  wave:a pair:1\nowner/two\n")
+        out = subprocess.run(
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert out.stdout.splitlines() == ["local|/abs/path|a|1", "repo|owner/two||"]
+
+    def test_shipped_roster_is_fully_paired(self):
+        """Every cohort member is in exactly one pair, each pair holds one repo
+        from each arm, and the arms are the same size. A half-assigned roster
+        would produce a verdict from whichever repos happened to be annotated."""
+        root = Path(__file__).resolve().parent.parent.parent
+        out = subprocess.run(
+            ["bash", "-c",
+             f'. "{LIB}"; ctx_read_roster "{root / ".skills" / "cohort"}"'],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        rows = [line.split("\x1f") for line in out.stdout.splitlines()]
+        assert len(rows) == 12
+        assert all(wave in ("a", "b") and pair for _, _, wave, pair in rows)
+        by_pair: dict[str, list[str]] = {}
+        for _, _, wave, pair in rows:
+            by_pair.setdefault(pair, []).append(wave)
+        assert len(by_pair) == 6
+        assert all(sorted(v) == ["a", "b"] for v in by_pair.values())
+
+    def test_rollup_reports_the_split(self, tmp_path: Path):
+        """The split is a property of the cohort, so it belongs in the roll-up
+        and not only inside the gate."""
+        _arm(tmp_path, "one", 9000, 5000, "1.1")
+        _arm(tmp_path, "two", 9000, None, "1.1")
+        roster = _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])
+        r = subprocess.run(
+            ["bash", str(COHORT), "--cohort-file", str(roster)],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 0, r.stderr
+        assert "validation split" in r.stdout
+        assert "wave a: 1 repos, 1 adopted" in r.stdout
+        assert "wave b: 1 repos, 0 adopted" in r.stdout
+
+
+class TestNoLossOnTheRow:
+    """--no-loss is what puts Phase 6's verdict where the gate can read it."""
+
+    def test_verdict_lands_on_the_row(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=10)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --no-loss ok'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["no_loss"] == "ok"
+
+    def test_absent_flag_records_null_not_ok(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=10)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["no_loss"] is None
+
+    def test_unrecognised_verdict_is_refused(self, tmp_path: Path):
+        """A gate reads anything but 'ok' as not-ok, so a typo would be a silent
+        permanent failure — and a leniently-normalised 'OK' a silent pass."""
+        repo = _repo(tmp_path, policy_lines=10)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --no-loss OK'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert out.returncode == 1
+        assert "must be ok, failed, or skipped" in out.stderr
+
+
+class TestValidationGateRoundSix:
+    """Regressions found reviewing the gate: each of these produced a verdict
+    that was wrong rather than merely unhelpful."""
+
+    def test_before_state_comes_from_the_same_policy_file(self, tmp_path: Path):
+        """A ledger may track more than one policy file. Taking the row that
+        merely happens to precede the curation fabricated the before-state: a
+        repo that really went 50,000 -> 9,000 scored -2900% off an unrelated
+        file's 6,100 and handed the pair to the other arm."""
+        d = tmp_path / "ctl1" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="ctl1", tokens=50000, actions=["baseline:exact"]),
+            _ledger_row(repo="ctl1", tokens=6100, file="sub/AGENTS.md",
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="ctl1", tokens=9000, actions=["demote:X"],
+                        skill_version="1.1", no_loss="ok"),
+        ]) + "\n")
+        _arm(tmp_path, "trt1", 49000, 9500, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        ctl = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
+        assert ctl["before"] == 50000, ctl
+        # 50,000 -> 9,000 against a 6,000 budget is 93.2% closure, so the
+        # control wins this pair and the treatment must not be adopted.
+        assert round(ctl["closure"], 3) == round((44000 - 3000) / 44000, 3)
+        assert json.loads(r.stdout)["verdict"] == "REJECT"
+
+    def test_min_pairs_zero_is_refused(self, tmp_path: Path):
+        """`--min-pairs 0` let the sweep test read `0 == 0` and adopt on no
+        evidence whatever — a vacuous pass in the control that exists to
+        prevent them."""
+        r = _score(_three_good_pairs(tmp_path), "--min-pairs", "0")
+        assert r.returncode == 1
+        assert "at least 1" in r.stderr
+
+    def test_zero_informative_pairs_never_adopts(self, tmp_path: Path):
+        """Belt to --min-pairs' braces: the sweep branch is guarded on its own,
+        so the two failures cannot line up again."""
+        _arm(tmp_path, "ctl1", 6200, 5000, "1.1")
+        _arm(tmp_path, "trt1", 6100, 4000, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "no informative pairs" in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_control_arm_missing_verdict_is_not_called_a_failure(
+            self, tmp_path: Path):
+        """'Failure' in the control-arm report means the shipped version did
+        something wrong. A run nobody checked is not that, and labelling it so
+        is the sort of line that gets quoted in an issue."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "ctl2", 28000, 12000, "1.1", no_loss=None)
+        r = _score(roster, "--min-pairs", "2")
+        assert "control-arm runs with no safety verdict" in r.stdout, r.stdout
+        assert "not a failure" in r.stdout
+        assert "control-arm safety failures" not in r.stdout
+
+    def test_arm_split_across_versions_is_refused(self, tmp_path: Path):
+        """'Adopt only if strictly better' presumes ONE proposal. A sweep could
+        otherwise be carried by whichever version drew the easier pairs."""
+        for i, (cb, ca, tb, ta) in enumerate(
+                [(50000, 20000, 49000, 12000), (30000, 14000, 29000, 9000)],
+                start=1):
+            _arm(tmp_path, f"ctl{i}", cb, ca, "1.1")
+            _arm(tmp_path, f"trt{i}", tb, ta, "1.2" if i == 1 else "1.9")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1"),
+                                      ("ctl2", "a", "2"), ("trt2", "b", "2")]),
+                   "--min-pairs", "2")
+        assert r.returncode == 5, r.stdout
+        assert "split across versions" in r.stdout
+        assert "no single change to adopt" in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_basename_collision_keeps_repos_distinct(self, tmp_path: Path):
+        """OrgA/cli and OrgB/cli merged into one record, concatenating two
+        ledgers and reporting an arm as having no attributed run when it had
+        one — a diagnosis that sends someone hunting a ledger that exists."""
+        (tmp_path / "OrgA").mkdir()
+        (tmp_path / "OrgB").mkdir()
+        _arm(tmp_path, "OrgA/cli", 50000, 9000, "1.1")
+        _arm(tmp_path, "OrgB/cli", 49000, 12000, "1.2")
+        roster = _roster(tmp_path, [("OrgA/cli", "a", "1"),
+                                    ("OrgB/cli", "b", "1")])
+        r = _score(roster, "--min-pairs", "1", "--format", "json")
+        payload = json.loads(r.stdout)
+        assert len(payload["repos"]) == 2
+        assert payload["treatment_versions"] == ["1.2"]
+        assert payload["control_versions"] == ["1.1"]
+        # Ambiguous basenames are shown in full rather than identically.
+        assert {x["repo"] for x in payload["repos"]} == {
+            str(tmp_path / "OrgA/cli"), str(tmp_path / "OrgB/cli")}
+
+    def test_unambiguous_basenames_stay_short(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path), "--format", "json")
+        assert {x["repo"] for x in json.loads(r.stdout)["repos"]} == {
+            "ctl1", "ctl2", "ctl3", "trt1", "trt2", "trt3"}
+
+    def test_inverted_arms_are_detected_and_refuse_to_reject(self, tmp_path: Path):
+        """Wave A adopts first and holds the OLDER version, so running the
+        script bare during round one inverts the comparison.
+
+        Detection alone was not enough: the WARN printed at the top and the
+        verdict then rejected the winning change and told the reader to file it
+        in rejected-changes.md, twenty lines below the warning saying not to
+        trust the result. A rejection entry is permanent and shapes future
+        proposals, so recording a *winning* change as refuted is the worst
+        single output this script can produce."""
+        roster = _three_good_pairs(tmp_path)
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file", str(roster),
+             "--treatment", "a", "--control", "b"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert "arms look" in r.stdout, r.stdout
+        assert "--treatment b --control a" in r.stdout
+        assert r.returncode == 5
+        assert "verdict: INCONCLUSIVE" in r.stdout
+        assert "verdict: REJECT" not in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
+
+    def test_correctly_ordered_arms_are_not_warned_about(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path))
+        assert "arms look" not in r.stdout
+
+    def test_version_comparison_is_numeric_not_lexical(self, tmp_path: Path):
+        """1.10 is newer than 1.9. A string compare says otherwise, which is
+        why the verdict never uses this ordering and the warning does."""
+        _arm(tmp_path, "ctl1", 50000, 20000, "1.9")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.10")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "arms look" not in r.stdout, r.stdout
+        assert "verdict: ADOPT" in r.stdout
+
+    def test_untagged_attributed_run_is_unscorable(self, tmp_path: Path):
+        """record-telemetry.sh emits actions: [] when --actions was omitted.
+        Scoring that as a curation attributes its near-zero closure to the
+        skill version; skipping past it hides the tagging gap."""
+        d = tmp_path / "trt1" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="trt1", tokens=49000, actions=["baseline:exact"]),
+            _ledger_row(repo="trt1", tokens=48000, actions=[],
+                        skill_version="1.2", no_loss="ok"),
+        ]) + "\n")
+        _arm(tmp_path, "ctl1", 50000, 20000, "1.1")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "no action tags" in r.stdout
+        assert "tag it and re-score" in r.stdout
+
+
+class TestCohortReportSingleFile:
+    def test_net_does_not_span_two_policy_files(self, tmp_path: Path):
+        """Same defect as the gate's before-state, in the roll-up: `net` would
+        span two different files and report a change for one that never moved.
+        That is the class of error the method-change anchoring exists to
+        prevent, so it gets the same treatment."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", tokens=9000, actions=["baseline:exact"]),
+            _ledger_row(repo="one", tokens=500, file="sub/AGENTS.md",
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="one", tokens=9000, actions=["demote:X"],
+                        skill_version="1.1"),
+        ]) + "\n")
+        r = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
+             "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 0, r.stderr
+        header, row = r.stdout.splitlines()[0].split("\t"), \
+            r.stdout.splitlines()[1].split("\t")
+        cells = dict(zip(header, row))
+        # AGENTS.md never moved: 9000 both times. Against sub/AGENTS.md's 500 it
+        # would read +8500.
+        assert cells["net"] == "0", cells
+        assert cells["runs"] == "2", cells
+
+
+def _two_file_ledger(root: Path, name: str, version: str,
+                     main_after: int, sub_after: int) -> None:
+    """A repo whose ledger tracks two policy files: a big curation on the
+    primary one, and a trivial prune on a secondary one recorded earlier."""
+    d = root / name / ".skills"
+    d.mkdir(parents=True)
+    (d / "context-metrics.jsonl").write_text("\n".join([
+        _ledger_row(repo=name, ts="2026-08-01", tokens=50000,
+                    actions=["baseline:exact"]),
+        _ledger_row(repo=name, ts="2026-08-01", file="sub/AGENTS.md",
+                    tokens=9000, actions=["baseline:exact"]),
+        _ledger_row(repo=name, ts="2026-08-02", file="sub/AGENTS.md",
+                    tokens=sub_after, actions=["prune:tiny"],
+                    skill_version=version, no_loss="ok"),
+        _ledger_row(repo=name, ts="2026-08-03", tokens=main_after,
+                    actions=["demote:Big"], skill_version=version,
+                    no_loss="ok"),
+    ]) + "\n")
+
+
+class TestValidationGateRoundSeven:
+    def test_gate_scores_the_primary_policy_file(self, tmp_path: Path):
+        """The scan took the first curation across ALL files, so a trivial prune
+        recorded a day earlier on a secondary file was scored instead of the
+        real one: sub/AGENTS.md 9,000 -> 8,900 (3.3%) rather than AGENTS.md
+        50,000 -> 7,000 (93.2%)."""
+        _two_file_ledger(tmp_path, "ctl1", "1.1", main_after=7000, sub_after=8900)
+        _two_file_ledger(tmp_path, "trt1", "1.2", main_after=9000, sub_after=8800)
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        by = {x["repo"]: x for x in json.loads(r.stdout)["repos"]}
+        assert by["ctl1"]["file"] == "AGENTS.md", by["ctl1"]
+        assert by["ctl1"]["before"] == 50000
+        assert by["ctl1"]["after"] == 7000
+        assert by["trt1"]["after"] == 9000
+        # The control did the better job on the primary file, so no adoption.
+        assert json.loads(r.stdout)["verdict"] == "REJECT"
+
+    def test_gate_and_rollup_agree_on_which_file_a_repo_is(self, tmp_path: Path):
+        """One ledger produced two irreconcilable pictures of the same repo.
+        The rule is duplicated in two languages, so pin them to one answer."""
+        _two_file_ledger(tmp_path, "one", "1.1", main_after=7000, sub_after=8900)
+        gate = _score(_roster(tmp_path, [("one", "a", "1")]),
+                      "--min-pairs", "1", "--format", "json")
+        rollup = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
+             "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        cells = dict(zip(*(line.split("\t")
+                           for line in rollup.stdout.splitlines()[:2])))
+        gate_rec = json.loads(gate.stdout)["repos"][0]
+        assert gate_rec["file"] == "AGENTS.md"
+        assert int(cells["tokens"]) == gate_rec["after"] == 7000
+        assert int(cells["runs"]) == 2      # AGENTS.md rows only
+
+    def test_uncurated_primary_file_names_the_file_and_the_others(
+            self, tmp_path: Path):
+        """Scoring a secondary file instead would be the bug this replaced; the
+        honest answer names what was skipped rather than dropping the repo."""
+        # AGENTS.md is the primary (3 rows) and was never curated; the curation
+        # happened on a secondary file. Scoring that secondary file instead
+        # would be the bug this replaced.
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=50000,
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="one", ts="2026-08-02", tokens=50000,
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="one", ts="2026-08-03", tokens=50000,
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="one", ts="2026-08-04", file="sub/AGENTS.md",
+                        tokens=9000, actions=["baseline:exact"]),
+            _ledger_row(repo="one", ts="2026-08-05", file="sub/AGENTS.md",
+                        tokens=7000, actions=["demote:X"], skill_version="1.1",
+                        no_loss="ok"),
+        ]) + "\n")
+        _arm(tmp_path, "two", 49000, 12000, "1.2")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "no attributed curation run for AGENTS.md" in r.stdout, r.stdout
+        assert "1 other file(s) in this ledger were not scored" in r.stdout
+
+    def test_same_version_plus_failure_is_not_a_rejection(self, tmp_path: Path):
+        """There is no proposal to reject, so the entry would name no change.
+        The failure is real and must stay visible — it is a finding about the
+        shipped version, the same distinction drawn for the control arm."""
+        _arm(tmp_path, "ctl1", 52000, 20000, "1.1")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.1", no_loss="failed")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "both arms ran the same version" in r.stdout
+        assert "not a rejection of anything proposed" in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
+        # Still visible, not masked by the reordering.
+        assert "treatment-arm safety failures:" in r.stdout
+        assert "no_loss=failed" in r.stdout
+
+    def test_real_failure_still_rejects_when_there_is_a_proposal(
+            self, tmp_path: Path):
+        """The reordering must not have disarmed the veto."""
+        r = _score(_three_good_pairs(tmp_path, no_loss="failed"))
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "treatment-arm safety failures:" in r.stdout
+
+    def test_out_of_arm_entries_are_reported(self, tmp_path: Path):
+        """A typo'd wave: value removed a repo from the experiment with no trace
+        anywhere in the output — a gate that quietly shrinks its own sample."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "stray", 9000, 7000, "1.2")
+        with roster.open("a") as fh:
+            fh.write(f"{tmp_path / 'stray'}  wave:x pair:9\n")
+        r = _score(roster)
+        assert "not in either arm" in r.stdout, r.stdout
+        assert "stray" in r.stdout
+        assert "wave x" in r.stdout
+
+    def test_out_of_arm_appears_in_json(self, tmp_path: Path):
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "stray", 9000, 7000, "1.2")
+        with roster.open("a") as fh:
+            fh.write(f"{tmp_path / 'stray'}  wave:x pair:9\n")
+        payload = json.loads(_score(roster, "--format", "json").stdout)
+        assert payload["out_of_arm"] == [
+            {"entry": str(tmp_path / "stray"), "wave": "x"}]
+
+    def test_duplicate_rows_do_not_shift_the_before_state(self, tmp_path: Path):
+        """list.index matches by dict equality, not identity, so a byte-identical
+        repeat of the curation row resolved to the earlier one and took the
+        before-state a row too early."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        dup = _ledger_row(repo="one", ts="2026-08-02", tokens=9000,
+                          actions=["demote:X"], skill_version="1.1",
+                          no_loss="ok")
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=50000,
+                        actions=["baseline:exact"]),
+            dup, dup,
+        ]) + "\n")
+        r = _score(_roster(tmp_path, [("one", "a", "1")]), "--min-pairs", "1",
+                   "--format", "json")
+        rec = json.loads(r.stdout)["repos"][0]
+        assert rec["before"] == 50000, rec
+
+
+class TestValidationGateRoundEight:
+    def test_a_stray_row_cannot_redefine_the_repo(self, tmp_path: Path):
+        """Most-recent-file alone was too fragile: one incidental baseline row
+        for docs/GUIDE.md re-defined a repo that had curated AGENTS.md over
+        three runs, dropping it out of the experiment and collapsing the
+        roll-up's headline to 4,000 tokens / 1 run / no net — a number that then
+        fed the cohort total. Row count is what a stray append cannot flip."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=50000,
+                        actions=["baseline:exact"]),
+            _ledger_row(repo="one", ts="2026-08-02", tokens=7000,
+                        actions=["demote:Big"], skill_version="1.1",
+                        no_loss="ok"),
+            _ledger_row(repo="one", ts="2026-08-03", tokens=6800,
+                        actions=["prune:X"], skill_version="1.1", no_loss="ok"),
+            _ledger_row(repo="one", ts="2026-08-04", file="docs/GUIDE.md",
+                        tokens=4000, actions=["baseline:exact"]),
+        ]) + "\n")
+        _arm(tmp_path, "two", 49000, 12000, "1.2")
+        gate = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                      "--min-pairs", "1", "--format", "json")
+        rec = next(x for x in json.loads(gate.stdout)["repos"]
+                   if x["repo"] == "one")
+        assert rec["file"] == "AGENTS.md", rec
+        assert rec["status"] == "scored"
+        assert rec["before"] == 50000 and rec["after"] == 7000
+        rollup = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
+             "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        cells = dict(zip(*(line.split("\t")
+                           for line in rollup.stdout.splitlines()[:2])))
+        assert cells["tokens"] == "6800", cells
+        assert cells["runs"] == "3", cells
+        assert cells["net"] == "-43200", cells
+
+    def test_ties_on_row_count_fall_back_to_most_recent(self, tmp_path: Path):
+        """The tie-break has to stay deterministic, and it has to be the same
+        one cohort-report.sh uses."""
+        _two_file_ledger(tmp_path, "one", "1.1", main_after=7000, sub_after=8900)
+        gate = _score(_roster(tmp_path, [("one", "a", "1")]), "--min-pairs", "1",
+                      "--format", "json")
+        assert json.loads(gate.stdout)["repos"][0]["file"] == "AGENTS.md"
+        rollup = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
+             "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        cells = dict(zip(*(line.split("\t")
+                           for line in rollup.stdout.splitlines()[:2])))
+        assert cells["tokens"] == "7000", cells
+
+    def test_same_release_spelled_two_ways_is_not_an_experiment(
+            self, tmp_path: Path):
+        """1.2 and 1.2.0 are one release. Comparing the raw strings made them
+        two, and the gate returned ADOPT for a release scored against itself —
+        the mirror of adopting on zero evidence."""
+        _arm(tmp_path, "one", 50000, 20000, "1.2")
+        _arm(tmp_path, "two", 49000, 12000, "1.2.0")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "both arms ran the same version" in r.stdout
+        assert "canonicalise to the same release" in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_prereleases_are_not_collapsed_into_one_version(self, tmp_path: Path):
+        """version_canon must not be version_key: the latter maps every
+        non-numeric component to 0, which would make 2.0-alpha and 2.0-beta the
+        same version and report two real changes as no experiment at all."""
+        _arm(tmp_path, "one", 50000, 20000, "2.0-alpha")
+        _arm(tmp_path, "two", 49000, 12000, "2.0-beta")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "both arms ran the same version" not in r.stdout, r.stdout
+        assert "verdict: ADOPT" in r.stdout
+
+    def test_empty_control_arm_says_so(self, tmp_path: Path):
+        """The expected intermediate state during the first experiment: wave B
+        adopts before wave A has re-run. 'No informative pairs' is true and
+        sends the reader to look at pair scoring instead of adoption progress."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text(
+            _ledger_row(repo="one", tokens=50000, actions=["baseline:exact"])
+            + "\n")
+        _arm(tmp_path, "two", 49000, 12000, "1.2")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "no attributed curation run in the control arm (wave a)" in r.stdout
+        assert "nothing to be compared against" in r.stdout
+
+    def test_split_arm_is_diagnosed_before_inversion(self, tmp_path: Path):
+        """An arm that is not internally coherent cannot meaningfully be called
+        older than the other. Reporting inversion first walked the reader
+        through two diagnoses — swap the flags, hit the split — for one
+        problem."""
+        _arm(tmp_path, "c1", 50000, 20000, "1.3")
+        _arm(tmp_path, "t1", 49000, 12000, "1.1")
+        _arm(tmp_path, "c2", 30000, 14000, "1.3")
+        _arm(tmp_path, "t2", 29000, 9000, "1.2")
+        r = _score(_roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1"),
+                                      ("c2", "a", "2"), ("t2", "b", "2")]),
+                   "--min-pairs", "1")
+        assert "split across versions" in r.stdout, r.stdout
+        assert "arms look inverted" not in r.stdout
+
+    def test_scored_file_is_named_when_a_ledger_holds_several(
+            self, tmp_path: Path):
+        """Without this the table reads as though the whole history were in
+        view — two repos at 50,000 -> 7,000 with no sign that a prune on a
+        secondary file was excluded from both."""
+        _two_file_ledger(tmp_path, "one", "1.1", main_after=7000, sub_after=8900)
+        _two_file_ledger(tmp_path, "two", "1.2", main_after=9000, sub_after=8800)
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "multi-file ledgers" in r.stdout, r.stdout
+        assert "one: AGENTS.md (+1 other file(s) not scored)" in r.stdout
+        assert "two: AGENTS.md (+1 other file(s) not scored)" in r.stdout
+
+    def test_single_file_ledgers_print_no_multi_file_block(self, tmp_path: Path):
+        r = _score(_three_good_pairs(tmp_path))
+        assert "multi-file ledgers" not in r.stdout
+
+    def test_reject_does_not_enumerate_failures_twice(self, tmp_path: Path):
+        """The body block is what keeps failures visible under the INCONCLUSIVE
+        paths, so it must not look redundant enough to delete."""
+        r = _score(_three_good_pairs(tmp_path, no_loss="failed"))
+        assert r.returncode == 3
+        assert "see the treatment-arm failures above" in r.stdout
+        # The pair lines and the body block each have a reason to name the repos;
+        # the verdict does not, and enumerating there is what made the body look
+        # deletable.
+        # "\nverdict: " with the newline and space, not a bare "verdict:" —
+        # that would also match inside a section header ending in the word, and
+        # the assertion would silently check the wrong block and pass.
+        verdict_block = r.stdout.split("\nverdict: ", 1)[1]
+        assert "no_loss=failed" not in verdict_block, verdict_block
+        assert "treatment-arm safety failures:" in r.stdout
+
+
+class TestValidationGateRoundNine:
+    def test_repeated_roster_entry_is_warned_and_used_once(self, tmp_path: Path):
+        """Merged silently, a repeat halved an experiment without saying so: a
+        roster declaring four entries and two pairs produced one pair, no note,
+        and a verdict of ADOPT."""
+        path = tmp_path / "cohort"
+        path.write_text("owner/one  wave:a pair:1\n"
+                        "owner/two  wave:b pair:1\n"
+                        "owner/one  wave:b pair:2\n")
+        out = subprocess.run(
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert "listed more than once" in out.stderr
+        assert "owner/one" in out.stderr
+        assert out.stdout.splitlines() == ["repo|owner/one|a|1", "repo|owner/two|b|1"]
+
+    def test_duplicate_does_not_shrink_the_experiment_silently(
+            self, tmp_path: Path):
+        _arm(tmp_path, "c1", 50000, 20000, "1.1")
+        _arm(tmp_path, "t1", 49000, 12000, "1.2")
+        roster = _roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1")])
+        with roster.open("a") as fh:
+            fh.write(f"{tmp_path / 'c1'}  wave:b pair:2\n")
+        r = _score(roster, "--min-pairs", "1")
+        assert "listed more than once" in r.stderr, r.stderr
+        payload = json.loads(_score(roster, "--min-pairs", "1",
+                                    "--format", "json").stdout)
+        # One pair, and the repo counted once — not two records and a phantom
+        # pair 2 that never appears in the report.
+        assert len(payload["repos"]) == 2
+        assert len(payload["pairs"]) == 1
+
+    def test_rollup_does_not_double_count_a_repeated_entry(self, tmp_path: Path):
+        """The same duplication inflated `runs` to 4 for a two-row ledger."""
+        _arm(tmp_path, "one", 50000, 20000, "1.1")
+        path = tmp_path / "cohort"
+        path.write_text(f"{tmp_path / 'one'}\n{tmp_path / 'one'}\n")
+        r = subprocess.run(
+            ["bash", str(COHORT), "--cohort-file", str(path), "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        cells = dict(zip(*(line.split("\t")
+                           for line in r.stdout.splitlines()[:2])))
+        assert cells["runs"] == "2", cells
+
+    @pytest.mark.parametrize("a,b", [("1.2", "v1.2"), ("v1.2", "1.2"),
+                                     ("1.2", "1.2.0"), ("V1.2.0", "1.2")])
+    def test_one_release_spelled_two_ways_is_never_an_experiment(
+            self, tmp_path: Path, a, b):
+        """v1.2 keyed to (0, 2) against 1.2's (1, 2), so the gate reported the
+        arms as inverted for one release spelled two ways — a confidently wrong
+        diagnosis pointing at the flags, which were not the problem."""
+        _arm(tmp_path, "one", 50000, 20000, a)
+        _arm(tmp_path, "two", 49000, 12000, b)
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "both arms ran the same version" in r.stdout
+        assert "arms look inverted" not in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_a_release_named_vnext_is_left_alone(self, tmp_path: Path):
+        """The v guard requires a digit after it, so a version that merely
+        starts with v is not mangled into a different one."""
+        out = subprocess.run(
+            ["bash", str(SCORE), "--help"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert out.returncode == 0
+        _arm(tmp_path, "one", 50000, 20000, "vNext")
+        _arm(tmp_path, "two", 49000, 12000, "1.2")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "both arms ran the same version" not in r.stdout, r.stdout
+
+    def test_version_ordering_still_works_after_canonicalisation(
+            self, tmp_path: Path):
+        """Deriving version_key from the canonical form must not break the
+        older/newer test it exists for: 1.10 is still newer than 1.9."""
+        _arm(tmp_path, "one", 50000, 20000, "1.10")
+        _arm(tmp_path, "two", 49000, 12000, "1.9")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        # Treatment (wave b) is 1.9, control is 1.10 — genuinely inverted.
+        assert "arms look inverted" in r.stdout, r.stdout
