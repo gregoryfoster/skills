@@ -124,7 +124,10 @@ each arm.
 
 Pair 3 is the weakest match in the roster. `watcher` has no size neighbour —
 every other pair is within 8% — and a difference on pair 3 is partly a difference
-in difficulty. Read it accordingly rather than dropping it.
+in difficulty. Read it accordingly rather than dropping it. It is also the one
+row where **wave A holds the smaller member**; every other row runs
+larger-then-smaller, so the ordering looks like a transcription error and is
+not.
 
 Pairs 5 and 6 are expected to be **uninformative for effectiveness**, and it is
 better to know that now than to discover it after the run. Pair 6 starts under

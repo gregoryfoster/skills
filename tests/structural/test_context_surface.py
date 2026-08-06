@@ -1898,6 +1898,97 @@ class TestValidationGateRoundEight:
         # The pair lines and the body block each have a reason to name the repos;
         # the verdict does not, and enumerating there is what made the body look
         # deletable.
-        verdict_block = r.stdout.split("verdict:", 1)[1]
+        # "\nverdict: " with the newline and space, not a bare "verdict:" —
+        # that would also match inside a section header ending in the word, and
+        # the assertion would silently check the wrong block and pass.
+        verdict_block = r.stdout.split("\nverdict: ", 1)[1]
         assert "no_loss=failed" not in verdict_block, verdict_block
         assert "treatment-arm safety failures:" in r.stdout
+
+
+class TestValidationGateRoundNine:
+    def test_repeated_roster_entry_is_warned_and_used_once(self, tmp_path: Path):
+        """Merged silently, a repeat halved an experiment without saying so: a
+        roster declaring four entries and two pairs produced one pair, no note,
+        and a verdict of ADOPT."""
+        path = tmp_path / "cohort"
+        path.write_text("owner/one  wave:a pair:1\n"
+                        "owner/two  wave:b pair:1\n"
+                        "owner/one  wave:b pair:2\n")
+        out = subprocess.run(
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert "listed more than once" in out.stderr
+        assert "owner/one" in out.stderr
+        assert out.stdout.splitlines() == ["repo|owner/one|a|1", "repo|owner/two|b|1"]
+
+    def test_duplicate_does_not_shrink_the_experiment_silently(
+            self, tmp_path: Path):
+        _arm(tmp_path, "c1", 50000, 20000, "1.1")
+        _arm(tmp_path, "t1", 49000, 12000, "1.2")
+        roster = _roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1")])
+        with roster.open("a") as fh:
+            fh.write(f"{tmp_path / 'c1'}  wave:b pair:2\n")
+        r = _score(roster, "--min-pairs", "1")
+        assert "listed more than once" in r.stderr, r.stderr
+        payload = json.loads(_score(roster, "--min-pairs", "1",
+                                    "--format", "json").stdout)
+        # One pair, and the repo counted once — not two records and a phantom
+        # pair 2 that never appears in the report.
+        assert len(payload["repos"]) == 2
+        assert len(payload["pairs"]) == 1
+
+    def test_rollup_does_not_double_count_a_repeated_entry(self, tmp_path: Path):
+        """The same duplication inflated `runs` to 4 for a two-row ledger."""
+        _arm(tmp_path, "one", 50000, 20000, "1.1")
+        path = tmp_path / "cohort"
+        path.write_text(f"{tmp_path / 'one'}\n{tmp_path / 'one'}\n")
+        r = subprocess.run(
+            ["bash", str(COHORT), "--cohort-file", str(path), "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        cells = dict(zip(*(line.split("\t")
+                           for line in r.stdout.splitlines()[:2])))
+        assert cells["runs"] == "2", cells
+
+    @pytest.mark.parametrize("a,b", [("1.2", "v1.2"), ("v1.2", "1.2"),
+                                     ("1.2", "1.2.0"), ("V1.2.0", "1.2")])
+    def test_one_release_spelled_two_ways_is_never_an_experiment(
+            self, tmp_path: Path, a, b):
+        """v1.2 keyed to (0, 2) against 1.2's (1, 2), so the gate reported the
+        arms as inverted for one release spelled two ways — a confidently wrong
+        diagnosis pointing at the flags, which were not the problem."""
+        _arm(tmp_path, "one", 50000, 20000, a)
+        _arm(tmp_path, "two", 49000, 12000, b)
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "both arms ran the same version" in r.stdout
+        assert "arms look inverted" not in r.stdout
+        assert "verdict: ADOPT" not in r.stdout
+
+    def test_a_release_named_vnext_is_left_alone(self, tmp_path: Path):
+        """The v guard requires a digit after it, so a version that merely
+        starts with v is not mangled into a different one."""
+        out = subprocess.run(
+            ["bash", str(SCORE), "--help"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert out.returncode == 0
+        _arm(tmp_path, "one", 50000, 20000, "vNext")
+        _arm(tmp_path, "two", 49000, 12000, "1.2")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "both arms ran the same version" not in r.stdout, r.stdout
+
+    def test_version_ordering_still_works_after_canonicalisation(
+            self, tmp_path: Path):
+        """Deriving version_key from the canonical form must not break the
+        older/newer test it exists for: 1.10 is still newer than 1.9."""
+        _arm(tmp_path, "one", 50000, 20000, "1.10")
+        _arm(tmp_path, "two", 49000, 12000, "1.9")
+        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+                   "--min-pairs", "1")
+        # Treatment (wave b) is 1.9, control is 1.10 — genuinely inverted.
+        assert "arms look inverted" in r.stdout, r.stdout

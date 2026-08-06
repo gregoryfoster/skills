@@ -488,6 +488,15 @@ wins = [p for p in informative if p["winner"] == "treatment"]
 
 
 def arm(wave, status):
+    """Every repo in the arm, INCLUDING ones in no pair — deliberately wider
+    than the pairing.
+
+    Safety is not a property of a comparison. Content lost under the proposed
+    version is lost whether or not that repo had a partner, so an unpaired repo
+    can veto adoption on its own while contributing nothing to any closure. It
+    stays visible: it is listed under "not in any pair" and again in the
+    treatment-arm failures block. Do not narrow this to paired repos.
+    """
     return [r for r in records if r["wave"] == wave and r["status"] == status]
 
 
@@ -509,27 +518,41 @@ t_by_version, c_by_version = versions_in(treatment), versions_in(control)
 t_versions, c_versions = sorted(t_by_version), sorted(c_by_version)
 
 
+def version_canon(v):
+    """One version, one spelling: 1.2, 1.2.0 and v1.2 are the same release.
+
+    Two cosmetic differences are normalised away and no others: a leading v, and
+    trailing zero components. Deliberately NOT the numeric key below, which is
+    lossy — it maps every non-numeric component to 0, so 2.0-alpha and 2.0-beta
+    would collapse into one version and two genuinely different prereleases
+    would be reported as no experiment at all.
+
+    The v guard checks that a digit follows, so a release actually named vNext
+    is left alone.
+    """
+    s = str(v).strip()
+    if s[:1] in ("v", "V") and s[1:2].isdigit():
+        s = s[1:]
+    parts = s.split(".")
+    while len(parts) > 1 and parts[-1] in ("0", ""):
+        parts.pop()
+    return ".".join(parts)
+
+
 def version_key(v):
     """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only to
     decide whether the arms look inverted, never who wins: a non-numeric
     component reads as 0, which is fine for refusing to score and not fine for
-    scoring."""
-    return tuple(int(p) if p.isdigit() else 0 for p in str(v).split("."))
+    scoring.
 
-
-def version_canon(v):
-    """One version, one spelling: 1.2 and 1.2.0 are the same release.
-
-    Deliberately NOT version_key, which is lossy — it maps every non-numeric
-    component to 0, so 2.0-alpha and 2.0-beta would collapse into one version
-    and two genuinely different prereleases would be reported as no experiment
-    at all. This only strips trailing zero components, which is the difference
-    that is always cosmetic.
+    Derived from the canonical form so the two cannot disagree. They did: v1.2
+    keyed to (0, 2) against 1.2's (1, 2), and the gate reported the arms as
+    inverted for one release spelled two ways — a confidently wrong diagnosis
+    pointing at the flags, which were not the problem. Deriving it also settles
+    1.2.0 vs 1.2, which keyed unequal and could trip the same test.
     """
-    parts = str(v).strip().split(".")
-    while len(parts) > 1 and parts[-1] in ("0", ""):
-        parts.pop()
-    return ".".join(parts)
+    return tuple(int(p) if p.isdigit() else 0
+                 for p in version_canon(v).split("."))
 
 
 # Every "is this even an experiment?" test compares CANONICAL versions. Comparing

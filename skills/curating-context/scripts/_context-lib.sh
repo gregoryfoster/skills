@@ -78,7 +78,8 @@ Provides:
       Parse the cohort roster. Emits one line per entry, fields separated by
       $CTX_US: "<kind><US><entry><US><wave><US><pair>", kind being repo or
       local. wave and pair may be empty. Unknown annotations warn and are
-      ignored. Read it with: IFS="$CTX_US" read -r kind entry wave pair
+      ignored, as does a repeated entry — emitted once, never twice.
+      Read it with: IFS="$CTX_US" read -r kind entry wave pair
 
   ctx_fetch_ledger <kind> <entry> <ledger-path> <branch> <outfile>
       Write one repo's ledger to <outfile>. Returns 0 fetched, 3 no ledger,
@@ -334,7 +335,17 @@ ctx_read_roster() {
   #
   # Unknown keys warn rather than fail, so an older copy of this library reading
   # a newer roster degrades to ignoring the field instead of refusing the file.
+  # A repeated entry is warned about and processed once. Merged silently it
+  # halved an experiment without saying so: a roster declaring four entries and
+  # two pairs produced a report with one pair, no note, and a verdict of ADOPT —
+  # the same "quietly shrinks its own sample" failure that out-of-arm reporting
+  # was added to prevent, reached through a different input error. In the roll-up
+  # the same duplication inflated `runs` to 4 for a two-row ledger.
+  #
+  # bash 3.2 has no associative arrays, so the seen-set is a US-delimited string;
+  # the entry is quoted inside the pattern, which keeps glob characters literal.
   local file="$1" line entry rest field key val wave pair kind
+  local seen="$CTX_US"
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"
@@ -342,6 +353,13 @@ ctx_read_roster() {
     [ -n "$line" ] || continue
     entry="${line%%[[:space:]]*}"
     rest="${line#"$entry"}"
+    case "$seen" in
+      *"$CTX_US$entry$CTX_US"*)
+        printf 'WARN %s: listed more than once in the roster; the repeat is ignored\n' \
+          "$entry" >&2
+        continue ;;
+    esac
+    seen="$seen$entry$CTX_US"
     wave=""
     pair=""
     for field in $rest; do
