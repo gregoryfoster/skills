@@ -34,10 +34,20 @@ Options:
                      is rate-limited per usage tier but consumes no tokens and
                      is billed nothing, with limits independent of message
                      creation. Requires python3 plus a credential, tried in
-                     order: ANTHROPIC_API_KEY, an `ant auth login` profile (as a
-                     Bearer token), then ANTHROPIC_API_KEY parsed out of a
-                     repo-root secrets file (see --env-file / --no-env-file).
-                     Falls back to the estimate with a WARN on any failure.
+                     order: ANTHROPIC_API_KEY in the environment, then
+                     ANTHROPIC_API_KEY parsed out of a repo-root secrets file
+                     (see --env-file / --no-env-file), then an `ant auth login`
+                     profile — last, because count_tokens rejects JWT auth
+                     today. Falls back to the estimate with a WARN on any
+                     failure.
+  --check-credential Preflight only: resolve a credential through the same three
+                     sources, say which one answered (never the value), and exit
+                     without measuring anything. 0 = a usable credential exists;
+                     3 = none does, or only the JWT profile does. Run this
+                     BEFORE starting a curation: the credential is otherwise
+                     first checked mid-Phase-1, which interactively is a stall
+                     at the worst moment and autonomously is eight phases of
+                     work toward a ledger row that exit-4s at the end.
   --model ID         Model for --exact token counting. Default: claude-opus-5
   --no-env-file      Never read a credential from a repo-root secrets file. Use
                      when the key must come only from the environment.
@@ -72,9 +82,11 @@ Output (stdout, JSON):
   pull into context from this repo's own guidance.
 
 Exit codes:
-  0  measurement completed (with or without budget violations)
+  0  measurement completed (with or without budget violations), or
+     --check-credential found a usable credential
   1  usage error, or no policy file found
   2  infrastructure failure (unreadable file, awk/find failure)
+  3  --check-credential only: no credential that count_tokens will accept
 USAGE
 }
 
@@ -84,6 +96,7 @@ BUDGET=6000
 DOC_BUDGET=10000
 ARCHIVAL="plans specs research audits archive"
 EXACT=0
+CHECK_CRED=0
 NO_WRITE=0
 NO_ENV_FILE=0
 ENV_FILES=".env env"
@@ -105,6 +118,7 @@ while [ $# -gt 0 ]; do
     --archival) need_arg "$#" --archival 'pass "" to measure everything'
                 ARCHIVAL="$2"; shift 2 ;;
     --exact) EXACT=1; shift ;;
+    --check-credential) CHECK_CRED=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
     --no-env-file) NO_ENV_FILE=1; shift ;;
     --env-file) need_arg "$#" --env-file 'space-separated names, relative to the repo root'
@@ -140,6 +154,42 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
+
+# --check-credential: answer "will --exact succeed?" BEFORE a run commits to
+# eight phases of work. Same three sources as the real resolution below, same
+# order, and the same honesty about the JWT profile: a credential that resolves
+# but will 401 on count_tokens is reported and still exits 3, because the
+# question is whether the LEDGER ROW will be exact, not whether something
+# authenticated. Prints the source that answered, never the value.
+if [ "$CHECK_CRED" -eq 1 ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "no: python3 is missing, so --exact cannot call the endpoint at all" >&2
+    exit 3
+  fi
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "ok: ANTHROPIC_API_KEY is in the environment"
+    exit 0
+  fi
+  if [ "$NO_ENV_FILE" -eq 0 ]; then
+    # Unquoted $ENV_FILES is deliberate: it is a space-separated list of names.
+    # shellcheck disable=SC2086
+    _k="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" || _k=""
+    if [ -n "$_k" ]; then
+      echo "ok: ANTHROPIC_API_KEY is in a repo-root secrets file ($ENV_FILES)"
+      exit 0
+    fi
+  fi
+  if command -v ant >/dev/null 2>&1 \
+    && [ -n "$(ant auth print-credentials --access-token 2>/dev/null)" ]; then
+    echo "no: only an \`ant auth\` profile resolves, and count_tokens rejects JWT" >&2
+    echo "    auth today — the run would degrade to an estimate row. Set" >&2
+    echo "    ANTHROPIC_API_KEY or put it in a repo-root .env first." >&2
+    exit 3
+  fi
+  echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2
+  echo "    .env — resolve this BEFORE starting the run; in autonomous mode, abort." >&2
+  exit 3
+fi
 
 # Which version of the skill is producing this measurement — carried into the
 # ledger row so a later A/B can group by it.

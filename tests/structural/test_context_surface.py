@@ -1992,3 +1992,252 @@ class TestValidationGateRoundNine:
                    "--min-pairs", "1")
         # Treatment (wave b) is 1.9, control is 1.10 — genuinely inverted.
         assert "arms look inverted" in r.stdout, r.stdout
+
+
+SEAMS = SCRIPTS / "check-seams.sh"
+
+
+def _seam_repo(tmp_path: Path) -> Path:
+    """A repo curated one commit ago: `## Deployment Topology` moved from
+    AGENTS.md into docs/OPS.md."""
+    repo = tmp_path / "seamrepo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "AGENTS.md").write_text(
+        "# Guide\n\n## Build\n\nrun make\n\n## Deployment Topology\n\n"
+        "The workers connect to the bus directly.\n")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "pre")
+    (repo / "docs").mkdir()
+    (repo / "AGENTS.md").write_text(
+        "# Guide\n\n## Build\n\nrun make\n\n## Detail Docs\n\n"
+        "- [docs/OPS.md](docs/OPS.md) — deployment\n")
+    (repo / "docs" / "OPS.md").write_text(
+        "# Ops\n\n## Deployment Topology\n\n"
+        "The workers connect to the bus directly.\n")
+    return repo
+
+
+def _run_seams(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(SEAMS), "--base", "HEAD", *args],
+        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=60,
+    )
+
+
+class TestCheckSeams:
+    def test_clean_move_reports_no_seams(self, tmp_path: Path):
+        r = _run_seams(_seam_repo(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "OK — no cross-reference seams found." in r.stdout
+        assert r.stdout.rstrip().endswith("seams: 0")
+
+    def test_back_reference_in_a_doc_is_reported(self, tmp_path: Path):
+        """The observo 🔴: a doc whose header says its own contents live in
+        AGENTS.md, after the run moved them into that very doc."""
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text("# Ops\n\nBounds semantics live in AGENTS.md.\n\n"
+                       "## Deployment Topology\n\n"
+                       "The workers connect to the bus directly.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "back-reference" in r.stdout
+        assert "docs/OPS.md:3" in r.stdout
+        assert "seams: 1" in r.stdout
+
+    def test_reference_to_a_moved_title_is_reported(self, tmp_path: Path):
+        """The observo dangling prose pointer: 'See AGENTS.md X' where X moved
+        into the pointing file itself."""
+        repo = _seam_repo(tmp_path)
+        cmd = repo / "docs" / "COMMANDS.md"
+        cmd.write_text("# Commands\n\nSee the Deployment Topology section for "
+                       "canonical invocations.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "moved-title" in r.stdout
+        assert "Deployment Topology" in r.stdout
+
+    def test_the_relocated_sections_own_heading_is_not_a_seam(
+            self, tmp_path: Path):
+        """docs/OPS.md's `## Deployment Topology` heading IS the moved section —
+        reporting it would flag every correct demotion."""
+        r = _run_seams(_seam_repo(tmp_path))
+        assert "moved-title" not in r.stdout
+
+    def test_duplicate_destination_heading_is_reported(self, tmp_path: Path):
+        """The observo class 2: the destination already covered the topic and
+        the demotion appended a second copy beside it."""
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text()
+                       + "\n## Deployment Topology\n\nAppended copy.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3
+        assert "duplicate-heading" in r.stdout
+        assert "also at line" in r.stdout
+
+    def test_provenance_in_a_heading_is_reported(self, tmp_path: Path):
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text()
+                       + "\n## Migration workflow (from AGENTS.md, #412)\n\nx\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3
+        assert "provenance-heading" in r.stdout
+
+    def test_archival_docs_are_not_swept(self, tmp_path: Path):
+        """A dated plan legitimately says 'AGENTS.md said X at the time'."""
+        repo = _seam_repo(tmp_path)
+        plans = repo / "docs" / "plans"
+        plans.mkdir()
+        (plans / "2026-01-01-old.md").write_text("AGENTS.md carries the rules.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_short_moved_titles_are_not_swept(self, tmp_path: Path):
+        """Grepping the surface for a title like 'Build' drowns real seams in
+        coincidental matches; the sweep floors title length instead."""
+        repo = _seam_repo(tmp_path)
+        # Move the SHORT section too.
+        agents = repo / "AGENTS.md"
+        agents.write_text(agents.read_text().replace(
+            "## Build\n\nrun make\n\n", ""))
+        (repo / "docs" / "OPS.md").write_text(
+            (repo / "docs" / "OPS.md").read_text()
+            + "\nUse the Build target.\n")
+        r = _run_seams(repo)
+        assert "moved-title" not in r.stdout, r.stdout
+
+
+class TestCredentialPreflight:
+    def test_env_var_answers(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        env = _clean_env()
+        env["ANTHROPIC_API_KEY"] = "sk-test"
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "environment" in r.stdout
+        assert "sk-test" not in r.stdout + r.stderr    # never the value
+
+    def test_secrets_file_answers(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-file-test\n")
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "secrets file" in r.stdout
+        assert "sk-file-test" not in r.stdout + r.stderr
+
+    def test_no_credential_is_exit_3_with_the_fix(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "BEFORE starting the run" in r.stderr
+
+    def test_jwt_only_profile_is_still_exit_3(self, tmp_path: Path):
+        """A credential that resolves but will 401 on count_tokens is a 'no':
+        the question is whether the LEDGER ROW will be exact, not whether
+        something authenticated."""
+        repo = _repo(tmp_path, policy_lines=5)
+        stub = tmp_path / "bin"
+        stub.mkdir()
+        (stub / "ant").write_text("#!/bin/sh\necho fake-jwt-token\n")
+        (stub / "ant").chmod(0o755)
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        env["PATH"] = f"{stub}:{env['PATH']}"
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "JWT" in r.stderr
+        assert "fake-jwt-token" not in r.stdout + r.stderr
+
+
+class TestRepoIdentity:
+    def _record(self, cwd: Path, *args: str) -> dict:
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{cwd}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run {" ".join(args)}'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        return json.loads(out.stdout)
+
+    def test_origin_basename_wins_over_directory_name(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        _git(repo, "remote", "add", "origin",
+             "https://github.com/CannObserv/usa-wa.git")
+        assert self._record(repo)["repo"] == "usa-wa"
+
+    def test_worktree_records_the_repository_not_the_branch_slug(
+            self, tmp_path: Path):
+        """The #102 case: usa-wa mandates worktree-based feature work, and the
+        row recorded `feat-161-curating-context` as the repo."""
+        repo = _repo(tmp_path, policy_lines=5)
+        _git(repo, "remote", "add", "origin",
+             "git@github.com:CannObserv/usa-wa.git")
+        wt = tmp_path / "feat-161-curating-context"
+        _git(repo, "worktree", "add", "-q", str(wt), "-b", "feat-161")
+        row = self._record(wt)
+        assert row["repo"] == "usa-wa", row
+
+    def test_explicit_override_wins(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        _git(repo, "remote", "add", "origin",
+             "https://github.com/CannObserv/usa-wa.git")
+        assert self._record(repo, "--repo", "roster-name")["repo"] == "roster-name"
+
+    def test_no_origin_falls_back_to_directory_name(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        assert self._record(repo)["repo"] == repo.name
+
+
+class TestSeamsOnTheRow:
+    def test_count_lands_on_the_row(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams 4'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["seams"] == 4
+
+    def test_absent_flag_records_null_not_zero(self, tmp_path: Path):
+        """'Not swept' and 'swept clean' must stay distinguishable, exactly as
+        with no_loss."""
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["seams"] is None
+
+    def test_non_numeric_count_is_refused(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams many'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert out.returncode == 1
+        assert "non-negative integer" in out.stderr

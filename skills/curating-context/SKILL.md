@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -105,6 +105,18 @@ cannot disagree about a number. It must travel with them: vendor the whole
 `scripts/` directory, never individual files. `install-guard.sh` refuses to
 install a guard whose library is missing, because that combination wires up
 cleanly and then does nothing, silently.
+
+## Phase 0 — Preflight the credential
+
+```bash
+bash "<SKILL_SCRIPTS>/measure-context.sh" --check-credential
+```
+
+One command, before anything else. Exit 0 means `--exact` will work; exit 3
+means resolve a credential **now** — interactively, ask while the human still
+has context; autonomously, **abort the run**. Discovered any later, this failure
+costs eight phases of work toward a ledger row that `record-telemetry.sh`
+refuses at the very end.
 
 ## Phase 1 — Measure
 
@@ -260,6 +272,13 @@ clean file:
    thing a reader skimming the diff will not notice, because the words are all
    still there.
 
+   Before **extending** an existing doc, read its `##` headings first: if the
+   destination already covers the incoming topic, merge into the canonical
+   section rather than appending a near-duplicate beside it — the cohort's
+   defect #5 created at the destination by the run itself. And keep provenance
+   out of headings: "Demoted from AGENTS.md (#412)" belongs in the commit, not
+   baked into a permanent anchor slug. Phase 6.5 checks both.
+
    Two mechanical adjustments come with every move, and only these two:
 
    - **Relative links gain a level.** A block moving from the repo root into
@@ -308,13 +327,32 @@ Re-run Phase 1 and assert, before committing:
 - The repo's own test suite still passes, if it asserts on policy-file content.
   Several cohort repos have structural tests that read `AGENTS.md`.
 
+## Phase 6.5 — Sweep the seams
+
+```bash
+bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
+```
+
+`prove-no-loss.sh` proves moved content arrived; this proves the rest of the
+surface still **describes where it went**. The first cohort adoption shipped a
+clean run — 0 dead links, 0 orphans, no-loss ok — carrying ten review findings
+the run itself created: a doc whose header claimed its own contents lived in
+`AGENTS.md`, prose sending readers to a section that had moved into the very
+file they were reading. All invisible to `links.dead`, because a resolvable link
+to the wrong content is not dead.
+
+The report is hits **to judge**, not defects to fix — a reference to the policy
+file is wrong only if what it points at moved. Judge each, fix what lies,
+re-run, and carry the final count to Phase 7 (`--seams N`). Run this sweep
+*last*, after every other edit has landed.
+
 ## Phase 7 — Record and ship
 
 ```bash
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
   | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
-      --no-loss ok --print-trend
+      --no-loss ok --seams 0 --print-trend
 ```
 
 Tag `--actions` honestly and specifically. The tags are the only thing that lets
@@ -345,6 +383,13 @@ the before/after token count, the per-section disposition table, **every relocat
 block with its destination**, and every deletion with its warrant. In autonomous
 mode this PR body is the entire audit trail — a reviewer must be able to
 reconstruct and revert any single decision from it without re-deriving the run.
+
+Then get the branch a **fresh-eyes review pass** before it ships. Whoever just
+moved three hundred lines has exactly the implementation blindness that misses
+"and now this other file lies about it" — the seam sweep catches the mechanical
+cases, a reviewer catches the rest. If a late fix changes the count, **rewrite
+this run's row to match what ships; across runs, only ever append** — the same
+distinction in [references/budget-and-metrics.md](references/budget-and-metrics.md).
 
 Never push to the default branch. Never delete on an UNVERIFIABLE verdict, even
 under budget pressure.
