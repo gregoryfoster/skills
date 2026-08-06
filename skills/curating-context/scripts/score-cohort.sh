@@ -303,8 +303,8 @@ def score_repo(key, info):
         "repo": display[key], "entry": key, "wave": info["wave"],
         "pair": info["pair"], "status": None, "why": None, "before": None,
         "after": None, "budget": None, "closure": None, "no_loss": None,
-        "skill_version": None, "ts": None, "file": None, "gates": [],
-        "unverified": [],
+        "skill_version": None, "ts": None, "file": None, "other_files": 0,
+        "gates": [], "unverified": [],
     }
     if info["status"] != "ok":
         rec["status"] = "unscorable"
@@ -318,19 +318,31 @@ def score_repo(key, info):
         rec["why"] = "no ledger rows"
         return rec
 
-    # PRIMARY POLICY FILE: the one measured most recently. A ledger may track
-    # several — record-telemetry.sh keys its own deltas by file — so "what did
-    # this repo do" is not answerable until one file is named.
+    # PRIMARY POLICY FILE: the one with the most rows, ties broken by whichever
+    # was measured most recently. A ledger may track several — record-telemetry.sh
+    # keys its own deltas by file — so "what did this repo do" is not answerable
+    # until one file is named.
+    #
+    # Most-recent alone was the first rule and it was too fragile: one incidental
+    # baseline row for docs/GUIDE.md re-defined a repo that had curated AGENTS.md
+    # 50,000 -> 6,800 over three runs, dropping it out of the experiment entirely
+    # and collapsing the roll-up's headline to 4,000 tokens / 1 run / no net.
+    # Row count is what a stray append cannot flip.
     #
     # THIS RULE IS SHARED WITH cohort-report.sh AND MUST STAY IDENTICAL. When the
     # two disagreed, one ledger produced two irreconcilable pictures of the same
     # repo: the gate scored sub/AGENTS.md 9,000 -> 8,900 (a 100-token prune, 3.3%
     # closure) while the roll-up reported AGENTS.md at 7,000, net -43,000. A test
     # pins the two scripts to the same answer.
-    primary = rows[-1].get("file")
-    other_files = {r.get("file") for r in rows} - {primary}
+    counts, last_seen = {}, {}
+    for i, r in enumerate(rows):
+        f = r.get("file")
+        counts[f] = counts.get(f, 0) + 1
+        last_seen[f] = i           # rows is ascending by ts, so later index wins
+    primary = max(counts, key=lambda f: (counts[f], last_seen[f]))
     rows = [r for r in rows if r.get("file") == primary]
     rec["file"] = primary
+    rec["other_files"] = len(counts) - 1
 
     scored = scored_idx = None
     for i, r in enumerate(rows):
@@ -347,8 +359,8 @@ def score_repo(key, info):
         scored, scored_idx = r, i
         break
     if scored is None:
-        extra = (f"; {len(other_files)} other file(s) in this ledger were not "
-                 "scored" if other_files else "")
+        extra = (f"; {rec['other_files']} other file(s) in this ledger were not "
+                 "scored" if rec["other_files"] else "")
         rec["status"] = "unscorable"
         rec["why"] = (f"no attributed curation run for {primary} yet (only "
                       f"baselines, or no skill_version){extra}")
@@ -498,10 +510,34 @@ t_versions, c_versions = sorted(t_by_version), sorted(c_by_version)
 
 
 def version_key(v):
-    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only for the
-    inverted-arms warning, never for the verdict: a non-numeric component reads
-    as 0, which is fine for a hint and not fine for a decision."""
+    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only to
+    decide whether the arms look inverted, never who wins: a non-numeric
+    component reads as 0, which is fine for refusing to score and not fine for
+    scoring."""
     return tuple(int(p) if p.isdigit() else 0 for p in str(v).split("."))
+
+
+def version_canon(v):
+    """One version, one spelling: 1.2 and 1.2.0 are the same release.
+
+    Deliberately NOT version_key, which is lossy — it maps every non-numeric
+    component to 0, so 2.0-alpha and 2.0-beta would collapse into one version
+    and two genuinely different prereleases would be reported as no experiment
+    at all. This only strips trailing zero components, which is the difference
+    that is always cosmetic.
+    """
+    parts = str(v).strip().split(".")
+    while len(parts) > 1 and parts[-1] in ("0", ""):
+        parts.pop()
+    return ".".join(parts)
+
+
+# Every "is this even an experiment?" test compares CANONICAL versions. Comparing
+# the raw strings let 1.2 and 1.2.0 read as two different versions, and the gate
+# returned ADOPT for a comparison of a release against itself — finding 32's
+# mirror, a positive verdict out of a non-experiment.
+t_canon = {version_canon(v) for v in t_versions}
+c_canon = {version_canon(v) for v in c_versions}
 
 
 # Wave A adopts first and therefore holds the OLDER version, so the first
@@ -521,46 +557,70 @@ inverted = bool(t_versions and c_versions
 # safety failures are still printed in the body whatever the verdict, so nothing
 # is masked by the reordering.
 verdict, code, reasons = None, 0, []
-if inverted:
-    # Detection alone was not enough: the WARN printed at the top and the verdict
-    # then rejected the winning change and told the reader to file it as refuted,
-    # twenty lines below the warning saying not to trust the result.
-    verdict, code = "INCONCLUSIVE", 5
-    reasons.append(f"the arms look inverted — wave {treatment} carries only "
-                   f"older versions ({', '.join(t_versions)}) than wave "
-                   f"{control} ({', '.join(c_versions)}). Re-run with "
-                   f"--treatment {control} --control {treatment}; as scored "
-                   "here a winning change reads as a losing one")
-elif not t_versions:
+inversion_is_the_verdict = False
+if not t_versions:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"no attributed curation run in the treatment arm (wave "
                    f"{treatment}) yet — nothing has been measured to compare")
-elif len(t_versions) > 1 or len(c_versions) > 1:
+elif not c_versions:
+    # The symmetric case, and the EXPECTED intermediate state during the first
+    # experiment: wave B adopts the proposal before wave A has re-run. Without
+    # this branch it fell through to "no informative pairs", which is true and
+    # sends the reader to look at pair scoring instead of at adoption progress.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(f"no attributed curation run in the control arm (wave "
+                   f"{control}) yet — the treatment has nothing to be compared "
+                   "against. Expected while the arms are still catching up")
+elif len(t_canon) > 1 or len(c_canon) > 1:
     # "Adopt only if strictly better" presumes ONE proposal. An arm split across
     # versions names no coherent change, and a sweep could be carried by
     # whichever version happened to draw the easier pairs.
+    #
+    # Ahead of the inverted-arms test on purpose: an arm that is not internally
+    # coherent cannot meaningfully be called older or newer than the other, and
+    # reporting inversion first walked the reader through two diagnoses — swap
+    # the flags, hit the split — to reach one problem.
     verdict, code = "INCONCLUSIVE", 5
-    split = t_by_version if len(t_versions) > 1 else c_by_version
-    which = treatment if len(t_versions) > 1 else control
+    split = t_by_version if len(t_canon) > 1 else c_by_version
+    which = treatment if len(t_canon) > 1 else control
     reasons.append(
         f"wave {which} is split across versions, so there is no single change to "
         "adopt: "
         + "; ".join(f"{v} ({', '.join(sorted(split[v]))})" for v in sorted(split))
         + " — bring the arm onto one version and re-score")
-elif t_versions == c_versions:
+elif t_canon == c_canon:
     verdict, code = "INCONCLUSIVE", 5
-    reasons.append(f"both arms ran the same version ({', '.join(t_versions)}); "
-                   "this is a baseline, not a comparison")
+    spelling = ""
+    if set(t_versions) != set(c_versions):
+        spelling = (f" — recorded as {', '.join(t_versions)} and "
+                    f"{', '.join(c_versions)}, which canonicalise to the same "
+                    "release; worth making the spelling uniform")
+    reasons.append(f"both arms ran the same version ({', '.join(sorted(t_canon))})"
+                   f"{spelling}; this is a baseline, not a comparison")
     if t_failures:
         # Real, and worth acting on, but it is a finding about the shipped
         # version rather than grounds to reject a proposal that does not exist.
         reasons.append("a safety gate did trip under that version — see the "
                        "treatment-arm failures above; that is a finding about "
                        "what is shipped, not a rejection of anything proposed")
+elif inverted:
+    # Detection alone was not enough: the WARN printed at the top and the verdict
+    # then rejected the winning change and told the reader to file it as refuted,
+    # twenty lines below the warning saying not to trust the result.
+    inversion_is_the_verdict = True
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(f"the arms look inverted — wave {treatment} carries only "
+                   f"older versions ({', '.join(t_versions)}) than wave "
+                   f"{control} ({', '.join(c_versions)}). Re-run with "
+                   f"--treatment {control} --control {treatment}; as scored "
+                   "here a winning change reads as a losing one")
 elif t_failures:
     verdict, code = "REJECT", 3
-    reasons.append("a safety gate tripped in the treatment arm: "
-                   + "; ".join(f"{r['repo']} ({r['why']})" for r in t_failures))
+    # Named in the body rather than enumerated twice. The body block is what
+    # keeps failures visible under the INCONCLUSIVE paths above, so it must not
+    # look redundant enough to delete.
+    reasons.append("a safety gate tripped in the treatment arm — see the "
+                   "treatment-arm failures above")
 elif t_unverified:
     # Blocks adoption, like a failure, but is NOT a rejection: nothing was
     # refuted, the experiment was run without its safety check. Filing that in
@@ -598,13 +658,16 @@ else:
     reasons.append(f"the treatment won {len(wins)} of {len(informative)} "
                    f"informative pairs; adoption requires all ({'; '.join(lost)})")
 
+# Only when inversion is what actually stopped the run. A split arm also trips
+# the older-than test — an incoherent arm compares older than anything — and
+# printing both banners walks the reader through two diagnoses for one problem.
 inversion_warning = (
     f"WARN wave {treatment} carries only older versions than wave {control} "
     f"({', '.join(t_versions)} vs {', '.join(c_versions)}). The arms look "
     f"inverted: wave A adopts first and holds the older version, so the first "
     f"experiment runs --treatment {control} --control {treatment}. As scored "
     f"here, a winning change reads as a losing one."
-) if inverted else None
+) if inversion_is_the_verdict else None
 
 if fmt == "json":
     print(json.dumps({
@@ -655,6 +718,18 @@ for p in pairs:
     else:
         print(f"{'':>4}  -> uninformative: {p['why']}")
 print()
+
+# Which file each score is actually about. The table has no room for a column,
+# and without this a multi-file ledger reads as though its whole history were in
+# view — two repos showing 50,000 -> 7,000 with no sign that a prune on a
+# secondary file was excluded from both.
+multi = [r for r in records if r["other_files"]]
+if multi:
+    print("multi-file ledgers — the file scored, and how many were not:")
+    for r in multi:
+        print(f"  {r['repo']}: {r['file']} "
+              f"(+{r['other_files']} other file(s) not scored)")
+    print()
 
 unassigned = [r for r in records if not r["pair"]]
 if unassigned:

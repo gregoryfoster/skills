@@ -218,10 +218,17 @@ for key in order:
             "best_actions": None, "best_delta": None,
         })
         continue
-    # PRIMARY POLICY FILE: the one measured most recently. A ledger may track
-    # more than one (record-telemetry.sh keys its own deltas by file), and mixing
-    # them makes `net` span two files and report a change for one that never
-    # moved — the class of error the method-change anchoring exists to prevent.
+    # PRIMARY POLICY FILE: the one with the most rows, ties broken by whichever
+    # was measured most recently. A ledger may track more than one
+    # (record-telemetry.sh keys its own deltas by file), and mixing them makes
+    # `net` span two files and report a change for one that never moved — the
+    # class of error the method-change anchoring exists to prevent.
+    #
+    # Most-recent alone was the first rule and it was too fragile: one incidental
+    # baseline row for docs/GUIDE.md collapsed a repo that had curated AGENTS.md
+    # 50,000 -> 6,800 to a headline of 4,000 tokens, 1 run and no net — and that
+    # 4,000 then fed the cohort total. Row count is what a stray append cannot
+    # flip.
     #
     # THIS RULE IS SHARED WITH score-cohort.sh AND MUST STAY IDENTICAL. When the
     # two disagreed, one ledger produced two irreconcilable pictures of the same
@@ -229,8 +236,14 @@ for key in order:
     # reported the 43,000-token curation on the primary one. A test pins them.
     #
     # `runs` counts runs for this file, which is also the more useful number.
+    counts, last_seen = {}, {}
+    for i, r in enumerate(rows):
+        f = r.get("file")
+        counts[f] = counts.get(f, 0) + 1
+        last_seen[f] = i           # rows is ascending by ts, so later index wins
+    primary = max(counts, key=lambda f: (counts[f], last_seen[f]))
+    rows = [r for r in rows if r.get("file") == primary]
     latest = rows[-1]
-    rows = [r for r in rows if r.get("file") == latest.get("file")]
     # The best single reduction and what accompanied it — the roll-up's reason
     # for existing: which optimisation actually moved the number, per repo.
     best = None

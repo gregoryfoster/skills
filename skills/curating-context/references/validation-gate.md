@@ -40,15 +40,25 @@ and the only comparisons left are between maintenance runs.
 
 Three details decide whether that run is scored at all:
 
-- **One policy file per repo — the one measured most recently.** A ledger may
-  track several, so "what did this repo do" is unanswerable until one is named.
+- **One policy file per repo — the one with the most rows**, ties broken by
+  whichever was measured most recently. A ledger may track several, so "what did
+  this repo do" is unanswerable until one is named.
+
+  Most-recent alone was the first rule and it was too fragile: one incidental
+  `docs/GUIDE.md` baseline re-defined a repo that had curated `AGENTS.md`
+  50,000 → 6,800 over three runs, dropping it out of the experiment and
+  collapsing the roll-up's headline to 4,000 tokens, one run and no net — a
+  number that then fed the cohort total. Row count is what a stray append cannot
+  flip.
+
   `score-cohort.sh` and `cohort-report.sh` use the **same rule**, and a test pins
   them to the same answer: when they disagreed, one ledger yielded two
   irreconcilable pictures of a single repo, the gate scoring a 100-token prune on
   `sub/AGENTS.md` (3.3% closure) while the roll-up reported the 43,000-token
   curation on `AGENTS.md`. If the primary file was never curated the repo is
-  unscorable and the report names both the file and how many others were skipped
-  — better than quietly scoring whichever file happened to be touched first.
+  unscorable and the report names both the file and how many others were skipped;
+  when any ledger held more than one file, the report names which was scored,
+  because the table has no room for the column.
 - **The before-state comes from that same file.** Taking whichever row happens to
   precede the curation produced a fabricated closure: a repo that really went
   50,000 → 9,000 scored **−2900%** against an unrelated file's 6,100, and handed
@@ -84,7 +94,17 @@ score and not fine for scoring.
 The verdict also refuses when **either arm is split across versions**. "Adopt
 only if strictly better" presumes one proposal; an arm running two names no
 coherent change, and a sweep could be carried by whichever version drew the
-easier pairs.
+easier pairs. That test runs *before* the inversion one — an arm that is not
+internally coherent compares older than anything, so diagnosing inversion first
+walked the reader through two problems to reach one.
+
+Every "is this even an experiment?" test compares **canonical** versions, where
+`1.2` and `1.2.0` are one release. Comparing the raw strings made them two, and
+the gate returned ADOPT for a release scored against itself — the mirror of
+adopting on zero evidence. Canonicalisation only strips trailing zero
+components; it is deliberately *not* the numeric key used for the older/newer
+test, which maps every non-numeric component to zero and would collapse
+`2.0-alpha` and `2.0-beta` into one version.
 
 ## The pairs
 
@@ -187,7 +207,14 @@ sweep requirement is the only threshold that carries any evidential weight here,
 and even it lands at p=0.062.
 
 `--min-pairs` (default 3, **minimum 1**) is the floor below which the verdict is
-INCONCLUSIVE rather than a rejection. Zero is refused rather than clamped: a
+INCONCLUSIVE rather than a rejection. Read it against the four-informative-pair
+ceiling above and it says something concrete about how much slack the roster
+has: **the experiment tolerates exactly one pair dropping out.** A second repo
+with no ledger, an untagged run, or a method change anywhere in pairs 1–4 takes
+the round below the floor and there is no verdict to be had. That is the number
+to weigh when deciding how tightly to sequence the adoption issues.
+
+Zero is refused rather than clamped: a
 verdict computed over no pairs is not a weaker verdict but no verdict, and the
 sweep test reads `0 == 0` as a win — it adopted on no evidence whatever until
 the branch was guarded on `informative` being non-empty as well.
