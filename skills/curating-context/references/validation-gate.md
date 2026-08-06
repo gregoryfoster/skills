@@ -38,13 +38,21 @@ first is a fair comparison. This is also why the staging matters: if all twelve
 repos adopt on the same day and the same version, every first curation is spent,
 and the only comparisons left are between maintenance runs.
 
-Two details decide whether that run is scored at all:
+Three details decide whether that run is scored at all:
 
-- **The before-state must come from the same policy file.** A ledger may track
-  more than one — `record-telemetry.sh` computes its own deltas per file — and
-  taking whichever row happens to precede the curation produced a fabricated
-  closure: a repo that really went 50,000 → 9,000 scored **−2900%** against an
-  unrelated file's 6,100, and handed the pair to the other arm.
+- **One policy file per repo — the one measured most recently.** A ledger may
+  track several, so "what did this repo do" is unanswerable until one is named.
+  `score-cohort.sh` and `cohort-report.sh` use the **same rule**, and a test pins
+  them to the same answer: when they disagreed, one ledger yielded two
+  irreconcilable pictures of a single repo, the gate scoring a 100-token prune on
+  `sub/AGENTS.md` (3.3% closure) while the roll-up reported the 43,000-token
+  curation on `AGENTS.md`. If the primary file was never curated the repo is
+  unscorable and the report names both the file and how many others were skipped
+  — better than quietly scoring whichever file happened to be touched first.
+- **The before-state comes from that same file.** Taking whichever row happens to
+  precede the curation produced a fabricated closure: a repo that really went
+  50,000 → 9,000 scored **−2900%** against an unrelated file's 6,100, and handed
+  the pair to the other arm.
 - **An untagged run makes the repo unscorable.** `record-telemetry.sh` emits
   `actions: []` when `--actions` was omitted, and such a row cannot be told from
   a baseline. Scoring it as a curation would attribute its near-zero closure to
@@ -62,11 +70,16 @@ rounds, once A is the arm carrying a proposal.
 
 Getting the direction backwards turns a winning change into a losing one, so the
 gate detects it: when the treatment arm's versions are all *older* than the
-control's, it prints a `WARN` naming the inversion and the flags that fix it.
+control's, it prints a `WARN` naming the inversion and the flags that fix it —
+**and returns INCONCLUSIVE rather than a rejection.** Detection alone was not
+enough. The first implementation warned at the top and then rejected the winning
+change and told the reader to file it in `rejected-changes.md`, twenty lines
+below the warning saying not to trust the result.
+
 Comparison is by numeric component, not by string — `1.10` is newer than `1.9`
-and sorts below it lexically. That ordering drives only the warning, never the
-verdict: a non-numeric component reads as zero, which is fine for a hint and not
-fine for a decision.
+and sorts below it lexically. That ordering decides only whether to *stop*, never
+who wins: a non-numeric component reads as zero, which is fine for refusing to
+score and not fine for scoring.
 
 The verdict also refuses when **either arm is split across versions**. "Adopt
 only if strictly better" presumes one proposal; an arm running two names no
@@ -134,7 +147,7 @@ Checked before any score, on the treatment arm's scored run:
 
 | Gate | Trips when |
 |---|---|
-| `no_loss` | `prove-no-loss.sh` did not return `ok` |
+| `no_loss` | `prove-no-loss.sh` returned a **non-`ok`** verdict. An absent or `skipped` one does not trip the gate — it makes the run *unverified*, which the next section separates out |
 | `links_dead` | the curated surface has broken links |
 | `docs_orphaned` | demotion left more orphans than it found |
 

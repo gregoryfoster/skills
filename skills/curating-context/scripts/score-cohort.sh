@@ -26,7 +26,9 @@ Options:
                       the defaults: --treatment b --control a. The defaults suit
                       later rounds, once A has caught up and is the arm carrying
                       a proposal. Get this backwards and a winning change reads
-                      as a losing one.
+                      as a losing one — so an arm carrying only older versions
+                      than the other is detected and returns INCONCLUSIVE rather
+                      than a rejection.
   --ledger PATH       Ledger path within each repo.
                       Default: .skills/context-metrics.jsonl
   --branch NAME       Branch to read for owner/repo entries.
@@ -95,7 +97,15 @@ Exit codes:
   2  infrastructure failure (python3 or gh missing, library missing)
   3  REJECT — a recorded safety gate tripped, or the treatment did not sweep
   5  INCONCLUSIVE — nothing was decided: too few informative pairs, safety
-     unverified, both arms on one version, or an arm split across versions
+     unverified, both arms on one version, an arm split across versions, or the
+     arms look inverted
+
+Every question of the form "is this even an experiment?" is answered BEFORE any
+verdict that would reject, because a REJECT tells the reader to write the change
+into rejected-changes.md — a permanent record. Naming a change as refuted when
+the comparison was mislabelled, or when no proposal existed, is the worst single
+output this script can produce. Treatment-arm safety failures are printed
+whatever the verdict, so the reordering masks nothing.
 USAGE
 }
 
@@ -198,10 +208,16 @@ fi
 
 : >"$TMP/all.jsonl"
 while IFS="$CTX_US" read -r kind entry wave pair; do
-  [ -n "$wave" ] || continue
+  # An entry outside the two arms is REPORTED, not dropped. The roll-up already
+  # refuses to skip a repo silently on the principle that missing telemetry is
+  # itself the finding; a gate that quietly shrinks its own sample is worse,
+  # because a typo'd wave: value removes a repo from the experiment with no
+  # trace anywhere in the output.
   case "$wave" in
     "$TREATMENT"|"$CONTROL") ;;
-    *) continue ;;
+    *) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "OUT_OF_ARM" \
+         >>"$TMP/all.jsonl"
+       continue ;;
   esac
   # The FULL roster entry is the key, not its basename: OrgA/cli and OrgB/cli
   # would otherwise merge into one record. The reader shortens it for display
@@ -231,11 +247,15 @@ min_pairs = int(min_pairs)
 
 repos = {}
 order = []
+out_of_arm = []
 for raw in open(src, encoding="utf-8"):
     raw = raw.rstrip("\n")
     if not raw or raw.count("\t") < 3:
         continue
     key, wave, pair, payload = raw.split("\t", 3)
+    if payload == "OUT_OF_ARM":
+        out_of_arm.append((key, wave))
+        continue
     if key not in repos:
         repos[key] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
         order.append(key)
@@ -283,7 +303,8 @@ def score_repo(key, info):
         "repo": display[key], "entry": key, "wave": info["wave"],
         "pair": info["pair"], "status": None, "why": None, "before": None,
         "after": None, "budget": None, "closure": None, "no_loss": None,
-        "skill_version": None, "ts": None, "gates": [], "unverified": [],
+        "skill_version": None, "ts": None, "file": None, "gates": [],
+        "unverified": [],
     }
     if info["status"] != "ok":
         rec["status"] = "unscorable"
@@ -297,8 +318,22 @@ def score_repo(key, info):
         rec["why"] = "no ledger rows"
         return rec
 
-    scored = None
-    for r in rows:
+    # PRIMARY POLICY FILE: the one measured most recently. A ledger may track
+    # several — record-telemetry.sh keys its own deltas by file — so "what did
+    # this repo do" is not answerable until one file is named.
+    #
+    # THIS RULE IS SHARED WITH cohort-report.sh AND MUST STAY IDENTICAL. When the
+    # two disagreed, one ledger produced two irreconcilable pictures of the same
+    # repo: the gate scored sub/AGENTS.md 9,000 -> 8,900 (a 100-token prune, 3.3%
+    # closure) while the roll-up reported AGENTS.md at 7,000, net -43,000. A test
+    # pins the two scripts to the same answer.
+    primary = rows[-1].get("file")
+    other_files = {r.get("file") for r in rows} - {primary}
+    rows = [r for r in rows if r.get("file") == primary]
+    rec["file"] = primary
+
+    scored = scored_idx = None
+    for i, r in enumerate(rows):
         if not r.get("skill_version"):
             continue
         kind = classify_run(r)
@@ -309,22 +344,21 @@ def score_repo(key, info):
             rec["why"] = ("the first attributed run carries no action tags, so it "
                           "cannot be told from a baseline; tag it and re-score")
             return rec
-        scored = r
+        scored, scored_idx = r, i
         break
     if scored is None:
+        extra = (f"; {len(other_files)} other file(s) in this ledger were not "
+                 "scored" if other_files else "")
         rec["status"] = "unscorable"
-        rec["why"] = "no attributed curation run yet (only baselines, or no skill_version)"
+        rec["why"] = (f"no attributed curation run for {primary} yet (only "
+                      f"baselines, or no skill_version){extra}")
         return rec
 
-    # The before-state must come from the SAME policy file. A ledger may track
-    # more than one — record-telemetry.sh computes its own deltas per file — and
-    # taking the row that merely happens to precede this one produced a
-    # fabricated closure: a repo that actually went 50,000 -> 9,000 scored -2900%
-    # off an unrelated file's 6,100.
-    target = scored.get("file")
-    same_file = [r for r in rows if r.get("file") == target]
-    idx = same_file.index(scored)
-    prev = same_file[idx - 1] if idx else None
+    # The before-state is the row before it in the SAME file — carried from the
+    # scan rather than looked up with .index(), which matches by dict equality:
+    # two byte-identical rows (a same-day re-run with no --note) would resolve to
+    # the earlier one and take the before-state a row too early.
+    prev = rows[scored_idx - 1] if scored_idx else None
 
     rec["skill_version"] = scored.get("skill_version")
     rec["ts"] = scored.get("ts")
@@ -478,20 +512,25 @@ inverted = bool(t_versions and c_versions
                 and max(map(version_key, t_versions))
                 < min(map(version_key, c_versions)))
 
+# Order matters, and it is the opposite of the obvious one. Every question of
+# the form "is this even an experiment?" is asked BEFORE any verdict that would
+# reject, because a REJECT tells the reader to write the change into
+# rejected-changes.md — a permanent record that shapes future proposals. Naming
+# a change as refuted when the comparison was mislabelled, or when there was no
+# proposal at all, is the worst single output this script can produce. Treatment
+# safety failures are still printed in the body whatever the verdict, so nothing
+# is masked by the reordering.
 verdict, code, reasons = None, 0, []
-if t_failures:
-    verdict, code = "REJECT", 3
-    reasons.append("a safety gate tripped in the treatment arm: "
-                   + "; ".join(f"{r['repo']} ({r['why']})" for r in t_failures))
-elif t_unverified:
-    # Blocks adoption, like a failure, but is NOT a rejection: nothing was
-    # refuted, the experiment was run without its safety check. Filing that in
-    # rejected-changes.md would record the idea as tested and beaten when it was
-    # neither.
+if inverted:
+    # Detection alone was not enough: the WARN printed at the top and the verdict
+    # then rejected the winning change and told the reader to file it as refuted,
+    # twenty lines below the warning saying not to trust the result.
     verdict, code = "INCONCLUSIVE", 5
-    reasons.append("safety could not be verified in the treatment arm: "
-                   + "; ".join(f"{r['repo']} ({r['why']})" for r in t_unverified)
-                   + " — re-run those curations with --no-loss and re-score")
+    reasons.append(f"the arms look inverted — wave {treatment} carries only "
+                   f"older versions ({', '.join(t_versions)}) than wave "
+                   f"{control} ({', '.join(c_versions)}). Re-run with "
+                   f"--treatment {control} --control {treatment}; as scored "
+                   "here a winning change reads as a losing one")
 elif not t_versions:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"no attributed curation run in the treatment arm (wave "
@@ -512,6 +551,25 @@ elif t_versions == c_versions:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"both arms ran the same version ({', '.join(t_versions)}); "
                    "this is a baseline, not a comparison")
+    if t_failures:
+        # Real, and worth acting on, but it is a finding about the shipped
+        # version rather than grounds to reject a proposal that does not exist.
+        reasons.append("a safety gate did trip under that version — see the "
+                       "treatment-arm failures above; that is a finding about "
+                       "what is shipped, not a rejection of anything proposed")
+elif t_failures:
+    verdict, code = "REJECT", 3
+    reasons.append("a safety gate tripped in the treatment arm: "
+                   + "; ".join(f"{r['repo']} ({r['why']})" for r in t_failures))
+elif t_unverified:
+    # Blocks adoption, like a failure, but is NOT a rejection: nothing was
+    # refuted, the experiment was run without its safety check. Filing that in
+    # rejected-changes.md would record the idea as tested and beaten when it was
+    # neither.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append("safety could not be verified in the treatment arm: "
+                   + "; ".join(f"{r['repo']} ({r['why']})" for r in t_unverified)
+                   + " — re-run those curations with --no-loss and re-score")
 elif not informative:
     # Independent of --min-pairs. With --min-pairs 0 the sweep test below reads
     # `0 == 0` and adopts on no evidence whatever — a vacuous pass in the one
@@ -555,9 +613,12 @@ if fmt == "json":
         "repos": records, "pairs": pairs,
         "informative_pairs": len(informative), "treatment_wins": len(wins),
         "min_pairs": min_pairs, "verdict": verdict, "reasons": reasons,
+        "treatment_arm_failures": [r["repo"] for r in t_failures],
+        "treatment_arm_unverified": [r["repo"] for r in t_unverified],
         "control_arm_failures": [r["repo"] for r in c_failures],
         "control_arm_unverified": [r["repo"] for r in c_unverified],
         "arms_may_be_inverted": inverted,
+        "out_of_arm": [{"entry": k, "wave": w or None} for k, w in out_of_arm],
     }, indent=2))
     sys.exit(code)
 
@@ -599,6 +660,24 @@ unassigned = [r for r in records if not r["pair"]]
 if unassigned:
     print("not in any pair: "
           + ", ".join(f"{r['repo']} (wave {r['wave']})" for r in unassigned))
+if out_of_arm:
+    print(f"not in either arm (wave is neither {treatment} nor {control}): "
+          + ", ".join(f"{k} (wave {w or 'unassigned'})" for k, w in out_of_arm))
+if unassigned or out_of_arm:
+    print()
+# Printed whatever the verdict, so that reordering the verdict checks — which
+# put "is this even an experiment?" ahead of any REJECT — cannot mask a real
+# safety failure behind an INCONCLUSIVE.
+if t_failures:
+    print("treatment-arm safety failures:")
+    for r in t_failures:
+        print(f"  {r['repo']}: {r['why']}")
+    print()
+if t_unverified:
+    print("treatment-arm runs with no safety verdict (the check was not run):")
+    for r in t_unverified:
+        print(f"  {r['repo']}: {r['why']}")
+    print()
 if c_failures:
     print("control-arm safety failures (reported, not a reason to reject the "
           "proposal):")

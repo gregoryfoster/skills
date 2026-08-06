@@ -27,6 +27,10 @@ Options:
                    it to reject a skill change that reduced tokens by dropping
                    content, which no token count can distinguish from a good
                    run. A null is treated as unscorable, never as ok.
+                   `skipped` records the decision explicitly and reads better in
+                   a ledger, but the gate treats it exactly like a null: only
+                   `ok` clears the check, and only `failed` is evidence that
+                   anything actually went wrong.
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:

@@ -337,7 +337,7 @@ returns every few runs and is re-litigated from scratch.
 validation split, and `score-cohort.sh` scores the arm running a proposal against
 the arm running the version before it. Adoption needs a win on every informative
 pair and a clean sweep of the safety gates; anything else, "no measurable
-difference" included, is a rejection. The split, the metric, and what the gate
+difference" included, blocks adoption. The split, the metric, and what the gate
 cannot see: [references/validation-gate.md](references/validation-gate.md).
 
 Commit the ledger with the edits, on a branch, and open a PR whose body carries:

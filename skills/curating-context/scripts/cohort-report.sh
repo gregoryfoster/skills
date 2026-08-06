@@ -218,14 +218,18 @@ for key in order:
             "best_actions": None, "best_delta": None,
         })
         continue
+    # PRIMARY POLICY FILE: the one measured most recently. A ledger may track
+    # more than one (record-telemetry.sh keys its own deltas by file), and mixing
+    # them makes `net` span two files and report a change for one that never
+    # moved — the class of error the method-change anchoring exists to prevent.
+    #
+    # THIS RULE IS SHARED WITH score-cohort.sh AND MUST STAY IDENTICAL. When the
+    # two disagreed, one ledger produced two irreconcilable pictures of the same
+    # repo: the gate scored a 100-token prune on a secondary file while this
+    # reported the 43,000-token curation on the primary one. A test pins them.
+    #
+    # `runs` counts runs for this file, which is also the more useful number.
     latest = rows[-1]
-    # Everything below is about ONE policy file — the one measured most recently.
-    # A ledger may track more than one (record-telemetry.sh computes its own
-    # deltas per file), and mixing them makes `net` span two different files and
-    # report a change for a file that never moved. That is the same class of
-    # error the method-change anchoring exists to prevent, so it gets the same
-    # treatment. `runs` counts runs for this file, which is also the more useful
-    # number.
     rows = [r for r in rows if r.get("file") == latest.get("file")]
     # The best single reduction and what accompanied it — the roll-up's reason
     # for existing: which optimisation actually moved the number, per repo.
