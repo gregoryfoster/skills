@@ -2030,7 +2030,7 @@ class TestCheckSeams:
     def test_clean_move_reports_no_seams(self, tmp_path: Path):
         r = _run_seams(_seam_repo(tmp_path))
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "OK — no cross-reference seams found." in r.stdout
+        assert "OK — no unacknowledged cross-reference seams." in r.stdout
         assert r.stdout.rstrip().endswith("seams: 0")
 
     def test_back_reference_in_a_doc_is_reported(self, tmp_path: Path):
@@ -2241,3 +2241,131 @@ class TestSeamsOnTheRow:
         )
         assert out.returncode == 1
         assert "non-negative integer" in out.stderr
+
+
+class TestSeamAcknowledgement:
+    """A legitimate back-reference is permanent, so without acknowledgement
+    exit 3 is the steady state — alarm fatigue — and the only way to zero the
+    count is to delete legitimate references: the tokens_live mistake with a
+    different metric."""
+
+    def _with_back_reference(self, tmp_path: Path) -> Path:
+        repo = _seam_repo(tmp_path)
+        (repo / "docs" / "OPS.md").write_text(
+            "# Ops\n\nThe short rules live in AGENTS.md; this file has the "
+            "rest.\n\n## Deployment Topology\n\n"
+            "The workers connect to the bus directly.\n")
+        return repo
+
+    def test_acknowledged_hit_is_excluded_and_exit_is_clean(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "# judged legitimate: the short rules are still inline\n"
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+        assert "no unacknowledged cross-reference seams" in r.stdout
+        assert "1 acknowledged seam(s) skipped" in r.stdout
+        assert "docs/OPS.md:3" in r.stdout       # still visible, not hidden
+        assert r.stdout.rstrip().endswith("seams: 0")
+
+    def test_non_matching_pattern_does_not_acknowledge(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OTHER.md some other line entirely\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3
+        assert "seams: 1" in r.stdout
+
+    def test_entry_expires_when_the_line_changes(self, tmp_path: Path):
+        """Content matching, not line numbers: the acknowledgement stops
+        applying the moment the acknowledged line is edited, which is exactly
+        when it needs re-judging."""
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text().replace(
+            "The short rules live in AGENTS.md",
+            "Everything that used to live in AGENTS.md"))
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "seams: 1" in r.stdout
+
+    def test_comments_and_blanks_are_ignored(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "\n# a comment\n\ndocs/OPS.md The short rules live in AGENTS.md  # why\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_this_repos_own_ack_file_keeps_the_sweep_clean(self):
+        """The dogfood: the four judged-legitimate hits stay acknowledged, so
+        this repo's Phase 6.5 exits 0 and records seams: 0."""
+        root = Path(__file__).resolve().parent.parent.parent
+        r = subprocess.run(
+            ["bash", str(SEAMS), "--base", "HEAD"],
+            cwd=root, capture_output=True, text=True, env=_clean_env(),
+            timeout=60,
+        )
+        assert r.returncode == 0, r.stdout
+        assert "acknowledged seam(s) skipped" in r.stdout
+
+
+class TestSeamRenameNoise:
+    def test_renamed_successor_heading_is_not_flagged(self, tmp_path: Path):
+        """A rename's successor heading contains the old title; flagging it put
+        a guaranteed-noise hit beside every real rename-fallout hit."""
+        repo = tmp_path / "rn"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / "AGENTS.md").write_text(
+            "# G\n\n## Deployment Topology\n\nstuff\n\n## Ops Notes\n\n"
+            "see the Deployment Topology section above\n")
+        _git(repo, "add", "-A")
+        _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "pre")
+        (repo / "AGENTS.md").write_text(
+            "# G\n\n## Deployment Topology and Rollout\n\nstuff\n\n"
+            "## Ops Notes\n\nsee the Deployment Topology section above\n")
+        r = _run_seams(repo)
+        out = r.stdout
+        # The successor heading (line 3) is not a hit; the stale prose (line 9) is.
+        assert "AGENTS.md:3" not in out, out
+        assert "AGENTS.md:9" in out
+        assert "seams: 1" in out
+
+
+class TestRelativeInvocationFromSubdir:
+    """cd "$ROOT" ran before the bootstrap resolved ${BASH_SOURCE[0]}, so a
+    relative invocation from a subdirectory looked for the library in the wrong
+    tree and blamed the library for it. The guard is exempt: its bootstrap sits
+    after log() by design, and hooks always run with cwd at the project root."""
+
+    @pytest.mark.parametrize("script,args,ok_codes", [
+        ("measure-context.sh", ["--no-write"], {0}),
+        ("prove-no-loss.sh", ["--base", "HEAD"], {0, 3}),
+        ("check-seams.sh", ["--base", "HEAD"], {0, 3}),
+        ("context-delta.sh", [], {0}),
+    ])
+    def test_relative_path_from_a_subdirectory_works(
+            self, tmp_path: Path, script, args, ok_codes):
+        repo = _seam_repo(tmp_path)
+        # Vendor the scripts into the repo the way a submodule would.
+        vendor = repo / "vendor" / "scripts"
+        vendor.mkdir(parents=True)
+        for f in SCRIPTS.iterdir():
+            shutil.copy2(f, vendor / f.name)
+        sub = repo / "docs"
+        r = subprocess.run(
+            ["bash", f"../vendor/scripts/{script}", *args],
+            cwd=sub, capture_output=True, text=True, env=_clean_env(),
+            timeout=60,
+        )
+        assert r.returncode in ok_codes, (
+            f"{script}: exit {r.returncode}\n{r.stdout}\n{r.stderr}")
+        assert "_context-lib.sh not found" not in r.stderr

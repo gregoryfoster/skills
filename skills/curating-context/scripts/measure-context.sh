@@ -129,16 +129,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Repo root, so the measurement is stable regardless of cwd. The silent
-# fallback to cwd covers running outside a git repo at all.
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
-
 # --- shared library -------------------------------------------------------
 # Resolve through a symlink chain first: this script may be reached through a
 # symlinked vendor tree, and ${BASH_SOURCE[0]}'s dirname would then hold no
 # library. Unlike the hook, a missing library here is fatal — a measurement that
 # silently fell back to different constants is worse than no measurement.
+#
+# BEFORE the cd to the repo root, deliberately: a relative invocation from a
+# subdirectory (bash ../skills/.../measure-context.sh) leaves ${BASH_SOURCE[0]}
+# relative to the ORIGINAL cwd, and resolving it after the cd looked for the
+# library in the wrong tree and blamed the library for it.
 _self="${BASH_SOURCE[0]}"
 _n=0
 while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
@@ -154,6 +154,11 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
+
+# Repo root, so the measurement is stable regardless of cwd. The silent
+# fallback to cwd covers running outside a git repo at all.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
 
 # --check-credential: answer "will --exact succeed?" BEFORE a run commits to
 # eight phases of work. Same three sources as the real resolution below, same

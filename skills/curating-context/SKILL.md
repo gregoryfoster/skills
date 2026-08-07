@@ -46,6 +46,7 @@ and the commit body names where it went.
 | "I'll write the architecture overview more concisely" | The ETH Zurich evaluation found codebase overviews did **not** help agents reach relevant files faster. Tightening a section that shouldn't be inline at all is wasted work — classify it first. |
 | "More context is safer" | Context is a finite resource with diminishing returns. Retrieval accuracy degrades as the window fills, so an unnecessary token is not neutral — it dilutes attention on the necessary ones. |
 | "Nothing changed this week, skip the run" | The run's cheapest output is the telemetry row. A flat week is a signal worth recording, and the fact checks still catch drift the repo caused elsewhere. |
+| "I can get seams to 0 by deleting the references" | A legitimate back-reference is navigation, and deleting it zeroes the metric while making the surface worse — the `tokens_live` mistake again. Acknowledge it in `.skills/context-seams-ok` instead; the healthy steady state is a stable acknowledged set with zero *new* hits. |
 
 ## Scope: one repo, and only this repo
 
@@ -140,7 +141,9 @@ cause rather than record the row. `--allow-method-change` overrides it and
 deliberately starts a new baseline.
 
 This matters most in an interactive session, which is the case least likely to
-have a key: a Claude Code session exports no `ANTHROPIC_API_KEY`. Three sources
+have a key: a Claude Code session exports no `ANTHROPIC_API_KEY`. Phase 0
+exists so the gap is found *before* any work starts — if you are reading this
+mid-run with no credential, that is the check that was skipped. Three sources
 are tried in order — the environment, then `ANTHROPIC_API_KEY` **parsed** out of a
 repo-root secrets file (`.env`, then bare `env`), then an `ant auth login`
 profile. Parsed, never sourced: a measurement script must not execute a secrets
@@ -342,9 +345,12 @@ file they were reading. All invisible to `links.dead`, because a resolvable link
 to the wrong content is not dead.
 
 The report is hits **to judge**, not defects to fix — a reference to the policy
-file is wrong only if what it points at moved. Judge each, fix what lies,
-re-run, and carry the final count to Phase 7 (`--seams N`). Run this sweep
-*last*, after every other edit has landed.
+file is wrong only if what it points at moved. Judge each: fix what lies, and
+add what is legitimate to `.skills/context-seams-ok` so it stays acknowledged
+rather than re-alarming every week (entries match line *content* and expire
+when the line changes — which is when they need re-judging). Re-run, and carry
+the count of **new** seams to Phase 7 (`--seams N`). Run this sweep *last*,
+after every other edit has landed.
 
 ## Phase 7 — Record and ship
 
@@ -352,7 +358,7 @@ re-run, and carry the final count to Phase 7 (`--seams N`). Run this sweep
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
   | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
-      --no-loss ok --seams 0 --print-trend
+      --no-loss ok --seams <N from Phase 6.5> --print-trend
 ```
 
 Tag `--actions` honestly and specifically. The tags are the only thing that lets

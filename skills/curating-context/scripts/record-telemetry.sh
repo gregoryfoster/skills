@@ -32,8 +32,9 @@ Options:
                    `ok` clears the check, and only `failed` is evidence that
                    anything actually went wrong.
   --seams N        Record check-seams.sh's final count for this run: the number
-                   of cross-reference seams left after Phase 6.5's hits were
-                   judged and the wrong ones fixed. Omitted means "not swept",
+                   of UNACKNOWLEDGED cross-reference seams after Phase 6.5's
+                   hits were judged — the wrong ones fixed, the legitimate ones
+                   added to .skills/context-seams-ok. Omitted means "not swept",
                    recorded as null — which, like no_loss, is never the same
                    as 0. Run the sweep last and record the number it prints.
   --repo NAME      Override the row's repo identity. Needed only when neither
@@ -68,7 +69,8 @@ Row schema (one JSON object per line):
   docs_orphaned     live docs not reachable from the policy file
   links_dead        broken relative links in the curated surface
   no_loss           prove-no-loss.sh's verdict, from --no-loss; null if not run
-  seams             check-seams.sh's final count, from --seams; null if not swept
+  seams             check-seams.sh's unacknowledged count, from --seams; null
+                    if not swept
   repo              the roll-up's join key — from --repo, else the origin
                     remote's basename, else the checkout directory name
   top_section       largest section title, and its share of the file
