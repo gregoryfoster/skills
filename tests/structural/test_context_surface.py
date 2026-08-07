@@ -2295,13 +2295,137 @@ class TestSeamAcknowledgement:
         assert r.returncode == 3, r.stdout
         assert "seams: 1" in r.stdout
 
-    def test_comments_and_blanks_are_ignored(self, tmp_path: Path):
+    def test_full_line_comments_and_blanks_are_ignored(self, tmp_path: Path):
+        """Comments are LINE-START only. An inline `#` is part of the pattern —
+        provenance-heading hits contain issue numbers, and stripping inline
+        comments silently broadened exactly those entries ('Fixed in #412'
+        became 'Fixed in', which matched hits nobody judged)."""
         repo = self._with_back_reference(tmp_path)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "\n# a comment\n\ndocs/OPS.md The short rules live in AGENTS.md  # why\n")
+            "\n# a comment\n\ndocs/OPS.md The short rules live in AGENTS.md\n")
         r = _run_seams(repo)
         assert r.returncode == 0, r.stdout
+
+    def test_a_hash_in_a_pattern_is_not_a_comment(self, tmp_path: Path):
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text() + "\n## Fixed in #412\n\nx\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md :: Fixed in #412\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+        assert "1 acknowledged seam(s) skipped" in r.stdout
+        # And the pattern that did the acknowledging is charged with it.
+        assert "1 hit(s): docs/OPS.md :: Fixed in #412" in r.stdout
+
+    def test_path_anchored_entry_does_not_match_another_file(self, tmp_path: Path):
+        """The :: form pins an entry to a file: the same judged content in a
+        different doc is a different judgement."""
+        repo = _seam_repo(tmp_path)
+        for name in ("OPS.md", "OTHER.md"):
+            p = repo / "docs" / name
+            base = p.read_text() if p.exists() else "# X\n"
+            p.write_text(base + "\nRules live in AGENTS.md.\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md :: Rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "seams: 1" in r.stdout            # OTHER.md still fires
+        assert "seams_acked: 1" in r.stdout      # OPS.md acknowledged
+
+    def test_a_blanket_pattern_is_warned_about(self, tmp_path: Path):
+        """One lazy line must not silently zero the count: the gaming vector
+        the ack file closed for the docs would otherwise reopen inside the ack
+        file itself, with no diff anywhere a review reads."""
+        repo = _seam_repo(tmp_path)
+        (repo / "docs" / "OPS.md").write_text(
+            "# Ops\n\nRules live in AGENTS.md.\nSee AGENTS.md for style.\n"
+            "And AGENTS.md for tests.\nAlso AGENTS.md for deploys.\n\n"
+            "## Deployment Topology\n\nThe workers connect to the bus directly.\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text("back-reference\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0          # acknowledged is acknowledged
+        assert "4 hit(s): back-reference" in r.stdout
+        assert "WARN this pattern is broad" in r.stdout
+        assert "an acknowledgement should cover ONE judged line" in r.stdout
+
+    def test_precise_entries_are_not_warned_about(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert "WARN this pattern is broad" not in r.stdout
+
+    def test_pattern_matches_beyond_the_display_truncation(self, tmp_path: Path):
+        """Matching is against the full source line, not the truncated display:
+        a pattern pasted from the actual doc must work, not only one copied
+        from the report."""
+        repo = _seam_repo(tmp_path)
+        long_tail = "the canonical location for the full rationale and history"
+        (repo / "docs" / "OPS.md").write_text(
+            "# Ops\n\n" + ("x" * 130) + " AGENTS.md is " + long_tail + "\n\n"
+            "## Deployment Topology\n\n"
+            "The workers connect to the bus directly.\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(long_tail + "\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_stale_entries_are_reported_for_pruning(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n"
+            "docs/GONE.md something that no longer exists\n")
+        r = _run_seams(repo)
+        assert "matched nothing" in r.stdout, r.stdout
+        assert "docs/GONE.md something that no longer exists" in r.stdout
+
+    def test_machine_lines_carry_both_counts(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        lines = r.stdout.rstrip().splitlines()
+        assert lines[-2] == "seams_acked: 1"
+        assert lines[-1] == "seams: 0"
+
+
+class TestSeamsAckedOnTheRow:
+    def test_both_counts_land_on_the_row(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams 1 --seams-acked 4'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        row = json.loads(out.stdout)
+        assert row["seams"] == 1 and row["seams_acked"] == 4
+
+    def test_absent_is_null_and_garbage_is_refused(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["seams_acked"] is None
+        bad = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams-acked lots'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert bad.returncode == 1
+        assert "--seams-acked must be a non-negative integer" in bad.stderr
 
     def test_this_repos_own_ack_file_keeps_the_sweep_clean(self):
         """The dogfood: the four judged-legitimate hits stay acknowledged, so
@@ -2312,7 +2436,11 @@ class TestSeamAcknowledgement:
             cwd=root, capture_output=True, text=True, env=_clean_env(),
             timeout=60,
         )
-        assert r.returncode == 0, r.stdout
+        assert r.returncode == 0, (
+            "an acknowledged line in this repo's own docs changed, so its "
+            "entry in .skills/context-seams-ok expired — re-judge the hit and "
+            "update the entry; this is the canary working, not the code "
+            f"breaking:\n{r.stdout}")
         assert "acknowledged seam(s) skipped" in r.stdout
 
 

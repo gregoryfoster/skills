@@ -37,6 +37,11 @@ Options:
                    added to .skills/context-seams-ok. Omitted means "not swept",
                    recorded as null — which, like no_loss, is never the same
                    as 0. Run the sweep last and record the number it prints.
+  --seams-acked N  Record the sweep's acknowledged count — hits judged
+                   legitimate and carried in .skills/context-seams-ok. Recorded
+                   alongside --seams so a repo whose acknowledged set balloons
+                   is visible in the roll-up: 0 new / 0 acked and 0 new /
+                   50 acked are different states. Null when not swept.
   --repo NAME      Override the row's repo identity. Needed only when neither
                    the origin remote nor the checkout directory names the
                    repository the cohort roster knows this repo as.
@@ -53,7 +58,8 @@ Options:
 
 Row schema (one JSON object per line):
   ts                UTC date (YYYY-MM-DD)
-  repo              basename of the repo root
+  repo              the roll-up's join key — from --repo, else the origin
+                    remote's basename, else the checkout directory name
   file              policy file path
   tokens            policy-file tokens (exact when tokens_exact is true)
   tokens_exact      whether the count came from the count_tokens endpoint
@@ -71,8 +77,8 @@ Row schema (one JSON object per line):
   no_loss           prove-no-loss.sh's verdict, from --no-loss; null if not run
   seams             check-seams.sh's unacknowledged count, from --seams; null
                     if not swept
-  repo              the roll-up's join key — from --repo, else the origin
-                    remote's basename, else the checkout directory name
+  seams_acked       the sweep's acknowledged count, from --seams-acked; null
+                    if not swept
   top_section       largest section title, and its share of the file
   delta_tokens      change vs the previous row for this file. Null on the first
                     row, and null when the measurement method changed since the
@@ -96,6 +102,7 @@ ACTIONS=""
 NOTE=""
 NO_LOSS=""
 SEAMS=""
+SEAMS_ACKED=""
 REPO_OVERRIDE=""
 DRY=0
 TREND=0
@@ -115,6 +122,7 @@ while [ $# -gt 0 ]; do
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
     --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
+    --seams-acked) SEAMS_ACKED="${2:?--seams-acked needs a count}"; shift 2 ;;
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
     --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
@@ -134,11 +142,14 @@ case "$NO_LOSS" in
 esac
 # Digits only — the value comes from check-seams.sh's `seams: N` line, and
 # anything else here is a transcription error, not a count.
-case "$SEAMS" in
-  ''|*[!0-9]*)
-    [ -z "$SEAMS" ] || {
-      echo "ERROR --seams must be a non-negative integer (got '$SEAMS')" >&2; exit 1; } ;;
-esac
+for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED"; do
+  _flag="${_pair%%=*}"; _val="${_pair#*=}"
+  case "$_val" in
+    ''|*[!0-9]*)
+      [ -z "$_val" ] || {
+        echo "ERROR $_flag must be a non-negative integer (got '$_val')" >&2; exit 1; } ;;
+  esac
+done
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
@@ -183,13 +194,13 @@ mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGE
 [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" <<'PY' || RC=$?
 import datetime as dt
 import json
 import sys
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
- no_loss, seams) = sys.argv[1:12]
+ no_loss, seams, seams_acked) = sys.argv[1:13]
 
 try:
     m = json.load(open(src, encoding="utf-8"))
@@ -224,6 +235,7 @@ row = {
     "links_dead": len(links["dead"]),
     "no_loss": no_loss or None,
     "seams": int(seams) if seams else None,
+    "seams_acked": int(seams_acked) if seams_acked else None,
     "top_section": top.get("title"),
     "top_section_share": top.get("share"),
     "delta_tokens": None,

@@ -348,8 +348,9 @@ The report is hits **to judge**, not defects to fix — a reference to the polic
 file is wrong only if what it points at moved. Judge each: fix what lies, and
 add what is legitimate to `.skills/context-seams-ok` so it stays acknowledged
 rather than re-alarming every week (entries match line *content* and expire
-when the line changes — which is when they need re-judging). Re-run, and carry
-the count of **new** seams to Phase 7 (`--seams N`). Run this sweep *last*,
+when the line changes — which is when they need re-judging; one entry per
+judged line, and the report warns on blanket patterns). Re-run, and carry both
+final counts to Phase 7 (`--seams N --seams-acked M`). Run this sweep *last*,
 after every other edit has landed.
 
 ## Phase 7 — Record and ship
@@ -358,10 +359,11 @@ after every other edit has landed.
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
   | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
-      --no-loss ok --seams <N from Phase 6.5> --print-trend
+      --no-loss ok --seams <N> --seams-acked <M> --print-trend
 ```
 
-Tag `--actions` honestly and specifically. The tags are the only thing that lets
+`<N>` and `<M>` are the two numbers Phase 6.5 printed — new and acknowledged
+seams. Tag `--actions` honestly and specifically. The tags are the only thing that lets
 a later run — or the cohort roll-up — attribute a token delta to what caused it.
 `"cleanup"` teaches nothing; `"demote:Project Layout"` does. Schema and budget
 rationale: [references/budget-and-metrics.md](references/budget-and-metrics.md).

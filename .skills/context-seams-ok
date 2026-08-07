@@ -1,17 +1,18 @@
 # Acknowledged cross-reference seams — hits check-seams.sh reports that were
-# judged legitimate. One substring per line, matched against
-# "<class> <path> <line content>"; an entry expires when the line it
-# acknowledges changes, which is when it should be re-judged.
+# judged legitimate. One entry per judged line. "PATH :: CONTENT" pins the
+# entry to one file; an entry expires when the line it acknowledges changes,
+# which is when it should be re-judged. Comments start the line; an inline #
+# is part of the pattern.
 #
 # All four below verified 2026-08-07: each names content that is still where
 # the reference says it is.
 
 # docs/CONVENTIONS.md's header routes override authors back to the policy file.
-docs/CONVENTIONS.md [AGENTS.md](../AGENTS.md). Read this when authoring
-docs/CONVENTIONS.md is in AGENTS.md. What follows
+docs/CONVENTIONS.md :: [AGENTS.md](../AGENTS.md). Read this when authoring
+docs/CONVENTIONS.md :: is in AGENTS.md. What follows
 
 # docs/SKILLS.md describes what AGENTS.md links directly.
-docs/SKILLS.md which AGENTS.md points at directly
+docs/SKILLS.md :: which AGENTS.md points at directly
 
 # docs/STYLE.md's header claim is true: AGENTS.md still carries ## Scripts.
-docs/STYLE.md script live inline in [AGENTS.md](../AGENTS.md) under
+docs/STYLE.md :: script live inline in [AGENTS.md](../AGENTS.md) under

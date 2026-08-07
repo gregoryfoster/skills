@@ -30,14 +30,25 @@ Options:
   --docs-dir DIR   Reference-doc root. Default: CONTEXT_DOCS_DIR, then
                    .skills/context-docs-dir, then docs.
   --ack-file PATH  Acknowledgement file. Default: .skills/context-seams-ok.
-                   One substring per line (# comments and blanks ignored); a hit
-                   whose "<class> <path> <line content>" contains the substring
-                   is reported under acknowledged, excluded from the count, and
-                   does not trip exit 3. Substrings match content rather than
-                   line numbers, so edits elsewhere in a file do not invalidate
-                   an entry — and an entry stops matching the moment the line it
-                   acknowledged changes, which is exactly when it should be
-                   re-judged.
+                   One entry per line, two forms:
+                     CONTENT            substring of "<class> <path> <line>"
+                     PATH :: CONTENT    both halves matched independently — use
+                                        this to pin an entry to one file, since
+                                        path-then-content as one substring only
+                                        works when the content starts its line
+                   A matched hit is reported under acknowledged, excluded from
+                   the count, and does not trip exit 3. Lines STARTING with #
+                   are comments;
+                   a # anywhere else is part of the pattern, because
+                   provenance-heading hits contain issue numbers and stripping
+                   inline comments silently broadened exactly those entries.
+                   Substrings match content rather than line numbers, so edits
+                   elsewhere in a file do not invalidate an entry — and an
+                   entry stops matching the moment the line it acknowledged
+                   changes, which is exactly when it should be re-judged.
+                   One entry per judged line: the report charges each hit to
+                   the first pattern that matched and WARNs on any pattern
+                   covering more than 3 hits or more than one file.
   -h, --help       Show this help and exit 0.
 
 What it reports, in three classes:
@@ -60,12 +71,14 @@ What it reports, in three classes:
                    and bakes the run into permanent anchor slugs.
 
 Sections whose titles still exist in the policy file are not reported as moved.
-The report goes to stdout in full. The last line is machine-readable:
+The report goes to stdout in full. The last two lines are machine-readable:
 
+  seams_acked: <M>
   seams: <N>
 
-which is the number to record with `record-telemetry.sh --seams N` after the
-hits have been resolved or judged legitimate (re-run to confirm the count).
+which are the numbers to record with `record-telemetry.sh --seams N
+--seams-acked M` after the hits have been resolved or judged legitimate (re-run
+to confirm the counts).
 
 A hit judged LEGITIMATE goes in the acknowledgement file, not in the bin: a
 reference to the policy file is often correct navigation, and deleting it to
@@ -217,7 +230,8 @@ def doc_lines(path):
 for d in docs:
     for i, line in enumerate(doc_lines(d), 1):
         if any(n in line for n in policy_names):
-            seams.append(("back-reference", f"{d}:{i}", line.strip()[:120]))
+            seams.append(("back-reference", f"{d}:{i}", line.strip()[:120],
+                          line.strip()))
 
 # -- class 2: references to a title that left the policy file. Searched in the
 #    docs AND in the policy file itself — "now lives in docs/X.md" pointing at
@@ -239,7 +253,8 @@ for k, orig in sweepable.items():
                 # fallout itself.
                 continue
             seams.append(("moved-title", f"{path}:{i}",
-                          f"references '{orig}' — {line.strip()[:100]}"))
+                          f"references '{orig}' — {line.strip()[:100]}",
+                          line.strip()))
 
 # -- class 3a: duplicate headings inside one destination.
 for d in docs:
@@ -252,7 +267,7 @@ for d in docs:
         if k in seen:
             seams.append(("duplicate-heading", f"{d}:{i}",
                           f"'{m.group(2)}' also at line {seen[k]} — did the "
-                          "destination already cover this?"))
+                          "destination already cover this?", line.strip()))
         else:
             seen[k] = i
 
@@ -263,7 +278,8 @@ for path in [policy_rel] + docs:
     for i, line in enumerate(doc_lines(path), 1):
         m = HEADING.match(line)
         if m and prov.search(m.group(2)):
-            seams.append(("provenance-heading", f"{path}:{i}", m.group(2)[:100]))
+            seams.append(("provenance-heading", f"{path}:{i}", m.group(2)[:100],
+                          line.strip()))
 
 # Acknowledged hits: judged legitimate on an earlier run and recorded in the
 # ack file, one substring per line. Matched on content, not line numbers, so an
@@ -272,20 +288,47 @@ for path in [policy_rel] + docs:
 # of legitimate references a CLEAN exit instead of a permanent alarm: the
 # alternative steady state is exit 3 every week, and a metric that can only be
 # zeroed by deleting legitimate references invites exactly that deletion.
+# Comments only at LINE START. Stripping an inline `#` silently turned an
+# entry containing one — exactly what acknowledging a provenance-heading hit
+# requires, since that class matches on #\d{2,} — into a BROADER pattern than
+# the author wrote. "Fixed in #412" became "Fixed in", which still matched the
+# judged hit and every future "Fixed in ..." hit nobody judged.
 patterns = []
 try:
     with open(ack_file, encoding="utf-8") as fh:
         for raw in fh:
-            raw = raw.split("#", 1)[0].strip()
-            if raw:
+            raw = raw.strip()
+            if raw and not raw.startswith("#"):
                 patterns.append(raw)
 except OSError:
     pass
 
+# Matching is against the FULL source line, not the truncated display — a
+# pattern pasted from the actual doc line must work, not only one copied from
+# the report. First matching pattern is charged with the hit, so a pattern's
+# blast radius is visible below.
+#
+# Two forms. "PATH :: CONTENT" matches the two halves independently — needed
+# because path-then-content as ONE substring only works when the content starts
+# its line, and a heading hit's line starts with "## ". A plain entry is a
+# substring of "<class> <path> <full line>".
+def matches(p, cls, path, full):
+    if " :: " in p:
+        p_path, p_content = p.split(" :: ", 1)
+        return p_path in path and p_content in full
+    return p in f"{cls} {path} {full}"
+
+
 new, acked = [], []
-for cls, loc, detail in seams:
-    hay = f"{cls} {loc.rsplit(':', 1)[0]} {detail}"
-    (acked if any(p in hay for p in patterns) else new).append((cls, loc, detail))
+matched_by = {p: [] for p in patterns}
+for cls, loc, detail, full in seams:
+    path = loc.rsplit(":", 1)[0]
+    hit_pattern = next((p for p in patterns if matches(p, cls, path, full)), None)
+    if hit_pattern is None:
+        new.append((cls, loc, detail))
+    else:
+        acked.append((cls, loc))
+        matched_by[hit_pattern].append(loc)
 
 if moved and not sweepable:
     print(f"note: {len(moved)} section(s) left the policy file but every title "
@@ -307,10 +350,33 @@ else:
 if acked:
     print(f"\n{len(acked)} acknowledged seam(s) skipped (judged legitimate in "
           f"{ack_file}):")
-    for cls, loc, _ in acked:
+    for cls, loc in acked:
         print(f"  {cls}  {loc}")
+    # Per-pattern accountability. An acknowledgement is one judged line, so a
+    # pattern matching many hits — or hits across files — is doing the job of
+    # judgement without the judging. That is the metric-gaming vector moved
+    # into this file: one blanket line zeroes the count with no diff in the
+    # docs, and without this report it would be indistinguishable from careful
+    # entries.
+    print("\n  by pattern:")
+    for p, locs in matched_by.items():
+        if not locs:
+            continue
+        print(f"    {len(locs)} hit(s): {p[:70]}")
+        files = {l.rsplit(":", 1)[0] for l in locs}
+        if len(locs) > 3 or len(files) > 1:
+            print(f"    WARN this pattern is broad ({len(locs)} hits across "
+                  f"{len(files)} file(s)) — an acknowledgement should cover ONE "
+                  "judged line; split it or re-judge")
+    unused = [p for p in patterns if not matched_by[p]]
+    if unused:
+        print(f"\n  {len(unused)} entry(ies) matched nothing — the line each "
+              "acknowledged has changed or gone; re-judge and prune:")
+        for p in unused:
+            print(f"    {p[:70]}")
 
-print(f"\nseams: {len(new)}")
+print(f"\nseams_acked: {len(acked)}")
+print(f"seams: {len(new)}")
 sys.exit(3 if new else 0)
 PY
 
