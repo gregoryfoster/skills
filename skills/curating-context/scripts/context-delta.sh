@@ -72,13 +72,12 @@ done
 TMP="$(mktemp -d 2>/dev/null)" || { trap 'exit 0' EXIT; exit 0; }
 trap 'rm -rf "$TMP"; exit 0' EXIT
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
-ROOT="$(cd "$ROOT" 2>/dev/null && pwd -P)" || exit 0
-cd "$ROOT" 2>/dev/null || exit 0
-
 # --- shared library -------------------------------------------------------
 # Resolve through a symlink chain: this script may be reached through a symlinked
 # vendor tree, and ${BASH_SOURCE[0]}'s dirname would then hold no library.
+# Before the cd, deliberately: a relative invocation from a subdirectory leaves
+# ${BASH_SOURCE[0]} relative to the ORIGINAL cwd, and resolving it after the cd
+# looked for the library in the wrong tree and blamed the library for it.
 _self="${BASH_SOURCE[0]}"
 _n=0
 while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
@@ -96,6 +95,10 @@ if [ -z "$_libdir" ] || [ ! -f "$_libdir/_context-lib.sh" ]; then
 fi
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+ROOT="$(cd "$ROOT" 2>/dev/null && pwd -P)" || exit 0
+cd "$ROOT" 2>/dev/null || exit 0
 
 BUDGET="$(ctx_read_num_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
 DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"

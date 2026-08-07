@@ -78,11 +78,10 @@ done
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "ERROR not inside a git repository" >&2; exit 2; }
-cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
-
 # --- shared library -------------------------------------------------------
+# Before the cd, deliberately: a relative invocation from a subdirectory leaves
+# ${BASH_SOURCE[0]} relative to the ORIGINAL cwd, and resolving it after the cd
+# looked for the library in the wrong tree and blamed the library for it.
 _self="${BASH_SOURCE[0]}"
 _n=0
 while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
@@ -98,6 +97,10 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
 . "$_libdir/_context-lib.sh"
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "ERROR not inside a git repository" >&2; exit 2; }
+cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
 
 DOCS_DIR="$(ctx_docs_dir "$ROOT" "$DOCS_DIR")"
 

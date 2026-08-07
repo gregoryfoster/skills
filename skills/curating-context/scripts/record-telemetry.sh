@@ -31,6 +31,20 @@ Options:
                    a ledger, but the gate treats it exactly like a null: only
                    `ok` clears the check, and only `failed` is evidence that
                    anything actually went wrong.
+  --seams N        Record check-seams.sh's final count for this run: the number
+                   of UNACKNOWLEDGED cross-reference seams after Phase 6.5's
+                   hits were judged — the wrong ones fixed, the legitimate ones
+                   added to .skills/context-seams-ok. Omitted means "not swept",
+                   recorded as null — which, like no_loss, is never the same
+                   as 0. Run the sweep last and record the number it prints.
+  --seams-acked N  Record the sweep's acknowledged count — hits judged
+                   legitimate and carried in .skills/context-seams-ok. Recorded
+                   alongside --seams so a repo whose acknowledged set balloons
+                   is visible in the roll-up: 0 new / 0 acked and 0 new /
+                   50 acked are different states. Null when not swept.
+  --repo NAME      Override the row's repo identity. Needed only when neither
+                   the origin remote nor the checkout directory names the
+                   repository the cohort roster knows this repo as.
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:
@@ -44,7 +58,8 @@ Options:
 
 Row schema (one JSON object per line):
   ts                UTC date (YYYY-MM-DD)
-  repo              basename of the repo root
+  repo              the roll-up's join key — from --repo, else the origin
+                    remote's basename, else the checkout directory name
   file              policy file path
   tokens            policy-file tokens (exact when tokens_exact is true)
   tokens_exact      whether the count came from the count_tokens endpoint
@@ -60,6 +75,10 @@ Row schema (one JSON object per line):
   docs_orphaned     live docs not reachable from the policy file
   links_dead        broken relative links in the curated surface
   no_loss           prove-no-loss.sh's verdict, from --no-loss; null if not run
+  seams             check-seams.sh's unacknowledged count, from --seams; null
+                    if not swept
+  seams_acked       the sweep's acknowledged count, from --seams-acked; null
+                    if not swept
   top_section       largest section title, and its share of the file
   delta_tokens      change vs the previous row for this file. Null on the first
                     row, and null when the measurement method changed since the
@@ -82,6 +101,9 @@ LEDGER=".skills/context-metrics.jsonl"
 ACTIONS=""
 NOTE=""
 NO_LOSS=""
+SEAMS=""
+SEAMS_ACKED=""
+REPO_OVERRIDE=""
 DRY=0
 TREND=0
 ALLOW_METHOD_CHANGE=0
@@ -99,6 +121,9 @@ while [ $# -gt 0 ]; do
     --actions) need_arg "$#" --actions; ACTIONS="$2"; shift 2 ;;
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
+    --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
+    --seams-acked) SEAMS_ACKED="${2:?--seams-acked needs a count}"; shift 2 ;;
+    --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
     --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
@@ -115,6 +140,16 @@ case "$NO_LOSS" in
   ''|ok|failed|skipped) ;;
   *) echo "ERROR --no-loss must be ok, failed, or skipped (got '$NO_LOSS')" >&2; exit 1 ;;
 esac
+# Digits only — the value comes from check-seams.sh's `seams: N` line, and
+# anything else here is a transcription error, not a count.
+for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED"; do
+  _flag="${_pair%%=*}"; _val="${_pair#*=}"
+  case "$_val" in
+    ''|*[!0-9]*)
+      [ -z "$_val" ] || {
+        echo "ERROR $_flag must be a non-negative integer (got '$_val')" >&2; exit 1; } ;;
+  esac
+done
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
@@ -129,19 +164,43 @@ cat >"$TMP/in.json"
 
 # TZ is pinned to UTC so rows from different machines sort and diff consistently.
 TODAY="$(TZ=UTC date +%Y-%m-%d)"
-REPO_NAME="$(basename "$ROOT")"
+
+# The row's repo identity — the join key the cohort roll-up and the validation
+# gate match against the roster, so it is not cosmetic. basename(ROOT) alone was
+# wrong in exactly the repos most likely to run this: in a git worktree
+# --show-toplevel is the worktree path, so a run from
+# .worktrees/feat-161-curating-context/ recorded THAT as the repo, and the row
+# never joined its roster entry (#102). Several cohort members mandate
+# worktree-based feature work, so this was not an edge case.
+#
+# Precedence: --repo, then the origin remote's basename (the identity the
+# roster's owner/repo entries actually use), then the directory name for a repo
+# with no origin at all.
+if [ -n "$REPO_OVERRIDE" ]; then
+  REPO_NAME="$REPO_OVERRIDE"
+else
+  ORIGIN="$(git remote get-url origin 2>/dev/null)" || ORIGIN=""
+  if [ -n "$ORIGIN" ]; then
+    REPO_NAME="${ORIGIN%/}"
+    REPO_NAME="${REPO_NAME##*[/:]}"
+    REPO_NAME="${REPO_NAME%.git}"
+  else
+    REPO_NAME="$(basename "$ROOT")"
+  fi
+fi
+[ -n "$REPO_NAME" ] || REPO_NAME="$(basename "$ROOT")"
 
 mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
 [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" <<'PY' || RC=$?
 import datetime as dt
 import json
 import sys
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
- no_loss) = sys.argv[1:11]
+ no_loss, seams, seams_acked) = sys.argv[1:13]
 
 try:
     m = json.load(open(src, encoding="utf-8"))
@@ -175,6 +234,8 @@ row = {
     "docs_orphaned": len(links["orphans"]),
     "links_dead": len(links["dead"]),
     "no_loss": no_loss or None,
+    "seams": int(seams) if seams else None,
+    "seams_acked": int(seams_acked) if seams_acked else None,
     "top_section": top.get("title"),
     "top_section_share": top.get("share"),
     "delta_tokens": None,
@@ -257,8 +318,10 @@ if history:
                 "offline estimate are not comparable, so recording this would "
                 "null every delta from here on.\n"
                 "  Fix the cause: run measure-context.sh --exact with a "
-                "credential (ANTHROPIC_API_KEY, an `ant auth login` profile, or "
-                "the key in a repo-root .env).\n"
+                "credential (ANTHROPIC_API_KEY, or the key in a repo-root .env).\n"
+                "  Next time, catch this before doing any work: "
+                "measure-context.sh --check-credential is the Phase 0 preflight "
+                "for exactly this refusal.\n"
                 "  Or record it deliberately: re-run with --allow-method-change, "
                 "which starts a new baseline.",
                 file=sys.stderr,

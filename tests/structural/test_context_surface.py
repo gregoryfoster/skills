@@ -1992,3 +1992,508 @@ class TestValidationGateRoundNine:
                    "--min-pairs", "1")
         # Treatment (wave b) is 1.9, control is 1.10 — genuinely inverted.
         assert "arms look inverted" in r.stdout, r.stdout
+
+
+SEAMS = SCRIPTS / "check-seams.sh"
+
+
+def _seam_repo(tmp_path: Path) -> Path:
+    """A repo curated one commit ago: `## Deployment Topology` moved from
+    AGENTS.md into docs/OPS.md."""
+    repo = tmp_path / "seamrepo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "AGENTS.md").write_text(
+        "# Guide\n\n## Build\n\nrun make\n\n## Deployment Topology\n\n"
+        "The workers connect to the bus directly.\n")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "pre")
+    (repo / "docs").mkdir()
+    (repo / "AGENTS.md").write_text(
+        "# Guide\n\n## Build\n\nrun make\n\n## Detail Docs\n\n"
+        "- [docs/OPS.md](docs/OPS.md) — deployment\n")
+    (repo / "docs" / "OPS.md").write_text(
+        "# Ops\n\n## Deployment Topology\n\n"
+        "The workers connect to the bus directly.\n")
+    return repo
+
+
+def _run_seams(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(SEAMS), "--base", "HEAD", *args],
+        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=60,
+    )
+
+
+class TestCheckSeams:
+    def test_clean_move_reports_no_seams(self, tmp_path: Path):
+        r = _run_seams(_seam_repo(tmp_path))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "OK — no unacknowledged cross-reference seams." in r.stdout
+        assert r.stdout.rstrip().endswith("seams: 0")
+
+    def test_back_reference_in_a_doc_is_reported(self, tmp_path: Path):
+        """The observo 🔴: a doc whose header says its own contents live in
+        AGENTS.md, after the run moved them into that very doc."""
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text("# Ops\n\nBounds semantics live in AGENTS.md.\n\n"
+                       "## Deployment Topology\n\n"
+                       "The workers connect to the bus directly.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "back-reference" in r.stdout
+        assert "docs/OPS.md:3" in r.stdout
+        assert "seams: 1" in r.stdout
+
+    def test_reference_to_a_moved_title_is_reported(self, tmp_path: Path):
+        """The observo dangling prose pointer: 'See AGENTS.md X' where X moved
+        into the pointing file itself."""
+        repo = _seam_repo(tmp_path)
+        cmd = repo / "docs" / "COMMANDS.md"
+        cmd.write_text("# Commands\n\nSee the Deployment Topology section for "
+                       "canonical invocations.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "moved-title" in r.stdout
+        assert "Deployment Topology" in r.stdout
+
+    def test_the_relocated_sections_own_heading_is_not_a_seam(
+            self, tmp_path: Path):
+        """docs/OPS.md's `## Deployment Topology` heading IS the moved section —
+        reporting it would flag every correct demotion."""
+        r = _run_seams(_seam_repo(tmp_path))
+        assert "moved-title" not in r.stdout
+
+    def test_duplicate_destination_heading_is_reported(self, tmp_path: Path):
+        """The observo class 2: the destination already covered the topic and
+        the demotion appended a second copy beside it."""
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text()
+                       + "\n## Deployment Topology\n\nAppended copy.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3
+        assert "duplicate-heading" in r.stdout
+        assert "also at line" in r.stdout
+
+    def test_provenance_in_a_heading_is_reported(self, tmp_path: Path):
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text()
+                       + "\n## Migration workflow (from AGENTS.md, #412)\n\nx\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3
+        assert "provenance-heading" in r.stdout
+
+    def test_archival_docs_are_not_swept(self, tmp_path: Path):
+        """A dated plan legitimately says 'AGENTS.md said X at the time'."""
+        repo = _seam_repo(tmp_path)
+        plans = repo / "docs" / "plans"
+        plans.mkdir()
+        (plans / "2026-01-01-old.md").write_text("AGENTS.md carries the rules.\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_short_moved_titles_are_not_swept(self, tmp_path: Path):
+        """Grepping the surface for a title like 'Build' drowns real seams in
+        coincidental matches; the sweep floors title length instead."""
+        repo = _seam_repo(tmp_path)
+        # Move the SHORT section too.
+        agents = repo / "AGENTS.md"
+        agents.write_text(agents.read_text().replace(
+            "## Build\n\nrun make\n\n", ""))
+        (repo / "docs" / "OPS.md").write_text(
+            (repo / "docs" / "OPS.md").read_text()
+            + "\nUse the Build target.\n")
+        r = _run_seams(repo)
+        assert "moved-title" not in r.stdout, r.stdout
+
+
+class TestCredentialPreflight:
+    def test_env_var_answers(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        env = _clean_env()
+        env["ANTHROPIC_API_KEY"] = "sk-test"
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "environment" in r.stdout
+        assert "sk-test" not in r.stdout + r.stderr    # never the value
+
+    def test_secrets_file_answers(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-file-test\n")
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "secrets file" in r.stdout
+        assert "sk-file-test" not in r.stdout + r.stderr
+
+    def test_no_credential_is_exit_3_with_the_fix(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "BEFORE starting the run" in r.stderr
+
+    def test_jwt_only_profile_is_still_exit_3(self, tmp_path: Path):
+        """A credential that resolves but will 401 on count_tokens is a 'no':
+        the question is whether the LEDGER ROW will be exact, not whether
+        something authenticated."""
+        repo = _repo(tmp_path, policy_lines=5)
+        stub = tmp_path / "bin"
+        stub.mkdir()
+        (stub / "ant").write_text("#!/bin/sh\necho fake-jwt-token\n")
+        (stub / "ant").chmod(0o755)
+        env = _clean_env()
+        env.pop("ANTHROPIC_API_KEY", None)
+        env["PATH"] = f"{stub}:{env['PATH']}"
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--check-credential"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "JWT" in r.stderr
+        assert "fake-jwt-token" not in r.stdout + r.stderr
+
+
+class TestRepoIdentity:
+    def _record(self, cwd: Path, *args: str) -> dict:
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{cwd}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run {" ".join(args)}'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        return json.loads(out.stdout)
+
+    def test_origin_basename_wins_over_directory_name(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        _git(repo, "remote", "add", "origin",
+             "https://github.com/CannObserv/usa-wa.git")
+        assert self._record(repo)["repo"] == "usa-wa"
+
+    def test_worktree_records_the_repository_not_the_branch_slug(
+            self, tmp_path: Path):
+        """The #102 case: usa-wa mandates worktree-based feature work, and the
+        row recorded `feat-161-curating-context` as the repo."""
+        repo = _repo(tmp_path, policy_lines=5)
+        _git(repo, "remote", "add", "origin",
+             "git@github.com:CannObserv/usa-wa.git")
+        wt = tmp_path / "feat-161-curating-context"
+        _git(repo, "worktree", "add", "-q", str(wt), "-b", "feat-161")
+        row = self._record(wt)
+        assert row["repo"] == "usa-wa", row
+
+    def test_explicit_override_wins(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        _git(repo, "remote", "add", "origin",
+             "https://github.com/CannObserv/usa-wa.git")
+        assert self._record(repo, "--repo", "roster-name")["repo"] == "roster-name"
+
+    def test_no_origin_falls_back_to_directory_name(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        assert self._record(repo)["repo"] == repo.name
+
+
+class TestSeamsOnTheRow:
+    def test_count_lands_on_the_row(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams 4'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["seams"] == 4
+
+    def test_absent_flag_records_null_not_zero(self, tmp_path: Path):
+        """'Not swept' and 'swept clean' must stay distinguishable, exactly as
+        with no_loss."""
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["seams"] is None
+
+    def test_non_numeric_count_is_refused(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams many'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert out.returncode == 1
+        assert "non-negative integer" in out.stderr
+
+
+class TestSeamAcknowledgement:
+    """A legitimate back-reference is permanent, so without acknowledgement
+    exit 3 is the steady state — alarm fatigue — and the only way to zero the
+    count is to delete legitimate references: the tokens_live mistake with a
+    different metric."""
+
+    def _with_back_reference(self, tmp_path: Path) -> Path:
+        repo = _seam_repo(tmp_path)
+        (repo / "docs" / "OPS.md").write_text(
+            "# Ops\n\nThe short rules live in AGENTS.md; this file has the "
+            "rest.\n\n## Deployment Topology\n\n"
+            "The workers connect to the bus directly.\n")
+        return repo
+
+    def test_acknowledged_hit_is_excluded_and_exit_is_clean(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "# judged legitimate: the short rules are still inline\n"
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+        assert "no unacknowledged cross-reference seams" in r.stdout
+        assert "1 acknowledged seam(s) skipped" in r.stdout
+        assert "docs/OPS.md:3" in r.stdout       # still visible, not hidden
+        assert r.stdout.rstrip().endswith("seams: 0")
+
+    def test_non_matching_pattern_does_not_acknowledge(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OTHER.md some other line entirely\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3
+        assert "seams: 1" in r.stdout
+
+    def test_entry_expires_when_the_line_changes(self, tmp_path: Path):
+        """Content matching, not line numbers: the acknowledgement stops
+        applying the moment the acknowledged line is edited, which is exactly
+        when it needs re-judging."""
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text().replace(
+            "The short rules live in AGENTS.md",
+            "Everything that used to live in AGENTS.md"))
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "seams: 1" in r.stdout
+
+    def test_full_line_comments_and_blanks_are_ignored(self, tmp_path: Path):
+        """Comments are LINE-START only. An inline `#` is part of the pattern —
+        provenance-heading hits contain issue numbers, and stripping inline
+        comments silently broadened exactly those entries ('Fixed in #412'
+        became 'Fixed in', which matched hits nobody judged)."""
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "\n# a comment\n\ndocs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_a_hash_in_a_pattern_is_not_a_comment(self, tmp_path: Path):
+        repo = _seam_repo(tmp_path)
+        ops = repo / "docs" / "OPS.md"
+        ops.write_text(ops.read_text() + "\n## Fixed in #412\n\nx\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md :: Fixed in #412\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+        assert "1 acknowledged seam(s) skipped" in r.stdout
+        # And the pattern that did the acknowledging is charged with it.
+        assert "1 hit(s): docs/OPS.md :: Fixed in #412" in r.stdout
+
+    def test_path_anchored_entry_does_not_match_another_file(self, tmp_path: Path):
+        """The :: form pins an entry to a file: the same judged content in a
+        different doc is a different judgement."""
+        repo = _seam_repo(tmp_path)
+        for name in ("OPS.md", "OTHER.md"):
+            p = repo / "docs" / name
+            base = p.read_text() if p.exists() else "# X\n"
+            p.write_text(base + "\nRules live in AGENTS.md.\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md :: Rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert r.returncode == 3, r.stdout
+        assert "seams: 1" in r.stdout            # OTHER.md still fires
+        assert "seams_acked: 1" in r.stdout      # OPS.md acknowledged
+
+    def test_a_blanket_pattern_is_warned_about(self, tmp_path: Path):
+        """One lazy line must not silently zero the count: the gaming vector
+        the ack file closed for the docs would otherwise reopen inside the ack
+        file itself, with no diff anywhere a review reads."""
+        repo = _seam_repo(tmp_path)
+        (repo / "docs" / "OPS.md").write_text(
+            "# Ops\n\nRules live in AGENTS.md.\nSee AGENTS.md for style.\n"
+            "And AGENTS.md for tests.\nAlso AGENTS.md for deploys.\n\n"
+            "## Deployment Topology\n\nThe workers connect to the bus directly.\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text("back-reference\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0          # acknowledged is acknowledged
+        assert "4 hit(s): back-reference" in r.stdout
+        assert "WARN this pattern is broad" in r.stdout
+        assert "an acknowledgement should cover ONE judged line" in r.stdout
+
+    def test_precise_entries_are_not_warned_about(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        assert "WARN this pattern is broad" not in r.stdout
+
+    def test_pattern_matches_beyond_the_display_truncation(self, tmp_path: Path):
+        """Matching is against the full source line, not the truncated display:
+        a pattern pasted from the actual doc must work, not only one copied
+        from the report."""
+        repo = _seam_repo(tmp_path)
+        long_tail = "the canonical location for the full rationale and history"
+        (repo / "docs" / "OPS.md").write_text(
+            "# Ops\n\n" + ("x" * 130) + " AGENTS.md is " + long_tail + "\n\n"
+            "## Deployment Topology\n\n"
+            "The workers connect to the bus directly.\n")
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(long_tail + "\n")
+        r = _run_seams(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_stale_entries_are_reported_for_pruning(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n"
+            "docs/GONE.md something that no longer exists\n")
+        r = _run_seams(repo)
+        assert "matched nothing" in r.stdout, r.stdout
+        assert "docs/GONE.md something that no longer exists" in r.stdout
+
+    def test_machine_lines_carry_both_counts(self, tmp_path: Path):
+        repo = self._with_back_reference(tmp_path)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-seams-ok").write_text(
+            "docs/OPS.md The short rules live in AGENTS.md\n")
+        r = _run_seams(repo)
+        lines = r.stdout.rstrip().splitlines()
+        assert lines[-2] == "seams_acked: 1"
+        assert lines[-1] == "seams: 0"
+
+
+class TestSeamsAckedOnTheRow:
+    def test_both_counts_land_on_the_row(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams 1 --seams-acked 4'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        row = json.loads(out.stdout)
+        assert row["seams"] == 1 and row["seams_acked"] == 4
+
+    def test_absent_is_null_and_garbage_is_refused(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=5)
+        out = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert json.loads(out.stdout)["seams_acked"] is None
+        bad = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --dry-run --seams-acked lots'],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert bad.returncode == 1
+        assert "--seams-acked must be a non-negative integer" in bad.stderr
+
+    def test_this_repos_own_ack_file_keeps_the_sweep_clean(self):
+        """The dogfood: the four judged-legitimate hits stay acknowledged, so
+        this repo's Phase 6.5 exits 0 and records seams: 0."""
+        root = Path(__file__).resolve().parent.parent.parent
+        r = subprocess.run(
+            ["bash", str(SEAMS), "--base", "HEAD"],
+            cwd=root, capture_output=True, text=True, env=_clean_env(),
+            timeout=60,
+        )
+        assert r.returncode == 0, (
+            "an acknowledged line in this repo's own docs changed, so its "
+            "entry in .skills/context-seams-ok expired — re-judge the hit and "
+            "update the entry; this is the canary working, not the code "
+            f"breaking:\n{r.stdout}")
+        assert "acknowledged seam(s) skipped" in r.stdout
+
+
+class TestSeamRenameNoise:
+    def test_renamed_successor_heading_is_not_flagged(self, tmp_path: Path):
+        """A rename's successor heading contains the old title; flagging it put
+        a guaranteed-noise hit beside every real rename-fallout hit."""
+        repo = tmp_path / "rn"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / "AGENTS.md").write_text(
+            "# G\n\n## Deployment Topology\n\nstuff\n\n## Ops Notes\n\n"
+            "see the Deployment Topology section above\n")
+        _git(repo, "add", "-A")
+        _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "pre")
+        (repo / "AGENTS.md").write_text(
+            "# G\n\n## Deployment Topology and Rollout\n\nstuff\n\n"
+            "## Ops Notes\n\nsee the Deployment Topology section above\n")
+        r = _run_seams(repo)
+        out = r.stdout
+        # The successor heading (line 3) is not a hit; the stale prose (line 9) is.
+        assert "AGENTS.md:3" not in out, out
+        assert "AGENTS.md:9" in out
+        assert "seams: 1" in out
+
+
+class TestRelativeInvocationFromSubdir:
+    """cd "$ROOT" ran before the bootstrap resolved ${BASH_SOURCE[0]}, so a
+    relative invocation from a subdirectory looked for the library in the wrong
+    tree and blamed the library for it. The guard is exempt: its bootstrap sits
+    after log() by design, and hooks always run with cwd at the project root."""
+
+    @pytest.mark.parametrize("script,args,ok_codes", [
+        ("measure-context.sh", ["--no-write"], {0}),
+        ("prove-no-loss.sh", ["--base", "HEAD"], {0, 3}),
+        ("check-seams.sh", ["--base", "HEAD"], {0, 3}),
+        ("context-delta.sh", [], {0}),
+    ])
+    def test_relative_path_from_a_subdirectory_works(
+            self, tmp_path: Path, script, args, ok_codes):
+        repo = _seam_repo(tmp_path)
+        # Vendor the scripts into the repo the way a submodule would.
+        vendor = repo / "vendor" / "scripts"
+        vendor.mkdir(parents=True)
+        for f in SCRIPTS.iterdir():
+            shutil.copy2(f, vendor / f.name)
+        sub = repo / "docs"
+        r = subprocess.run(
+            ["bash", f"../vendor/scripts/{script}", *args],
+            cwd=sub, capture_output=True, text=True, env=_clean_env(),
+            timeout=60,
+        )
+        assert r.returncode in ok_codes, (
+            f"{script}: exit {r.returncode}\n{r.stdout}\n{r.stderr}")
+        assert "_context-lib.sh not found" not in r.stderr

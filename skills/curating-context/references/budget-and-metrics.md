@@ -195,7 +195,7 @@ access to any other repo.
 | Field | Meaning |
 |---|---|
 | `ts` | UTC date, `YYYY-MM-DD`. Pinned to UTC so rows from different machines sort consistently. |
-| `repo`, `file` | repo basename and policy-file path |
+| `repo`, `file` | repo identity and policy-file path. `repo` is **the join key** the cohort roll-up and the validation gate match against the roster — not cosmetic. It comes from `--repo`, else the origin remote's basename, else the checkout directory name; the directory name alone recorded a *worktree* slug (`feat-161-curating-context`) as the repo in every member that mandates worktree-based feature work. |
 | `tokens`, `lines`, `bytes` | policy-file size |
 | `tokens_exact` | `true` when counted via `count_tokens`; gates delta comparability |
 | `delta_unavailable` | present only when `delta_tokens` was suppressed; says why |
@@ -204,6 +204,7 @@ access to any other repo.
 | `docs_total`, `docs_orphaned` | live doc count, and how many nothing links |
 | `links_dead` | broken relative links in the curated surface |
 | `no_loss` | `prove-no-loss.sh`'s verdict — `ok`, `failed`, `skipped`, or `null` when the check was not run. A safety field, not a score: [the validation gate](validation-gate.md) reads it to reject a change that reduced tokens by dropping content, which no token count can distinguish from a good run. `null` is unscorable, never a pass. |
+| `seams`, `seams_acked` | `check-seams.sh`'s counts after Phase 6.5's report was judged: **unacknowledged** hits, and hits judged legitimate and carried in `.skills/context-seams-ok`. Both `null` when the sweep was not run, which is never the same as `0`. Both recorded because `0 new / 0 acked` and `0 new / 50 acked` are different states — the second may be an acknowledged set quietly ballooning, which one number alone cannot show. Watch the **delta** on `seams`: a stable acknowledged set with `0` new hits is the healthy steady state, and a run that "improves" either number by deleting legitimate references has made the surface worse — the `tokens_live` mistake with a different metric. These fields are what make the cross-reference defect class visible to the gate at all; on the run that motivated the sweep, ten review findings were invisible to every other field on this row. |
 | `skill_version`, `skill_commit` | which version of this skill produced the row; `null` on rows predating the field |
 | `top_section`, `top_section_share` | largest section and its % of the file |
 | `delta_tokens`, `delta_days` | change since the previous row for this file; `null` on the first |
@@ -228,6 +229,16 @@ Use `verb:target`:
 
 `"cleanup"` and `"misc"` are worse than no tag: they occupy the slot that would
 otherwise have said something.
+
+### One row per run: rewrite within, append across
+
+The ledger is append-only **between** runs, and that is where the rule matters:
+a later run that rewrites an old row destroys the trend it was keeping.
+**Within** a run the instinct runs the other way and is correct — when a late
+fix on the same branch shifts the count, rewrite this run's still-unmerged row
+so it describes what actually ships, rather than appending a second row for an
+intermediate state nobody can check out. The test is whether the row's commit
+has merged: unmerged, it is a draft of this run's record; merged, it is history.
 
 ### Reading the trend
 

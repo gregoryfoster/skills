@@ -233,15 +233,25 @@ non-results and teach a later reader that the idea was tested and failed.
   not whether the right sections were classified A versus B. A change that
   demotes the wrong things but hits the number will pass. The gates catch loss,
   not misjudgement.
+- **It sees only what the row carries.** The first field report (#101) proved the
+  point: ten review findings, all created by an otherwise clean run, all
+  invisible to `tokens`, `links_dead`, `docs_orphaned` and `no_loss`. The
+  `seams` field exists so that class is measurable — but wave A's rows predate
+  it, so the first experiment compares wave B's *measured* seam counts against
+  wave A's hand-reviewed ones (observo's 10 is the control datapoint), and only
+  later rounds get a symmetric comparison. A proposal aimed at a defect class
+  the row cannot see yet should add its measurement first, as v1.3 did.
 - **It cannot run more than once per proposal.** Each repo has one first
   curation. After both waves have adopted, the split still works for steady-state
   weekly runs, but the effect sizes are far smaller and the metric shifts from
   "how much of the gap did it close" to "did it stay under budget without loss."
 - **It cannot gate itself.** The change that introduced this gate — v1.2 — is the
-  last one that ships unvalidated, because at the time it shipped no cohort repo
-  had adopted anything. That is a genuine hole and not a rhetorical one; the
-  honest mitigation is that this change adds scripts and a reference rather than
-  altering the keep/cut rubric that decides what gets moved.
+  last one that shipped unvalidated, because at the time it shipped no cohort
+  repo had adopted anything. That is a genuine hole and not a rhetorical one; the
+  honest mitigation is that that change added scripts and a reference rather than
+  altering the keep/cut rubric that decides what gets moved. **v1.3 is the first
+  proposal the gate judges**: wave B adopts it, wave A holds at v1.2, and
+  `score-cohort.sh --treatment b --control a` produces the verdict.
 
 ## Not in scope
 
