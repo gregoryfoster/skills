@@ -78,6 +78,17 @@ adopts *on the proposed version* while wave A keeps running the version before i
 `--treatment b --control a`.** The script's defaults (`--treatment a`) suit later
 rounds, once A is the arm carrying a proposal.
 
+> **Superseded after experiment 1.** This describes how the first experiment was
+> staged, and it worked — the arms came out version-clean. It does not describe
+> how later ones can be. Every cohort repo is on skills-vendor auto-refresh and
+> follow-up issues keep necessitating updates, so **a wave cannot hold a version**:
+> `observo` moved itself to v1.3 within a day of that version existing. Going
+> forward the arms are defined by each row's recorded `skill_version`, not by wave
+> membership, and the `wave:`/`pair:` annotations keep only their staging value —
+> rolling a proposal out to half the cohort first.
+> [#118](https://github.com/gregoryfoster/skills/issues/118) carries the
+> replacement design.
+
 Getting the direction backwards turns a winning change into a losing one, so the
 gate detects it: when the treatment arm's versions are all *older* than the
 control's, it prints a `WARN` naming the inversion and the flags that fix it —
