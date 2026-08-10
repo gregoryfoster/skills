@@ -1448,12 +1448,18 @@ class TestValidationGateRoundSix:
         _arm(tmp_path, "trt1", 49000, 9500, "1.2")
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1", "--format", "json")
-        ctl = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
+        out = json.loads(r.stdout)
+        ctl = next(x for x in out["repos"] if x["repo"] == "ctl1")
         assert ctl["before"] == 50000, ctl
         # 50,000 -> 9,000 against a 6,000 budget is 93.2% closure, so the
         # control wins this pair and the treatment must not be adopted.
         assert round(ctl["closure"], 3) == round((44000 - 3000) / 44000, 3)
-        assert json.loads(r.stdout)["verdict"] == "REJECT"
+        # The pair outcome is what the fabricated before-state got wrong, so it
+        # is what this pins. The VERDICT is INCONCLUSIVE rather than REJECT only
+        # because one pair is below the rejection floor — a separate rule, with
+        # its own test.
+        assert out["pairs"][0]["winner"] == "control", out["pairs"]
+        assert out["verdict"] != "ADOPT"
 
     def test_min_pairs_zero_is_refused(self, tmp_path: Path):
         """`--min-pairs 0` let the sweep test read `0 == 0` and adopt on no
@@ -1642,13 +1648,18 @@ class TestValidationGateRoundSeven:
         _two_file_ledger(tmp_path, "trt1", "1.2", main_after=9000, sub_after=8800)
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1", "--format", "json")
-        by = {x["repo"]: x for x in json.loads(r.stdout)["repos"]}
+        out = json.loads(r.stdout)
+        by = {x["repo"]: x for x in out["repos"]}
         assert by["ctl1"]["file"] == "AGENTS.md", by["ctl1"]
         assert by["ctl1"]["before"] == 50000
         assert by["ctl1"]["after"] == 7000
         assert by["trt1"]["after"] == 9000
         # The control did the better job on the primary file, so no adoption.
-        assert json.loads(r.stdout)["verdict"] == "REJECT"
+        # Scored off sub/AGENTS.md the pair went the other way, which is the
+        # regression this pins; the verdict is INCONCLUSIVE rather than REJECT
+        # because one pair is below the rejection floor.
+        assert out["pairs"][0]["winner"] == "control", out["pairs"]
+        assert out["verdict"] != "ADOPT"
 
     def test_gate_and_rollup_agree_on_which_file_a_repo_is(self, tmp_path: Path):
         """One ledger produced two irreconcilable pictures of the same repo.
@@ -2497,3 +2508,234 @@ class TestRelativeInvocationFromSubdir:
         assert r.returncode in ok_codes, (
             f"{script}: exit {r.returncode}\n{r.stdout}\n{r.stderr}")
         assert "_context-lib.sh not found" not in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# The before-state a first curation never had (#116), and the rejection floor
+# a permanent record deserves (#117)
+# ---------------------------------------------------------------------------
+
+
+class TestBaselineRow:
+    """`record-telemetry.sh --baseline` is what makes a FIRST curation scorable.
+
+    Experiment 1 scored nothing: the gate takes a run's before-state from the
+    previous ledger row, and a first curation is the run that CREATES the
+    ledger, so the scored run was exactly the run that could never be scored.
+    Twelve repos followed the skill correctly and produced twelve unscorable
+    rows."""
+
+    def _measure(self, repo: Path) -> str:
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=60)
+        assert r.returncode == 0, r.stderr
+        return r.stdout
+
+    def _record(self, repo: Path, measurement: str, *extra: str):
+        return subprocess.run(
+            ["bash", str(RECORD), *extra], input=measurement,
+            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
+            timeout=30)
+
+    def _rows(self, repo: Path) -> list[dict]:
+        return [json.loads(ln) for ln
+                in (repo / ".skills" / "context-metrics.jsonl").read_text()
+                .splitlines() if ln.strip()]
+
+    def test_baseline_row_is_tagged_and_measurement_only(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        r = self._record(repo, self._measure(repo), "--baseline")
+        assert r.returncode == 0, r.stderr
+        row = self._rows(repo)[-1]
+        # The tag the gate already knows to skip past, so a baseline row can
+        # never be mistaken for the curation it precedes.
+        assert row["actions"] == ["baseline"], row
+        assert row["no_loss"] is None
+        assert row["delta_tokens"] is None
+        assert "baseline" in r.stderr
+
+    def test_the_curation_row_then_has_a_before_state(self, tmp_path: Path):
+        """The whole point: Phase 1 and Phase 7 leave two rows, and the second
+        one has something to be compared against."""
+        repo = _repo(tmp_path, policy_lines=50)
+        assert self._record(repo, self._measure(repo), "--baseline").returncode == 0
+        (repo / "AGENTS.md").write_text(POLICY_LINE * 10)
+        r = self._record(repo, self._measure(repo), "--actions", "demote:Big",
+                         "--no-loss", "ok")
+        assert r.returncode == 0, r.stderr
+        rows = self._rows(repo)
+        assert len(rows) == 2
+        assert rows[0]["actions"] == ["baseline"]
+        assert isinstance(rows[1]["delta_tokens"], int)
+        assert rows[1]["delta_tokens"] < 0, rows[1]
+
+    @pytest.mark.parametrize("extra,marker", [
+        (("--actions", "demote:X"), "--baseline and --actions"),
+        (("--no-loss", "ok"), "--baseline and --no-loss"),
+    ])
+    def test_flags_that_assert_a_curation_are_refused(
+            self, tmp_path: Path, extra, marker):
+        """A baseline row records the surface AS FOUND. --no-loss in particular
+        would put a relocation verdict on a row where nothing was relocated, and
+        the gate reads that field as evidence."""
+        repo = _repo(tmp_path, policy_lines=50)
+        r = self._record(repo, self._measure(repo), "--baseline", *extra)
+        assert r.returncode == 1, r.stderr
+        assert marker in r.stderr
+        assert not (repo / ".skills" / "context-metrics.jsonl").exists() or \
+            self._rows(repo) == []
+
+    def test_pure_measurement_fields_are_still_allowed(self, tmp_path: Path):
+        """--seams on a baseline row measures the surface as found, which is a
+        before-state like any other and the one #117 argues the next experiment
+        turns on. Not refused."""
+        repo = _repo(tmp_path, policy_lines=50)
+        r = self._record(repo, self._measure(repo), "--baseline",
+                         "--seams", "41", "--seams-acked", "9")
+        assert r.returncode == 0, r.stderr
+        assert self._rows(repo)[-1]["seams"] == 41
+
+
+class TestFirstCurationIsScorable:
+    """With a baseline row the gate scores a first curation — and the orphan
+    gate, which needs a before-row to compare against, can trip at all."""
+
+    def _first_curation(self, root: Path, name: str, before: int, after: int,
+                        version: str, **kw) -> None:
+        d = root / name / ".skills"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo=name, ts="2026-08-01", tokens=before,
+                        actions=["baseline"],
+                        docs_orphaned=kw.get("orph_before", 0)),
+            _ledger_row(repo=name, ts="2026-08-02", tokens=after,
+                        actions=["demote:Big"], skill_version=version,
+                        no_loss=kw.get("no_loss", "ok"),
+                        docs_orphaned=kw.get("orph_after", 0)),
+        ]) + "\n")
+
+    def test_a_first_curation_scores(self, tmp_path: Path):
+        self._first_curation(tmp_path, "ctl1", 52000, 20000, "1.1")
+        self._first_curation(tmp_path, "trt1", 49000, 12000, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        out = json.loads(r.stdout)
+        by = {x["repo"]: x for x in out["repos"]}
+        assert by["trt1"]["status"] == "scored", by["trt1"]
+        assert by["trt1"]["before"] == 49000
+        assert out["pairs"][0]["informative"] is True
+        assert out["pairs"][0]["winner"] == "treatment"
+
+    def test_the_orphan_gate_can_now_trip_on_a_first_curation(
+            self, tmp_path: Path):
+        """Without a before-row `prev is None`, so the docs_orphaned comparison
+        was skipped entirely — one of the three safety gates was structurally
+        inert on the modal case."""
+        self._first_curation(tmp_path, "ctl1", 52000, 20000, "1.1")
+        self._first_curation(tmp_path, "trt1", 49000, 12000, "1.2",
+                             orph_before=0, orph_after=4)
+        roster = _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])
+        r = _score(roster, "--min-pairs", "1")
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "docs_orphaned 0->4" in r.stdout
+
+        # The contrast, and the actual defect: strip the baseline rows and the
+        # same orphaning run sails through, because there is nothing to compare
+        # `docs_orphaned` against. This is the state all twelve first curations
+        # were scored in.
+        for name in ("ctl1", "trt1"):
+            led = tmp_path / name / ".skills" / "context-metrics.jsonl"
+            led.write_text(led.read_text().splitlines()[1] + "\n")
+        r = _score(roster, "--min-pairs", "1")
+        assert "docs_orphaned" not in r.stdout, r.stdout
+        assert "verdict: REJECT" not in r.stdout
+
+
+class TestSystematicUnscorable:
+    """Twelve repos unscorable for twelve reasons is cohort non-compliance.
+    Twelve unscorable for ONE reason is a rule no repo can satisfy, and the two
+    read identically from below — both arrive at 'no informative pairs'."""
+
+    def _no_baseline(self, root: Path, name: str, version: str) -> None:
+        """A first curation exactly as the skill produced it before #116: one
+        row, no predecessor."""
+        d = root / name / ".skills"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "context-metrics.jsonl").write_text(_ledger_row(
+            repo=name, tokens=5900, actions=["demote:Big"],
+            skill_version=version, no_loss="ok") + "\n")
+
+    def test_one_shared_reason_is_reported_as_a_gate_defect(self, tmp_path: Path):
+        spec = []
+        for i in (1, 2, 3):
+            self._no_baseline(tmp_path, f"ctl{i}", "1.2")
+            self._no_baseline(tmp_path, f"trt{i}", "1.3")
+            spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
+        r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "GATE DEFECT" in r.stdout, r.stdout
+        assert "all 6 repos in both arms" in r.stdout
+        assert "no row before the first curation" in r.stdout
+        # And it names the fix, rather than leaving the reader to walk the
+        # scoring core the way experiment 1 required.
+        assert "--baseline" in r.stdout
+        # The reason is stated ONCE as a diagnosis, not implied by repetition.
+        assert "no informative pairs" not in r.stdout
+
+    def test_mixed_reasons_are_not_a_gate_defect(self, tmp_path: Path):
+        """Different reasons per repo means each repo needs its own fix. That is
+        a finding about the cohort, and claiming a defect in the gate would send
+        the reader to the wrong file."""
+        self._no_baseline(tmp_path, "ctl1", "1.2")
+        _arm(tmp_path, "trt1", 49000, None, "1.3")   # no curation row at all
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert "GATE DEFECT" not in r.stdout, r.stdout
+
+
+class TestRejectionFloor:
+    """An adoption is revisited the next time the skill changes. A rejection is
+    written into rejected-changes.md permanently and shapes every later
+    proposal, so the two do not share a floor. Experiment 1 came within one flag
+    of rejecting v1.3 on two pairs."""
+
+    def _two_pairs_one_lost(self, root: Path) -> Path:
+        # Pair 1 to the treatment, pair 2 to the control.
+        _arm(root, "ctl1", 52000, 20000, "1.1")
+        _arm(root, "trt1", 49000, 12000, "1.2")
+        _arm(root, "ctl2", 28000, 12000, "1.1")
+        _arm(root, "trt2", 26000, 20000, "1.2")
+        return _roster(root, [("ctl1", "a", "1"), ("trt1", "b", "1"),
+                              ("ctl2", "a", "2"), ("trt2", "b", "2")])
+
+    def test_two_pairs_cannot_reject(self, tmp_path: Path):
+        r = _score(self._two_pairs_one_lost(tmp_path), "--min-pairs", "2")
+        assert r.returncode == 5, r.stdout
+        assert "verdict: INCONCLUSIVE" in r.stdout
+        assert "below the rejection floor" in r.stdout
+        # Still blocked, and still not written down as refuted.
+        assert "verdict: ADOPT" not in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
+
+    def test_three_pairs_still_reject(self, tmp_path: Path):
+        """The floor bounds a rejection, it does not abolish one."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "trt3", 14000, 13000, "1.2")
+        r = _score(roster)
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "below the rejection floor" not in r.stdout
+
+    def test_a_safety_failure_rejects_on_one_repo(self, tmp_path: Path):
+        """The veto is exempt. Content lost under the proposed version is lost
+        whether or not that repo had a partner, so a single repo rejects on its
+        own with no informative pairs at all."""
+        _arm(tmp_path, "ctl1", 52000, 20000, "1.1")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.2", no_loss="failed")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "no_loss=failed" in r.stdout

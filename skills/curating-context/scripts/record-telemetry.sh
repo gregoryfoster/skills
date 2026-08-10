@@ -16,6 +16,23 @@ Usage:
 
 Options:
   --ledger PATH    Ledger file. Default: .skills/context-metrics.jsonl
+  --baseline       Record a measurement-only row for the surface AS FOUND,
+                   before any edits. Tagged `baseline`, which every reader
+                   already knows to skip past when looking for a curation.
+
+                   This is what makes a FIRST curation scorable. The validation
+                   gate takes a run's before-state from the previous row for the
+                   same file, and a first curation is the run that creates the
+                   ledger — so without a baseline row the scored run is exactly
+                   the run that can never be scored, and the docs_orphaned gate
+                   has nothing to compare against and silently cannot trip
+                   (#116). Phase 1 records this row; Phase 7 records the
+                   curation, and both ship in the same commit.
+
+                   Refuses --actions (a baseline row is measurement-only, and
+                   its tag is fixed) and --no-loss (nothing was relocated yet).
+                   --note, --seams and --seams-acked are allowed: they measure
+                   the surface as found, which is a before-state too.
   --actions LIST   Comma-separated action tags applied this run, e.g.
                    "demote:Project Layout,prune:Conventions,fix:dead-link".
                    Recorded verbatim so a later run can correlate a token
@@ -85,12 +102,13 @@ Row schema (one JSON object per line):
                     previous row — see delta_unavailable
   delta_days        days since the previous row (null if first)
   delta_unavailable present only when delta_tokens was suppressed; says why
-  actions           action tags from --actions
+  actions           action tags from --actions, or ["baseline"] with --baseline
   note              --note text
 
 Exit codes:
   0  row appended (or printed, with --dry-run)
-  1  usage error, or stdin was not measure-context.sh JSON
+  1  usage error (including --baseline with --actions or --no-loss), or stdin
+     was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
      (pass --allow-method-change to record it anyway)
@@ -107,6 +125,8 @@ REPO_OVERRIDE=""
 DRY=0
 TREND=0
 ALLOW_METHOD_CHANGE=0
+BASELINE=0
+ACTIONS_SET=0
 
 # --actions and --note accept an empty value deliberately, so they cannot use
 # ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
@@ -118,7 +138,8 @@ need_arg() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
-    --actions) need_arg "$#" --actions; ACTIONS="$2"; shift 2 ;;
+    --baseline) BASELINE=1; shift ;;
+    --actions) need_arg "$#" --actions; ACTIONS="$2"; ACTIONS_SET=1; shift 2 ;;
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
     --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
@@ -131,6 +152,27 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# A baseline row records the surface AS FOUND, so the flags that assert
+# something about a curation are refused rather than quietly ignored. --no-loss
+# in particular would put a relocation verdict on a row where nothing was
+# relocated, and the gate reads that field as evidence.
+#
+# --seams/--seams-acked are deliberately NOT refused: a sweep of the surface as
+# found measures the state before the run, which is a before-state like any
+# other and the one #117 argues the next experiment turns on.
+if [ "$BASELINE" -eq 1 ]; then
+  [ "$ACTIONS_SET" -eq 0 ] || {
+    echo "ERROR --baseline and --actions are mutually exclusive: a baseline row" >&2
+    echo "      is measurement-only and carries the fixed tag \`baseline\`." >&2
+    echo "      Record the edits on the Phase 7 row instead." >&2
+    exit 1; }
+  [ -z "$NO_LOSS" ] || {
+    echo "ERROR --baseline and --no-loss are mutually exclusive: nothing has" >&2
+    echo "      been relocated yet, so there is no verdict to record." >&2
+    exit 1; }
+  ACTIONS="baseline"
+fi
 
 # Reject an unrecognised verdict rather than storing it. A gate that reads this
 # field treats anything other than "ok" as not-ok, so a typo would silently be a
@@ -351,7 +393,13 @@ else:
     except OSError as exc:
         print(f"ERROR cannot append to {ledger}: {exc}", file=sys.stderr)
         sys.exit(2)
-    print(f"recorded {row['file']}: {row['tokens']} tokens", file=sys.stderr)
+    # Name the kind of row, not just the number. A baseline row is the one a
+    # reader is most likely to think did not land, because it records a state
+    # rather than a change and its delta is null by construction.
+    kind = " (baseline — the before-state for this run)" \
+        if row["actions"] == ["baseline"] else ""
+    print(f"recorded {row['file']}: {row['tokens']} tokens{kind}",
+          file=sys.stderr)
 
 if trend == "1":
     series = history + [row]

@@ -34,6 +34,15 @@ Options:
   --branch NAME       Branch to read for owner/repo entries.
   --min-pairs N       Fewest informative pairs that can produce a verdict
                       other than INCONCLUSIVE. Minimum 1. Default: 3
+
+                      This governs ADOPTION. A REJECT has its own floor of 3
+                      that --min-pairs cannot lower: an adoption is revisited
+                      the next time the skill changes, while a rejection is
+                      written into rejected-changes.md permanently and shapes
+                      every later proposal. Below the rejection floor a failed
+                      sweep is INCONCLUSIVE. A tripped SAFETY gate is exempt —
+                      one repo that dropped content rejects on its own, with no
+                      pairs at all.
   --format FMT        table (default) or json
   -h, --help          Show this help and exit 0.
 
@@ -47,6 +56,13 @@ What it scores
   The before-state is the previous row FOR THE SAME POLICY FILE. A ledger may
   track several, and an untagged run (actions: []) cannot be told from a
   baseline, so it makes the repo unscorable rather than being guessed at.
+
+  A first curation therefore needs a BASELINE ROW to be scorable at all — it is
+  the run that creates the ledger, so nothing precedes it by construction. Phase
+  1 records that row (`record-telemetry.sh --baseline`) and Phase 7 records the
+  curation; both ship in the same commit. When every repo in both arms is
+  unscorable for one and the same reason, this script says so as a GATE DEFECT
+  rather than reporting an empty experiment (#116).
 
   The effectiveness metric is budget-gap closure:
 
@@ -96,9 +112,11 @@ Exit codes:
   1  usage error, or the roster carries no wave assignment
   2  infrastructure failure (python3 or gh missing, library missing)
   3  REJECT — a recorded safety gate tripped, or the treatment did not sweep
-  5  INCONCLUSIVE — nothing was decided: too few informative pairs, safety
-     unverified, both arms on one version, an arm split across versions, or the
-     arms look inverted
+     over at least the rejection floor of informative pairs
+  5  INCONCLUSIVE — nothing was decided: too few informative pairs, a failed
+     sweep below the rejection floor, safety unverified, every repo in both arms
+     unscorable for one reason, both arms on one version, an arm split across
+     versions, or the arms look inverted
 
 Every question of the form "is this even an experiment?" is answered BEFORE any
 verdict that would reject, because a REJECT tells the reader to write the change
@@ -301,14 +319,20 @@ def classify_run(row):
 def score_repo(key, info):
     rec = {
         "repo": display[key], "entry": key, "wave": info["wave"],
-        "pair": info["pair"], "status": None, "why": None, "before": None,
+        "pair": info["pair"], "status": None, "why": None, "why_code": None,
+        "before": None,
         "after": None, "budget": None, "closure": None, "no_loss": None,
         "skill_version": None, "ts": None, "file": None, "other_files": 0,
         "gates": [], "unverified": [],
     }
+    # why_code is the machine-readable twin of `why`, which interpolates repo
+    # detail and so cannot be compared across repos. The systematic-defect check
+    # below groups on it: twelve repos unscorable for twelve different reasons is
+    # a cohort problem, and twelve unscorable for ONE reason is a gate problem.
     if info["status"] != "ok":
         rec["status"] = "unscorable"
         rec["why"] = info["status"]
+        rec["why_code"] = info["status"].replace(" ", "_")
         return rec
     # ts is a date, so several runs on one day tie. sorted() is stable, so ties
     # keep ledger order — which is append order, which is the true sequence.
@@ -316,6 +340,7 @@ def score_repo(key, info):
     if not rows:
         rec["status"] = "unscorable"
         rec["why"] = "no ledger rows"
+        rec["why_code"] = "no_ledger_rows"
         return rec
 
     # PRIMARY POLICY FILE: the one with the most rows, ties broken by whichever
@@ -355,6 +380,7 @@ def score_repo(key, info):
             rec["status"] = "unscorable"
             rec["why"] = ("the first attributed run carries no action tags, so it "
                           "cannot be told from a baseline; tag it and re-score")
+            rec["why_code"] = "untagged_run"
             return rec
         scored, scored_idx = r, i
         break
@@ -364,6 +390,7 @@ def score_repo(key, info):
         rec["status"] = "unscorable"
         rec["why"] = (f"no attributed curation run for {primary} yet (only "
                       f"baselines, or no skill_version){extra}")
+        rec["why_code"] = "no_attributed_run"
         return rec
 
     # The before-state is the row before it in the SAME file — carried from the
@@ -413,15 +440,18 @@ def score_repo(key, info):
     if prev is None:
         rec["status"] = "unscorable"
         rec["why"] = "no row before the first curation, so there is no before-state"
+        rec["why_code"] = "no_before_state"
         return rec
     if prev.get("tokens_exact") != scored.get("tokens_exact"):
         rec["status"] = "unscorable"
         rec["why"] = "measurement method changed at the scored run"
+        rec["why_code"] = "method_changed"
         return rec
     if not isinstance(prev.get("tokens"), int) or not isinstance(rec["after"], int) \
             or not isinstance(rec["budget"], int):
         rec["status"] = "unscorable"
         rec["why"] = "a token count or budget is missing"
+        rec["why_code"] = "missing_counts"
         return rec
 
     rec["before"] = prev["tokens"]
@@ -485,6 +515,51 @@ for pid in sorted(set(by_arm[treatment]) | set(by_arm[control]),
 
 informative = [p for p in pairs if p["informative"]]
 wins = [p for p in informative if p["winner"] == "treatment"]
+
+# An ADOPT and a REJECT are not symmetric outputs, so they do not share a floor.
+# An ADOPT is a decision to ship, revisited every time the skill changes again; a
+# REJECT writes into rejected-changes.md, which is permanent by design and shapes
+# every future proposal. Experiment 1 came within one flag of writing a rejection
+# from two pairs, both of them the honest-shortfall repos and one of them the pair
+# the roster itself flags as its weakest match. --min-pairs governs adoption and
+# can be lowered; the rejection floor cannot go below REJECT_FLOOR, whatever it is
+# set to. Below that a failed sweep is INCONCLUSIVE — pending evidence, which is
+# what it actually is.
+#
+# The SAFETY veto is deliberately not subject to this: a single repo that dropped
+# content rejects on its own with no pairs at all, which is why the t_failures
+# branch sits above the pair arithmetic and why arm() is wider than the pairing.
+REJECT_FLOOR = 3
+reject_floor = max(min_pairs, REJECT_FLOOR)
+
+# A systematic unscorable — every repo in BOTH arms blocked by one rule. See the
+# verdict branch below for why this is separated from "no informative pairs".
+SYSTEMIC_HINTS = {
+    "no_before_state":
+        "every scored run is a FIRST curation, and a first curation is the run "
+        "that creates the ledger. Record the Phase 1 measurement as a baseline "
+        "row — `record-telemetry.sh --baseline` — so each run carries the "
+        "before-state it is scored against (#116).",
+    "untagged_run":
+        "re-run Phase 7 with --actions naming what each run did; an untagged "
+        "row cannot be told from a baseline.",
+    "method_changed":
+        "supply a credential and re-measure with --exact rather than recording "
+        "estimates against exact rows.",
+}
+
+arm_records = [r for r in records if r["wave"] in (treatment, control)]
+systemic = systemic_hint = None
+if arm_records and all(r["status"] == "unscorable" for r in arm_records):
+    codes = {r["why_code"] for r in arm_records}
+    if len(codes) == 1:
+        code_one = next(iter(codes))
+        # Prefer the sentence when every repo produced the same one; fall back to
+        # the code when `why` interpolates per-repo detail (a file name, a count)
+        # and quoting one repo's version would misreport it as everyone's.
+        whys = {r["why"] for r in arm_records}
+        systemic = next(iter(whys)) if len(whys) == 1 else code_one
+        systemic_hint = SYSTEMIC_HINTS.get(code_one)
 
 
 def arm(wave, status):
@@ -653,6 +728,28 @@ elif t_unverified:
     reasons.append("safety could not be verified in the treatment arm: "
                    + "; ".join(f"{r['repo']} ({r['why']})" for r in t_unverified)
                    + " — re-run those curations with --no-loss and re-score")
+elif systemic is not None:
+    # A SYSTEMATIC unscorable is a defect in the gate, not an empty experiment,
+    # and the two read identically from below: both arrive at "no informative
+    # pairs", which sends the reader to look at pair scoring. Experiment 1 came
+    # back with all twelve repos unscorable for one reason — the before-state is
+    # the previous ledger row, and a first curation is the run that creates the
+    # ledger (#116) — and the only visible signal was the same line repeated
+    # twelve times above a verdict that reads as "nothing has happened yet".
+    #
+    # The test is deliberately strict: every repo in BOTH arms, one reason. A
+    # mixed bag of reasons is cohort non-compliance and each repo needs its own
+    # fix; one reason across both arms is a rule that no repo can satisfy.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(
+        f"GATE DEFECT — all {len(arm_records)} repos in both arms are unscorable "
+        f"for the SAME reason: {systemic}")
+    reasons.append(
+        "a rule no repo in either arm can satisfy is a defect in this gate, not "
+        "a finding about the cohort. Nothing was measured, so nothing about the "
+        "proposal is in question — fix the gate and re-score")
+    if systemic_hint:
+        reasons.append(systemic_hint)
 elif not informative:
     # Independent of --min-pairs. With --min-pairs 0 the sweep test below reads
     # `0 == 0` and adopts on no evidence whatever — a vacuous pass in the one
@@ -675,11 +772,25 @@ elif len(wins) == len(informative):
     reasons.append(f"the treatment won all {len(informative)} informative pairs "
                    f"(p={p:.3f}, one-sided sign test){caveat}")
 else:
-    verdict, code = "REJECT", 3
     lost = [f"pair {p['pair']} -> {p['winner']}" for p in informative
             if p["winner"] != "treatment"]
-    reasons.append(f"the treatment won {len(wins)} of {len(informative)} "
-                   f"informative pairs; adoption requires all ({'; '.join(lost)})")
+    shortfall = (f"the treatment won {len(wins)} of {len(informative)} "
+                 f"informative pairs; adoption requires all ({'; '.join(lost)})")
+    if len(informative) < reject_floor:
+        # Blocks adoption exactly as a rejection would, but does not write one
+        # down. See REJECT_FLOOR above: the asymmetry is between a decision that
+        # gets revisited and a record that does not.
+        verdict, code = "INCONCLUSIVE", 5
+        reasons.append(shortfall)
+        reasons.append(
+            f"but {len(informative)} informative pair(s) is below the rejection "
+            f"floor of {reject_floor}, so this is not recorded as a refutation. "
+            "A rejection is permanent and shapes every later proposal; adoption "
+            "is revisited the next time the skill changes, so the two do not "
+            "share a floor. The proposal is blocked and still pending evidence")
+    else:
+        verdict, code = "REJECT", 3
+        reasons.append(shortfall)
 
 # Only when inversion is what actually stopped the run. A split arm also trips
 # the older-than test — an incoherent arm compares older than anything — and
@@ -698,7 +809,9 @@ if fmt == "json":
         "treatment_versions": t_versions, "control_versions": c_versions,
         "repos": records, "pairs": pairs,
         "informative_pairs": len(informative), "treatment_wins": len(wins),
-        "min_pairs": min_pairs, "verdict": verdict, "reasons": reasons,
+        "min_pairs": min_pairs, "reject_floor": reject_floor,
+        "systemic_unscorable": systemic,
+        "verdict": verdict, "reasons": reasons,
         "treatment_arm_failures": [r["repo"] for r in t_failures],
         "treatment_arm_unverified": [r["repo"] for r in t_unverified],
         "control_arm_failures": [r["repo"] for r in c_failures],

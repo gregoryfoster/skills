@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -122,13 +122,32 @@ refuses at the very end.
 ## Phase 1 — Measure
 
 ```bash
-bash "<SKILL_SCRIPTS>/measure-context.sh" --exact > /tmp/context-baseline.json
+bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
+  | tee /tmp/context-baseline.json \
+  | bash "<SKILL_SCRIPTS>/record-telemetry.sh" --baseline
 ```
 
 `--exact` counts via the Anthropic `count_tokens` endpoint — the only accurate
 tokenizer for Claude models, and **free to call**. Run it always; without a
 credential it degrades to a calibrated offline estimate with a WARN. Never
 substitute `tiktoken` — it is OpenAI's tokenizer and undercounts Claude badly.
+
+### The baseline row is not optional either
+
+`--baseline` appends a measurement-only row for the surface **as found**, before
+any edit. It is what makes this run scorable at all.
+
+The validation gate takes a run's before-state from the previous ledger row for
+the same file, and a first curation is the run that *creates* the ledger — so
+without this row the scored run is precisely the run that can never be scored,
+and the `docs_orphaned` safety gate has nothing to compare against and cannot
+trip. That is not hypothetical: it is what happened to all twelve cohort repos
+in [experiment 1](references/validation-gate.md), which scored nothing
+([#116](https://github.com/gregoryfoster/skills/issues/116)).
+
+The row costs one command and lands in the same commit as the curation. Phase 7
+appends the after-row; **never rewrite the baseline row to match it** — the pair
+is the measurement.
 
 ### A credential is not optional, even interactively
 
