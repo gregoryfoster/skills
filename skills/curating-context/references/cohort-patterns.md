@@ -197,6 +197,21 @@ the sibling repo's GitHub URL, or inline the rule.
 
 ## Baseline: policy-file tokens, 2026-08-05
 
+> **Frozen. Do not refresh these numbers in place.**
+>
+> This table is the cohort's **pre-registered before-state**. It was committed at
+> `c10bf7f` on 2026-08-05, before any member repo had curated anything, and the
+> validation split's pairs are defined by it. Because it predates every outcome,
+> it is the one baseline that provably cannot have been chosen to favour an arm —
+> which is the only reason the first experiment's rows can be scored at all
+> ([#116](https://github.com/gregoryfoster/skills/issues/116): the gate needs a
+> before-state and no ledger row carries one).
+>
+> Every repo here has since curated, so as a *description of the cohort today*
+> these numbers are stale by design, and updating them in place would look like an
+> obvious cleanup. It would destroy the experiment. Add a new dated table below
+> instead, and leave this one alone.
+
 Counted with `count_tokens` against `claude-opus-5` — **exact, not estimated**.
 The `est` column is what the old uncalibrated `bytes/4` heuristic reported, kept
 here because the gap is the point.
