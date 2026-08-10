@@ -237,10 +237,11 @@ non-results and teach a later reader that the idea was tested and failed.
   point: ten review findings, all created by an otherwise clean run, all
   invisible to `tokens`, `links_dead`, `docs_orphaned` and `no_loss`. The
   `seams` field exists so that class is measurable — but wave A's rows predate
-  it, so the first experiment compares wave B's *measured* seam counts against
-  wave A's hand-reviewed ones (observo's 10 is the control datapoint), and only
-  later rounds get a symmetric comparison. A proposal aimed at a defect class
-  the row cannot see yet should add its measurement first, as v1.3 did.
+  it, so the first experiment had no symmetric comparison available: its control
+  datapoint is `observo` re-measured at v1.3 (41 seams on a surface v1.2 had
+  declared finished), not a wave-A row. A proposal aimed at a defect class the row
+  cannot see yet should add its measurement first, as v1.3 did — and note that
+  doing so buys measurability for *later* rounds, not for its own experiment.
 - **It cannot run more than once per proposal.** Each repo has one first
   curation. After both waves have adopted, the split still works for steady-state
   weekly runs, but the effect sizes are far smaller and the metric shifts from
@@ -249,9 +250,50 @@ non-results and teach a later reader that the idea was tested and failed.
   last one that shipped unvalidated, because at the time it shipped no cohort
   repo had adopted anything. That is a genuine hole and not a rhetorical one; the
   honest mitigation is that that change added scripts and a reference rather than
-  altering the keep/cut rubric that decides what gets moved. **v1.3 is the first
-  proposal the gate judges**: wave B adopts it, wave A holds at v1.2, and
-  `score-cohort.sh --treatment b --control a` produces the verdict.
+  altering the keep/cut rubric that decides what gets moved. **v1.3 was the first
+  proposal the gate judged** — see the record below.
+
+## Experiment 1 — v1.3, run 2026-08-10: no verdict
+
+Both arms adopted as designed and the gate produced **no verdict**. Recorded here
+because the design's one-shot property (previous bullet) means this cannot be
+re-run: the cohort's first-curation capital is now spent.
+
+What went right: the arms were clean. All six wave-B repos ran v1.3 (`c1e6273`),
+all six wave-A first curations stand at v1.2 (`3fc7b71`), and every safety gate
+passed in **both** arms — `no_loss=ok`, `links_dead=0`, `docs_orphaned=0` across
+all twelve.
+
+What went wrong, in two layers:
+
+- **The gate scored nothing at all.** Every repo came back `unscorable` for the
+  same reason: the before-state is defined as the previous ledger row, and a first
+  curation is the run that *creates* the ledger. The scored run is precisely the
+  run that can never be scored, and no phase of this skill ever records a
+  baseline row ([#116](https://github.com/gregoryfoster/skills/issues/116)).
+- **The metric could not have judged this proposal anyway.** Scored by hand
+  against the pre-registered 2026-08-05 baseline, ten of twelve repos landed under
+  budget, so `gap_after == 0` and closure pins at exactly 1.0 — four of six pairs
+  uninformative, and the two that discriminate are the only two repos that
+  *missed* budget, one falling to each arm. Closure measures shortfall, not
+  quality, and it is structurally blind to what v1.3 changed
+  ([#117](https://github.com/gregoryfoster/skills/issues/117)).
+
+Per the rule above, this is INCONCLUSIVE and does **not** enter
+`rejected-changes.md`. v1.3 stays shipped and unjudged, which is the accurate
+state.
+
+The evidence that does exist is qualitative and directional: all six v1.3 runs
+recorded `seams: 0`, and `observo` — re-run at v1.3 over the surface its own v1.2
+curation had declared finished — found **41** unacknowledged seams. One control
+datapoint, and the comparison is asymmetric (detection on an unswept surface
+versus resolution during a run), but it is the only measurement of that defect
+class in existence. Wave B's runs also produced #111 and #113 as findings against
+v1.3, so the held-out arm yielded qualitatively even where the gate did not.
+
+The lesson for experiment 2 is that the unit of comparison and the primary metric
+have to be settled — and pre-registered — *before* the treatment arm adopts.
+Choosing either after the rows land is choosing the verdict.
 
 ## Not in scope
 
