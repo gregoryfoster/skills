@@ -3500,8 +3500,13 @@ class TestBudgetKnobIsOneAnswer:
             cwd=str(repo), env=_clean_env(), timeout=60).stdout
         # The delta prints a table; read the budget column off the AGENTS.md row
         # rather than substring-matching a number that appears in several.
-        row = next(ln for ln in delta.splitlines() if ln.startswith("AGENTS.md"))
-        assert row.split()[3] == "200", row
+        lines = delta.splitlines()
+        # Locate the column from the HEADER rather than a fixed index, so a
+        # reordered table fails pointing at the table instead of at the budget.
+        header = next(ln for ln in lines if ln.split()[:2] == ["file", "tokens"])
+        col = header.split().index("budget")
+        row = next(ln for ln in lines if ln.startswith("AGENTS.md"))
+        assert row.split()[col] == "200", (header, row)
         assert "OVER" in row, row
 
     @pytest.mark.parametrize("args,env,expected", [
@@ -3518,16 +3523,38 @@ class TestBudgetKnobIsOneAnswer:
         plain = _repo(tmp_path, policy_lines=100)
         assert self._measured(plain)["budget"] == 6000
 
-    def test_the_doc_budget_reads_its_knob_too(self, tmp_path: Path):
+    @pytest.mark.parametrize("args,env,expected", [
+        ((), {}, 300),                                        # the knob file
+        ((), {"CONTEXT_DOC_BUDGET": "700"}, 700),              # env beats it
+        (("--doc-budget", "900"), {"CONTEXT_DOC_BUDGET": "700"}, 900),  # flag wins
+    ])
+    def test_the_doc_budget_has_the_same_three_rungs(
+            self, tmp_path: Path, args, env, expected):
+        """The less-used half, parametrised like the policy budget. The
+        asymmetry is where a copy-paste slip in the second ctx_read_num_knob
+        call would have hidden."""
         repo = _repo(tmp_path, policy_lines=10)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-doc-budget").write_text("300\n")
         (repo / "docs").mkdir()
         (repo / "docs" / "BIG.md").write_text(POLICY_LINE * 400)
         r = subprocess.run(
-            ["bash", str(MEASURE), "--no-write"], capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=60)
+            ["bash", str(MEASURE), "--no-write", *args], capture_output=True,
+            text=True, cwd=str(repo), env={**_clean_env(), **env}, timeout=60)
         assert r.returncode == 0, r.stderr
-        docs = json.loads(r.stdout)["docs"]
-        big = next(d for d in docs if d["path"].endswith("BIG.md"))
-        assert big["over_budget"] is True, big
+        out = json.loads(r.stdout)
+        big = next(d for d in out["docs"] if d["path"].endswith("BIG.md"))
+        # ~1000 tokens of doc: over 300 and 700, under 900.
+        assert big["over_budget"] is (big["tokens"] > expected), (expected, big)
+
+    @pytest.mark.parametrize("flag", ["--budget", "--doc-budget"])
+    def test_a_malformed_budget_flag_is_refused(self, tmp_path: Path, flag):
+        """ctx_read_num_knob returns the fallback for anything unparseable —
+        right for a knob file, wrong for a flag, where silence means the run
+        measures against 6000 and records that."""
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--no-write", flag, "4,000"],
+            capture_output=True, text=True, cwd=str(_repo(tmp_path)),
+            env=_clean_env(), timeout=60)
+        assert r.returncode == 1, r.stdout
+        assert f"{flag} must be a non-negative integer (got '4,000')" in r.stderr

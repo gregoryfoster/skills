@@ -137,6 +137,23 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Digits only, checked HERE rather than left to the resolver. ctx_read_num_knob
+# returns the fallback for anything it cannot parse, which is right for a knob
+# FILE — a repo should not fail to measure because someone left a comment in one
+# — and wrong for a FLAG, where a typo is the likely cause and silence means the
+# run measures against 6000 and records that. Before #126 a malformed --budget
+# at least produced `[: 4,000: integer expression expected` on stderr; losing
+# that would be a step in the direction this change exists to reverse.
+for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE"; do
+  _flag="${_pair%%=*}"; _val="${_pair#*=}"
+  case "$_val" in
+    '') ;;
+    *[!0-9]*)
+      echo "ERROR $_flag must be a non-negative integer (got '$_val')" >&2
+      exit 1 ;;
+  esac
+done
+
 # --- shared library -------------------------------------------------------
 # Resolve through a symlink chain first: this script may be reached through a
 # symlinked vendor tree, and ${BASH_SOURCE[0]}'s dirname would then hold no
