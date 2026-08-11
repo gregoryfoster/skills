@@ -294,12 +294,6 @@ by it rather than assumed to be per-week.
   budget into a merge gate is [#88](https://github.com/gregoryfoster/skills/issues/88),
   and its sequencing rule stands: add the gate per repo only *after* that repo is
   under budget, or it is a permanently-red check people learn to bypass.
-- **Its drift warning inherits [#126](https://github.com/gregoryfoster/skills/issues/126).**
-  `measure-context.sh` hardcodes the 6,000 budget and does not read
-  `.skills/context-budget`, though the write guard and the review delta both do.
-  A repo that set a custom budget gets warned — and gets a `budget` field on
-  every row — against 6,000 instead. Latent today, since the whole cohort runs
-  the default; live the moment somebody runs `install-guard.sh --budget N`.
 - **It does not fix the arms problem.** Rows carry `skill_version`, so a series
   can still be split by version — but the confounds
   [#118](https://github.com/gregoryfoster/skills/issues/118) names (version

@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.5"
+  version: "1.6"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -100,9 +100,14 @@ variable — each Bash invocation runs in a fresh shell.
 
 `scripts/` also holds **`_context-lib.sh`**, which is sourced rather than run.
 `measure-context.sh`, `context-budget-guard.sh`, and `context-delta.sh` all read
-the bytes-per-token ratio, the archival matcher, the docs-dir knob, and the
-symlink/git comparison from it, so the weekly run and both continuous surfaces
-cannot disagree about a number. It must travel with them: vendor the whole
+the bytes-per-token ratio, the archival matcher, the docs-dir knob, **the two
+budgets**, and the symlink/git comparison from it, so the weekly run and both
+continuous surfaces cannot disagree about a number. The budgets were the
+exception until [#126](https://github.com/gregoryfoster/skills/issues/126):
+`measure-context.sh` hardcoded 6,000 and read only its flag, so a repo that set
+`.skills/context-budget` got warnings at its own number from both continuous
+surfaces and **ledger rows recorded against 6,000** — the denominator
+`score-cohort.sh` divides by. It must travel with them: vendor the whole
 `scripts/` directory, never individual files. `install-guard.sh` refuses to
 install a guard whose library is missing, because that combination wires up
 cleanly and then does nothing, silently.

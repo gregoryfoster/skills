@@ -73,6 +73,16 @@ and record why, rather than failing every week.
 Override per repo with `--budget` / `--doc-budget`, or inline via the trigger
 phrase (`context budget 6000`).
 
+**One chain, four scripts.** Every reader resolves the budget the same way —
+the flag, then `CONTEXT_BUDGET`, then `.skills/context-budget`, then 6,000 — and
+the per-doc budget likewise via `CONTEXT_DOC_BUDGET` and
+`.skills/context-doc-budget`. `install-guard.sh --budget N` writes the knob file,
+which is what makes a repo's choice stick across the weekly measurement, the
+write guard and the review delta. `measure-context.sh` was the exception and
+recorded every row against 6,000 regardless
+([#126](https://github.com/gregoryfoster/skills/issues/126)); a test now pins all
+three surfaces to one answer for one knob file.
+
 ## Measuring tokens
 
 `measure-context.sh --exact` calls `POST /v1/messages/count_tokens`. That endpoint
