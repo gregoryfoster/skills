@@ -1,6 +1,6 @@
 ---
 name: curating-context
-description: Curates a repo's agent-context surface — AGENTS.md and the reference docs it links — against a token budget, verifying facts before removing them. Measures the policy file and its whole live doc tree, fans out to check falsifiable claims (paths, commands, links, issue refs), classifies each section keep/demote/tighten/delete against an evidence-based rubric, relocates rather than deletes, then records a telemetry row so the cohort can learn which optimisations actually pay. Use when the user says "curate context", "context budget", "hone AGENTS.md", "trim AGENTS.md", or "prune context", and for scheduled weekly maintenance.
+description: Curates a repo's agent-context surface — AGENTS.md and the reference docs it links — against a token budget, verifying facts before removing them. Measures the policy file and its whole live doc tree, fans out to check falsifiable claims (paths, commands, links, issue refs), classifies each section keep/demote/tighten/delete against an evidence-based rubric, relocates rather than deletes, then records a before-and-after telemetry pair so the cohort can learn which optimisations actually pay. Use when the user says "curate context", "context budget", "hone AGENTS.md", "trim AGENTS.md", or "prune context", and for scheduled weekly maintenance.
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
@@ -148,6 +148,13 @@ in [experiment 1](references/validation-gate.md), which scored nothing
 The row costs one command and lands in the same commit as the curation. Phase 7
 appends the after-row; **never rewrite the baseline row to match it** — the pair
 is the measurement.
+
+**Be on a branch before you run this.** This is the first write of the run, and
+it writes a tracked file. Phases 6 and 6.5 already presume a branch point exists
+(`--base <branch-point>`) and Phase 7 commits there; the skill never says to
+create it, so create it here. An aborted run otherwise leaves a modified ledger
+on whatever branch you started from, which for an autonomous run is the one
+place this skill forbids writing to.
 
 ### A credential is not optional, even interactively
 

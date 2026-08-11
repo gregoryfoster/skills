@@ -35,6 +35,11 @@ Columns:
   single reduction. That last column is the point of the roll-up: it names which
   optimisation actually paid, per repo.
 
+  `runs` counts CURATION rows, not ledger rows. A run writes two — the Phase 1
+  `baseline` for the surface as found and the Phase 7 curation — so a row count
+  reports every repo as having run twice as often as it did. A repo that
+  measured and stopped shows 0 runs and `(baseline only)`.
+
   `net` is anchored at the oldest run that used the SAME measurement method as
   the latest one, not at the first run ever recorded — an exact count and an
   offline estimate differ by ~60% on this content, so a net spanning that change
@@ -204,6 +209,24 @@ display = {
     for short, keys in basenames.items() for key in keys
 }
 
+def is_curation_row(row):
+    """Whether a row records a RUN rather than a state.
+
+    A curation run writes TWO rows — the Phase 1 `baseline` for the surface as
+    found, and the Phase 7 curation — so a row count is twice the run count.
+    Counting rows reported one curation as two runs, in the column a reader
+    consults to answer "is this repo actually running?" (#116).
+
+    THIS RULE IS SHARED WITH score-cohort.sh's classify_run() AND MUST STAY
+    IDENTICAL; a test pins the two to the same answer. An untagged row
+    (actions: []) counts as a run: something happened that nobody tagged, which
+    is a tagging gap rather than a measurement. Only an explicit `baseline*` row
+    is a state.
+    """
+    acts = row.get("actions") or []
+    return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
+
+
 records = []
 for key in order:
     info = repos[key]
@@ -286,7 +309,7 @@ for key in order:
         "net": net,
         "net_from": net_from,
         "net_why": net_why,
-        "runs": len(rows),
+        "runs": sum(1 for r in rows if is_curation_row(r)),
         "orphans": latest.get("docs_orphaned"),
         "dead": latest.get("links_dead"),
         "skill_version": latest.get("skill_version"),
@@ -327,7 +350,11 @@ for r in records:
     best = "-"
     if r["best_delta"] is not None:
         best = f"{r['best_delta']:+d}  {r['best_actions']}"
-    elif r["runs"] == 1:
+    elif r["runs"] == 0:
+        # Zero RUNS, not zero rows: a repo that measured and stopped has a
+        # baseline row and nothing else. Before runs counted curations this read
+        # `== 1`, which meant the same thing when a single row was all a
+        # measurement-only visit produced.
         best = "(baseline only)"
     elif r["status"] != "ok":
         best = r["status"]

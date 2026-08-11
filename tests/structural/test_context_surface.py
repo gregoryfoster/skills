@@ -1615,7 +1615,9 @@ class TestCohortReportSingleFile:
         # AGENTS.md never moved: 9000 both times. Against sub/AGENTS.md's 500 it
         # would read +8500.
         assert cells["net"] == "0", cells
-        assert cells["runs"] == "2", cells
+        # One curation on AGENTS.md. `runs` counts curations, not rows, so
+        # neither its own baseline nor sub/AGENTS.md's row is in this number.
+        assert cells["runs"] == "1", cells
 
 
 def _two_file_ledger(root: Path, name: str, version: str,
@@ -1677,7 +1679,9 @@ class TestValidationGateRoundSeven:
         gate_rec = json.loads(gate.stdout)["repos"][0]
         assert gate_rec["file"] == "AGENTS.md"
         assert int(cells["tokens"]) == gate_rec["after"] == 7000
-        assert int(cells["runs"]) == 2      # AGENTS.md rows only
+        # One curation on AGENTS.md. Counting every file's curations would
+        # read 2 — sub/AGENTS.md was pruned too.
+        assert int(cells["runs"]) == 1
 
     def test_uncurated_primary_file_names_the_file_and_the_others(
             self, tmp_path: Path):
@@ -1777,7 +1781,7 @@ class TestValidationGateRoundEight:
         """Most-recent-file alone was too fragile: one incidental baseline row
         for docs/GUIDE.md re-defined a repo that had curated AGENTS.md over
         three runs, dropping it out of the experiment and collapsing the
-        roll-up's headline to 4,000 tokens / 1 run / no net — a number that then
+        roll-up's headline to 4,000 tokens / no runs / no net — a number that then
         fed the cohort total. Row count is what a stray append cannot flip."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
@@ -1808,7 +1812,9 @@ class TestValidationGateRoundEight:
         cells = dict(zip(*(line.split("\t")
                            for line in rollup.stdout.splitlines()[:2])))
         assert cells["tokens"] == "6800", cells
-        assert cells["runs"] == "3", cells
+        # Two curations on AGENTS.md, plus a baseline. Scored off the stray
+        # docs/GUIDE.md row this would read 0 runs.
+        assert cells["runs"] == "2", cells
         assert cells["net"] == "-43200", cells
 
     def test_ties_on_row_count_fall_back_to_most_recent(self, tmp_path: Path):
@@ -1951,7 +1957,8 @@ class TestValidationGateRoundNine:
         assert len(payload["pairs"]) == 1
 
     def test_rollup_does_not_double_count_a_repeated_entry(self, tmp_path: Path):
-        """The same duplication inflated `runs` to 4 for a two-row ledger."""
+        """The same duplication inflated `runs` to 4 for a two-row ledger —
+        which is one curation, so the number to hold is 1."""
         _arm(tmp_path, "one", 50000, 20000, "1.1")
         path = tmp_path / "cohort"
         path.write_text(f"{tmp_path / 'one'}\n{tmp_path / 'one'}\n")
@@ -1961,7 +1968,7 @@ class TestValidationGateRoundNine:
         )
         cells = dict(zip(*(line.split("\t")
                            for line in r.stdout.splitlines()[:2])))
-        assert cells["runs"] == "2", cells
+        assert cells["runs"] == "1", cells
 
     @pytest.mark.parametrize("a,b", [("1.2", "v1.2"), ("v1.2", "1.2"),
                                      ("1.2", "1.2.0"), ("V1.2.0", "1.2")])
@@ -2583,8 +2590,9 @@ class TestBaselineRow:
         r = self._record(repo, self._measure(repo), "--baseline", *extra)
         assert r.returncode == 1, r.stderr
         assert marker in r.stderr
-        assert not (repo / ".skills" / "context-metrics.jsonl").exists() or \
-            self._rows(repo) == []
+        # The refusal lands before the ledger is created, so nothing was written
+        # at all — not even an empty file.
+        assert not (repo / ".skills" / "context-metrics.jsonl").exists()
 
     def test_pure_measurement_fields_are_still_allowed(self, tmp_path: Path):
         """--seams on a baseline row measures the surface as found, which is a
@@ -2687,12 +2695,32 @@ class TestSystematicUnscorable:
     def test_mixed_reasons_are_not_a_gate_defect(self, tmp_path: Path):
         """Different reasons per repo means each repo needs its own fix. That is
         a finding about the cohort, and claiming a defect in the gate would send
-        the reader to the wrong file."""
+        the reader to the wrong file.
+
+        Four repos, so the roster clears SYSTEMIC_MIN and the ONLY thing keeping
+        this from reading as a defect is the mix of reasons."""
+        spec = []
+        for i in (1, 2):
+            self._no_baseline(tmp_path, f"ctl{i}", "1.2")
+            spec.append((f"ctl{i}", "a", str(i)))
+        # No curation row at all — a different unscorable reason.
+        _arm(tmp_path, "trt1", 49000, None, "1.3")
+        self._no_baseline(tmp_path, "trt2", "1.3")
+        spec += [("trt1", "b", "1"), ("trt2", "b", "2")]
+        r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
+        assert "GATE DEFECT" not in r.stdout, r.stdout
+
+    def test_two_repos_are_too_few_to_name_a_gate_defect(self, tmp_path: Path):
+        """The claim is an inference from BREADTH. At one repo per arm the
+        likelier reading is two non-compliant repos, which needs a different fix
+        than 'the gate is broken' — so the diagnosis stays off."""
         self._no_baseline(tmp_path, "ctl1", "1.2")
-        _arm(tmp_path, "trt1", 49000, None, "1.3")   # no curation row at all
+        self._no_baseline(tmp_path, "trt1", "1.3")
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
         assert "GATE DEFECT" not in r.stdout, r.stdout
+        assert "no informative pairs" in r.stdout
 
 
 class TestRejectionFloor:
@@ -2739,3 +2767,76 @@ class TestRejectionFloor:
         assert r.returncode == 3, r.stdout
         assert "verdict: REJECT" in r.stdout
         assert "no_loss=failed" in r.stdout
+
+
+class TestRunsCountsCurationsNotRows:
+    """A curation run writes two rows — the Phase 1 baseline and the Phase 7
+    curation — so a row count reports every repo as having run twice as often as
+    it did. `runs` is the column a reader consults to answer "is this repo
+    actually running?", which is #118's whole subject."""
+
+    def _one_curation(self, root: Path) -> Path:
+        d = root / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=12000,
+                        actions=["baseline"]),
+            _ledger_row(repo="one", ts="2026-08-02", tokens=5800,
+                        actions=["demote:Big"], skill_version="1.4",
+                        no_loss="ok", delta_tokens=-6200),
+        ]) + "\n")
+        return root / "one"
+
+    def _rollup(self, repo: Path) -> dict:
+        r = subprocess.run(
+            ["bash", str(COHORT), "--local", str(repo), "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stderr
+        head, row = (ln.split("\t") for ln in r.stdout.splitlines()[:2])
+        return dict(zip(head, row))
+
+    def test_one_curation_is_one_run(self, tmp_path: Path):
+        cells = self._rollup(self._one_curation(tmp_path))
+        assert cells["runs"] == "1", cells
+
+    def test_a_baseline_only_visit_is_zero_runs(self, tmp_path: Path):
+        """A run that measured and stopped. Before `runs` counted curations this
+        case had exactly one row, which is why the display keyed on `runs == 1`."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text(_ledger_row(
+            repo="one", tokens=12000, actions=["baseline"]) + "\n")
+        cells = self._rollup(tmp_path / "one")
+        assert cells["runs"] == "0", cells
+        table = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one")],
+            capture_output=True, text=True, env=_clean_env(), timeout=30)
+        assert "(baseline only)" in table.stdout, table.stdout
+
+    def test_an_untagged_row_still_counts_as_a_run(self, tmp_path: Path):
+        """Only an explicit `baseline*` row is a state. An untagged row is a
+        tagging gap, and hiding it from the run count would hide the gap — the
+        same rule score-cohort.sh applies when it refuses to score one."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=12000,
+                        actions=["baseline"]),
+            _ledger_row(repo="one", ts="2026-08-02", tokens=9000, actions=[]),
+        ]) + "\n")
+        assert self._rollup(tmp_path / "one")["runs"] == "1"
+
+    def test_the_trend_reports_runs_and_rows_separately(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        measure = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
+        subprocess.run(["bash", str(RECORD), "--baseline"], input=measure,
+                       capture_output=True, text=True, cwd=str(repo),
+                       env=_clean_env(), timeout=30)
+        r = subprocess.run(
+            ["bash", str(RECORD), "--actions", "demote:Big", "--print-trend"],
+            input=measure, capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stderr
+        assert "1 run(s) over 2 rows" in r.stderr, r.stderr

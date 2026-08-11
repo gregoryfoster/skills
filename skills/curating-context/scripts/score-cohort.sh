@@ -530,6 +530,11 @@ wins = [p for p in informative if p["winner"] == "treatment"]
 # content rejects on its own with no pairs at all, which is why the t_failures
 # branch sits above the pair arithmetic and why arm() is wider than the pairing.
 REJECT_FLOOR = 3
+# The EFFECTIVE floor, for reporting: --min-pairs gates every verdict first, so
+# when it is set above REJECT_FLOOR it is what a rejection actually has to clear.
+# The branch below is reachable only when min_pairs < REJECT_FLOOR — above that,
+# `len(informative) >= min_pairs >= REJECT_FLOOR` and the shortfall test cannot
+# fire — so REJECT_FLOOR is the constant that does the work there.
 reject_floor = max(min_pairs, REJECT_FLOOR)
 
 # A systematic unscorable — every repo in BOTH arms blocked by one rule. See the
@@ -548,9 +553,17 @@ SYSTEMIC_HINTS = {
         "estimates against exact rows.",
 }
 
-arm_records = [r for r in records if r["wave"] in (treatment, control)]
+# Every record IS in an arm: the shell layer diverts entries whose wave is
+# neither into out_of_arm before they reach here, so there is nothing to filter.
+arm_records = records
+# "No repo in either arm can satisfy this rule" is an inference from BREADTH, and
+# at two repos it is not supported — the likelier reading is two non-compliant
+# repos, which is a finding about the cohort and needs a different fix. Require
+# at least two per arm before naming a defect in the gate.
+SYSTEMIC_MIN = 4
 systemic = systemic_hint = None
-if arm_records and all(r["status"] == "unscorable" for r in arm_records):
+if len(arm_records) >= SYSTEMIC_MIN \
+        and all(r["status"] == "unscorable" for r in arm_records):
     codes = {r["why_code"] for r in arm_records}
     if len(codes) == 1:
         code_one = next(iter(codes))
@@ -776,7 +789,7 @@ else:
             if p["winner"] != "treatment"]
     shortfall = (f"the treatment won {len(wins)} of {len(informative)} "
                  f"informative pairs; adoption requires all ({'; '.join(lost)})")
-    if len(informative) < reject_floor:
+    if len(informative) < REJECT_FLOOR:
         # Blocks adoption exactly as a rejection would, but does not write one
         # down. See REJECT_FLOOR above: the asymmetry is between a decision that
         # gets revisited and a record that does not.
@@ -784,7 +797,7 @@ else:
         reasons.append(shortfall)
         reasons.append(
             f"but {len(informative)} informative pair(s) is below the rejection "
-            f"floor of {reject_floor}, so this is not recorded as a refutation. "
+            f"floor of {REJECT_FLOOR}, so this is not recorded as a refutation. "
             "A rejection is permanent and shapes every later proposal; adoption "
             "is revisited the next time the skill changes, so the two do not "
             "share a floor. The proposal is blocked and still pending evidence")

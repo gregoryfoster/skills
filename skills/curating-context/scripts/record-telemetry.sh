@@ -403,7 +403,19 @@ else:
 
 if trend == "1":
     series = history + [row]
-    print(f"\ntrend for {row['file']} ({len(series)} runs):", file=sys.stderr)
+    # Runs, not rows. A curation run writes two rows — the Phase 1 `baseline` and
+    # the Phase 7 curation — so len(series) reported one curation as two runs.
+    # THIS RULE IS SHARED WITH cohort-report.sh's is_curation_row() and
+    # score-cohort.sh's classify_run(): an untagged row counts as a run, only an
+    # explicit `baseline*` row is a state. Every row is still PRINTED below; the
+    # baselines are what the deltas are measured against.
+    def _is_curation(r):
+        acts = r.get("actions") or []
+        return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
+
+    n_runs = sum(1 for r in series if _is_curation(r))
+    print(f"\ntrend for {row['file']} ({n_runs} run(s) over {len(series)} rows):",
+          file=sys.stderr)
     # Action tags are the point of the ledger, so a real run carries several and a
     # single-line format stops being readable at about three. Wrap onto
     # continuation lines aligned under the first tag rather than truncating: the
