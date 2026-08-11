@@ -163,7 +163,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 Re-runs of `/managing-skills` must never double-wire the hook. Bail out of the procedure if **both** of these are already true:
 
 - The symlink at `.claude/hooks/skills-submodule-update.sh` exists and resolves to the vendored script (`../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh`).
-- `.claude/settings.json` contains the string `bash .claude/hooks/skills-submodule-update.sh` at least once.
+- `.claude/settings.json` contains the string `.claude/hooks/skills-submodule-update.sh` at least once. Match the script path, not the whole command — an install written before the `$CLAUDE_PROJECT_DIR` form ([#110](https://github.com/gregoryfoster/skills/issues/110)) uses a cwd-relative command and must still be recognised.
 
 Otherwise — fresh install or partial install — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
 
@@ -186,16 +186,21 @@ The `../../` prefix resolves from `.claude/hooks/` back to the project root, the
 ```bash
 jq '(.hooks //= {}) |
     (.hooks.SessionStart //= []) |
-    .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh")) |
+    .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not)) |
     .hooks.SessionStart += [{
       "matcher": ".*",
       "hooks": [{
         "type": "command",
-        "command": "bash .claude/hooks/skills-submodule-update.sh"
+        "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\""
       }]
     }]' .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
 ```
+
+Two details in that expression are load-bearing:
+
+- **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not on the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). Claude Code normally runs hooks from the project dir, so the older `bash .claude/hooks/…` form works today — but it is an undocumented assumption, and a repo whose `settings.json` mixes both styles is what made this visible in review. The `${CLAUDE_PROJECT_DIR:-.}` fallback is the same one `init-socraticode` uses: with the variable unset, a bare `"$CLAUDE_PROJECT_DIR/…"` degrades to `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
+- **The strip matches the script path, not the whole command string.** An equality test against the current command would skip an entry written in the older form — duplicating the hook here, and leaving it unremovable by the uninstall filter below.
 
 If `.claude/settings.json` does not exist yet, create it with `echo '{}' > .claude/settings.json` before running the jq command.
 
@@ -210,7 +215,7 @@ The merged result should look like:
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/skills-submodule-update.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\""
           }
         ]
       }
@@ -234,11 +239,11 @@ Remove the symlink:
 git rm .claude/hooks/skills-submodule-update.sh
 ```
 
-Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block:
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable:
 
 ```bash
 jq 'if .hooks.SessionStart then
-      .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh"))
+      .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not))
     else . end' \
    .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json

@@ -52,12 +52,27 @@ something committed it unannounced is a bad surprise.
    edit, and not even an `ok:` line appears, because logging starts after the
    source.
 2. A `PostToolUse` entry in `.claude/settings.json` matching
-   `Edit|Write|MultiEdit`, with a 10s timeout. The jq merge strips any prior
-   entry for this command before appending, and defaults `.hooks` /
-   `.hooks.PostToolUse` into existence, so it works against `{}`, a settings file
-   with no hooks block, and one with other hooks already wired. A settings file
-   that is not valid JSON is **refused, not overwritten** — it may hold
-   permissions and env config that would be expensive to lose.
+   `Edit|Write|MultiEdit`, with a 10s timeout. The command is
+   `bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/context-budget-guard.sh"` —
+   anchored on the project dir rather than on the hook process's cwd, which was
+   an undocumented assumption the earlier relative form was load-bearing on
+   ([#110](https://github.com/gregoryfoster/skills/issues/110)). The `:-.`
+   fallback is `init-socraticode`'s house style: with the variable unset, a bare
+   `"$CLAUDE_PROJECT_DIR/…"` degrades to `bash "/.claude/hooks/…"` and errors on
+   every edit, where `.` degrades to exactly the old behaviour. The guard
+   resolves the repo the same way, falling back to `$CLAUDE_PROJECT_DIR` when its
+   cwd is not inside one.
+
+   The jq merge strips any prior entry for this hook before appending, and
+   defaults `.hooks` / `.hooks.PostToolUse` into existence, so it works against
+   `{}`, a settings file with no hooks block, and one with other hooks already
+   wired. The strip matches on the **script path**, not on the exact command
+   string, so an install written by an older version is found, replaced, and
+   still removable by `--uninstall`; matching the exact string would have made
+   every existing install permanent. `--check` reports such an entry as installed
+   and names it, since it works — a re-run normalizes it. A settings file that is
+   not valid JSON is **refused, not overwritten** — it may hold permissions and
+   env config that would be expensive to lose.
 3. `.skills/context-budget` and `.skills/context-doc-budget`, only when the flags
    are passed.
 

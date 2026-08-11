@@ -176,3 +176,198 @@ class TestGuardLogPath:
         assert f"{gitdir}/context-budget.log" in result.stdout, result.stdout
 
 
+
+class TestGuardCommandForm:
+    """#110 — the wired command must not depend on the hook process's cwd."""
+
+    @requires_jq
+    def test_installer_writes_a_project_dir_anchored_command(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        assert _run_installer(repo, vendored).returncode == 0
+
+        assert _post_tool_commands(repo) == [GUARD_COMMAND]
+
+    @requires_jq
+    def test_the_wired_command_works_from_a_foreign_cwd(self, tmp_path: Path):
+        """The property the issue is actually about: run the literal command
+        string with a cwd that is not the project and it must still measure."""
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        assert _run_installer(repo, vendored).returncode == 0
+        (repo / "AGENTS.md").write_text(POLICY_LINE * 2600)
+
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        env = _clean_env()
+        env["CLAUDE_PROJECT_DIR"] = str(repo)
+        command = _post_tool_commands(repo)[0]
+        result = subprocess.run(
+            ["bash", "-c", command], input=_payload(repo / "AGENTS.md"),
+            capture_output=True, text=True, cwd=str(elsewhere),
+            env=env, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "context budget" in result.stdout, (
+            "the hook did not resolve from a foreign cwd: " + repr(result.stdout)
+        )
+
+    @requires_jq
+    def test_install_replaces_a_legacy_cwd_relative_entry(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [
+                {"matcher": "Edit|Write|MultiEdit",
+                 "hooks": [{"type": "command", "command": LEGACY_GUARD_COMMAND,
+                            "timeout": 10}]},
+                {"matcher": "Bash",
+                 "hooks": [{"type": "command", "command": "bash other.sh"}]},
+            ]}
+        }))
+        assert _run_installer(repo, vendored).returncode == 0
+
+        assert _post_tool_commands(repo) == ["bash other.sh", GUARD_COMMAND], (
+            "the legacy entry survived, so the repo now runs the guard twice"
+        )
+
+    @requires_jq
+    def test_uninstall_removes_a_legacy_cwd_relative_entry(self, tmp_path: Path):
+        """The subtle half: if the removal filter only matches the new string,
+        every existing install becomes unremovable."""
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [
+                {"matcher": "Edit|Write|MultiEdit",
+                 "hooks": [{"type": "command", "command": LEGACY_GUARD_COMMAND,
+                            "timeout": 10}]},
+                {"matcher": "Bash",
+                 "hooks": [{"type": "command", "command": "bash other.sh"}]},
+            ]}
+        }))
+        result = _run_installer(repo, vendored, "--uninstall")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        assert _post_tool_commands(repo) == ["bash other.sh"]
+
+    @requires_jq
+    def test_install_is_still_idempotent(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        assert _run_installer(repo, vendored).returncode == 0
+        assert _run_installer(repo, vendored).returncode == 0
+
+        assert _post_tool_commands(repo) == [GUARD_COMMAND]
+
+    @requires_jq
+    def test_check_recognises_a_legacy_entry_and_names_it(self, tmp_path: Path):
+        """A legacy entry is installed and working. Reporting it 'not installed'
+        would be a false negative; reporting it silently would strand it."""
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        assert _run_installer(repo, vendored).returncode == 0
+        settings = repo / ".claude" / "settings.json"
+        settings.write_text(
+            settings.read_text().replace(json.dumps(GUARD_COMMAND)[1:-1],
+                                         LEGACY_GUARD_COMMAND)
+        )
+
+        result = _run_installer(repo, vendored, "--check")
+        assert result.returncode == 0, result.stdout + result.stderr
+        # A phrase, not the word "legacy" — pytest's tmp_path embeds the test
+        # name, so a bare substring test passes on the paths --check prints.
+        assert "cwd-relative command form" in result.stdout, result.stdout
+
+
+
+class TestManagingSkillsHookCommand:
+    """#110's second and third installers. The documented jq snippets are run
+    verbatim, because a removal filter that stops matching the old form is how
+    an existing install becomes unremovable."""
+
+    def _fenced_blocks(self, text: str) -> list[str]:
+        return re.findall(r"```(?:bash|json)\n(.*?)```", text, re.DOTALL)
+
+    def _jq_block(self, needle: str) -> str:
+        blocks = [
+            b for b in self._fenced_blocks(MS_SKILL.read_text())
+            if "jq " in b and needle in b
+        ]
+        assert len(blocks) == 1, (
+            f"expected exactly one documented jq block containing {needle!r}, "
+            f"found {len(blocks)}"
+        )
+        return blocks[0]
+
+    def _seed(self, tmp_path: Path, command: str) -> Path:
+        (tmp_path / ".claude").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"SessionStart": [
+                {"matcher": ".*",
+                 "hooks": [{"type": "command", "command": command}]},
+                {"matcher": ".*",
+                 "hooks": [{"type": "command", "command": "bash unrelated.sh"}]},
+            ]}
+        }))
+        return tmp_path / ".claude" / "settings.json"
+
+    def _session_commands(self, settings: Path) -> list[str]:
+        data = json.loads(settings.read_text())
+        return [
+            h.get("command", "")
+            for e in data.get("hooks", {}).get("SessionStart", [])
+            for h in e.get("hooks", [])
+        ]
+
+    def _run_block(self, block: str, cwd: Path):
+        result = subprocess.run(
+            ["bash", "-c", block], capture_output=True, text=True,
+            cwd=str(cwd), env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    @requires_jq
+    def test_documented_install_snippet_writes_the_anchored_command(self, tmp_path):
+        settings = self._seed(tmp_path, "bash unrelated-only.sh")
+        settings.write_text(json.dumps({}))
+        self._run_block(self._jq_block("SessionStart +="), tmp_path)
+
+        assert self._session_commands(settings) == [UPDATE_COMMAND]
+
+    @requires_jq
+    def test_documented_install_snippet_replaces_a_legacy_entry(self, tmp_path):
+        settings = self._seed(tmp_path, LEGACY_UPDATE_COMMAND)
+        self._run_block(self._jq_block("SessionStart +="), tmp_path)
+
+        assert self._session_commands(settings) == [
+            "bash unrelated.sh", UPDATE_COMMAND
+        ]
+
+    @requires_jq
+    def test_documented_uninstall_snippet_removes_a_legacy_entry(self, tmp_path):
+        settings = self._seed(tmp_path, LEGACY_UPDATE_COMMAND)
+        self._run_block(self._jq_block("if .hooks.SessionStart then"), tmp_path)
+
+        assert self._session_commands(settings) == ["bash unrelated.sh"]
+
+    @requires_jq
+    def test_documented_uninstall_snippet_removes_the_current_entry(self, tmp_path):
+        settings = self._seed(tmp_path, UPDATE_COMMAND)
+        self._run_block(self._jq_block("if .hooks.SessionStart then"), tmp_path)
+
+        assert self._session_commands(settings) == ["bash unrelated.sh"]
+
+    def test_no_installer_still_documents_the_cwd_relative_form(self):
+        """All three installers must agree, or a repo's settings.json ends up
+        with a mix of styles — which is what made this visible in review."""
+        offenders = []
+        for path in (MS_SKILL, FASTAPI_SKILL, INSTALL):
+            for i, line in enumerate(path.read_text().splitlines(), 1):
+                if re.search(r'bash \.claude/hooks/\S+\.sh', line):
+                    offenders.append(f"{path.name}:{i}: {line.strip()}")
+        assert not offenders, "\n".join(offenders)
+
+

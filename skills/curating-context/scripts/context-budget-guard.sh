@@ -77,7 +77,14 @@ case "${1-}" in
 esac
 
 # From here on, every failure path must still reach exit 0.
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || ROOT=""
+# The wired command is anchored on $CLAUDE_PROJECT_DIR so the SCRIPT resolves from
+# any cwd (#110); this is the other half — the repo it measures resolves from any
+# cwd too. Without it a hook invoked from elsewhere finds the script, finds no
+# repo, and exits 0 silently, which looks identical to "installed and quiet".
+if [ -z "$ROOT" ] && [ -n "${CLAUDE_PROJECT_DIR-}" ]; then
+  ROOT="$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null)" || ROOT=""
+fi
 [ -n "$ROOT" ] || exit 0
 # `pwd -P` resolves symlinks in the root. Without it, a checkout reached through
 # a symlinked parent (/tmp -> /private/tmp on macOS, or any symlinked home) gives
