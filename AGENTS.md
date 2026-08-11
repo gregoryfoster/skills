@@ -113,6 +113,14 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Use structured output (JSON, TSV) on stdout; diagnostics to stderr
 - Use `set -euo pipefail` in bash scripts
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
+- Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
+  (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
+  over `skills/*/scripts/`, `scripts/` and `.claude/hooks/`, and skips loudly when
+  the binary is absent; `SHELLCHECK_REQUIRED=1` turns that skip into a failure.
+- A `# shellcheck disable=SCxxxx` **must** carry a reason comment on the line
+  directly above it. `TestShellcheckSuppressionsCarryReasons` enforces the
+  pairing, so a suppression stays a documented decision rather than a silencer
+  ([#90](https://github.com/gregoryfoster/skills/issues/90)).
 
 Two conventions here carry a full template and a rationale, and live in
 [docs/STYLE.md](docs/STYLE.md):
@@ -211,6 +219,14 @@ Tests run automatically from that point on. To run them manually:
 pytest tests/structural/ -v              # fast, no API key needed
 pytest tests/integration/ -v -m integration  # requires ANTHROPIC_API_KEY
 ```
+
+**Put a new structural rule in its own `tests/structural/test_<rule>.py`, not at
+the end of `test_context_surface.py`.** That file is already ~3,600 lines and is
+the obvious default home, which is exactly the problem: when several agents work
+the backlog in parallel worktrees, appending to one shared file turns every merge
+into a conflict, while a new per-rule file merges clean. It also keeps a rule
+findable by filename. Extend an existing file only when the new test belongs to
+the rule that file already owns.
 
 `ANTHROPIC_API_KEY` lives in the gitignored `.env` at the repo root. Load it with
 `set -a && source .env && set +a`; `run-integration-tests.sh` and

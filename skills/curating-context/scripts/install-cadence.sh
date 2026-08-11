@@ -101,7 +101,16 @@ done
 # Five whitespace-separated fields. Deliberately shallow — the point is to catch
 # a prose string or a six-field spec, not to reimplement cron.
 if [ -n "$CRON" ]; then
+  # `set -f` is load-bearing, not decoration. Word splitting is what counts the
+  # fields, but the same unquoted expansion also globs — and a cron expression
+  # is mostly `*`. Run from any directory with visible files, `0 15 * * 1`
+  # expanded to one field per file and every valid schedule was refused with a
+  # nonsense count. Found by the shellcheck gate's SC2086 (#90).
+  set -f
+  # Deliberate word split; globbing is off for exactly these two lines.
+  # shellcheck disable=SC2086
   set -- $CRON
+  set +f
   [ "$#" -eq 5 ] || {
     echo "ERROR --cron needs five fields (got $#): '$CRON'" >&2
     echo "      e.g. --cron '0 15 * * 1'" >&2

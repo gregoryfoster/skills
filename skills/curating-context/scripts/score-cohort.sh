@@ -199,6 +199,9 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   _n=$(( _n + 1 ))
 done
 _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
+# C-runs-when-A-is-true is the intent: both tests must hold, and either one
+# failing means the same thing — no library, no measurement, exit 2.
+# shellcheck disable=SC2015
 [ -n "$_libdir" ] && [ -f "$_libdir/_context-lib.sh" ] || {
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
