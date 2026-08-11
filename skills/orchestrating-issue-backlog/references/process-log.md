@@ -20,6 +20,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-07-19 | CannObserv/archiver | **Version-freshness hard edge**: a metadata fix (#85 pyproject bump) must precede the issue that *snapshots* it (#92 commits `archiver-openapi.json`, which embeds `info.version`) — a dependency invisible to file-overlap analysis; **route new CI checks to an uncontested job** (lockstep check → lint job, away from the two jobs Batch B edits); shared-test-DB ceiling **2nd recurrence** (after 2026-06-16 usa-wa) — resolved by serializing full-suite runs, orchestrator's batch-branch run authoritative; validator-merges-last ordering (#85 last in batch so its lockstep check validates the batch's final state) |
 | 2026-07-23 | CannObserv/cli | **Followup-derived across-the-stack backlog** (5th followup recurrence — CR-like disjointness, single contested file); Shape B for a same-file pair that differs in kind (contained correctness fix #849 in parallel batch, wider design-discovery guard refactor #851 gated behind it); **guard-placement constraint drove the read-only decision** (`LegislativeSessionParamType` off-limits — other consumers legitimately pass child sessions); lightweight-worktree project → no binding ceiling |
 | 2026-07-08 | CannObserv/power-map | **Shared test infrastructure is a soft conflict zone** — a test-suite-optimization issue (#283) with zero *source*-file overlap still sequenced **last & solo** because it mutates `conftest.py`/session fixtures every other worker's TDD tests depend on; **stability-critical deploy context split a fully-disjoint backlog into 3 gated batches** even though all 6 could run at once (correctness-first won over max-parallelism); closed-in-fact catch via `git log -S` (#20 → resolved by #210) closed **before** the interview; standard equal-weight rubric (no flex) |
+| 2026-08-11 | gregoryfoster/skills | **Adoption-feedback backlog → owning-file agent unit** (new provenance shape: 15 defects filed by cohort repos against *one* skill's script family → 7 agents, one per owning script, not one per issue); **a shared test file has two conflict halves and "write a new file" solves only one** — grep the test file for the literal strings each fix rewrites, then partition the modify-half by line window; **semantic dependency inside one file** (#119's flood makes #111's judgment undecidable → Shape B on different regions of the same file); measure a lint-gate issue's debt *distribution* before choosing first-vs-last; verify the repo's real gate surface before honouring an issue's "add it to CI" |
 
 ---
 
@@ -557,3 +558,88 @@ First orchestration session in the `cli` repo. Five CR/followup carve-outs from 
 - `gh issue create --body-file` from the scratchpad (apostrophe-safe); precedent (a) for the doc commit — committed on `main` without the `#<n>` prefix, then opened #855.
 - **The `.claude/skills/…` path is a double symlink into the `gregoryfoster-skills` submodule**, despite CLAUDE.md labelling this skill a "local override." `.claude/skills/orchestrating-issue-backlog` → `../../skills/orchestrating-issue-backlog` → `skills-vendor/gregoryfoster-skills/skills/…`. Editing the process-log from the `cli` working session is a direct edit to *another repo* — the maintainer's rule is **file an issue in that repo instead** (this issue), not commit across the submodule boundary.
 - Pre-commit hook runs full pytest (~2 min) even on a docs-only commit; budget the Bash timeout accordingly (repo memory).
+
+---
+
+## Session 2026-08-11 — gregoryfoster/skills (curating-context pre-pin bundle)
+
+Third orchestration session in this repo (after 2026-05-24, 2026-05-25). Scope arrived pre-bundled as tracking issue #134: every `curating-context` fix that wave-A/B cohort adoption surfaced, to land **before** twelve cohort repos re-pin their submodule for the cadence rollout. 15 issues → 14 work items → 3 batches. Tracking issue #135, plan `docs/plans/2026-08-11-curating-context-prepin-backlog.md`.
+
+**Interview answers:**
+- Q0 Dups: **#120 + #124 bundled into one agent, both left open.** Same defect (the dead-link check strips `#fragments`), but each carried unique specifics — #124 the `dead_anchors` output class and prose-guard carve-outs, #120 the per-file duplicate-slug numbering and archival-subtrees-as-link-sources edge cases. Closing either as a dup would have stranded its half in a closed issue.
+- Q1 Quality: **Correctness ×3** → `(Foundation × 2) + (Correctness × 3) + Scope`, max 18. Second recurrence in this repo (after 2026-05-24).
+- Q2 Deploy: **early production.** Twelve repos carry committed pins and the auto-refresh hook propagates daily — but no repo has the cadence workflow installed, so the new code is inert. Propagation passive and currently harmless → wide batches, few gates.
+- Q3 Defer: #117, #118, #88, #96, #97 out. **Three additions** to #134's bundle: #100 (its own argued exception), #108, #90.
+- Q4a Test routing: **new per-agent test file** rather than appending to the 3,560-line monolith.
+- Q4b Parallelism: **hybrid.**
+- Q5 Ceiling: **none binding** — no `dev.sh`, no port pool, no DB, no vhosts. Plain `git worktree add`. (Same as 2026-07-23 `cli`.)
+- Q6 Merge: regular merge commit batch→main; intra-batch fixed FF/regular. Design doc committed **directly on `main`** (no workspace-isolation hook here).
+
+**Shape:** Batch A — 7 parallel agents (A1 #132 `_context-lib.sh`; A2 #120+#124+#123 `measure-context.sh`; A3 #119 `prove-no-loss.sh` `normalise()` only; A4 #131→#113 `check-seams.sh`; A5 #108 `verify-facts.sh`; A6 #99+#110+#109+#103 install/hook wiring; A7 #100 `skills-submodule-update.sh`), with **A6 merging before A7** on `managing-skills/SKILL.md`. Batch B — 1 agent (#111). Batch C — 2 parallel (#95, #90).
+
+### New provenance shape: the adoption-feedback backlog
+
+Doesn't match any existing entry in the Step 5/6 geometry list. Not CR-surfaced (one bug per surface, naturally disjoint), not spec-derived, not feature-followup. These are defects filed **by consumers of a skill while adopting it**, accumulating over weeks against *one* skill's script family.
+
+**Geometry: the tightest clustering there is.** Fifteen issues, one skill, twelve scripts. Nearly every pair shares a file with some other pair. But it decomposes cleanly on an axis the other shapes don't have — **the owning script**. Two issues in `check-seams.sh`, two in `measure-context.sh`, two in `prove-no-loss.sh`, four in the install/hook path.
+
+**So the natural agent unit is one agent per owning script, not one per issue.** 15 issues → 7 Batch A agents, and the parallelism came from the script family being modular, not from the issues being independent. Worth recognizing early: the instinct on a 15-issue backlog is to ask "how many can run at once?", and the answer here was set by the *skill's* internal file structure, not by the backlog's.
+
+### A shared test file has two conflict halves — and the obvious fix solves only one
+
+`tests/structural/test_context_surface.py`: 3,560 lines, covering every `curating-context` script, with an append-a-new-class-at-EOF convention. Six workers appending at the same line.
+
+Routing new tests to new per-agent files (Q4a) removes the **append** half entirely. It does nothing for the **modify** half — existing assertions that each fix *invalidates*. That half is invisible to source-file overlap analysis and to reading the issue bodies, because the issues describe script changes and say nothing about tests.
+
+**Method that found it:** grep the test file for the literal strings each fix rewrites. The payoff was immediate — `test_context_surface.py:404` hardcodes `"command": "bash .claude/hooks/context-budget-guard.sh"`, which is exactly the string #110 replaces with the `$CLAUDE_PROJECT_DIR` form, and `:371` hardcodes the `.git/context-budget.log` path #109 changes. Neither issue mentions a test.
+
+**Then partition the modify-half by line window before assigning.** Here the five affected agents' regions turned out cleanly separated (:189–241 & :3451–3560, :517–686, :736–925, :2049–2490, :331–415). Distant hunks merge fine, so the file stayed contested without becoming a serializer. Had the windows overlapped, the answer would have been sequencing, not a new file — which is why the mapping has to happen at Step 5, not be discovered at merge time.
+
+Generalizes the 2026-07-08 "shared test infrastructure is a soft conflict zone" finding: there it was `conftest.py` fixtures (a *semantic* shared dependency); here it's assertion text (a *textual* one), and the two need different remedies.
+
+### A semantic dependency between two regions of the same file
+
+#119 and #111 both live in `prove-no-loss.sh`, in different regions — #119 is a one-line regex in `normalise()`, #111 is a fourth verdict plus an ack file plus edits to `record-telemetry.sh` and `score-cohort.sh`.
+
+Pure file-overlap analysis gives two wrong answers: *same file → bundle* (Shape A), or *different regions → parallelize*. The correct edge is neither. #111's whole job is deciding what a genuine unaccounted-for line looks like — **undecidable while #119's bug reports every link-carrying line as LOST** (172 false positives measured). So: Shape B, #119 in the parallel batch, #111 gated behind it.
+
+**Question worth asking whenever two issues touch the same measurement tool: does one's defect corrupt the input the other's design work has to read?** Distinct from the 2026-07-19 archiver "version-freshness hard edge" (there the artifact *embedded* the other issue's output; here it *drowns* it).
+
+### Measure a lint-gate issue's debt distribution, not just its size
+
+#90 (add shellcheck to the structural gate) could plausibly go first — so every worker writes clean code — or last, as one sweep. Running `shellcheck` before deciding settled it: **23 findings, 0 errors**, which on size alone argues "cheap, do it first."
+
+The *distribution* said the opposite. Seven of the 23 are the identical `A && B || C` bootstrap block copy-pasted across seven scripts — precisely the seven scripts Batch A rewrites — and eight more are `SC1091` on the same `_context-lib.sh` source line. Landing #90 first puts a mechanical sweep across seven files directly underneath the seven agents editing them. Last, it validates the bundle's final state (validator-merges-last, 2026-07-19).
+
+**So for any "add a linter/gate" issue: run the tool, then cross-reference the offending files against the batch's file set.** Count is the wrong statistic; overlap is the right one.
+
+### Verify the repo's real gate surface before honouring "add it to CI"
+
+Both #90 and #95 instruct the implementer to add a check "in CI." **This repo has no `.github/workflows/` at all** — the only gate is `.pre-commit-config.yaml` running `pytest tests/structural/`, and AGENTS.md's own precedent (`TestNoBareScriptPaths`, `TestPreShipGateHardening`) is that gates ship as structural tests. Both issues were rewritten in the plan to land as structural tests.
+
+A second constraint fell out of the same check: #95's budget gate wants `measure-context.sh --exact`, which needs `ANTHROPIC_API_KEY` — unavailable in pre-commit. The gate must use the offline estimator (`.skills/context-token-ratio` = 2.65) or run at integration tier. Recorded in Key Decisions so the worker doesn't discover it mid-implementation.
+
+**Same class as the footprint grep, applied to infrastructure rather than to source.** An issue body's claim about *where a check goes* is as unreliable as its claim about which files it touches.
+
+### A pre-bundled backlog is still worth re-scanning for free slots
+
+#134 named 12 issues. Asking Q3 as "what should join?" surfaced **#108** — not in the bundle, same shape as Group A (a measurement script emitting a wrong verdict), and sole owner of `verify-facts.sh`, a file no other issue touches. A free parallel slot at zero added conflict.
+
+The tracking issue's author was optimizing for a **narrative** (why these fixes block the re-pin), not for parallelism. Those are different groupings. **When a backlog arrives pre-bundled, scan the rest of the open backlog for same-shape issues with disjoint footprints before accepting the bundle's boundary.**
+
+### Footprint grep — corrections in both directions again
+
+Four, all reaching the worker prompts (cf. open issue #122, "issue bodies give reliable directions and unreliable specifics"):
+
+- **#132 claims to be latent** ("no cohort repo sets either knob"). This repo sets both — `.skills/context-budget` = 6000, `.skills/context-doc-budget` = 10000. The issue's own repo falsified its severity claim.
+- **#131's proposed fix partly exists.** `check-seams.sh:215` already filters `len(k) >= 8`; `Organizations` and `Jurisdictions` are 13 characters and pass. A worker reading only the issue would plausibly bump the threshold and ship nothing.
+- **#110 reaches a third skill.** The issue names `curating-context` and `managing-skills`; the grep found `init-project-fastapi/SKILL.md:294` carrying the same cwd-relative pattern.
+- **#95's blocker was already cleared and its number is stale.** Body says "should follow #94" (#94 shipped at `3fc7b71`); says 9,235 tokens, #134 says 10,197, file is now 27,996 bytes. C1 re-measures first.
+
+### Tactical
+
+- **Scoring calls that needed stating, not just computing.** #110 scored Correctness **1** because its own body says "it works today" — hardening, not a defect — which dropped it to 10 despite being mechanical; its *High blast* is what actually placed it. Presenting the reasoning inline made the score table's surprises (a "works today" issue at the bottom, #100 above every Group A fix) legible rather than arguable.
+- **A rubric lift at the approval gate cost nothing because placement was blast-driven.** The user lifted #95's Correctness 1 → 2 ("every activation pays those tokens"). Score 10 → 13, plan unchanged. Saying so immediately — *this lift does not move the batch* — kept the gate to one round trip. Worth doing generally: when presenting a score table, note which rows' placement is blast-driven, so a rubric argument doesn't read as a plan argument.
+- `gh issue create --body-file` from the scratchpad (apostrophe-safe) — confirmed again.
+- Design doc committed on `main` using precedent (b): opened #135 first, then committed with the `#135` prefix. Cheap here because the tracking-issue body was already written.
+- Pre-commit runs the full structural suite even on a docs-only commit; it passed in ~15s (this repo's suite is fast, unlike the `cli`/WordPress siblings).
