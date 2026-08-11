@@ -1104,6 +1104,12 @@ def _arm(root: Path, name: str, before: int, after: int | None, version: str,
             skill_version=version, skill_commit="deadbee",
             no_loss=kw.get("no_loss", "ok"),
             links_dead=kw.get("links_dead", 0),
+            # Passed through only when a caller asks for it, so the default
+            # fixture keeps producing a row that PREDATES the field — the null
+            # path score-cohort must not gate on, or every historical row in
+            # the cohort would retroactively REJECT.
+            **({"links_dead_anchors": kw["links_dead_anchors"]}
+               if "links_dead_anchors" in kw else {}),
             docs_orphaned=kw.get("orph_after", 0),
         ))
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
@@ -1175,6 +1181,11 @@ class TestValidationGate:
     @pytest.mark.parametrize("kw,marker", [
         ({"no_loss": "failed"}, "no_loss=failed"),
         ({"links_dead": 2}, "links_dead=2"),
+        # The anchor half of the link gate (#120/#124). A doc split moves
+        # headings out of a file while leaving the file in place, so
+        # links_dead stays 0 and only this catches it — without it the
+        # measurement landed in Phase 6 while the gate stayed blind.
+        ({"links_dead_anchors": 3}, "links_dead_anchors=3"),
         ({"orph_before": 0, "orph_after": 4}, "docs_orphaned 0->4"),
     ])
     def test_safety_gate_vetoes_a_winning_score(self, tmp_path: Path, kw, marker):
@@ -3566,3 +3577,59 @@ class TestBudgetKnobIsOneAnswer:
             env=_clean_env(), timeout=60)
         assert r.returncode == 1, r.stdout
         assert f"{flag} must be a non-negative integer (got '4,000')" in r.stderr
+
+
+class TestDeadAnchorsReachTheLedgerAndTheGate:
+    """CR round 1, finding 2.
+
+    #120/#124 taught measure-context.sh to see an anchor whose file resolves
+    but whose #fragment names no heading. The ledger row and score-cohort.sh
+    were not part of that fence, so the number was computed and then dropped:
+    a curation that orphaned every anchor into a split file recorded
+    `links_dead: 0` and scored clean. #120 named links_dead "a safety gate in
+    score-cohort.sh" — that is the whole reason anchor blindness mattered.
+    """
+
+    def _payload_with(self, dead_anchors: list[str] | None) -> str:
+        links = {"dead": [], "orphans": []}
+        if dead_anchors is not None:
+            links["dead_anchors"] = dead_anchors
+        return json.dumps({
+            "policy": {"path": "AGENTS.md", "lines": 10, "bytes": 100,
+                       "tokens": 40, "tokens_exact": True, "bytes_per_token": 2.5,
+                       "budget": 6000, "over_budget": False},
+            "totals": {"tokens_live": 40, "files_docs": 0},
+            "docs": [], "links": links, "sections": [],
+        })
+
+    def _row(self, tmp_path: Path, payload: str) -> dict:
+        repo = _repo(tmp_path)
+        r = subprocess.run(
+            ["bash", str(RECORD), "--dry-run"], input=payload,
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        line = [x for x in r.stdout.splitlines() if x.strip().startswith("{")][-1]
+        return json.loads(line)
+
+    def test_a_broken_anchor_lands_on_the_row(self, tmp_path: Path):
+        row = self._row(tmp_path, self._payload_with(
+            ["AGENTS.md -> docs/API.md#gone", "AGENTS.md -> docs/API.md#also-gone"]))
+        assert row["links_dead"] == 0, "the files resolved; only the anchors are dead"
+        assert row["links_dead_anchors"] == 2, row
+
+    def test_a_payload_predating_the_field_records_null_not_zero(
+            self, tmp_path: Path):
+        """Null and 0 are different claims: a run that never measured anchors
+        has not shown there are none. The ledger already draws this line for
+        no_loss and seams."""
+        row = self._row(tmp_path, self._payload_with(None))
+        assert row["links_dead_anchors"] is None, row
+
+    def test_a_null_does_not_trip_the_gate(self, tmp_path: Path):
+        """Every row written before the field exists carries null. Gating on
+        it would retroactively REJECT the entire cohort."""
+        r = _score(_three_good_pairs(tmp_path))
+        assert "links_dead_anchors" not in r.stdout, r.stdout
+        assert "verdict: REJECT" not in r.stdout, r.stdout

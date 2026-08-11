@@ -99,6 +99,9 @@ Row schema (one JSON object per line):
   docs_total        live reference docs measured
   docs_orphaned     live docs not reachable from the policy file
   links_dead        broken relative links in the curated surface
+  links_dead_anchors  links whose file resolves but whose #fragment names no
+                    heading; null on a payload predating the field, which is
+                    never the same as 0
   no_loss           prove-no-loss.sh's verdict, from --no-loss; null if not run
   seams             check-seams.sh's unacknowledged count, from --seams; null
                     if not swept
@@ -315,6 +318,13 @@ row = {
     "docs_total": totals["files_docs"],
     "docs_orphaned": len(links["orphans"]),
     "links_dead": len(links["dead"]),
+    # None, not 0, when the payload predates the field (#120/#124): a row that
+    # never measured anchors has not proved there are none, and the ledger
+    # already distinguishes null from zero for no_loss and seams. Recording 0
+    # here would tell the gate a surface was checked when it wasn't.
+    "links_dead_anchors": (
+        len(links["dead_anchors"]) if "dead_anchors" in links else None
+    ),
     "no_loss": no_loss or None,
     "seams": int(seams) if seams else None,
     "seams_acked": int(seams_acked) if seams_acked else None,

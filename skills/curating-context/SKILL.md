@@ -368,8 +368,8 @@ bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
 ```
 
 `prove-no-loss.sh` proves moved content arrived; this proves the rest of the
-surface still **describes where it went** — invisible to `links.dead`, because a
-resolvable link to the wrong content is not dead. One cohort adoption shipped a
+surface still **describes where it went** — the *prose* half. `links.dead_anchors`
+now decides the *link* half mechanically. One cohort adoption shipped a
 clean run carrying ten such findings; a later one left 16 stale docstring
 references across 13 shipped packages, which is why tracked **source** outside
 the docs tree is swept too once a section leaves the policy file. Never repoint

@@ -478,3 +478,73 @@ class TestUncoveredWritePathsAreDocumented:
     def test_the_matcher_is_unchanged(self):
         assert "Edit|Write|MultiEdit" in INSTALL.read_text()
         assert '"Bash"' not in INSTALL.read_text()
+
+
+class TestCheckRecognisesTheFormItJustWrote:
+    """CR round 1, finding 1.
+
+    `--check` compared $COMMAND against the raw settings.json with `grep -qF`.
+    jq writes the command with its inner quotes JSON-escaped —
+    `bash \"${CLAUDE_PROJECT_DIR:-.}/…\"` — so the grep could never match what
+    the installer had just written, and the "older cwd-relative command form"
+    note fired forever, including on the run immediately after a successful
+    normalize.
+
+    A check that cannot report success is worse than no check: it trains the
+    reader to ignore it, which is the same failure this whole batch is about.
+    """
+
+    LEGACY_NOTE = "older cwd-relative command form"
+
+    def test_check_is_quiet_after_a_fresh_install(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        assert _run_installer(repo, vendored).returncode == 0
+
+        r = _run_installer(repo, vendored, "--check")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert self.LEGACY_NOTE not in r.stdout, (
+            "--check called its own freshly written command legacy:\n" + r.stdout
+        )
+
+    def test_check_is_quiet_after_normalizing_a_legacy_entry(self, tmp_path: Path):
+        """The reported reproduction: normalize, then immediately re-check."""
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / "context-budget-guard.sh").symlink_to(vendored / "context-budget-guard.sh")
+        (repo / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [{
+                "matcher": "Edit|Write|MultiEdit",
+                "hooks": [{"type": "command",
+                           "command": "bash .claude/hooks/context-budget-guard.sh",
+                           "timeout": 10}],
+            }]}
+        }))
+        assert self.LEGACY_NOTE in _run_installer(repo, vendored, "--check").stdout, (
+            "the legacy form was not detected before normalizing — test is vacuous"
+        )
+        assert _run_installer(repo, vendored).returncode == 0
+        r = _run_installer(repo, vendored, "--check")
+        assert self.LEGACY_NOTE not in r.stdout, (
+            "still reported legacy after a successful normalize:\n" + r.stdout
+        )
+        assert len(_post_tool_commands(repo)) == 1, "normalize duplicated the entry"
+
+    def test_a_genuine_legacy_entry_still_reports(self, tmp_path: Path):
+        """The fix must not buy silence by never reporting."""
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / "context-budget-guard.sh").symlink_to(vendored / "context-budget-guard.sh")
+        (repo / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PostToolUse": [{
+                "matcher": "Edit|Write|MultiEdit",
+                "hooks": [{"type": "command",
+                           "command": "bash .claude/hooks/context-budget-guard.sh"}],
+            }]}
+        }))
+        r = _run_installer(repo, vendored, "--check")
+        assert self.LEGACY_NOTE in r.stdout, r.stdout

@@ -117,7 +117,15 @@ if [ "$MODE" = "check" ]; then
     echo "installed: $HOOK, and referenced in .claude/settings.json"
     echo "library:   $(cd "$(dirname "$hook_target")" && pwd -P)/_context-lib.sh"
     echo "log:       $GITDIR/context-budget.log"
-    if ! grep -qF "$COMMAND" "$SETTINGS"; then
+    # Compared as a PARSED value, not as file text. jq writes the command with
+    # its inner quotes JSON-escaped (`bash \"${CLAUDE_PROJECT_DIR:-.}/…\"`), so
+    # a grep for the shell form can never match what jq just wrote — the note
+    # below fired forever, including on the run immediately after a successful
+    # normalize. A check that cannot report success is worse than no check: it
+    # trains the reader to ignore it.
+    if ! jq -e --arg cmd "$COMMAND" \
+        '[.hooks.PostToolUse[]?.hooks[]?.command] | any(. == $cmd)' \
+        "$SETTINGS" >/dev/null 2>&1; then
       echo "note: the settings entry uses the older cwd-relative command form."
       echo "      It works, but it depends on the hook process's cwd. Re-run"
       echo "      install-guard.sh to normalize it onto \$CLAUDE_PROJECT_DIR."

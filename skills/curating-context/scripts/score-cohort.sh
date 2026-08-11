@@ -80,6 +80,10 @@ Safety gates (checked before any score)
 
     no_loss != ok       prove-no-loss.sh did not confirm relocation
     links_dead > 0      the curated surface has broken links
+    links_dead_anchors > 0
+                        a link resolves to a file but its #fragment names no
+                        heading — the breakage a doc split makes, which
+                        links_dead alone cannot see
     docs_orphaned rose  demotion created docs nothing points at
 
   Any tripped gate in the treatment arm is an outright REJECT, whatever the token
@@ -423,6 +427,13 @@ def score_repo(key, info):
     dead = scored.get("links_dead")
     if isinstance(dead, int) and dead > 0:
         rec["gates"].append(f"links_dead={dead}")
+    # The anchor half of the same gate (#120/#124). Same isinstance shape as
+    # links_dead above, which is what keeps a row predating the field out of
+    # the gate rather than retroactively rejecting every historical run — the
+    # field is null there, and null is not a violation.
+    dead_anchors = scored.get("links_dead_anchors")
+    if isinstance(dead_anchors, int) and dead_anchors > 0:
+        rec["gates"].append(f"links_dead_anchors={dead_anchors}")
     if prev is not None:
         a, b = prev.get("docs_orphaned"), scored.get("docs_orphaned")
         if isinstance(a, int) and isinstance(b, int) and b > a:
