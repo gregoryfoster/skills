@@ -1,6 +1,6 @@
-"""Anchor resolution in measure-context.sh (#120, #124).
+"""Anchor resolution and per-row exactness in measure-context.sh (#120, #124, #123).
 
-A defect found on real cohort runs:
+Two defects, one script, both found on real cohort runs:
 
 - `extract_links()` stripped the `#fragment` before resolving, so a link whose
   file exists and whose heading does not was invisible. That is exactly the shape
@@ -8,12 +8,17 @@ A defect found on real cohort runs:
   headings out of a file while leaving the file in place — so the gate was blind
   precisely where the advice points. Misses are reported as `links.dead_anchors`,
   their own class, so `dead` keeps its meaning for existing consumers.
+- `tokens_exact` was emitted run-wide only, so one transient `count_tokens`
+  failure disowned every row in the payload. Rows now carry their own flag; the
+  `policy` flag keeps its run-wide meaning.
 
-No API calls: every path here uses the offline estimate.
+No API calls: the exactness tests substitute a `python3` that answers without a
+network.
 """
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -26,6 +31,8 @@ SCRIPTS = (
     / "scripts"
 )
 MEASURE = SCRIPTS / "measure-context.sh"
+
+POLICY_LINE = "- a policy line naming `some/path.py` and explaining why\n"
 
 
 def _clean_env() -> dict:
@@ -273,3 +280,85 @@ class TestArchivalSubtreesAreScannedAsSources:
         data = _measure(repo, "--archival", "")
         assert data["links"]["dead_anchors"] == []
         assert data["links"]["orphans"] == ["docs/plans/2026-01-01-old.md"]
+
+
+def _bin_with_real_tools(bin_dir: Path) -> Path:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc", "sort",
+                 "find", "head", "tr", "dirname", "basename", "mktemp", "date",
+                 "cat", "rm", "mkdir", "printf", "ls", "cut", "tail", "uniq"):
+        real = shutil.which(tool)
+        if real and not (bin_dir / tool).exists():
+            (bin_dir / tool).symlink_to(real)
+    return bin_dir
+
+
+class TestPerRowExactness:
+    """One transient count_tokens failure used to disown every row in the payload:
+    a downstream gate reading a run-wide `tokens_exact: false` can only suppress
+    all 29 docs, including the 28 that were counted exactly."""
+
+    @pytest.fixture
+    def env_with_selective_counter(self, tmp_path: Path) -> dict:
+        """A `python3` that answers a token count for every file except FLAKY.md.
+
+        count.py is invoked as `python3 <count.py> <file> <model>`, so the file
+        under measurement is $2.
+        """
+        bin_dir = _bin_with_real_tools(tmp_path / "bin")
+        (bin_dir / "python3").unlink()
+        (bin_dir / "python3").write_text(
+            "#!/bin/sh\n"
+            'case "$2" in *FLAKY.md) echo "boom" >&2; exit 1 ;; esac\n'
+            "echo 1000\n"
+        )
+        (bin_dir / "python3").chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = str(bin_dir)
+        env["ANTHROPIC_API_KEY"] = "sk-ant-test-not-used-offline"
+        return env
+
+    def _repo_with_two_docs(self, tmp_path: Path) -> Path:
+        repo = _repo(tmp_path, POLICY_LINE * 50)
+        (repo / "docs" / "GOOD.md").write_text("# Good\n\nbody\n")
+        (repo / "docs" / "FLAKY.md").write_text("# Flaky\n\nbody\n")
+        return repo
+
+    def _rows(self, data: dict) -> dict:
+        return {d["path"]: d for d in data["docs"]}
+
+    def test_an_estimate_run_marks_every_row_inexact(self, tmp_path: Path):
+        repo = self._repo_with_two_docs(tmp_path)
+        data = _measure(repo)
+        assert data["policy"]["tokens_exact"] is False
+        assert all(d["tokens_exact"] is False for d in data["docs"]), data["docs"]
+
+    def test_one_failure_leaves_the_other_rows_exact(
+        self, tmp_path: Path, env_with_selective_counter: dict
+    ):
+        repo = self._repo_with_two_docs(tmp_path)
+        data = _measure(repo, "--exact", env=env_with_selective_counter)
+        rows = self._rows(data)
+        assert rows["docs/GOOD.md"]["tokens_exact"] is True
+        assert rows["docs/GOOD.md"]["tokens"] == 1000
+        assert rows["docs/FLAKY.md"]["tokens_exact"] is False
+        assert rows["docs/FLAKY.md"]["tokens"] != 1000
+
+    def test_the_run_wide_flag_keeps_its_meaning(
+        self, tmp_path: Path, env_with_selective_counter: dict
+    ):
+        """Backward compatibility: `policy.tokens_exact` is still true only when
+        every count in the run was exact."""
+        repo = self._repo_with_two_docs(tmp_path)
+        data = _measure(repo, "--exact", env=env_with_selective_counter)
+        assert data["policy"]["tokens_exact"] is False
+        assert any(d["tokens_exact"] is True for d in data["docs"])
+
+    def test_a_fully_exact_run_marks_every_row_exact(
+        self, tmp_path: Path, env_with_selective_counter: dict
+    ):
+        repo = _repo(tmp_path, POLICY_LINE * 50)
+        (repo / "docs" / "GOOD.md").write_text("# Good\n\nbody\n")
+        data = _measure(repo, "--exact", env=env_with_selective_counter)
+        assert data["policy"]["tokens_exact"] is True
+        assert [d["tokens_exact"] for d in data["docs"]] == [True]

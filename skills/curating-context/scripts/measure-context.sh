@@ -78,7 +78,11 @@ Output (stdout, JSON):
   subsections [ { title, parent, lines, bytes, tokens, share } ]  `###`, ditto
               The unit most demotions actually act on: a large `##` section is
               usually kept-plus-demoted rather than moved whole.
-  docs      [ { path, lines, bytes, tokens, linked, over_budget } ]  live only
+  docs      [ { path, lines, bytes, tokens, tokens_exact, linked, over_budget } ]
+              live only. `tokens_exact` is PER ROW: one transient count_tokens
+              failure no longer disowns the rows that were counted exactly.
+              policy.tokens_exact stays run-wide — true only when every count in
+              the run was exact — because the ledger compares whole runs.
   links     { refs, dead, dead_anchors, orphans }
               `dead` is a link whose FILE does not exist. `dead_anchors` is a
               link whose file exists and whose #fragment names no heading in it
@@ -374,6 +378,9 @@ count_tokens() {
   # per-file failure, so one bad response degrades a number rather than the run.
   local f="$1" est out rc=0
   est="$(est_tokens "$f")"
+  # Clear the PER-CALL marker before counting, so last_count_exact answers for
+  # this file and not for whichever file failed earlier in the run (#123).
+  rm -f "$TMP/last_fell_back" 2>/dev/null || true
   if [ "$EXACT_OK" -ne 1 ]; then printf '%s' "$est"; return 0; fi
   out="$(python3 "$TMP/count.py" "$f" "$MODEL" 2>"$TMP/ct.err")" || rc=$?
   if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -qE '^[0-9]+$'; then
@@ -385,9 +392,25 @@ count_tokens() {
     # note above) reported tokens_exact=true over numbers that were entirely
     # estimates, which is the one lie the whole comparability chain cannot survive.
     : >"$TMP/count_fell_back"
+    : >"$TMP/last_fell_back"
     printf '%s' "$est"
   else
     printf '%s' "$out"
+  fi
+}
+
+last_count_exact() {
+  # true/false for the count_tokens call that JUST returned. Read it immediately
+  # after the call, before the next one clears the marker.
+  #
+  # The run-wide flag on `policy` answers "is this whole measurement comparable
+  # with an exact ledger row?", which is the right question for the ledger and the
+  # wrong one for a per-doc consumer: a downstream budget gate reading a run-wide
+  # false has to suppress all 29 rows, including the 28 counted exactly (#123).
+  if [ "$EXACT_OK" -eq 1 ] && [ ! -f "$TMP/last_fell_back" ]; then
+    printf 'true'
+  else
+    printf 'false'
   fi
 }
 
@@ -718,9 +741,11 @@ if [ -d "$DOCS_DIR" ]; then
     dl=$(LC_ALL=C wc -l <"$d" | tr -d ' ')
     db=$(LC_ALL=C wc -c <"$d" | tr -d ' ')
     dt=$(count_tokens "$d")
+    dexact="$(last_count_exact)"
     linked=false
     grep -Fxq "$d" "$TMP/reachable" && linked=true
-    printf '%s%s%s%s%s%s%s%s%s\n' "$dl" "$TAB" "$db" "$TAB" "$dt" "$TAB" "$linked" "$TAB" "$d" >>"$TMP/docs.tsv"
+    printf '%s%s%s%s%s%s%s%s%s%s%s\n' "$dl" "$TAB" "$db" "$TAB" "$dt" "$TAB" \
+      "$dexact" "$TAB" "$linked" "$TAB" "$d" >>"$TMP/docs.tsv"
   done <"$TMP/docfiles"
 else
   ARCHIVAL_SKIPPED=0
@@ -764,7 +789,7 @@ fi
 sort -t"$TAB" -k2,2nr "$TMP/sections.tsv" >"$TMP/sections.sorted"
 sort -t"$TAB" -k2,2nr "$TMP/subsections.tsv" >"$TMP/subsections.sorted"
 sort -t"$TAB" -k3,3nr "$TMP/docs.tsv" >"$TMP/docs.sorted"
-awk -F"$TAB" '$4 == "false" { print $5 }' "$TMP/docs.tsv" | sort >"$TMP/orphans"
+awk -F"$TAB" '$5 == "false" { print $6 }' "$TMP/docs.tsv" | sort >"$TMP/orphans"
 sort -u "$TMP/refs" >"$TMP/refs.sorted"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
 sort -u "$TMP/dead_anchors" >"$TMP/dead_anchors.sorted"
@@ -841,15 +866,15 @@ printf '  ],\n'
 printf '  "docs": [\n'
 first=1
 docs_tokens=0
-while IFS="$TAB" read -r dl db dt dlinked dpath; do
+while IFS="$TAB" read -r dl db dt dexact dlinked dpath; do
   [ -n "${dl:-}" ] || continue
   docs_tokens=$(( docs_tokens + dt ))
   dover=false
   [ "$dt" -gt "$DOC_BUDGET" ] && dover=true
   [ "$first" -eq 1 ] || printf ',\n'
   first=0
-  printf '    {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "linked": %s, "over_budget": %s}' \
-    "$(jesc "$dpath")" "$dl" "$db" "$dt" "$dlinked" "$dover"
+  printf '    {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "linked": %s, "over_budget": %s}' \
+    "$(jesc "$dpath")" "$dl" "$db" "$dt" "$dexact" "$dlinked" "$dover"
 done <"$TMP/docs.sorted"
 [ "$first" -eq 1 ] || printf '\n'
 printf '  ],\n'
@@ -867,7 +892,7 @@ printf '},\n'
 # tokens_live = policy + every live (non-archival) doc reachable from it. This
 # is the ceiling on what one session can pull in from the repo's own guidance.
 live_tokens="$P_TOKENS"
-while IFS="$TAB" read -r dl db dt dlinked dpath; do
+while IFS="$TAB" read -r dl db dt dexact dlinked dpath; do
   [ -n "${dl:-}" ] || continue
   [ "$dlinked" = "true" ] && live_tokens=$(( live_tokens + dt ))
 done <"$TMP/docs.tsv"

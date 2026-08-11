@@ -132,6 +132,32 @@ re-derives the divisor it was computed with, producing exactly `2.70` — a
 self-confirming fake measurement, comfortably inside the plausibility band, which
 every later offline estimate in the repo would then trust.
 
+### Run-wide on `policy`, per row on `docs`
+
+`policy.tokens_exact` answers "is this whole measurement comparable with an exact
+ledger row?" — `true` only when every count in the run succeeded. That is the right
+question for the ledger and the wrong one for a per-doc consumer. Observo's CI gate
+reports per-doc overages as `::warning file=…` annotations, and on a run-wide
+`false` its only defensible move is to suppress **all** of them, because an
+annotation naming a precise count is a claim the same run has disowned. One
+transient failure on one file therefore dropped budget reporting for all 29 docs,
+including the 28 counted exactly
+([#123](https://github.com/gregoryfoster/skills/issues/123)).
+
+So each `docs` row carries its own `tokens_exact` as well:
+
+```jsonc
+"docs": [
+  {"path": "docs/API.md",   "tokens": 6930, "tokens_exact": true,  "over_budget": false},
+  {"path": "docs/FLEET.md", "tokens": 9701, "tokens_exact": false, "over_budget": false}
+]
+```
+
+A consumer can then report on the exact rows and stay silent on the estimated ones,
+rather than choosing between reporting nothing and reporting numbers that may be
+fiction. Nothing about the existing contract changed: a consumer reading only
+`policy.tokens_exact` sees exactly what it saw before.
+
 **Never use `tiktoken`.** It is OpenAI's tokenizer; it undercounts Claude text by
 15–20% and by considerably more on code and non-English input. There is no
 accurate offline tokenizer for current Claude models, which is why a
