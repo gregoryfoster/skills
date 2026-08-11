@@ -16,9 +16,17 @@ Usage:
 
 Options:
   --ledger PATH    Ledger file. Default: .skills/context-metrics.jsonl
-  --baseline       Record a measurement-only row for the surface AS FOUND,
-                   before any edits. Tagged `baseline`, which every reader
-                   already knows to skip past when looking for a curation.
+  --baseline[=KIND]
+                   Record a measurement-only row for the surface AS FOUND.
+                   Tagged `baseline:KIND`, which every reader already knows to
+                   skip past when looking for a curation.
+
+                   KIND defaults to `pre-curation` — the state this run's edits
+                   will be measured against. The scheduled cadence passes
+                   `--baseline=scheduled`: a reading of a surface nobody
+                   touched. The two mean different things to a longitudinal
+                   comparison, and the distinction belongs on the tag rather
+                   than in --note freetext.
 
                    This is what makes a FIRST curation scorable. The validation
                    gate takes a run's before-state from the previous row for the
@@ -102,7 +110,8 @@ Row schema (one JSON object per line):
                     previous row — see delta_unavailable
   delta_days        days since the previous row (null if first)
   delta_unavailable present only when delta_tokens was suppressed; says why
-  actions           action tags from --actions, or ["baseline"] with --baseline
+  actions           action tags from --actions, or ["baseline:KIND"] with
+                    --baseline
   note              --note text
 
 Exit codes:
@@ -126,6 +135,7 @@ DRY=0
 TREND=0
 ALLOW_METHOD_CHANGE=0
 BASELINE=0
+BASELINE_KIND=""
 ACTIONS_SET=0
 
 # --actions and --note accept an empty value deliberately, so they cannot use
@@ -138,7 +148,8 @@ need_arg() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
-    --baseline) BASELINE=1; shift ;;
+    --baseline) BASELINE=1; BASELINE_KIND="pre-curation"; shift ;;
+    --baseline=*) BASELINE=1; BASELINE_KIND="${1#*=}"; shift ;;
     --actions) need_arg "$#" --actions; ACTIONS="$2"; ACTIONS_SET=1; shift 2 ;;
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
@@ -171,7 +182,19 @@ if [ "$BASELINE" -eq 1 ]; then
     echo "ERROR --baseline and --no-loss are mutually exclusive: nothing has" >&2
     echo "      been relocated yet, so there is no verdict to record." >&2
     exit 1; }
-  ACTIONS="baseline"
+  # The KIND is on the TAG, not in --note. Two kinds of baseline row mean
+  # different things to the longitudinal analysis — the state a curation was
+  # measured against, versus a scheduled reading of a surface nobody touched —
+  # and recovering that distinction from freetext is the asymmetry #116 called
+  # out. `verb:target` is the house tag shape, and every reader already matches
+  # on the `baseline` prefix, so a qualified tag is still a state.
+  case "$BASELINE_KIND" in
+    ''|*[!a-z0-9-]*)
+      echo "ERROR --baseline=KIND must be lowercase letters, digits or dashes" >&2
+      echo "      (got '$BASELINE_KIND'). Known kinds: pre-curation, scheduled." >&2
+      exit 1 ;;
+  esac
+  ACTIONS="baseline:$BASELINE_KIND"
 fi
 
 # Reject an unrecognised verdict rather than storing it. A gate that reads this
@@ -413,8 +436,9 @@ else:
     # Name the kind of row, not just the number. A baseline row is the one a
     # reader is most likely to think did not land, because it records a state
     # rather than a change and its delta is null by construction.
-    kind = " (baseline — the before-state for this run)" \
-        if row["actions"] == ["baseline"] else ""
+    acts = row["actions"]
+    kind = f" ({acts[0]} — a measurement, not a curation)" \
+        if len(acts) == 1 and acts[0].split(":", 1)[0] == "baseline" else ""
     print(f"recorded {row['file']}: {row['tokens']} tokens{kind}",
           file=sys.stderr)
 

@@ -22,6 +22,7 @@ No API calls: every path here uses the offline estimate.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,6 +43,7 @@ SCORE = SCRIPTS / "score-cohort.sh"
 INSTALL = SCRIPTS / "install-guard.sh"
 LIB = SCRIPTS / "_context-lib.sh"
 RECORD = SCRIPTS / "record-telemetry.sh"
+REFERENCES = SCRIPTS.parent / "references"
 
 # ~2.7 bytes/token, so this is comfortably over the 6000 policy budget.
 POLICY_LINE = "- a policy line naming `some/path.py` and explaining why\n"
@@ -2557,7 +2559,7 @@ class TestBaselineRow:
         row = self._rows(repo)[-1]
         # The tag the gate already knows to skip past, so a baseline row can
         # never be mistaken for the curation it precedes.
-        assert row["actions"] == ["baseline"], row
+        assert row["actions"] == ["baseline:pre-curation"], row
         assert row["no_loss"] is None
         assert row["delta_tokens"] is None
         assert "baseline" in r.stderr
@@ -2573,7 +2575,7 @@ class TestBaselineRow:
         assert r.returncode == 0, r.stderr
         rows = self._rows(repo)
         assert len(rows) == 2
-        assert rows[0]["actions"] == ["baseline"]
+        assert rows[0]["actions"] == ["baseline:pre-curation"]
         assert isinstance(rows[1]["delta_tokens"], int)
         assert rows[1]["delta_tokens"] < 0, rows[1]
 
@@ -2615,7 +2617,7 @@ class TestFirstCurationIsScorable:
         d.mkdir(parents=True, exist_ok=True)
         (d / "context-metrics.jsonl").write_text("\n".join([
             _ledger_row(repo=name, ts="2026-08-01", tokens=before,
-                        actions=["baseline"],
+                        actions=["baseline:pre-curation"],
                         docs_orphaned=kw.get("orph_before", 0)),
             _ledger_row(repo=name, ts="2026-08-02", tokens=after,
                         actions=["demote:Big"], skill_version=version,
@@ -2974,3 +2976,473 @@ class TestCurationRuleIsOneRule:
             capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
             timeout=30)
         assert "0 runs over 1 row" in r.stderr, r.stderr
+
+
+INSTALL_CADENCE = SCRIPTS / "install-cadence.sh"
+
+
+class TestCadenceInstaller:
+    """#118's blocking prerequisite: the skill named "the scheduled weekly run"
+    in six places and shipped no way to schedule anything, so ten of twelve
+    cohort repos held exactly one ledger row and the longitudinal design had no
+    series to read."""
+
+    def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        return repo
+
+    def test_rendered_workflow_is_valid_yaml_with_the_right_triggers(
+            self, tmp_path: Path):
+        yaml = pytest.importorskip("yaml")
+        r = self._run(self._repo(tmp_path), "--print")
+        assert r.returncode == 0, r.stderr
+        doc = yaml.safe_load(r.stdout)
+        # PyYAML parses a bare `on:` key as the boolean True.
+        triggers = doc[True] if True in doc else doc["on"]
+        assert set(triggers) == {"schedule", "workflow_dispatch"}, triggers
+        # It must never gate a merge. That is #88, with its own sequencing rule.
+        assert "pull_request" not in triggers
+        assert doc["permissions"] == {"contents": "write"}
+        # NOT continue-on-error: a red run means "this repo is not measuring",
+        # which is exactly what somebody needs to see. Swallowing it would undo
+        # the credential preflight, whose whole purpose is to make that loud.
+        # Drift is a ::warning:: and never fails the job, so red always means
+        # the mechanism broke rather than that the surface grew.
+        assert "continue-on-error" not in doc["jobs"]["measure"]
+
+    def test_rendering_executes_nothing(self, tmp_path: Path):
+        """The template lives in an unquoted heredoc, so an unescaped backtick
+        or $( ) is COMMAND SUBSTITUTION at render time — it runs, and its output
+        replaces the text in the generated workflow. A comment reading
+        `git push origin ""` did exactly that, printing
+        `fatal: invalid refspec ''` and rendering the comment empty.
+
+        A clean render writes nothing to stderr."""
+        r = self._run(self._repo(tmp_path), "--print")
+        assert r.returncode == 0, r.stderr
+        assert r.stderr == "", (
+            "render-time command substitution leaked:\n" + r.stderr)
+        # And the text that triggered it survives as text.
+        assert 'git push origin ""` fails opaquely' in r.stdout
+
+    def test_the_credential_is_preflighted_before_any_work(self, tmp_path: Path):
+        """Without the secret, --exact degrades to an estimate and
+        record-telemetry.sh refuses the append — the job records NOTHING,
+        silently. Failing at second zero is the whole point of the ordering."""
+        yaml = pytest.importorskip("yaml")
+        doc = yaml.safe_load(self._run(self._repo(tmp_path), "--print").stdout)
+        names = [s.get("name", s.get("uses", ""))
+                 for s in doc["jobs"]["measure"]["steps"]]
+        assert "Preflight the credential" in names, names
+        assert names.index("Preflight the credential") < names.index("Measure and record")
+
+    def test_checkout_takes_submodules(self, tmp_path: Path):
+        """The skill is vendored under skills-vendor/ and reached through a
+        symlink. Without submodules the link dangles and every step fails."""
+        yaml = pytest.importorskip("yaml")
+        doc = yaml.safe_load(self._run(self._repo(tmp_path), "--print").stdout)
+        checkout = doc["jobs"]["measure"]["steps"][0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert checkout["with"]["submodules"] == "recursive"
+
+    def test_it_records_a_baseline_row_not_a_curation(self, tmp_path: Path):
+        """What goes on the clock is a measurement. A curation needs judgement,
+        and judgement on a timer is what this skill avoids everywhere else."""
+        out = self._run(self._repo(tmp_path), "--print").stdout
+        assert 'record-telemetry.sh" --baseline' in out, out
+        # The two flags --baseline refuses. Their absence is the assertion: a
+        # scheduled job that recorded a relocation verdict, or tagged edits it
+        # never made, would be claiming a curation happened.
+        assert "--no-loss" not in out
+        assert "--actions " not in out
+
+    def test_the_cohort_is_staggered_and_stable(self, tmp_path: Path):
+        """Twelve repos on one cron produce twelve simultaneous count_tokens
+        bursts and twelve commits in a minute. The offset comes from the repo
+        name, so it needs no per-repo decision and does not move on a re-run."""
+        crons = set()
+        for name in ("usa-wa", "observo", "watcher", "power-map", "cli"):
+            repo = tmp_path / name
+            repo.mkdir()
+            _git(repo, "init", "-q")
+            out = self._run(repo, "--print").stdout
+            cron = next(ln for ln in out.splitlines() if "- cron:" in ln)
+            crons.add(cron)
+            assert self._run(repo, "--print").stdout == out, "not stable"
+        assert len(crons) > 1, f"every repo drew the same slot: {crons}"
+
+    def test_install_check_uninstall_round_trip(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        wf = repo / ".github" / "workflows" / "context-cadence.yml"
+        assert self._run(repo, "--check").returncode == 3
+        assert self._run(repo).returncode == 0
+        assert wf.exists()
+        assert self._run(repo, "--check").returncode == 0
+        # Idempotent: a second install reports no change rather than churning.
+        again = self._run(repo)
+        assert "unchanged" in again.stdout, again.stdout
+        changed = self._run(repo, "--cron", "0 15 * * 1")
+        assert "updated" in changed.stdout, changed.stdout
+        assert "0 15 * * 1" in wf.read_text()
+        assert self._run(repo, "--uninstall").returncode == 0
+        assert not wf.exists()
+
+    def test_a_malformed_cron_is_refused(self, tmp_path: Path):
+        r = self._run(self._repo(tmp_path), "--cron", "every monday")
+        assert r.returncode == 1
+        assert "five fields" in r.stderr, r.stderr
+
+    def test_it_refuses_outside_a_git_repo(self, tmp_path: Path):
+        d = tmp_path / "bare"
+        d.mkdir()
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE)], capture_output=True, text=True,
+            cwd=str(d), env=_clean_env(), timeout=30)
+        assert r.returncode == 1
+        assert "not inside a git repository" in r.stderr
+
+
+class TestCadenceTemplateMatchesTheRenderer:
+    """references/cadence.md carries the workflow as an annotated block and says
+    it is what install-cadence.sh renders. It was not: `fetch-depth` and
+    `if: always()` were in the doc and absent from the rendered file, and
+    `if: always()` is load-bearing — without it a failed push swallows the drift
+    warnings.
+
+    This is the third copy-divergence in this skill, so it gets a pin rather
+    than another comment asserting one."""
+
+    def test_the_documented_block_is_the_rendered_file(self, tmp_path: Path):
+        import re
+        doc = (REFERENCES / "cadence.md").read_text()
+        block = re.search(r"```yaml\n(.*?)```", doc, re.S)
+        assert block, "cadence.md no longer carries a yaml block"
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        rendered = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
+            timeout=30).stdout.replace("- cron: '0 15 * * 1'", "- cron: '<CRON>'")
+        assert block.group(1) == rendered, (
+            "cadence.md's yaml block has drifted from install-cadence.sh --print")
+
+
+class TestCadenceShellActuallyRuns:
+    """The two real bugs in the first draft of this workflow — parsing a
+    nonexistent `acknowledged:` line, and measuring twice — were both inside
+    `run:` blocks, and neither would have been caught by asserting on the YAML
+    structure. Execute the shell."""
+
+    def _step(self, tmp_path: Path, name: str) -> str:
+        yaml = pytest.importorskip("yaml")
+        repo = tmp_path / "render"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        doc = yaml.safe_load(subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30).stdout)
+        return next(s["run"] for s in doc["jobs"]["measure"]["steps"]
+                    if s.get("name") == name)
+
+    def test_the_seam_extraction_parses_real_check_seams_output(
+            self, tmp_path: Path):
+        """The counts are named exactly as record-telemetry's flags, and the
+        first draft parsed `acknowledged:`, which check-seams.sh never emits."""
+        repo = _repo(tmp_path, policy_lines=5)
+        (repo / "docs").mkdir()
+        # A back-reference: a live doc naming the policy file is a seam.
+        (repo / "docs" / "guide.md").write_text("See AGENTS.md for the overview.\n")
+        (repo / "AGENTS.md").write_text("# A\n\nSee [guide](docs/guide.md).\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed")
+        env = _clean_env()
+        env["SKILL_SCRIPTS"] = str(SCRIPTS)
+        env["GITHUB_ENV"] = str(tmp_path / "gh_env")
+        (tmp_path / "gh_env").write_text("")
+        r = subprocess.run(["bash", "-e", "-c", self._step(tmp_path, "Sweep the seams")],
+                           capture_output=True, text=True, cwd=str(repo),
+                           env=env, timeout=60)
+        assert r.returncode == 0, r.stderr
+        written = (tmp_path / "gh_env").read_text()
+        assert re.search(r"^SEAMS=\d+$", written, re.M), written
+        assert re.search(r"^SEAMS_ACKED=\d+$", written, re.M), written
+
+    def test_the_commit_step_stages_the_row_without_the_ratio_file(
+            self, tmp_path: Path):
+        """A single `git add` over both paths stages NOTHING when either is
+        missing — it exits 128 on the unmatched pathspec — so the row was
+        discarded silently. measure-context.sh does not persist the ratio when
+        any count falls back, which makes that reachable on a first run."""
+        repo = _repo(tmp_path, policy_lines=5)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-metrics.jsonl").write_text(
+            _ledger_row(repo="r", tokens=100) + "\n")
+        assert not (repo / ".skills" / "context-token-ratio").exists()
+        # Split on a stable sentinel rather than a variable name: renaming the
+        # variable used to make the split find nothing and silently change what
+        # this test exercised.
+        step = self._step(tmp_path, "Commit the row")
+        assert "# --- push ---" in step, step
+        r = subprocess.run(["bash", "-e", "-c", step.split("# --- push ---")[0]],
+                           capture_output=True, text=True, cwd=str(repo),
+                           env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "nothing to commit" not in r.stdout, (
+            "the row was silently dropped: " + r.stdout)
+        log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
+                             capture_output=True, text=True).stdout
+        assert "weekly context measurement" in log, log
+
+    def test_a_human_commit_during_the_measurement_does_not_lose_the_row(
+            self, tmp_path: Path):
+        """The whole push path, against a real remote, in the race it exists
+        for. Without `merge=union` on the ledger the rebase halts on a conflict
+        — two appends land on the same last line — and the week's row is lost
+        with markers left in the file. Verified end to end rather than reasoned
+        about, because the first version of this retry loop did not work."""
+        origin = tmp_path / "o.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+                       check=True, env=_clean_env())
+
+        def clone(name: str) -> Path:
+            d = tmp_path / name
+            subprocess.run(["git", "clone", "-q", str(origin), str(d)],
+                           check=True, env=_clean_env())
+            _git(d, "config", "user.email", "t@t")
+            _git(d, "config", "user.name", "t")
+            return d
+
+        seed = clone("seed")
+        (seed / ".skills").mkdir()
+        (seed / ".skills" / "context-metrics.jsonl").write_text(
+            _ledger_row(repo="r", ts="2026-08-01", tokens=100) + "\n")
+        # The attribute has to be in the BASE commit: git resolves using the
+        # attributes in the tree being replayed onto, so adding it after the
+        # conflict does not rescue the conflict.
+        (seed / ".gitattributes").write_text(
+            ".skills/context-metrics.jsonl merge=union\n")
+        _git(seed, "add", "-A")
+        _git(seed, "commit", "-qm", "seed")
+        _git(seed, "push", "-q", "origin", "HEAD:main")
+
+        bot = clone("bot")
+        human = clone("human")
+
+        # The human lands first, while the bot is still measuring.
+        led = human / ".skills" / "context-metrics.jsonl"
+        led.write_text(led.read_text() + _ledger_row(
+            repo="r", ts="2026-08-07", tokens=120) + "\n")
+        _git(human, "commit", "-qam", "human edit")
+        _git(human, "push", "-q", "origin", "HEAD:main")
+
+        # The bot appends its weekly row on the now-stale checkout and runs the
+        # rendered step verbatim.
+        led = bot / ".skills" / "context-metrics.jsonl"
+        led.write_text(led.read_text() + _ledger_row(
+            repo="r", ts="2026-08-08", tokens=130) + "\n")
+        env = {**_clean_env(), "GITHUB_REF_NAME": "main"}
+        r = subprocess.run(
+            ["bash", "-e", "-c", self._step(tmp_path, "Commit the row")],
+            capture_output=True, text=True, cwd=str(bot), env=env, timeout=60)
+        assert r.returncode == 0, (
+            "the retry did not recover the push:\n" + r.stdout + r.stderr)
+
+        final = subprocess.run(
+            ["git", "-C", str(origin), "show", "main:.skills/context-metrics.jsonl"],
+            capture_output=True, text=True, env=_clean_env()).stdout
+        assert "<<<<<<<" not in final, "conflict markers reached the remote:\n" + final
+        stamps = [json.loads(ln)["ts"] for ln in final.splitlines() if ln.strip()]
+        # Both survive, in order. The human's row is not clobbered and the
+        # bot's is not lost.
+        assert stamps == ["2026-08-01", "2026-08-07", "2026-08-08"], stamps
+
+    def test_the_drift_report_warns_only_when_over_budget(self, tmp_path: Path):
+        step = self._step(tmp_path, "Report drift")
+        for tokens, expect in ((99_000, True), (100, False)):
+            ctx = tmp_path / "ctx.json"
+            ctx.write_text(json.dumps({"policy": {
+                "path": "AGENTS.md", "tokens": tokens, "budget": 6000,
+                "over_budget": tokens > 6000}}))
+            r = subprocess.run(
+                ["bash", "-e", "-c", step.replace("/tmp/ctx.json", str(ctx))],
+                capture_output=True, text=True, cwd=str(tmp_path),
+                env={**_clean_env(), "SEAMS": "0"}, timeout=30)
+            assert r.returncode == 0, r.stderr
+            assert ("::warning::AGENTS.md is" in r.stdout) is expect, r.stdout
+
+
+class TestCadenceIsTwoArtifacts:
+    """The installer's contract is a workflow AND a union-merge attribute. An
+    early `exit 0` on "the workflow is already current" skipped the attribute
+    entirely, so every repo that adopted before the attribute existed re-ran the
+    installer, was told "unchanged", and stayed one race away from losing a row
+    — which is exactly the population --check tells to re-run."""
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        return repo
+
+    def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+
+    def test_rerunning_retrofits_a_missing_attribute(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        assert self._run(repo).returncode == 0
+        (repo / ".gitattributes").unlink()          # the pre-fix adopter
+        r = self._run(repo)
+        assert r.returncode == 0, r.stderr
+        assert "unchanged" in r.stdout, "the workflow should not have churned"
+        assert (repo / ".gitattributes").exists(), (
+            "re-running did not restore the attribute — the remediation "
+            "--check advertises does nothing:\n" + r.stdout)
+        assert "merge=union" in (repo / ".gitattributes").read_text()
+
+    def test_check_reports_both_independently(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo)
+        both = self._run(repo, "--check")
+        assert both.returncode == 0, both.stdout
+        assert "ledger union merge: yes" in both.stdout
+
+        (repo / ".gitattributes").unlink()
+        no_attr = self._run(repo, "--check")
+        assert no_attr.returncode == 3, no_attr.stdout
+        # The workflow is still reported — gating one on the other hid whichever
+        # you were not looking for.
+        assert "context-cadence.yml" in no_attr.stdout
+        assert "ledger union merge: MISSING" in no_attr.stdout
+
+        (repo / ".github" / "workflows" / "context-cadence.yml").unlink()
+        neither = self._run(repo, "--check")
+        assert neither.returncode == 3
+        assert "workflow:           MISSING" in neither.stdout
+        assert "ledger union merge: MISSING" in neither.stdout
+
+    def test_the_ledger_path_agrees_everywhere(self, tmp_path: Path):
+        """Three places must name the same file: the merge attribute, the
+        workflow's git add, and the recorder's --ledger. A cadence that measures
+        into one path and stages another records nothing."""
+        repo = self._repo(tmp_path)
+        r = self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        assert r.returncode == 0, r.stderr
+        assert "telemetry/ctx.jsonl merge=union" in (
+            repo / ".gitattributes").read_text()
+        wf = (repo / ".github" / "workflows" / "context-cadence.yml").read_text()
+        assert 'git add -- "telemetry/ctx.jsonl"' in wf, wf
+        assert '--ledger "telemetry/ctx.jsonl"' in wf, wf
+        assert ".skills/context-metrics.jsonl" not in wf, (
+            "the default ledger leaked into a --ledger install:\n" + wf)
+
+    def test_an_existing_gitattributes_is_extended_not_replaced(
+            self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        (repo / ".gitattributes").write_text("*.png binary\n")
+        assert self._run(repo).returncode == 0
+        text = (repo / ".gitattributes").read_text()
+        assert "*.png binary" in text, "an unrelated rule was clobbered"
+        assert "merge=union" in text
+        # Idempotent: a second run neither duplicates nor churns.
+        self._run(repo)
+        assert (repo / ".gitattributes").read_text().count("merge=union") == 1
+
+
+class TestCadenceDescribesTheRepoNotTheInvocation:
+    """Deriving the ledger from the flag alone meant every mode assumed the
+    caller repeated --ledger. `--check` on a repo installed with a custom ledger
+    reported the attribute MISSING and said to re-run; doing so appended a second
+    attribute for the default path and rewrote the workflow back to the default.
+    Following the tool's own advice broke a correct install."""
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        return repo
+
+    def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+
+    def test_check_without_the_flag_reads_the_installed_ledger(
+            self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        r = self._run(repo, "--check")
+        assert r.returncode == 0, r.stdout
+        assert "telemetry/ctx.jsonl merge=union" in r.stdout, r.stdout
+
+    def test_a_bare_rerun_does_not_revert_a_custom_ledger(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        self._run(repo)                       # no flag — the advertised remedy
+        wf = (repo / ".github" / "workflows" / "context-cadence.yml").read_text()
+        attrs = (repo / ".gitattributes").read_text()
+        assert 'git add -- "telemetry/ctx.jsonl"' in wf, wf
+        assert ".skills/context-metrics.jsonl" not in wf, wf
+        assert attrs.count("merge=union") == 1, attrs
+
+    def test_changing_the_ledger_supersedes_the_old_attribute(
+            self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        r = self._run(repo, "--ledger", "other/l.jsonl")
+        assert "superseded" in r.stdout, r.stdout
+        attrs = (repo / ".gitattributes").read_text()
+        assert "other/l.jsonl merge=union" in attrs
+        assert "telemetry/ctx.jsonl" not in attrs, attrs
+        assert attrs.count("merge=union") == 1, attrs
+
+    def test_a_commented_out_attribute_is_not_present(self, tmp_path: Path):
+        """Commenting the line out is how somebody disables it. A substring
+        grep called that 'yes' and asserted a guarantee that was switched off."""
+        repo = self._repo(tmp_path)
+        (repo / ".gitattributes").write_text(
+            "# .skills/context-metrics.jsonl merge=union\n")
+        r = self._run(repo, "--check")
+        assert "ledger union merge: MISSING" in r.stdout, r.stdout
+        assert r.returncode == 3
+
+    def test_uninstall_does_not_claim_an_attribute_it_never_wrote(
+            self, tmp_path: Path):
+        r = self._run(self._repo(tmp_path), "--uninstall")
+        assert r.returncode == 0
+        assert "removed the .gitattributes union merge" not in r.stdout
+        assert "recorded rows were left in place" in r.stdout
+
+    def test_uninstall_removes_the_attribute_it_installed(self, tmp_path: Path):
+        """The installer's contract is two artifacts, so uninstall reverses
+        both. The rows stay — removing the mechanism that adds to the series is
+        not a reason to discard what it already collected."""
+        repo = self._repo(tmp_path)
+        self._run(repo)
+        assert (repo / ".gitattributes").exists()
+        r = self._run(repo, "--uninstall")
+        assert r.returncode == 0, r.stderr
+        assert "removed the .gitattributes union merge" in r.stdout
+        # The file was ours, so it goes with it.
+        assert not (repo / ".gitattributes").exists(), (
+            repo / ".gitattributes").read_text()
+
+    def test_uninstall_leaves_unrelated_gitattributes_rules(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        (repo / ".gitattributes").write_text("*.png binary\n")
+        self._run(repo)
+        self._run(repo, "--uninstall")
+        text = (repo / ".gitattributes").read_text()
+        assert "*.png binary" in text, text
+        assert "merge=union" not in text, text
+        # And our explanatory comments went with the line they explained.
+        assert "Append-only telemetry" not in text, text

@@ -230,11 +230,20 @@ Use `verb:target`:
 - `split:<doc>` — an over-budget reference doc divided
 - `fix:dead-link`, `fix:stale-command`, `fix:stale-issue-ref` — Phase 2 repairs
 - `relink:<doc>` — an orphan given an index entry
-- `baseline` — a measurement-only row, no edits. Written by
-  `record-telemetry.sh --baseline`, which fixes the tag rather than taking
+- `baseline:<kind>` — a measurement-only row, no edits. Written by
+  `record-telemetry.sh --baseline[=KIND]`, which fixes the tag rather than taking
   `--actions`, so no reader has to guess whether a row describes a state or a
   change. Every reader — the gate, the roll-up — skips `baseline*` when looking
   for a curation.
+
+  Two kinds, and the distinction is on the **tag** rather than in `--note`,
+  because a longitudinal comparison has to be able to tell them apart without
+  parsing freetext:
+
+  - `baseline:pre-curation` (bare `--baseline`) — Phase 1: the state this run's
+    edits will be measured against.
+  - `baseline:scheduled` (`--baseline=scheduled`) — the weekly cadence: a
+    reading of a surface nobody touched. See [cadence.md](cadence.md).
 
 `"cleanup"` and `"misc"` are worse than no tag: they occupy the slot that would
 otherwise have said something.
