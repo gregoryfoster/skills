@@ -80,13 +80,14 @@ USAGE
 CRON=""
 WF_PATH=".github/workflows/context-cadence.yml"
 LEDGER=".skills/context-metrics.jsonl"
+LEDGER_SET=0
 MODE="install"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --cron) CRON="${2:?--cron needs a cron expression}"; shift 2 ;;
     --file) WF_PATH="${2:?--file needs a path}"; shift 2 ;;
-    --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
+    --ledger) LEDGER="${2:?--ledger needs a path}"; LEDGER_SET=1; shift 2 ;;
     --check) MODE="check"; shift ;;
     --uninstall) MODE="uninstall"; shift ;;
     --print) MODE="print"; shift ;;
@@ -109,6 +110,22 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 1; }
 WF="$ROOT/$WF_PATH"
 
+# What the INSTALLED workflow measures, which is not necessarily what this
+# invocation was told. Deriving the ledger from the flag alone meant every mode
+# silently assumed the caller repeated --ledger: --check on a repo installed with
+# a custom ledger reported the attribute MISSING and said to re-run, and doing so
+# appended a SECOND attribute for the default path and rewrote the workflow back
+# to the default. Following the tool's own advice broke a correct install.
+INSTALLED_LEDGER=""
+if [ -f "$WF" ]; then
+  INSTALLED_LEDGER="$(sed -n 's/^ *git add -- "\(.*\)"$/\1/p' "$WF" | head -1)"
+fi
+# An explicit --ledger always wins — that is how you deliberately change it.
+# Otherwise describe the repo rather than the invocation.
+if [ "$LEDGER_SET" -eq 0 ] && [ -n "$INSTALLED_LEDGER" ]; then
+  LEDGER="$INSTALLED_LEDGER"
+fi
+
 # ONE definition, above the mode dispatch, because --check reads this and
 # ensure_attr writes it. They lived forty lines apart with the string typed
 # twice, so the reader and the writer could drift — and a --check reporting
@@ -116,8 +133,18 @@ WF="$ROOT/$WF_PATH"
 ATTR_FILE="$ROOT/.gitattributes"
 ATTR_LINE="$LEDGER merge=union"
 
+# Anchored, and comment lines are skipped. A substring grep reported a
+# COMMENTED-OUT attribute as present — and commenting it out is exactly how
+# somebody disables it, so the check asserted a guarantee that was switched off
+# and the failure landed later as a row lost to a race.
 has_attr() {
-  [ -f "$ATTR_FILE" ] && grep -qF "$ATTR_LINE" "$ATTR_FILE"
+  [ -f "$ATTR_FILE" ] || return 1
+  awk -v want="$ATTR_LINE" '
+    { line = $0; sub(/^[ \t]+/, "", line) }
+    line ~ /^#/ { next }
+    index(line, want) == 1 { found = 1; exit }
+    END { exit !found }
+  ' "$ATTR_FILE"
 }
 
 if [ "$MODE" = "check" ]; then
@@ -150,9 +177,11 @@ if [ "$MODE" = "uninstall" ]; then
   else
     echo "nothing to remove: no $WF_PATH"
   fi
-  echo "note: the recorded rows were left in place — they are the series, and"
-  echo "      so was the .gitattributes union merge, which is correct for an"
-  echo "      append-only ledger whether or not anything is scheduled."
+  echo "note: the recorded rows were left in place — they are the series."
+  if has_attr; then
+    echo "      The .gitattributes union merge was left too, which is correct"
+    echo "      for an append-only ledger whether or not anything is scheduled."
+  fi
   exit 0
 fi
 
@@ -190,6 +219,21 @@ fi
 # onto, so an attribute added after the fact does not rescue the conflict that
 # motivated it.
 ensure_attr() {
+  # A deliberate ledger change supersedes the old attribute. Leaving it makes
+  # .gitattributes accumulate one dead line per reconfiguration and makes
+  # --check's output ambiguous about which one is live.
+  if [ -n "$INSTALLED_LEDGER" ] && [ "$INSTALLED_LEDGER" != "$LEDGER" ] \
+     && [ -f "$ATTR_FILE" ]; then
+    stale="$INSTALLED_LEDGER merge=union"
+    if grep -qF "$stale" "$ATTR_FILE"; then
+      awk -v want="$stale" '
+        { line = $0; sub(/^[ \t]+/, "", line) }
+        line !~ /^#/ && index(line, want) == 1 { next }
+        { print }
+      ' "$ATTR_FILE" >"$ATTR_FILE.tmp" && mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+      echo "removed superseded .gitattributes line: $stale"
+    fi
+  fi
   if has_attr; then
     echo "unchanged: .gitattributes already carries the union merge for the ledger"
     return 0

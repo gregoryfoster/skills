@@ -3356,3 +3356,68 @@ class TestCadenceIsTwoArtifacts:
         # Idempotent: a second run neither duplicates nor churns.
         self._run(repo)
         assert (repo / ".gitattributes").read_text().count("merge=union") == 1
+
+
+class TestCadenceDescribesTheRepoNotTheInvocation:
+    """Deriving the ledger from the flag alone meant every mode assumed the
+    caller repeated --ledger. `--check` on a repo installed with a custom ledger
+    reported the attribute MISSING and said to re-run; doing so appended a second
+    attribute for the default path and rewrote the workflow back to the default.
+    Following the tool's own advice broke a correct install."""
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        return repo
+
+    def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+
+    def test_check_without_the_flag_reads_the_installed_ledger(
+            self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        r = self._run(repo, "--check")
+        assert r.returncode == 0, r.stdout
+        assert "telemetry/ctx.jsonl merge=union" in r.stdout, r.stdout
+
+    def test_a_bare_rerun_does_not_revert_a_custom_ledger(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        self._run(repo)                       # no flag — the advertised remedy
+        wf = (repo / ".github" / "workflows" / "context-cadence.yml").read_text()
+        attrs = (repo / ".gitattributes").read_text()
+        assert 'git add -- "telemetry/ctx.jsonl"' in wf, wf
+        assert ".skills/context-metrics.jsonl" not in wf, wf
+        assert attrs.count("merge=union") == 1, attrs
+
+    def test_changing_the_ledger_supersedes_the_old_attribute(
+            self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        r = self._run(repo, "--ledger", "other/l.jsonl")
+        assert "superseded" in r.stdout, r.stdout
+        attrs = (repo / ".gitattributes").read_text()
+        assert "other/l.jsonl merge=union" in attrs
+        assert "telemetry/ctx.jsonl" not in attrs, attrs
+        assert attrs.count("merge=union") == 1, attrs
+
+    def test_a_commented_out_attribute_is_not_present(self, tmp_path: Path):
+        """Commenting the line out is how somebody disables it. A substring
+        grep called that 'yes' and asserted a guarantee that was switched off."""
+        repo = self._repo(tmp_path)
+        (repo / ".gitattributes").write_text(
+            "# .skills/context-metrics.jsonl merge=union\n")
+        r = self._run(repo, "--check")
+        assert "ledger union merge: MISSING" in r.stdout, r.stdout
+        assert r.returncode == 3
+
+    def test_uninstall_does_not_claim_an_attribute_it_never_wrote(
+            self, tmp_path: Path):
+        r = self._run(self._repo(tmp_path), "--uninstall")
+        assert r.returncode == 0
+        assert "union merge was left" not in r.stdout
+        assert "recorded rows were left in place" in r.stdout
