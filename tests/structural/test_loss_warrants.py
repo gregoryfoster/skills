@@ -355,6 +355,89 @@ class TestCopiedRatherThanMoved:
         assert "duplicated: 0" in r.stdout, r.stdout
 
 
+class TestProvingADocSplit:
+    """`--file` takes a REFERENCE DOC, not only the policy file, and that is
+    the right tool for a doc split: the split moves nothing out of AGENTS.md,
+    so a policy-file run passes while saying nothing about it.
+
+    The interesting half is the one the docs described as working and did not.
+    A split that DELETES its source — `docs/API.md` -> `docs/api/*.md`, the
+    shape #119 was measured on — left `--file docs/API.md` naming a path with
+    no working-tree file, and the explicit argument fell through to the
+    autodetect branch's error: "no policy file found (looked for AGENTS.md,
+    CLAUDE.md)", exit 1, for a file the caller had named outright.
+    """
+
+    def _split(self, tmp_path: Path, keep_source: bool) -> Path:
+        repo = _repo(tmp_path, "# P\n\n## A\n\nsee [docs/API.md](docs/API.md)\n")
+        docs = repo / "docs"
+        docs.mkdir()
+        (docs / "API.md").write_text(
+            "# API\n\n## Shapes\n\nSee the [helper](../tests/x.py) for the shape.\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "the doc before its split")
+        (docs / "api").mkdir()
+        # One level deeper than the source, so the link gains a level too —
+        # the depth #119 fixed, exercised through the split it describes. The
+        # index part is what a real split leaves behind, and it is where the
+        # source doc's own `# API` title has to survive.
+        (docs / "api" / "README.md").write_text("# API\n\n- [Shapes](shapes.md)\n")
+        (docs / "api" / "shapes.md").write_text(
+            "# Shapes\n\nSee the [helper](../../tests/x.py) for the shape.\n")
+        if not keep_source:
+            (docs / "API.md").unlink()
+        return repo
+
+    def test_a_split_that_deletes_its_source_is_provable(self, tmp_path: Path):
+        r = _prove(self._split(tmp_path, keep_source=False), "--file", "docs/API.md")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "docs/api/shapes.md" in r.stdout, r.stdout
+
+    def test_it_says_the_source_is_gone_rather_than_implying_it_is_empty(
+            self, tmp_path: Path):
+        """0 still inline out of 3 is indistinguishable from a file that was
+        emptied in place, and the two want different review."""
+        r = _prove(self._split(tmp_path, keep_source=False), "--file", "docs/API.md")
+        assert "docs/API.md no longer exists" in r.stdout, r.stdout
+
+    def test_a_split_that_keeps_its_source_is_still_provable(self, tmp_path: Path):
+        r = _prove(self._split(tmp_path, keep_source=True), "--file", "docs/API.md")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_a_line_the_split_dropped_is_still_caught(self, tmp_path: Path):
+        """The whole point. Removing the working-tree check must not weaken
+        anything: with no inline set, every line has to be in a destination."""
+        repo = self._split(tmp_path, keep_source=False)
+        (repo / "docs" / "api" / "shapes.md").write_text("# Shapes\n")
+        r = _prove(repo, "--file", "docs/API.md")
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "helper" in r.stdout, r.stdout
+
+    def test_a_file_absent_at_base_too_is_still_an_infrastructure_error(
+            self, tmp_path: Path):
+        """Exit 2, not a silent pass over zero lines."""
+        repo = _repo(tmp_path, "# P\n")
+        r = _prove(repo, "--file", "docs/NEVER.md")
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "does not exist at" in r.stderr, r.stderr
+
+    def test_no_file_flag_and_no_policy_file_is_still_a_usage_error(
+            self, tmp_path: Path):
+        """The autodetect branch keeps its own message — the fix must not turn
+        a repo with no policy file into a run over nothing."""
+        repo = tmp_path / "bare"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "README.md").write_text("hi\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "i")
+        r = _prove(repo)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "no policy file found" in r.stderr, r.stderr
+
+
 class TestTheCountRidesTheRow:
     """`no_loss: ok` alone cannot tell "nothing was unaccounted for" from
     "eight lines were judged and waved through". Recording the count is what

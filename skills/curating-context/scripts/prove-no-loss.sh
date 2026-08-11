@@ -34,8 +34,12 @@ Options:
                    somewhere under --docs-dir, which is the check a split needs
                    and the policy file cannot give (the split moves nothing out
                    of AGENTS.md, so a policy-file run passes while saying
-                   nothing about the split). The file must exist at --base as a
-                   regular file; everything else works the same.
+                   nothing about the split). It must exist at --base as a
+                   regular file, and need NOT still exist now: a split deletes
+                   its source by construction, and with no file to read the
+                   inline set is simply empty, so every line has to turn up in a
+                   destination. Autodetection still requires a real file — a
+                   repo with no policy file is a usage error.
   --docs-dir DIR   Reference-doc root searched for relocated content. Default:
                    CONTEXT_DOCS_DIR, then .skills/context-docs-dir, then docs.
 
@@ -193,14 +197,23 @@ cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
 
 DOCS_DIR="$(ctx_docs_dir "$ROOT" "$DOCS_DIR")"
 
+# A file named with --file need not still EXIST. Autodetection does — a repo
+# with no policy file is a usage error — but a doc split deletes its source by
+# construction (`docs/API.md` -> `docs/api/*.md`), and requiring the working-tree
+# file made --file unusable for exactly the case it is the right tool for: the
+# explicit argument fell through to the message below and reported "no policy
+# file found (looked for AGENTS.md, CLAUDE.md)" for a path the caller had named.
+# Nothing is weakened by allowing it: existence AT --base is still required, two
+# checks down, and with no file now the inline set is empty, so every line has to
+# turn up in a destination.
 if [ -z "$POLICY" ]; then
   for cand in AGENTS.md CLAUDE.md; do
     [ -f "$cand" ] && { POLICY="$cand"; break; }
   done
-fi
-if [ -z "$POLICY" ] || [ ! -f "$POLICY" ]; then
-  echo "ERROR no policy file found (looked for AGENTS.md, CLAUDE.md under $ROOT)" >&2
-  exit 1
+  if [ -z "$POLICY" ]; then
+    echo "ERROR no policy file found (looked for AGENTS.md, CLAUDE.md under $ROOT)" >&2
+    exit 1
+  fi
 fi
 
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
@@ -220,7 +233,14 @@ git show "$BASE:$POLICY" >"$TMP/before" 2>/dev/null || {
 # Destinations: the policy file itself (content that stayed), every live
 # reference doc, and anything named with --also.
 : >"$TMP/dests"
-printf '%s\n' "$POLICY" >>"$TMP/dests"
+if [ -f "$POLICY" ]; then
+  printf '%s\n' "$POLICY" >>"$TMP/dests"
+else
+  # Said out loud, because "0 still inline" out of 40 is indistinguishable in
+  # the report from a file that was emptied in place, and the two want
+  # different review.
+  echo "note: $POLICY no longer exists — every line must be in a destination."
+fi
 if [ -d "$DOCS_DIR" ]; then
   # Gate-like: this find populates the destination list, and a partial failure
   # silently shrinks it — lines that WERE relocated then report as LOST and the
