@@ -62,7 +62,12 @@ What it reports, in three classes:
   moved-title refs Prose or link references, anywhere in the live surface, to
                    the title of a section that LEFT the policy file since
                    --base. These are the highest-confidence seams: something
-                   still points at a home that no longer exists.
+                   still points at a home that no longer exists. A title of two
+                   or more words (and 8+ characters) is matched anywhere; a
+                   generic one — People, Organizations — only on a line that
+                   points somewhere, meaning a §, a markdown link, or a .md
+                   filename, because otherwise it matches every ordinary use of
+                   the word. The report names the titles swept that way.
 
   heading defects  Within each live doc: duplicate normalised headings (the
                    destination already covered the topic and the demotion
@@ -207,12 +212,33 @@ def norm_title(t):
 
 base_titles = {norm_title(t): t for _, t in headings(base_lines)}
 now_titles = {norm_title(t) for _, t in headings(now_lines)}
-# Titles that LEFT the policy file since base. Short titles are excluded from
-# the prose sweep below: grepping the surface for "Overview" or "Testing"
-# drowns the real seams in coincidental matches, and a title that generic was
-# never a useful pointer anyway.
+# Titles that LEFT the policy file since base, in two tiers.
+#
+# A title is swept BARE — matched anywhere in the surface — only when it is
+# specific enough to be a pointer rather than a noun: two or more words, and at
+# least 8 characters. The character floor alone was the whole filter, and it
+# shipped a flood: a doc split into per-resource docs titled People,
+# Organizations, Jurisdictions produced 205 moved-title hits, every one a
+# verified false positive (an admin breadcrumb, a scope-table row, prose using
+# the plural noun), against 55 provenance-heading hits and zero real
+# references. `Organizations` is thirteen characters, so raising the floor
+# would have changed nothing. Descriptive titles on the same programme produced
+# zero false positives, which is why bare matching survives for them — and why
+# it must: a source docstring citing "WordPress conventions" and nothing else
+# is a seam nothing else can see.
+#
+# Every OTHER moved title is still swept, but only on a line that POINTS
+# somewhere — a §, a markdown link, or a .md filename. A title that moved
+# matters where something refers readers to it, and "see docs/X.md § People" is
+# exactly the reference this class exists to catch. The three measured false
+# positives carry none of those markers.
+WORDS = re.compile(r"[0-9a-z]+")
+POINTER = re.compile(r"§|\]\(|\.md\b", re.IGNORECASE)
+
 moved = {k: v for k, v in base_titles.items() if k not in now_titles}
-sweepable = {k: v for k, v in moved.items() if len(k) >= 8}
+sweepable = {k: v for k, v in moved.items()
+             if len(k) >= 8 and len(WORDS.findall(k)) >= 2}
+generic = {k: v for k, v in moved.items() if k not in sweepable}
 
 policy_names = ("AGENTS.md", "CLAUDE.md")
 seams = []
@@ -238,11 +264,16 @@ for d in docs:
 #    a section the same run renamed is a seam too. The moved title's own new
 #    heading is not a seam, so heading lines matching the title exactly are
 #    skipped.
-for k, orig in sweepable.items():
+for k, orig in moved.items():
     pat = re.compile(re.escape(orig), re.IGNORECASE)
+    bare = k in sweepable
     for path in [policy_rel] + docs:
         for i, line in enumerate(doc_lines(path), 1):
             if not pat.search(line):
+                continue
+            if not bare and not POINTER.search(line):
+                # A generic title on a line that points nowhere is the word,
+                # not a reference to the section.
                 continue
             m = HEADING.match(line)
             if m and k in norm_title(m.group(2)):
@@ -330,9 +361,15 @@ for cls, loc, detail, full in seams:
         acked.append((cls, loc))
         matched_by[hit_pattern].append(loc)
 
-if moved and not sweepable:
-    print(f"note: {len(moved)} section(s) left the policy file but every title "
-          "is under 8 characters — too generic to sweep for.")
+if generic:
+    # Say which titles got the weaker sweep. A heuristic that silently narrows
+    # itself to stop a flood is indistinguishable, from the report, from one
+    # that found nothing.
+    named = ", ".join(sorted(generic.values()))
+    print(f"note: {len(generic)} moved title(s) are too generic to sweep bare "
+          f"({named[:120]}) — one word, or under 8 characters. They were "
+          "matched only on lines that point somewhere: a §, a markdown link, "
+          "or a .md filename.")
 if new:
     print(f"{len(new)} seam(s) to review — each needs a decision, not "
           "necessarily a fix:\n")
