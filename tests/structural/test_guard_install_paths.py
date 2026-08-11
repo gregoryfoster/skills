@@ -371,3 +371,82 @@ class TestManagingSkillsHookCommand:
         assert not offenders, "\n".join(offenders)
 
 
+
+class TestDoctorHealsHookSymlinks:
+    """#99 — a dangling hook symlink fails on every Edit|Write|MultiEdit, which
+    is a far higher-frequency event than invoking a skill."""
+
+    def _repo_with_hooks(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        (repo / ".claude" / "hooks").mkdir(parents=True)
+        return repo
+
+    def _doctor(self, repo: Path, *args: str):
+        return subprocess.run(
+            ["bash", str(DOCTOR), *args], capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=60,
+        )
+
+    def test_dangling_hook_symlink_is_reported(self, tmp_path: Path):
+        repo = self._repo_with_hooks(tmp_path)
+        (repo / "skills").mkdir()
+        (repo / ".claude" / "hooks" / "context-budget-guard.sh").symlink_to(
+            "../../skills-vendor/acme/scripts/context-budget-guard.sh"
+        )
+
+        result = self._doctor(repo, "--check-only")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ".claude/hooks/context-budget-guard.sh" in result.stderr, result.stderr
+
+    def test_dangling_hook_symlink_is_reported_without_a_skills_dir(self, tmp_path):
+        """The early exit was `[ ! -d skills ]`. A consumer that wires a hook but
+        keeps no skills/ tree must still be checked."""
+        repo = self._repo_with_hooks(tmp_path)
+        (repo / ".claude" / "hooks" / "context-budget-guard.sh").symlink_to(
+            "../../skills-vendor/acme/scripts/context-budget-guard.sh"
+        )
+
+        result = self._doctor(repo, "--check-only")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ".claude/hooks/context-budget-guard.sh" in result.stderr, result.stderr
+
+    def test_resolving_hook_symlink_is_silent(self, tmp_path: Path):
+        repo = self._repo_with_hooks(tmp_path)
+        target = repo / "real-hook.sh"
+        target.write_text("#!/usr/bin/env bash\n")
+        (repo / ".claude" / "hooks" / "context-budget-guard.sh").symlink_to(
+            "../../real-hook.sh"
+        )
+
+        result = self._doctor(repo, "--check-only")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_regular_files_in_hooks_are_not_symlinks(self, tmp_path: Path):
+        repo = self._repo_with_hooks(tmp_path)
+        (repo / ".claude" / "hooks" / "local.sh").write_text("#!/bin/sh\n")
+
+        result = self._doctor(repo, "--check-only")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_no_scan_dirs_at_all_is_a_silent_noop(self, tmp_path: Path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+
+        result = self._doctor(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stderr.strip() == "", result.stderr
+
+    def test_heal_scope_is_documented(self):
+        """A heal scope nobody knows about gets re-litigated in every consumer."""
+        text = MS_SKILL.read_text()
+        assert ".claude/hooks/" in text and "doctor" in text.lower()
+        help_text = subprocess.run(
+            ["bash", str(DOCTOR), "--help"], capture_output=True, text=True,
+            env=_clean_env(), timeout=30,
+        ).stdout
+        assert ".claude/hooks/" in help_text, help_text
+
+

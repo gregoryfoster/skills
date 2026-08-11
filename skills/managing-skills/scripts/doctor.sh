@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # managing-skills-doctor: do not remove this marker — install-doctor.sh greps it
-# doctor.sh — diagnose and self-heal dangling skill symlinks.
+# doctor.sh — diagnose and self-heal dangling skill and hook symlinks.
 #
 # When this repo is vendored via the managing-skills git-submodule + symlink
 # pattern, a consumer checkout that hasn't initialized submodules
@@ -11,9 +11,16 @@
 #
 # This script is installed as a real (non-symlinked) file at
 # <repo-root>/.skills/doctor.sh so it remains reachable even when the
-# vendor chain is broken. It walks skills/* symlinks, attempts a
-# `git submodule update --init --recursive` if any dangle, and prints a
-# clear actionable error if self-healing fails.
+# vendor chain is broken. It walks skills/* and .claude/hooks/* symlinks,
+# attempts a `git submodule update --init --recursive` if any dangle, and
+# prints a clear actionable error if self-healing fails.
+#
+# .claude/hooks/ is in scope because skill installers link hooks there too
+# (issue #99). A dangling skills/<name> surfaces only when that skill is
+# invoked; a dangling hook symlink surfaces on every Edit|Write|MultiEdit —
+# the highest-frequency tool event there is — as exit 127 naming a path that
+# `ls` plainly shows exists. Same failure class, different directory, and one
+# heal path covers any future hook a skill installs.
 #
 # Because the installed copy is a copy, it re-syncs itself from the vendored
 # source whenever that source is reachable — see sync_self below.
@@ -35,7 +42,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-04-2"
+VERSION="2026-08-11-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -50,12 +57,16 @@ for arg in "$@"; do
       cat <<EOF
 Usage: bash .skills/doctor.sh [--check-only] [--verbose] [--no-preflight]
 
-Diagnose and self-heal dangling skill symlinks in skills/.
+Diagnose and self-heal dangling symlinks in skills/ and .claude/hooks/.
 
-If any skills/<name> symlink does not resolve and a .git directory is
-present, runs 'git submodule update --init --recursive' and re-checks.
+If any symlink in those directories does not resolve and a .git directory
+is present, runs 'git submodule update --init --recursive' and re-checks.
 Exits 0 silently when healthy. Exits non-zero with an actionable error
 when self-healing fails or is not possible (e.g. no .git directory).
+
+.claude/hooks/ is scanned because skill installers link hooks there into
+the same vendor chain; a dangling one fails on every file edit rather than
+only when a skill is invoked.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -84,7 +95,7 @@ Options:
   --help, -h      Show this help and exit.
 
 Exit codes:
-  0  All skill symlinks resolve (or skills/ does not exist).
+  0  All scanned symlinks resolve (or neither directory exists).
   1  One or more symlinks remain broken after self-heal attempt, or
      pre-flight SSH check failed.
   2  Invalid invocation (e.g. unknown flag).
@@ -181,9 +192,26 @@ sync_self() {
 # logic would almost never run.
 sync_self
 
-# Nothing to check if the consumer doesn't use the skills/ pattern.
-if [ ! -d skills ]; then
-  [ "$VERBOSE" = "1" ] && echo "doctor: no skills/ directory — nothing to check" >&2
+# Directories whose direct children are scanned for dangling symlinks.
+# skills/ is the vendored-skill chain; .claude/hooks/ holds the hook symlinks
+# skill installers write into a consumer (issue #99). .claude/skills/ needs no
+# entry — it links through skills/<name>, so a break there is already reported
+# at its source rather than twice.
+SCAN_DIRS=(skills .claude/hooks)
+
+# An `if`, not `[ -d "$d" ] && present=1` — under `set -e` the && form makes the
+# loop's exit status that of the last test, so a run whose final scan dir is
+# absent would abort the script instead of reporting.
+present=0
+for d in "${SCAN_DIRS[@]}"; do
+  if [ -d "$d" ]; then
+    present=1
+  fi
+done
+
+# Nothing to check if the consumer uses none of those patterns.
+if [ "$present" -eq 0 ]; then
+  [ "$VERBOSE" = "1" ] && echo "doctor: no skills/ or .claude/hooks/ directory — nothing to check" >&2
   exit 0
 fi
 
@@ -193,24 +221,28 @@ fi
 # paths-with-spaces correctly when later expanded as "${BROKEN[@]}".
 declare -a BROKEN=()
 
-# Walks skills/* and populates BROKEN with any dangling symlinks. A symlink
-# is "broken" when it exists but its target does not resolve. Local
-# overrides (regular directories) are skipped — they're not symlinks.
+# Walks each SCAN_DIRS entry and populates BROKEN with any dangling symlinks.
+# A symlink is "broken" when it exists but its target does not resolve. Local
+# overrides (regular directories) and project-authored hook scripts (regular
+# files) are skipped — they're not symlinks.
 scan_broken() {
   BROKEN=()
-  local entry
-  for entry in skills/*; do
-    [ -L "$entry" ] || continue
-    if [ ! -e "$entry" ]; then
-      BROKEN+=("$entry")
-    fi
+  local dir entry
+  for dir in "${SCAN_DIRS[@]}"; do
+    [ -d "$dir" ] || continue
+    for entry in "$dir"/*; do
+      [ -L "$entry" ] || continue
+      if [ ! -e "$entry" ]; then
+        BROKEN+=("$entry")
+      fi
+    done
   done
 }
 
 scan_broken
 
 if [ "${#BROKEN[@]}" -eq 0 ]; then
-  [ "$VERBOSE" = "1" ] && echo "doctor: all skill symlinks resolve" >&2
+  [ "$VERBOSE" = "1" ] && echo "doctor: all scanned symlinks resolve" >&2
   exit 0
 fi
 
@@ -219,7 +251,7 @@ fi
 # so --check-only never suggests a `git submodule` command in a checkout
 # that doesn't have a .git dir.
 if [ ! -d .git ] && [ ! -f .git ]; then
-  echo "doctor: dangling skill symlinks detected and no .git directory present:" >&2
+  echo "doctor: dangling symlinks detected and no .git directory present:" >&2
   printf '  %s\n' "${BROKEN[@]}" >&2
   echo "" >&2
   echo "This checkout was likely created from a source archive (zip/tarball)" >&2
@@ -230,7 +262,7 @@ if [ ! -d .git ] && [ ! -f .git ]; then
 fi
 
 if [ "$CHECK_ONLY" = "1" ]; then
-  echo "doctor: dangling skill symlinks detected:" >&2
+  echo "doctor: dangling symlinks detected:" >&2
   printf '  %s\n' "${BROKEN[@]}" >&2
   echo "Run 'git submodule update --init --recursive' to repair." >&2
   exit 1
@@ -381,7 +413,7 @@ if ! preflight_ssh_check; then
   exit 1
 fi
 
-echo "doctor: dangling skill symlinks detected — initializing submodules..." >&2
+echo "doctor: dangling symlinks detected — initializing submodules..." >&2
 
 # Capture stderr for post-hoc classification while also streaming it live
 # so the user sees git's output during slow clones. We use a named pipe
@@ -439,5 +471,5 @@ if [ "${#BROKEN[@]}" -gt 0 ]; then
   exit 1
 fi
 
-[ "$VERBOSE" = "1" ] && echo "doctor: self-healed; all skill symlinks resolve" >&2
+[ "$VERBOSE" = "1" ] && echo "doctor: self-healed; all scanned symlinks resolve" >&2
 exit 0
