@@ -3017,6 +3017,21 @@ class TestCadenceInstaller:
         # the mechanism broke rather than that the surface grew.
         assert "continue-on-error" not in doc["jobs"]["measure"]
 
+    def test_rendering_executes_nothing(self, tmp_path: Path):
+        """The template lives in an unquoted heredoc, so an unescaped backtick
+        or $( ) is COMMAND SUBSTITUTION at render time — it runs, and its output
+        replaces the text in the generated workflow. A comment reading
+        `git push origin ""` did exactly that, printing
+        `fatal: invalid refspec ''` and rendering the comment empty.
+
+        A clean render writes nothing to stderr."""
+        r = self._run(self._repo(tmp_path), "--print")
+        assert r.returncode == 0, r.stderr
+        assert r.stderr == "", (
+            "render-time command substitution leaked:\n" + r.stderr)
+        # And the text that triggered it survives as text.
+        assert 'git push origin ""` fails opaquely' in r.stdout
+
     def test_the_credential_is_preflighted_before_any_work(self, tmp_path: Path):
         """Without the secret, --exact degrades to an estimate and
         record-telemetry.sh refuses the append — the job records NOTHING,
@@ -3171,17 +3186,83 @@ class TestCadenceShellActuallyRuns:
         (repo / ".skills" / "context-metrics.jsonl").write_text(
             _ledger_row(repo="r", tokens=100) + "\n")
         assert not (repo / ".skills" / "context-token-ratio").exists()
+        # Split on a stable sentinel rather than a variable name: renaming the
+        # variable used to make the split find nothing and silently change what
+        # this test exercised.
         step = self._step(tmp_path, "Commit the row")
-        # Stop before the push — there is no remote here.
-        step = step.split("BRANCH=")[0]
-        r = subprocess.run(["bash", "-e", "-c", step], capture_output=True,
-                           text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+        assert "# --- push ---" in step, step
+        r = subprocess.run(["bash", "-e", "-c", step.split("# --- push ---")[0]],
+                           capture_output=True, text=True, cwd=str(repo),
+                           env=_clean_env(), timeout=30)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "nothing to commit" not in r.stdout, (
             "the row was silently dropped: " + r.stdout)
         log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
                              capture_output=True, text=True).stdout
         assert "weekly context measurement" in log, log
+
+    def test_a_human_commit_during_the_measurement_does_not_lose_the_row(
+            self, tmp_path: Path):
+        """The whole push path, against a real remote, in the race it exists
+        for. Without `merge=union` on the ledger the rebase halts on a conflict
+        — two appends land on the same last line — and the week's row is lost
+        with markers left in the file. Verified end to end rather than reasoned
+        about, because the first version of this retry loop did not work."""
+        origin = tmp_path / "o.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+                       check=True, env=_clean_env())
+
+        def clone(name: str) -> Path:
+            d = tmp_path / name
+            subprocess.run(["git", "clone", "-q", str(origin), str(d)],
+                           check=True, env=_clean_env())
+            _git(d, "config", "user.email", "t@t")
+            _git(d, "config", "user.name", "t")
+            return d
+
+        seed = clone("seed")
+        (seed / ".skills").mkdir()
+        (seed / ".skills" / "context-metrics.jsonl").write_text(
+            _ledger_row(repo="r", ts="2026-08-01", tokens=100) + "\n")
+        # The attribute has to be in the BASE commit: git resolves using the
+        # attributes in the tree being replayed onto, so adding it after the
+        # conflict does not rescue the conflict.
+        (seed / ".gitattributes").write_text(
+            ".skills/context-metrics.jsonl merge=union\n")
+        _git(seed, "add", "-A")
+        _git(seed, "commit", "-qm", "seed")
+        _git(seed, "push", "-q", "origin", "HEAD:main")
+
+        bot = clone("bot")
+        human = clone("human")
+
+        # The human lands first, while the bot is still measuring.
+        led = human / ".skills" / "context-metrics.jsonl"
+        led.write_text(led.read_text() + _ledger_row(
+            repo="r", ts="2026-08-07", tokens=120) + "\n")
+        _git(human, "commit", "-qam", "human edit")
+        _git(human, "push", "-q", "origin", "HEAD:main")
+
+        # The bot appends its weekly row on the now-stale checkout and runs the
+        # rendered step verbatim.
+        led = bot / ".skills" / "context-metrics.jsonl"
+        led.write_text(led.read_text() + _ledger_row(
+            repo="r", ts="2026-08-08", tokens=130) + "\n")
+        env = {**_clean_env(), "GITHUB_REF_NAME": "main"}
+        r = subprocess.run(
+            ["bash", "-e", "-c", self._step(tmp_path, "Commit the row")],
+            capture_output=True, text=True, cwd=str(bot), env=env, timeout=60)
+        assert r.returncode == 0, (
+            "the retry did not recover the push:\n" + r.stdout + r.stderr)
+
+        final = subprocess.run(
+            ["git", "-C", str(origin), "show", "main:.skills/context-metrics.jsonl"],
+            capture_output=True, text=True, env=_clean_env()).stdout
+        assert "<<<<<<<" not in final, "conflict markers reached the remote:\n" + final
+        stamps = [json.loads(ln)["ts"] for ln in final.splitlines() if ln.strip()]
+        # Both survive, in order. The human's row is not clobbered and the
+        # bot's is not lost.
+        assert stamps == ["2026-08-01", "2026-08-07", "2026-08-08"], stamps
 
     def test_the_drift_report_warns_only_when_over_budget(self, tmp_path: Path):
         step = self._step(tmp_path, "Report drift")

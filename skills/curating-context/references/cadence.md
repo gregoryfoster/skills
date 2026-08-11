@@ -60,6 +60,30 @@ the Actions tab.
 The workflow below runs `--check-credential` as its first step for exactly this
 reason: fail loudly at second zero rather than at the last step of the job.
 
+## The ledger needs a union merge, and it needs it first
+
+The ledger is append-only, so a scheduled append and a human commit land on the
+**same last line** and git cannot auto-merge them. The push is rejected, the
+retry's rebase halts on a conflict, and the week's row is lost with markers left
+in the file — verified against a real remote, which is how the first version of
+the retry loop was found not to work.
+
+`install-cadence.sh` therefore also ensures:
+
+```
+.skills/context-metrics.jsonl merge=union
+```
+
+in `.gitattributes`, appending to whatever is already there. With it, the same
+race rebases cleanly and both rows survive in order.
+
+**Commit it before the first concurrent run.** Git resolves a merge using the
+attributes in the tree being *replayed onto*, so an attribute added after the
+fact does not rescue the conflict that motivated it. That is why the installer
+tells you to stage both files together, and why `--uninstall` leaves the
+attribute behind: it is correct for an append-only ledger whether or not
+anything is scheduled.
+
 ## The workflow
 
 Follows the house scheduled-job pattern from
@@ -125,9 +149,13 @@ jobs:
     steps:
       # submodules: recursive is load-bearing — the skill is vendored under
       # skills-vendor/ and reached through a symlink, which dangles without it.
+      # fetch-depth: 0 because the push path rebases when a human commit lands
+      # during the measurement, and rebasing on a depth-1 clone lacks the history
+      # to replay onto.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Heal vendored symlinks
         run: '[ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh'
@@ -188,11 +216,22 @@ jobs:
           # A human push landing during the measurement makes this a
           # non-fast-forward. The ledger is append-only JSONL, so rebasing is
           # safe by construction; without it the week's row is simply lost.
-          BRANCH="$(git branch --show-current)"
+          # GITHUB_REF_NAME is authoritative; git branch --show-current is
+          # empty on a detached HEAD and `git push origin ""` fails opaquely.
+          BRANCH="${GITHUB_REF_NAME:-$(git branch --show-current)}"
+          # --- push ---
           for attempt in 1 2 3; do
-            git push origin "$BRANCH" && exit 0
+            git push origin "HEAD:$BRANCH" && exit 0
             echo "push rejected (attempt $attempt) — rebasing onto origin/$BRANCH"
-            git pull --rebase --autostash origin "$BRANCH"
+            # A failing rebase is fatal and must SAY so. As a bare command under
+            # bash -e it killed the step before this loop could retry or reach
+            # the error line below, making "3 attempts" really one.
+            git pull --rebase --autostash origin "$BRANCH" || {
+              echo "::error::rebase onto origin/$BRANCH failed — the row was not pushed."
+              echo "::error::If the ledger conflicted, .gitattributes is missing"
+              echo "::error::`.skills/context-metrics.jsonl merge=union` — re-run install-cadence.sh."
+              exit 1
+            }
           done
           echo "::error::could not push the measurement row after 3 attempts"
           exit 1
@@ -203,6 +242,14 @@ jobs:
       - name: Report drift
         if: always()
         run: |
+          # always() makes this reachable when the measurement never ran — the
+          # missing-credential case, which is exactly the failure this design
+          # exists to make legible. A FileNotFoundError stacked on top of the
+          # real preflight error helps nobody.
+          if [ ! -f /tmp/ctx.json ]; then
+            echo "no measurement was taken — see the failing step above"
+            exit 0
+          fi
           python3 - /tmp/ctx.json <<'PY'
           import json, sys
           p = json.load(open(sys.argv[1]))["policy"]

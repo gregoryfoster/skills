@@ -31,6 +31,13 @@ Options:
   -h, --help       Show this help and exit 0.
 
 What it does:
+  Ensures .gitattributes carries `.skills/context-metrics.jsonl merge=union`.
+  The ledger is append-only, so a scheduled append racing a human commit lands
+  on the same last line and cannot auto-merge; without the union driver the
+  push is rejected, the retry's rebase conflicts, and the week's row is lost.
+  It must be committed BEFORE the first concurrent run — git resolves using the
+  attributes in the tree being replayed onto.
+
   Renders .github/workflows/context-cadence.yml, which weekly:
     1. checks out with submodules (the skill is reached through a symlink into
        skills-vendor/, which dangles without them),
@@ -93,6 +100,12 @@ if [ "$MODE" = "check" ]; then
   if [ -f "$WF" ]; then
     echo "installed: $WF_PATH"
     sed -n 's/^ *- cron: *\(.*\)$/  schedule: \1/p' "$WF"
+    if [ -f "$ROOT/.gitattributes" ] \
+       && grep -qF ".skills/context-metrics.jsonl merge=union" "$ROOT/.gitattributes"; then
+      echo "  ledger union merge: yes"
+    else
+      echo "  ledger union merge: NO — concurrent appends will conflict; re-run to add it"
+    fi
     exit 0
   fi
   echo "not installed: no $WF_PATH"
@@ -106,7 +119,9 @@ if [ "$MODE" = "uninstall" ]; then
   else
     echo "nothing to remove: no $WF_PATH"
   fi
-  echo "note: the recorded rows were left in place — they are the series."
+  echo "note: the recorded rows were left in place — they are the series, and"
+  echo "      so was the .gitattributes union merge, which is correct for an"
+  echo "      append-only ledger whether or not anything is scheduled."
   exit 0
 fi
 
@@ -133,6 +148,36 @@ if [ -z "$CRON" ]; then
   DOW=$(( 1 + (H / 360) % 5 ))    # Mon-Fri; weekends delay hardest
   CRON="$MIN $HOUR * * $DOW"
 fi
+
+# The ledger is append-only, so two appends land on the SAME last line and git
+# cannot auto-merge them: a human commit during the measurement makes the push a
+# non-fast-forward, and the retry's rebase then halts on a conflict, leaving
+# markers in the ledger and the week's row lost. Verified against a real remote.
+#
+# `merge=union` is the fix, and it must be COMMITTED BEFORE the first concurrent
+# run — git resolves the merge using the attributes in the tree being replayed
+# onto, so an attribute added after the fact does not rescue the conflict that
+# motivated it.
+ATTR_FILE="$ROOT/.gitattributes"
+ATTR_LINE=".skills/context-metrics.jsonl merge=union"
+
+ensure_attr() {
+  if [ -f "$ATTR_FILE" ] && grep -qF "$ATTR_LINE" "$ATTR_FILE"; then
+    echo "unchanged: .gitattributes already carries the union merge for the ledger"
+    return 0
+  fi
+  # Append rather than overwrite: the file routinely carries linguist and
+  # line-ending rules that are none of this script's business.
+  if [ -s "$ATTR_FILE" ] && [ "$(tail -c 1 "$ATTR_FILE" | wc -l)" -eq 0 ]; then
+    printf '\n' >>"$ATTR_FILE"
+  fi
+  {
+    printf '\n# Append-only telemetry: concurrent appends must union-merge, or a\n'
+    printf '# scheduled measurement racing a human commit conflicts and is lost.\n'
+    printf '%s\n' "$ATTR_LINE"
+  } >>"$ATTR_FILE"
+  echo "wrote .gitattributes: $ATTR_LINE"
+}
 
 render() {
   cat <<YAML
@@ -180,9 +225,13 @@ jobs:
     steps:
       # submodules: recursive is load-bearing — the skill is vendored under
       # skills-vendor/ and reached through a symlink, which dangles without it.
+      # fetch-depth: 0 because the push path rebases when a human commit lands
+      # during the measurement, and rebasing on a depth-1 clone lacks the history
+      # to replay onto.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Heal vendored symlinks
         run: '[ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh'
@@ -243,11 +292,22 @@ jobs:
           # A human push landing during the measurement makes this a
           # non-fast-forward. The ledger is append-only JSONL, so rebasing is
           # safe by construction; without it the week's row is simply lost.
-          BRANCH="\$(git branch --show-current)"
+          # GITHUB_REF_NAME is authoritative; git branch --show-current is
+          # empty on a detached HEAD and \`git push origin ""\` fails opaquely.
+          BRANCH="\${GITHUB_REF_NAME:-\$(git branch --show-current)}"
+          # --- push ---
           for attempt in 1 2 3; do
-            git push origin "\$BRANCH" && exit 0
+            git push origin "HEAD:\$BRANCH" && exit 0
             echo "push rejected (attempt \$attempt) — rebasing onto origin/\$BRANCH"
-            git pull --rebase --autostash origin "\$BRANCH"
+            # A failing rebase is fatal and must SAY so. As a bare command under
+            # bash -e it killed the step before this loop could retry or reach
+            # the error line below, making "3 attempts" really one.
+            git pull --rebase --autostash origin "\$BRANCH" || {
+              echo "::error::rebase onto origin/\$BRANCH failed — the row was not pushed."
+              echo "::error::If the ledger conflicted, .gitattributes is missing"
+              echo "::error::\`.skills/context-metrics.jsonl merge=union\` — re-run install-cadence.sh."
+              exit 1
+            }
           done
           echo "::error::could not push the measurement row after 3 attempts"
           exit 1
@@ -258,6 +318,14 @@ jobs:
       - name: Report drift
         if: always()
         run: |
+          # always() makes this reachable when the measurement never ran — the
+          # missing-credential case, which is exactly the failure this design
+          # exists to make legible. A FileNotFoundError stacked on top of the
+          # real preflight error helps nobody.
+          if [ ! -f /tmp/ctx.json ]; then
+            echo "no measurement was taken — see the failing step above"
+            exit 0
+          fi
           python3 - /tmp/ctx.json <<'PY'
           import json, sys
           p = json.load(open(sys.argv[1]))["policy"]
@@ -289,14 +357,17 @@ if [ "$EXISTED" = yes ]; then
 else
   echo "installed: $WF_PATH (schedule: $CRON)"
 fi
+ensure_attr
 
 cat <<NEXT
 
 The secret is REQUIRED — without it this job records nothing, silently:
   gh secret set ANTHROPIC_API_KEY
 
-Not committed — review and commit with your normal gate:
-  git add $WF_PATH
+Not committed — review and commit with your normal gate. BOTH files: the
+.gitattributes union merge has to be in history before the first concurrent
+run, or the race it prevents is already lost when it lands.
+  git add $WF_PATH .gitattributes
   git commit -m "chore: schedule the weekly context measurement"
 
 Then run it once by hand before trusting the schedule:
