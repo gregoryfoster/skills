@@ -29,6 +29,11 @@ Options:
   --file PATH      Policy file. Default: AGENTS.md, else CLAUDE.md.
   --docs-dir DIR   Reference-doc root. Default: CONTEXT_DOCS_DIR, then
                    .skills/context-docs-dir, then docs.
+  --no-source      Skip the source classes below. For a repo whose tracked
+                   source legitimately names the policy file everywhere — a
+                   tooling repo, say — where the sweep is all noise. The report
+                   says when the sweep ran with this on, so a clean exit never
+                   silently means "not looked at".
   --ack-file PATH  Acknowledgement file. Default: .skills/context-seams-ok.
                    One entry per line, two forms:
                      CONTENT            substring of "<class> <path> <line>"
@@ -51,7 +56,7 @@ Options:
                    covering more than 3 hits or more than one file.
   -h, --help       Show this help and exit 0.
 
-What it reports, in three classes:
+What it reports, in four classes:
 
   back-references  Every mention of the policy file's name (AGENTS.md or
                    CLAUDE.md) inside a live reference doc. A doc that says "see
@@ -74,6 +79,32 @@ What it reports, in three classes:
                    appended a second copy), and headings carrying provenance —
                    "from AGENTS.md" or an issue number — which ages into noise
                    and bakes the run into permanent anchor slugs.
+
+  source refs      The same two reference shapes — the policy filename, and a
+                   moved title — in tracked source OUTSIDE the docs tree, as
+                   their own classes (source-back-reference, source-moved-title)
+                   so they do not drown the doc classes. Docstrings ship inside
+                   wheels: a consumer reading one in site-packages is pointed at
+                   a policy file they do not have. One adoption run left 16 such
+                   references across 13 files and this sweep reported none of
+                   them while fixing one it stumbled on — worse than missing all
+                   of them, since the clean exit reads as "swept". Seven of the
+                   sixteen named the section title and not the filename, so a
+                   filename grep alone finds nine — which is why the moved-title
+                   set is swept here too, and why it had to be tightened first.
+                   Do NOT fix a hit by repointing it at a bare docs/ path:
+                   that has no valid resolution from an installed wheel and can
+                   silently resolve to a different repo's file in a sibling
+                   checkout. Qualify it — `<distribution> docs/<FILE>.md`.
+
+                   Swept only when a section actually LEFT the policy file since
+                   --base, because that is what makes a source mention stale; a
+                   script that reads the policy file names it legitimately, and
+                   sweeping unconditionally buries the class in hundreds of
+                   those. The report states its coverage either way. Tracked
+                   files only (git ls-files, so the repo's ignore rules apply),
+                   skipping *.md, the docs tree, .skills, archival subtrees, and
+                   anything binary or over 500 KB.
 
 Sections whose titles still exist in the policy file are not reported as moved.
 The report goes to stdout in full. The last two lines are machine-readable:
@@ -109,12 +140,14 @@ BASE="HEAD"
 POLICY=""
 DOCS_DIR=""
 ACK_FILE=".skills/context-seams-ok"
+SWEEP_SOURCE=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="${2:?--base needs a revision}"; shift 2 ;;
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
+    --no-source) SWEEP_SOURCE=0; shift ;;
     --ack-file) ACK_FILE="${2:?--ack-file needs a path}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -183,12 +216,36 @@ if [ -d "$DOCS_DIR" ]; then
   done <"$TMP/docs.all"
 fi
 
+# Tracked source outside the docs tree: the surface the sweep never looked at.
+# git ls-files rather than find — it is limited to tracked files and inherits
+# the repo's ignore rules for free, so a build tree or a vendored dependency
+# cannot flood the report. Markdown is excluded everywhere: the docs classes
+# already own the docs tree, and a README naming the policy file is navigation
+# rather than a shipped docstring. .skills is excluded because it holds this
+# sweep's own acknowledgement file and the telemetry ledger, both of which quote
+# the policy filename by design.
+: >"$TMP/src"
+if [ "$SWEEP_SOURCE" -eq 1 ]; then
+  LS_RC=0
+  git ls-files -z -- ':!*.md' ':!*.markdown' ':!.skills' ":!$DOCS_DIR" \
+    >"$TMP/src.all" 2>"$TMP/ls.err" || LS_RC=$?
+  [ "$LS_RC" -eq 0 ] || {
+    echo "ERROR git ls-files failed: $(tr -d '\n' <"$TMP/ls.err")" >&2; exit 2; }
+  while IFS= read -r -d '' f; do
+    [ -n "$f" ] || continue
+    ctx_is_archival "$f" || printf '%s\n' "$f" >>"$TMP/src"
+  done <"$TMP/src.all"
+fi
+
 RC=0
-python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" <<'PY' || RC=$?
+python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" "$TMP/src" \
+  "$SWEEP_SOURCE" <<'PY' || RC=$?
+import os
 import re
 import sys
 
-base_policy_path, policy_rel, docs_list, ack_file = sys.argv[1:5]
+(base_policy_path, policy_rel, docs_list, ack_file, src_list,
+ sweep_source) = sys.argv[1:7]
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
@@ -197,6 +254,7 @@ with open(policy_rel, encoding="utf-8", errors="replace") as fh:
 now_lines = now_text.splitlines()
 
 docs = [d for d in open(docs_list, encoding="utf-8").read().splitlines() if d]
+src = [s for s in open(src_list, encoding="utf-8").read().splitlines() if s]
 
 HEADING = re.compile(r"^(#{2,6})\s+(.*?)\s*$")
 
@@ -312,6 +370,58 @@ for path in [policy_rel] + docs:
             seams.append(("provenance-heading", f"{path}:{i}", m.group(2)[:100],
                           line.strip()))
 
+# -- class 4: the same two shapes in tracked SOURCE, as their own classes and
+#    reported last, so they cannot drown the doc classes.
+#
+#    Nothing outside the docs tree was ever read, so a curation could relocate a
+#    contract and leave every production caller's docstring pointing at the old
+#    home — 16 of them across 13 files on one adoption run, under a clean exit.
+#    These ship inside wheels, where the reader has no policy file at all.
+#
+#    Only when something MOVED. A source file naming the policy file is usually
+#    correct (a script that reads it must name it), and an unconditional sweep
+#    buries the class: the skill's own repo would report ~180. What makes a
+#    mention stale is content having LEFT, which is what `moved` measures.
+#
+#    One hit per line, filename first: a docstring citing both the file and the
+#    section is one judgement, not two.
+MAX_SOURCE_BYTES = 500 * 1024
+
+
+def source_lines(path):
+    """Text only. git ls-files lists every tracked blob, including images and
+    fixtures; decoding those is noise at best and slow at worst."""
+    try:
+        if os.path.getsize(path) > MAX_SOURCE_BYTES:
+            return []
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return []
+    if b"\0" in data:
+        return []
+    return data.decode("utf-8", "replace").splitlines()
+
+
+if src and moved:
+    title_pats = [(k, orig, re.compile(re.escape(orig), re.IGNORECASE))
+                  for k, orig in moved.items()]
+    for s in src:
+        for i, line in enumerate(source_lines(s), 1):
+            if any(n in line for n in policy_names):
+                seams.append(("source-back-reference", f"{s}:{i}",
+                              line.strip()[:120], line.strip()))
+                continue
+            for k, orig, pat in title_pats:
+                if not pat.search(line):
+                    continue
+                if k not in sweepable and not POINTER.search(line):
+                    continue
+                seams.append(("source-moved-title", f"{s}:{i}",
+                              f"references '{orig}' — {line.strip()[:100]}",
+                              line.strip()))
+                break
+
 # Acknowledged hits: judged legitimate on an earlier run and recorded in the
 # ack file, one substring per line. Matched on content, not line numbers, so an
 # entry survives unrelated edits and expires the moment its line changes —
@@ -370,6 +480,19 @@ if generic:
           f"({named[:120]}) — one word, or under 8 characters. They were "
           "matched only on lines that point somewhere: a §, a markdown link, "
           "or a .md filename.")
+# What was and was not looked at outside the docs tree. Without this the exit
+# code is the only signal, and a clean one reads as "swept" — which is how 16
+# stale docstrings shipped under a report that had never opened a .py file.
+if sweep_source != "1":
+    print("note: source not swept (--no-source) — mentions of the policy file "
+          "in tracked source outside the docs tree were not looked at.")
+elif not moved:
+    print(f"note: {len(src)} tracked source file(s) not swept — nothing left "
+          "the policy file since --base, so a mention there is not fallout "
+          "from this run.")
+else:
+    print(f"note: swept {len(src)} tracked source file(s) outside the docs "
+          f"tree for the policy filename and {len(moved)} moved title(s).")
 if new:
     print(f"{len(new)} seam(s) to review — each needs a decision, not "
           "necessarily a fix:\n")

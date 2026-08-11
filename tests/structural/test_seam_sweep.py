@@ -161,3 +161,134 @@ class TestGenericMovedTitles:
         r = _run(_moved_repo(tmp_path))
         assert "People" in r.stdout and "Organizations" in r.stdout
         assert "Deployment Topology" not in r.stdout
+
+
+class TestSourceSweep:
+    """#113: the sweep read the policy file and docs/*.md and nothing else, so
+    16 docstring references in shipped packages survived a clean exit — worse
+    than missing all of them, because the clean exit reads as 'swept'."""
+
+    def test_a_docstring_naming_the_policy_file_is_reported(
+            self, tmp_path: Path):
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/app.py",
+               '"""Bounds semantics live in AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout
+        assert "source-back-reference" in r.stdout
+        assert "src/app.py:1" in r.stdout
+
+    def test_a_docstring_naming_only_the_moved_title_is_reported(
+            self, tmp_path: Path):
+        """Seven of the sixteen cited the section title and not the filename,
+        so a filename-only grep finds nine."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/app.py",
+               '"""Ordering follows the Deployment Topology section."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout
+        assert "source-moved-title" in r.stdout
+        assert "src/app.py:1" in r.stdout
+
+    def test_one_source_line_is_one_hit(self, tmp_path: Path):
+        """A line naming both is one judgement, not two — the source classes
+        must not drown the docs classes they sit beside."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/app.py",
+               '"""See AGENTS.md, the Deployment Topology section."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert "seams: 1" in r.stdout, r.stdout
+
+    def test_untracked_source_is_not_swept(self, tmp_path: Path):
+        """git ls-files keeps the sweep to tracked files and inherits the
+        repo's ignore rules for free."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "build/generated.py", '"""See AGENTS.md."""\n')
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_markdown_outside_the_docs_tree_is_not_a_source_hit(
+            self, tmp_path: Path):
+        repo = _moved_repo(tmp_path)
+        _write(repo, "README.md", "Conventions live in AGENTS.md.\n")
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_archival_source_is_not_swept(self, tmp_path: Path):
+        """A dated spec recording what AGENTS.md said at the time is correct
+        history — the same exemption the docs sweep makes."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "specs/2026-01-01/gen.py", '"""Per AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_the_skill_state_dir_is_not_swept(self, tmp_path: Path):
+        """.skills holds the ack file and the telemetry ledger, both of which
+        quote the policy filename by design."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, ".skills/context-metrics.jsonl",
+               '{"policy": "AGENTS.md", "tokens": 1}\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_binary_files_are_not_swept(self, tmp_path: Path):
+        repo = _moved_repo(tmp_path)
+        (repo / "blob.bin").write_bytes(b"AGENTS.md\x00\x01\x02")
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+
+    def test_source_is_not_swept_when_nothing_left_the_policy_file(
+            self, tmp_path: Path):
+        """A source mention is fallout only if content moved. Sweeping
+        unconditionally makes the class unreadable: this repo alone carries 180
+        legitimate mentions in scripts that read the policy file for a living.
+        The report says so rather than implying coverage it does not have."""
+        repo = tmp_path / "unmoved"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(repo, "AGENTS.md", "# Guide\n\n## Build\n\nrun make\n")
+        _write(repo, "src/app.py", '"""Bounds live in AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+        assert "not swept" in r.stdout
+
+    def test_no_source_disables_the_class_and_says_so(self, tmp_path: Path):
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/app.py", '"""Bounds live in AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo, "--no-source")
+        assert r.returncode == 0, r.stdout
+        assert "--no-source" in r.stdout
+
+    def test_a_swept_run_reports_its_coverage(self, tmp_path: Path):
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/app.py", '"""Nothing to see."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+        assert "tracked source file(s)" in r.stdout
+
+    def test_a_source_hit_can_be_acknowledged(self, tmp_path: Path):
+        """The ack file's substring form works on the new classes, so a
+        docstring that legitimately names the policy file is judged once."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/app.py",
+               '"""Bounds semantics live in AGENTS.md."""\n')
+        # The :: form, because a docstring's content does not start its line.
+        _write(repo, ".skills/context-seams-ok",
+               "src/app.py :: Bounds semantics live in AGENTS.md\n")
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+        assert "seams_acked: 1" in r.stdout
