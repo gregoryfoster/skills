@@ -3197,8 +3197,16 @@ class TestCadenceShellActuallyRuns:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "nothing to commit" not in r.stdout, (
             "the row was silently dropped: " + r.stdout)
+        # env=_clean_env() is not optional here. Git exports GIT_DIR to hook
+        # processes, so when the suite runs under the pre-commit hook this call
+        # inherits it. From the main checkout GIT_DIR is the relative ".git",
+        # which -C re-resolves against the temp repo by accident and the test
+        # passes; from a linked worktree it is absolute, so the log read comes
+        # from the SHARED repo and the assertion fails on a diff that never
+        # touched this code. The only call in this file that was missing it.
         log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
-                             capture_output=True, text=True).stdout
+                             capture_output=True, text=True,
+                             env=_clean_env()).stdout
         assert "weekly context measurement" in log, log
 
     def test_a_human_commit_during_the_measurement_does_not_lose_the_row(
