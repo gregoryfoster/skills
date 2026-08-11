@@ -87,9 +87,12 @@ it supersedes.
 **Commit it before the first concurrent run.** Git resolves a merge using the
 attributes in the tree being *replayed onto*, so an attribute added after the
 fact does not rescue the conflict that motivated it. That is why the installer
-tells you to stage both files together, and why `--uninstall` leaves the
-attribute behind: it is correct for an append-only ledger whether or not
-anything is scheduled.
+tells you to stage both files together.
+
+`--uninstall` removes the attribute along with the workflow, leaving
+`.gitattributes` as it found it — the file itself goes only if nothing else was
+in it. The recorded rows stay either way: they are the series, and removing the
+mechanism that adds to it is not a reason to discard what it already collected.
 
 ## The workflow
 

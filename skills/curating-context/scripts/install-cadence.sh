@@ -34,8 +34,10 @@ Options:
                    TWO artifacts, so both are reported independently and the
                    exit code reflects either being absent.
                    Exit 0 both present, 3 either missing.
-  --uninstall      Remove the workflow file. Leaves the merge attribute, which
-                   is correct for an append-only ledger regardless.
+  --uninstall      Remove the workflow file AND the union-merge attribute it
+                   installed, leaving .gitattributes as it found it (the file
+                   itself goes only if nothing else was in it). The recorded
+                   rows stay — they are the series.
   --print          Write the rendered workflow to stdout and exit; touch
                    nothing. Still needs to be inside a git repo: the default
                    schedule is derived from the repo identity.
@@ -133,6 +135,27 @@ fi
 ATTR_FILE="$ROOT/.gitattributes"
 ATTR_LINE="$LEDGER merge=union"
 
+ATTR_NOTE_1="# Append-only telemetry: concurrent appends must union-merge, or a"
+ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost."
+
+# Remove OUR block for a given ledger: the attribute line and the two comment
+# lines that introduce it. Factored rather than inlined twice — a superseded
+# ledger and an uninstall want the same operation, and hand-rolling this awk a
+# second time is the duplication the last three rounds kept finding.
+strip_attr() {
+  [ -f "$ATTR_FILE" ] || return 0
+  awk -v want="$1" -v n1="$ATTR_NOTE_1" -v n2="$ATTR_NOTE_2" '
+    { line = $0; sub(/^[ \t]+/, "", line) }
+    line == n1 || line == n2 { next }
+    line !~ /^#/ && index(line, want) == 1 { next }
+    { print }
+  ' "$ATTR_FILE" >"$ATTR_FILE.tmp" && mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+  # If nothing but blank lines is left, the file was ours to begin with.
+  if [ ! -s "$ATTR_FILE" ] || ! grep -q '[^[:space:]]' "$ATTR_FILE"; then
+    rm -f "$ATTR_FILE"
+  fi
+}
+
 # Anchored, and comment lines are skipped. A substring grep reported a
 # COMMENTED-OUT attribute as present — and commenting it out is exactly how
 # somebody disables it, so the check asserted a guarantee that was switched off
@@ -177,11 +200,11 @@ if [ "$MODE" = "uninstall" ]; then
   else
     echo "nothing to remove: no $WF_PATH"
   fi
-  echo "note: the recorded rows were left in place — they are the series."
   if has_attr; then
-    echo "      The .gitattributes union merge was left too, which is correct"
-    echo "      for an append-only ledger whether or not anything is scheduled."
+    strip_attr "$ATTR_LINE"
+    echo "removed the .gitattributes union merge for $LEDGER"
   fi
+  echo "note: the recorded rows were left in place — they are the series."
   exit 0
 fi
 
@@ -222,15 +245,10 @@ ensure_attr() {
   # A deliberate ledger change supersedes the old attribute. Leaving it makes
   # .gitattributes accumulate one dead line per reconfiguration and makes
   # --check's output ambiguous about which one is live.
-  if [ -n "$INSTALLED_LEDGER" ] && [ "$INSTALLED_LEDGER" != "$LEDGER" ] \
-     && [ -f "$ATTR_FILE" ]; then
+  if [ -n "$INSTALLED_LEDGER" ] && [ "$INSTALLED_LEDGER" != "$LEDGER" ]; then
     stale="$INSTALLED_LEDGER merge=union"
-    if grep -qF "$stale" "$ATTR_FILE"; then
-      awk -v want="$stale" '
-        { line = $0; sub(/^[ \t]+/, "", line) }
-        line !~ /^#/ && index(line, want) == 1 { next }
-        { print }
-      ' "$ATTR_FILE" >"$ATTR_FILE.tmp" && mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+    if [ -f "$ATTR_FILE" ] && grep -qF "$stale" "$ATTR_FILE"; then
+      strip_attr "$stale"
       echo "removed superseded .gitattributes line: $stale"
     fi
   fi
@@ -244,9 +262,7 @@ ensure_attr() {
     printf '\n' >>"$ATTR_FILE"
   fi
   {
-    printf '\n# Append-only telemetry: concurrent appends must union-merge, or a\n'
-    printf '# scheduled measurement racing a human commit conflicts and is lost.\n'
-    printf '%s\n' "$ATTR_LINE"
+    printf '\n%s\n%s\n%s\n' "$ATTR_NOTE_1" "$ATTR_NOTE_2" "$ATTR_LINE"
   } >>"$ATTR_FILE"
   echo "wrote .gitattributes: $ATTR_LINE"
 }
