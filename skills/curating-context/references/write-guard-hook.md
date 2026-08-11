@@ -52,12 +52,27 @@ something committed it unannounced is a bad surprise.
    edit, and not even an `ok:` line appears, because logging starts after the
    source.
 2. A `PostToolUse` entry in `.claude/settings.json` matching
-   `Edit|Write|MultiEdit`, with a 10s timeout. The jq merge strips any prior
-   entry for this command before appending, and defaults `.hooks` /
-   `.hooks.PostToolUse` into existence, so it works against `{}`, a settings file
-   with no hooks block, and one with other hooks already wired. A settings file
-   that is not valid JSON is **refused, not overwritten** — it may hold
-   permissions and env config that would be expensive to lose.
+   `Edit|Write|MultiEdit`, with a 10s timeout. The command is
+   `bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/context-budget-guard.sh"` —
+   anchored on the project dir rather than on the hook process's cwd, which was
+   an undocumented assumption the earlier relative form was load-bearing on
+   ([#110](https://github.com/gregoryfoster/skills/issues/110)). The `:-.`
+   fallback is `init-socraticode`'s house style: with the variable unset, a bare
+   `"$CLAUDE_PROJECT_DIR/…"` degrades to `bash "/.claude/hooks/…"` and errors on
+   every edit, where `.` degrades to exactly the old behaviour. The guard
+   resolves the repo the same way, falling back to `$CLAUDE_PROJECT_DIR` when its
+   cwd is not inside one.
+
+   The jq merge strips any prior entry for this hook before appending, and
+   defaults `.hooks` / `.hooks.PostToolUse` into existence, so it works against
+   `{}`, a settings file with no hooks block, and one with other hooks already
+   wired. The strip matches on the **script path**, not on the exact command
+   string, so an install written by an older version is found, replaced, and
+   still removable by `--uninstall`; matching the exact string would have made
+   every existing install permanent. `--check` reports such an entry as installed
+   and names it, since it works — a re-run normalizes it. A settings file that is
+   not valid JSON is **refused, not overwritten** — it may hold permissions and
+   env config that would be expensive to lose.
 3. `.skills/context-budget` and `.skills/context-doc-budget`, only when the flags
    are passed.
 
@@ -136,13 +151,21 @@ as a "hook error" notice, which is the wrong frame for an advisory — this is
 information, not a failure. So the guard exits 0 on **every** path, including
 every internal failure. A hook must never be the reason a session misbehaves.
 
-Every decision, speak or stay quiet, is logged to `.git/context-budget.log`
-(truncated to the last 200 lines past 64 KiB). That log is how you confirm the
-hook is wired at all:
+Every decision, speak or stay quiet, is logged to
+`$(git rev-parse --absolute-git-dir)/context-budget.log` (truncated to the last
+200 lines past 64 KiB). That log is how you confirm the hook is wired at all:
 
 ```bash
-tail .git/context-budget.log
+tail "$(git rev-parse --absolute-git-dir)/context-budget.log"
 ```
+
+The git *dir*, not `.git`, because in a linked worktree `.git` is a file
+containing `gitdir: …` — the earlier hardcoded path could never be appended to
+there, and the failure was swallowed, so repos that mandate worktree development
+got no audit trail in exactly the trees where editing happens
+([#109](https://github.com/gregoryfoster/skills/issues/109)). The log is
+per-worktree, matching `skills-submodule-update.sh`; the installer prints the
+resolved path when it finishes.
 
 An `ok:` line proves the hook ran and chose silence — a distinction you cannot
 otherwise make from the outside, and the first thing to check when someone
@@ -180,6 +203,19 @@ reports "the guard never fires".
   failure mode the `ok:` log lines exist to expose.
 - **Needs `python3` or `jq`** to parse the hook payload. With neither it logs a
   skip line and exits 0 rather than parsing JSON with a regex.
+- **Structured edits only — not every write.** The matcher is
+  `Edit|Write|MultiEdit`, so two write paths are invisible to it: a **shell
+  redirect** (`cat >> AGENTS.md <<'EOF'`, `tee -a`, `sed -i`), which arrives as a
+  `Bash` call the guard never sees, and **`NotebookEdit`**, narrower in practice.
+  A bulk heredoc append is exactly what regrowth looks like between runs, and in
+  one adoption run it added the single largest block in the whole curation
+  without the guard firing
+  ([#103](https://github.com/gregoryfoster/skills/issues/103)). Adding `Bash` to
+  the matcher is **not** the fix: it would run the guard on every shell command
+  in the session, the overwhelming majority of which touch nothing, to catch a
+  small fraction of writes — inverting the cheapness that makes the guard
+  tolerable. The gap is covered at review time instead, by `context-delta.sh`,
+  which measures the branch's whole effect regardless of how the bytes arrived.
 
 ## Relationship to the weekly run
 
