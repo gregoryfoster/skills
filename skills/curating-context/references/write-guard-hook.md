@@ -217,6 +217,13 @@ reports "the guard never fires".
   tolerable. The gap is covered at review time instead, by `context-delta.sh`,
   which measures the branch's whole effect regardless of how the bytes arrived.
 
+It sees what the write guard cannot, twice over: the guard evaluates one edit at a
+time, so a 400-token addition that replaced 600 elsewhere reads the same as a
+straight gain; and it matches `Edit|Write|MultiEdit`, so a shell redirect
+(`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it
+([#103](https://github.com/gregoryfoster/skills/issues/103)). Review sees the
+whole branch however the bytes arrived, while the tradeoff is still cheap.
+
 ## Relationship to the weekly run
 
 The guard and the skill are the two halves of one ratchet: the guard stops
@@ -234,3 +241,11 @@ See [cadence.md](cadence.md).
 If a genuine addition has to land and push the file over, that is fine — the
 advisory is not a veto. Land it, and let the next run classify it. What the guard
 buys is that the decision was seen rather than accreted.
+
+The guard and the weekly run are two halves of one ratchet: the guard stops
+regrowth cheaply, in the turn that caused it, on the common path; the run and the
+review-time delta recover ground and catch what the matcher never saw. A repo with
+the run but no guard sawtooths, and no curation fixes a file something else keeps
+appending to. Semantics, the speak-only-on-both-conditions rule, the uncovered
+write paths, and uninstall:
+[references/write-guard-hook.md](write-guard-hook.md).

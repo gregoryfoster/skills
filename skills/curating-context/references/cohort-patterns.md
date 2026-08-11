@@ -54,6 +54,13 @@ The shape to converge on. Present in `cannobserv`, `cli`,
 orphaned docs.
 
 ```markdown
+### Normalizing the index — the Phase 5 step in full
+
+   reference doc with a one-line purpose. See
+   [references/cohort-patterns.md](cohort-patterns.md) for the shape
+   the cohort has converged on, and the canonical section order and `docs/`
+   filenames to align with.
+
 ## Detail Docs
 
 - [docs/COMMANDS.md](docs/COMMANDS.md) — every runnable command, with flags
@@ -66,6 +73,33 @@ One line per live doc, each naming **what a task would need it for** — the lin
 the routing signal that decides whether an agent loads a 10k-token file, so
 "style guide" is worse than "code style and formatting rules". The index is class
 A by construction: it is the mechanism progressive disclosure runs on.
+
+## Cross-repo surveys stay read-only
+
+Two mechanics enforce this:
+
+- `measure-context.sh --no-write` suppresses the one side effect an `--exact` run
+  has — persisting the observed token ratio to `.skills/context-token-ratio`.
+  **Always pass it when surveying a repo you are not curating.** Without it, a
+  read-only-looking survey leaves an untracked file behind in every repo it
+  touched.
+- `cohort-report.sh` and `score-cohort.sh` read ledgers over `gh api` and never
+  clone or write.
+
+A cohort ledger therefore fills in as each repo adopts the skill, not from one
+central sweep. `cohort-report.sh` reporting "no ledger" for a member is the
+expected state before adoption, not a failure.
+
+### The rule in full
+
+This skill edits **the repo it is invoked in**. It never writes to a sibling
+checkout, even one it just measured.
+
+Cross-repo work is filed as **issues**, not commits — the same convention the
+skill-family sweeps already follow. So a cohort pass is: measure each member
+read-only, then open an adoption issue per repo carrying that repo's numbers and
+findings. The repo's own maintainers (or an agent invoked inside it) run the
+curation.
 
 ## Reference-doc filenames
 
@@ -87,6 +121,13 @@ When demoting, prefer an existing name from this table over a new one. A
 thirteenth distinct filename for the same concept is how the cohort loses its
 shared shape.
 
+   When the repo has **no `docs/` tree at all** — as this one did — the run is
+   creating it. Take filenames from the frequency table in
+   [references/cohort-patterns.md](cohort-patterns.md) rather than
+   inventing them; a thirteenth distinct name for the same concept is how the
+   cohort loses its shared shape. This is a different starting state from the six
+   members that have `docs/` but no index: there, step 2 is the whole job.
+
 ### Archival subtrees
 
 `docs/plans/` (11 repos), `docs/research/` (6), `docs/specs/` (4),
@@ -95,6 +136,12 @@ since-moved path inside a plan is a correct historical record. `measure-context.
 excludes them at any depth — including the nested `docs/superpowers/plans/` and
 `docs/superpowers/specs/` that vendored skill trees create. Never widen
 `--archival` and then act on the result.
+
+Archival subtrees (`docs/plans/`, `specs/`, `research/`, `audits/`, `archive/`, at
+any depth) are excluded by default. Plans and audits are dated snapshots — a
+since-moved path inside one is a correct historical record, and counting them
+buries the live signal under hundreds of files. Do not widen `--archival` to
+"measure everything" and then act on the result.
 
 ## Recurring defects
 
@@ -165,6 +212,8 @@ Note that `cannabis.observer-wordpress` alone carries **192k tokens** of
 over-budget live docs plus a 49k policy file. Demoting more into that tree would
 be moving deck chairs; it needs splitting first.
 
+**Split before demoting, never after.** A doc split is free only while nothing in the surface points at what moves; once relocated prose points *into* a section, splitting it forces a choice between a circular pointer and a [no-loss failure](validation-gate.md#warranted-losses-are-not-the-same-claim-as-no-loss). One cohort run reverted a split because moving `## DB` into `docs/SCHEMA.md` routed 14 relocated bullets back to their own page. If a destination needs splitting, split it first.
+
 ### 3. One section dominating the file
 
 `cannabis.observer-wordpress`: `## Constraints & Working Rules` is **91% of
@@ -189,11 +238,41 @@ a `docs/COMMANDS.md`. Keep the two or three commands needed on nearly every task
 inline (class A); the full reference is class B. When they disagree, that is
 warrant #1 for deletion of the copy — but establish which is correct first.
 
+4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text;
+   do not paraphrase it in transit. A paraphrase during a move is an
+   unreviewable content change wearing a refactor's clothes — and it is the one
+   thing a reader skimming the diff will not notice, because the words are all
+   still there.
+
+   Before **extending** an existing doc, read its `##` headings first: if the
+   destination already covers the incoming topic, merge into the canonical
+   section rather than appending a near-duplicate beside it — the cohort's
+   defect #5 created at the destination by the run itself. And keep provenance
+   out of headings: "Demoted from AGENTS.md (#412)" belongs in the commit, not
+   baked into a permanent anchor slug. Phase 6.5 checks both.
+
 ### 6. Cross-repo and moved link targets
 
 `cli/docs/STYLE.md` links `cannobserv/docs/STYLE.md` — a path valid only in a
 sibling checkout. These are genuine FALSE verdicts and are auto-fixable: point at
 the sibling repo's GitHub URL, or inline the rule.
+
+`prove-no-loss.sh` proves moved content arrived; this proves the rest of the
+surface still **describes where it went** — the *prose* half. `links.dead_anchors`
+now decides the *link* half mechanically. One cohort adoption shipped a
+clean run carrying ten such findings; a later one left 16 stale docstring
+references across 13 shipped packages, which is why tracked **source** outside
+the docs tree is swept too once a section leaves the policy file. Never repoint
+one of those at a bare `docs/X.md` — no installed wheel resolves it, and it can
+hit a *different* repo's file in a sibling checkout. Qualify or inline it.
+
+The report is hits **to judge**, not defects to fix — a reference to the policy
+file is wrong only if what it points at moved. Judge each: fix what lies, add
+what is legitimate to `.skills/context-seams-ok` (entries match line *content*
+and expire when the line changes, which is when they need re-judging; the
+report warns on blanket patterns). Re-run, carry both counts to Phase 7
+(`--seams N --seams-acked M`), and run this sweep *last*. No class sees a
+command split from its claim: re-read any command beside a block that moved.
 
 ## Baseline: policy-file tokens, 2026-08-05
 

@@ -170,3 +170,21 @@ line:
    meet the budget.** Report the shortfall. An over-budget file that is still
    true is strictly better than an on-budget file that lost a load-bearing fact,
    because the second failure is invisible until it costs someone a session.
+
+## The verdicts as Phase 2 states them
+
+Three verdicts, and they are not interchangeable:
+
+- **FALSE** — a command refuted the claim. Eligible for correction or removal.
+  Deliberately narrow: a broken markdown link, or a missing target in a runner
+  manifest that does exist.
+- **TRUE** — confirmed. Note that a *closed* issue reference is TRUE-the-reference
+  yet may still make surrounding prose stale ("pending in #42" when #42 shipped).
+- **UNVERIFIABLE** — the script could not decide. **Never a licence to delete.**
+
+Then verify what no script can, using
+[references/fact-verification.md](fact-verification.md): behavioural
+rules, version pins, port numbers, deployment topology, and "known issues"
+sections. That file gives the per-class verification command and the rule for
+when absence of evidence counts as evidence. Prioritise by decay rate — commands
+and issue state rot fastest, architecture prose slowest.
