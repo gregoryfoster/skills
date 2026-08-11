@@ -79,7 +79,14 @@ Output (stdout, JSON):
               The unit most demotions actually act on: a large `##` section is
               usually kept-plus-demoted rather than moved whole.
   docs      [ { path, lines, bytes, tokens, linked, over_budget } ]  live only
-  links     { refs, dead, orphans }
+  links     { refs, dead, dead_anchors, orphans }
+              `dead` is a link whose FILE does not exist. `dead_anchors` is a
+              link whose file exists and whose #fragment names no heading in it
+              — reported as its own class so `dead` keeps its meaning for
+              existing consumers and a repo adopting the check can stage the
+              cleanup. Archival subtrees are scanned as SOURCES of anchors even
+              though they are excluded from the doc inventory: a dated plan
+              pointing into a live doc is navigation and goes stale the same way.
   totals    { tokens_policy, tokens_docs, tokens_live, files_docs, archival_skipped }
 
   tokens_live is the number that matters: the policy file plus every live
@@ -485,15 +492,145 @@ norm() {
 }
 
 extract_links() {
-  # Relative markdown link targets, with anchors and absolute URLs stripped.
-  # Targets containing <>, *, or a comma-space are prose that happens to sit in
-  # bracket-paren form — `[label](references/<name>.md)` documenting a naming
-  # convention, or a parenthesised list. Reporting them as dead links trains the
-  # reader to ignore the dead-link list, so they are dropped here.
+  # Relative markdown link targets, absolute URLs dropped and the #fragment KEPT.
+  # The fragment used to be stripped here, which made `[l](docs/FOO.md#heading)`
+  # a check that docs/FOO.md exists and nothing more — blind to exactly the edit
+  # this skill encourages, since splitting an over-budget doc moves headings out
+  # of a file while leaving the file in place (#120, #124). Callers split the
+  # target on the first `#` and apply the prose guard to each half; see is_prose.
   grep -oE '\]\([^)]+\)' "$1" 2>/dev/null \
-    | sed -e 's/^](//' -e 's/)$//' -e 's/#.*$//' \
-    | grep -vE '^(https?:|mailto:|//|$)' \
-    | grep -vE '[<>*]|, ' || true
+    | sed -e 's/^](//' -e 's/)$//' \
+    | grep -vE '^(https?:|mailto:|//|$)' || true
+}
+
+is_prose() {
+  # True for a target — or a fragment — containing <>, *, or a comma-space: prose
+  # that happens to sit in bracket-paren form, `[label](references/<name>.md)`
+  # documenting a naming convention, or a parenthesised list. Reporting these
+  # trains the reader to ignore the list, so a prose PATH drops the whole link
+  # (as it always has) and a prose FRAGMENT drops only itself, leaving the path
+  # around it resolved as before.
+  case "$1" in
+    *'<'*|*'>'*|*'*'*|*', '*) return 0 ;;
+  esac
+  return 1
+}
+
+slugs_of() {
+  # slugs_of <markdown file> -> one GitHub heading slug per line, document order.
+  #
+  # GitHub's rules: lowercase, drop everything outside [a-z0-9 _-], each space
+  # becomes a hyphen, and a repeat of an earlier slug in the SAME FILE gets -1,
+  # -2, ... Per file, not per pre-split document: a split that moves the third
+  # `### PHP layers` into a file of its own makes it `php-layers` again, so a
+  # suffix computed over the original document validates against slugs that do
+  # not exist (#120).
+  #
+  # Spaces are substituted one for one rather than collapsed, because a dropped
+  # character leaves its spaces behind: `Tranche 5h3 — 2026-06-15` slugs to
+  # `tranche-5h3--2026-06-15`, double hyphen and all.
+  #
+  # Headings inside fenced code blocks do not count. A `# comment` in a bash
+  # fence otherwise manufactures an anchor that masks a real miss, and this
+  # cohort's docs are dense with bash fences.
+  #
+  # Not modelled: explicit `<a id="...">` anchors, and setext headings (`Title`
+  # over `=====`). A repo using either sees a dead_anchors entry to judge rather
+  # than a silent pass, which is why the miss class is reported separately from
+  # `dead` in the first place.
+  LC_ALL=C awk '
+    {
+      line = $0
+      gsub(/\t/, "    ", line)   # a tab is up to four columns of indent
+      indented = line
+      sub(/^ +/, "", line)
+      # Four or more columns of indent is an indented code block, so neither a
+      # heading nor a fence — same reason fenced content is skipped below.
+      if (length(indented) - length(line) > 3) next
+      if (line ~ /^(```|~~~)/) {
+        ch = substr(line, 1, 1)
+        # The closing fence must repeat the opening character, so a ``` example
+        # inside a ~~~ block does not end the block.
+        if (!fence) { fence = 1; fchar = ch }
+        else if (ch == fchar) { fence = 0 }
+        next
+      }
+      if (fence) next
+      if (line !~ /^#+ /) next
+      sub(/^#+ +/, "", line)
+      sub(/ +#+ *$/, "", line)   # closed ATX: `## Heading ##`
+      sub(/ +$/, "", line)
+      gsub(/\]\([^)]*\)/, "]", line)  # a link in a heading slugs on its text
+      line = tolower(line)
+      gsub(/[^a-z0-9 _-]/, "", line)
+      gsub(/ /, "-", line)
+      if (line == "") next
+      seen[line]++
+      if (seen[line] > 1) print line "-" (seen[line] - 1)
+      else print line
+    }
+  ' "$1"
+}
+
+anchor_missing() {
+  # anchor_missing <target .md file> <fragment> -> 0 when the fragment names no
+  # heading in the target. Slug sets are computed once per target and cached: a
+  # policy file linking twenty anchors into one doc would otherwise re-read it
+  # twenty times.
+  local f="$1" frag="$2" idx
+  idx="$(grep -Fxn -- "$f" "$TMP/slugfiles" 2>/dev/null | head -1 | cut -d: -f1)" || idx=""
+  if [ -z "$idx" ]; then
+    printf '%s\n' "$f" >>"$TMP/slugfiles"
+    idx="$(LC_ALL=C wc -l <"$TMP/slugfiles" | tr -d ' ')"
+    slugs_of "$f" >"$TMP/slugs.$idx" \
+      || echo "WARN could not read headings from $f; its anchors will read as missing" >&2
+  fi
+  # Compared lowercased. GitHub only ever mints lowercase ids, and an author who
+  # typed #Some-Heading meant the heading that exists — reporting that as a miss
+  # would be the noise this class exists to avoid.
+  frag="$(printf '%s' "$frag" | tr '[:upper:]' '[:lower:]')"
+  grep -Fxq -- "$frag" "$TMP/slugs.$idx" && return 1
+  return 0
+}
+
+record_anchor() {
+  # record_anchor <source> <target> <fragment> — note a fragment that names no
+  # heading. Only for an existing .md target: a missing FILE is one defect, not
+  # two, and it is already on the dead list.
+  local src="$1" tgt="$2" frag="$3"
+  case "$tgt" in *.md) ;; *) return 0 ;; esac
+  [ -f "$tgt" ] || return 0
+  if anchor_missing "$tgt" "$frag"; then
+    printf '%s -> %s#%s\n' "$src" "$tgt" "$frag" >>"$TMP/dead_anchors"
+  fi
+}
+
+scan_anchors_only() {
+  # scan_anchors_only <file> — record this file's anchor misses and nothing else.
+  #
+  # For archival subtrees, which are excluded from the doc inventory and never
+  # traversed: a dated plan pointing into a live doc is navigation and goes stale
+  # the same way, so it is worth scanning as a SOURCE. Its dead PATHS stay
+  # unreported — a stale path inside a dated snapshot is a correct historical
+  # record, and reporting those is what buries the live signal (#120).
+  local src="$1" srcdir raw rawpath rawfrag tgt
+  srcdir="$(dirname "$src")"
+  [ "$srcdir" = "." ] && srcdir=""
+  extract_links "$src" >"$TMP/links.arch"
+  while IFS= read -r raw; do
+    [ -n "$raw" ] || continue
+    case "$raw" in *'#'*) rawfrag="${raw#*'#'}" ;; *) continue ;; esac
+    rawpath="${raw%%'#'*}"
+    [ -n "$rawfrag" ] || continue
+    if is_prose "$rawpath" || is_prose "$rawfrag"; then continue; fi
+    if [ -z "$rawpath" ]; then
+      tgt="$src"
+    else
+      tgt="$(norm "$srcdir" "$rawpath")"
+    fi
+    [ -n "$tgt" ] || continue
+    record_anchor "$src" "$tgt" "$rawfrag"
+  done <"$TMP/links.arch"
 }
 
 in_scope() {
@@ -513,6 +650,8 @@ in_scope() {
 : >"$TMP/reachable"
 : >"$TMP/refs"
 : >"$TMP/dead"
+: >"$TMP/dead_anchors"
+: >"$TMP/slugfiles"
 QUEUE=("$POLICY")
 qi=0
 while [ "$qi" -lt "${#QUEUE[@]}" ]; do
@@ -525,13 +664,26 @@ while [ "$qi" -lt "${#QUEUE[@]}" ]; do
   extract_links "$cur" >"$TMP/links.raw"
   while IFS= read -r raw; do
     [ -n "$raw" ] || continue
-    tgt="$(norm "$curdir" "$raw")"
+    rawpath="${raw%%'#'*}"
+    rawfrag=""
+    case "$raw" in *'#'*) rawfrag="${raw#*'#'}" ;; esac
+    if is_prose "$rawpath"; then continue; fi
+    if is_prose "$rawfrag"; then rawfrag=""; fi
+    if [ -z "$rawpath" ]; then
+      # A same-file anchor, [jump](#setup). It adds no file to the graph, so it
+      # is neither a ref nor traversed — but a heading rename inside one long
+      # file breaks it exactly as a cross-file rename does.
+      if [ -n "$rawfrag" ]; then record_anchor "$cur" "$cur" "$rawfrag"; fi
+      continue
+    fi
+    tgt="$(norm "$curdir" "$rawpath")"
     [ -n "$tgt" ] || continue
     if [ "$cur" = "$POLICY" ]; then printf '%s\n' "$tgt" >>"$TMP/refs"; fi
     if [ ! -e "$tgt" ]; then
       printf '%s -> %s\n' "$cur" "$tgt" >>"$TMP/dead"
       continue
     fi
+    if [ -n "$rawfrag" ]; then record_anchor "$cur" "$tgt" "$rawfrag"; fi
     # Out-of-scope targets (archival docs, root-level history files) are recorded
     # as reachable — so they never count as orphans — but are not traversed.
     if in_scope "$tgt"; then
@@ -559,6 +711,8 @@ if [ -d "$DOCS_DIR" ]; then
     [ -n "$d" ] || continue
     if ctx_is_archival "$d"; then
       ARCHIVAL_SKIPPED=$(( ARCHIVAL_SKIPPED + 1 ))
+      # Out of the inventory, still a source of anchors — see scan_anchors_only.
+      scan_anchors_only "$d"
       continue
     fi
     dl=$(LC_ALL=C wc -l <"$d" | tr -d ' ')
@@ -613,6 +767,7 @@ sort -t"$TAB" -k3,3nr "$TMP/docs.tsv" >"$TMP/docs.sorted"
 awk -F"$TAB" '$4 == "false" { print $5 }' "$TMP/docs.tsv" | sort >"$TMP/orphans"
 sort -u "$TMP/refs" >"$TMP/refs.sorted"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
+sort -u "$TMP/dead_anchors" >"$TMP/dead_anchors.sorted"
 
 printf '{\n'
 # Observed bytes-per-token, and — on a genuinely exact run — persist it so the
@@ -703,6 +858,8 @@ printf '  "links": {"refs": '
 json_list "$TMP/refs.sorted"
 printf ', "dead": '
 json_list "$TMP/dead.sorted"
+printf ', "dead_anchors": '
+json_list "$TMP/dead_anchors.sorted"
 printf ', "orphans": '
 json_list "$TMP/orphans"
 printf '},\n'

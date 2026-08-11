@@ -356,7 +356,7 @@ Re-run Phase 1 and assert, before committing:
   Carry the verdict onto the ledger row in Phase 7 (`--no-loss ok`). The
   validation gate treats a missing verdict as unscorable rather than as a pass,
   so a run that skipped this phase cannot clear it by silence.
-- `links.dead` is empty, and no new orphan appeared.
+- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](references/budget-and-metrics.md#the-link-graph)).
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes, if it asserts on policy-file content.
   Several cohort repos have structural tests that read `AGENTS.md`.
