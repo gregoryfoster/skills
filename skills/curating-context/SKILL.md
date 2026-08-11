@@ -474,18 +474,17 @@ The next two catch regrowth *between* those weekly measurements.
 `context-delta.sh` reports the branch's effect on the surface — token delta and
 budget position per changed file, nothing at all when the diff touches no
 context-surface file. The four `reviewing-code*` variants already call it from
-their `gather-context.sh` when this skill is vendored alongside them, so on those
-repos it needs no wiring. It is informational by construction and exits 0 on every
-path.
+their `gather-context.sh` when this skill is vendored alongside them, so it needs
+no wiring there. It is informational by construction and exits 0 on every path.
 
-It sees what the write guard cannot: the guard evaluates one edit at a time and
-cannot distinguish a 400-token addition that replaced 600 tokens elsewhere from a
-straight 400-token gain. Review sees the whole branch, and sees it while the
-tradeoff is still cheap to negotiate.
+It sees what the write guard cannot, twice over: the guard evaluates one edit at a
+time, so a 400-token addition that replaced 600 elsewhere reads the same as a
+straight gain; and it matches `Edit|Write|MultiEdit`, so a shell redirect
+(`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it
+([#103](https://github.com/gregoryfoster/skills/issues/103)). Review sees the
+whole branch however the bytes arrived, while the tradeoff is still cheap.
 
 ### Write guard
-
-Offer this once per repo, after the first successful curation:
 
 > Install the context-budget write guard? It is a `PostToolUse` hook that flags an
 > edit which pushes `AGENTS.md` or a live reference doc further over budget. It
@@ -498,12 +497,13 @@ bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
 ```
 
 The guard and the weekly run are two halves of one ratchet: the guard stops
-regrowth, the run recovers ground. A repo with the run but no guard sawtooths —
-reduce, regrow, reduce — and no amount of curation fixes a file something else
-keeps appending to. Semantics, the reasoning behind the speak-only-on-both-
-conditions rule, and the uninstall path:
+regrowth cheaply, in the turn that caused it, on the common path; the run and the
+review-time delta recover ground and catch what the matcher never saw. A repo with
+the run but no guard sawtooths, and no curation fixes a file something else keeps
+appending to. Semantics, the speak-only-on-both-conditions rule, the uncovered
+write paths, and uninstall:
 [references/write-guard-hook.md](references/write-guard-hook.md).
 
-The installer prints its `git add` line rather than committing. Hook wiring lands
-through the project's normal gate — a hook that starts running because something
-committed it unannounced is a bad surprise.
+The installer prints its `git add` line rather than committing, and names the log
+path to tail. Hook wiring lands through the project's normal gate — a hook that
+starts running because something committed it unannounced is a bad surprise.

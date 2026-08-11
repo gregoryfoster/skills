@@ -450,3 +450,31 @@ class TestDoctorHealsHookSymlinks:
         assert ".claude/hooks/" in help_text, help_text
 
 
+
+class TestUncoveredWritePathsAreDocumented:
+    """#103 — documentation only. Widening the matcher to `Bash` would fire the
+    guard on every shell command to catch a small fraction of writes, inverting
+    its deliberate cheapness. The fix is to stop the docs implying coverage."""
+
+    def test_the_guard_doc_names_the_uncovered_write_paths(self):
+        text = GUARD_DOC.read_text()
+        assert "NotebookEdit" in text, "the doc never names the NotebookEdit gap"
+        assert re.search(r"redirect|heredoc|>>", text), (
+            "the doc never names shell-redirect writes"
+        )
+        assert "context-delta.sh" in text, (
+            "the doc names the gap without naming the surface that covers it"
+        )
+
+    def test_phase_8_names_which_half_covers_which_failure(self):
+        text = CTX_SKILL.read_text()
+        phase8 = text[text.index("## Phase 8"):]
+        assert "NotebookEdit" in phase8 or "redirect" in phase8, (
+            "Phase 8 still frames the ratchet without naming what the guard "
+            "cannot see"
+        )
+        assert "context-delta.sh" in phase8
+
+    def test_the_matcher_is_unchanged(self):
+        assert "Edit|Write|MultiEdit" in INSTALL.read_text()
+        assert '"Bash"' not in INSTALL.read_text()
