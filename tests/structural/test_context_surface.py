@@ -1448,12 +1448,18 @@ class TestValidationGateRoundSix:
         _arm(tmp_path, "trt1", 49000, 9500, "1.2")
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1", "--format", "json")
-        ctl = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
+        out = json.loads(r.stdout)
+        ctl = next(x for x in out["repos"] if x["repo"] == "ctl1")
         assert ctl["before"] == 50000, ctl
         # 50,000 -> 9,000 against a 6,000 budget is 93.2% closure, so the
         # control wins this pair and the treatment must not be adopted.
         assert round(ctl["closure"], 3) == round((44000 - 3000) / 44000, 3)
-        assert json.loads(r.stdout)["verdict"] == "REJECT"
+        # The pair outcome is what the fabricated before-state got wrong, so it
+        # is what this pins. The VERDICT is INCONCLUSIVE rather than REJECT only
+        # because one pair is below the rejection floor — a separate rule, with
+        # its own test.
+        assert out["pairs"][0]["winner"] == "control", out["pairs"]
+        assert out["verdict"] != "ADOPT"
 
     def test_min_pairs_zero_is_refused(self, tmp_path: Path):
         """`--min-pairs 0` let the sweep test read `0 == 0` and adopt on no
@@ -1609,7 +1615,9 @@ class TestCohortReportSingleFile:
         # AGENTS.md never moved: 9000 both times. Against sub/AGENTS.md's 500 it
         # would read +8500.
         assert cells["net"] == "0", cells
-        assert cells["runs"] == "2", cells
+        # One curation on AGENTS.md. `runs` counts curations, not rows, so
+        # neither its own baseline nor sub/AGENTS.md's row is in this number.
+        assert cells["runs"] == "1", cells
 
 
 def _two_file_ledger(root: Path, name: str, version: str,
@@ -1642,13 +1650,18 @@ class TestValidationGateRoundSeven:
         _two_file_ledger(tmp_path, "trt1", "1.2", main_after=9000, sub_after=8800)
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1", "--format", "json")
-        by = {x["repo"]: x for x in json.loads(r.stdout)["repos"]}
+        out = json.loads(r.stdout)
+        by = {x["repo"]: x for x in out["repos"]}
         assert by["ctl1"]["file"] == "AGENTS.md", by["ctl1"]
         assert by["ctl1"]["before"] == 50000
         assert by["ctl1"]["after"] == 7000
         assert by["trt1"]["after"] == 9000
         # The control did the better job on the primary file, so no adoption.
-        assert json.loads(r.stdout)["verdict"] == "REJECT"
+        # Scored off sub/AGENTS.md the pair went the other way, which is the
+        # regression this pins; the verdict is INCONCLUSIVE rather than REJECT
+        # because one pair is below the rejection floor.
+        assert out["pairs"][0]["winner"] == "control", out["pairs"]
+        assert out["verdict"] != "ADOPT"
 
     def test_gate_and_rollup_agree_on_which_file_a_repo_is(self, tmp_path: Path):
         """One ledger produced two irreconcilable pictures of the same repo.
@@ -1666,7 +1679,9 @@ class TestValidationGateRoundSeven:
         gate_rec = json.loads(gate.stdout)["repos"][0]
         assert gate_rec["file"] == "AGENTS.md"
         assert int(cells["tokens"]) == gate_rec["after"] == 7000
-        assert int(cells["runs"]) == 2      # AGENTS.md rows only
+        # One curation on AGENTS.md. Counting every file's curations would
+        # read 2 — sub/AGENTS.md was pruned too.
+        assert int(cells["runs"]) == 1
 
     def test_uncurated_primary_file_names_the_file_and_the_others(
             self, tmp_path: Path):
@@ -1766,7 +1781,7 @@ class TestValidationGateRoundEight:
         """Most-recent-file alone was too fragile: one incidental baseline row
         for docs/GUIDE.md re-defined a repo that had curated AGENTS.md over
         three runs, dropping it out of the experiment and collapsing the
-        roll-up's headline to 4,000 tokens / 1 run / no net — a number that then
+        roll-up's headline to 4,000 tokens / no runs / no net — a number that then
         fed the cohort total. Row count is what a stray append cannot flip."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
@@ -1797,7 +1812,9 @@ class TestValidationGateRoundEight:
         cells = dict(zip(*(line.split("\t")
                            for line in rollup.stdout.splitlines()[:2])))
         assert cells["tokens"] == "6800", cells
-        assert cells["runs"] == "3", cells
+        # Two curations on AGENTS.md, plus a baseline. Scored off the stray
+        # docs/GUIDE.md row this would read 0 runs.
+        assert cells["runs"] == "2", cells
         assert cells["net"] == "-43200", cells
 
     def test_ties_on_row_count_fall_back_to_most_recent(self, tmp_path: Path):
@@ -1940,7 +1957,8 @@ class TestValidationGateRoundNine:
         assert len(payload["pairs"]) == 1
 
     def test_rollup_does_not_double_count_a_repeated_entry(self, tmp_path: Path):
-        """The same duplication inflated `runs` to 4 for a two-row ledger."""
+        """The same duplication inflated `runs` to 4 for a two-row ledger —
+        which is one curation, so the number to hold is 1."""
         _arm(tmp_path, "one", 50000, 20000, "1.1")
         path = tmp_path / "cohort"
         path.write_text(f"{tmp_path / 'one'}\n{tmp_path / 'one'}\n")
@@ -1950,7 +1968,7 @@ class TestValidationGateRoundNine:
         )
         cells = dict(zip(*(line.split("\t")
                            for line in r.stdout.splitlines()[:2])))
-        assert cells["runs"] == "2", cells
+        assert cells["runs"] == "1", cells
 
     @pytest.mark.parametrize("a,b", [("1.2", "v1.2"), ("v1.2", "1.2"),
                                      ("1.2", "1.2.0"), ("V1.2.0", "1.2")])
@@ -2497,3 +2515,462 @@ class TestRelativeInvocationFromSubdir:
         assert r.returncode in ok_codes, (
             f"{script}: exit {r.returncode}\n{r.stdout}\n{r.stderr}")
         assert "_context-lib.sh not found" not in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# The before-state a first curation never had (#116), and the rejection floor
+# a permanent record deserves (#117)
+# ---------------------------------------------------------------------------
+
+
+class TestBaselineRow:
+    """`record-telemetry.sh --baseline` is what makes a FIRST curation scorable.
+
+    Experiment 1 scored nothing: the gate takes a run's before-state from the
+    previous ledger row, and a first curation is the run that CREATES the
+    ledger, so the scored run was exactly the run that could never be scored.
+    Twelve repos followed the skill correctly and produced twelve unscorable
+    rows."""
+
+    def _measure(self, repo: Path) -> str:
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=60)
+        assert r.returncode == 0, r.stderr
+        return r.stdout
+
+    def _record(self, repo: Path, measurement: str, *extra: str):
+        return subprocess.run(
+            ["bash", str(RECORD), *extra], input=measurement,
+            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
+            timeout=30)
+
+    def _rows(self, repo: Path) -> list[dict]:
+        return [json.loads(ln) for ln
+                in (repo / ".skills" / "context-metrics.jsonl").read_text()
+                .splitlines() if ln.strip()]
+
+    def test_baseline_row_is_tagged_and_measurement_only(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        r = self._record(repo, self._measure(repo), "--baseline")
+        assert r.returncode == 0, r.stderr
+        row = self._rows(repo)[-1]
+        # The tag the gate already knows to skip past, so a baseline row can
+        # never be mistaken for the curation it precedes.
+        assert row["actions"] == ["baseline"], row
+        assert row["no_loss"] is None
+        assert row["delta_tokens"] is None
+        assert "baseline" in r.stderr
+
+    def test_the_curation_row_then_has_a_before_state(self, tmp_path: Path):
+        """The whole point: Phase 1 and Phase 7 leave two rows, and the second
+        one has something to be compared against."""
+        repo = _repo(tmp_path, policy_lines=50)
+        assert self._record(repo, self._measure(repo), "--baseline").returncode == 0
+        (repo / "AGENTS.md").write_text(POLICY_LINE * 10)
+        r = self._record(repo, self._measure(repo), "--actions", "demote:Big",
+                         "--no-loss", "ok")
+        assert r.returncode == 0, r.stderr
+        rows = self._rows(repo)
+        assert len(rows) == 2
+        assert rows[0]["actions"] == ["baseline"]
+        assert isinstance(rows[1]["delta_tokens"], int)
+        assert rows[1]["delta_tokens"] < 0, rows[1]
+
+    @pytest.mark.parametrize("extra,marker", [
+        (("--actions", "demote:X"), "--baseline and --actions"),
+        (("--no-loss", "ok"), "--baseline and --no-loss"),
+    ])
+    def test_flags_that_assert_a_curation_are_refused(
+            self, tmp_path: Path, extra, marker):
+        """A baseline row records the surface AS FOUND. --no-loss in particular
+        would put a relocation verdict on a row where nothing was relocated, and
+        the gate reads that field as evidence."""
+        repo = _repo(tmp_path, policy_lines=50)
+        r = self._record(repo, self._measure(repo), "--baseline", *extra)
+        assert r.returncode == 1, r.stderr
+        assert marker in r.stderr
+        # The refusal lands before the ledger is created, so nothing was written
+        # at all — not even an empty file.
+        assert not (repo / ".skills" / "context-metrics.jsonl").exists()
+
+    def test_pure_measurement_fields_are_still_allowed(self, tmp_path: Path):
+        """--seams on a baseline row measures the surface as found, which is a
+        before-state like any other and the one #117 argues the next experiment
+        turns on. Not refused."""
+        repo = _repo(tmp_path, policy_lines=50)
+        r = self._record(repo, self._measure(repo), "--baseline",
+                         "--seams", "41", "--seams-acked", "9")
+        assert r.returncode == 0, r.stderr
+        assert self._rows(repo)[-1]["seams"] == 41
+
+
+class TestFirstCurationIsScorable:
+    """With a baseline row the gate scores a first curation — and the orphan
+    gate, which needs a before-row to compare against, can trip at all."""
+
+    def _first_curation(self, root: Path, name: str, before: int, after: int,
+                        version: str, **kw) -> None:
+        d = root / name / ".skills"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo=name, ts="2026-08-01", tokens=before,
+                        actions=["baseline"],
+                        docs_orphaned=kw.get("orph_before", 0)),
+            _ledger_row(repo=name, ts="2026-08-02", tokens=after,
+                        actions=["demote:Big"], skill_version=version,
+                        no_loss=kw.get("no_loss", "ok"),
+                        docs_orphaned=kw.get("orph_after", 0)),
+        ]) + "\n")
+
+    def test_a_first_curation_scores(self, tmp_path: Path):
+        self._first_curation(tmp_path, "ctl1", 52000, 20000, "1.1")
+        self._first_curation(tmp_path, "trt1", 49000, 12000, "1.2")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        out = json.loads(r.stdout)
+        by = {x["repo"]: x for x in out["repos"]}
+        assert by["trt1"]["status"] == "scored", by["trt1"]
+        assert by["trt1"]["before"] == 49000
+        assert out["pairs"][0]["informative"] is True
+        assert out["pairs"][0]["winner"] == "treatment"
+
+    def test_the_orphan_gate_can_now_trip_on_a_first_curation(
+            self, tmp_path: Path):
+        """Without a before-row `prev is None`, so the docs_orphaned comparison
+        was skipped entirely — one of the three safety gates was structurally
+        inert on the modal case."""
+        self._first_curation(tmp_path, "ctl1", 52000, 20000, "1.1")
+        self._first_curation(tmp_path, "trt1", 49000, 12000, "1.2",
+                             orph_before=0, orph_after=4)
+        roster = _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])
+        r = _score(roster, "--min-pairs", "1")
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "docs_orphaned 0->4" in r.stdout
+
+        # The contrast, and the actual defect: strip the baseline rows and the
+        # same orphaning run sails through, because there is nothing to compare
+        # `docs_orphaned` against. This is the state all twelve first curations
+        # were scored in.
+        for name in ("ctl1", "trt1"):
+            led = tmp_path / name / ".skills" / "context-metrics.jsonl"
+            led.write_text(led.read_text().splitlines()[1] + "\n")
+        r = _score(roster, "--min-pairs", "1")
+        assert "docs_orphaned" not in r.stdout, r.stdout
+        assert "verdict: REJECT" not in r.stdout
+
+
+class TestSystematicUnscorable:
+    """Twelve repos unscorable for twelve reasons is cohort non-compliance.
+    Twelve unscorable for ONE reason is a rule no repo can satisfy, and the two
+    read identically from below — both arrive at 'no informative pairs'."""
+
+    def _no_baseline(self, root: Path, name: str, version: str) -> None:
+        """A first curation exactly as the skill produced it before #116: one
+        row, no predecessor."""
+        d = root / name / ".skills"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "context-metrics.jsonl").write_text(_ledger_row(
+            repo=name, tokens=5900, actions=["demote:Big"],
+            skill_version=version, no_loss="ok") + "\n")
+
+    def test_one_shared_reason_is_reported_as_a_gate_defect(self, tmp_path: Path):
+        spec = []
+        for i in (1, 2, 3):
+            self._no_baseline(tmp_path, f"ctl{i}", "1.2")
+            self._no_baseline(tmp_path, f"trt{i}", "1.3")
+            spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
+        r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "GATE DEFECT" in r.stdout, r.stdout
+        assert "all 6 repos in both arms" in r.stdout
+        assert "no row before the first curation" in r.stdout
+        # And it names the fix, rather than leaving the reader to walk the
+        # scoring core the way experiment 1 required.
+        assert "--baseline" in r.stdout
+        # The reason is stated ONCE as a diagnosis, not implied by repetition.
+        assert "no informative pairs" not in r.stdout
+
+    def test_mixed_reasons_are_not_a_gate_defect(self, tmp_path: Path):
+        """Different reasons per repo means each repo needs its own fix. That is
+        a finding about the cohort, and claiming a defect in the gate would send
+        the reader to the wrong file.
+
+        Four repos, so the roster clears SYSTEMIC_MIN and the ONLY thing keeping
+        this from reading as a defect is the mix of reasons."""
+        spec = []
+        for i in (1, 2):
+            self._no_baseline(tmp_path, f"ctl{i}", "1.2")
+            spec.append((f"ctl{i}", "a", str(i)))
+        # No curation row at all — a different unscorable reason.
+        _arm(tmp_path, "trt1", 49000, None, "1.3")
+        self._no_baseline(tmp_path, "trt2", "1.3")
+        spec += [("trt1", "b", "1"), ("trt2", "b", "2")]
+        r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
+        assert "GATE DEFECT" not in r.stdout, r.stdout
+
+    def test_two_repos_are_too_few_to_name_a_gate_defect(self, tmp_path: Path):
+        """The claim is an inference from BREADTH. At one repo per arm the
+        likelier reading is two non-compliant repos, which needs a different fix
+        than 'the gate is broken' — so the diagnosis stays off."""
+        self._no_baseline(tmp_path, "ctl1", "1.2")
+        self._no_baseline(tmp_path, "trt1", "1.3")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 5, r.stdout
+        assert "GATE DEFECT" not in r.stdout, r.stdout
+        assert "no informative pairs" in r.stdout
+
+    def test_a_lopsided_roster_does_not_clear_the_floor(self, tmp_path: Path):
+        """Counted PER ARM, not over the roster. Three treatment repos and one
+        control clears a roster total of four while saying nothing about whether
+        the rule is satisfiable — one arm carrying a single repo is the same thin
+        evidence the floor exists to refuse."""
+        spec = []
+        for i in (1, 2, 3):
+            self._no_baseline(tmp_path, f"trt{i}", "1.3")
+            spec.append((f"trt{i}", "b", str(i)))
+        self._no_baseline(tmp_path, "ctl1", "1.2")
+        spec.append(("ctl1", "a", "1"))
+        r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
+        assert "GATE DEFECT" not in r.stdout, r.stdout
+
+
+class TestRejectionFloor:
+    """An adoption is revisited the next time the skill changes. A rejection is
+    written into rejected-changes.md permanently and shapes every later
+    proposal, so the two do not share a floor. Experiment 1 came within one flag
+    of rejecting v1.3 on two pairs."""
+
+    def _two_pairs_one_lost(self, root: Path) -> Path:
+        # Pair 1 to the treatment, pair 2 to the control.
+        _arm(root, "ctl1", 52000, 20000, "1.1")
+        _arm(root, "trt1", 49000, 12000, "1.2")
+        _arm(root, "ctl2", 28000, 12000, "1.1")
+        _arm(root, "trt2", 26000, 20000, "1.2")
+        return _roster(root, [("ctl1", "a", "1"), ("trt1", "b", "1"),
+                              ("ctl2", "a", "2"), ("trt2", "b", "2")])
+
+    def test_two_pairs_cannot_reject(self, tmp_path: Path):
+        roster = self._two_pairs_one_lost(tmp_path)
+        r = _score(roster, "--min-pairs", "2")
+        assert r.returncode == 5, r.stdout
+        assert "verdict: INCONCLUSIVE" in r.stdout
+        assert "below the rejection floor" in r.stdout
+        # Still blocked, and still not written down as refuted.
+        assert "verdict: ADOPT" not in r.stdout
+        assert "record this in references/rejected-changes.md" not in r.stdout
+        # The floor a rejection had to clear, on the row, so a reader of the
+        # JSON can see why an INCONCLUSIVE is not a REJECT.
+        out = json.loads(_score(roster, "--min-pairs", "2",
+                                "--format", "json").stdout)
+        assert out["reject_floor"] == 3, out
+        assert out["informative_pairs"] == 2, out
+
+    def test_min_pairs_above_the_floor_is_the_effective_floor(self, tmp_path: Path):
+        """--min-pairs gates every verdict first, so when it is set higher it is
+        what a rejection actually has to clear. The JSON reports that, while the
+        branch below uses the constant."""
+        out = json.loads(_score(self._two_pairs_one_lost(tmp_path),
+                                "--min-pairs", "5", "--format", "json").stdout)
+        assert out["reject_floor"] == 5, out
+        assert out["verdict"] == "INCONCLUSIVE"
+
+    def test_three_pairs_still_reject(self, tmp_path: Path):
+        """The floor bounds a rejection, it does not abolish one."""
+        roster = _three_good_pairs(tmp_path)
+        _arm(tmp_path, "trt3", 14000, 13000, "1.2")
+        r = _score(roster)
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "below the rejection floor" not in r.stdout
+
+    def test_a_safety_failure_rejects_on_one_repo(self, tmp_path: Path):
+        """The veto is exempt. Content lost under the proposed version is lost
+        whether or not that repo had a partner, so a single repo rejects on its
+        own with no informative pairs at all."""
+        _arm(tmp_path, "ctl1", 52000, 20000, "1.1")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.2", no_loss="failed")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1")
+        assert r.returncode == 3, r.stdout
+        assert "verdict: REJECT" in r.stdout
+        assert "no_loss=failed" in r.stdout
+
+
+class TestRunsCountsCurationsNotRows:
+    """A curation run writes two rows — the Phase 1 baseline and the Phase 7
+    curation — so a row count reports every repo as having run twice as often as
+    it did. `runs` is the column a reader consults to answer "is this repo
+    actually running?", which is #118's whole subject."""
+
+    def _one_curation(self, root: Path) -> Path:
+        d = root / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=12000,
+                        actions=["baseline"]),
+            _ledger_row(repo="one", ts="2026-08-02", tokens=5800,
+                        actions=["demote:Big"], skill_version="1.4",
+                        no_loss="ok", delta_tokens=-6200),
+        ]) + "\n")
+        return root / "one"
+
+    def _rollup(self, repo: Path) -> dict:
+        r = subprocess.run(
+            ["bash", str(COHORT), "--local", str(repo), "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stderr
+        head, row = (ln.split("\t") for ln in r.stdout.splitlines()[:2])
+        return dict(zip(head, row))
+
+    def test_one_curation_is_one_run(self, tmp_path: Path):
+        cells = self._rollup(self._one_curation(tmp_path))
+        assert cells["runs"] == "1", cells
+
+    def test_a_baseline_only_visit_is_zero_runs(self, tmp_path: Path):
+        """A run that measured and stopped. Before `runs` counted curations this
+        case had exactly one row, which is why the display keyed on `runs == 1`."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text(_ledger_row(
+            repo="one", tokens=12000, actions=["baseline"]) + "\n")
+        cells = self._rollup(tmp_path / "one")
+        assert cells["runs"] == "0", cells
+        table = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one")],
+            capture_output=True, text=True, env=_clean_env(), timeout=30)
+        assert "(baseline only)" in table.stdout, table.stdout
+
+    def test_an_untagged_row_still_counts_as_a_run(self, tmp_path: Path):
+        """Only an explicit `baseline*` row is a state. An untagged row is a
+        tagging gap, and hiding it from the run count would hide the gap — the
+        same rule score-cohort.sh applies when it refuses to score one."""
+        d = tmp_path / "one" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="one", ts="2026-08-01", tokens=12000,
+                        actions=["baseline"]),
+            _ledger_row(repo="one", ts="2026-08-02", tokens=9000, actions=[]),
+        ]) + "\n")
+        assert self._rollup(tmp_path / "one")["runs"] == "1"
+
+    def test_the_trend_reports_runs_and_rows_separately(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        measure = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
+        subprocess.run(["bash", str(RECORD), "--baseline"], input=measure,
+                       capture_output=True, text=True, cwd=str(repo),
+                       env=_clean_env(), timeout=30)
+        r = subprocess.run(
+            ["bash", str(RECORD), "--actions", "demote:Big", "--print-trend"],
+            input=measure, capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stderr
+        assert "1 run over 2 rows" in r.stderr, r.stderr
+
+
+class TestCurationRuleIsOneRule:
+    """Three scripts decide independently whether a ledger row records a RUN or
+    a state — score-cohort.sh's classify_run(), cohort-report.sh's and
+    record-telemetry.sh's is_curation_row(). Each comment says the rule must
+    stay identical; this is what makes that true rather than asserted.
+
+    The precedent is the neighbouring primary-file rule, which diverged between
+    the first two of these and produced two irreconcilable pictures of one repo:
+    the gate scoring a 100-token prune while the roll-up reported a
+    43,000-token curation."""
+
+    #  1  baseline            state  — plain tag
+    #  2  baseline:exact      state  — qualified tag, same prefix
+    #  3  demote:Big          RUN
+    #  4  (untagged)          RUN    — a tagging gap, not a measurement
+    # Every row carries skill_version, so a script that mistook a baseline for a
+    # curation would score row 1 rather than skipping to row 3.
+    def _mixed_ledger(self, root: Path, name: str, exact: bool = True) -> Path:
+        d = root / name / ".skills"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo=name, ts="2026-08-01", tokens=52000,
+                        tokens_exact=exact, actions=["baseline"],
+                        skill_version="1.4"),
+            _ledger_row(repo=name, ts="2026-08-02", tokens=50000,
+                        tokens_exact=exact, actions=["baseline:exact"],
+                        skill_version="1.4"),
+            _ledger_row(repo=name, ts="2026-08-03", tokens=7000,
+                        tokens_exact=exact, actions=["demote:Big"],
+                        skill_version="1.4", no_loss="ok"),
+            _ledger_row(repo=name, ts="2026-08-04", tokens=6900,
+                        tokens_exact=exact, actions=[], skill_version="1.4"),
+        ]) + "\n")
+        return root / name
+
+    def test_the_rollup_sees_two_runs(self, tmp_path: Path):
+        r = subprocess.run(
+            ["bash", str(COHORT), "--local", str(self._mixed_ledger(tmp_path, "one")),
+             "--format", "tsv"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stderr
+        cells = dict(zip(*(ln.split("\t") for ln in r.stdout.splitlines()[:2])))
+        # 4 if baselines counted, 1 if the untagged row did not.
+        assert cells["runs"] == "2", cells
+
+    def test_the_gate_skips_both_baselines_to_the_curation(self, tmp_path: Path):
+        """Row 3 is the scored run and row 2 is its before-state. A script that
+        read `baseline`/`baseline:exact` as curations would stop at row 1, which
+        has no predecessor, and report the repo unscorable instead."""
+        self._mixed_ledger(tmp_path, "ctl1")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.5")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        rec = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
+        assert rec["status"] == "scored", rec
+        assert rec["before"] == 50000 and rec["after"] == 7000, rec
+
+    def test_the_gate_still_refuses_an_untagged_run_it_reaches_first(
+            self, tmp_path: Path):
+        """The other half of the rule: an untagged row counts as a run, and when
+        it is the FIRST run it cannot be told from a baseline, so the gate says
+        so rather than scoring it. Same classification, opposite consequence."""
+        d = tmp_path / "ctl1" / ".skills"
+        d.mkdir(parents=True)
+        (d / "context-metrics.jsonl").write_text("\n".join([
+            _ledger_row(repo="ctl1", ts="2026-08-01", tokens=52000,
+                        actions=["baseline"], skill_version="1.4"),
+            _ledger_row(repo="ctl1", ts="2026-08-02", tokens=7000, actions=[],
+                        skill_version="1.4"),
+        ]) + "\n")
+        _arm(tmp_path, "trt1", 49000, 12000, "1.5")
+        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+                   "--min-pairs", "1", "--format", "json")
+        rec = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
+        assert rec["why_code"] == "untagged_run", rec
+
+    def test_the_trend_header_sees_the_same_two_runs(self, tmp_path: Path):
+        """Recorded through the script itself, so the third copy of the rule is
+        exercised rather than read."""
+        repo = _repo(tmp_path, policy_lines=50)
+        self._mixed_ledger(tmp_path, "repo", exact=False)
+        measure = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
+        r = subprocess.run(
+            ["bash", str(RECORD), "--actions", "prune:X", "--print-trend"],
+            input=measure, capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stderr
+        # Two runs in the fixture plus the one just recorded, over five rows.
+        assert "3 runs over 5 rows" in r.stderr, r.stderr
+
+    def test_a_baseline_only_trend_reads_grammatically(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        measure = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
+        r = subprocess.run(
+            ["bash", str(RECORD), "--baseline", "--print-trend"], input=measure,
+            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
+            timeout=30)
+        assert "0 runs over 1 row" in r.stderr, r.stderr

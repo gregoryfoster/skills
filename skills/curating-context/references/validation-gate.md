@@ -59,10 +59,25 @@ Three details decide whether that run is scored at all:
   unscorable and the report names both the file and how many others were skipped;
   when any ledger held more than one file, the report names which was scored,
   because the table has no room for the column.
-- **The before-state comes from that same file.** Taking whichever row happens to
-  precede the curation produced a fabricated closure: a repo that really went
-  50,000 → 9,000 scored **−2900%** against an unrelated file's 6,100, and handed
-  the pair to the other arm.
+- **The before-state comes from that same file** — and it has to *exist*. Taking
+  whichever row happens to precede the curation produced a fabricated closure: a
+  repo that really went 50,000 → 9,000 scored **−2900%** against an unrelated
+  file's 6,100, and handed the pair to the other arm.
+
+  The deeper failure is that for a first curation there was no preceding row at
+  all. It is the run that *creates* the ledger, so the scored run was exactly the
+  run that could never be scored — which is why experiment 1 scored nothing
+  ([#116](https://github.com/gregoryfoster/skills/issues/116)). Phase 1 now
+  records a `baseline` row (`record-telemetry.sh --baseline`) and both rows ship
+  in one commit, so a run carries the state it is compared against. Rows
+  predating that rule stay unscorable; the gate says so as a **gate defect**
+  when every repo in both arms is blocked by one and the same reason, instead of
+  reporting an empty experiment.
+
+  The same absence disarmed a safety gate. `docs_orphaned` trips on a *rise*
+  against the previous row, so with no previous row it could not trip at all —
+  on all twelve first curations. The recorded values were `0`, so nothing was
+  missed in fact, but the check had not run.
 - **An untagged run makes the repo unscorable.** `record-telemetry.sh` emits
   `actions: []` when `--actions` was omitted, and such a row cannot be told from
   a baseline. Scoring it as a curation would attribute its near-zero closure to
@@ -233,6 +248,28 @@ verdict computed over no pairs is not a weaker verdict but no verdict, and the
 sweep test reads `0 == 0` as a win — it adopted on no evidence whatever until
 the branch was guarded on `informative` being non-empty as well.
 
+### A rejection has its own floor
+
+`--min-pairs` governs **adoption**. A failed sweep needs at least **three**
+informative pairs to be recorded as a REJECT, and `--min-pairs` cannot lower
+that; below it the verdict is INCONCLUSIVE, which still blocks adoption and
+still leaves `rejected-changes.md` alone.
+
+The two are not symmetric outputs. An adoption is a decision to ship that gets
+revisited the next time the skill changes. A rejection is written into
+`rejected-changes.md` permanently, by design, and shapes every later proposal —
+which is the whole value of that file and exactly why filling it with artefacts
+is expensive. Experiment 1 came within one flag of it: at `--min-pairs 2` the
+gate would have reached a 1–1 split and written REJECT against v1.3 on the
+strength of two repos, both of them the honest-shortfall cases and one of them
+the pair the roster itself flags as its weakest match at 29% apart
+([#117](https://github.com/gregoryfoster/skills/issues/117)).
+
+The **safety veto is exempt.** A single repo that dropped content rejects on its
+own, with no pairs at all — content lost under the proposed version is lost
+whether or not that repo had a partner, which is also why the arm listing is
+deliberately wider than the pairing.
+
 INCONCLUSIVE is **not** a rejection and does not belong in
 `rejected-changes.md`: nothing has been decided, and the proposal is still
 pending evidence. Recording it as a rejection would poison the buffer with
@@ -305,6 +342,15 @@ v1.3, so the held-out arm yielded qualitatively even where the gate did not.
 The lesson for experiment 2 is that the unit of comparison and the primary metric
 have to be settled — and pre-registered — *before* the treatment arm adopts.
 Choosing either after the rows land is choosing the verdict.
+
+**Fixed since, in v1.4:** Phase 1 records a `baseline` row, so a first curation
+carries the before-state it is scored against and the `docs_orphaned` gate has
+something to compare; a systematic unscorable is reported as a gate defect rather
+than as an empty experiment; and a REJECT now needs three informative pairs
+whatever `--min-pairs` says. None of that recovers experiment 1 — the cohort's
+first-curation capital is spent either way, which is
+[#118](https://github.com/gregoryfoster/skills/issues/118)'s subject. What it
+does is make the *next* run of the gate measure something.
 
 ## Not in scope
 

@@ -184,11 +184,16 @@ ad-hoc `curate context` must land in one comparable series.
 
 ## Telemetry
 
-One append-only JSONL row per run at `.skills/context-metrics.jsonl`, committed
+An append-only JSONL ledger at `.skills/context-metrics.jsonl`, committed
 alongside the file it measures. Committed, rather than kept in a central store,
 for three reasons: the row travels with the repo through a transfer, it is
 reviewable in the same PR as the edits it describes, and a run needs no write
 access to any other repo.
+
+A curation run writes **two** rows: a `baseline` row at Phase 1 for the surface
+as found, and the curation row at Phase 7. See
+[the pair, not the row](#the-pair-not-the-row) — a single row records a state,
+and only a pair records a change.
 
 ### Row schema
 
@@ -225,31 +230,61 @@ Use `verb:target`:
 - `split:<doc>` — an over-budget reference doc divided
 - `fix:dead-link`, `fix:stale-command`, `fix:stale-issue-ref` — Phase 2 repairs
 - `relink:<doc>` — an orphan given an index entry
-- `baseline` — a measurement-only run with no edits
+- `baseline` — a measurement-only row, no edits. Written by
+  `record-telemetry.sh --baseline`, which fixes the tag rather than taking
+  `--actions`, so no reader has to guess whether a row describes a state or a
+  change. Every reader — the gate, the roll-up — skips `baseline*` when looking
+  for a curation.
 
 `"cleanup"` and `"misc"` are worse than no tag: they occupy the slot that would
 otherwise have said something.
 
-### One row per run: rewrite within, append across
+### The pair, not the row
+
+A run's measurement is **two rows**: the Phase 1 `baseline` and the Phase 7
+curation. One row alone records a state; the change lives in the difference, and
+every consumer computes it that way — `delta_tokens` against the previous row for
+the same file, and the validation gate's before-state the same.
+
+That is why a first curation was unscorable before this rule existed. It is the
+run that *creates* the ledger, so nothing precedes it, and the gate's scored run
+was exactly the run it could never score: all twelve cohort repos came back
+`unscorable` in experiment 1 ([#116](https://github.com/gregoryfoster/skills/issues/116)).
+The `docs_orphaned` safety gate failed the same way and more quietly — it
+compares against the previous row, so on a first curation it could not trip at
+all.
+
+Both rows ship in the same commit. Do **not** rewrite the baseline row when the
+after-count changes; rewrite the curation row (next section). The baseline is the
+thing being measured against, and a baseline edited to match its outcome measures
+nothing.
+
+### One row per phase: rewrite within, append across
 
 The ledger is append-only **between** runs, and that is where the rule matters:
 a later run that rewrites an old row destroys the trend it was keeping.
 **Within** a run the instinct runs the other way and is correct — when a late
-fix on the same branch shifts the count, rewrite this run's still-unmerged row
-so it describes what actually ships, rather than appending a second row for an
-intermediate state nobody can check out. The test is whether the row's commit
-has merged: unmerged, it is a draft of this run's record; merged, it is history.
+fix on the same branch shifts the count, rewrite this run's still-unmerged
+*curation* row so it describes what actually ships, rather than appending a
+third row for an intermediate state nobody can check out. The test is whether
+the row's commit has merged: unmerged, it is a draft of this run's record;
+merged, it is history. The baseline row is exempt in both directions — it
+records a state that has already passed, so a late fix cannot change it.
 
 ### Reading the trend
 
-`record-telemetry.sh --print-trend` prints the last eight runs with per-run
-deltas and net change. Three shapes to recognise:
+`record-telemetry.sh --print-trend` prints the last eight **rows** with per-row
+deltas and net change, and its header separates the two counts — a run writes a
+`baseline` row and a curation row, so eight rows is four runs. Three shapes to
+recognise:
 
 - **Sawtooth** — reductions followed by regrowth. The file is not the problem;
   whatever keeps appending to it is. Look for a skill or hook that writes to
   `AGENTS.md`, and give it a reference doc to write to instead.
 - **Step then flat** — one large demotion, then nothing. Healthy. Subsequent runs
-  should be cheap `baseline` rows.
+  should show a curation row with a delta near zero: the surface is holding.
+  (A `baseline` row is no longer the marker of a quiet week — every run writes
+  one at Phase 1, so it says nothing about what the run found.)
 - **Slow creep with no negative deltas** — nobody is running Phase 5, or every
   run is finding the budget already met and stopping. Check whether the budget is
   set high enough to never bind.
