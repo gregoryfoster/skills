@@ -192,6 +192,7 @@ jobs:
         run: |
           bash "$SKILL_SCRIPTS/measure-context.sh" --exact >/tmp/ctx.json
           bash "$SKILL_SCRIPTS/record-telemetry.sh" --baseline=scheduled \
+              --ledger ".skills/context-metrics.jsonl" \
               ${SEAMS:+--seams "$SEAMS"} ${SEAMS_ACKED:+--seams-acked "$SEAMS_ACKED"} \
               --print-trend </tmp/ctx.json
 
@@ -204,7 +205,7 @@ jobs:
           # it exits 128 on the unmatched pathspec — so `|| true` turned a
           # missing ratio file into "no new row" and discarded the measurement
           # silently, which is the failure this whole job exists to prevent.
-          git add -- .skills/context-metrics.jsonl
+          git add -- ".skills/context-metrics.jsonl"
           if [ -f .skills/context-token-ratio ]; then
             git add -- .skills/context-token-ratio
           fi

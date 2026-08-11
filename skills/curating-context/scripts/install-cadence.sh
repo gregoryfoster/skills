@@ -24,14 +24,25 @@ Options:
                    derived from the repo name, so a twelve-repo cohort spreads
                    across the window instead of firing at once.
   --file PATH      Workflow path. Default: .github/workflows/context-cadence.yml
-  --check          Report whether the workflow is installed; change nothing.
-                   Exit 0 installed, 3 not installed.
-  --uninstall      Remove the workflow file.
-  --print          Write the rendered workflow to stdout and exit; touch nothing.
+  --ledger PATH    Ledger the cadence records into, relative to the repo root.
+                   Default: .skills/context-metrics.jsonl. Threaded through all
+                   three places that must agree — the union-merge attribute,
+                   the workflow's `git add`, and its error message — because a
+                   cadence that measures correctly and stages the wrong path
+                   records nothing.
+  --check          Report what is installed; change nothing. The contract is
+                   TWO artifacts, so both are reported independently and the
+                   exit code reflects either being absent.
+                   Exit 0 both present, 3 either missing.
+  --uninstall      Remove the workflow file. Leaves the merge attribute, which
+                   is correct for an append-only ledger regardless.
+  --print          Write the rendered workflow to stdout and exit; touch
+                   nothing. Still needs to be inside a git repo: the default
+                   schedule is derived from the repo identity.
   -h, --help       Show this help and exit 0.
 
 What it does:
-  Ensures .gitattributes carries `.skills/context-metrics.jsonl merge=union`.
+  Ensures .gitattributes carries `<ledger> merge=union`.
   The ledger is append-only, so a scheduled append racing a human commit lands
   on the same last line and cannot auto-merge; without the union driver the
   push is rejected, the retry's rebase conflicts, and the week's row is lost.
@@ -68,12 +79,14 @@ USAGE
 
 CRON=""
 WF_PATH=".github/workflows/context-cadence.yml"
+LEDGER=".skills/context-metrics.jsonl"
 MODE="install"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --cron) CRON="${2:?--cron needs a cron expression}"; shift 2 ;;
     --file) WF_PATH="${2:?--file needs a path}"; shift 2 ;;
+    --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
     --check) MODE="check"; shift ;;
     --uninstall) MODE="uninstall"; shift ;;
     --print) MODE="print"; shift ;;
@@ -96,20 +109,38 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 1; }
 WF="$ROOT/$WF_PATH"
 
+# ONE definition, above the mode dispatch, because --check reads this and
+# ensure_attr writes it. They lived forty lines apart with the string typed
+# twice, so the reader and the writer could drift — and a --check reporting
+# "yes" against a line the installer no longer writes is worse than no check.
+ATTR_FILE="$ROOT/.gitattributes"
+ATTR_LINE="$LEDGER merge=union"
+
+has_attr() {
+  [ -f "$ATTR_FILE" ] && grep -qF "$ATTR_LINE" "$ATTR_FILE"
+}
+
 if [ "$MODE" = "check" ]; then
+  # Reported independently. The two are separate failure modes — a workflow with
+  # no merge attribute loses a row to the first race, and an attribute with no
+  # workflow measures nothing — and gating the second report on the first hid
+  # whichever one you were not looking for.
+  rc=0
   if [ -f "$WF" ]; then
-    echo "installed: $WF_PATH"
-    sed -n 's/^ *- cron: *\(.*\)$/  schedule: \1/p' "$WF"
-    if [ -f "$ROOT/.gitattributes" ] \
-       && grep -qF ".skills/context-metrics.jsonl merge=union" "$ROOT/.gitattributes"; then
-      echo "  ledger union merge: yes"
-    else
-      echo "  ledger union merge: NO — concurrent appends will conflict; re-run to add it"
-    fi
-    exit 0
+    echo "workflow:           $WF_PATH"
+    sed -n 's/^ *- cron: *\(.*\)$/  schedule:         \1/p' "$WF"
+  else
+    echo "workflow:           MISSING ($WF_PATH)"
+    rc=3
   fi
-  echo "not installed: no $WF_PATH"
-  exit 3
+  if has_attr; then
+    echo "ledger union merge: yes ($ATTR_LINE)"
+  else
+    echo "ledger union merge: MISSING — concurrent appends will conflict and the"
+    echo "                    row is lost. Re-run install-cadence.sh to add it."
+    rc=3
+  fi
+  exit "$rc"
 fi
 
 if [ "$MODE" = "uninstall" ]; then
@@ -158,11 +189,8 @@ fi
 # run — git resolves the merge using the attributes in the tree being replayed
 # onto, so an attribute added after the fact does not rescue the conflict that
 # motivated it.
-ATTR_FILE="$ROOT/.gitattributes"
-ATTR_LINE=".skills/context-metrics.jsonl merge=union"
-
 ensure_attr() {
-  if [ -f "$ATTR_FILE" ] && grep -qF "$ATTR_LINE" "$ATTR_FILE"; then
+  if has_attr; then
     echo "unchanged: .gitattributes already carries the union merge for the ledger"
     return 0
   fi
@@ -268,6 +296,7 @@ jobs:
         run: |
           bash "\$SKILL_SCRIPTS/measure-context.sh" --exact >/tmp/ctx.json
           bash "\$SKILL_SCRIPTS/record-telemetry.sh" --baseline=scheduled \\
+              --ledger "$LEDGER" \\
               \${SEAMS:+--seams "\$SEAMS"} \${SEAMS_ACKED:+--seams-acked "\$SEAMS_ACKED"} \\
               --print-trend </tmp/ctx.json
 
@@ -280,7 +309,7 @@ jobs:
           # it exits 128 on the unmatched pathspec — so \`|| true\` turned a
           # missing ratio file into "no new row" and discarded the measurement
           # silently, which is the failure this whole job exists to prevent.
-          git add -- .skills/context-metrics.jsonl
+          git add -- "$LEDGER"
           if [ -f .skills/context-token-ratio ]; then
             git add -- .skills/context-token-ratio
           fi
@@ -305,7 +334,7 @@ jobs:
             git pull --rebase --autostash origin "\$BRANCH" || {
               echo "::error::rebase onto origin/\$BRANCH failed — the row was not pushed."
               echo "::error::If the ledger conflicted, .gitattributes is missing"
-              echo "::error::\`.skills/context-metrics.jsonl merge=union\` — re-run install-cadence.sh."
+              echo "::error::\`$ATTR_LINE\` — re-run install-cadence.sh."
               exit 1
             }
           done
@@ -347,16 +376,21 @@ fi
 mkdir -p "$(dirname "$WF")"
 if [ -f "$WF" ] && render | cmp -s - "$WF"; then
   echo "unchanged: $WF_PATH is already current (schedule: $CRON)"
-  exit 0
-fi
-EXISTED=no
-[ -f "$WF" ] && EXISTED=yes
-render >"$WF"
-if [ "$EXISTED" = yes ]; then
-  echo "updated: $WF_PATH (schedule: $CRON)"
 else
-  echo "installed: $WF_PATH (schedule: $CRON)"
+  EXISTED=no
+  [ -f "$WF" ] && EXISTED=yes
+  render >"$WF"
+  if [ "$EXISTED" = yes ]; then
+    echo "updated: $WF_PATH (schedule: $CRON)"
+  else
+    echo "installed: $WF_PATH (schedule: $CRON)"
+  fi
 fi
+# NOT inside the else. The installer's contract is two artifacts, and an early
+# exit on "the workflow is current" skipped this entirely — so every repo that
+# adopted before the merge attribute existed re-ran the installer, was told
+# "unchanged", and stayed one race away from losing a row. That is exactly the
+# population --check tells to re-run.
 ensure_attr
 
 cat <<NEXT

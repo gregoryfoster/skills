@@ -3277,3 +3277,82 @@ class TestCadenceShellActuallyRuns:
                 env={**_clean_env(), "SEAMS": "0"}, timeout=30)
             assert r.returncode == 0, r.stderr
             assert ("::warning::AGENTS.md is" in r.stdout) is expect, r.stdout
+
+
+class TestCadenceIsTwoArtifacts:
+    """The installer's contract is a workflow AND a union-merge attribute. An
+    early `exit 0` on "the workflow is already current" skipped the attribute
+    entirely, so every repo that adopted before the attribute existed re-ran the
+    installer, was told "unchanged", and stayed one race away from losing a row
+    — which is exactly the population --check tells to re-run."""
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        return repo
+
+    def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+
+    def test_rerunning_retrofits_a_missing_attribute(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        assert self._run(repo).returncode == 0
+        (repo / ".gitattributes").unlink()          # the pre-fix adopter
+        r = self._run(repo)
+        assert r.returncode == 0, r.stderr
+        assert "unchanged" in r.stdout, "the workflow should not have churned"
+        assert (repo / ".gitattributes").exists(), (
+            "re-running did not restore the attribute — the remediation "
+            "--check advertises does nothing:\n" + r.stdout)
+        assert "merge=union" in (repo / ".gitattributes").read_text()
+
+    def test_check_reports_both_independently(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        self._run(repo)
+        both = self._run(repo, "--check")
+        assert both.returncode == 0, both.stdout
+        assert "ledger union merge: yes" in both.stdout
+
+        (repo / ".gitattributes").unlink()
+        no_attr = self._run(repo, "--check")
+        assert no_attr.returncode == 3, no_attr.stdout
+        # The workflow is still reported — gating one on the other hid whichever
+        # you were not looking for.
+        assert "context-cadence.yml" in no_attr.stdout
+        assert "ledger union merge: MISSING" in no_attr.stdout
+
+        (repo / ".github" / "workflows" / "context-cadence.yml").unlink()
+        neither = self._run(repo, "--check")
+        assert neither.returncode == 3
+        assert "workflow:           MISSING" in neither.stdout
+        assert "ledger union merge: MISSING" in neither.stdout
+
+    def test_the_ledger_path_agrees_everywhere(self, tmp_path: Path):
+        """Three places must name the same file: the merge attribute, the
+        workflow's git add, and the recorder's --ledger. A cadence that measures
+        into one path and stages another records nothing."""
+        repo = self._repo(tmp_path)
+        r = self._run(repo, "--ledger", "telemetry/ctx.jsonl")
+        assert r.returncode == 0, r.stderr
+        assert "telemetry/ctx.jsonl merge=union" in (
+            repo / ".gitattributes").read_text()
+        wf = (repo / ".github" / "workflows" / "context-cadence.yml").read_text()
+        assert 'git add -- "telemetry/ctx.jsonl"' in wf, wf
+        assert '--ledger "telemetry/ctx.jsonl"' in wf, wf
+        assert ".skills/context-metrics.jsonl" not in wf, (
+            "the default ledger leaked into a --ledger install:\n" + wf)
+
+    def test_an_existing_gitattributes_is_extended_not_replaced(
+            self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        (repo / ".gitattributes").write_text("*.png binary\n")
+        assert self._run(repo).returncode == 0
+        text = (repo / ".gitattributes").read_text()
+        assert "*.png binary" in text, "an unrelated rule was clobbered"
+        assert "merge=union" in text
+        # Idempotent: a second run neither duplicates nor churns.
+        self._run(repo)
+        assert (repo / ".gitattributes").read_text().count("merge=union") == 1
