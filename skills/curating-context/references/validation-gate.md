@@ -201,6 +201,16 @@ Checked before any score, on the treatment arm's scored run:
 | `links_dead_anchors` | a link's file resolves but its `#fragment` names no heading. The breakage a doc split makes: it moves headings out of a file while leaving the file in place, so `links_dead` stays `0`. `null` (a row predating the field) does not trip the gate |
 | `docs_orphaned` | demotion left more orphans than it found |
 
+### Why `no_loss` comes from a script and not a grep
+
+Phase 6 originally said "grep a distinctive phrase from each moved block". On
+this skill's first real run that check **passed over a genuine defect**: a line
+had been moved *and* recombined into a longer sentence, so the phrase was present
+and the line was not. One line out of 226, invisible in the diff, and exactly the
+paraphrase-in-transit Phase 5 forbids. A dropped line is the one failure mode of
+this skill that a token count cannot detect — the count looks *better* for it,
+which is why the verdict is a gate rather than a metric.
+
 **Any tripped gate is an outright REJECT, whatever the token numbers say.** A
 change that reduces tokens by losing content is the one failure this skill exists
 to prevent, and no amount of closure buys it back. This is the composite the

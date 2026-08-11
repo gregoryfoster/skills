@@ -343,23 +343,14 @@ Re-run Phase 1 and assert, before committing:
   ```
 
   Every non-blank line of the policy file as it was at `--base` must still be
-  present verbatim, inline or in a destination. Exit 3 lists what is not.
-
-  A distinctive-phrase grep is **not** sufficient, which is why this is a script.
-  On this skill's first real run the phrase check passed over a genuine defect: a
-  line had been moved *and* recombined into a longer sentence, so the phrase was
-  present and the line was not. One line out of 226, invisible in the diff, and
-  exactly the paraphrase-in-transit Phase 5 forbids. A dropped line is the one
-  failure mode of this skill that a token count cannot detect — the count looks
-  better for it.
-
-  Carry the verdict onto the ledger row in Phase 7 (`--no-loss ok`). The
-  validation gate treats a missing verdict as unscorable rather than as a pass,
-  so a run that skipped this phase cannot clear it by silence.
+  present verbatim, inline or in a destination. Exit 3 lists what is not. A
+  distinctive-phrase grep is **not** sufficient, which is why this is a script —
+  [the gate](references/validation-gate.md#why-no_loss-comes-from-a-script-and-not-a-grep)
+  carries the defect that proved it. Carry the verdict to Phase 7 (`--no-loss
+  ok`); a missing one is unscorable, never a pass.
 - `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](references/budget-and-metrics.md#the-link-graph)).
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
-- The repo's own test suite still passes, if it asserts on policy-file content.
-  Several cohort repos have structural tests that read `AGENTS.md`.
+- The repo's own test suite still passes — several cohort repos have structural tests that read `AGENTS.md`.
 
 ## Phase 6.5 — Sweep the seams
 
