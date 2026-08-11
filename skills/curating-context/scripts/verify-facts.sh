@@ -37,6 +37,10 @@ Claim classes checked:
   link      Relative markdown link target -> does it exist?
   command   `make X` / `npm run X` / `uv run X` / `just X` -> is the target
             defined in Makefile / package.json / pyproject.toml / justfile?
+            A directory prefix moves the manifest: `cd frontend && npm run
+            build` and `make -C frontend dist` resolve against frontend/.
+            A `cd` into a directory that is not here is FALSE; a directory
+            with no manifest is UNVERIFIABLE.
   unit      `foo.service` -> is that unit named anywhere in the repo?
   issue     #N / owner/repo#N -> open, closed, or nonexistent (with --issues)
 
@@ -145,8 +149,25 @@ check_links() {
 # --- command claims -------------------------------------------------------
 # A documented command that no longer exists is the highest-cost stale fact in a
 # policy file: an agent runs it, it fails, and the whole file loses authority.
+#
+# A documented command also carries where it runs. `cd frontend && npm run build`
+# is the ordinary shape of a monorepo's frontend build, and the manifest that
+# decides it is frontend/package.json — resolving it against the root one turns a
+# correct claim into FALSE, the single verdict this skill deletes on. So peel the
+# directory-scoping prefixes off and resolve the manifest where the command says
+# it runs.
+
+# Join a directory segment onto an accumulated prefix; an absolute segment wins.
+join_dir() {
+  case "$2" in
+    /*) printf '%s' "$2" ;;
+    *) if [ -n "$1" ]; then printf '%s/%s' "$1" "$2"; else printf '%s' "$2"; fi ;;
+  esac
+}
+
 check_commands() {
-  local f="$1" line runner target found
+  local f="$1" line runner target found dir base where i n
+  local -a toks
   # Scan only code context — inline backticks and fenced blocks. Scanning prose
   # matches English ("make it possible", "just once") and produces confident
   # nonsense; a documented command lives in code formatting or it isn't one.
@@ -158,12 +179,83 @@ check_commands() {
         $0 = substr($0, RSTART + RLENGTH)
       } }
   ' "$f" >"$TMP/code" 2>/dev/null || : >"$TMP/code"
-  grep -oE '\b(make|just|npm run|pnpm run|yarn|uv run|poetry run|composer)[[:space:]]+[a-zA-Z0-9:_-]+' "$TMP/code" 2>/dev/null \
+  # Capture any leading `cd <dir> &&` chain (optionally inside a subshell) and a
+  # directory-scoping flag between the runner and its target, so the parser below
+  # can see where the command runs. sed then normalises whitespace and pads `&&`,
+  # which both keeps the emitted claim TSV-safe (a literal tab would split a row)
+  # and lets the parser split on single spaces.
+  grep -oE '(\()?((cd|pushd)[[:space:]]+[^[:space:]&|;()]+[[:space:]]*&&[[:space:]]*)*\b(make|just|npm run|pnpm run|yarn|uv run|poetry run|composer)[[:space:]]+((-C|--directory|--prefix)([[:space:]]+|=)[^[:space:]&|;()]+[[:space:]]+)?[a-zA-Z0-9:_-]+' "$TMP/code" 2>/dev/null \
+    | sed -e 's/^(//' -e 's/&&/ \&\& /g' -e 's/[[:space:]][[:space:]]*/ /g' \
+          -e 's/^ //' -e 's/ $//' \
     | sort -u >"$TMP/cmds" || true
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    target="${line##* }"
-    runner="${line% *}"
+    toks=()
+    IFS=' ' read -r -a toks <<<"$line"
+    n="${#toks[@]}"
+    i=0
+    dir=""
+    # Peel `cd <dir> &&` / `pushd <dir> &&`, including a chain of them.
+    while [ "$i" -lt "$n" ]; do
+      case "${toks[$i]}" in
+        cd|pushd) ;;
+        *) break ;;
+      esac
+      # Needs `<dir> && <runner> <target>` still to come, or it is not a prefix.
+      if [ $((i + 3)) -ge "$n" ] || [ "${toks[$((i + 2))]}" != "&&" ]; then break; fi
+      dir="$(join_dir "$dir" "${toks[$((i + 1))]}")"
+      i=$((i + 3))
+    done
+    # Two-word runners (`npm run`, `uv run`) consume a second token.
+    runner="${toks[$i]:-}"
+    case "$runner" in
+      npm|pnpm|uv|poetry) runner="$runner ${toks[$((i + 1))]:-}"; i=$((i + 2)) ;;
+      *) i=$((i + 1)) ;;
+    esac
+    # A directory-scoping flag moves the authoritative manifest exactly as `cd`
+    # does — `make -C frontend dist` is decided by frontend/Makefile. Deferred:
+    # `npm --prefix <dir> run x` puts the flag before `run`, so the extraction
+    # never matches it at all; that is a silent miss, not a false FALSE, and
+    # widening the runner pattern to cover it is a larger change than this fix.
+    case "${toks[$i]:-}" in
+      -C|--directory|--prefix)
+        if [ -n "${toks[$((i + 1))]:-}" ]; then
+          dir="$(join_dir "$dir" "${toks[$((i + 1))]}")"
+          i=$((i + 2))
+        fi ;;
+      --directory=*|--prefix=*)
+        dir="$(join_dir "$dir" "${toks[$i]#*=}")"; i=$((i + 1)) ;;
+    esac
+    target="${toks[$i]:-}"
+    case "$target" in
+      ""|-*)
+        # `make -C frontend` scopes a directory and names no target. Reporting
+        # FALSE for a target called `-C` is the same false FALSE in miniature.
+        emit UNVERIFIABLE command "$f" "$line" "no target named — a bare runner or a flag"
+        continue ;;
+    esac
+    base=""
+    where="this repo"
+    if [ -n "$dir" ]; then
+      dir="${dir#./}"; dir="${dir%/}"
+      [ "$dir" = "." ] && dir=""
+    fi
+    if [ -n "$dir" ]; then
+      case "$dir" in
+        /*|~*|*'$'*|*'<'*|*'>'*|*'*'*)
+          emit UNVERIFIABLE command "$f" "$line" "runs in '$dir' — outside this checkout or a placeholder; no manifest to resolve against"
+          continue ;;
+      esac
+      if [ ! -d "$dir" ]; then
+        # The checkout refutes this one: the directory the command changes into
+        # is not here, so the command cannot run as documented. Blame the
+        # directory, not the runner — that is the half the operator must fix.
+        emit FALSE command "$f" "$line" "no directory '$dir' in this repo — the command cannot run as written"
+        continue
+      fi
+      base="$dir/"
+      where="$dir"
+    fi
     # Built-in subcommands are not manifest entries. `composer install` and
     # `yarn add` are always valid and would otherwise report FALSE forever.
     case "$runner $target" in
@@ -177,20 +269,20 @@ check_commands() {
     found=""
     case "$runner" in
       make)
-        [ -f Makefile ] && grep -qE "^${target}[[:space:]]*:" Makefile && found=Makefile ;;
+        [ -f "${base}Makefile" ] && grep -qE "^${target}[[:space:]]*:" "${base}Makefile" && found="${base}Makefile" ;;
       just)
-        [ -f justfile ] && grep -qE "^${target}([[:space:]]|:)" justfile && found=justfile ;;
+        [ -f "${base}justfile" ] && grep -qE "^${target}([[:space:]]|:)" "${base}justfile" && found="${base}justfile" ;;
       "npm run"|"pnpm run"|yarn)
-        [ -f package.json ] && grep -qE "\"$target\"[[:space:]]*:" package.json && found=package.json ;;
+        [ -f "${base}package.json" ] && grep -qE "\"$target\"[[:space:]]*:" "${base}package.json" && found="${base}package.json" ;;
       composer)
-        [ -f composer.json ] && grep -qE "\"$target\"[[:space:]]*:" composer.json && found=composer.json ;;
+        [ -f "${base}composer.json" ] && grep -qE "\"$target\"[[:space:]]*:" "${base}composer.json" && found="${base}composer.json" ;;
       "uv run"|"poetry run")
         # A console script, a module, or an installed tool — several legitimate
         # shapes, so confirm presence rather than claim absence.
-        if grep -rqE "(^|[\"'[:space:]])${target}[\"'[:space:]]*=" pyproject.toml 2>/dev/null; then
-          found=pyproject.toml
-        elif [ -x ".venv/bin/$target" ]; then
-          found=".venv/bin/$target"
+        if grep -rqE "(^|[\"'[:space:]])${target}[\"'[:space:]]*=" "${base}pyproject.toml" 2>/dev/null; then
+          found="${base}pyproject.toml"
+        elif [ -x "${base}.venv/bin/$target" ]; then
+          found="${base}.venv/bin/$target"
         fi ;;
     esac
     if [ -n "$found" ]; then
@@ -199,31 +291,32 @@ check_commands() {
     fi
     # FALSE only when the manifest that would define the target actually exists.
     # No Makefile at all means the command belongs to a different repo or a
-    # different era — stale, but not refuted.
+    # different era — stale, but not refuted. A directory that exists but holds
+    # no manifest is the same case, one level down.
     case "$runner" in
       make)
-        if [ -f Makefile ]; then
-          emit FALSE command "$f" "$line" "no '$target' target in Makefile"
+        if [ -f "${base}Makefile" ]; then
+          emit FALSE command "$f" "$line" "no '$target' target in ${base}Makefile"
         else
-          emit UNVERIFIABLE command "$f" "$line" "no Makefile in this repo — may document another surface"
+          emit UNVERIFIABLE command "$f" "$line" "no Makefile in $where — may document another surface"
         fi ;;
       just)
-        if [ -f justfile ]; then
-          emit FALSE command "$f" "$line" "no '$target' recipe in justfile"
+        if [ -f "${base}justfile" ]; then
+          emit FALSE command "$f" "$line" "no '$target' recipe in ${base}justfile"
         else
-          emit UNVERIFIABLE command "$f" "$line" "no justfile in this repo"
+          emit UNVERIFIABLE command "$f" "$line" "no justfile in $where"
         fi ;;
       "npm run"|"pnpm run"|yarn)
-        if [ -f package.json ]; then
-          emit FALSE command "$f" "$line" "no '$target' script in package.json"
+        if [ -f "${base}package.json" ]; then
+          emit FALSE command "$f" "$line" "no '$target' script in ${base}package.json"
         else
-          emit UNVERIFIABLE command "$f" "$line" "no package.json in this repo"
+          emit UNVERIFIABLE command "$f" "$line" "no package.json in $where"
         fi ;;
       composer)
-        if [ -f composer.json ]; then
-          emit FALSE command "$f" "$line" "no '$target' script in composer.json"
+        if [ -f "${base}composer.json" ]; then
+          emit FALSE command "$f" "$line" "no '$target' script in ${base}composer.json"
         else
-          emit UNVERIFIABLE command "$f" "$line" "no composer.json in this repo"
+          emit UNVERIFIABLE command "$f" "$line" "no composer.json in $where"
         fi ;;
       *)
         emit UNVERIFIABLE command "$f" "$line" "no declaration found; may be a module or installed tool — run it" ;;
