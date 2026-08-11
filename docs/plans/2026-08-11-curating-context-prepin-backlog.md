@@ -273,6 +273,22 @@ C1 and C2 are disjoint by extension — `.md` versus `.sh`.
    touches the frontmatter.
 9. **A3 is scoped to `normalise()` only.** The remainder of `prove-no-loss.sh` is
    B1's; a wider A3 would collide with the gated batch.
+10. **B1 makes its own room in `SKILL.md` by demoting a Phase 6 block.** The body
+    sits at **499 of the 500-line cap** enforced by
+    `test_schema.py::TestBody::test_body_length_guideline`; all three Batch A
+    agents that touched it had to compress their own prose to land net-zero. B1
+    must add the "split before demoting, never after" rule *and* edit Phase 6,
+    so it cannot land net-zero by tightening alone — it demotes a Phase 6 block
+    into `references/` first, which is the skill's own relocate-not-delete move.
+    (CR round 1, finding 4. The alternative — pulling #95 ahead of #111 — was
+    considered and rejected: it would put the wholesale SKILL.md rewrite before
+    the batch that still has to edit it.)
+11. **C2 folds the test-file convention into #90's gate.** The per-agent
+    new-test-file rule that kept Batch A conflict-free lives only in the worker
+    prompts; `test_context_surface.py` is still ~3,600 lines and still the
+    obvious home, so the next contributor reintroduces the contention. #90 is
+    already adding a gate over the script surface — it carries this too, as a
+    note in AGENTS.md or an assertion. (CR round 1, finding 5.)
 
 ### Shellcheck debt, measured
 
