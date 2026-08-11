@@ -68,6 +68,9 @@ done
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 1; }
+# The per-worktree git dir, which is where the guard logs. `$ROOT/.git` is a FILE
+# in a linked worktree, so it is never a usable directory there (#109).
+GITDIR="$(git rev-parse --absolute-git-dir 2>/dev/null)" || GITDIR="$ROOT/.git"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC="$SRC_DIR/context-budget-guard.sh"
 HOOK_DIR="$ROOT/.claude/hooks"
@@ -100,6 +103,7 @@ if [ "$MODE" = "check" ]; then
   if [ "$ok" -eq 0 ]; then
     echo "installed: $HOOK, and referenced in .claude/settings.json"
     echo "library:   $(cd "$(dirname "$hook_target")" && pwd -P)/_context-lib.sh"
+    echo "log:       $GITDIR/context-budget.log"
     exit 0
   fi
   echo "not installed (hook symlink present: $([ -e "$HOOK" ] && echo yes || echo no); settings entry: $([ -f "$SETTINGS" ] && grep -qF "$COMMAND" "$SETTINGS" && echo yes || echo no); library beside target: $lib_ok)"
@@ -188,12 +192,16 @@ if [ -n "$DOC_BUDGET" ]; then
   echo "wrote .skills/context-doc-budget = $DOC_BUDGET"
 fi
 
-cat <<'NEXT'
+# Print the RESOLVED log path, not a hardcoded `.git/context-budget.log`. In a
+# linked worktree the log lives under the main checkout's .git/worktrees/<name>/,
+# so the hardcoded hint fails there — and a failing verification step reads as
+# "the guard is broken" when it is not (#109).
+cat <<NEXT
 
 Not committed — review and commit with your normal gate:
   git add .claude/hooks/context-budget-guard.sh .claude/settings.json .skills/
   git commit -m "chore: enable the context-budget write guard"
 
 Verify after the next edit to AGENTS.md:
-  tail .git/context-budget.log
+  tail $GITDIR/context-budget.log
 NEXT

@@ -61,7 +61,10 @@ Tokens are estimated offline at ~2.7 bytes/token, refined per repo by
 hook must be fast and offline, so it never calls count_tokens; the estimate only
 decides whether to speak.
 
-Logs every decision to .git/context-budget.log (truncated at 64 KiB).
+Logs every decision to <git-dir>/context-budget.log (truncated at 64 KiB), where
+<git-dir> is `git rev-parse --absolute-git-dir` — the per-worktree git dir, so a
+linked worktree keeps its own trail rather than losing every line to a .git that
+is a file there.
 
 Exit codes:
   0  always — including every internal failure. A hook must never be the reason
@@ -83,9 +86,21 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd -P)" || exit 0
 cd "$ROOT" 2>/dev/null || exit 0
 
-LOG="$ROOT/.git/context-budget.log"
+# The git DIRECTORY, not "$ROOT/.git". In a linked worktree that path is a FILE
+# containing `gitdir: …`, so every append failed and was swallowed by the
+# `|| true` below — no audit trail in precisely the trees several cohort repos
+# mandate all development happens in (#109).
+#
+# Per-worktree (`--absolute-git-dir`) rather than a single shared log
+# (`--git-common-dir`), for three reasons: it matches skills-submodule-update.sh,
+# which already logs to `git rev-parse --git-dir`; the log answers "did the guard
+# fire on the edit I just made here", which is a per-tree question; and the
+# truncation below rewrites the file whole, so several worktrees appending to one
+# shared log would race and lose lines.
+GITDIR="$(git rev-parse --absolute-git-dir 2>/dev/null)" || GITDIR=""
+LOG="$GITDIR/context-budget.log"
 log() {
-  [ -d "$ROOT/.git" ] || return 0
+  [ -n "$GITDIR" ] && [ -d "$GITDIR" ] || return 0
   printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG" 2>/dev/null || true
   # Truncate to the last 200 lines once the log crosses 64 KiB.
   if [ -f "$LOG" ] && [ "$(LC_ALL=C wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 65536 ]; then

@@ -136,13 +136,21 @@ as a "hook error" notice, which is the wrong frame for an advisory — this is
 information, not a failure. So the guard exits 0 on **every** path, including
 every internal failure. A hook must never be the reason a session misbehaves.
 
-Every decision, speak or stay quiet, is logged to `.git/context-budget.log`
-(truncated to the last 200 lines past 64 KiB). That log is how you confirm the
-hook is wired at all:
+Every decision, speak or stay quiet, is logged to
+`$(git rev-parse --absolute-git-dir)/context-budget.log` (truncated to the last
+200 lines past 64 KiB). That log is how you confirm the hook is wired at all:
 
 ```bash
-tail .git/context-budget.log
+tail "$(git rev-parse --absolute-git-dir)/context-budget.log"
 ```
+
+The git *dir*, not `.git`, because in a linked worktree `.git` is a file
+containing `gitdir: …` — the earlier hardcoded path could never be appended to
+there, and the failure was swallowed, so repos that mandate worktree development
+got no audit trail in exactly the trees where editing happens
+([#109](https://github.com/gregoryfoster/skills/issues/109)). The log is
+per-worktree, matching `skills-submodule-update.sh`; the installer prints the
+resolved path when it finishes.
 
 An `ok:` line proves the hook ran and chose silence — a distinction you cannot
 otherwise make from the outside, and the first thing to check when someone
