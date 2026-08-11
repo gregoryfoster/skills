@@ -417,7 +417,9 @@ for line in lost:
 # through a pipe, and the failure list printed above the counts explaining it.
 out = sys.stdout
 total = kept + sum(len(v) for v in relocated.values()) + len(lost)
-print(f"policy file at base: {total} non-blank lines", file=out)
+# Named, not "policy file": --file takes a reference doc when proving a split,
+# and a report headed "policy file" for docs/API.md reads as the wrong run.
+print(f"{policy} at base: {total} non-blank lines", file=out)
 print(f"  still inline:               {kept}", file=out)
 for path in sorted(relocated):
     print(f"  relocated verbatim -> {path}: {len(relocated[path])}", file=out)
@@ -469,7 +471,7 @@ if unused:
 
 if unwarranted:
     print(
-        "\nEach line below is missing from the policy file AND from every "
+        f"\nEach line below is missing from {policy} AND from every "
         "destination.\nA curation may only drop a line with a named warrant — "
         f"add a judged entry to\n{ack_path} (see --help) or restore the line "
         "verbatim.\n",
