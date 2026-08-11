@@ -201,15 +201,17 @@ Checked before any score, on the treatment arm's scored run:
 | `links_dead_anchors` | a link's file resolves but its `#fragment` names no heading. The breakage a doc split makes: it moves headings out of a file while leaving the file in place, so `links_dead` stays `0`. `null` (a row predating the field) does not trip the gate |
 | `docs_orphaned` | demotion left more orphans than it found |
 
-### Why `no_loss` comes from a script and not a grep
-
-Phase 6 originally said "grep a distinctive phrase from each moved block". On
-this skill's first real run that check **passed over a genuine defect**: a line
-had been moved *and* recombined into a longer sentence, so the phrase was present
-and the line was not. One line out of 226, invisible in the diff, and exactly the
-paraphrase-in-transit Phase 5 forbids. A dropped line is the one failure mode of
-this skill that a token count cannot detect — the count looks *better* for it,
-which is why the verdict is a gate rather than a metric.
+`no_loss_warrants` is **not** a gate, deliberately. A warranted loss is a line
+this run's own split — or a rename Phase 6.5 mandates — forced it to rewrite,
+and rejecting a run for *reporting* that would recreate the choice the field
+exists to remove: the rational response would be to stop recording it, and the
+cohort would be back to two adopters resolving one state in opposite
+directions. It rides the `no_loss` column as `ok+Nw` instead, so a run that
+waved eight lines through and one that waved none stop reading identically. The
+defences against a ballooning warrant file are the per-entry accountability in
+`prove-no-loss.sh`'s own report and the **delta** across runs — the same two the
+cohort settled on for `seams_acked`, and for the same reason: a count that can
+only be zeroed by deleting legitimate entries invites exactly that deletion.
 
 **Any tripped gate is an outright REJECT, whatever the token numbers say.** A
 change that reduces tokens by losing content is the one failure this skill exists
@@ -235,6 +237,29 @@ Three asymmetries are deliberate:
   tomorrow's proposal. A missing verdict there is reported separately again,
   because calling it a failure reads as the shipped skill having dropped content
   when in fact nobody ran the check.
+
+### Why `no_loss` comes from a script and not a grep
+
+Phase 6 originally said "grep a distinctive phrase from each moved block". On
+this skill's first real run that check **passed over a genuine defect**: a line
+had been moved *and* recombined into a longer sentence, so the phrase was present
+and the line was not. One line out of 226, invisible in the diff, and exactly the
+paraphrase-in-transit Phase 5 forbids. A dropped line is the one failure mode of
+this skill that a token count cannot detect — the count looks *better* for it,
+which is why the verdict is a gate rather than a metric.
+
+### Warranted losses are not the same claim as no loss
+
+Whole-line matching is what makes this check strong, and it is also what makes a
+*justified* rewrite indistinguishable from a drop. `.skills/context-loss-ok`
+carries one judged entry per such line — `WARRANT :: CONTENT`, the warrant from
+a closed set — and `prove-no-loss.sh` then exits `0` with `loss_warranted: N`,
+which Phase 7 records. Two of the warrants are for edits this skill *requires*:
+a pointer whose target this same change moved, and a heading rename Phase 6.5
+compels because an issue number must not survive into a permanent anchor slug.
+Ordering avoids the first — "split before demoting, never after" — and nothing
+avoids the second, which is why the answer had to be a warrant rather than a
+discipline.
 
 ## The adoption rule
 

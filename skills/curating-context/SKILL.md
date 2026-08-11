@@ -289,6 +289,8 @@ per-doc budget has moved the problem; split the destination or pick another.
 
 ## Phase 5 — Apply
 
+**Split before demoting, never after.** A doc split is free only while nothing in the surface points at what moves; once relocated prose points *into* a section, splitting it forces a choice between a circular pointer and a [no-loss failure](references/validation-gate.md#warranted-losses-are-not-the-same-claim-as-no-loss). One cohort run reverted a split because moving `## DB` into `docs/SCHEMA.md` routed 14 relocated bullets back to their own page. If a destination needs splitting, split it first.
+
 Order matters — do the mechanical work first so the semantic edits land on a
 clean file:
 
@@ -348,6 +350,10 @@ Re-run Phase 1 and assert, before committing:
   [the gate](references/validation-gate.md#why-no_loss-comes-from-a-script-and-not-a-grep)
   carries the defect that proved it. Carry the verdict to Phase 7 (`--no-loss
   ok`); a missing one is unscorable, never a pass.
+
+  A line the run had to **rewrite** rather than move — a pointer whose target this same change relocated, a heading Phase 6.5 forces you to rename — is not a loss and must not be recorded as one. Give each a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, warrant from the closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as `--no-loss-warrants M`. Entries expire when their line changes and each is charged with its hits, so one blanket line is visible. **Never** warrant a line you have not read against its replacement.
+- **No block was copied instead of moved.** The check is satisfied by presence *anywhere*, so a bullet left inline *and* in a destination is invisible to it, to Phase 6.5, and to `links.dead` — six shipped that way on one run. `duplicated: N` lists them; judge each, because a lead-in that is load-bearing in both places is a real state.
+- **Every demoted block sits at the right heading depth.** Compare each against its neighbours in the destination: a `###` inserted directly under an existing `##` silently reparents everything below it — 24 pre-existing bullets, on the run that found this — and no gate sees depth.
 - `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](references/budget-and-metrics.md#the-link-graph)).
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes — several cohort repos have structural tests that read `AGENTS.md`.
@@ -381,11 +387,10 @@ command split from its claim: re-read any command beside a block that moved.
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
   | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
-      --no-loss ok --seams <N> --seams-acked <M> --print-trend
+      --no-loss ok --no-loss-warrants <W> --seams <N> --seams-acked <M> --print-trend
 ```
 
-`<N>` and `<M>` are the two numbers Phase 6.5 printed — new and acknowledged
-seams. Tag `--actions` honestly and specifically. The tags are the only thing that lets
+`<N>` and `<M>` are the two numbers Phase 6.5 printed — new and acknowledged seams; `<W>` is Phase 6's `loss_warranted:`, omitted only if that phase was not run. Tag `--actions` honestly and specifically. The tags are the only thing that lets
 a later run — or the cohort roll-up — attribute a token delta to what caused it.
 `"cleanup"` teaches nothing; `"demote:Project Layout"` does. Schema and budget
 rationale: [references/budget-and-metrics.md](references/budget-and-metrics.md).

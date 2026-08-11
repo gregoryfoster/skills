@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # prove-no-loss.sh — assert that nothing was silently dropped by a curation run.
 #
-# Every non-blank line of the policy file as it was at <base> must still be
-# present verbatim, either inline or in a destination file. Lines that are not
-# are reported; each one must be justified as duplicated, disproven, or a trained
-# default before the run ships.
+# Every non-blank line of the file under --file as it was at <base> — the policy
+# file by default, a reference doc when proving a split — must still be present
+# verbatim, either inline or in a destination file. Lines that are not are
+# reported, and each needs a named warrant in .skills/context-loss-ok before the
+# run ships. Some of those warrants are for edits this skill MANDATES, which is
+# why the file exists at all: see "Warranted losses" in --help.
 #
 # This exists because the obvious check is not strong enough. "Grep a distinctive
 # phrase from each moved block" passes when a block was moved AND reworded — the
@@ -23,9 +25,31 @@ Usage:
 Options:
   --base REF       Revision holding the pre-curation policy file. Default: HEAD.
                    Use the branch point when the curation spans several commits.
-  --file PATH      Policy file. Default: AGENTS.md, else CLAUDE.md.
+  --file PATH      The file whose base-revision lines must still exist.
+                   Default: AGENTS.md, else CLAUDE.md.
+
+                   Not only the policy file. Point it at a REFERENCE DOC and it
+                   is the right tool for a doc split: `--file docs/API.md`
+                   proves every line of the doc as it was at --base still exists
+                   somewhere under --docs-dir, which is the check a split needs
+                   and the policy file cannot give (the split moves nothing out
+                   of AGENTS.md, so a policy-file run passes while saying
+                   nothing about the split). The file must exist at --base as a
+                   regular file; everything else works the same.
   --docs-dir DIR   Reference-doc root searched for relocated content. Default:
                    CONTEXT_DOCS_DIR, then .skills/context-docs-dir, then docs.
+
+                   Searched RECURSIVELY, so a destination nested below the root
+                   counts: with the default root, `docs/api/conventions.md` is
+                   found for content out of `docs/API.md`. That depth is also
+                   normalised away on the link side — a split moves content one
+                   level deeper than a demotion does, and before #119 every
+                   link-carrying line in such a split reported LOST. --file and
+                   --docs-dir are independent: --file names what must survive,
+                   --docs-dir where it is allowed to have gone, and pointing
+                   --file at a doc INSIDE --docs-dir is the normal case for a
+                   split, not a conflict. Archival subtrees are never valid
+                   destinations, whatever the root.
   --also PATH      Additional destination to search (repeatable) — use when a
                    block was demoted somewhere other than the docs tree, e.g.
                    a skill's references/ directory.
@@ -79,8 +103,14 @@ What counts as "present":
 
     heading level   `### Foo` in a policy file becomes `## Foo` at the top of its
                     own document.
-    link depth      a relative link moving into docs/ gains one level, so
-                    `](tests/x.py)` becomes `](../tests/x.py)`.
+    link depth      a block that changes directory re-aims its relative links,
+                    so `](tests/x.py)`, `](../tests/x.py)` and
+                    `](../../tests/x.py)` are one line at three depths. Erased
+                    in BOTH directions and at ANY depth — a demotion into docs/
+                    gains a level, a split into docs/api/ gains two, and a
+                    promotion back to the root loses them. The target after the
+                    `../` is not touched, so a REPOINTED link is still a
+                    difference and still reports (#119).
 
   Nothing else is normalised. Reflowed prose, changed wording, appended clauses,
   and dropped lines all fail, which is the point. Whole-line matching is what
