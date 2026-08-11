@@ -29,8 +29,48 @@ Options:
   --also PATH      Additional destination to search (repeatable) — use when a
                    block was demoted somewhere other than the docs tree, e.g.
                    a skill's references/ directory.
+  --ack-file PATH  Warrant file for lines this run had to rewrite rather than
+                   move. Default: .skills/context-loss-ok.
   --show-relocated Also list which destination each moved line landed in.
   -h, --help       Show this help and exit 0.
+
+Warranted losses (.skills/context-loss-ok):
+  Some edits legitimately leave a base line present nowhere, and whole-line
+  matching — the thing that makes this check strong — cannot tell them from a
+  drop. Two shapes came out of the cohort and both are compulsory rather than
+  chosen:
+
+    a pointer retargeted because THIS change moved what it points at. The split
+    that invalidates it is the same run that fixes it, so the corrected line is
+    a different line.
+    a heading Phase 6.5 forces you to rename — `#\d{2,}` in a permanent anchor
+    slug is a class 3b seam, and heading TEXT is not normalised here.
+
+  Neither has an honest verdict without this file: `ok` contradicts exit 3,
+  `failed` tells score-cohort.sh content was dropped when none was, and
+  `skipped` is false. So each such line gets a judged entry:
+
+    WARRANT :: CONTENT        e.g.  retarget :: Full rules live in docs/STYLE.md §32
+
+  WARRANT names WHY, from a closed set — an unrecognised one is refused rather
+  than ignored, because a mute allowlist is not a judgement:
+
+    retarget   the pointer's target moved in this same change
+    rename     Phase 6.5 or check-seams required the new heading text
+    duplicate  the content is verbatim elsewhere in the surface already
+    disproven  a command refuted the claim (see verify-facts.sh)
+    default    the tool now does this by default, so the instruction is noise
+
+  CONTENT is a substring of the reported line. Matched on content, never on
+  line number, so an entry expires the moment its line changes — which is
+  exactly when it needs re-judging. An entry can only ever reach a line that is
+  ALREADY unaccounted for, so it can neither hide a relocation nor invent one,
+  and every entry is charged with its hits in a per-entry report: one broad
+  line that zeroes the count is the gaming vector this file introduces, and the
+  report is what makes it visible.
+
+  Comments are `#` at LINE START only. Stripping an inline one would silently
+  broaden the entry — `Fixed in #412` becomes `Fixed in`.
 
 What counts as "present":
   A line matches an entire line of the current policy file or of a destination —
@@ -48,19 +88,37 @@ What counts as "present":
   because it appeared inside "Step 9: 1. Commit and push when ready." elsewhere.
 
   The report goes to stdout in full, including the LOST list, so it stays in
-  order through a pipe.
+  order through a pipe. Its last three lines are machine-readable:
+
+    duplicated: <D>       lines left in BOTH the policy file and a destination
+    loss_warranted: <M>   unaccounted lines with a judged entry
+    lost: <N>             unaccounted lines with none
+
+  <M> goes on the ledger row via `record-telemetry.sh --no-loss-warrants M`,
+  which is what keeps "nothing was unaccounted for" and "eight lines were
+  judged and waved through" distinguishable in the cohort's data.
+
+  <D> is a NOTE, not a failure, and never changes the exit code. Presence
+  anywhere satisfies this check, so a block COPIED rather than moved is
+  invisible to it — six shipped that way on one cohort run, one line reaching
+  three occurrences. Judge each: a lead-in that is load-bearing in both places
+  is a real state, distinct from forgetting to delete the original. Only lines
+  of 40+ characters are compared, or fences, rules and shared headings would
+  bury the real hits.
 
 Exit codes:
-  0  every line accounted for
-  1  usage error, or no policy file found
+  0  every line accounted for, or warranted
+  1  usage error, no policy file found, or a malformed acknowledgement entry
   2  infrastructure failure (base revision unreadable, python3 missing)
-  3  one or more lines unaccounted for — the run must justify or restore them
+  3  one or more lines unaccounted for and unwarranted — the run must justify
+     or restore them
 USAGE
 }
 
 BASE="HEAD"
 POLICY=""
 DOCS_DIR=""
+ACK_FILE=".skills/context-loss-ok"
 SHOW_RELOCATED=0
 EXTRA=()
 
@@ -70,6 +128,7 @@ while [ $# -gt 0 ]; do
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
     --also) EXTRA+=("${2:?--also needs a path}"); shift 2 ;;
+    --ack-file) ACK_FILE="${2:?--ack-file needs a path}"; shift 2 ;;
     --show-relocated) SHOW_RELOCATED=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -158,11 +217,24 @@ done
 sort -u "$TMP/dests" >"$TMP/dests.u"
 
 RC=0
-python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" <<'PY' || RC=$?
+python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" <<'PY' || RC=$?
 import re
 import sys
 
-before_path, policy, dests_path, show = sys.argv[1:5]
+before_path, policy, dests_path, show, ack_path = sys.argv[1:6]
+
+# Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
+# this file is to record a judgement, and free text would make it a mute
+# allowlist — the same file minus the only part a reviewer can check. The first
+# two are compulsory edits the skill itself forces (#111); the last three were
+# already the warrants the LOST message names in prose, and had nowhere to live.
+WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default")
+
+# Below this, a line shared by the policy file and a destination is structure,
+# not duplicated content: fences, `---`, `## Detail Docs`, one-word bullets.
+# Without a floor the copied-not-moved note is hundreds of lines of noise, and a
+# note nobody reads finds nothing — which is how six real copies shipped.
+DUP_MIN_CHARS = 40
 
 HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 # Every leading `../` on a link target, not just the first. `.replace("](../",
@@ -218,9 +290,45 @@ except OSError as exc:
     print(f"ERROR {exc}", file=sys.stderr)
     sys.exit(2)
 
+# Acknowledgement entries, refused rather than ignored when malformed. A typo'd
+# warrant that merely failed to match would report as an ordinary loss and send
+# the run hunting for content that is fine; refusing also errs toward NOT
+# passing, which is the only safe direction for a file that can turn exit 3
+# into exit 0.
+entries, malformed = [], []
+try:
+    with open(ack_path, encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            raw = raw.rstrip("\n")
+            if not raw.strip() or raw.lstrip().startswith("#"):
+                continue
+            head, sep, tail = raw.partition("::")
+            warrant, content = head.strip(), tail.strip()
+            if not sep:
+                why = "no `::` — an entry is `WARRANT :: CONTENT`"
+            elif warrant not in WARRANTS:
+                why = (f"unknown warrant '{warrant}' — one of: "
+                       + ", ".join(WARRANTS))
+            elif not content:
+                why = "empty CONTENT — an entry with no content matches every line"
+            else:
+                entries.append((warrant, content))
+                continue
+            malformed.append((lineno, raw.strip()[:100], why))
+except OSError:
+    pass
+
+if malformed:
+    print(f"ERROR {ack_path} has {len(malformed)} malformed entry(ies):",
+          file=sys.stderr)
+    for lineno, text, why in malformed:
+        print(f"  line {lineno}: {why}", file=sys.stderr)
+        print(f"    {text}", file=sys.stderr)
+    sys.exit(1)
+
 inline = dests.get(policy, set())
 others = [p for p in dest_paths if p != policy]
-kept, relocated, lost = 0, {}, []
+kept, relocated, lost, duplicated = 0, {}, [], []
 
 for raw in before:
     line = normalise(raw)
@@ -228,12 +336,32 @@ for raw in before:
         continue
     if line in inline:
         kept += 1
+        # Still inline AND in a destination: copied rather than moved. This
+        # check is satisfied by presence ANYWHERE, so without this it sees
+        # nothing — and check-seams and links.dead do not look at all.
+        if len(line) >= DUP_MIN_CHARS:
+            also = [p for p in others if line in dests[p]]
+            if also:
+                duplicated.append((raw.strip(), also))
         continue
     where = next((p for p in others if line in dests[p]), None)
     if where:
         relocated.setdefault(where, []).append(raw.strip())
     else:
         lost.append(raw.strip())
+
+# A warrant only ever reaches a line that is ALREADY unaccounted for, so it can
+# neither mask a relocation nor manufacture one. First matching entry is charged
+# with the hit, which is what makes an entry's blast radius visible below.
+warranted, unwarranted = [], []
+charged = [[] for _ in entries]
+for line in lost:
+    idx = next((i for i, (_, c) in enumerate(entries) if c in line), None)
+    if idx is None:
+        unwarranted.append(line)
+    else:
+        warranted.append((entries[idx][0], line))
+        charged[idx].append(line)
 
 # One stream for the whole report. Split across stdout and stderr it interleaved
 # through a pipe, and the failure list printed above the counts explaining it.
@@ -247,22 +375,71 @@ for path in sorted(relocated):
         for line in relocated[path]:
             print(f"      {line[:120]}", file=out)
 print(f"  UNACCOUNTED FOR:            {len(lost)}", file=out)
+if entries or warranted:
+    print(f"    warranted:                {len(warranted)}", file=out)
+    print(f"    unwarranted:              {len(unwarranted)}", file=out)
 
-if lost:
+if duplicated:
+    print(f"\n{len(duplicated)} line(s) left in BOTH the policy file and a "
+          "destination — copied, not moved.\nJudge each: a lead-in that is "
+          "load-bearing in both places is a real state, but\nnothing else "
+          "requires the second copy. Not a failure, and not checked by any "
+          "gate.", file=out)
+    for line, where in duplicated:
+        print(f"  ALSO IN {', '.join(where)}", file=out)
+        print(f"          {line[:120]}", file=out)
+
+if warranted:
+    print(f"\n{len(warranted)} warranted loss(es) (judged in {ack_path}):",
+          file=out)
+    width = max(len(w) for w, _ in warranted)
+    for warrant, line in warranted:
+        print(f"  WARRANTED {warrant:<{width}}  {line[:120]}", file=out)
+    # Per-entry accountability, the part of check-seams.sh's ack report the
+    # cohort named as what proved no entry had quietly become a blanket. An
+    # acknowledgement is ONE judged line, so anything above one hit is an
+    # entry doing the job of judgement without the judging.
+    print("\n  by entry:", file=out)
+    for (warrant, content), hits in zip(entries, charged):
+        if not hits:
+            continue
+        print(f"    {len(hits)} hit(s): {warrant} :: {content[:70]}", file=out)
+        if len(hits) > 1:
+            print(f"    WARN this entry is broad ({len(hits)} hits) — an "
+                  "acknowledgement should cover ONE judged line; split it or "
+                  "re-judge", file=out)
+
+unused = [e for e, hits in zip(entries, charged) if not hits]
+if unused:
+    print(f"\n  {len(unused)} entry(ies) matched nothing — the line each "
+          "acknowledged has changed\n  or gone, which is when it needs "
+          "re-judging; re-judge and prune:", file=out)
+    for warrant, content in unused:
+        print(f"    {warrant} :: {content[:70]}", file=out)
+
+if unwarranted:
     print(
         "\nEach line below is missing from the policy file AND from every "
         "destination.\nA curation may only drop a line with a named warrant — "
-        "verbatim duplication\nelsewhere in the surface, a command that "
-        "disproved it, or a trained default.\nOtherwise it was lost in transit; "
-        "restore it verbatim.\n",
+        f"add a judged entry to\n{ack_path} (see --help) or restore the line "
+        "verbatim.\n",
         file=out,
     )
-    for line in lost:
+    for line in unwarranted:
         print(f"  LOST  {line[:160]}", file=out)
-    out.flush()
-    sys.exit(3)
+elif warranted:
+    print(f"\nOK — {len(warranted)} line(s) warranted, none unexplained.",
+          file=out)
+else:
+    print("\nOK — every line is either still inline or relocated verbatim.",
+          file=out)
 
-print("\nOK — every line is either still inline or relocated verbatim.", file=out)
+print(f"\nduplicated: {len(duplicated)}", file=out)
+print(f"loss_warranted: {len(warranted)}", file=out)
+print(f"lost: {len(unwarranted)}", file=out)
+out.flush()
+if unwarranted:
+    sys.exit(3)
 
 PY
 

@@ -56,6 +56,17 @@ Options:
                    a ledger, but the gate treats it exactly like a null: only
                    `ok` clears the check, and only `failed` is evidence that
                    anything actually went wrong.
+  --no-loss-warrants N
+                   Record how many of prove-no-loss.sh's unaccounted lines
+                   carried a judged entry in .skills/context-loss-ok — its
+                   `loss_warranted:` line. Requires --no-loss ok or failed: a
+                   count with no verdict, or against `skipped`, would claim
+                   lines were judged by a check that did not run. Omitted is
+                   null, which is never the same as 0 — 0 says the run read the
+                   report and warranted nothing, and null says it did not say.
+                   Without this the ledger cannot tell a clean run from one
+                   that waved eight lines through, and the cohort already holds
+                   both recorded as `ok` (#111).
   --seams N        Record check-seams.sh's final count for this run: the number
                    of UNACKNOWLEDGED cross-reference seams after Phase 6.5's
                    hits were judged — the wrong ones fixed, the legitimate ones
@@ -103,6 +114,13 @@ Row schema (one JSON object per line):
                     heading; null on a payload predating the field, which is
                     never the same as 0
   no_loss           prove-no-loss.sh's verdict, from --no-loss; null if not run
+  no_loss_warrants  how many of that verdict's unaccounted lines carried a
+                    judged entry in .skills/context-loss-ok, from
+                    --no-loss-warrants. Null when the run did not report it,
+                    which is never the same as 0: `ok` alone cannot tell
+                    "nothing was unaccounted for" from "eight lines were judged
+                    and waved through", and two cohort adoptions recorded that
+                    same state in opposite ways (#111)
   seams             check-seams.sh's unacknowledged count, from --seams; null
                     if not swept
   seams_acked       the sweep's acknowledged count, from --seams-acked; null
@@ -119,7 +137,8 @@ Row schema (one JSON object per line):
 
 Exit codes:
   0  row appended (or printed, with --dry-run)
-  1  usage error (including --baseline with --actions or --no-loss), or stdin
+  1  usage error (including --baseline with --actions, --no-loss or
+     --no-loss-warrants; or --no-loss-warrants without a verdict), or stdin
      was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
@@ -131,6 +150,7 @@ LEDGER=".skills/context-metrics.jsonl"
 ACTIONS=""
 NOTE=""
 NO_LOSS=""
+NO_LOSS_WARRANTS=""
 SEAMS=""
 SEAMS_ACKED=""
 REPO_OVERRIDE=""
@@ -156,6 +176,8 @@ while [ $# -gt 0 ]; do
     --actions) need_arg "$#" --actions; ACTIONS="$2"; ACTIONS_SET=1; shift 2 ;;
     --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
+    --no-loss-warrants)
+      NO_LOSS_WARRANTS="${2:?--no-loss-warrants needs a count}"; shift 2 ;;
     --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
     --seams-acked) SEAMS_ACKED="${2:?--seams-acked needs a count}"; shift 2 ;;
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
@@ -181,10 +203,12 @@ if [ "$BASELINE" -eq 1 ]; then
     echo "      is measurement-only and carries the fixed tag \`baseline\`." >&2
     echo "      Record the edits on the Phase 7 row instead." >&2
     exit 1; }
-  [ -z "$NO_LOSS" ] || {
-    echo "ERROR --baseline and --no-loss are mutually exclusive: nothing has" >&2
-    echo "      been relocated yet, so there is no verdict to record." >&2
-    exit 1; }
+  if [ -n "$NO_LOSS" ] || [ -n "$NO_LOSS_WARRANTS" ]; then
+    echo "ERROR --baseline and --no-loss/--no-loss-warrants are mutually" >&2
+    echo "      exclusive: nothing has been relocated yet, so there is no" >&2
+    echo "      verdict to record and nothing to have warranted." >&2
+    exit 1
+  fi
   # The KIND is on the TAG, not in --note. Two kinds of baseline row mean
   # different things to the longitudinal analysis — the state a curation was
   # measured against, versus a scheduled reading of a surface nobody touched —
@@ -208,9 +232,24 @@ case "$NO_LOSS" in
   ''|ok|failed|skipped) ;;
   *) echo "ERROR --no-loss must be ok, failed, or skipped (got '$NO_LOSS')" >&2; exit 1 ;;
 esac
+# Warrants are the COMPOSITION of a verdict, never a verdict of their own.
+# Recorded against `skipped` or against nothing they would assert that lines
+# were judged by a check nobody ran — the over-statement #111 found already in
+# the cohort's data. Against `failed` they are informative: five warranted of
+# eight unaccounted says how much of the failure was understood.
+if [ -n "$NO_LOSS_WARRANTS" ]; then
+  case "$NO_LOSS" in
+    ok|failed) ;;
+    *) echo "ERROR --no-loss-warrants needs --no-loss ok or --no-loss failed" >&2
+       echo "      (got '${NO_LOSS:-nothing}'). A count with no verdict claims" >&2
+       echo "      lines were judged by a check that did not run." >&2
+       exit 1 ;;
+  esac
+fi
 # Digits only — the value comes from check-seams.sh's `seams: N` line, and
 # anything else here is a transcription error, not a count.
-for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED"; do
+for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED" \
+             "--no-loss-warrants=$NO_LOSS_WARRANTS"; do
   _flag="${_pair%%=*}"; _val="${_pair#*=}"
   case "$_val" in
     ''|*[!0-9]*)
@@ -262,13 +301,13 @@ mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGE
 [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" <<'PY' || RC=$?
 import datetime as dt
 import json
 import sys
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
- no_loss, seams, seams_acked) = sys.argv[1:13]
+ no_loss, seams, seams_acked, no_loss_warrants) = sys.argv[1:14]
 
 try:
     m = json.load(open(src, encoding="utf-8"))
@@ -326,6 +365,11 @@ row = {
         len(links["dead_anchors"]) if "dead_anchors" in links else None
     ),
     "no_loss": no_loss or None,
+    # Empty-string test, not truthiness: `--no-loss-warrants 0` is a positive
+    # claim — the run read the report and had nothing to warrant — and the
+    # `or None` shape used above would fold it back into "not measured". That
+    # distinction is the whole point of the field (#111).
+    "no_loss_warrants": int(no_loss_warrants) if no_loss_warrants != "" else None,
     "seams": int(seams) if seams else None,
     "seams_acked": int(seams_acked) if seams_acked else None,
     "top_section": top.get("title"),
