@@ -92,6 +92,19 @@ Requires a named warrant. One of exactly three:
 Nothing else is class D. In particular, a section that *feels* like boilerplate
 but states a real project constraint is class C, not class D.
 
+### The four classes as Phase 3 tabulates them
+
+| Class | Meaning | Disposition |
+|---|---|---|
+| **A — Keep inline** | Only the author knows it, and it is needed on nearly every task: build/test commands, non-obvious constraints, project-specific gotchas | stays, possibly tightened |
+| **B — Demote** | Correct and valuable, needed on *some* tasks | move to `docs/<TOPIC>.md`, link from the index |
+| **C — Tighten** | Class A content carrying prose an agent doesn't need | rewrite in place |
+| **D — Delete** | Restates a trained default, duplicates another part of the surface, or was disproven in Phase 2 | delete, with the warrant named |
+
+Classification is where the value is. Compressing a class-B section is wasted
+work; deleting a class-A section is damage. Do the classification before writing
+a single edit.
+
 ## What never gets cut
 
 The keep list, binding at equal strength to the rest of this rubric:
@@ -139,6 +152,24 @@ Two rules for the split:
 
 Only descend to individual lines inside something already called class C.
 
+### The measured example
+
+**Most large sections split A+B rather than taking one class.** On this repo's
+first run, three of four demotions were splits: the `##` section stayed and its
+`###` subsections moved. So classify at `##` level first, then check
+`subsections[]` for any child over ~5% of the file — that array exists because a
+`##`-only census hides the unit the decision is actually made on. The measured
+example:
+
+| Section | Total | Kept inline | Demoted subsection |
+|---|---:|---:|---|
+| `Scripts` | 2,670 | 390 | `<SKILL_SCRIPTS>` 1,315 + gate-script discipline 1,215 |
+| `Project-level superseding` | 1,351 | 384 | `Required override frontmatter` 789 |
+
+Note the counter-example in the same run: `Self-discovery` (176) was a *child of a
+demoted parent* and stayed inline, because the `../skills` vs `../../skills`
+footgun is class A. A parent's class does not descend to its children.
+
 ## Evidence behind these classes
 
 - Human-written context files outperformed LLM-generated ones for all four agents
@@ -154,3 +185,25 @@ Only descend to individual lines inside something already called class C.
   actually improved by 2.7%. Duplication is warrant #1 for a reason.
 - Context is a finite resource with diminishing marginal returns; retrieval
   accuracy degrades as the window fills. An unnecessary token is not neutral.
+
+## The third clause, and the three warrants
+
+The third clause is what makes this skill safe to run unattended. Cutting a
+section from `AGENTS.md` is a **move** to a `docs/` reference by default. Outright
+deletion needs one of exactly three warrants: the content is verbatim-duplicated
+elsewhere in the surface, a command proved it false, or it restates something the
+model already knows (rubric class D — see below). Anything else gets relocated,
+and the commit body names where it went.
+
+## Rationalization prevention
+
+| Thought | Reality |
+|---|---|
+| "It's under 200 lines, so it's fine" | Line count is not the budget. Measured exactly, `wslcb-licensing-tracker` is 205 lines / **5,331 tokens** and `cannabis.observer-wordpress` is 332 lines / **49,103**. Both pass a line cap; one costs 9.2× the other. `watcher` and `usa-wa` differ by one line and 33,238 tokens. Gate on tokens. |
+| "I'll move the bloat into `docs/`" | Only helps if the doc is *smaller than the thing an agent would otherwise read*. `cannabis.observer-wordpress` already carries 192k tokens of over-budget live docs; demoting its 44.8k `Constraints` section into one of them moves the cost, it doesn't remove it. Demotion is paired with a per-doc budget. |
+| "This section looks redundant, cutting it" | Redundant with *what*? Verbatim duplication is a warrant; "feels like boilerplate" is not. Quote both copies or relocate instead. |
+| "The path doesn't exist, so the claim is stale" | A policy file legitimately names paths that don't exist locally — illustrative templates, naming conventions, downstream consumer paths. `verify-facts.sh` marks those UNVERIFIABLE for exactly this reason. Deleting on UNVERIFIABLE is how real guidance gets destroyed. |
+| "I'll write the architecture overview more concisely" | The ETH Zurich evaluation found codebase overviews did **not** help agents reach relevant files faster. Tightening a section that shouldn't be inline at all is wasted work — classify it first. |
+| "More context is safer" | Context is a finite resource with diminishing returns. Retrieval accuracy degrades as the window fills, so an unnecessary token is not neutral — it dilutes attention on the necessary ones. |
+| "Nothing changed this week, skip the run" | The run's cheapest output is the telemetry row. A flat week is a signal worth recording, and the fact checks still catch drift the repo caused elsewhere. |
+| "I can get seams to 0 by deleting the references" | A legitimate back-reference is navigation, and deleting it zeroes the metric while making the surface worse — the `tokens_live` mistake again. Acknowledge it in `.skills/context-seams-ok` instead; the healthy steady state is a stable acknowledged set with zero *new* hits. |

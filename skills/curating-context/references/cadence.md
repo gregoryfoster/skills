@@ -273,6 +273,19 @@ jobs:
           fi
 ```
 
+What goes on the clock is a **measurement, not a curation** — regrowth, budget
+adherence and seam accrual all come from measuring, and judgement on a timer is
+what this skill avoids everywhere else. The weekly job records a `baseline` row
+and warns when the surface drifts; a human or an agent curates on that evidence.
+It never runs on `pull_request`.
+
+**It needs the `ANTHROPIC_API_KEY` repository secret.** Without it the job
+records *nothing*, silently, every week — `record-telemetry.sh` refuses an
+estimate against exact rows. Set the secret first, then run it once by hand.
+
+Design, the annotated template, and what it deliberately does not do:
+[references/cadence.md](cadence.md) ([#118](https://github.com/gregoryfoster/skills/issues/118)).
+
 ## Stagger the cron across the cohort
 
 Twelve repos all firing at `0 15 * * 1` produce twelve simultaneous
