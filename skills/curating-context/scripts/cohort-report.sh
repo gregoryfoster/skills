@@ -209,6 +209,7 @@ display = {
     for short, keys in basenames.items() for key in keys
 }
 
+
 def is_curation_row(row):
     """Whether a row records a RUN rather than a state.
 
@@ -217,11 +218,14 @@ def is_curation_row(row):
     Counting rows reported one curation as two runs, in the column a reader
     consults to answer "is this repo actually running?" (#116).
 
-    THIS RULE IS SHARED WITH score-cohort.sh's classify_run() AND MUST STAY
-    IDENTICAL; a test pins the two to the same answer. An untagged row
-    (actions: []) counts as a run: something happened that nobody tagged, which
-    is a tagging gap rather than a measurement. Only an explicit `baseline*` row
-    is a state.
+    THIS RULE IS SHARED WITH score-cohort.sh's classify_run() and
+    record-telemetry.sh's is_curation_row(), and MUST STAY IDENTICAL. The
+    neighbouring primary-file rule diverged between exactly these two scripts
+    once and produced two irreconcilable pictures of one repo, so
+    TestCurationRuleIsOneRule feeds a single mixed ledger through all three and
+    pins them to one answer. An untagged row (actions: []) counts as a run:
+    something happened that nobody tagged, which is a tagging gap rather than a
+    measurement. Only an explicit `baseline*` row is a state.
     """
     acts = row.get("actions") or []
     return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))

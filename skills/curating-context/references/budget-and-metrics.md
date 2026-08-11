@@ -273,14 +273,18 @@ records a state that has already passed, so a late fix cannot change it.
 
 ### Reading the trend
 
-`record-telemetry.sh --print-trend` prints the last eight runs with per-run
-deltas and net change. Three shapes to recognise:
+`record-telemetry.sh --print-trend` prints the last eight **rows** with per-row
+deltas and net change, and its header separates the two counts — a run writes a
+`baseline` row and a curation row, so eight rows is four runs. Three shapes to
+recognise:
 
 - **Sawtooth** — reductions followed by regrowth. The file is not the problem;
   whatever keeps appending to it is. Look for a skill or hook that writes to
   `AGENTS.md`, and give it a reference doc to write to instead.
 - **Step then flat** — one large demotion, then nothing. Healthy. Subsequent runs
-  should be cheap `baseline` rows.
+  should show a curation row with a delta near zero: the surface is holding.
+  (A `baseline` row is no longer the marker of a quiet week — every run writes
+  one at Phase 1, so it says nothing about what the run found.)
 - **Slow creep with no negative deltas** — nobody is running Phase 5, or every
   run is finding the budget already met and stopping. Check whether the budget is
   set high enough to never bind.

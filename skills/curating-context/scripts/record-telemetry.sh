@@ -251,6 +251,23 @@ except (ValueError, KeyError) as exc:
     print(f"ERROR stdin is not measure-context.sh JSON: {exc}", file=sys.stderr)
     sys.exit(1)
 
+def is_curation_row(r):
+    """Whether a row records a RUN rather than a state.
+
+    THIS RULE IS SHARED WITH cohort-report.sh's is_curation_row() and
+    score-cohort.sh's classify_run(), and a test pins all three to one answer
+    over a single mixed ledger. An untagged row (actions: []) counts as a run —
+    something happened that nobody tagged, which is a tagging gap rather than a
+    measurement. Only an explicit `baseline*` row is a state.
+    """
+    acts = r.get("actions") or []
+    return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
+
+
+def plural(n, word):
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
 # Which skill version produced this row. Absent from measurements taken before
 # the field existed, and null rather than guessed in that case — a wrong
 # attribution is worse than a missing one when the point is to A/B skill changes.
@@ -405,16 +422,11 @@ if trend == "1":
     series = history + [row]
     # Runs, not rows. A curation run writes two rows — the Phase 1 `baseline` and
     # the Phase 7 curation — so len(series) reported one curation as two runs.
-    # THIS RULE IS SHARED WITH cohort-report.sh's is_curation_row() and
-    # score-cohort.sh's classify_run(): an untagged row counts as a run, only an
-    # explicit `baseline*` row is a state. Every row is still PRINTED below; the
-    # baselines are what the deltas are measured against.
-    def _is_curation(r):
-        acts = r.get("actions") or []
-        return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
-
-    n_runs = sum(1 for r in series if _is_curation(r))
-    print(f"\ntrend for {row['file']} ({n_runs} run(s) over {len(series)} rows):",
+    # Every row is still PRINTED below; the baselines are what the deltas are
+    # measured against.
+    n_runs = sum(1 for r in series if is_curation_row(r))
+    print(f"\ntrend for {row['file']} "
+          f"({plural(n_runs, 'run')} over {plural(len(series), 'row')}):",
           file=sys.stderr)
     # Action tags are the point of the ledger, so a real run carries several and a
     # single-line format stops being readable at about three. Wrap onto

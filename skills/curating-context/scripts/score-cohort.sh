@@ -558,11 +558,17 @@ SYSTEMIC_HINTS = {
 arm_records = records
 # "No repo in either arm can satisfy this rule" is an inference from BREADTH, and
 # at two repos it is not supported — the likelier reading is two non-compliant
-# repos, which is a finding about the cohort and needs a different fix. Require
-# at least two per arm before naming a defect in the gate.
-SYSTEMIC_MIN = 4
+# repos, which is a finding about the cohort and needs a different fix.
+#
+# Counted PER ARM, not over the roster. A roster total let 3 treatment repos and
+# 1 control repo clear a floor of 4 and print the defect, which is the same thin
+# evidence the floor exists to refuse — one arm carrying a single repo says
+# nothing about whether the rule is satisfiable.
+SYSTEMIC_MIN_PER_ARM = 2
+t_arm_n = sum(1 for r in records if r["wave"] == treatment)
+c_arm_n = sum(1 for r in records if r["wave"] == control)
 systemic = systemic_hint = None
-if len(arm_records) >= SYSTEMIC_MIN \
+if min(t_arm_n, c_arm_n) >= SYSTEMIC_MIN_PER_ARM \
         and all(r["status"] == "unscorable" for r in arm_records):
     codes = {r["why_code"] for r in arm_records}
     if len(codes) == 1:
