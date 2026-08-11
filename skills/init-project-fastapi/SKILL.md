@@ -291,7 +291,7 @@ chmod +x .claude/hooks/skills-submodule-update.sh
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bash .claude/hooks/skills-submodule-update.sh" }
+          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\"" }
         ]
       }
     ]

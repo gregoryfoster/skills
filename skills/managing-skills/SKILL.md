@@ -73,7 +73,9 @@ The `../../` prefix resolves from `.claude/skills/` back to the project root, th
 
 #### Step 2c — Install the doctor script
 
-Skills referenced via the symlink chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/.../skills/<name>`) are unreachable when the submodule isn't initialized — fresh `git worktree add`, shallow CI clones without `--recurse-submodules`, etc. The doctor is a tiny script copied into the consumer's `.skills/` directory that walks `skills/*` symlinks, auto-runs `git submodule update --init --recursive` when any dangle, and prints an actionable error otherwise. Phase 1 of every `reviewing-*` / `shipping-*` skill invokes it as a preflight.
+Skills referenced via the symlink chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/.../skills/<name>`) are unreachable when the submodule isn't initialized — fresh `git worktree add`, shallow CI clones without `--recurse-submodules`, etc. The doctor is a tiny script copied into the consumer's `.skills/` directory that walks `skills/*` **and `.claude/hooks/*`** symlinks, auto-runs `git submodule update --init --recursive` when any dangle, and prints an actionable error otherwise. Phase 1 of every `reviewing-*` / `shipping-*` skill invokes it as a preflight.
+
+`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored.
 
 Run the installer from the vendor copy:
 
@@ -163,7 +165,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 Re-runs of `/managing-skills` must never double-wire the hook. Bail out of the procedure if **both** of these are already true:
 
 - The symlink at `.claude/hooks/skills-submodule-update.sh` exists and resolves to the vendored script (`../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh`).
-- `.claude/settings.json` contains the string `bash .claude/hooks/skills-submodule-update.sh` at least once.
+- `.claude/settings.json` contains the string `.claude/hooks/skills-submodule-update.sh` at least once. Match the script path, not the whole command — an install written before the `$CLAUDE_PROJECT_DIR` form ([#110](https://github.com/gregoryfoster/skills/issues/110)) uses a cwd-relative command and must still be recognised.
 
 Otherwise — fresh install or partial install — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
 
@@ -186,16 +188,21 @@ The `../../` prefix resolves from `.claude/hooks/` back to the project root, the
 ```bash
 jq '(.hooks //= {}) |
     (.hooks.SessionStart //= []) |
-    .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh")) |
+    .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not)) |
     .hooks.SessionStart += [{
       "matcher": ".*",
       "hooks": [{
         "type": "command",
-        "command": "bash .claude/hooks/skills-submodule-update.sh"
+        "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\""
       }]
     }]' .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
 ```
+
+Two details in that expression are load-bearing:
+
+- **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not on the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). Claude Code normally runs hooks from the project dir, so the older `bash .claude/hooks/…` form works today — but it is an undocumented assumption, and a repo whose `settings.json` mixes both styles is what made this visible in review. The `${CLAUDE_PROJECT_DIR:-.}` fallback is the same one `init-socraticode` uses: with the variable unset, a bare `"$CLAUDE_PROJECT_DIR/…"` degrades to `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
+- **The strip matches the script path, not the whole command string.** An equality test against the current command would skip an entry written in the older form — duplicating the hook here, and leaving it unremovable by the uninstall filter below.
 
 If `.claude/settings.json` does not exist yet, create it with `echo '{}' > .claude/settings.json` before running the jq command.
 
@@ -210,7 +217,7 @@ The merged result should look like:
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/skills-submodule-update.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\""
           }
         ]
       }
@@ -234,11 +241,11 @@ Remove the symlink:
 git rm .claude/hooks/skills-submodule-update.sh
 ```
 
-Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block:
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable:
 
 ```bash
 jq 'if .hooks.SessionStart then
-      .hooks.SessionStart |= map(select((.hooks // [])[0].command != "bash .claude/hooks/skills-submodule-update.sh"))
+      .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not))
     else . end' \
    .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
@@ -256,6 +263,53 @@ You may also want to delete the hook's files in `.git/` if you don't plan to rei
 ```bash
 rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err
 ```
+
+### Holding one submodule at a commit
+
+Use this when a repo must stay on a specific vendored version — an experiment's
+control arm, a known-good release pending a breaking change — while its sibling
+submodules keep refreshing. Uninstalling the auto-refresh hook also works, but
+it is blunt: it stops every other submodule's refresh and the `.skills/doctor.sh`
+self-heal too.
+
+Write `.skills/skills-pin`, one `<submodule-path> <commit-ish>` per line. Blank
+lines and `#` comments are ignored:
+
+```
+# held for the curating-context cohort experiment (wave A control arm)
+skills-vendor/gregoryfoster-skills 3fc7b71
+```
+
+Commit it. The file is deliberately committed rather than an env var or a
+settings key: a hold has to survive across sessions and machines, and be
+greppable and reviewable by whoever inherits it.
+
+What the hook does with it:
+
+- Pinned paths are excluded from the submodule update **and** from the
+  auto-commit. Excluding only the update is not enough — staging
+  `skills-vendor/` wholesale would commit a pinned submodule whose checkout had
+  already drifted, ending the hold the update step just honoured.
+- Every honoured pin is logged by name in `.git/skills-update.log`, so a hold
+  that outlived its reason is visible rather than silent.
+- A pin naming a submodule git has no record of, or a line that is not
+  `<path> <commit-ish>`, **refuses the whole refresh for that run** and reports
+  to stderr. A typo'd path leaves the intended submodule unpinned, which is the
+  exact silent bump the pin was written to stop; moving nothing is the only
+  safe response.
+- If the recorded gitlink is not the pinned commit — the pin was written after
+  the pointer had already moved — the hook reports **drift** and still holds the
+  pointer still. It will not rewrite the pointer back; reset it by hand and
+  commit.
+
+For a one-off hold without committing a file, point `SKILLS_PIN_FILE` at another
+path. Resolution is the usual three steps: `$SKILLS_PIN_FILE`, then
+`.skills/skills-pin`, then no pins.
+
+`.skills/doctor.sh` needs no pin awareness, but it does not substitute for one:
+its `--init --recursive` restores the *recorded* pointer, so it can never move a
+submodule past a pin — and equally can never restore a pointer that was already
+committed past one.
 
 ### Creating a local override
 

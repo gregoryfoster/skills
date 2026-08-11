@@ -197,7 +197,8 @@ Checked before any score, on the treatment arm's scored run:
 | Gate | Trips when |
 |---|---|
 | `no_loss` | `prove-no-loss.sh` returned a **non-`ok`** verdict. An absent or `skipped` one does not trip the gate — it makes the run *unverified*, which the next section separates out |
-| `links_dead` | the curated surface has broken links |
+| `links_dead` | the curated surface has broken links — the link's file does not exist |
+| `links_dead_anchors` | a link's file resolves but its `#fragment` names no heading. The breakage a doc split makes: it moves headings out of a file while leaving the file in place, so `links_dead` stays `0`. `null` (a row predating the field) does not trip the gate |
 | `docs_orphaned` | demotion left more orphans than it found |
 
 **Any tripped gate is an outright REJECT, whatever the token numbers say.** A

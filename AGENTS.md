@@ -145,6 +145,16 @@ Skills that read or write plan documents resolve the plans directory via the sam
 
 The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the resolved directory. Downstream projects that previously carried a `writing-plans` override solely to repoint the storage path can drop the override and configure `.skills/plans_dir` instead — the upstream skill's resolution order makes the path a knob rather than a fork.
 
+## Submodule pin convention
+
+The auto-refresh hook resolves per-submodule pins via the same three-step lookup (see [`managing-skills`](skills/managing-skills/)):
+
+1. `SKILLS_PIN_FILE` env var (highest priority — one-off overrides)
+2. `.skills/skills-pin` file under the repo root (one `<submodule-path> <commit-ish>` per line; `#` comments ignored)
+3. no pins — every `skills-vendor/` submodule refreshes (prior behaviour)
+
+A pinned submodule is excluded from both the update and the auto-commit, and each honoured pin is logged by name. Use it to hold one vendored repo at a known-good commit — an experiment control arm, say — while the rest keep refreshing; before this the only remedy was deleting the hook's `SessionStart` entry, which also stopped the sibling refreshes and the `.skills/doctor.sh` self-heal ([#100](https://github.com/gregoryfoster/skills/issues/100)).
+
 ## References convention
 
 Skills may carry supplementary `references/*.md` files for content that exceeds the

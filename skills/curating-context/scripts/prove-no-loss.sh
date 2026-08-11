@@ -165,14 +165,27 @@ import sys
 before_path, policy, dests_path, show = sys.argv[1:5]
 
 HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+# Every leading `../` on a link target, not just the first. `.replace("](../",
+# "](")` erased exactly one level: str.replace scans the ORIGINAL string and
+# resumes past each replacement, so `](../../plugins/x)` matched at index 0 and
+# kept its second level. A doc split (`docs/API.md` -> `docs/api/part.md`) moves
+# content one level deeper than a demotion does, and every link-carrying line
+# then reported LOST — 172 of them on the run that found this, all false. A
+# report that wrong is worse than no check, because a reader who learns to
+# ignore it will ignore a real loss in it.
+LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 
 def normalise(raw):
     """One line -> its comparable form, or "" when it carries no content.
 
     Exactly two differences a move legitimately forces are erased:
 
-      link depth    a block moving into docs/ gains a level, so
-                    `](tests/x.py)` becomes `](../tests/x.py)`.
+      link depth    a block moving between directories re-aims its relative
+                    links, so `](tests/x.py)`, `](../tests/x.py)` and
+                    `](../../tests/x.py)` are the same line at three depths.
+                    Depth is erased in both directions and at any amount; the
+                    target after it is not, so a repointed link is still a
+                    difference.
       heading level a `###` subsection promoted to its own document's `##`.
 
     Heading text is tagged rather than merely stripped of its hashes. Stripping
@@ -182,7 +195,7 @@ def normalise(raw):
     line = raw.strip()
     if not line:
         return ""
-    line = line.replace("](../", "](")
+    line = LINK_DEPTH.sub("](", line)
     m = HEADING.match(line)
     return "H:" + m.group(1).strip() if m else line
 

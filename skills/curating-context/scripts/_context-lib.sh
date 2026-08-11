@@ -32,11 +32,15 @@ This file is a library. Source it; do not run it:
 Provides:
   ctx_read_num_knob <override> <env> <file> <default>
       Numeric knob lookup: override, then env var, then a single-line file,
-      then the default. Non-numeric content falls back to the default.
+      then the default. The file's first whitespace-delimited token must be a
+      bare integer ("6000 # tokens" is fine, "v2 6000" is not); anything else
+      warns on stderr and uses the default.
 
   ctx_read_str_knob <override> <env> <file> <default>
       String knob lookup, same precedence. Strips a leading ./ and a trailing
-      slash; rejects an absolute path in favour of the default.
+      slash; rejects an absolute path, an empty value and a value containing
+      whitespace in favour of the default, warning on stderr when the file was
+      the source.
 
   ctx_docs_dir <root> [override]
       Reference-doc root: override, then CONTEXT_DOCS_DIR, then
@@ -141,7 +145,30 @@ ctx_read_num_knob() {
   if [ -n "$override" ]; then v="$override"
   elif [ -n "$envval" ]; then v="$envval"
   elif [ -n "$file" ] && [ -f "$file" ]; then
-    v="$(head -1 "$file" 2>/dev/null | tr -dc '0-9')"
+    # PARSED, not stripped. `tr -dc '0-9'` deleted every non-digit and
+    # concatenated what was left, so a file this could not understand produced
+    # a DIFFERENT number rather than none: `v2 6000` became 26000 and
+    # `6000 or 8000` became 60008000. A budget four times the intended one
+    # reports `over_budget: false`, and the ledger row then records compliance
+    # that was never achieved — for every future week, since nothing says so.
+    #
+    # Tolerance was right; deletion was the wrong way to get it. The first
+    # whitespace-delimited token keeps every benign case a knob file deserves —
+    # a trailing newline, a leading space, `6000 # tokens`, and `6000 or 8000`,
+    # whose trailing words are indistinguishable from an annotation — while
+    # `v2 6000` and `4,000` are simply not a bare integer, and now say so (#132).
+    v="$(head -1 "$file" 2>/dev/null | tr -d '\r' | awk '{print $1; exit}')" || v=""
+    case "$v" in
+      ''|*[!0-9]*)
+        # And it says so. A malformed knob FILE degrades to the default — a
+        # repo should not fail to measure because somebody annotated one — but
+        # silently is how a wrong budget survives. The mirror of the FLAG rule
+        # in measure-context.sh, where a malformed --budget is a typo and is
+        # refused outright (#126).
+        printf 'WARN %s: not a bare integer ("%s") — using %s\n' \
+          "$file" "$v" "$fallback" >&2
+        v="" ;;
+    esac
   fi
   case "$v" in
     ''|*[!0-9]*) printf '%s' "$fallback" ;;
@@ -154,7 +181,22 @@ ctx_read_str_knob() {
   if [ -n "$override" ]; then v="$override"
   elif [ -n "$envval" ]; then v="$envval"
   elif [ -n "$file" ] && [ -f "$file" ]; then
-    v="$(head -1 "$file" 2>/dev/null | tr -d '[:space:]')"
+    # The milder half of the same mistake: `tr -d '[:space:]'` turned "my docs"
+    # into "mydocs" and "docs # ref" into "docs#ref" — directories that do not
+    # exist, so the two continuous surfaces classify nothing and say nothing.
+    # Trim the ends, then REJECT anything still holding whitespace rather than
+    # guess which half was meant; taking the first token would silently point
+    # the whole surface at "my". An absolute path is refused here too, so the
+    # rejection the docstring already promised is now audible.
+    v="$(head -1 "$file" 2>/dev/null | tr -d '\r')" || v=""
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    case "${v#./}" in
+      ''|*[[:space:]]*|/*)
+        printf 'WARN %s: not a single relative path ("%s") — using %s\n' \
+          "$file" "$v" "$fallback" >&2
+        v="" ;;
+    esac
   fi
   [ -n "$v" ] || v="$fallback"
   v="${v#./}"; v="${v%/}"
@@ -177,20 +219,37 @@ ctx_docs_dir() {
 ctx_bytes_per_token_x100() {
   # measure-context.sh --exact writes the repo's observed ratio to
   # .skills/context-token-ratio; when present and plausible it wins.
-  local root="$1" r w f out="$CTX_BPT_DEFAULT_X100"
-  if [ -f "$root/.skills/context-token-ratio" ]; then
-    r="$(head -1 "$root/.skills/context-token-ratio" 2>/dev/null | tr -dc '0-9.')"
+  #
+  # Parsed the same way as the budget knobs and for the same reason (#132):
+  # `tr -dc '0-9.'` read "v2 3.5" as 23.5 bytes per token, which clears the
+  # plausibility floor below and under-counts every file measured against it by
+  # eight times. This one divides every byte count in all three surfaces, so a
+  # mutated value is not merely a wrong number — it is a wrong number that looks
+  # like a calibration.
+  local root="$1" file r w f out=""
+  file="$root/.skills/context-token-ratio"
+  if [ -f "$file" ]; then
+    r="$(head -1 "$file" 2>/dev/null | tr -d '\r' | awk '{print $1; exit}')" || r=""
     case "$r" in
-      ''|.*|*.*.*) ;;
+      ''|*[!0-9.]*|.*|*.*.*) ;;
       # The literal 1 prefix on the fractional part stops a leading zero being
       # read as octal ("08" would abort under set -e); the -100 removes it again.
+      # 10# does the same job for the whole part, which the old strip could not
+      # reach because a leading zero there was rare enough to go unnoticed.
       *.*) w="${r%%.*}"; f="${r#*.}00"
-           out=$(( ${w:-0} * 100 + 1${f:0:2} - 100 )) ;;
-      *) out=$(( r * 100 )) ;;
+           out=$(( 10#${w:-0} * 100 + 1${f:0:2} - 100 )) ;;
+      *) out=$(( 10#$r * 100 )) ;;
     esac
-    [ "$out" -ge 100 ] || out="$CTX_BPT_DEFAULT_X100"
+    # One warning for both ways of being unusable — unparseable, or parsed and
+    # under one byte per token. Either way the constant wins, and the run says
+    # which value it declined rather than reporting a ratio nobody configured.
+    if [ -z "$out" ] || [ "$out" -lt 100 ]; then
+      printf 'WARN %s: not a plausible bytes-per-token ratio ("%s") — using %s\n' \
+        "$file" "$r" "$CTX_BPT_DEFAULT_X100" >&2
+      out=""
+    fi
   fi
-  printf '%s' "$out"
+  printf '%s' "${out:-$CTX_BPT_DEFAULT_X100}"
 }
 
 ctx_est_from_bytes() {

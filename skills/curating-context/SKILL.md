@@ -356,7 +356,7 @@ Re-run Phase 1 and assert, before committing:
   Carry the verdict onto the ledger row in Phase 7 (`--no-loss ok`). The
   validation gate treats a missing verdict as unscorable rather than as a pass,
   so a run that skipped this phase cannot clear it by silence.
-- `links.dead` is empty, and no new orphan appeared.
+- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](references/budget-and-metrics.md#the-link-graph)).
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes, if it asserts on policy-file content.
   Several cohort repos have structural tests that read `AGENTS.md`.
@@ -368,21 +368,21 @@ bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
 ```
 
 `prove-no-loss.sh` proves moved content arrived; this proves the rest of the
-surface still **describes where it went**. The first cohort adoption shipped a
-clean run — 0 dead links, 0 orphans, no-loss ok — carrying ten review findings
-the run itself created: a doc whose header claimed its own contents lived in
-`AGENTS.md`, prose sending readers to a section that had moved into the very
-file they were reading. All invisible to `links.dead`, because a resolvable link
-to the wrong content is not dead.
+surface still **describes where it went** — the *prose* half. `links.dead_anchors`
+now decides the *link* half mechanically. One cohort adoption shipped a
+clean run carrying ten such findings; a later one left 16 stale docstring
+references across 13 shipped packages, which is why tracked **source** outside
+the docs tree is swept too once a section leaves the policy file. Never repoint
+one of those at a bare `docs/X.md` — no installed wheel resolves it, and it can
+hit a *different* repo's file in a sibling checkout. Qualify or inline it.
 
 The report is hits **to judge**, not defects to fix — a reference to the policy
-file is wrong only if what it points at moved. Judge each: fix what lies, and
-add what is legitimate to `.skills/context-seams-ok` so it stays acknowledged
-rather than re-alarming every week (entries match line *content* and expire
-when the line changes — which is when they need re-judging; one entry per
-judged line, and the report warns on blanket patterns). Re-run, and carry both
-final counts to Phase 7 (`--seams N --seams-acked M`). Run this sweep *last*,
-after every other edit has landed.
+file is wrong only if what it points at moved. Judge each: fix what lies, add
+what is legitimate to `.skills/context-seams-ok` (entries match line *content*
+and expire when the line changes, which is when they need re-judging; the
+report warns on blanket patterns). Re-run, carry both counts to Phase 7
+(`--seams N --seams-acked M`), and run this sweep *last*. No class sees a
+command split from its claim: re-read any command beside a block that moved.
 
 ## Phase 7 — Record and ship
 
@@ -474,18 +474,17 @@ The next two catch regrowth *between* those weekly measurements.
 `context-delta.sh` reports the branch's effect on the surface — token delta and
 budget position per changed file, nothing at all when the diff touches no
 context-surface file. The four `reviewing-code*` variants already call it from
-their `gather-context.sh` when this skill is vendored alongside them, so on those
-repos it needs no wiring. It is informational by construction and exits 0 on every
-path.
+their `gather-context.sh` when this skill is vendored alongside them, so it needs
+no wiring there. It is informational by construction and exits 0 on every path.
 
-It sees what the write guard cannot: the guard evaluates one edit at a time and
-cannot distinguish a 400-token addition that replaced 600 tokens elsewhere from a
-straight 400-token gain. Review sees the whole branch, and sees it while the
-tradeoff is still cheap to negotiate.
+It sees what the write guard cannot, twice over: the guard evaluates one edit at a
+time, so a 400-token addition that replaced 600 elsewhere reads the same as a
+straight gain; and it matches `Edit|Write|MultiEdit`, so a shell redirect
+(`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it
+([#103](https://github.com/gregoryfoster/skills/issues/103)). Review sees the
+whole branch however the bytes arrived, while the tradeoff is still cheap.
 
 ### Write guard
-
-Offer this once per repo, after the first successful curation:
 
 > Install the context-budget write guard? It is a `PostToolUse` hook that flags an
 > edit which pushes `AGENTS.md` or a live reference doc further over budget. It
@@ -498,12 +497,13 @@ bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
 ```
 
 The guard and the weekly run are two halves of one ratchet: the guard stops
-regrowth, the run recovers ground. A repo with the run but no guard sawtooths —
-reduce, regrow, reduce — and no amount of curation fixes a file something else
-keeps appending to. Semantics, the reasoning behind the speak-only-on-both-
-conditions rule, and the uninstall path:
+regrowth cheaply, in the turn that caused it, on the common path; the run and the
+review-time delta recover ground and catch what the matcher never saw. A repo with
+the run but no guard sawtooths, and no curation fixes a file something else keeps
+appending to. Semantics, the speak-only-on-both-conditions rule, the uncovered
+write paths, and uninstall:
 [references/write-guard-hook.md](references/write-guard-hook.md).
 
-The installer prints its `git add` line rather than committing. Hook wiring lands
-through the project's normal gate — a hook that starts running because something
-committed it unannounced is a bad surprise.
+The installer prints its `git add` line rather than committing, and names the log
+path to tail. Hook wiring lands through the project's normal gate — a hook that
+starts running because something committed it unannounced is a bad surprise.
