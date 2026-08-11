@@ -116,7 +116,16 @@ fi
 # runs are delayed most. Derive an offset from the repo name so the spread needs
 # no per-repo decision and is stable across re-runs of this installer.
 if [ -z "$CRON" ]; then
-  NAME="$(basename "$ROOT")"
+  # The ORIGIN basename, not the checkout directory. #102 fixed this same latent
+  # bug in record-telemetry.sh, where a worktree path recorded
+  # `feat-161-curating-context` as the repo; here it would only make two repos
+  # draw the same slot, but the precedence should not differ between scripts.
+  ORIGIN="$(git remote get-url origin 2>/dev/null)" || ORIGIN=""
+  if [ -n "$ORIGIN" ]; then
+    NAME="${ORIGIN%/}"; NAME="${NAME##*[/:]}"; NAME="${NAME%.git}"
+  else
+    NAME="$(basename "$ROOT")"
+  fi
   # cksum is POSIX and stable across platforms, unlike $RANDOM or md5/md5sum.
   H="$(printf '%s' "$NAME" | cksum | cut -d' ' -f1)"
   MIN=$(( H % 60 ))
@@ -162,8 +171,12 @@ jobs:
   measure:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Surfacing a measurement must never make the repo look broken.
-    continue-on-error: true
+    # NOT continue-on-error. A red run here means "this repo is not measuring",
+    # which is true and worth seeing — the credential preflight exists to make
+    # that failure loud, and continue-on-error would restore the silence at the
+    # one level a human actually looks at. Drift is reported as ::warning::
+    # below and never fails the job, so red always means the mechanism broke,
+    # never that the surface grew.
     steps:
       # submodules: recursive is load-bearing — the skill is vendored under
       # skills-vendor/ and reached through a symlink, which dangles without it.
@@ -205,23 +218,45 @@ jobs:
           ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           bash "\$SKILL_SCRIPTS/measure-context.sh" --exact >/tmp/ctx.json
-          bash "\$SKILL_SCRIPTS/record-telemetry.sh" --baseline \\
+          bash "\$SKILL_SCRIPTS/record-telemetry.sh" --baseline=scheduled \\
               \${SEAMS:+--seams "\$SEAMS"} \${SEAMS_ACKED:+--seams-acked "\$SEAMS_ACKED"} \\
-              --note "scheduled cadence" --print-trend </tmp/ctx.json
+              --print-trend </tmp/ctx.json
 
       - name: Commit the row
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- .skills/context-metrics.jsonl .skills/context-token-ratio 2>/dev/null || true
+          # Staged separately, and the row is NOT tolerant of failure. One
+          # \`git add\` over both paths stages NOTHING when either is missing —
+          # it exits 128 on the unmatched pathspec — so \`|| true\` turned a
+          # missing ratio file into "no new row" and discarded the measurement
+          # silently, which is the failure this whole job exists to prevent.
+          git add -- .skills/context-metrics.jsonl
+          if [ -f .skills/context-token-ratio ]; then
+            git add -- .skills/context-token-ratio
+          fi
           if git diff --cached --quiet; then
             echo "no new row — nothing to commit"
             exit 0
           fi
           git commit -m "chore: weekly context measurement"
-          git push
+          # A human push landing during the measurement makes this a
+          # non-fast-forward. The ledger is append-only JSONL, so rebasing is
+          # safe by construction; without it the week's row is simply lost.
+          BRANCH="\$(git branch --show-current)"
+          for attempt in 1 2 3; do
+            git push origin "\$BRANCH" && exit 0
+            echo "push rejected (attempt \$attempt) — rebasing onto origin/\$BRANCH"
+            git pull --rebase --autostash origin "\$BRANCH"
+          done
+          echo "::error::could not push the measurement row after 3 attempts"
+          exit 1
 
+      # always(), so a failed push does not swallow the warnings. Those are the
+      # only output a human reads, and losing them on exactly the runs that went
+      # wrong inverts the intent.
       - name: Report drift
+        if: always()
         run: |
           python3 - /tmp/ctx.json <<'PY'
           import json, sys

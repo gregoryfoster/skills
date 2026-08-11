@@ -188,6 +188,13 @@ regrowth, the weekly run recovers ground. Neither substitutes for the other. A
 repo with the guard but no weekly run stays at whatever size it was when the
 guard went in; a repo with the weekly run but no guard sawtooths.
 
+That second half was unwireable until
+[#118](https://github.com/gregoryfoster/skills/issues/118): the skill named a
+weekly run throughout and shipped no way to schedule one. `install-cadence.sh`
+now installs it — as a weekly *measurement* rather than a weekly curation, so
+what it recovers is the evidence that ground was lost, not the ground itself.
+See [cadence.md](cadence.md).
+
 If a genuine addition has to land and push the file over, that is fine — the
 advisory is not a veto. Land it, and let the next run classify it. What the guard
 buys is that the decision was seen rather than accreted.

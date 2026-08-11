@@ -22,6 +22,7 @@ No API calls: every path here uses the offline estimate.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,6 +43,7 @@ SCORE = SCRIPTS / "score-cohort.sh"
 INSTALL = SCRIPTS / "install-guard.sh"
 LIB = SCRIPTS / "_context-lib.sh"
 RECORD = SCRIPTS / "record-telemetry.sh"
+REFERENCES = SCRIPTS.parent / "references"
 
 # ~2.7 bytes/token, so this is comfortably over the 6000 policy budget.
 POLICY_LINE = "- a policy line naming `some/path.py` and explaining why\n"
@@ -2557,7 +2559,7 @@ class TestBaselineRow:
         row = self._rows(repo)[-1]
         # The tag the gate already knows to skip past, so a baseline row can
         # never be mistaken for the curation it precedes.
-        assert row["actions"] == ["baseline"], row
+        assert row["actions"] == ["baseline:pre-curation"], row
         assert row["no_loss"] is None
         assert row["delta_tokens"] is None
         assert "baseline" in r.stderr
@@ -2573,7 +2575,7 @@ class TestBaselineRow:
         assert r.returncode == 0, r.stderr
         rows = self._rows(repo)
         assert len(rows) == 2
-        assert rows[0]["actions"] == ["baseline"]
+        assert rows[0]["actions"] == ["baseline:pre-curation"]
         assert isinstance(rows[1]["delta_tokens"], int)
         assert rows[1]["delta_tokens"] < 0, rows[1]
 
@@ -2615,7 +2617,7 @@ class TestFirstCurationIsScorable:
         d.mkdir(parents=True, exist_ok=True)
         (d / "context-metrics.jsonl").write_text("\n".join([
             _ledger_row(repo=name, ts="2026-08-01", tokens=before,
-                        actions=["baseline"],
+                        actions=["baseline:pre-curation"],
                         docs_orphaned=kw.get("orph_before", 0)),
             _ledger_row(repo=name, ts="2026-08-02", tokens=after,
                         actions=["demote:Big"], skill_version=version,
@@ -3008,7 +3010,12 @@ class TestCadenceInstaller:
         # It must never gate a merge. That is #88, with its own sequencing rule.
         assert "pull_request" not in triggers
         assert doc["permissions"] == {"contents": "write"}
-        assert doc["jobs"]["measure"]["continue-on-error"] is True
+        # NOT continue-on-error: a red run means "this repo is not measuring",
+        # which is exactly what somebody needs to see. Swallowing it would undo
+        # the credential preflight, whose whole purpose is to make that loud.
+        # Drift is a ::warning:: and never fails the job, so red always means
+        # the mechanism broke rather than that the surface grew.
+        assert "continue-on-error" not in doc["jobs"]["measure"]
 
     def test_the_credential_is_preflighted_before_any_work(self, tmp_path: Path):
         """Without the secret, --exact degrades to an estimate and
@@ -3085,3 +3092,107 @@ class TestCadenceInstaller:
             cwd=str(d), env=_clean_env(), timeout=30)
         assert r.returncode == 1
         assert "not inside a git repository" in r.stderr
+
+
+class TestCadenceTemplateMatchesTheRenderer:
+    """references/cadence.md carries the workflow as an annotated block and says
+    it is what install-cadence.sh renders. It was not: `fetch-depth` and
+    `if: always()` were in the doc and absent from the rendered file, and
+    `if: always()` is load-bearing — without it a failed push swallows the drift
+    warnings.
+
+    This is the third copy-divergence in this skill, so it gets a pin rather
+    than another comment asserting one."""
+
+    def test_the_documented_block_is_the_rendered_file(self, tmp_path: Path):
+        import re
+        doc = (REFERENCES / "cadence.md").read_text()
+        block = re.search(r"```yaml\n(.*?)```", doc, re.S)
+        assert block, "cadence.md no longer carries a yaml block"
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        rendered = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
+            timeout=30).stdout.replace("- cron: '0 15 * * 1'", "- cron: '<CRON>'")
+        assert block.group(1) == rendered, (
+            "cadence.md's yaml block has drifted from install-cadence.sh --print")
+
+
+class TestCadenceShellActuallyRuns:
+    """The two real bugs in the first draft of this workflow — parsing a
+    nonexistent `acknowledged:` line, and measuring twice — were both inside
+    `run:` blocks, and neither would have been caught by asserting on the YAML
+    structure. Execute the shell."""
+
+    def _step(self, tmp_path: Path, name: str) -> str:
+        yaml = pytest.importorskip("yaml")
+        repo = tmp_path / "render"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        doc = yaml.safe_load(subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print"], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30).stdout)
+        return next(s["run"] for s in doc["jobs"]["measure"]["steps"]
+                    if s.get("name") == name)
+
+    def test_the_seam_extraction_parses_real_check_seams_output(
+            self, tmp_path: Path):
+        """The counts are named exactly as record-telemetry's flags, and the
+        first draft parsed `acknowledged:`, which check-seams.sh never emits."""
+        repo = _repo(tmp_path, policy_lines=5)
+        (repo / "docs").mkdir()
+        # A back-reference: a live doc naming the policy file is a seam.
+        (repo / "docs" / "guide.md").write_text("See AGENTS.md for the overview.\n")
+        (repo / "AGENTS.md").write_text("# A\n\nSee [guide](docs/guide.md).\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed")
+        env = _clean_env()
+        env["SKILL_SCRIPTS"] = str(SCRIPTS)
+        env["GITHUB_ENV"] = str(tmp_path / "gh_env")
+        (tmp_path / "gh_env").write_text("")
+        r = subprocess.run(["bash", "-e", "-c", self._step(tmp_path, "Sweep the seams")],
+                           capture_output=True, text=True, cwd=str(repo),
+                           env=env, timeout=60)
+        assert r.returncode == 0, r.stderr
+        written = (tmp_path / "gh_env").read_text()
+        assert re.search(r"^SEAMS=\d+$", written, re.M), written
+        assert re.search(r"^SEAMS_ACKED=\d+$", written, re.M), written
+
+    def test_the_commit_step_stages_the_row_without_the_ratio_file(
+            self, tmp_path: Path):
+        """A single `git add` over both paths stages NOTHING when either is
+        missing — it exits 128 on the unmatched pathspec — so the row was
+        discarded silently. measure-context.sh does not persist the ratio when
+        any count falls back, which makes that reachable on a first run."""
+        repo = _repo(tmp_path, policy_lines=5)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-metrics.jsonl").write_text(
+            _ledger_row(repo="r", tokens=100) + "\n")
+        assert not (repo / ".skills" / "context-token-ratio").exists()
+        step = self._step(tmp_path, "Commit the row")
+        # Stop before the push — there is no remote here.
+        step = step.split("BRANCH=")[0]
+        r = subprocess.run(["bash", "-e", "-c", step], capture_output=True,
+                           text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "nothing to commit" not in r.stdout, (
+            "the row was silently dropped: " + r.stdout)
+        log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
+                             capture_output=True, text=True).stdout
+        assert "weekly context measurement" in log, log
+
+    def test_the_drift_report_warns_only_when_over_budget(self, tmp_path: Path):
+        step = self._step(tmp_path, "Report drift")
+        for tokens, expect in ((99_000, True), (100, False)):
+            ctx = tmp_path / "ctx.json"
+            ctx.write_text(json.dumps({"policy": {
+                "path": "AGENTS.md", "tokens": tokens, "budget": 6000,
+                "over_budget": tokens > 6000}}))
+            r = subprocess.run(
+                ["bash", "-e", "-c", step.replace("/tmp/ctx.json", str(ctx))],
+                capture_output=True, text=True, cwd=str(tmp_path),
+                env={**_clean_env(), "SEAMS": "0"}, timeout=30)
+            assert r.returncode == 0, r.stderr
+            assert ("::warning::AGENTS.md is" in r.stdout) is expect, r.stdout
