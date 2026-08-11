@@ -59,6 +59,33 @@ calls FALSE when the manifest that *would* define the target exists. A `make
 build` with no `Makefile` in the repo is stale-looking but not refuted — it may
 document a different surface.
 
+A documented command also carries *where it runs*, and that decides which
+manifest is authoritative. The script peels a `cd <dir> &&` chain (and the
+subshell and `pushd` forms) and a directory-scoping flag (`make -C <dir>`,
+`uv run --directory <dir>`) off the front, then resolves against that directory:
+`cd frontend && npm run build` is decided by `frontend/package.json`, not the
+root one. Resolving it at the root reported a correct monorepo build command as
+FALSE — the one verdict this skill deletes on — which is why the three outcomes
+are split deliberately:
+
+| Shape | Verdict | Why |
+|---|---|---|
+| `cd frontend && npm run build`, `build` in `frontend/package.json` | TRUE | the manifest confirms it |
+| `cd frontend && npm run bundle`, no `bundle` there | FALSE | the manifest that governs it refutes it |
+| `cd nosuchdir && npm run build` | FALSE | the checkout refutes the `cd` — evidence blames the directory, which is the half to fix |
+| `cd docs && npm run build`, `docs/` has no `package.json` | UNVERIFIABLE | nothing refutes it; no deletion licence |
+| `cd <workspace> && npm run build`, or an absolute path | UNVERIFIABLE | a placeholder or a path outside this checkout |
+
+Three shapes are knowingly out of scope. An env-assignment prefix (`CI=1 npm run
+build`) and a `source … &&` prefix do not change the working directory, so root
+resolution stays correct for them. `npm --prefix <dir> run build` puts the flag
+before `run`, so the extraction does not match it at all — a silent miss, which
+is the safe direction, rather than a false verdict. And in a chain of *two*
+runners (`cd frontend && npm run build && npm run test`), only the first inherits
+the directory; the second is still resolved at the root. If a chained second
+command comes back FALSE, check which directory it actually runs in before
+acting on the verdict.
+
 For anything it marks UNVERIFIABLE, **run the command** if it is read-only
 (`--help`, `--version`, `--dry-run`, a lint or list subcommand). A documented
 command that errors is the single most damaging stale fact in a policy file: the
