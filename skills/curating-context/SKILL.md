@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.4"
+  version: "1.5"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -440,8 +440,29 @@ missing telemetry is itself the finding.
 
 ## Phase 8 — Wire the continuous surfaces
 
-Two places catch regrowth between weekly runs. Offer both once per repo, after the
-first successful curation.
+Three surfaces keep the ground this run won. Offer all three once per repo, after
+the first successful curation.
+
+### The cadence
+
+```bash
+bash "<SKILL_SCRIPTS>/install-cadence.sh"
+```
+
+What goes on the clock is a **measurement, not a curation** — regrowth, budget
+adherence and seam accrual all come from measuring, and judgement on a timer is
+what this skill avoids everywhere else. The weekly job records a `baseline` row
+and warns when the surface drifts; a human or an agent curates on that evidence.
+It never runs on `pull_request`.
+
+**It needs the `ANTHROPIC_API_KEY` repository secret.** Without it the job
+records *nothing*, silently, every week — `record-telemetry.sh` refuses an
+estimate against exact rows. Set the secret first, then run it once by hand.
+
+Design, the annotated template, and what it deliberately does not do:
+[references/cadence.md](references/cadence.md) ([#118](https://github.com/gregoryfoster/skills/issues/118)).
+
+The next two catch regrowth *between* those weekly measurements.
 
 ### Review-time delta
 

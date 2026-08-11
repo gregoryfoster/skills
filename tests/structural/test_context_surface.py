@@ -2974,3 +2974,114 @@ class TestCurationRuleIsOneRule:
             capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
             timeout=30)
         assert "0 runs over 1 row" in r.stderr, r.stderr
+
+
+INSTALL_CADENCE = SCRIPTS / "install-cadence.sh"
+
+
+class TestCadenceInstaller:
+    """#118's blocking prerequisite: the skill named "the scheduled weekly run"
+    in six places and shipped no way to schedule anything, so ten of twelve
+    cohort repos held exactly one ledger row and the longitudinal design had no
+    series to read."""
+
+    def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
+            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+
+    def _repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "r"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        return repo
+
+    def test_rendered_workflow_is_valid_yaml_with_the_right_triggers(
+            self, tmp_path: Path):
+        yaml = pytest.importorskip("yaml")
+        r = self._run(self._repo(tmp_path), "--print")
+        assert r.returncode == 0, r.stderr
+        doc = yaml.safe_load(r.stdout)
+        # PyYAML parses a bare `on:` key as the boolean True.
+        triggers = doc[True] if True in doc else doc["on"]
+        assert set(triggers) == {"schedule", "workflow_dispatch"}, triggers
+        # It must never gate a merge. That is #88, with its own sequencing rule.
+        assert "pull_request" not in triggers
+        assert doc["permissions"] == {"contents": "write"}
+        assert doc["jobs"]["measure"]["continue-on-error"] is True
+
+    def test_the_credential_is_preflighted_before_any_work(self, tmp_path: Path):
+        """Without the secret, --exact degrades to an estimate and
+        record-telemetry.sh refuses the append — the job records NOTHING,
+        silently. Failing at second zero is the whole point of the ordering."""
+        yaml = pytest.importorskip("yaml")
+        doc = yaml.safe_load(self._run(self._repo(tmp_path), "--print").stdout)
+        names = [s.get("name", s.get("uses", ""))
+                 for s in doc["jobs"]["measure"]["steps"]]
+        assert "Preflight the credential" in names, names
+        assert names.index("Preflight the credential") < names.index("Measure and record")
+
+    def test_checkout_takes_submodules(self, tmp_path: Path):
+        """The skill is vendored under skills-vendor/ and reached through a
+        symlink. Without submodules the link dangles and every step fails."""
+        yaml = pytest.importorskip("yaml")
+        doc = yaml.safe_load(self._run(self._repo(tmp_path), "--print").stdout)
+        checkout = doc["jobs"]["measure"]["steps"][0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert checkout["with"]["submodules"] == "recursive"
+
+    def test_it_records_a_baseline_row_not_a_curation(self, tmp_path: Path):
+        """What goes on the clock is a measurement. A curation needs judgement,
+        and judgement on a timer is what this skill avoids everywhere else."""
+        out = self._run(self._repo(tmp_path), "--print").stdout
+        assert 'record-telemetry.sh" --baseline' in out, out
+        # The two flags --baseline refuses. Their absence is the assertion: a
+        # scheduled job that recorded a relocation verdict, or tagged edits it
+        # never made, would be claiming a curation happened.
+        assert "--no-loss" not in out
+        assert "--actions " not in out
+
+    def test_the_cohort_is_staggered_and_stable(self, tmp_path: Path):
+        """Twelve repos on one cron produce twelve simultaneous count_tokens
+        bursts and twelve commits in a minute. The offset comes from the repo
+        name, so it needs no per-repo decision and does not move on a re-run."""
+        crons = set()
+        for name in ("usa-wa", "observo", "watcher", "power-map", "cli"):
+            repo = tmp_path / name
+            repo.mkdir()
+            _git(repo, "init", "-q")
+            out = self._run(repo, "--print").stdout
+            cron = next(ln for ln in out.splitlines() if "- cron:" in ln)
+            crons.add(cron)
+            assert self._run(repo, "--print").stdout == out, "not stable"
+        assert len(crons) > 1, f"every repo drew the same slot: {crons}"
+
+    def test_install_check_uninstall_round_trip(self, tmp_path: Path):
+        repo = self._repo(tmp_path)
+        wf = repo / ".github" / "workflows" / "context-cadence.yml"
+        assert self._run(repo, "--check").returncode == 3
+        assert self._run(repo).returncode == 0
+        assert wf.exists()
+        assert self._run(repo, "--check").returncode == 0
+        # Idempotent: a second install reports no change rather than churning.
+        again = self._run(repo)
+        assert "unchanged" in again.stdout, again.stdout
+        changed = self._run(repo, "--cron", "0 15 * * 1")
+        assert "updated" in changed.stdout, changed.stdout
+        assert "0 15 * * 1" in wf.read_text()
+        assert self._run(repo, "--uninstall").returncode == 0
+        assert not wf.exists()
+
+    def test_a_malformed_cron_is_refused(self, tmp_path: Path):
+        r = self._run(self._repo(tmp_path), "--cron", "every monday")
+        assert r.returncode == 1
+        assert "five fields" in r.stderr, r.stderr
+
+    def test_it_refuses_outside_a_git_repo(self, tmp_path: Path):
+        d = tmp_path / "bare"
+        d.mkdir()
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE)], capture_output=True, text=True,
+            cwd=str(d), env=_clean_env(), timeout=30)
+        assert r.returncode == 1
+        assert "not inside a git repository" in r.stderr
