@@ -86,6 +86,16 @@ Safety gates (checked before any score)
                         links_dead alone cannot see
     docs_orphaned rose  demotion created docs nothing points at
 
+  no_loss_warrants is NOT a gate, deliberately. A warranted loss is a line this
+  run's own split or a mandated rename forced it to rewrite (#111), and
+  rejecting a run for saying so would recreate the choice the field exists to
+  remove — the rational move would be to stop recording it. It rides the
+  no_loss column as `ok+Nw` instead, so a run that waved eight lines through and
+  one that waved none stop reading identically. The defences against a
+  ballooning warrant file are per-entry accountability in prove-no-loss.sh's
+  own report and the DELTA across runs, the same two the cohort settled on for
+  seams_acked.
+
   Any tripped gate in the treatment arm is an outright REJECT, whatever the token
   numbers say — a change that reduces tokens by losing content is the one failure
   this skill exists to prevent, and no amount of closure buys it back.
@@ -326,6 +336,7 @@ def score_repo(key, info):
         "pair": info["pair"], "status": None, "why": None, "why_code": None,
         "before": None,
         "after": None, "budget": None, "closure": None, "no_loss": None,
+        "no_loss_warrants": None,
         "skill_version": None, "ts": None, "file": None, "other_files": 0,
         "gates": [], "unverified": [],
     }
@@ -408,6 +419,7 @@ def score_repo(key, info):
     rec["after"] = scored.get("tokens")
     rec["budget"] = scored.get("budget")
     rec["no_loss"] = scored.get("no_loss")
+    rec["no_loss_warrants"] = scored.get("no_loss_warrants")
 
     # Safety first, and independent of whether the run is scorable for
     # effectiveness: a run that dropped content is a failure even if its
@@ -860,6 +872,19 @@ def num(v):
     return "-" if not isinstance(v, int) else str(v)
 
 
+def no_loss_cell(r):
+    """The no_loss column, qualified by how much of it was judged (#111).
+
+    Same isinstance shape the links_dead gates use, for the same reason: the
+    field is null on every row predating it, and rendering that as `ok+0w`
+    would claim the run measured and warranted nothing. Suppressed at 0 too —
+    a run with an explicit zero is making the same claim a bare `ok` makes.
+    """
+    n = r.get("no_loss_warrants")
+    base = r["no_loss"] or "-"
+    return f"{base}+{n}w" if isinstance(n, int) and n > 0 else base
+
+
 w = max([len(r["repo"]) for r in records] + [4])
 print(f"treatment wave {treatment}: {', '.join(t_versions) or 'no attributed runs'}")
 print(f"control   wave {control}: {', '.join(c_versions) or 'no attributed runs'}")
@@ -877,7 +902,7 @@ for p in pairs:
             continue
         print(f"{p['pair']:>4}  {tag:<3} {r['repo']:<{w}} {num(r['before']):>8} "
               f"{num(r['after']):>8} {num(r['budget']):>7} {pct(r['closure']):>8}"
-              f"  {r['no_loss'] or '-'}")
+              f"  {no_loss_cell(r)}")
     if p["informative"]:
         margin = p["margin"] * 100
         print(f"{'':>4}  -> {p['winner']} ({margin:+.1f}pp)")

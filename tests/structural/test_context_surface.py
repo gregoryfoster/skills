@@ -1107,9 +1107,10 @@ def _arm(root: Path, name: str, before: int, after: int | None, version: str,
             # Passed through only when a caller asks for it, so the default
             # fixture keeps producing a row that PREDATES the field — the null
             # path score-cohort must not gate on, or every historical row in
-            # the cohort would retroactively REJECT.
-            **({"links_dead_anchors": kw["links_dead_anchors"]}
-               if "links_dead_anchors" in kw else {}),
+            # the cohort would retroactively REJECT. Same for no_loss_warrants
+            # (#111), whose null path is the entire existing cohort.
+            **{k: kw[k] for k in ("links_dead_anchors", "no_loss_warrants")
+               if k in kw},
             docs_orphaned=kw.get("orph_after", 0),
         ))
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
