@@ -132,6 +132,32 @@ re-derives the divisor it was computed with, producing exactly `2.70` — a
 self-confirming fake measurement, comfortably inside the plausibility band, which
 every later offline estimate in the repo would then trust.
 
+### Run-wide on `policy`, per row on `docs`
+
+`policy.tokens_exact` answers "is this whole measurement comparable with an exact
+ledger row?" — `true` only when every count in the run succeeded. That is the right
+question for the ledger and the wrong one for a per-doc consumer. Observo's CI gate
+reports per-doc overages as `::warning file=…` annotations, and on a run-wide
+`false` its only defensible move is to suppress **all** of them, because an
+annotation naming a precise count is a claim the same run has disowned. One
+transient failure on one file therefore dropped budget reporting for all 29 docs,
+including the 28 counted exactly
+([#123](https://github.com/gregoryfoster/skills/issues/123)).
+
+So each `docs` row carries its own `tokens_exact` as well:
+
+```jsonc
+"docs": [
+  {"path": "docs/API.md",   "tokens": 6930, "tokens_exact": true,  "over_budget": false},
+  {"path": "docs/FLEET.md", "tokens": 9701, "tokens_exact": false, "over_budget": false}
+]
+```
+
+A consumer can then report on the exact rows and stay silent on the estimated ones,
+rather than choosing between reporting nothing and reporting numbers that may be
+fiction. Nothing about the existing contract changed: a consumer reading only
+`policy.tokens_exact` sees exactly what it saw before.
+
 **Never use `tiktoken`.** It is OpenAI's tokenizer; it undercounts Claude text by
 15–20% and by considerably more on code and non-English input. There is no
 accurate offline tokenizer for current Claude models, which is why a
@@ -191,6 +217,64 @@ that source; `--env-file NAMES` changes which files are searched.
 With all three sources, an interactive run and a scheduled run produce the same
 `tokens_exact: true` rows, which is the whole point — a weekly cadence and an
 ad-hoc `curate context` must land in one comparable series.
+
+## The link graph
+
+`measure-context.sh` reports two classes of broken link, and they are separate on
+purpose.
+
+| Field | Meaning |
+|---|---|
+| `links.dead` | the link's **file** does not exist |
+| `links.dead_anchors` | the file exists and the link's `#fragment` names no heading in it — `"AGENTS.md -> docs/CONSUMERS.md#adding-a-new-analysis-stage"` |
+
+The anchor half was invisible until
+[#124](https://github.com/gregoryfoster/skills/issues/124): the extractor stripped
+the fragment before resolving, so `[l](docs/FOO.md#some-heading)` was a check that
+`docs/FOO.md` exists and nothing more. That is blind exactly where this skill's own
+advice points — **splitting an over-budget doc moves headings out of a file while
+leaving the file in place**, the one edit shaped to break anchors and no plain
+paths. Observo split a 13,871-token `docs/CONSUMERS.md` into three files and
+`measure-context.sh` reported `"dead": []` before, during and after; the orphaned
+anchor was caught by hand. Five more were measured on
+`cannabis.observer-wordpress` immediately after a curation shipped a clean run
+([#120](https://github.com/gregoryfoster/skills/issues/120)).
+
+Keeping them as separate fields is what lets an existing consumer's `dead`
+semantics stay put, and lets a repo adopting the check stage the cleanup instead of
+turning the gate red on day one.
+
+### How a fragment is resolved
+
+GitHub's slug rules: lowercase, drop everything outside `[a-z0-9 _-]`, each space
+becomes a hyphen, and a repeat of an earlier slug gets `-1`, `-2`, … Four details
+decide whether the checker is usable:
+
+- **Spaces are substituted one for one, not collapsed.** A dropped character leaves
+  its spaces behind, so `## Segments tranche 5h3 — 2026-06-15` slugs to
+  `segments-tranche-5h3--2026-06-15`, double hyphen and all. Collapsing runs
+  validates against slugs GitHub never mints.
+- **Headings inside fenced code blocks do not count.** A `# comment` in a bash
+  fence otherwise manufactures an anchor that masks a real miss, and this cohort's
+  docs are dense with bash fences.
+- **Duplicate numbering is per file.** A split that moves the third
+  `### PHP layers` into a file of its own makes it `php-layers` again — a suffix
+  computed over the pre-split document validates against slugs that do not exist.
+- **A prose fragment is dropped, not reported.** Fragments containing `<`, `>`, `*`
+  or a comma-space are dropped for the same reason those are dropped from paths:
+  reporting prose in link clothing trains the reader to ignore the list. The path
+  around such a fragment is still resolved.
+
+Same-file anchors (`[jump](#setup)`) are checked too — a heading rename inside one
+long file breaks them exactly as a cross-file rename does. Explicit
+`<a id="…">` anchors are **not** modelled; a repo using them gets a
+`dead_anchors` entry to judge rather than a silent pass.
+
+**Archival subtrees are scanned as sources.** `docs/plans/` and friends are excluded
+from the doc inventory and never traversed, because a stale *path* inside a dated
+snapshot is a correct historical record. Their **anchors** are still reported: a
+dated plan pointing into a live doc is navigation, and it goes stale the same way.
+Whether to fix it is the maintainer's call.
 
 ## Telemetry
 
