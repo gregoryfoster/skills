@@ -20,8 +20,13 @@ Options:
                      .skills/context-docs-dir, then docs. The write guard and
                      context-delta.sh read the same knob, so setting it once
                      keeps all three looking at the same tree.
-  --budget N         Token budget for the policy file (default 6000).
-  --doc-budget N     Token budget per reference doc (default 10000).
+  --budget N         Token budget for the policy file. Overrides CONTEXT_BUDGET
+                     and .skills/context-budget; default 6000. The knob file is
+                     what install-guard.sh --budget writes, and what the write
+                     guard and the review delta read, so all three agree.
+  --doc-budget N     Token budget per reference doc. Same chain via
+                     CONTEXT_DOC_BUDGET and .skills/context-doc-budget;
+                     default 10000.
   --archival NAMES   Space-separated <docs-dir> subdirectory names treated as an
                      archive rather than live context: excluded from the doc
                      inventory, and not traversed for links. Default:
@@ -92,8 +97,11 @@ USAGE
 
 POLICY=""
 DOCS_DIR=""
-BUDGET=6000
-DOC_BUDGET=10000
+# Resolved AFTER the library loads, through the same override -> env -> knob
+# file -> default chain the write guard and the review delta use. These hold
+# only the flag.
+BUDGET_OVERRIDE=""
+DOC_BUDGET_OVERRIDE=""
 ARCHIVAL="plans specs research audits archive"
 EXACT=0
 CHECK_CRED=0
@@ -113,8 +121,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
-    --budget) BUDGET="${2:?--budget needs a number}"; shift 2 ;;
-    --doc-budget) DOC_BUDGET="${2:?--doc-budget needs a number}"; shift 2 ;;
+    --budget) BUDGET_OVERRIDE="${2:?--budget needs a number}"; shift 2 ;;
+    --doc-budget) DOC_BUDGET_OVERRIDE="${2:?--doc-budget needs a number}"; shift 2 ;;
     --archival) need_arg "$#" --archival 'pass "" to measure everything'
                 ARCHIVAL="$2"; shift 2 ;;
     --exact) EXACT=1; shift ;;
@@ -126,6 +134,23 @@ while [ $# -gt 0 ]; do
     --model) MODEL="${2:?--model needs an id}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+# Digits only, checked HERE rather than left to the resolver. ctx_read_num_knob
+# returns the fallback for anything it cannot parse, which is right for a knob
+# FILE — a repo should not fail to measure because someone left a comment in one
+# — and wrong for a FLAG, where a typo is the likely cause and silence means the
+# run measures against 6000 and records that. Before #126 a malformed --budget
+# at least produced `[: 4,000: integer expression expected` on stderr; losing
+# that would be a step in the direction this change exists to reverse.
+for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE"; do
+  _flag="${_pair%%=*}"; _val="${_pair#*=}"
+  case "$_val" in
+    '') ;;
+    *[!0-9]*)
+      echo "ERROR $_flag must be a non-negative integer (got '$_val')" >&2
+      exit 1 ;;
   esac
 done
 
@@ -159,6 +184,20 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 # fallback to cwd covers running outside a git repo at all.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
+
+# The budgets, through the SAME chain as context-budget-guard.sh and
+# context-delta.sh: flag, then CONTEXT_BUDGET, then .skills/context-budget, then
+# the default. This script used to hardcode 6000 and read the flag only, so the
+# two continuous surfaces honoured a repo's configured budget and the WEEKLY
+# MEASUREMENT did not — and it is this script that puts `budget` and
+# `over_budget` on the ledger row, which score-cohort.sh divides by and #118
+# proposes as the adherence metric. install-guard.sh --budget writes that knob,
+# so the supported way to configure a budget was the one that produced the
+# disagreement (#126).
+BUDGET="$(ctx_read_num_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" \
+  "$ROOT/.skills/context-budget" 6000)"
+DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" \
+  "$ROOT/.skills/context-doc-budget" 10000)"
 
 # --check-credential: answer "will --exact succeed?" BEFORE a run commits to
 # eight phases of work. Same three sources as the real resolution below, same

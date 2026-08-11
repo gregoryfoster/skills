@@ -3446,3 +3446,115 @@ class TestCadenceDescribesTheRepoNotTheInvocation:
         assert "merge=union" not in text, text
         # And our explanatory comments went with the line they explained.
         assert "Append-only telemetry" not in text, text
+
+
+class TestBudgetKnobIsOneAnswer:
+    """The budget was resolved through the shared library by
+    context-budget-guard.sh and context-delta.sh, and HARDCODED at 6000 by
+    measure-context.sh — which is the script that puts `budget` and
+    `over_budget` on the ledger row, the denominator score-cohort.sh divides by
+    and the field #118 proposes as the adherence metric.
+
+    So a repo configuring a budget got warnings at N from two surfaces and rows
+    recorded against 6000 forever, and `install-guard.sh --budget` — the
+    documented way to set it — was what produced the disagreement (#126)."""
+
+    @pytest.fixture
+    def repo(self, tmp_path: Path) -> Path:
+        repo = _repo(tmp_path, policy_lines=100)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-budget").write_text("200\n")
+        return repo
+
+    def _measured(self, repo: Path, *args: str, env: dict | None = None) -> dict:
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--no-write", *args], capture_output=True,
+            text=True, cwd=str(repo), env={**_clean_env(), **(env or {})},
+            timeout=60)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)["policy"]
+
+    def test_the_row_is_measured_against_the_configured_budget(self, repo: Path):
+        p = self._measured(repo)
+        assert p["budget"] == 200, p
+        assert p["over_budget"] is True, p
+
+    def test_all_three_surfaces_agree_on_one_knob(self, repo: Path):
+        """The pin. One knob file, one answer, across every script that reads a
+        budget — the same shape as TestCurationRuleIsOneRule and for the same
+        reason: this is the third rule duplicated across these scripts."""
+        assert self._measured(repo)["budget"] == 200
+
+        # The guard and the delta both report on GROWTH against HEAD, so the
+        # edit has to be real for either to speak.
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed")
+        (repo / "AGENTS.md").write_text(POLICY_LINE * 300)
+
+        guard = _advisory(_run_guard(repo, repo / "AGENTS.md"))
+        assert guard is not None, "guard stayed silent on an over-budget policy"
+        assert "200 budget" in guard, guard
+
+        delta = subprocess.run(
+            ["bash", str(DELTA)], capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=60).stdout
+        # The delta prints a table; read the budget column off the AGENTS.md row
+        # rather than substring-matching a number that appears in several.
+        lines = delta.splitlines()
+        # Locate the column from the HEADER rather than a fixed index, so a
+        # reordered table fails pointing at the table instead of at the budget.
+        header = next(ln for ln in lines if ln.split()[:2] == ["file", "tokens"])
+        col = header.split().index("budget")
+        row = next(ln for ln in lines if ln.startswith("AGENTS.md"))
+        assert row.split()[col] == "200", (header, row)
+        assert "OVER" in row, row
+
+    @pytest.mark.parametrize("args,env,expected", [
+        ((), {}, 200),                                   # the knob file
+        ((), {"CONTEXT_BUDGET": "999"}, 999),            # env beats the file
+        (("--budget", "4242"), {"CONTEXT_BUDGET": "999"}, 4242),  # flag beats both
+    ])
+    def test_the_precedence_matches_the_other_surfaces(
+            self, repo: Path, args, env, expected):
+        assert self._measured(repo, *args, env=env)["budget"] == expected
+
+    def test_no_knob_still_defaults(self, tmp_path: Path):
+        """The flag stops being the only source without becoming optional."""
+        plain = _repo(tmp_path, policy_lines=100)
+        assert self._measured(plain)["budget"] == 6000
+
+    @pytest.mark.parametrize("args,env,expected", [
+        ((), {}, 300),                                        # the knob file
+        ((), {"CONTEXT_DOC_BUDGET": "700"}, 700),              # env beats it
+        (("--doc-budget", "900"), {"CONTEXT_DOC_BUDGET": "700"}, 900),  # flag wins
+    ])
+    def test_the_doc_budget_has_the_same_three_rungs(
+            self, tmp_path: Path, args, env, expected):
+        """The less-used half, parametrised like the policy budget. The
+        asymmetry is where a copy-paste slip in the second ctx_read_num_knob
+        call would have hidden."""
+        repo = _repo(tmp_path, policy_lines=10)
+        (repo / ".skills").mkdir()
+        (repo / ".skills" / "context-doc-budget").write_text("300\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "BIG.md").write_text(POLICY_LINE * 400)
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--no-write", *args], capture_output=True,
+            text=True, cwd=str(repo), env={**_clean_env(), **env}, timeout=60)
+        assert r.returncode == 0, r.stderr
+        out = json.loads(r.stdout)
+        big = next(d for d in out["docs"] if d["path"].endswith("BIG.md"))
+        # ~1000 tokens of doc: over 300 and 700, under 900.
+        assert big["over_budget"] is (big["tokens"] > expected), (expected, big)
+
+    @pytest.mark.parametrize("flag", ["--budget", "--doc-budget"])
+    def test_a_malformed_budget_flag_is_refused(self, tmp_path: Path, flag):
+        """ctx_read_num_knob returns the fallback for anything unparseable —
+        right for a knob file, wrong for a flag, where silence means the run
+        measures against 6000 and records that."""
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--no-write", flag, "4,000"],
+            capture_output=True, text=True, cwd=str(_repo(tmp_path)),
+            env=_clean_env(), timeout=60)
+        assert r.returncode == 1, r.stdout
+        assert f"{flag} must be a non-negative integer (got '4,000')" in r.stderr
