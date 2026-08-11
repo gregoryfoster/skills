@@ -111,6 +111,9 @@ log() {
   printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG" 2>/dev/null || true
   # Truncate to the last 200 lines once the log crosses 64 KiB.
   if [ -f "$LOG" ] && [ "$(LC_ALL=C wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 65536 ]; then
+    # Truncation is best-effort: `|| true` is the C branch on purpose, so a
+    # failed tail and a failed mv both leave the log as-is and the hook silent.
+    # shellcheck disable=SC2015
     tail -n 200 "$LOG" >"$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG" 2>/dev/null || true
   fi
 }

@@ -97,6 +97,9 @@ emit() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; }
 # brackets are prose, not paths.
 check_paths() {
   local f="$1" line tok
+  # The backticks are regex literals — this greps Markdown code spans out of a
+  # doc — so single quotes are correct and expansion is not wanted.
+  # shellcheck disable=SC2016
   grep -oE '`[^`]+`' "$f" 2>/dev/null | sed -e 's/^`//' -e 's/`$//' | sort -u \
     | grep -vE '[ <>*$|(){}]' \
     | grep -E '/|\.(py|js|ts|tsx|php|go|rb|sh|json|toml|yaml|yml|md|service|timer|sql)$' \
