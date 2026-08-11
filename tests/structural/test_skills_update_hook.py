@@ -23,6 +23,24 @@ Coverage:
                                                commit skipped, scratch cleaned
 - `git commit` fails                         → index unstaged, install kept
 
+Submodule pins (issue #100) get their own fixture, `pinned_repo`, because the
+property under test is which pointers actually move — a shimmed `git submodule`
+cannot show that. Those tests build real superproject/submodule pairs over the
+`file` transport and let the hook run the real update:
+- no pin file                                → every submodule refreshes
+- pinned submodule                           → pointer does not move
+- unpinned sibling                           → still refreshes
+- pin survives the auto-commit step
+- honoured pin is logged
+- pin naming an unknown submodule            → reported, refresh refused
+- malformed pin line                         → reported, refresh refused
+- every submodule pinned                     → no update runs at all
+- recorded pointer past the pin              → drift reported
+- unresolvable pin target                    → reported, hold still applied
+- comments/blank lines only                  → treated as no pins
+- SKILLS_PIN_FILE overrides the file location
+- the pin file itself is never staged
+
 Keep this list current — it is the file's index, and it undercounted for two
 rounds while tests were added around it.
 """
@@ -64,14 +82,21 @@ def _clean_env() -> dict:
     return env
 
 
-def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def _git(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    env_extra: dict | None = None,
+) -> subprocess.CompletedProcess:
+    env = _clean_env()
+    env.update(env_extra or {})
     return subprocess.run(
         ["git", *args],
         cwd=repo,
         check=check,
         capture_output=True,
         text=True,
-        env=_clean_env(),
+        env=env,
     )
 
 
@@ -125,9 +150,10 @@ def _write_git_shim(repo: Path, extra_arms: str = "") -> None:
     shim.chmod(0o755)
 
 
-def _run_hook(repo: Path) -> subprocess.CompletedProcess:
+def _run_hook(repo: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = _clean_env()
     env["PATH"] = f"{_shim_dir(repo)}:{env.get('PATH', '/usr/bin:/bin')}"
+    env.update(env_extra or {})
     return subprocess.run(
         ["bash", str(HOOK)], cwd=repo, capture_output=True, text=True, env=env
     )
@@ -369,3 +395,306 @@ class TestBranchGating:
         )
         assert _commit_count(repo) == before, "no auto-commit off main"
         assert not _tracked(repo, ".skills/doctor.sh")
+
+
+# --------------------------------------------------------------------------
+# Submodule pins (#100)
+#
+# Everything above shims `git submodule` away, because those tests are about
+# staging scope. A pin is about which pointers move, which only real
+# submodules can demonstrate — so the fixtures below build throwaway
+# superproject/submodule pairs and let the hook run the real update.
+# --------------------------------------------------------------------------
+
+# `git submodule` refuses the `file` transport by default since git 2.38
+# (CVE-2022-39253). Local throwaway upstreams need it re-allowed — for the
+# fixture's own git calls and for the hook's, which clones and fetches here.
+FILE_TRANSPORT = {"GIT_ALLOW_PROTOCOL": "file"}
+
+VENDOR_A = "skills-vendor/acme-skills"
+VENDOR_B = "skills-vendor/obra-superpowers"
+
+
+def _gitlink(repo: Path, path: str) -> str:
+    """The commit the superproject records for a submodule, from HEAD.
+
+    This — not the submodule's checked-out HEAD — is what an auto-commit
+    would move and what a hold has to keep still."""
+    return _git(repo, "rev-parse", f"HEAD:{path}").stdout.strip()
+
+
+def _write_pin(repo: Path, text: str, name: str = "skills-pin") -> Path:
+    skills = repo / ".skills"
+    skills.mkdir(exist_ok=True)
+    pin = skills / name
+    pin.write_text(text)
+    return pin
+
+
+def _log_text(repo: Path) -> str:
+    log = repo / ".git" / "skills-update.log"
+    return log.read_text() if log.exists() else ""
+
+
+@pytest.fixture
+def pinned_repo(tmp_path: Path):
+    """A consumer repo with two real skills-vendor/ submodules, each recorded
+    one commit behind its upstream, so a refresh visibly moves a pointer.
+
+    No pin file is written — each test writes the one it needs.
+    """
+    from types import SimpleNamespace
+
+    upstreams = {}
+    for name, rel in (("acme", VENDOR_A), ("obra", VENDOR_B)):
+        up = tmp_path / f"up-{name}"
+        _git(tmp_path, "init", "-q", "-b", "main", str(up))
+        (up / "f.txt").write_text(f"{name} one\n")
+        _git(up, "add", "-A")
+        _git(up, "commit", "-qm", f"{name} c1")
+        upstreams[rel] = up
+
+    repo = tmp_path / "repo"
+    _git(tmp_path, "init", "-q", "-b", "main", str(repo))
+    (repo / "README.md").write_text("consumer\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    for rel, up in upstreams.items():
+        _git(repo, "submodule", "add", "-q", str(up), rel, env_extra=FILE_TRANSPORT)
+    _git(repo, "commit", "-qm", "vendor submodules")
+
+    before = {rel: _gitlink(repo, rel) for rel in upstreams}
+
+    after = {}
+    for rel, up in upstreams.items():
+        (up / "f.txt").write_text("two\n")
+        _git(up, "commit", "-qam", "c2")
+        after[rel] = _git(up, "rev-parse", "HEAD").stdout.strip()
+
+    assert before[VENDOR_A] != after[VENDOR_A]
+    assert before[VENDOR_A] != before[VENDOR_B], (
+        "the two submodules must be distinguishable by sha or the assertions "
+        "below prove nothing"
+    )
+
+    # Empty: the pin tests want real git, but _run_hook always prepends it.
+    _shim_dir(repo).mkdir()
+    return SimpleNamespace(path=repo, before=before, after=after, upstreams=upstreams)
+
+
+def _run_pin_hook(fixture) -> subprocess.CompletedProcess:
+    result = _run_hook(fixture.path, env_extra=FILE_TRANSPORT)
+    assert result.returncode == 0, (
+        f"the hook must never block a session: {result.stderr}"
+    )
+    return result
+
+
+class TestPinlessBehaviourIsUnchanged:
+    def test_every_submodule_refreshes_without_a_pin_file(self, pinned_repo):
+        """The baseline the pin has to preserve for unpinned submodules."""
+        _run_pin_hook(pinned_repo)
+
+        for rel in (VENDOR_A, VENDOR_B):
+            assert _gitlink(pinned_repo.path, rel) == pinned_repo.after[rel], (
+                f"{rel} should have refreshed to its remote HEAD"
+            )
+
+    def test_comments_and_blank_lines_are_not_pins(self, pinned_repo):
+        """A pin file with no entries must not accidentally hold anything —
+        the empty pathspec that would produce is the dangerous shape."""
+        _write_pin(pinned_repo.path, "# nothing held right now\n\n   \n")
+
+        _run_pin_hook(pinned_repo)
+
+        for rel in (VENDOR_A, VENDOR_B):
+            assert _gitlink(pinned_repo.path, rel) == pinned_repo.after[rel]
+
+
+class TestPinHoldsOneSubmodule:
+    def test_pinned_pointer_does_not_move(self, pinned_repo):
+        _write_pin(pinned_repo.path, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+
+        _run_pin_hook(pinned_repo)
+
+        assert _gitlink(pinned_repo.path, VENDOR_A) == pinned_repo.before[VENDOR_A], (
+            "the held submodule's recorded pointer moved — the hold ended "
+            "silently, which is exactly issue #100"
+        )
+
+    def test_unpinned_sibling_still_refreshes(self, pinned_repo):
+        """The whole point: per-submodule granularity, not an all-or-nothing
+        pause of the hook."""
+        _write_pin(pinned_repo.path, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+
+        _run_pin_hook(pinned_repo)
+
+        assert _gitlink(pinned_repo.path, VENDOR_B) == pinned_repo.after[VENDOR_B], (
+            "holding one submodule must not stop the others refreshing"
+        )
+
+    def test_honoured_pin_is_logged(self, pinned_repo):
+        """A pin that is silently honoured is a second silent behaviour; the
+        log line is what makes a stale hold visible."""
+        _write_pin(pinned_repo.path, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+
+        _run_pin_hook(pinned_repo)
+
+        log = _log_text(pinned_repo.path)
+        assert "pin honoured" in log and VENDOR_A in log, (
+            f"no honoured-pin line naming {VENDOR_A} in the log:\n{log}"
+        )
+
+    def test_pin_file_is_never_staged(self, pinned_repo):
+        """`.skills/skills-pin` is operator config, like plans_dir — the hook
+        writes commits, it does not own this file."""
+        _write_pin(pinned_repo.path, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+
+        _run_pin_hook(pinned_repo)
+
+        assert not _tracked(pinned_repo.path, ".skills/skills-pin")
+
+    def test_pin_file_location_is_overridable(self, pinned_repo):
+        """Three-step knob resolution (AGENTS.md): env var wins over the
+        committed file."""
+        _write_pin(pinned_repo.path, f"{VENDOR_B} {pinned_repo.before[VENDOR_B]}\n")
+        _write_pin(
+            pinned_repo.path,
+            f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n",
+            name="skills-pin.override",
+        )
+
+        result = _run_hook(
+            pinned_repo.path,
+            env_extra={**FILE_TRANSPORT, "SKILLS_PIN_FILE": ".skills/skills-pin.override"},
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert _gitlink(pinned_repo.path, VENDOR_A) == pinned_repo.before[VENDOR_A]
+        assert _gitlink(pinned_repo.path, VENDOR_B) == pinned_repo.after[VENDOR_B], (
+            "the env var must override the committed pin file, not merge with it"
+        )
+
+
+class TestPinSurvivesTheAutoCommit:
+    """A pin honoured during the update but clobbered by the commit step is
+    not a pin. The commit stages `skills-vendor/` wholesale unless the pinned
+    paths are removed from its scope."""
+
+    def test_drifted_checkout_is_not_committed(self, pinned_repo):
+        repo = pinned_repo.path
+        sub = repo / VENDOR_A
+        # Someone ran `git submodule update --remote` by hand: the checkout is
+        # ahead of the recorded pointer, so `git add skills-vendor/` would
+        # commit the bump the pin exists to prevent.
+        _git(sub, "fetch", "-q", "origin", env_extra=FILE_TRANSPORT)
+        _git(sub, "checkout", "-q", pinned_repo.after[VENDOR_A])
+        assert " M " in _git(repo, "status", "--porcelain").stdout
+
+        _write_pin(repo, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+        _run_pin_hook(pinned_repo)
+
+        assert _gitlink(repo, VENDOR_A) == pinned_repo.before[VENDOR_A], (
+            "the auto-commit absorbed the pinned submodule's drift — the "
+            "update honoured the pin and the commit step undid it"
+        )
+        committed = _git(repo, "show", "--name-only", "--pretty=", "HEAD").stdout
+        assert VENDOR_A not in committed, (
+            f"pinned path appears in the hook's commit:\n{committed}"
+        )
+
+    def test_drift_is_reported(self, pinned_repo):
+        """The pin arriving *after* the pointer already moved past it is the
+        real-world case (the hold ended, then someone wrote the pin). Not
+        updating cannot restore it — only an operator can — so the hook must
+        say the hold is not in effect rather than imply it is."""
+        repo = pinned_repo.path
+        sub = repo / VENDOR_A
+        _git(sub, "fetch", "-q", "origin", env_extra=FILE_TRANSPORT)
+        _git(sub, "checkout", "-q", pinned_repo.after[VENDOR_A])
+        _git(repo, "add", "--", VENDOR_A)
+        _git(repo, "commit", "-qm", "bump landed before the pin was written")
+        # Pin the older commit — present in the checkout, so it resolves.
+        _write_pin(repo, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+
+        result = _run_pin_hook(pinned_repo)
+
+        assert "pin drift" in _log_text(repo), _log_text(repo)
+        assert VENDOR_A in result.stderr, (
+            f"drift must reach the operator, not only the log: {result.stderr!r}"
+        )
+
+    def test_unresolvable_target_is_reported_but_still_holds(self, pinned_repo):
+        """A target the submodule checkout cannot resolve — an uninitialised
+        submodule, a commit not yet fetched — must not refuse the refresh:
+        the hold on movement is applied either way, and refusing would strand
+        every sibling on a fresh clone. Report it and carry on."""
+        repo = pinned_repo.path
+        _write_pin(repo, f"{VENDOR_A} v9.9.9-does-not-exist\n")
+
+        result = _run_pin_hook(pinned_repo)
+
+        assert "pin unverified" in _log_text(repo), _log_text(repo)
+        assert VENDOR_A in result.stderr
+        assert _gitlink(repo, VENDOR_A) == pinned_repo.before[VENDOR_A], (
+            "the hold must still be applied"
+        )
+        assert _gitlink(repo, VENDOR_B) == pinned_repo.after[VENDOR_B], (
+            "an unverifiable target must not refuse the sibling's refresh"
+        )
+
+
+class TestUnhonourablePinRefusesTheRefresh:
+    """A pin the hook cannot apply means the operator believes they have a
+    hold they do not have. Refusing the refresh for the run is the only
+    outcome that cannot silently end an experiment arm."""
+
+    def test_unknown_submodule_is_reported(self, pinned_repo):
+        _write_pin(pinned_repo.path, "skills-vendor/not-vendored abc1234\n")
+
+        result = _run_pin_hook(pinned_repo)
+
+        log = _log_text(pinned_repo.path)
+        assert "not-vendored" in log, log
+        assert "not-vendored" in result.stderr, result.stderr
+
+    def test_unknown_submodule_holds_every_pointer(self, pinned_repo):
+        """A typo'd path leaves the real path unpinned; refreshing it would be
+        the exact silent bump the pin was written to stop."""
+        _write_pin(pinned_repo.path, "skills-vendor/not-vendored abc1234\n")
+
+        _run_pin_hook(pinned_repo)
+
+        for rel in (VENDOR_A, VENDOR_B):
+            assert _gitlink(pinned_repo.path, rel) == pinned_repo.before[rel], (
+                "a pin the hook could not honour must stop the refresh, not "
+                "be skipped past"
+            )
+
+    def test_malformed_line_is_reported_and_refuses(self, pinned_repo):
+        _write_pin(pinned_repo.path, f"{VENDOR_A}\n")
+
+        result = _run_pin_hook(pinned_repo)
+
+        assert "malformed" in _log_text(pinned_repo.path).lower()
+        assert result.stderr.strip(), "a malformed pin file must reach stderr"
+        for rel in (VENDOR_A, VENDOR_B):
+            assert _gitlink(pinned_repo.path, rel) == pinned_repo.before[rel]
+
+    def test_every_submodule_pinned_runs_no_update(self, pinned_repo):
+        """An empty pathspec is not "nothing" to `git submodule update` — it
+        is *everything*. Verified: `git submodule update --remote --merge --`
+        with no paths refreshes every submodule."""
+        _write_pin(
+            pinned_repo.path,
+            f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n"
+            f"{VENDOR_B} {pinned_repo.before[VENDOR_B]}\n",
+        )
+
+        _run_pin_hook(pinned_repo)
+
+        for rel in (VENDOR_A, VENDOR_B):
+            assert _gitlink(pinned_repo.path, rel) == pinned_repo.before[rel], (
+                f"{rel} moved although every submodule was pinned — the "
+                "pathspec collapsed to empty and git updated everything"
+            )
