@@ -186,6 +186,9 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   _n=$(( _n + 1 ))
 done
 _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
+# C-runs-when-A-is-true is the intent: both tests must hold, and either one
+# failing means the same thing — no library, no measurement, exit 2.
+# shellcheck disable=SC2015
 [ -n "$_libdir" ] && [ -f "$_libdir/_context-lib.sh" ] || {
   echo "ERROR _context-lib.sh not found next to $_self" >&2; exit 2; }
 # shellcheck source=_context-lib.sh
@@ -291,6 +294,11 @@ TAB="$(printf '\t')"
 # known limitation rather than looking like a working choice.
 EXACT_OK=0
 if [ "$EXACT" -eq 1 ]; then
+  # Unquoted $ENV_FILES in the third branch is deliberate: it is a
+  # space-separated list of names, passed as one argument each (same as the
+  # --check path above). The directive sits here because shellcheck only
+  # accepts one in front of a whole compound command, never an elif (SC1123).
+  # shellcheck disable=SC2086
   if ! command -v python3 >/dev/null 2>&1; then
     echo "WARN --exact requires python3; using offline estimate" >&2
   elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then

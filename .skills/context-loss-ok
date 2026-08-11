@@ -1,0 +1,31 @@
+# Judged losses. WARRANT :: CONTENT — see prove-no-loss.sh --help for the
+# closed set of warrants. Entries match line CONTENT and expire the moment the
+# line changes, which is when they need re-judging.
+#
+# The file is per-repo while --file is per-run, so an entry judged for one
+# target reports "matched nothing" on a run against another. Read the target
+# before pruning.
+
+# #95 split budget-and-metrics.md: its lede advertised "the telemetry schema",
+# which this same change moved to telemetry.md. The replacement lede points
+# there. (Target: references/budget-and-metrics.md.)
+retarget :: and the telemetry
+retarget :: schema that makes cross-cohort learning possible.
+
+# #95 trimmed SKILL.md: four demoted lines carried a `](references/X.md)` link
+# that this same change moved one directory down, where the path no longer
+# resolves. Each was moved verbatim except for the link, which is re-aimed at
+# its sibling. Read against its replacement in the destination named.
+# (Target: skills/curating-context/SKILL.md.)
+retarget :: [references/cohort-patterns.md](references/cohort-patterns.md) for the shape
+retarget :: rationale: [references/budget-and-metrics.md](references/budget-and-metrics.md).
+retarget :: [references/rejected-changes.md](references/rejected-changes.md) with what refuted
+retarget :: distinction in [references/budget-and-metrics.md](references/budget-and-metrics.md).
+retarget :: in [experiment 1](references/validation-gate.md), which scored nothing
+retarget :: **Split before demoting, never after.** A doc split is free only while
+retarget :: [references/cohort-patterns.md](references/cohort-patterns.md) rather than
+retarget :: [the gate](references/validation-gate.md#why-no_loss-comes-from-a-script-and-not-a-grep)
+retarget :: `dead_anchors` is the anchor half — a link whose file resolves
+retarget :: cannot see: [references/validation-gate.md](references/validation-gate.md).
+retarget :: [references/cadence.md](references/cadence.md) ([#118]
+retarget :: [references/write-guard-hook.md](references/write-guard-hook.md).

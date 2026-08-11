@@ -248,6 +248,15 @@ paraphrase-in-transit Phase 5 forbids. A dropped line is the one failure mode of
 this skill that a token count cannot detect — the count looks *better* for it,
 which is why the verdict is a gate rather than a metric.
 
+### The Phase 6 no-loss bullet in full
+
+  Every non-blank line of the policy file as it was at `--base` must still be
+  present verbatim, inline or in a destination. Exit 3 lists what is not. A
+  distinctive-phrase grep is **not** sufficient, which is why this is a script —
+  [the gate](validation-gate.md#why-no_loss-comes-from-a-script-and-not-a-grep)
+  carries the defect that proved it. Carry the verdict to Phase 7 (`--no-loss
+  ok`); a missing one is unscorable, never a pass.
+
 ### Warranted losses are not the same claim as no loss
 
 Whole-line matching is what makes this check strong, and it is also what makes a
@@ -260,6 +269,21 @@ compels because an issue number must not survive into a permanent anchor slug.
 Ordering avoids the first — "split before demoting, never after" — and nothing
 avoids the second, which is why the answer had to be a warrant rather than a
 discipline.
+
+### Phase 6's remaining assertions in full
+
+  A line the run had to **rewrite** rather than move — a pointer whose target this same change relocated, a heading Phase 6.5 forces you to rename — is not a loss and must not be recorded as one. Give each a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, warrant from the closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as `--no-loss-warrants M`. Entries expire when their line changes and each is charged with its hits, so one blanket line is visible. **Never** warrant a line you have not read against its replacement.
+
+- **No block was copied instead of moved.** The check is satisfied by presence *anywhere*, so a bullet left inline *and* in a destination is invisible to it, to Phase 6.5, and to `links.dead` — six shipped that way on one run. `duplicated: N` lists them; judge each, because a lead-in that is load-bearing in both places is a real state.
+
+- **Every demoted block sits at the right heading depth.** Compare each against its neighbours in the destination: a `###` inserted directly under an existing `##` silently reparents everything below it — 24 pre-existing bullets, on the run that found this — and no gate sees depth.
+
+### Two more Phase 6 notes
+
+     Phase 6 reports a wave of dead links — the check catches it, but the run
+     fails rather than succeeding.
+
+- The repo's own test suite still passes — several cohort repos have structural tests that read `AGENTS.md`.
 
 ## The adoption rule
 
@@ -283,6 +307,13 @@ Zero is refused rather than clamped: a
 verdict computed over no pairs is not a weaker verdict but no verdict, and the
 sweep test reads `0 == 0` as a win — it adopted on no evidence whatever until
 the branch was guarded on `informative` being non-empty as well.
+
+**A change to this skill is not adopted on judgement.** The cohort is a held-out
+validation split, and `score-cohort.sh` scores the arm running a proposal against
+the arm running the version before it. Adoption needs a win on every informative
+pair and a clean sweep of the safety gates; anything else, "no measurable
+difference" included, blocks adoption. The split, the metric, and what the gate
+cannot see: [references/validation-gate.md](validation-gate.md).
 
 ### A rejection has its own floor
 

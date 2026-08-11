@@ -82,6 +82,9 @@ SETTINGS="$ROOT/.claude/settings.json"
 # with the variable unset, a bare "$CLAUDE_PROJECT_DIR/..." degrades to
 # `bash "/.claude/hooks/…"` and errors on every edit, where `.` degrades to
 # exactly the old behaviour.
+# Single quotes are required: this is the literal string written into
+# settings.json for the hook runtime to expand, not for this shell to expand.
+# shellcheck disable=SC2016
 COMMAND='bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/context-budget-guard.sh"'
 # Entries are FOUND by script path, not by exact command string, so an install
 # written by an older version of this script is still recognised, replaced and
@@ -152,6 +155,9 @@ merge_settings() {
   # `// "" | tostring` keeps a hand-edited entry with a null or non-string
   # command from erroring the whole merge.
   local expr
+  # $marker is a jq variable, bound below with --arg; single quotes keep the
+  # shell out of it.
+  # shellcheck disable=SC2016
   expr='(.hooks //= {}) |
         (.hooks.PostToolUse //= []) |
         .hooks.PostToolUse |= map(select((.hooks // [])

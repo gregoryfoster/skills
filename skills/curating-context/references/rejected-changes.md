@@ -25,6 +25,13 @@ because the fact that it was once refuted is itself information.
 
 ---
 
+## Why this file exists, as Phase 7 puts it
+
+When a change to this skill is tried and abandoned, record it in
+[references/rejected-changes.md](rejected-changes.md) with what refuted
+it. A rejection is negative feedback: without the record the same plausible idea
+returns every few runs and is re-litigated from scratch.
+
 ## A 4,000-token policy-file budget
 
 **Proposed:** 4,000 tokens, justified in `budget-and-metrics.md` on the grounds

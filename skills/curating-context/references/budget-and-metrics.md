@@ -1,7 +1,8 @@
 # Budget and Metrics
 
-Why the budget is denominated in tokens, what the numbers mean, and the telemetry
-schema that makes cross-cohort learning possible.
+Why the budget is denominated in tokens, what the numbers mean, and how they are
+counted. The ledger those numbers land in, and the cross-cohort roll-up that
+reads it: [telemetry.md](telemetry.md).
 
 ## Why tokens, not lines
 
@@ -30,6 +31,17 @@ class B demotion). Read them together; gate on tokens.
 | Policy file | **6,000 tokens** | The initial cohort figure, chosen to be reachable — see below. Ratchets down. |
 | Reference doc | **10,000 tokens** | The point of demotion is that loading the doc costs less than carrying it inline everywhere. Past ~10k that stops being true; split on top-level headings. |
 | Live surface | reported, watched, never gated | `totals.tokens_live` is the ceiling on what one session can pull in. Gating it would penalise a repo for having thorough, well-routed docs — which is the goal. It *rises* on a successful demotion (this repo: 8,462 → 9,862 while the always-paid cost halved), so it is not the trend metric either — `policy.tokens` is. Watch `tokens_live` for a doc tree growing without being read. |
+
+### `tokens_live` is watched, not optimised
+
+`totals.tokens_live` is the ceiling on what one session can pull in from this
+repo's guidance — a number to **watch**, not the one to optimise. A successful
+demotion *raises* it: this repo's first curation moved it 8,462 -> 9,862 while
+halving the always-paid cost, because the index and the new documents' own headers
+are real bytes. The trend follows **`policy.tokens`**, which is what every
+invocation actually pays. Treating `tokens_live` as the success metric would make
+every good run read as a regression, and would push an autonomous run toward
+deleting content instead of routing it.
 
 ### Where 6,000 came from, and where it goes
 
@@ -83,6 +95,22 @@ recorded every row against 6,000 regardless
 ([#126](https://github.com/gregoryfoster/skills/issues/126)); a test now pins all
 three surfaces to one answer for one knob file.
 
+### The library the chain lives in
+
+`scripts/` also holds **`_context-lib.sh`**, which is sourced rather than run.
+`measure-context.sh`, `context-budget-guard.sh`, and `context-delta.sh` all read
+the bytes-per-token ratio, the archival matcher, the docs-dir knob, **the two
+budgets**, and the symlink/git comparison from it, so the weekly run and both
+continuous surfaces cannot disagree about a number. The budgets were the
+exception until [#126](https://github.com/gregoryfoster/skills/issues/126):
+`measure-context.sh` hardcoded 6,000 and read only its flag, so a repo that set
+`.skills/context-budget` got warnings at its own number from both continuous
+surfaces and **ledger rows recorded against 6,000** — the denominator
+`score-cohort.sh` divides by. It must travel with them: vendor the whole
+`scripts/` directory, never individual files. `install-guard.sh` refuses to
+install a guard whose library is missing, because that combination wires up
+cleanly and then does nothing, silently.
+
 ## Measuring tokens
 
 `measure-context.sh --exact` calls `POST /v1/messages/count_tokens`. That endpoint
@@ -97,6 +125,14 @@ creation. So `--exact` has no cost argument against it — run it always. A zero
 credit balance blocks the whole API including free endpoints, which surfaces as a
 400 whose body names the reason — the script prints that body rather than just the
 status line.
+
+### The Phase 0 preflight, in full
+
+One command, before anything else. Exit 0 means `--exact` will work; exit 3
+means resolve a credential **now** — interactively, ask while the human still
+has context; autonomously, **abort the run**. Discovered any later, this failure
+costs eight phases of work toward a ledger row that `record-telemetry.sh`
+refuses at the very end.
 
 ### Credential order, and why it is not the obvious one
 
@@ -194,6 +230,12 @@ The estimate is still an estimate: use it to rank sections against each other an
 to decide whether the guard should speak, and use `--exact` for anything that lands
 in the ledger or a budget decision.
 
+An exact run also writes the repo's observed bytes-per-token ratio to
+`.skills/context-token-ratio`, which is what keeps the offline estimators (the
+write guard, `context-delta.sh`) honest between runs. The conventional `bytes/4`
+heuristic under-reports this cohort's markdown by 56–65%, so an uncalibrated
+estimate would let a 6k budget pass a 15k file in silence.
+
 ### Keeping a ledger single-method
 
 `record-telemetry.sh` **refuses** to append a row whose method differs from the
@@ -217,6 +259,38 @@ that source; `--env-file NAMES` changes which files are searched.
 With all three sources, an interactive run and a scheduled run produce the same
 `tokens_exact: true` rows, which is the whole point — a weekly cadence and an
 ad-hoc `curate context` must land in one comparable series.
+
+### A credential is not optional, even interactively
+
+The measurement is the same either way, but the *ledger row* is not: an estimate
+records `tokens_exact: false`, and a row recorded by one method cannot be compared
+against a row recorded by the other. One credential-less run appended to a ledger
+of exact rows nulls its own delta and resets the trend baseline — so
+`record-telemetry.sh` **refuses** that append and exits 4, telling you to fix the
+cause rather than record the row. `--allow-method-change` overrides it and
+deliberately starts a new baseline.
+
+This matters most in an interactive session, which is the case least likely to
+have a key: a Claude Code session exports no `ANTHROPIC_API_KEY`. Phase 0
+exists so the gap is found *before* any work starts — if you are reading this
+mid-run with no credential, that is the check that was skipped. Three sources
+are tried in order — the environment, then `ANTHROPIC_API_KEY` **parsed** out of a
+repo-root secrets file (`.env`, then bare `env`), then an `ant auth login`
+profile. Parsed, never sourced: a measurement script must not execute a secrets
+file to obtain a token count. `--no-env-file` refuses that source when the key
+must come only from the environment.
+
+The `ant auth` profile is last on purpose — `count_tokens` currently rejects JWT
+auth, so it authenticates and then 401s. Don't rely on it.
+
+And `tokens_exact` reports whether the **numbers** are exact, not whether a
+credential was found: if any count falls back, the run says `false` and the
+observed ratio is not persisted. So a warning from `--exact` means the row is an
+estimate no matter what credential was accepted — prefer stopping to recording an
+incomparable row.
+
+So an interactive run in a repo whose `.env` holds the key needs nothing extra.
+Elsewhere, export the key first.
 
 ## The link graph
 
@@ -243,6 +317,10 @@ anchor was caught by hand. Five more were measured on
 Keeping them as separate fields is what lets an existing consumer's `dead`
 semantics stay put, and lets a repo adopting the check stage the cleanup instead of
 turning the gate red on day one.
+
+### What Phase 6 asserts about links
+
+- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](budget-and-metrics.md#the-link-graph)).
 
 ### How a fragment is resolved
 
@@ -275,157 +353,3 @@ from the doc inventory and never traversed, because a stale *path* inside a date
 snapshot is a correct historical record. Their **anchors** are still reported: a
 dated plan pointing into a live doc is navigation, and it goes stale the same way.
 Whether to fix it is the maintainer's call.
-
-## Telemetry
-
-An append-only JSONL ledger at `.skills/context-metrics.jsonl`, committed
-alongside the file it measures. Committed, rather than kept in a central store,
-for three reasons: the row travels with the repo through a transfer, it is
-reviewable in the same PR as the edits it describes, and a run needs no write
-access to any other repo.
-
-A curation run writes **two** rows: a `baseline` row at Phase 1 for the surface
-as found, and the curation row at Phase 7. See
-[the pair, not the row](#the-pair-not-the-row) — a single row records a state,
-and only a pair records a change.
-
-### Row schema
-
-| Field | Meaning |
-|---|---|
-| `ts` | UTC date, `YYYY-MM-DD`. Pinned to UTC so rows from different machines sort consistently. |
-| `repo`, `file` | repo identity and policy-file path. `repo` is **the join key** the cohort roll-up and the validation gate match against the roster — not cosmetic. It comes from `--repo`, else the origin remote's basename, else the checkout directory name; the directory name alone recorded a *worktree* slug (`feat-161-curating-context`) as the repo in every member that mandates worktree-based feature work. |
-| `tokens`, `lines`, `bytes` | policy-file size |
-| `tokens_exact` | `true` when counted via `count_tokens`; gates delta comparability |
-| `delta_unavailable` | present only when `delta_tokens` was suppressed; says why |
-| `budget`, `over_budget` | the budget in force this run, and whether it was met |
-| `tokens_live` | policy + reachable live reference docs |
-| `docs_total`, `docs_orphaned` | live doc count, and how many nothing links |
-| `links_dead` | broken relative links in the curated surface — the link's **file** does not exist |
-| `links_dead_anchors` | the anchor half: the file resolves but the `#fragment` names no heading in it. `null` on a row predating the field, which is never the same as `0` — a run that never measured anchors has not shown there are none. Gated the same way as `links_dead`, because a doc split breaks anchors and no paths, so `links_dead` alone reports a clean surface ([#120](https://github.com/gregoryfoster/skills/issues/120), [#124](https://github.com/gregoryfoster/skills/issues/124)) |
-| `no_loss` | `prove-no-loss.sh`'s verdict — `ok`, `failed`, `skipped`, or `null` when the check was not run. A safety field, not a score: [the validation gate](validation-gate.md) reads it to reject a change that reduced tokens by dropping content, which no token count can distinguish from a good run. `null` is unscorable, never a pass. |
-| `no_loss_warrants` | how many of that verdict's unaccounted lines carried a judged entry in `.skills/context-loss-ok` — [`prove-no-loss.sh`](../scripts/prove-no-loss.sh)'s `loss_warranted:` line. `null` when the run did not report it, which is never the same as `0`: `0` says the run read the report and warranted nothing, `null` says it did not say. Without it `ok` cannot distinguish "nothing was unaccounted for" from "eight lines were judged and waved through", and two cohort adoptions recorded that same state in opposite ways — one leaving the ledger untouched, one recording a bare `ok` ([#111](https://github.com/gregoryfoster/skills/issues/111)). Recorded, surfaced as `ok+Nw`, and deliberately **not** gated; [the validation gate](validation-gate.md#the-safety-gates) says why. Watch the **delta**, as with `seams_acked` |
-| `seams`, `seams_acked` | `check-seams.sh`'s counts after Phase 6.5's report was judged: **unacknowledged** hits, and hits judged legitimate and carried in `.skills/context-seams-ok`. Both `null` when the sweep was not run, which is never the same as `0`. Both recorded because `0 new / 0 acked` and `0 new / 50 acked` are different states — the second may be an acknowledged set quietly ballooning, which one number alone cannot show. Watch the **delta** on `seams`: a stable acknowledged set with `0` new hits is the healthy steady state, and a run that "improves" either number by deleting legitimate references has made the surface worse — the `tokens_live` mistake with a different metric. These fields are what make the cross-reference defect class visible to the gate at all; on the run that motivated the sweep, ten review findings were invisible to every other field on this row. |
-| `skill_version`, `skill_commit` | which version of this skill produced the row; `null` on rows predating the field |
-| `top_section`, `top_section_share` | largest section and its % of the file |
-| `delta_tokens`, `delta_days` | change since the previous row for this file; `null` on the first |
-| `actions` | action tags — see below |
-| `note` | one-line free text |
-
-### Action tags
-
-The tags are the only mechanism connecting a token delta to its cause. Without
-them the ledger records that a repo got smaller and nothing about how, which
-makes the cohort roll-up unable to answer the question it exists to answer.
-
-Use `verb:target`:
-
-- `demote:<section>` — moved to a reference doc
-- `prune:<section>` — tightened in place (class C)
-- `delete:<section>` — removed with a warrant (class D)
-- `split:<doc>` — an over-budget reference doc divided
-- `fix:dead-link`, `fix:stale-command`, `fix:stale-issue-ref` — Phase 2 repairs
-- `relink:<doc>` — an orphan given an index entry
-- `baseline:<kind>` — a measurement-only row, no edits. Written by
-  `record-telemetry.sh --baseline[=KIND]`, which fixes the tag rather than taking
-  `--actions`, so no reader has to guess whether a row describes a state or a
-  change. Every reader — the gate, the roll-up — skips `baseline*` when looking
-  for a curation.
-
-  Two kinds, and the distinction is on the **tag** rather than in `--note`,
-  because a longitudinal comparison has to be able to tell them apart without
-  parsing freetext:
-
-  - `baseline:pre-curation` (bare `--baseline`) — Phase 1: the state this run's
-    edits will be measured against.
-  - `baseline:scheduled` (`--baseline=scheduled`) — the weekly cadence: a
-    reading of a surface nobody touched. See [cadence.md](cadence.md).
-
-`"cleanup"` and `"misc"` are worse than no tag: they occupy the slot that would
-otherwise have said something.
-
-### The pair, not the row
-
-A run's measurement is **two rows**: the Phase 1 `baseline` and the Phase 7
-curation. One row alone records a state; the change lives in the difference, and
-every consumer computes it that way — `delta_tokens` against the previous row for
-the same file, and the validation gate's before-state the same.
-
-That is why a first curation was unscorable before this rule existed. It is the
-run that *creates* the ledger, so nothing precedes it, and the gate's scored run
-was exactly the run it could never score: all twelve cohort repos came back
-`unscorable` in experiment 1 ([#116](https://github.com/gregoryfoster/skills/issues/116)).
-The `docs_orphaned` safety gate failed the same way and more quietly — it
-compares against the previous row, so on a first curation it could not trip at
-all.
-
-Both rows ship in the same commit. Do **not** rewrite the baseline row when the
-after-count changes; rewrite the curation row (next section). The baseline is the
-thing being measured against, and a baseline edited to match its outcome measures
-nothing.
-
-### One row per phase: rewrite within, append across
-
-The ledger is append-only **between** runs, and that is where the rule matters:
-a later run that rewrites an old row destroys the trend it was keeping.
-**Within** a run the instinct runs the other way and is correct — when a late
-fix on the same branch shifts the count, rewrite this run's still-unmerged
-*curation* row so it describes what actually ships, rather than appending a
-third row for an intermediate state nobody can check out. The test is whether
-the row's commit has merged: unmerged, it is a draft of this run's record;
-merged, it is history. The baseline row is exempt in both directions — it
-records a state that has already passed, so a late fix cannot change it.
-
-### Reading the trend
-
-`record-telemetry.sh --print-trend` prints the last eight **rows** with per-row
-deltas and net change, and its header separates the two counts — a run writes a
-`baseline` row and a curation row, so eight rows is four runs. Three shapes to
-recognise:
-
-- **Sawtooth** — reductions followed by regrowth. The file is not the problem;
-  whatever keeps appending to it is. Look for a skill or hook that writes to
-  `AGENTS.md`, and give it a reference doc to write to instead.
-- **Step then flat** — one large demotion, then nothing. Healthy. Subsequent runs
-  should show a curation row with a delta near zero: the surface is holding.
-  (A `baseline` row is no longer the marker of a quiet week — every run writes
-  one at Phase 1, so it says nothing about what the run found.)
-- **Slow creep with no negative deltas** — nobody is running Phase 5, or every
-  run is finding the budget already met and stopping. Check whether the budget is
-  set high enough to never bind.
-
-## Cohort roll-up
-
-`cohort-report.sh` reads every member's ledger over `gh api` — no clone — and
-prints current tokens, net change, run count, orphan and dead-link counts, and
-**the action tags that accompanied each repo's largest single reduction**. That
-last column is the cross-repo learning: after a few weeks it names which
-optimisation actually pays, and the same one usually pays everywhere.
-
-`net` obeys the same comparability rule as `delta_tokens`: it is anchored at the
-oldest run contiguously matching the *latest* run's method, not at the first run
-ever recorded. Anchoring at the first row instead reported **+2,743** for this
-repo's own ledger, whose three rows record an identical 22,533-byte file — the
-whole figure was the estimate→exact transition. When no comparable anchor exists
-the cell reads `-` and a footer names the repo and says why, so a suppressed
-comparison cannot be mistaken for "no change yet".
-
-Roster in `.skills/cohort`, one `owner/repo` slug or local path per line; `#`
-comments allowed. Repos with no ledger are reported rather than skipped.
-
-An entry may also carry `wave:` and `pair:` annotations. The roll-up prints the
-resulting split and how many members of each arm have adopted;
-`score-cohort.sh` is what acts on it. Both scripts read the roster through one
-parser in `_context-lib.sh`, so they cannot disagree about which repo is in which
-arm — a second opinion about the experiment's own assignment would be worse than
-no experiment. See [validation-gate.md](validation-gate.md).
-
-Before a repo adopts the skill it has no ledger, and that is the expected state —
-not a failure, and not something to fix by writing a ledger into it. Ledgers
-appear as each repo adopts, driven by a per-repo adoption issue. After adoption,
-a member with no recent row *is* the finding.
-
-One caveat worth designing around: `gh api` prints nothing **and** exits non-zero
-on a 404, so a naive empty-output test reads a missing ledger as an empty one.
-The script greps the error body for `404` before deciding, and reports anything
-else as `unreadable` rather than silently as absent.
