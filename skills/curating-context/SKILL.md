@@ -68,11 +68,12 @@ behind. A member reporting "no ledger" is the expected pre-adoption state
 cannot go without deleting procedure. That is Phase 4's escape clause, not a
 licence: the ratchet only ever comes down.
 
-**Learnings carry an edit budget: +250 net tokens per round.** A budget on the
-file is a ceiling, and without a per-round cap a self-improving skill walks up to
-it one plausible addition at a time — which is how this file reached 82% over.
-When the cap binds, **demote or tighten something first**, so a learning competes
-for space rather than accumulating.
+**Learnings carry an edit budget: +250 net tokens per round, or the headroom left
+under the ratchet — whichever is smaller.** The ratchet is the ceiling, the budget
+a rate limit, and the ceiling usually binds first, so measure before writing.
+Without a cap a skill walks up to its ceiling one plausible addition at a time,
+which is how this file reached 82% over. When either binds, **demote or tighten
+first**.
 
 Changes to the skill itself carry extra procedure: an abandoned change is
 recorded in [references/rejected-changes.md](references/rejected-changes.md) with

@@ -145,9 +145,11 @@ class TestTheSkillsOwnSurface:
             "<branch-point> --file skills/curating-context/SKILL.md "
             "--docs-dir skills/curating-context/references\n\n"
             "Raising SKILL_MD_RATCHET is not the fix. It is a ratchet: it came "
-            "down from 10,902 and only ever comes down. The +250 per-round edit "
-            "budget means a learning that does not fit has to displace "
-            "something.\n\n"
+            "down from 10,902 and only ever comes down.\n\n"
+            "Note the +250 per-round edit budget is a RATE limit, not a "
+            "licence to add 250: this ceiling is usually the tighter of the "
+            "two, and a learning that does not fit under it has to displace "
+            "something first.\n\n"
             + ESTIMATE_CAVEAT
         )
 
@@ -240,6 +242,26 @@ class TestTheEditBudgetForLearnings:
         assert "250" in body, (
             "SKILL.md names an edit budget without a number; a cap with no "
             "figure never binds"
+        )
+
+    def test_the_cap_is_reconciled_with_the_ratchet(self):
+        """CR round 2, finding 8. The two numbers have to be read together.
+
+        The ratchet left ~49 tokens of headroom while the prose advertised
+        +250, so a contributor spending their documented budget failed a gate
+        whose message never mentioned the budget. Neither number was wrong —
+        one is a ceiling and one a rate limit — but stating the rate without
+        the ceiling invites exactly one wasted round.
+        """
+        body = SKILL_MD.read_text().lower()
+        window = body[body.index("edit budget"):body.index("edit budget") + 600]
+        assert "ratchet" in window, (
+            "the edit budget is stated without naming the ratchet, so nothing "
+            "tells a contributor which of the two actually binds"
+        )
+        assert "smaller" in window or "whichever" in window, (
+            "the edit budget does not say it is capped by the remaining "
+            "headroom, which is the constraint that actually fires"
         )
 
     def test_the_cap_says_what_happens_when_it_binds(self):

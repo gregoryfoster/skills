@@ -92,10 +92,13 @@ Warranted losses (.skills/context-loss-ok):
   CONTENT is a substring of the reported line. Matched on content, never on
   line number, so an entry expires the moment its line changes — which is
   exactly when it needs re-judging. An entry can only ever reach a line that is
-  ALREADY unaccounted for, so it can neither hide a relocation nor invent one,
-  and every entry is charged with its hits in a per-entry report: one broad
-  line that zeroes the count is the gaming vector this file introduces, and the
-  report is what makes it visible.
+  ALREADY unaccounted for, so it can neither hide a relocation nor invent one.
+
+  An acknowledgement covers ONE judged line. An entry matching more than one is
+  REFUSED, as is CONTENT under 8 characters — one broad line that zeroes the
+  count is the gaming vector this file introduces, and a warning about it is not
+  enough: warnings ride in stdout, where the exit code, the ledger row and the
+  cohort gate do not read them. Split a broad entry into one per line.
 
   Comments are `#` at LINE START only. Stripping an inline one would silently
   broaden the entry — `Fixed in #412` becomes `Fixed in`.
@@ -289,6 +292,13 @@ WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default")
 # note nobody reads finds nothing — which is how six real copies shipped.
 DUP_MIN_CHARS = 40
 
+# The same reasoning applied to an acknowledgement's CONTENT, which is matched as
+# a substring. Kept low deliberately: the real breadth guard is the over-broad
+# refusal further down, which counts what an entry ACTUALLY matched rather than
+# guessing from its length. This floor only rules out the degenerate case a hit
+# count cannot catch — an entry so short that matching one line today is luck.
+WARRANT_MIN_CHARS = 8
+
 HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 # Every leading `../` on a link target, not just the first. `.replace("](../",
 # "](")` erased exactly one level: str.replace scans the ORIGINAL string and
@@ -364,6 +374,14 @@ try:
                        + ", ".join(WARRANTS))
             elif not content:
                 why = "empty CONTENT — an entry with no content matches every line"
+            elif len(content) < WARRANT_MIN_CHARS:
+                # Checked here as well as by the over-broad refusal below, because
+                # a two-character entry that happens to hit exactly one line
+                # today is not identifying that line — it will silently move to
+                # a different one the moment the surface changes, which is the
+                # opposite of the expiry this file promises.
+                why = (f"CONTENT is {len(content)} characters — an entry must be "
+                       f"at least {WARRANT_MIN_CHARS} to identify one line")
             else:
                 entries.append((warrant, content))
                 continue
@@ -416,6 +434,23 @@ for line in lost:
         warranted.append((entries[idx][0], line))
         charged[idx].append(line)
 
+# An entry that covers more than one line is REFUSED, not warned about. Breadth
+# is the whole attack surface here: `retarget :: e` matched every dropped line
+# in a repo and turned exit 3 into exit 0 with `lost: 0`, while the warning that
+# said so rode along in stdout where no gate reads it. This file is the only
+# thing that can convert a content-loss failure into a pass, so it gets the same
+# treatment malformed syntax already gets — refusal, which errs toward NOT
+# passing. An acknowledgement is ONE judged line; two lines are two judgements.
+broad = [(w, c, len(h)) for (w, c), h in zip(entries, charged) if len(h) > 1]
+if broad:
+    print(f"ERROR {ack_path} has {len(broad)} over-broad entry(ies) — an "
+          "acknowledgement covers ONE judged line:", file=sys.stderr)
+    for warrant, content, n in broad:
+        print(f"  {n} lines matched: {warrant} :: {content[:70]}", file=sys.stderr)
+        print("    split it into one entry per line, or narrow the content so it "
+              "identifies a single line", file=sys.stderr)
+    sys.exit(1)
+
 # One stream for the whole report. Split across stdout and stderr it interleaved
 # through a pipe, and the failure list printed above the counts explaining it.
 out = sys.stdout
@@ -459,10 +494,6 @@ if warranted:
         if not hits:
             continue
         print(f"    {len(hits)} hit(s): {warrant} :: {content[:70]}", file=out)
-        if len(hits) > 1:
-            print(f"    WARN this entry is broad ({len(hits)} hits) — an "
-                  "acknowledgement should cover ONE judged line; split it or "
-                  "re-judge", file=out)
 
 unused = [e for e, hits in zip(entries, charged) if not hits]
 if unused:

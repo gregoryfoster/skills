@@ -211,27 +211,63 @@ class TestAGenuineLossStillFails:
         assert "loss_warranted: 0" in r.stdout, r.stdout
         assert "matched nothing" in r.stdout, r.stdout
 
-    def test_a_blanket_entry_is_warned_about(self, tmp_path: Path):
-        """The metric-gaming vector, moved into this file: one broad line
-        zeroes the count with no diff anywhere. check-seams.sh's per-pattern
-        accountability report is the part worth copying verbatim — the cohort
-        named it as what proved no entry had quietly become a blanket."""
+    def test_a_blanket_entry_is_refused(self, tmp_path: Path):
+        """The metric-gaming vector: one broad line zeroes the count with no
+        diff anywhere.
+
+        This was a WARN and is now a refusal (CR round 2, finding 7). The
+        warning was correct and useless: it rode along in stdout while the exit
+        code said 0, the row recorded `no_loss: ok`, and score-cohort.sh — the
+        only reader that matters — passed the run. `retarget :: e` warranted
+        every dropped line in a repo that way. This file is the one thing that
+        can turn a content-loss failure into a pass, so breadth gets the same
+        treatment malformed syntax already got.
+        """
         repo = _repo(tmp_path, "# P\n\n## A\n\nfirst rule here\nsecond rule here\nthird rule here\n")
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         _ack(repo, "duplicate :: rule here")
         r = _prove(repo)
-        assert r.returncode == 0, r.stdout
-        assert "3 hit(s)" in r.stdout, r.stdout
-        assert "WARN" in r.stdout and "broad" in r.stdout, r.stdout
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "over-broad" in r.stderr, r.stderr
+        assert "3 lines matched" in r.stderr, r.stderr
+        assert "loss_warranted" not in r.stdout, (
+            "a refused ack file must not also emit a verdict: " + r.stdout
+        )
 
-    def test_a_precise_entry_is_not_warned_about(self, tmp_path: Path):
-        """Or the WARN means nothing."""
+    def test_splitting_a_blanket_into_one_entry_per_line_is_accepted(
+            self, tmp_path: Path):
+        """The refusal has to leave a way through, or it is just a ban on
+        warranting more than one line per run."""
+        repo = _repo(tmp_path, "# P\n\n## A\n\nfirst rule here\nsecond rule here\nthird rule here\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n")
+        _ack(repo, "duplicate :: first rule here", "duplicate :: second rule here",
+             "duplicate :: third rule here")
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "loss_warranted: 3" in r.stdout, r.stdout
+        assert "lost: 0" in r.stdout, r.stdout
+
+    def test_content_under_the_floor_is_refused(self, tmp_path: Path):
+        """An entry short enough to match one line by luck is not identifying
+        it — the next edit silently moves it to a different line, which is the
+        opposite of the expiry the file promises. Caught at parse time, so the
+        message names the rule rather than the symptom."""
+        repo = _repo(tmp_path, "# P\n\n## A\n\nonly line\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n")
+        _ack(repo, "duplicate :: ly l")
+        r = _prove(repo)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "characters" in r.stderr and "at least 8" in r.stderr, r.stderr
+
+    def test_a_precise_entry_passes_cleanly(self, tmp_path: Path):
+        """Or the refusal is just a ban on the file working at all."""
         repo = _repo(tmp_path, "# P\n\n## A\n\nfirst rule here\n")
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         _ack(repo, "duplicate :: first rule here")
         r = _prove(repo)
-        assert r.returncode == 0, r.stdout
-        assert "WARN" not in r.stdout, r.stdout
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "over-broad" not in r.stderr, r.stderr
+        assert "loss_warranted: 1" in r.stdout, r.stdout
 
 
 class TestAWarrantMustBeNamed:

@@ -1,31 +1,19 @@
 # Judged losses. WARRANT :: CONTENT — see prove-no-loss.sh --help for the
-# closed set of warrants. Entries match line CONTENT and expire the moment the
-# line changes, which is when they need re-judging.
+# closed set of warrants. Entries match line CONTENT as a substring and expire
+# the moment the line changes, which is when they need re-judging. An entry
+# matching more than one line, or shorter than 8 characters, is refused.
 #
-# The file is per-repo while --file is per-run, so an entry judged for one
-# target reports "matched nothing" on a run against another. Read the target
-# before pruning.
-
-# #95 split budget-and-metrics.md: its lede advertised "the telemetry schema",
-# which this same change moved to telemetry.md. The replacement lede points
-# there. (Target: references/budget-and-metrics.md.)
-retarget :: and the telemetry
-retarget :: schema that makes cross-cohort learning possible.
-
-# #95 trimmed SKILL.md: four demoted lines carried a `](references/X.md)` link
-# that this same change moved one directory down, where the path no longer
-# resolves. Each was moved verbatim except for the link, which is re-aimed at
-# its sibling. Read against its replacement in the destination named.
-# (Target: skills/curating-context/SKILL.md.)
-retarget :: [references/cohort-patterns.md](references/cohort-patterns.md) for the shape
-retarget :: rationale: [references/budget-and-metrics.md](references/budget-and-metrics.md).
-retarget :: [references/rejected-changes.md](references/rejected-changes.md) with what refuted
-retarget :: distinction in [references/budget-and-metrics.md](references/budget-and-metrics.md).
-retarget :: in [experiment 1](references/validation-gate.md), which scored nothing
-retarget :: **Split before demoting, never after.** A doc split is free only while
-retarget :: [references/cohort-patterns.md](references/cohort-patterns.md) rather than
-retarget :: [the gate](references/validation-gate.md#why-no_loss-comes-from-a-script-and-not-a-grep)
-retarget :: `dead_anchors` is the anchor half — a link whose file resolves
-retarget :: cannot see: [references/validation-gate.md](references/validation-gate.md).
-retarget :: [references/cadence.md](references/cadence.md) ([#118]
-retarget :: [references/write-guard-hook.md](references/write-guard-hook.md).
+# A warrant is SINGLE-TRANSITION, unlike .skills/context-seams-ok. A seam recurs
+# on every run, so its acknowledgement earns its place indefinitely. A warranted
+# loss justifies one base -> now comparison: once that change is merged, every
+# later run's --base sits after it and the line never appears again. So an entry
+# is spent the moment the change it warrants lands, and prune it then — leaving
+# it behind means every future run reports it as "matched nothing", which is the
+# same signal a genuinely stale entry gives, and the file stops being readable.
+#
+# (The 14 entries that justified the #95 trim were removed on merge for exactly
+# that reason — CR round 2, finding 9. The trim itself is in git history.)
+#
+# The file is per-repo while --file is per-target, so an entry judged for one
+# target reports "matched nothing" on a run against another (#139). Read the
+# target before pruning.
