@@ -115,7 +115,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 
 **New patterns worth keeping:**
 
-1. **Grep the file's own header comments during the closed-in-fact check.** Issue #129 was verified resolved by reading [_name_metadata_fields.html](src/templates/admin/people/partials/_name_metadata_fields.html) — the file's docstring explicitly credits #131 for the fix. Adding `grep -rn "Issue #" src/templates/ src/api/admin/` to the closed-in-fact pass surfaces these credits without needing to read entire files. Module/template docstrings are an underused signal — they're how careful contributors annotate which footgun an edit retired. The 2026-05-09 log already established "grep for contested symbols before presenting scores"; expand the recommendation: also grep for `Issue #` in the contested files themselves.
+1. **Grep the file's own header comments during the closed-in-fact check.** Issue #129 was verified resolved by reading `src/templates/admin/people/partials/_name_metadata_fields.html` (in `cannabis.observer/power-map`) — the file's docstring explicitly credits #131 for the fix. Adding `grep -rn "Issue #" src/templates/ src/api/admin/` to the closed-in-fact pass surfaces these credits without needing to read entire files. Module/template docstrings are an underused signal — they're how careful contributors annotate which footgun an edit retired. The 2026-05-09 log already established "grep for contested symbols before presenting scores"; expand the recommendation: also grep for `Issue #` in the contested files themselves.
 
 2. **The "closed-in-fact" check should target every issue, not just the high-blast ones.** #129 had Med blast and the highest score (10/15). If I'd skipped grep verification because "high blast = surely still open", I'd have allocated a batch slot to dead work. **Rule:** for every scored issue, grep at least one identifying symbol from its body. Don't trust the issue body's claim about file state.
 
@@ -978,7 +978,7 @@ Third orchestration session in this repo (after 2026-05-24, 2026-05-25). Scope a
 
 **Interview answers:**
 - Q0 Dups: **#120 + #124 bundled into one agent, both left open.** Same defect (the dead-link check strips `#fragments`), but each carried unique specifics — #124 the `dead_anchors` output class and prose-guard carve-outs, #120 the per-file duplicate-slug numbering and archival-subtrees-as-link-sources edge cases. Closing either as a dup would have stranded its half in a closed issue.
-- Q1 Quality: **Correctness ×3** → `(Foundation × 2) + (Correctness × 3) + Scope`, max 18. Third in this repo (after 2026-05-24 and 2026-05-25), and the 4th Correctness-leading session overall (2026-08-10 cannabis.observer-wordpress sits between).
+- Q1 Quality: **Correctness ×3** → `(Foundation × 2) + (Correctness × 3) + Scope`, max 18. Third in this repo (after 2026-05-24 and 2026-05-25).
 - Q2 Deploy: **early production.** Twelve repos carry committed pins and the auto-refresh hook propagates daily — but no repo has the cadence workflow installed, so the new code is inert. Propagation passive and currently harmless → wide batches, few gates.
 - Q3 Defer: #117, #118, #88, #96, #97 out. **Three additions** to #134's bundle: #100 (its own argued exception), #108, #90.
 - Q4a Test routing: **new per-agent test file** rather than appending to the 3,560-line monolith.
