@@ -20,16 +20,17 @@ Do NOT assign priorities, design batches, write a design doc, or open a GitHub i
 
 Create a task for each item and complete them in order:
 
-1. **Fetch all open issues** — `gh issue list --state open --limit 50 --json number,title,labels,body`
-2. **Explore project context** — read AGENTS.md, recent commits, existing design docs
-3. **Interview user** — establish rubrics and constraints (one question at a time)
-4. **Score all issues** — apply rubrics, present table, get approval
-5. **Analyze conflict zones** — identify files touched by multiple issues; build dependency graph
-6. **Present dependency analysis** — get approval before batch design
-7. **Design batch plan** — assign issues to merge batches; get approval
-8. **Write design doc** — `docs/plans/YYYY-MM-DD-<topic>-backlog.md`; commit
-9. **Open GitHub tracking issue** — link to design doc; list batches
-10. **Capture session learnings** — append a session entry to `references/process-log.md`; promote patterns into this skill only when they recur or introduce a new rule
+1. **Sync local main** — `git checkout main && git pull --ff-only`; clear any untracked stray from the checkout (Rule 1). A stale tree produces a conflict map of a layout that no longer exists
+2. **Fetch all open issues** — `gh issue list --state open --limit 50 --json number,title,labels,body`
+3. **Explore project context** — read AGENTS.md, recent commits, existing design docs
+4. **Interview user** — establish rubrics and constraints (one question at a time)
+5. **Score all issues** — apply rubrics, present table, get approval
+6. **Analyze conflict zones** — identify files touched by multiple issues; build dependency graph
+7. **Present dependency analysis** — get approval before batch design
+8. **Design batch plan** — assign issues to merge batches; get approval
+9. **Write design doc** — `docs/plans/YYYY-MM-DD-<topic>-backlog.md`; commit
+10. **Open GitHub tracking issue** — link to design doc; list batches
+11. **Capture session learnings** — append a session entry to `references/process-log.md`; promote patterns into this skill only when they recur or introduce a new rule
 
 ---
 
@@ -54,6 +55,7 @@ These questions establish everything needed. Ask them in order; do not stack mul
 
 **Q0 (conditional) — Resolve any candidate pairs surfaced in Step 1–2 (duplicate *or* prerequisite), plus any rescope-to-residual verdicts.**
 > For each candidate pair: **bundle** (one agent handles both — see the "Bundle related issues" rule in Step 7), **close one as dup**, or **score independently** (two separate work items — Step 7 decides batch shape)?
+> For each partially-shipped issue: **rescope to the verified residual** (rewrite the body down to what is genuinely still open, then re-score it as the smaller item it now is), **close as done**, or **defer**?
 
 Skip Q0 entirely if Step 1–2 didn't flag any candidates. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close <issue> --comment 'duplicate of #<survivor>'` before moving to Q1 so the scored backlog reflects the resolved state and the closed issue records the dup link.
 
@@ -77,7 +79,7 @@ Two sub-questions, both capping the per-batch agent count regardless of file-dis
 > 1. Does the host project have a custom worktree-create script (e.g. `dev.sh worktree create`)? What concurrent ceiling does it support, and what does it provision beyond plain `git worktree add` — Nginx vhosts, DB clones, port pools, node_modules overlays? If the user doesn't know, ask them to grep the script for port-pool size or docker-compose port ranges first.
 > 2. **What backing services do the worktrees NOT clone?** A shared test database, a shared Redis, a shared search index, a single dev-server port. Plain `git worktree` clones *none* of these, so a project with **no** worktree script can still have a hard ceiling of 1.
 
-Six sessions across four projects have now found the real ceiling in sub-question 2, not 1 (process-log 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, and both 2026-08-11 sessions). **Ask it explicitly — don't wait to rediscover it in Step 5.**
+Six sessions across three projects have now found the real ceiling in sub-question 2, not 1 (process-log 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, and both 2026-08-11 sessions). **Ask it explicitly — don't wait to rediscover it in Step 5.**
 
 For a shared test database specifically: read the suite's session-scoped fixture and its DSN guard before accepting any ceiling.
 - If the fixture is destructive (`DROP SCHEMA … CASCADE`, `drop_all`, truncate-all), concurrent runs corrupt each other and the ceiling is 1 until slots are provisioned.
@@ -88,7 +90,7 @@ Three resolutions, in preference order:
 2. **Serialize the verification gate** — workers implement in parallel, the orchestrator runs the suite. Cheap, but workers can no longer self-verify before signalling.
 3. **Cap agents at 1 per batch.** Always available, wastes all disjointness.
 
-**Naming gotcha:** provisioned slot names must satisfy the suite's own safety guard. `assert_test_url_safety()` requiring a `_test` *suffix* means the obvious `db_test_1 … _4` aborts at conftest import; the slots have to be `db_1_test … db_4_test` (process-log 2026-08-07).
+**Naming gotcha:** provisioned slot names must satisfy the suite's own safety guard. A guard like usa-wa's `assert_test_url_safety()`, requiring a `_test` *suffix*, means the obvious `db_test_1 … _4` aborts at conftest import; the slots have to be `db_1_test … db_4_test` (process-log 2026-08-07).
 
 Record agreements explicitly as you go — they feed the design doc.
 
@@ -122,13 +124,13 @@ Identify files touched by 2+ issues — these drive sequencing decisions:
    - **Issue bodies also state *relationships*** — "depends on #N", "do these in order". Treat those as hypotheses, not facts: a stated sequential dependency between two issues whose footprints substantially overlap is usually a **bundling** signal (Shape A) that the author mistook for an ordering constraint. Grep before honoring a stated order (process-log 2026-08-09: two issues filed an hour earlier by the same author carried an explicit "do these in order" note; 5 of 6 production files and 9 test files were shared, so the second agent would have rewritten everything the first just moved).
    - **A grep sizes a *surface*; only execution measures a *behaviour*.** Where an issue reports a **measured** number, beating it requires measuring, not counting occurrences (process-log 2026-08-10: a reference grep found 15 classes and "corrected" an issue's 2-class claim as a 2× understatement; running them in isolation showed **6** actually leaked, and the issue's own number was closer). The grep is authoritative about existence of a call site, not about frequency of an effect.
    - **Size an unbounded "sweep" or "audit" issue, then intersect it.** Such an issue is neither automatically high-blast nor automatically batch-isolating. Enumerate the set (one `grep -rl` plus a per-file counter), then intersect it with co-batch agents' footprints — zero overlap licenses full-ceiling parallelism (process-log 2026-08-11 observo: "worth a sweep" resolved to 17 files / ~64 sites, disjoint from both co-batch agents')
-2. **Grep the test surface for the literal strings each fix rewrites.** A large shared test file is two conflict zones, and only one is visible from source-file overlap. The **append** half (every worker adding a test class at EOF) is solved by routing new tests to a new per-agent file. The **modify** half — existing assertions that a fix *invalidates* — is invisible to both the source grep and the issue bodies, which describe script changes and say nothing about tests. Grep the test file for the exact strings, paths and JSON keys each issue changes (process-log 2026-08-11: a 3,560-line test file hardcoded the literal hook command one issue rewrote and the literal log path another changed; neither issue mentioned a test). Then **map each agent's owned line-window before assigning**: separated windows merge cleanly and the file stays contested without serializing the batch, but overlapping windows mean sequencing — which has to be decided here, not discovered at merge time. Distinct from a shared *fixture* dependency (process-log 2026-07-08: `conftest.py`), which is semantic and needs sequencing rather than a new file
-3. **Where a shared backing service sets the ceiling (Q5), grep for the helpers that *escape* the isolation fixture.** A helper that opens its own engine/connection and destroys shared state is a *hard* conflict zone, not the soft one of item 2: it does not degrade other agents, it corrupts them mid-run, and the failure presents as an unrelated worker's mysterious red. It forces its issue solo on a database property with no file-overlap footprint at all (process-log 2026-08-11 usa-wa: a `reset_migration_schemas` helper documented as deliberately bypassing the savepointed `db_session` fixture forced a three-line test fix into its own batch). One grep, run alongside the contested-file grep:
+2. **Grep the test surface for the literal strings each fix rewrites.** A large shared test file is two conflict zones, and only one is visible from source-file overlap. The **append** half (every worker adding a test class at EOF) is solved by routing new tests to a new per-agent file. The **modify** half — existing assertions that a fix *invalidates* — is invisible to both the source grep and the issue bodies, which describe script changes and say nothing about tests. Grep the test file for the exact strings, paths and JSON keys each issue changes (process-log 2026-08-11 skills: a 3,560-line test file hardcoded the literal hook command one issue rewrote and the literal log path another changed; neither issue mentioned a test). Then **map each agent's owned line-window before assigning**: separated windows merge cleanly and the file stays contested without serializing the batch, but overlapping windows mean sequencing — which has to be decided here, not discovered at merge time. Distinct from a shared *fixture* dependency (process-log 2026-07-08: `conftest.py`), which is semantic and needs sequencing rather than a new file
+3. **Where a shared backing service sets the ceiling (Q5), grep for the helpers that *escape* the isolation fixture.** A helper that opens its own engine/connection and destroys shared state is a *hard* conflict zone — not the **soft** fixture dependency item 2 ends by naming (2026-07-08 `conftest.py`): it does not degrade other agents, it corrupts them mid-run, and the failure presents as an unrelated worker's mysterious red. It forces its issue solo on a database property with no file-overlap footprint at all (process-log 2026-08-11 usa-wa: a `reset_migration_schemas` helper documented as deliberately bypassing the savepointed `db_session` fixture forced a three-line test fix into its own batch). One grep, run alongside the contested-file grep:
    ```bash
    grep -rnE 'DROP (SCHEMA|DATABASE)|TRUNCATE|create_async_engine|create_engine' --include='*.py' <test trees> <testing helper modules>
    ```
 4. Determine required merge order within each file (usually: smaller targeted fixes first, wide refactors last, features after foundations)
-5. Derive a dependency graph showing which issues must precede which. Look for edges that **no file overlap can show**: two issues in different regions of the same measurement tool are not independent when one's defect corrupts the input the other's design work must read (process-log 2026-08-11: a normaliser bug reporting every link-carrying line as LOST made the sibling issue's verdict design undecidable → Shape B on regions of one file)
+5. Derive a dependency graph showing which issues must precede which. Look for edges that **no file overlap can show**: two issues in different regions of the same measurement tool are not independent when one's defect corrupts the input the other's design work must read (process-log 2026-08-11 skills: a normaliser bug reporting every link-carrying line as LOST made the sibling issue's verdict design undecidable → Shape B on regions of one file)
 
 Present the conflict zones and dependency graph. Get approval.
 
@@ -145,7 +147,7 @@ Recognize either flavor when the backlog issues were filed in the same session a
 - **CR-surfaced** (issues found while reviewing recent feature work) tend to be **naturally disjoint** — the reviewer found one bug per surface — so high parallelism is the default, not the exception (process-log 2026-05-09: 6 agents, zero contested files). Don't impose sequential gates just because past backlogs had them.
 - **Feature-followup** (issues filed against a just-shipped feature) cluster *or* disperse depending on **where the cycle's defects landed**, not on the fact that they're followups. When the followups all land in one partial (the implementer's TODOs, the reviewer's smells, and the QA gaps on the same file) expect a single-file critical path with a few parallel-safe outliers (process-log 2026-05-11: critical path through one template across three batches). But when the originating cycle spread defects **one-per-layer** across the stack, the same followup provenance produces a **CR-like, near-fully-disjoint** backlog (process-log 2026-06-28: six 5h.x followups across model / ETL / CLI / admin JS / admin meta / theme → high parallelism, single doc-file overlap). Heuristic: one-partial → clusters; across-the-stack → disjoint. Don't assume a single-file critical path just because the backlog is followup-derived.
 - **Spec-derived** and **deep-architectural-chain** backlogs sit between: the spec or the shared core file dictates a foundation-then-split shape.
-- **Adoption-feedback** (defects filed by consumers of a shared library/skill while adopting it, accumulating over weeks against *one* component's file family) is the **tightest clustering shape** — nearly every pair of issues shares a file with some other pair. But it decomposes on an axis the others lack: **the owning file**. The natural agent unit is therefore one agent per owning file, not one per issue (process-log 2026-08-11: 15 issues → 7 parallel agents, grouped by which script each defect lived in). The parallelism comes from the *component's* modularity, not the backlog's independence — so derive the agent count from the file map, not from the issue count.
+- **Adoption-feedback** (defects filed by consumers of a shared library/skill while adopting it, accumulating over weeks against *one* component's file family) is the **tightest clustering shape** — nearly every pair of issues shares a file with some other pair. But it decomposes on an axis the others lack: **the owning file**. The natural agent unit is therefore one agent per owning file, not one per issue (process-log 2026-08-11 skills: 15 issues → 7 parallel agents, grouped by which script each defect lived in). The parallelism comes from the *component's* modularity, not the backlog's independence — so derive the agent count from the file map, not from the issue count.
 
 ### Step 7: Batch design
 
@@ -462,7 +464,7 @@ Session-specific institutional memory — interview answers, batch shapes, non-o
 - Rule 5 slot-reclaim semantics + cheap ceiling re-verification — 2026-06-09
 - Step 4 rubric variable-weight escape hatch — confirmed for **Foundation**-leading (×3), not just Correctness — 2026-05-24 (Correctness ×3), 2026-06-29 (Foundation ×3)
 - Step 4 / Key Principles "blast ≠ priority" refinement: a single issue whose blast intersects **multiple** otherwise-parallel agents → isolate in its own gated batch (grep call sites to verify) — 2026-06-29; further variants (zero-conflict issue is a slot-filler; a trivial issue can be a hard gate; a measurement issue sequences last on epistemics) — 2026-08-07, 2026-08-11
-- Q5 shared-backing-service sub-question + the provision / serialize / cap resolution ladder + read-the-guard clause — 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, 2026-08-11 ×2 (six recurrences; the ceiling was in a shared service, not the worktree tooling, in all six)
+- Q5 shared-backing-service sub-question + the provision / serialize / cap resolution ladder + read-the-guard clause — 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, 2026-08-11 usa-wa, 2026-08-11 observo (six recurrences across three projects; the ceiling was in a shared service, not the worktree tooling, in all six)
 - Worker step 3 "issue body is a proposal, not a specification" + the report-back corrections slot + Step 8 body-decay note — 2026-08-09 (13/13 bodies materially wrong), 2026-08-10
 - Rule 1 extended to fire before conflict analysis, not only before launch — 2026-08-10
 - Step 7 chain-appending rule (one migration/ADR/sequence-generating agent per batch) — 2026-08-07
