@@ -211,7 +211,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 
 **Non-obvious decisions captured:**
 
-- **Single-owner assignment to resolve a one-line shared-file overlap.** [skills/using-git-worktrees/SKILL.md](../using-git-worktrees/SKILL.md) was the only contested file (between #28 documenting an internal fix and #31 documenting a new script). Resolution: assign SKILL.md edits exclusively to one agent (F4, the larger contributor) rather than serializing two small edits with a rebase. F1 (#28) ceded SKILL.md and relies on commit message + inline script comments to document the internal change. This is cheaper than any merge-order ceremony for ≤2-line overlaps and worth reaching for first.
+- **Single-owner assignment to resolve a one-line shared-file overlap.** [skills/using-git-worktrees/SKILL.md](../../using-git-worktrees/SKILL.md) was the only contested file (between #28 documenting an internal fix and #31 documenting a new script). Resolution: assign SKILL.md edits exclusively to one agent (F4, the larger contributor) rather than serializing two small edits with a rebase. F1 (#28) ceded SKILL.md and relies on commit message + inline script comments to document the internal change. This is cheaper than any merge-order ceremony for ≤2-line overlaps and worth reaching for first.
 - **Detection-only as the merge-safe minimum for a paired feature.** #31's issue listed `worktree-create.sh` preamble integration and `pre-ship.sh` wiring as optional. Both were scoped out to keep F4's diff narrow and avoid pulling additional files (`worktree-create.sh`) into the batch. Pattern: when an issue offers a "main thing + optional integration points," ship the main thing in this batch and file follow-ups for the wiring.
 - **Variable rubric weight.** First session where Correctness flexed to ×3. Confirmed the existing "unless the user requests different weights" escape hatch is enough — no rubric change needed at the skill level. Worth noting that the weighting choice flipped the ordering: under Correctness ×2 / Foundation ×2, #28 and the convention work (#26) would have been closer; under Correctness ×3, #28 leads clearly because of real downstream forensics.
 
@@ -835,8 +835,8 @@ Tracking issue `#687`; plan `docs/plans/2026-08-10-cr-followup-backlog.md`. (Sou
 
 **Interview answers:**
 - Q0 Duplicates: #664 closed as dup of #681 (see below).
-- Q1 Quality: **Correctness ×3** (3rd Correctness-leading recurrence after 2026-05-24, 2026-08-11
-  skills).
+- Q1 Quality: **Correctness ×3** (3rd Correctness-leading session, after 2026-05-24 and 2026-05-25 —
+  both `gregoryfoster/skills`).
 - Q2 Deployment: pre-production — **not asked**, answered from project memory (staging live, launch
   epic #421 open, no real users). Stated as an assumption with an invitation to correct.
 - Q3 Deferrals: none; #656 scoped to *include* the prerequisite it underscoped.
@@ -978,7 +978,7 @@ Third orchestration session in this repo (after 2026-05-24, 2026-05-25). Scope a
 
 **Interview answers:**
 - Q0 Dups: **#120 + #124 bundled into one agent, both left open.** Same defect (the dead-link check strips `#fragments`), but each carried unique specifics — #124 the `dead_anchors` output class and prose-guard carve-outs, #120 the per-file duplicate-slug numbering and archival-subtrees-as-link-sources edge cases. Closing either as a dup would have stranded its half in a closed issue.
-- Q1 Quality: **Correctness ×3** → `(Foundation × 2) + (Correctness × 3) + Scope`, max 18. Second recurrence in this repo (after 2026-05-24).
+- Q1 Quality: **Correctness ×3** → `(Foundation × 2) + (Correctness × 3) + Scope`, max 18. Third in this repo (after 2026-05-24 and 2026-05-25), and the 4th Correctness-leading session overall (2026-08-10 cannabis.observer-wordpress sits between).
 - Q2 Deploy: **early production.** Twelve repos carry committed pins and the auto-refresh hook propagates daily — but no repo has the cadence workflow installed, so the new code is inert. Propagation passive and currently harmless → wide batches, few gates.
 - Q3 Defer: #117, #118, #88, #96, #97 out. **Three additions** to #134's bundle: #100 (its own argued exception), #108, #90.
 - Q4a Test routing: **new per-agent test file** rather than appending to the 3,560-line monolith.
