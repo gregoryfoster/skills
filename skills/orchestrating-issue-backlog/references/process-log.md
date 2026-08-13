@@ -29,6 +29,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-12 | gregoryfoster/skills | **The ceiling was genuinely absent** — 7th Q5 session, first to find neither a worktree-provisioning nor a shared-backing-service limit (negative result worth recording against six positives); **line-window ownership generalized from a test file to a policy file** (`AGENTS.md`, three concurrent writers, separated windows + "no restructuring"); **an issue body's own hedge is a grep target — and so is the orchestrator's own grep** (a loose `\]\(…\)` sweep "disproved" #143's discriminator and was itself refuted by the implementing agent: the match was a bare fragment in an inline code span, not a link — design doc, score and issue comment all retracted); **three instances of the same shape in one session** — a link sweep, two test assertions and a code-review finding, all *absence* claims derived from a model of the artifact rather than from the artifact; **descope to decouple** (deleting a shared sub-problem from one issue removed an ordering constraint entirely); blast radius discovered in a **test assertion about prose**, not in any issue body; **a blocked residual defers rather than rescopes** when its blocker is outside a user-named subset |
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 | 2026-08-13 | CannObserv/cannobserv | **Upstream-blocked backlog: check the sibling repo's blocker states before anything else** — all three blockers closed within 5 days, converting a "blocked" backlog to actionable, with a stale contract pin as the shared consequence; **a shared first step that is not an issue** (the re-pin) modeled as commit 1 of a Shape-A bundle, then read-only for the gated batch; **same-function overlap is the sharpest Shape-A signal yet** (two issues edit `test_write_bodies.py:22-23`); **a clarifying "Other" answer at a decision gate flipped the decision and exposed a latent read-time data drop** (wp/v2 observation adapter silently drops ACF `co_roles` — the issue body's "no such field on either backend" was true of the model, misleading about the data); hybrid preference degenerated to fully-sequential (every pairing shared a file); policy-deferral of a user-named issue (#278, async-parity) confirmed at Q3 |
+| 2026-08-13 | CannObserv/usa-wa | **The backlog contained the fix for its own ceiling** (shared-test-DB **7th recurrence** — #208 itself in the named set; old contract still binds during Batch A: workers unit-tier only, gate run authoritative); **operational mitigation is not partial shipment** (#211 kill-switched via env var → Correctness 3→2 but full scope retained; issue *comment* authoritative over body; plan gains a required **ops tail** with an observation window); verification-mode asymmetry 3rd recurrence, doubled (#208 fixture + #216 coverage gating + live-SOAP integration run → three non-worker causes for a red gate) |
 
 ---
 
@@ -1661,3 +1662,28 @@ gate belongs on the index or on per-entry size, not on the total.
 - **A concurrent session pushed to `main` twice mid-ship**, once between the merge and the push.
   `git push` rejection is the cheap detector; the expensive version is a batch branch cut from a
   `main` that moved. Re-pull immediately before every push, not just before every batch.
+
+---
+
+## Session 2026-08-13 (CannObserv/usa-wa)
+
+**Backlog:** user-named set #208, #211–#213, #216 — all filed out of the #207 cycle (followup-derived, 7th recurrence; low-discovery mode applied). 5 issues → 3 work items → Batch A (3 parallel) + Batch B (#211 solo) + an ops tail. Tracking: usa-wa#218; plan `docs/plans/2026-08-13-sidecar-testinfra-backlog.md`.
+
+**Agreements:** Correctness ×3 (max 18); early production; cheap-first depth (#208 advisory lock over namespacing, #216 exit-code fix over scheduler wiring); hybrid parallelism; serialize-the-verification-gate for the DB ceiling; regular merge to main.
+
+### The backlog contained the fix for its own ceiling
+
+Shared-test-DB ceiling, **7th recurrence** — but for the first time the ceiling *is one of the issues being orchestrated* (#208, the destructive session fixture). The ceiling still binds during the backlog's own execution: #208's fix isn't trusted until its batch gate passes, so Batch A ran under the old contract (workers unit-tier only, orchestrator's gate run alone and authoritative — the same discipline #207 used). Don't let "we're fixing it in Batch A" license concurrent db verification *in* Batch A.
+
+### Operational mitigation is not partial shipment
+
+#211's symptom was gone at orchestration time — sidecar back up with `REPLAY_ENABLED=false` — yet zero fix code had landed. That is neither closed-in-fact nor rescope-to-residual: the *issue comment* (hold lifted, kill switch, re-enable procedure) was authoritative over the body, and the full fix stayed in scope with its Correctness score *lowered* (3→2) because the live risk is mitigated. A kill-switch mitigation moves an issue's urgency, not its scope. It also adds a required **ops tail** to the plan: the backlog is not done at merge but after the switch is removed and ≥2 replay passes show convergence — the merge ships the fix, the observation window proves it (echoes 2026-08-11's measurement-sequences-last epistemics).
+
+### Also captured
+
+- **Q0a bundling by file (=Shape A) before scoring**: #212+#213 share `engine/read.py` and one review session; bundling first meant the table scored 4 rows, not 5, and Batch B's gate inherited the pair's shape.
+- **Line-window ownership on AGENTS.md/COMMANDS.md, 3rd recurrence** — #208 (concurrency contract) and #216 (integration-tier lines) both write inside the same ~10-line test-commands block in *two* docs; separated windows + no-restructuring clause kept both in Batch A.
+- **Verification-mode asymmetry, 3rd recurrence, now doubled**: #208 changes the db fixture and #216 changes coverage gating, so gate A's run is the first under *both* new modes — plus the `-m integration` run hits live WSL SOAP, adding an upstream-outage red that is nobody's defect. Three distinct non-worker causes for a red gate, named in Key Decisions up front.
+- Decisions written back before any agent existed (#208 option 3, #216 option 2), continuing 2026-08-09/-11/-12.
+- Negative results recorded: no chain-appending artifacts (no migrations — `APPLY_NOOP` is a constant); twelve-for-twelve live issues under the closed-in-fact grep, though it still caught line drift (`test_refresh_e2e.py:96`→`:120`).
+- Precedent (b) again: tracking issue #218 opened first, then the plan committed with the `#218` prefix.
