@@ -1536,3 +1536,20 @@ The #295 issue body framed decision 2 as "observation has no such field on eithe
 - Planning-time resolution of both flagged build-time decisions (label column → carry both; observation roles → both backends) moved MINOR public-model calls from worker discretion to the design doc's Key Decisions — right call under this repo's API-stability tracking rule.
 - Precedent (a): plan committed without prefix, then #329 opened.
 - `gh issue create --body-file` from the scratchpad; body contained backticks throughout.
+
+### Post-gate addendum (same day): a nomenclature decision reopened after approval
+
+After the plan shipped, the user reopened #295's naming: the `roles` model field predates the
+project's Roles CPT and now collides with the real Role entity — replace with Task/Performer
+nomenclature (`task_performers` field, `get_task_performers` facade, `task_label`+`performer_label`
+columns), justified by "there are no downstream consumers so we can do this right." The audit
+**half-confirmed** that claim: the *new* surfaces had none, but the *existing* `EventModel.roles` /
+`EventTypeModel.roles` had production consumers in the adjacent `cli` checkout (cancellation
+stripping, event-add seeding, an export command, direct `TaskPerformerModel(task=...)` construction).
+Lessons: (1) a user's no-consumers assertion spans whatever *they* mean by the surface — grep the
+adjacent downstream checkouts before accepting it for the surfaces the rename actually touches, and
+surface the split (new-surface-free vs existing-field-consumed) so the breaking half is a deliberate
+choice; (2) post-gate decision changes flow through the same write-back circuit as mid-orchestration
+surgery (2026-08-11 observo): plan Key Decisions + issue comment + tracking-issue body, before any
+agent exists. The user chose the full rename with a cli adoption issue at ship time (adopt-a-release
+covers it); the plan gained Key Decision 9.
