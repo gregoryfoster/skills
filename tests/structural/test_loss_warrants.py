@@ -270,6 +270,126 @@ class TestAGenuineLossStillFails:
         assert "loss_warranted: 1" in r.stdout, r.stdout
 
 
+class TestAnEntryCanBeScopedToOneTarget:
+    """The ack file is per-repo while `--file` is per-target (#139).
+
+    An entry judged for a run against `AGENTS.md` matches nothing on the next
+    run against `skills/x/SKILL.md`, so the report's stale-entry warning — the
+    thing that makes expiry trustworthy — fires on entries that are simply
+    about a different target. The optional `PATH :: WARRANT :: CONTENT` form
+    mirrors the `PATH :: CONTENT` form `.skills/context-seams-ok` already
+    carries for exactly this reason.
+
+    Scoping narrows what an entry can reach; it never widens it. Every case
+    below is paired with that direction.
+    """
+
+    def _two_targets(self, tmp_path: Path) -> Path:
+        """One repo, two curated targets, each with one warrantable rewrite:
+        the policy file retargets a pointer, and a reference doc's index entry
+        is rewritten by the same run."""
+        repo = _repo(tmp_path, f"# P\n\n## Conventions\n\n{POINTER}\n")
+        docs = repo / "docs"
+        docs.mkdir()
+        (docs / "API.md").write_text(f"# API\n\n{INDEX_ENTRY}\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "both targets before")
+        (repo / "AGENTS.md").write_text(f"# P\n\n## Conventions\n\n{RETARGETED}\n")
+        (docs / "naming").mkdir()
+        (docs / "naming" / "STYLE.md").write_text("# Style\n\n## Naming\n\nrules\n")
+        (docs / "API.md").write_text("# API\n\n- [conventions](CONVENTIONS.md)\n")
+        return repo
+
+    def test_a_scoped_entry_warrants_its_own_targets_line(self, tmp_path: Path):
+        repo = self._two_targets(tmp_path)
+        _ack(repo, f"AGENTS.md :: retarget :: {POINTER}")
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "loss_warranted: 1" in r.stdout, r.stdout
+
+    def test_an_entry_for_another_target_is_not_called_stale(self, tmp_path: Path):
+        """The reported symptom. Both entries are live and correct; a run
+        against one target must not accuse the other's entry of having expired,
+        or the warning stops meaning anything."""
+        repo = self._two_targets(tmp_path)
+        _ack(repo,
+             f"AGENTS.md :: retarget :: {POINTER}",
+             f"docs/API.md :: retarget :: {INDEX_ENTRY}")
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "matched nothing" not in r.stdout, r.stdout
+        assert "another target" in r.stdout, (
+            "an out-of-scope entry must be reported as such, not silently "
+            "dropped: " + r.stdout
+        )
+
+        other = _prove(repo, "--file", "docs/API.md")
+        assert other.returncode == 0, other.stdout + other.stderr
+        assert "matched nothing" not in other.stdout, other.stdout
+        assert "loss_warranted: 1" in other.stdout, other.stdout
+
+    def test_an_entry_scoped_elsewhere_cannot_warrant_this_run(
+            self, tmp_path: Path):
+        """The direction that matters: scoping must narrow, never widen. An
+        entry judged against another target does not wave a line through
+        here."""
+        repo = self._two_targets(tmp_path)
+        _ack(repo, f"docs/API.md :: retarget :: {POINTER}")
+        r = _prove(repo)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "lost: 1" in r.stdout, r.stdout
+
+    def test_an_unscoped_entry_still_reaches_every_target(self, tmp_path: Path):
+        """The two-field form is unchanged — every entry in every cohort repo
+        is written that way."""
+        repo = self._two_targets(tmp_path)
+        _ack(repo, f"retarget :: {POINTER}")
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "loss_warranted: 1" in r.stdout, r.stdout
+
+    def test_content_may_still_contain_the_separator(self, tmp_path: Path):
+        """The form is disambiguated on the WARRANT, not on the count of
+        `::` — splitting on every separator would truncate any entry whose
+        judged line contains one."""
+        line = "Write it as `key :: value` and never otherwise."
+        repo = _repo(tmp_path, f"# P\n\n## A\n\n{line}\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n")
+        _ack(repo, "duplicate :: `key :: value` and never")
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "loss_warranted: 1" in r.stdout, r.stdout
+
+    def test_an_unknown_warrant_in_the_scoped_form_is_still_refused(
+            self, tmp_path: Path):
+        repo = self._two_targets(tmp_path)
+        _ack(repo, f"AGENTS.md :: retargetted :: {POINTER}")
+        r = _prove(repo)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "retargetted" in r.stderr, r.stderr
+
+    def test_an_empty_path_half_is_refused(self, tmp_path: Path):
+        """` :: retarget :: x` is not the unscoped form spelled oddly — an
+        empty path would match every target, and this file only ever errs
+        toward NOT passing."""
+        repo = self._two_targets(tmp_path)
+        _ack(repo, f" :: retarget :: {POINTER}")
+        r = _prove(repo)
+        assert r.returncode == 1, r.stdout + r.stderr
+
+    def test_an_out_of_scope_entry_is_not_charged_with_breadth(
+            self, tmp_path: Path):
+        """An entry that cannot apply here has no hits here, so the over-broad
+        refusal must not fire on it — and must still fire on one that does."""
+        repo = _repo(tmp_path,
+                     "# P\n\n## A\n\nfirst rule here\nsecond rule here\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n")
+        _ack(repo, "docs/NOWHERE.md :: duplicate :: rule here")
+        r = _prove(repo)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "over-broad" not in r.stderr, r.stderr
+
+
 class TestAWarrantMustBeNamed:
     """An acknowledgement is a *judgement*, and the tag is where it is
     recorded. A free-text or bare entry would make the file a mute allowlist —

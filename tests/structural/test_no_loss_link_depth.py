@@ -196,3 +196,305 @@ class TestDepthAgnosticIsNotTargetBlind:
         assert result.returncode == 3, (
             f"a `../` outside a link was normalised away:\n{result.stdout}"
         )
+
+
+def _demote_repo(tmp_path: Path, base_line: str, moved_line: str) -> Path:
+    """A DEMOTION, the other direction: a bullet moves out of the policy file at
+    the repo root and into `docs/STYLE.md`.
+
+    A link that was aimed from the root at `docs/OTHER.md` is aimed from inside
+    `docs/` as `OTHER.md` — the move REMOVES a directory prefix rather than
+    adding `../`, which is what #119's fix could not see.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "AGENTS.md").write_text(f"# P\n\n## Rules\n\n{base_line}\n")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "OTHER.md").write_text("# Other\n\nthe rules\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "before")
+
+    (repo / "AGENTS.md").write_text("# P\n\nSee [docs/STYLE.md](docs/STYLE.md).\n")
+    (repo / "docs" / "STYLE.md").write_text(f"# Style\n\n## Rules\n\n{moved_line}\n")
+    return repo
+
+
+def _run_policy(repo: Path, *extra: str):
+    """A policy-file run — the default target, which is what a demotion proves."""
+    return subprocess.run(
+        ["bash", str(PROVE), "--base", "HEAD", *extra],
+        capture_output=True, text=True, cwd=str(repo),
+        env=_clean_env(), timeout=30,
+    )
+
+
+class TestARemovedDirectoryPrefixIsNormalised:
+    """The demotion half of the same transform (#137).
+
+    A demotion is the operation this skill recommends most often, and every
+    link-carrying bullet it moved reported LOST: one real run needed 12
+    `retarget` warrants for nothing but this. The prefix erased is the docs
+    root, because that is the directory the content moved INTO — anything else
+    still discriminates, which is the point of the class below.
+    """
+
+    def test_a_demoted_sibling_link_is_accounted_for(self, tmp_path: Path):
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](docs/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        result = _run_policy(repo)
+        assert result.returncode == 0, (
+            f"a demoted sibling link reported lost:\n{result.stdout}{result.stderr}"
+        )
+        assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
+
+    def test_the_promotion_direction_matches_too(self, tmp_path: Path):
+        """Erased in BOTH directions, like depth: content coming back up to the
+        root re-acquires the prefix."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text("# P\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "STYLE.md").write_text(
+            "# Style\n\n- See [other](OTHER.md) for the rules.\n")
+        (repo / "docs" / "OTHER.md").write_text("# Other\n\nthe rules\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        (repo / "docs" / "STYLE.md").write_text("# Style\n")
+        (repo / "AGENTS.md").write_text(
+            "# P\n\n- See [other](docs/OTHER.md) for the rules.\n")
+        result = subprocess.run(
+            ["bash", str(PROVE), "--base", "HEAD", "--file", "docs/STYLE.md",
+             "--also", "AGENTS.md"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_the_prefix_is_the_configured_docs_root_not_the_literal_docs(
+        self, tmp_path: Path
+    ):
+        """A repo keeping its references elsewhere gets the same fix — the
+        prefix erased is whatever --docs-dir names, or the check would work
+        only for repos that spell it `docs`."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text(
+            "# P\n\n- See [other](reference/OTHER.md) for the rules.\n")
+        (repo / "reference").mkdir()
+        (repo / "reference" / "OTHER.md").write_text("# Other\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        (repo / "AGENTS.md").write_text("# P\n")
+        (repo / "reference" / "STYLE.md").write_text(
+            "# Style\n\n- See [other](OTHER.md) for the rules.\n")
+        result = _run_policy(repo, "--docs-dir", "reference")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
+class TestPrefixErasureIsNotTargetBlind:
+    """Every relaxation of whole-line matching is paid out of the strength of
+    the only gate that can see content loss, so the erasure is anchored to one
+    prefix and one position. Each case below is a demotion with one non-depth
+    difference added, and each must still be reported."""
+
+    def test_a_prefix_that_is_not_the_docs_root_is_kept(self, tmp_path: Path):
+        """`](lib/OTHER.md)` becoming `](OTHER.md)` is a repoint at a directory
+        the run relocated nothing into, not a re-aim."""
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](lib/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        result = _run_policy(repo)
+        assert result.returncode == 3, (
+            f"a non-docs prefix was erased:\n{result.stdout}{result.stderr}"
+        )
+        assert "lib/OTHER.md" in result.stdout, result.stdout
+
+    def test_a_changed_target_under_the_docs_root_is_still_lost(
+        self, tmp_path: Path
+    ):
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](docs/ALPHA.md) for the rules.",
+            "- See [other](BETA.md) for the rules.",
+        )
+        result = _run_policy(repo)
+        assert result.returncode == 3, (
+            f"a repointed link compared equal:\n{result.stdout}{result.stderr}"
+        )
+        assert "ALPHA.md" in result.stdout, result.stdout
+
+    def test_only_the_leading_prefix_is_erased(self, tmp_path: Path):
+        """Anchored to the start of the target. A `docs/` deeper in the path is
+        part of what the link points at."""
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](vendor/docs/OTHER.md) for the rules.",
+            "- See [other](vendor/OTHER.md) for the rules.",
+        )
+        result = _run_policy(repo)
+        assert result.returncode == 3, (
+            f"a docs/ inside the target was erased:\n{result.stdout}"
+        )
+
+    def test_the_docs_root_outside_a_link_is_untouched(self, tmp_path: Path):
+        """Normalisation is anchored to `](`, here as much as for depth. A path
+        written in prose or in a command is content."""
+        repo = _demote_repo(
+            tmp_path,
+            "- Run `cat docs/OTHER.md` before editing the rules.",
+            "- Run `cat OTHER.md` before editing the rules.",
+        )
+        result = _run_policy(repo)
+        assert result.returncode == 3, (
+            f"a docs/ outside a link was erased:\n{result.stdout}"
+        )
+
+    def test_a_reworded_demoted_line_is_still_lost(self, tmp_path: Path):
+        """Paraphrase-in-transit, in the shape the prefix fix touches."""
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](docs/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules, all of them.",
+        )
+        assert _run_policy(repo).returncode == 3
+
+
+def _skill_demote_repo(tmp_path: Path, base_line: str, moved_line: str) -> Path:
+    """A demotion on a SKILL's OWN surface, where the policy file is not at the
+    repo root: `skills/demo/SKILL.md` demoting into `skills/demo/references/`.
+
+    This is the shape `curating-context` is run in when it curates itself, and
+    the shape every vendored skill has. Its links are written relative to the
+    skill directory — `](references/X.md)`, twenty-one times in this repo's own
+    SKILL.md — not relative to the repo root.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "skills" / "demo" / "references").mkdir(parents=True)
+    (repo / "skills" / "demo" / "SKILL.md").write_text(
+        f"# Demo\n\n## Rules\n\n{base_line}\n")
+    (repo / "skills" / "demo" / "references" / "OTHER.md").write_text(
+        "# Other\n\nthe rules\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "before")
+
+    (repo / "skills" / "demo" / "SKILL.md").write_text(
+        "# Demo\n\nSee [references/STYLE.md](references/STYLE.md).\n")
+    (repo / "skills" / "demo" / "references" / "STYLE.md").write_text(
+        f"# Style\n\n## Rules\n\n{moved_line}\n")
+    return repo
+
+
+def _run_skill(repo: Path, *extra: str):
+    return subprocess.run(
+        ["bash", str(PROVE), "--base", "HEAD",
+         "--file", "skills/demo/SKILL.md",
+         "--docs-dir", "skills/demo/references", *extra],
+        capture_output=True, text=True, cwd=str(repo),
+        env=_clean_env(), timeout=30,
+    )
+
+
+class TestThePrefixIsRelativeToThePolicyFile:
+    """#137's fix built the erasable prefix from the repo-relative --docs-dir
+    string, so it could only ever fire for a policy file at the repo root.
+
+    A skill curating its own surface passes `--docs-dir
+    skills/demo/references`, which made the pattern `](skills/demo/references/`
+    — but SKILL.md writes its links relative to its own directory, as
+    `](references/X.md)`. The prefixes never matched, the substitution was a
+    no-op, and the demotion case reported LOST on exactly the surface #137
+    exists to fix. A link is written relative to the file that carries it, so
+    the prefix a demotion removes is the docs root seen FROM the policy file.
+    """
+
+    def test_a_demoted_sibling_link_is_accounted_for(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](references/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        result = _run_skill(repo)
+        assert result.returncode == 0, (
+            f"a demotion on a skill's own surface reported lost:"
+            f"\n{result.stdout}{result.stderr}"
+        )
+        assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
+
+    def test_every_link_on_the_line_is_re_aimed(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- [a](references/A.md) and [b](references/B.md) and prose.",
+            "- [a](A.md) and [b](B.md) and prose.",
+        )
+        assert _run_skill(repo).returncode == 0
+
+    def test_the_repo_relative_prefix_still_works(self, tmp_path: Path):
+        """The canonical shape #137 shipped for is untouched — a policy file at
+        the repo root sees `docs` as both prefixes at once."""
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](docs/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        assert _run_policy(repo).returncode == 0
+
+
+class TestThePolicyRelativePrefixIsNotTargetBlind:
+    """The same bargain as every other relaxation here: the prefix is one
+    prefix, at the start of the target, anchored to `](`."""
+
+    def test_a_repointed_link_under_the_docs_root_is_still_lost(
+        self, tmp_path: Path
+    ):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](references/ALPHA.md) for the rules.",
+            "- See [other](BETA.md) for the rules.",
+        )
+        result = _run_skill(repo)
+        assert result.returncode == 3, (
+            f"a repointed link compared equal:\n{result.stdout}{result.stderr}"
+        )
+        assert "ALPHA.md" in result.stdout, result.stdout
+
+    def test_a_prefix_that_is_not_the_docs_root_is_kept(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](scripts/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        assert _run_skill(repo).returncode == 3
+
+    def test_the_docs_root_outside_a_link_is_untouched(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- Run `cat references/OTHER.md` before editing the rules.",
+            "- Run `cat OTHER.md` before editing the rules.",
+        )
+        assert _run_skill(repo).returncode == 3
+
+    def test_a_reworded_demoted_line_is_still_lost(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](references/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules, all of them.",
+        )
+        assert _run_skill(repo).returncode == 3

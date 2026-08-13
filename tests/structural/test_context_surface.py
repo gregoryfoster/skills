@@ -923,6 +923,94 @@ class TestProveNoLoss:
         assert "mode 120000" in result.stderr, result.stderr
 
 
+class TestFrontmatterIsNotContent:
+    """Phase 7 MANDATES a frontmatter version bump, so Phase 6 must not call it
+    a loss (#136).
+
+    `version: "1.6"` becoming `version: "1.7"` is a line that existed at --base
+    and exists nowhere now, and a line-based check reports it LOST — the run
+    that follows the skill's own instructions cannot pass the skill's own gate.
+    The warrant file cannot absorb it either: #111 shipped a CLOSED vocabulary
+    and none of the five warrants means "this field is required to change".
+
+    So a leading YAML frontmatter block is not compared at all, on either side.
+    The cases below pair that with the two ways it could go wrong: body content
+    must still be checked across a bump, and a `---` that is a thematic rule
+    rather than a frontmatter fence must not swallow the top of a document.
+    """
+
+    PROVE = SCRIPTS / "prove-no-loss.sh"
+
+    def _front(self, version: str) -> str:
+        return (
+            "---\n"
+            "name: demo\n"
+            "metadata:\n"
+            f'  version: "{version}"\n'
+            "---\n"
+        )
+
+    def _repo(self, tmp_path: Path, before: str) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "AGENTS.md").write_text(before)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "before")
+        return repo
+
+    def _run(self, repo: Path, *extra: str):
+        return subprocess.run(
+            ["bash", str(self.PROVE), "--base", "HEAD", *extra],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=30,
+        )
+
+    BODY = "\n# Demo\n\nA load-bearing constraint nobody may drop.\n"
+
+    def test_a_mandated_version_bump_is_not_a_loss(self, tmp_path: Path):
+        repo = self._repo(tmp_path, self._front("1.6") + self.BODY)
+        (repo / "AGENTS.md").write_text(self._front("1.7") + self.BODY)
+        result = self._run(repo)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
+
+    def test_the_body_is_still_checked_across_a_bump(self, tmp_path: Path):
+        """Skipping frontmatter must skip frontmatter and nothing else."""
+        repo = self._repo(tmp_path, self._front("1.6") + self.BODY)
+        (repo / "AGENTS.md").write_text(self._front("1.7") + "\n# Demo\n")
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert "load-bearing constraint" in result.stdout, result.stdout
+
+    def test_a_thematic_rule_is_not_a_frontmatter_fence(self, tmp_path: Path):
+        """`---` opening a file is a frontmatter fence only when what follows
+        reads as YAML. Prose between two rules is content, and dropping it is a
+        loss."""
+        before = "---\n\nA rule-fenced sentence that is plainly prose.\n\n---\n\n# Demo\n"
+        repo = self._repo(tmp_path, before)
+        (repo / "AGENTS.md").write_text("---\n\n---\n\n# Demo\n")
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert "plainly prose" in result.stdout, result.stdout
+
+    def test_a_destinations_frontmatter_cannot_account_for_a_body_line(
+        self, tmp_path: Path
+    ):
+        """Frontmatter is skipped on the destination side too, so a body line
+        that merely resembles a metadata field is not 'relocated' by landing
+        beside one. The skip must never turn into a new way to pass."""
+        repo = self._repo(tmp_path, "# Demo\n\nname: demo\n")
+        (repo / "AGENTS.md").write_text("# Demo\n")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "X.md").write_text(self._front("1.0") + "\n# X\n")
+        result = self._run(repo)
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert "name: demo" in result.stdout, result.stdout
+
+
 class TestCensusInvariant:
     """`sections[]` rows must sum to the policy file's byte count — that is what
     makes `share` trustworthy, and the census comment advertises it."""

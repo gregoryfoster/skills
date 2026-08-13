@@ -36,14 +36,66 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
 # --- Project-local env loading (optional override point) ---------------------
-# Some deployments need to source /etc/<project>/.env before running tests
-# (e.g., when test fixtures read live secrets). Override this block in a
-# project-local fork of pre-ship.sh if your project requires it. Example:
+# Upstream ships without env loading — most projects don't need it. If yours
+# does (test fixtures reading live secrets, a conftest that hard-fails on a
+# missing DSN), do NOT fork this script: a fork copies every gate below to add
+# a handful of lines, then stops receiving upstream fixes without saying so.
+# The skill's resolution loop (SKILL.md Step 1) probes `scripts/` first, so a
+# project-local WRAPPER wins and delegates back here:
 #
-#   export $(cat /etc/<project>/.env "$PROJECT_ROOT/.env" 2>/dev/null | xargs)
+#   #!/usr/bin/env bash
+#   set -euo pipefail
+#   PROJECT_ROOT=$(git rev-parse --show-toplevel); cd "$PROJECT_ROOT"
+#   DELEGATE="skills/shipping-work-python-fastapi/scripts/pre-ship.sh"
+#   [[ -f "$DELEGATE" ]] || {
+#     echo "ERROR: vendored gate missing at $DELEGATE" >&2
+#     echo "       fix: git submodule update --init --recursive" >&2
+#     exit 2
+#   }
+#   load_env() {                                  # parse, never source
+#     [ -r "$1" ] || return 0
+#     while IFS= read -r line || [ -n "$line" ]; do
+#       line=${line#"${line%%[![:space:]]*}"}       # drop leading blanks
+#       case $line in ''|\#*) continue ;; esac       # blank or comment
+#       line=${line#export }                        # tolerate `export K=v`
+#       case $line in *=*) ;; *) continue ;; esac
+#       key=${line%%=*} val=${line#*=}
+#       key=${key%"${key##*[![:space:]]}"}
+#       case $key in ''|*[!A-Za-z0-9_]*) continue ;; esac
+#       case $val in                                # strip matched quotes
+#         \"*\") val=${val#\"} val=${val%\"} ;;
+#         \'*\') val=${val#\'} val=${val%\'} ;;
+#       esac
+#       export "$key=$val"
+#     done < "$1"
+#   }
+#   load_env /etc/<project>/.env
+#   load_env "$PROJECT_ROOT/.env"
+#   exec bash "$DELEGATE" "$@"
 #
-# Upstream ships without env loading — most projects don't need it, and the
-# ones that do (e.g., archiver, notifier, watcher) keep a thin local fork.
+# Every line there is a trap someone has already hit:
+#   - Delegate through the SYMLINK path (skills/...), never skills-vendor/... —
+#     the symlink is the stable interface, the vendor layout is not.
+#   - `exec`, so the exit code the Iron Law gates on propagates unchanged.
+#   - "$@", so `--help` still reaches this script.
+#   - The missing-delegate guard exits 2, matching this script's own
+#     tooling/infra code so operators read one exit-code table rather than
+#     two. Without the guard an unpopulated submodule (a clone without
+#     --recurse-submodules, a fresh `git worktree add`) fails as bash's
+#     generic "No such file or directory".
+#   - Parse the file line by line; never `set -a; . file`, and never
+#     `export $(cat ... | xargs)`. That one-liner shipped here until #144
+#     and had three defects: with both files absent it degenerated to a bare
+#     `export`, dumping every exported variable — secrets included — into the
+#     ship-gate transcript; a `#` comment line reached `export` as `'#': not a
+#     valid identifier`, so `set -e` killed the wrapper BEFORE the gate ran;
+#     and `xargs` word-split `PW=two words` into a wrong value with exit 0.
+#   - Quoting `export "$key=$val"` is what makes spaces, globs and quoted
+#     values survive, so no `set -f` dance and no shellcheck suppressions.
+#   - Skipping a key that is not a plain identifier, rather than aborting.
+#     A malformed line in a secrets file must not decide whether the gate
+#     runs — that is precisely the environmental-vs-real judgement call a
+#     gate should never put in front of an operator.
 
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see

@@ -1,17 +1,32 @@
 # Code Exploration Policy — AGENTS.md block + SessionStart hook
 
-Two artifacts the skill installs into the target project (SKILL.md Phase 3):
+Three artifacts the skill installs into the target project (SKILL.md Phase 3):
 
 1. A **Code Exploration Policy** section in the project's `AGENTS.md`, wrapped in
    idempotency markers so re-runs never duplicate it.
-2. A **SessionStart hook** in `.claude/settings.json` that re-emits the
+2. A **`docs/SOCRATICODE.md`** detail doc carrying the full tool table, the
+   prefetch query and the per-tool guidance — see
+   [`socraticode-doc.md`](socraticode-doc.md).
+3. A **SessionStart hook** in `.claude/settings.json` that re-emits the
    `ToolSearch` prefetch instruction each session (the `codebase_*` MCP tools
    are *deferred* — their schemas load only after the prefetch).
 
-Both must be **project-adapted, not copied verbatim** (acceptance criterion).
-The block below is canonical wording lifted from `init-project-fastapi`'s
-`agents-md-template.md`; keep the negative rule and the tool table, but tailor
-the last table row and any path examples to the project's actual layout.
+All must be **project-adapted, not copied verbatim** (acceptance criterion).
+The block below is trimmed wording descended from `init-project-fastapi`'s
+`agents-md-template.md`; keep the negative rule and the three-row table, but
+tailor the path examples to the project's actual layout.
+
+**Why the block is small.** `AGENTS.md` is loaded on every invocation, and this
+section is the one `curating-context` refuses to touch (it has its own
+idempotency contract — see
+[`../../curating-context/references/cohort-patterns.md`](../../curating-context/references/cohort-patterns.md)),
+so whatever lands here is a fixed cost the repo can never curate away. Measured
+on `CannObserv/watcher`, the pre-split section was **1,247 exact tokens — 15% of
+the whole curated file and 21% of the 6,000-token budget**, the largest single
+section, and it blocked that repo from reaching budget without cutting class-A
+operational rules ([#115](https://github.com/gregoryfoster/skills/issues/115)).
+Everything that is not needed *on nearly every task* belongs in
+`docs/SOCRATICODE.md`, which is read on demand.
 
 ---
 
@@ -24,51 +39,112 @@ where one already exists:
 1. **Write the block, preferring the existing position:**
    - a `<!-- BEGIN socraticode-policy -->` / `<!-- END socraticode-policy -->`
      pair already exists → **replace the content between the markers**;
-   - else an unmarked `## Code Exploration Policy` section exists → **replace that
-     section in place** (its heading through the line before the next `##`, or end
-     of file if none follows) with the marked block below;
+   - else an unmarked `## Code Exploration Policy` section exists → **rescue any
+     repo-authored content in it (step 1a), then replace that section in place**
+     (its heading through the line before the next `##`, or end of file if none
+     follows) with the marked block below;
    - else → **append** the marked block below. (If no `AGENTS.md` exists, create
      one and add the block.)
+   1. **Rescue before you replace (unmarked branch only).** Read the span first
+      and compare it to the template. Any paragraph, list, table row or
+      sub-heading that the template does not itself carry is **repo-authored**
+      and must not be deleted. Move it out, unchanged, into a
+      `## Code Exploration Notes (repo-specific)` section placed immediately
+      *after* the `<!-- END socraticode-policy -->` marker, and **name every
+      moved block in the completion report**. Nothing enclosed by the marker
+      pair survives a re-run, so this is the only opportunity to notice.
 2. **Then, unconditionally,** delete any *other* `## Code Exploration Policy`
    section **not** enclosed by the marker pair (same heading-to-next-`##` span).
    Step 1 fixes at most one location; this sweeps any remaining stray copy — e.g.
    a repo where an earlier `init-socraticode` run appended a marked block beside
    the original unmarked one, where step 1 takes the marker-pair branch and would
-   otherwise leave the unmarked copy behind.
+   otherwise leave the unmarked copy behind. The rescue heading is deliberately
+   **not** `## Code Exploration Policy`, so this sweep never eats it.
 
 Never leave more than one policy section.
+
+> **Why step 1a exists.** The unmarked branch is a whole-span replacement, and
+> repos accumulate real content inside that span: `CannObserv/watcher` had grown
+> a 732-byte `**Index scope.**` paragraph there — `.socraticodeignore` policy,
+> why vendored prose outranks first-party code in `codebase_search`, and the
+> fact that editing the ignore file only affects subsequent scans — none of it
+> recoverable from the template. Deleting it was correct per the old contract
+> and **silent**, which is what made it a defect
+> ([#115](https://github.com/gregoryfoster/skills/issues/115)). Tell the repo,
+> once, where repo-specific additions belong: **outside the marker pair.**
+
+### Variant A — standard (graph yield OK)
 
 ```markdown
 <!-- BEGIN socraticode-policy -->
 ## Code Exploration Policy
 
-SocratiCode is the preferred semantic-search tool for this repo (once indexed;
-the artifact manifest lives in `.socraticodecontextartifacts.json`, and the
-index itself lives in the local Qdrant store + on-disk graph once
-`codebase_index` has run). Its MCP tools are **deferred** — schemas load only
-after a `ToolSearch` prefetch.
+SocratiCode is the preferred semantic-search tool here once indexed (local
+Qdrant store + on-disk graph; manifest `.socraticodecontextartifacts.json`).
+Its MCP tools are **deferred** — schemas load only after the `ToolSearch`
+prefetch that `.claude/hooks/socraticode-reminder.sh` prints each session.
 
-**Negative rule.** For broad semantic questions ("where is X", "how does Y
-work", "what depends on Z"), use SocratiCode MCP tools first. Reach for
-`grep`/`ripgrep` only on exact strings (error messages, log lines, known
-symbols). Reserve the Explore subagent for path-pattern walks (e.g. "all
-`*.py` under `src/api/routes/`"), not semantic search.
+**Negative rule.** Use SocratiCode MCP tools first for semantic questions
+("where is X", "how does Y work", "what depends on Z"). Reach for `grep`/`rg`
+only on exact strings (error messages, log lines, known symbols). Reserve the
+Explore subagent for path-pattern walks (`*.py` under `src/api/routes/`), not
+semantic search.
 
 | Goal | Tool |
 |------|------|
-| Where is X defined / how does Y work / what files touch Z | `codebase_search` |
-| Exact string/regex match (errors, log lines, known symbols) | `grep` / `rg` |
-| Blast radius of changing/deleting a file or function | `codebase_impact` |
-| What does an entry point actually do? | `codebase_flow` |
-| Callers and callees of a function | `codebase_symbol` |
-| Imports/dependents of a file | `codebase_graph_query` |
-| DB schemas, deployment topology, runbook context | `codebase_context` / `codebase_context_search` |
+| Where is X defined / how does Y work / what touches Z | `codebase_search` |
+| Exact string or regex (errors, log lines, known symbols) | `grep` / `rg` |
+| Imports/dependents of a file · blast radius of a change | `codebase_graph_query` / `codebase_impact` |
 
-Prefetch query — run via `ToolSearch` at session start:
-
-`select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search`
+Full tool table, prefetch query, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
 <!-- END socraticode-policy -->
 ```
+
+### Variant B — degraded (graph yield LOW)
+
+Write **this** block instead when Phase 6's yield gate returns `low` — the
+dependency graph resolved almost no edges, so `codebase_graph_query`,
+`codebase_impact` and `codebase_flow` answer with an ordinary "no dependency
+information found" sentence rather than an error. An agent reads that as *no
+dependents*, which is the opposite of the truth
+([#107](https://github.com/gregoryfoster/skills/issues/107)). Substitute the
+real numbers from `mcp-driver.mjs health-check` and the repo's real import
+syntax in the `rg` example.
+
+```markdown
+<!-- BEGIN socraticode-policy -->
+## Code Exploration Policy
+
+SocratiCode is the preferred semantic-search tool here once indexed (local
+Qdrant store + on-disk graph; manifest `.socraticodecontextartifacts.json`).
+Its MCP tools are **deferred** — schemas load only after the `ToolSearch`
+prefetch that `.claude/hooks/socraticode-reminder.sh` prints each session.
+
+**Negative rule.** Use SocratiCode MCP tools first for semantic questions
+("where is X", "how does Y work", "what depends on Z"). Reach for `grep`/`rg`
+only on exact strings (error messages, log lines, known symbols). Reserve the
+Explore subagent for path-pattern walks, not semantic search.
+
+> **The dependency graph here is LOW-YIELD** — <EDGES> edges across <NODES>
+> files, <UNRESOLVED>% unresolved (<DATE>). `codebase_graph_query`,
+> `codebase_impact` and `codebase_flow` answer empty rather than erroring, so
+> **treat empty graph output as tool failure, not as absence** — "No dependency
+> information found" means the resolver failed, never that nothing depends on
+> the file. Use `rg -n 'from <module> import|import <module>'` instead.
+
+| Goal | Tool |
+|------|------|
+| Where is X defined / how does Y work / what touches Z | `codebase_search` |
+| Exact string or regex (errors, log lines, known symbols) | `grep` / `rg` |
+| Imports/dependents of a file · blast radius of a change | `grep` / `rg` — graph low-yield |
+
+Full tool table, prefetch query, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
+<!-- END socraticode-policy -->
+```
+
+Everything else — the marker discipline, the rescue step, the sweep — is
+identical for both variants. Re-run the yield gate after any upstream
+SocratiCode upgrade and switch the variant back when the graph recovers.
 
 ## 2. SessionStart hook (script file + `.claude/settings.json`)
 
@@ -145,6 +221,33 @@ collapses any prior duplication — which a skip-only dedupe would leave strande
 on the old, erroring command. (Step A has already written the script the
 canonical command points at.)
 
+**Step C — install the once-per-day health hook.** Copy
+[`../scripts/socraticode-health.sh`](../scripts/socraticode-health.sh) to
+`.claude/hooks/socraticode-health.sh` (overwrite in place; it carries no
+per-project state), `chmod +x`, and append a second SessionStart entry:
+
+```json
+{
+  "type": "command",
+  "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-health.sh\" # socraticode-health"
+}
+```
+
+Dedupe on `socraticode-health`, which is deliberately distinct from
+`socraticode-prefetch` / `socraticode-reminder` — a shared marker would make one
+hook's scan match the other's entry and skip an install. The hook is silent
+unless it finds something, runs at most once per UTC day, and exits 0 on every
+path; it re-checks the Phase 6 yield gate, `codebase_health`, and a failed last
+operation, so an install that was green in January is not assumed green in June
+([#107](https://github.com/gregoryfoster/skills/issues/107)). Set
+`SOCRATICODE_PROBE_FILE` in `.claude/settings.local.json`'s `env` block to a
+file with several first-party imports if you want the confirmatory graph probe.
+
+**It reports; it does not repair.** No re-index, no `docker start`, no file
+edit. A SessionStart hook runs before the agent has any context, and a hook that
+started a two-hour index — or rewrote `AGENTS.md` under an agent already at work
+— would be a worse failure than the one it detected.
+
 > **Duplicate-config trap.** If a session shows BOTH
 > `mcp__plugin_socraticode_socraticode__*` and a standalone
 > `mcp__socraticode__*`, the user has a duplicate MCP registration. Remove the
@@ -153,11 +256,18 @@ canonical command points at.)
 
 ## Adaptation checklist (per project)
 
-- [ ] Last tool-table row (`codebase_context …`) names the project's real
-      non-code knowledge (schemas, OpenAPI, Terraform) — see
-      [`context-artifacts.md`](context-artifacts.md).
+- [ ] Variant chosen from the Phase 6 yield gate — **A** on `ok`/`unknown`,
+      **B** on `low`, with the real edge/node/unresolved numbers substituted.
 - [ ] Any path examples in the negative rule match the project's tree
       (`src/api/routes/` is FastAPI-shaped; change for CLI/PHP/etc.).
+- [ ] `docs/SOCRATICODE.md` written from [`socraticode-doc.md`](socraticode-doc.md),
+      with its `codebase_context` row naming the project's real non-code
+      knowledge (schemas, OpenAPI, Terraform) — see
+      [`context-artifacts.md`](context-artifacts.md). The block's link is
+      relative to the repo root; if the project keeps detail docs elsewhere,
+      change both the destination and the link.
+- [ ] Repo-authored content found in an unmarked section was **rescued**, not
+      replaced (step 1a), and every moved block is named in the report.
 - [ ] `AGENTS.md` vs `CLAUDE.md`: this org standardizes on `AGENTS.md` with a
       one-line `CLAUDE.md` that reads `@AGENTS.md`. If the project only has
       `CLAUDE.md`, put the block there instead.

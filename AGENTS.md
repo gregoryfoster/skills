@@ -116,7 +116,11 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
   over `skills/*/scripts/`, `scripts/` and `.claude/hooks/`, and skips loudly when
-  the binary is absent; `SHELLCHECK_REQUIRED=1` turns that skip into a failure.
+  the binary is absent or older than 0.7.0 — the release that added
+  `--source-path=SCRIPTDIR`, without which an older build rejects the invocation
+  outright instead of linting
+  ([#140](https://github.com/gregoryfoster/skills/issues/140)).
+  `SHELLCHECK_REQUIRED=1` turns either skip into a failure.
 - A `# shellcheck disable=SCxxxx` **must** carry a reason comment on the line
   directly above it. `TestShellcheckSuppressionsCarryReasons` enforces the
   pairing, so a suppression stays a documented decision rather than a silencer
@@ -132,6 +136,11 @@ Two conventions here carry a full template and a rationale, and live in
 - **Gate-script discipline.** A script whose output drives a ship/skip decision
   must never silently swallow the stderr of the tool producing that output.
   `TestPreShipGateHardening` enforces it for `shipping-work*/scripts/pre-ship.sh`.
+  Each of those four also publishes a project-local override point recommending
+  a *wrapper* — `exec` the vendored script through the `skills/…` symlink —
+  never a fork, which drifts silently on every submodule update.
+  `test_pre_ship_env_override.py` keeps the block from drifting back to one
+  variant ([#105](https://github.com/gregoryfoster/skills/issues/105)).
 
 ## Worktree root convention
 
@@ -166,13 +175,20 @@ A pinned submodule is excluded from both the update and the auto-commit, and eac
 ## References convention
 
 Skills may carry supplementary `references/*.md` files for content that exceeds the
-SKILL.md body cap. They are loaded on demand, not on activation. Two rules are
+SKILL.md body cap. They are loaded on demand, not on activation. Three rules are
 enforced by the structural suite:
 
 - **No frontmatter**, and **every `references/<name>.md` must be linked from its
   sibling SKILL.md** — orphans fail [tests/structural/test_references.py](tests/structural/test_references.py).
 - **Flat directory**, `lowercase-kebab.md`. No length cap: escaping the body
   recommendation is the point of a reference file.
+- **Relative links resolve from the file that contains them.** Every rendered
+  link in any `skills/**/*.md` — SKILL.md and references alike — must point at a
+  real path, or [tests/structural/test_relative_links.py](tests/structural/test_relative_links.py)
+  fails. Links inside code fences and inline code spans are skipped: they never
+  render as links, which is where illustrative paths belonging to a *consuming*
+  repo live. An illustrative link in prose needs an `EXEMPT_LINKS` entry naming
+  the file, the target and the reason ([#143](https://github.com/gregoryfoster/skills/issues/143)).
 
 Conditional-block delimiters and the `assets/` equivalents:
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md).

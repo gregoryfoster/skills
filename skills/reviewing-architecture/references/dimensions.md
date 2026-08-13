@@ -4,7 +4,9 @@ Detailed guidance for each dimension evaluated during an architectural review.
 
 **Altitude test — the single rule that keeps this distinct from code review:** *Could a reviewer find this by reading one file?* If yes, it belongs to [`reviewing-code`](../../reviewing-code/SKILL.md), not here. Architecture findings are about relationships *between* units — boundaries, direction, contracts, blast radius — not defects *within* one. A bare `except` is CR's; two modules that both own authentication is AR's. When a dimension below sounds code-level, it is because the same word (DRY, error handling) names a structural cousin — always report the structural one.
 
-Each dimension carries **Look for / How to find it / Example finding** so the analysis phase produces evidence-backed findings, not opinions. The **Example finding** lines illustrate the *What* phrasing for that dimension only — they are not full findings; the required report envelope (`What:` / `Why it matters:` / `Suggested approach:` / `Effort/Blast radius:`, all four verbatim) lives in [SKILL.md](../SKILL.md) Phase 3.
+Each dimension carries **Look for / How to find it / Example finding** so the analysis phase produces evidence-backed findings, not opinions. The **Example finding** lines illustrate the *What* phrasing for that dimension only — they are not full findings; the required report envelope (`What:` / `Evidence:` / `Why it matters:` / `Suggested approach:` / `Effort/Blast radius:`, all five verbatim) lives in [SKILL.md](../SKILL.md) Phase 3.
+
+**"How to find it" is the finding's `Evidence:`.** Whatever command, graph query, or gather-context section actually surfaced the problem is what the finding records — as run, so the implementer can re-run it rather than re-derive the citation from a line table that has since moved.
 
 ---
 

@@ -58,9 +58,10 @@ Options:
 
 What it reports, in four classes:
 
-  back-references  Every mention of the policy file's name (AGENTS.md or
-                   CLAUDE.md) inside a live reference doc. A doc that says "see
-                   AGENTS.md for X" is wrong the moment X moves — and the run
+  back-references  Every mention of THIS run's policy filename — whatever
+                   --file named, or both AGENTS.md and CLAUDE.md when
+                   autodetecting — inside a live reference doc. A doc that says
+                   "see AGENTS.md for X" is wrong the moment X moves, and the run
                    that moved X is the run reading this report. Each hit needs a
                    human decision; a mention is not automatically wrong.
 
@@ -304,7 +305,43 @@ sweepable = {k: v for k, v in moved.items()
              if len(k) >= 8 and len(WORDS.findall(k)) >= 2}
 generic = {k: v for k, v in moved.items() if k not in sweepable}
 
-policy_names = ("AGENTS.md", "CLAUDE.md")
+# The name this run is sweeping FOR, taken from the target rather than assumed.
+# The tuple used to be hardcoded, so `--file skills/x/SKILL.md` still hunted for
+# the literal strings below: run against a skill *about* curating AGENTS.md it
+# returned 296 hits, every one subject matter and not one a reference to the
+# swept file. That is worse than an unswept class, because the only ack entry
+# that silences noise at that scale is a blanket pattern in the repo's real seam
+# ledger (#138).
+#
+# Both default names are kept when the target IS one of them, which is every
+# autodetected run: the cohort norm is `CLAUDE.md -> ./AGENTS.md`, so a doc
+# naming either name back-references the one policy file, and dropping the
+# sibling would lose half the class it was written for.
+#
+# Scoped by WHERE the mention is, because a basename is only unambiguous inside
+# the tree that owns it. This repo carries twenty SKILL.md files, so deriving
+# the name and stopping there merely traded 296 AGENTS.md hits for 95 SKILL.md
+# ones — in other skills' scripts and in tests, none of them about the swept
+# file. A bare name resolves to the target from inside the target's own
+# directory; from outside it takes a path. A policy file at the repo root owns
+# the whole tree, which is every autodetected run, so nothing narrows there.
+DEFAULT_POLICY_NAMES = ("AGENTS.md", "CLAUDE.md")
+_policy_dir = os.path.dirname(policy_rel)
+_policy_name = os.path.basename(policy_rel)
+LOCAL_POLICY_NAMES = (DEFAULT_POLICY_NAMES
+                      if _policy_name in DEFAULT_POLICY_NAMES
+                      else (_policy_name,))
+OUTER_POLICY_NAMES = (policy_rel,) if _policy_dir else LOCAL_POLICY_NAMES
+
+
+def names_policy_file(path, line):
+    """Does `line`, read in `path`, name the file this run is sweeping?"""
+    local = (not _policy_dir or path == policy_rel
+             or path.startswith(_policy_dir + "/"))
+    names = LOCAL_POLICY_NAMES if local else OUTER_POLICY_NAMES
+    return any(n in line for n in names)
+
+
 seams = []
 
 
@@ -319,7 +356,7 @@ def doc_lines(path):
 # -- class 1: back-references — the policy file named inside a reference doc.
 for d in docs:
     for i, line in enumerate(doc_lines(d), 1):
-        if any(n in line for n in policy_names):
+        if names_policy_file(d, line):
             seams.append(("back-reference", f"{d}:{i}", line.strip()[:120],
                           line.strip()))
 
@@ -414,7 +451,7 @@ if src and moved:
                   for k, orig in moved.items()]
     for s in src:
         for i, line in enumerate(source_lines(s), 1):
-            if any(n in line for n in policy_names):
+            if names_policy_file(s, line):
                 seams.append(("source-back-reference", f"{s}:{i}",
                               line.strip()[:120], line.strip()))
                 continue

@@ -25,7 +25,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-10 | cannabis.observer-wordpress | **Generated artifact under a byte-for-byte sync test is a hard bundle signal** (openapi.json + `CoRestOpenApiSyncTest` → Shape A, conflict made impossible not just managed); **a CLOSED prerequisite is not a MET prerequisite** (#656 cited "finding 5 of #655" — #655 closed, but finding 5 was a different finding); **design-gate vs file-gate** (#669 gated behind #667 with zero file overlap, on the issue's own "decide the seam once" — paid off: the seam shipped with 4 consumers, 2 invisible until #667 merged); **sync local main before ANALYSIS**, not just before launch — a 7-commit-stale checkout produced a conflict map of a layout that no longer existed; **a grep sizes a footprint, only execution measures a leak** |
 | 2026-08-11 | gregoryfoster/skills | **Adoption-feedback backlog → owning-file agent unit** (new provenance shape: 15 defects filed by cohort repos against *one* skill's script family → 7 agents, one per owning script, not one per issue); **a shared test file has two conflict halves and "write a new file" solves only one** — grep the test file for the literal strings each fix rewrites, then partition the modify-half by line window; **semantic dependency inside one file** (#119's flood makes #111's judgment undecidable → Shape B on different regions of the same file); measure a lint-gate issue's debt *distribution* before choosing first-vs-last; verify the repo's real gate surface before honouring an issue's "add it to CI" |
 | 2026-08-11 | CannObserv/usa-wa | **A shared-fixture *escape* is a hard conflict zone, not a soft one** — a helper that opens its own engine and `DROP SCHEMA … CASCADE`s outside the savepointed fixture forces its issue solo (destruction, not contention — sharpens the shared-test-DB ceiling, **5th recurrence**); **closed-in-fact grep caught a partially-shipped issue** → rescope-to-residual, a 4th disposition beside keep/close/defer; 6th followup recurrence, across-the-stack; **a "split on headings" target with no headings** — measure structure before scoping a curation issue |
-| 2026-08-12 | gregoryfoster/skills | **The ceiling was genuinely absent** — 7th Q5 session, first to find neither a worktree-provisioning nor a shared-backing-service limit (negative result worth recording against six positives); **line-window ownership generalized from a test file to a policy file** (`AGENTS.md`, three concurrent writers, separated windows + "no restructuring"); **an issue body's own hedge is a grep target** ("worth confirming before committing to it" → discriminator disproven, Scope 3→2); **descope to decouple** (deleting a shared sub-problem from one issue removed an ordering constraint entirely); blast radius discovered in a **test assertion about prose**, not in any issue body; **a blocked residual defers rather than rescopes** when its blocker is outside a user-named subset |
+| 2026-08-12 | gregoryfoster/skills | **The ceiling was genuinely absent** — 7th Q5 session, first to find neither a worktree-provisioning nor a shared-backing-service limit (negative result worth recording against six positives); **line-window ownership generalized from a test file to a policy file** (`AGENTS.md`, three concurrent writers, separated windows + "no restructuring"); **an issue body's own hedge is a grep target — and so is the orchestrator's own grep** (a loose `\]\(…\)` sweep "disproved" #143's discriminator and was itself refuted by the implementing agent: the match was a bare fragment in an inline code span, not a link — design doc, score and issue comment all retracted); **three instances of the same shape in one session** — a link sweep, two test assertions and a code-review finding, all *absence* claims derived from a model of the artifact rather than from the artifact; **descope to decouple** (deleting a shared sub-problem from one issue removed an ordering constraint entirely); blast radius discovered in a **test assertion about prose**, not in any issue body; **a blocked residual defers rather than rescopes** when its blocker is outside a user-named subset |
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 
 ---
@@ -1373,18 +1373,42 @@ genuinely shared point declared read-only for both: a `parametrize` list at `:25
 *both* `prove-no-loss.sh` and `check-seams.sh`. Neither issue changes an invocation path, so neither
 agent has cause to touch it. Naming the shared line is cheaper than sequencing around it.
 
-### An issue body's own hedge is a Step 5 grep target, and it paid
+### An issue body's own hedge is a Step 5 grep target — and the orchestrator's grep needs auditing too
 
 #143 proposed a discriminator (check only `./`- and `../`-prefixed link targets) and closed with
-*"Worth confirming before committing to it."* Confirming it took one sweep and **disproved it**:
-a fifth carve-out exists that the issue missed, and it is relative-prefixed —
-`curating-context/SKILL.md:250` carries `](../tests/x.py)` as prose *explaining that a demoted link
-gains a `../`*, i.e. the exact string the discriminator was built to catch. Scope Clarity 3 → 2.
+*"Worth confirming before committing to it."* Confirming it took one sweep, which reported a fifth,
+relative-prefixed carve-out at `curating-context/SKILL.md:250` — `](../tests/x.py)`, apparently the
+exact string the discriminator was built to catch. Scope Clarity was cut 3 → 2, the finding was
+written into the design doc, and it was commented onto the issue as a correction.
 
-New cheap rule, promoted to Step 5: when an issue body **flags its own claim as unverified** — "worth
-confirming", "I think", "assuming" — that sentence is a grep target, and a high-yield one. The author
-already located the risk; they just did not spend the minute. Distinct from the bidirectional
-footprint grep, which hunts claims the body states *confidently*.
+**It was wrong, and the implementing agent (LINKS) refuted it.** That string is not a markdown link:
+it is a bare `](…)` fragment inside an inline code span, with no `[label]`, in prose quoting a link's
+*form*. Any extractor requiring the real `[label](target)` grammar never sees it. The planning sweep
+used a loose `\]\((\.{1,2}/[^)\s]+)\)` that matched fragments. Verified after the fact: the loose
+regex returns `['../tests/x.py']` on that line; a `[label]`-requiring regex returns nothing.
+
+The agent's own survey found **8 dead links across 5 files, none relative-prefixed** — so the issue's
+discriminator would in fact have cleared the current tree. It was still the wrong shape, for a reason
+neither the issue nor the orchestrator identified: **all 8 sit inside a code fence or an inline code
+span**. The real distinction is the *context a link sits in*, not its target string; a target-string
+rule passes today and breaks the first time someone writes a fenced example with a `../` prefix. The
+agent shipped fence + code-span masking with an exemption registry that ships **empty**, and closed
+the loop by finding the identical defect in `measure-context.sh:533` — which is why that script
+reports four phantom dead links for this file, the source of the batch's "4 dead links, up from 2"
+observation.
+
+Two rules, and the second is the one that cost something:
+
+1. When an issue body **flags its own claim as unverified** — "worth confirming", "I think",
+   "assuming" — that sentence is a grep target. The author located the risk and didn't spend the
+   minute. Distinct from the bidirectional footprint grep, which hunts claims stated *confidently*.
+2. **Audit the instrument before publishing the correction.** An orchestrator's throwaway regex is
+   exactly as falsifiable as the issue body it audits, and more dangerous, because it arrives
+   labelled as a correction — it re-scored an issue, altered a design doc, and was commented onto
+   GitHub before anyone checked it. Match the artifact's real grammar (markdown links need
+   `[label](target)`; code spans and fences are not prose), and state the instrument alongside the
+   finding so the next reader can falsify it. Retracting took three file edits and a follow-up
+   comment; the check would have taken thirty seconds.
 
 ### A decision at the scoring gate can remove a dependency edge, not just clarify scope
 
@@ -1430,6 +1454,32 @@ slot allocated to it would have been dead work.
 This only arises because the user named a subset. When the ask is "the backlog", a blocker is almost
 always inside it; when the ask enumerates issue numbers, check each survivor's blockers against the
 named set specifically.
+
+### The instrument defect recurred twice more, in a code review of the same batch
+
+The retraction above was not a one-off. Reviewing `batch/a` produced two more findings of the
+identical shape, which makes it a pattern rather than an accident:
+
+- **Two replacement test assertions checked for the words `set -f` and `xargs`** to prove the old
+  unsafe recipe was gone. Both failed immediately: the words survive in the *prose explaining their
+  removal*. The fix was to assert on the construct (`export $(`, a line whose command is `set -f`)
+  rather than on the vocabulary. Caught by running the suite — the system working.
+- **A finding claimed the stub `shipping-work` variant defined `load_env()` but never called it.**
+  It did call it, two lines below, in the same block. The claim was reasoned from a true premise
+  (the stub has no delegate to `exec`) instead of read off the file, and the "fix" duplicated the
+  call sites. Caught only because the duplicate was visible in the verification grep.
+
+Three instances in one session — a link sweep, two test assertions, a code-review finding. The
+common shape: **a claim about an artifact, derived from a model of the artifact rather than from the
+artifact.** The link regex modelled markdown as `](…)`; the assertions modelled a comment block as
+code; the finding modelled the stub from its architecture. Each was confidently phrased and each
+arrived as a correction to someone else's work, which is what made them expensive — a wrong finding
+costs the retraction *plus* whatever the recipient changed on its authority.
+
+Operationally the rule is narrow and cheap: **before publishing a claim that something is absent,
+grep for it.** Absence claims are the dangerous half — a false *presence* claim dies the moment
+someone opens the file, but a false absence claim looks like diligence. All three here were absence
+claims ("no `[label]`-less fragment is a non-link", "the word is gone", "the call is missing").
 
 ### Also captured
 

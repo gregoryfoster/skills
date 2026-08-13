@@ -7,10 +7,12 @@
 // into a 2h hang (#85, gotchas H/J). This selftest is the tripwire: run it
 // after any server upgrade, or whenever a driver run behaves oddly.
 //
-// THIS IS A MANUAL CHECK. Nothing runs it automatically — the repo's
-// pre-commit hook runs the Python structural suite, which does not shell out
-// to node. Treat it as part of the "upgraded socraticode" checklist, not as
-// something CI will catch for you.
+// RUN AUTOMATICALLY since #107: tests/structural/test_socraticode_graph_yield.py
+// shells out to this file (skipping loudly when node is absent), so the
+// pre-commit structural suite pulls the tripwire. It used to be a manual check
+// nothing ran, which is not a tripwire. Still run it by hand after a server
+// upgrade — the fixtures are the thing that goes stale, and only a human
+// comparing them to the new server's output can notice.
 //
 // Fixtures are synthesized line-for-line from the server's own formatter
 // (src/tools/query-tools.ts, socraticode 1.6.1). If the server changes its
@@ -33,6 +35,9 @@ import {
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
   contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
+  parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
+  GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
+  GRAPH_UNRESOLVED_WARN_PCT,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -241,6 +246,70 @@ eq('"below score threshold" fails',
   searchHasHits('No results above score threshold 0.10 for "config" in project /repo.\n2 results were below the threshold.'), false);
 eq('a populated project list passes', listHasProjects('Indexed projects (1):\n  - /repo\n    Collection: socraticode_abc'), true);
 eq('the empty-list sentence fails', listHasProjects('No projects have been indexed yet. Use codebase_index to index a project.'), false);
+
+console.log('— graph YIELD: READY is a status, not a result (#107) —');
+// Verbatim from CannObserv/usa-wa's codebase_graph_status, the run that filed
+// #107: a uv workspace with the standard src layout, where the resolver cannot
+// follow packages/<dashed-name>/src/<underscored_module>/ and gives up.
+const GRAPH_LOW = `Code Graph Status
+
+Status: READY
+Files (nodes): 374
+Dependencies (edges): 3
+Symbols: 3767
+Call edges: 23237
+Unresolved: 81.8%`;
+const GRAPH_OK = `Code Graph Status
+
+Status: READY
+Files (nodes): 374
+Dependencies (edges): 1512
+Symbols: 3767
+Call edges: 23237
+Unresolved: 12.4%`;
+const GRAPH_TINY = `Code Graph Status
+
+Status: READY
+Files (nodes): 6
+Dependencies (edges): 0`;
+
+eq('the #107 graph parses', parseGraphCounts(GRAPH_LOW),
+  { nodes: 374, edges: 3, symbols: 3767, callEdges: 23237, unresolvedPct: 81.8 });
+// The whole point: both of these are READY.
+eq('READY does not distinguish them', [graphReady(GRAPH_LOW), graphReady(GRAPH_OK)], [true, true]);
+eq('…yield does: the #107 graph is LOW', graphYield(GRAPH_LOW).verdict, 'low');
+eq('…and a resolving graph is OK', graphYield(GRAPH_OK).verdict, 'ok');
+// `unknown` must never be silently folded into `low`: writing the degraded
+// policy asserts a repo's graph is broken, and a repo too small to judge, or a
+// status string we could not read, is not evidence of that.
+eq('a 6-file repo is UNKNOWN, not LOW', graphYield(GRAPH_TINY).verdict, 'unknown');
+eq('an unparseable status is UNKNOWN, not LOW',
+  graphYield('Code Graph Status\n\nStatus: BUILDING').verdict, 'unknown');
+eq('the threshold is edges/node, and it is stated once',
+  graphYield(GRAPH_LOW).edgesPerNode < GRAPH_YIELD_MIN_EDGES_PER_NODE, true);
+// The corroborating signal, never the verdict — call-graph unresolution is
+// legitimately high in dynamic code.
+eq('unresolved% is parsed for corroboration',
+  graphYield(GRAPH_LOW).unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT, true);
+eq('a small graph is not judged by node count alone', GRAPH_YIELD_MIN_NODES, 20);
+// `Call edges` is a different statistic and is three orders of magnitude larger
+// on exactly the broken graph this gate exists to catch. If a relabelled build
+// let it satisfy the dependency-edge matcher, the verdict would flip from `low`
+// to a confident `ok` — the worst possible direction for this gate.
+eq('"Call edges" must not be mistaken for dependency edges',
+  parseGraphCounts('Status: READY\nFiles (nodes): 374\nCall edges: 23237').edges, null);
+eq('…and a graph missing its dependency line is UNKNOWN, never ok',
+  graphYield('Status: READY\nFiles (nodes): 374\nCall edges: 23237').verdict, 'unknown');
+// The failure SHAPE is what makes this invisible: an ordinary sentence, no
+// error, which an agent reads as a fact about the code.
+eq('empty graph query is prose, not an exception',
+  graphQueryEmpty('No dependency information found for this file.'), true);
+eq('a real graph answer is not empty',
+  graphQueryEmpty('Dependencies of src/app.py:\n  imports: src/db.py'), false);
+eq('a stopped container is a health problem',
+  healthProblems('Docker: ✓ running\nQdrant: ✗ container not running\nOllama: ✓').length, 1);
+eq('an all-green health report has no problems',
+  healthProblems('Docker: ✓ running\nQdrant: ✓ healthy\nOllama: ✓ nomic-embed-text present'), []);
 
 console.log('— artifact shapes (gotcha H) —');
 eq('partial 2/7', parseArtifacts(PARTIAL_ARTIFACTS), { done: 2, total: 7 });

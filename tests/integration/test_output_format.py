@@ -94,7 +94,8 @@ _ARCH_REVIEW_PROMPT = (
     "start with an h2 title (##) matching '## Architectural Review — [scope]', "
     "followed by severity sections (🔴 🟡 💭), "
     "sequential numbering across all sections, per-finding subfields "
-    "(What:, Why it matters:, Suggested fix:), "
+    "(What:, Evidence:, Why it matters:, Suggested approach:, "
+    "Effort/Blast radius:), "
     "and end with a '### Summary' section.\n\n"
     + _ARCH_DESCRIPTION
 )
@@ -156,7 +157,7 @@ class TestArchReviewOutputFormat:
         assert_sequential_numbering(arch_review_response)
 
     def test_finding_subfields(self, arch_review_response):
-        assert_finding_subfields(arch_review_response)
+        assert_finding_subfields(arch_review_response, review_type="architecture")
 
     def test_summary_section(self, arch_review_response):
         assert_summary_section(arch_review_response)

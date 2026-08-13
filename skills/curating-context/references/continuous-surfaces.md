@@ -30,6 +30,13 @@ estimate against exact rows. Set the secret first, then run it once by hand.
 Design, the annotated template, and what it deliberately does not do:
 [references/cadence.md](cadence.md) ([#118](https://github.com/gregoryfoster/skills/issues/118)).
 
+As Phase 8 summarised it inline until v1.9:
+
+- **The cadence** — `install-cadence.sh`. What goes on the clock is a
+  **measurement, not a curation**. It needs the `ANTHROPIC_API_KEY` repository
+  secret, or the job records *nothing*, silently, every week
+  ([references/cadence.md](cadence.md)).
+
 The next two catch regrowth *between* those weekly measurements.
 
 ### Review-time delta
@@ -46,6 +53,13 @@ straight gain; and it matches `Edit|Write|MultiEdit`, so a shell redirect
 (`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it
 ([#103](https://github.com/gregoryfoster/skills/issues/103)). Review sees the
 whole branch however the bytes arrived, while the tradeoff is still cheap.
+
+As Phase 8 summarised it inline until v1.9:
+
+- **Review-time delta** — `context-delta.sh`, already called from the four
+  `reviewing-code*` variants' `gather-context.sh`, so it needs no wiring. It sees
+  what the guard cannot: the guard matches `Edit|Write|MultiEdit`, so a shell
+  redirect (`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it.
 
 ### Write guard
 
@@ -70,3 +84,10 @@ write paths, and uninstall:
 The installer prints its `git add` line rather than committing, and names the log
 path to tail. Hook wiring lands through the project's normal gate — a hook that
 starts running because something committed it unannounced is a bad surprise.
+
+As Phase 8 summarised it inline until v1.9:
+
+- **Write guard** — `install-guard.sh --budget 6000 --doc-budget 10000`, a
+  `PostToolUse` hook that flags an edit pushing a file further over budget. It
+  never blocks and stays silent when an edit reduces the count
+  ([references/write-guard-hook.md](write-guard-hook.md)).

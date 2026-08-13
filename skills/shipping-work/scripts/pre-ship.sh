@@ -42,6 +42,50 @@ exit 1
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
+# --- Project-local env loading (optional override point) ---------------------
+# Upstream ships without env loading — most projects don't need it. If yours
+# does (test fixtures reading live secrets, a bootstrap that hard-fails on a
+# missing DSN), load it here, at the top of your override:
+#
+#   load_env() {                                  # parse, never source
+#     [ -r "$1" ] || return 0
+#     while IFS= read -r line || [ -n "$line" ]; do
+#       line=${line#"${line%%[![:space:]]*}"}       # drop leading blanks
+#       case $line in ''|\#*) continue ;; esac       # blank or comment
+#       line=${line#export }                        # tolerate `export K=v`
+#       case $line in *=*) ;; *) continue ;; esac
+#       key=${line%%=*} val=${line#*=}
+#       key=${key%"${key##*[![:space:]]}"}
+#       case $key in ''|*[!A-Za-z0-9_]*) continue ;; esac
+#       case $val in                                # strip matched quotes
+#         \"*\") val=${val#\"} val=${val%\"} ;;
+#         \'*\') val=${val#\'} val=${val%\'} ;;
+#       esac
+#       export "$key=$val"
+#     done < "$1"
+#   }
+#   load_env /etc/<project>/.env
+#   load_env "$PROJECT_ROOT/.env"
+#
+# Note how this differs from the language variants (-php, -python-click,
+# -python-fastapi). Those ship a real gate, so their advice is a project-local
+# WRAPPER that loads env and `exec`s the vendored script — one copy of the
+# logic, upstream fixes land automatically. This script is a stub that exits 1
+# above, so there is nothing to delegate to: your project-local copy IS the
+# gate, and the env loading belongs inside it.
+#
+# Parse the file line by line; never `set -a; . file`, and never
+# `export $(cat ... | xargs)`. That one-liner shipped here until #144 and had
+# three defects: with both files absent it degenerated to a bare `export`,
+# dumping every exported variable — secrets included — into the ship-gate
+# transcript; a `#` comment line reached `export` as `'#': not a valid
+# identifier`, so `set -e` killed the caller BEFORE the gate ran; and `xargs`
+# word-split `PW=two words` into a wrong value with exit 0. Quoting
+# `export "$key=$val"` is what makes spaces, globs and quoted values survive,
+# so there is no `set -f` dance and no shellcheck suppressions. A key that is
+# not a plain identifier is skipped rather than aborting: a malformed line in
+# a secrets file must not decide whether the gate runs.
+
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see
 # (operators using raw `git worktree remove`, post-destroy spawn races, etc.).

@@ -4,7 +4,7 @@ description: Performs a high-level architectural review evaluating structural he
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git.
 metadata:
   author: gregoryfoster
-  version: "1.4"
+  version: "1.5"
   triggers: AR, architecture review, architectural review
 ---
 
@@ -34,6 +34,7 @@ If the user hasn't responded with directives, you cannot implement anything.
 | "I'll suggest a refactor as I go" | Phase 4 exists. Present findings first; user picks which refactors warrant doing. |
 | "This module wasn't in the diff" | Architecture review crosses boundaries — call graphs, dependency direction, layering. The diff is the trigger, not the scope. |
 | "The user seems in a hurry" | A fast bad architecture pivot is slower than a thorough correct one. |
+| "I listed the exact lines — that's as specific as it gets" | Lines move; the command that found them doesn't. Record the grep beside the conclusion so the reader re-runs it instead of trusting a snapshot. |
 
 ## Parameterized invocation
 
@@ -109,9 +110,13 @@ Required report structure:
 
 Each finding within `### Findings` must follow this format:
 
-> N. **[module/file]** What: \<precise description with file/module reference\>. Why it matters: \<architectural impact: maintainability? performance? correctness?\>. Suggested approach: \<concrete refactoring direction — name new modules, describe the split, sketch the pattern\>. Effort/Blast radius: \<rough cost and reach of the fix: how many modules move, and is it reversible or a one-way door\>.
+> N. **[module/file]** What: \<precise description with file/module reference\>. Evidence: \<the command, query, or gather-context section that produced the citation, written so the reader can re-run it — `rg -n "is StreamProvider\." src/`, `codebase_graph_circular`, the `=== File sizes ===` block\>. Why it matters: \<architectural impact: maintainability? performance? correctness?\>. Suggested approach: \<concrete refactoring direction — name new modules, describe the split, sketch the pattern\>. Effort/Blast radius: \<rough cost and reach of the fix: how many modules move, and is it reversible or a one-way door\>.
 
-All four labels (`What:`, `Why it matters:`, `Suggested approach:`, `Effort/Blast radius:`) are required in every finding, verbatim. The severity marker (🔴/🟡/💭) ranks *how bad the problem is*; `Effort/Blast radius:` is a separate axis for *how expensive and risky the fix is* — a user triaging refactors needs both, because "severe but cheap and reversible" and "severe but a risky migration" warrant different decisions.
+All five labels (`What:`, `Evidence:`, `Why it matters:`, `Suggested approach:`, `Effort/Blast radius:`) are required in every finding, verbatim. The severity marker (🔴/🟡/💭) ranks *how bad the problem is*; `Effort/Blast radius:` is a separate axis for *how expensive and risky the fix is* — a user triaging refactors needs both, because "severe but cheap and reversible" and "severe but a risky migration" warrant different decisions.
+
+`Evidence:` records *how* the citation was obtained, not a second copy of where it points. A finding whose grep travels with it can be **re-run** by whoever implements it, months later, in a second; a finding carrying only the conclusion has to be re-derived, and re-derivation is the step that gets skipped. Where the finding rests on reading rather than on a command, say so — "read `settings.py` end to end" is honest evidence; a grep reconstructed for the report is not.
+
+**Shelf life — lead with the invariant.** A finding's file:line specifics are evidence-of-the-moment, not specification. Findings become issue bodies read *later*, after other findings from the same review have been implemented, so staleness is not random: it is proportional to how deep in the execution order a finding sits, and it is worst exactly where the work is hardest. Phrase `What:` so the durable claim leads and the specifics merely evidence it — "every provider branch is inline at the call site" survives a refactor that "seven `is X` checks, at lines 40, 88, 133…" does not. Keep the specifics, mark them as observed at review time, and treat line numbers as evidence rather than as specification; `Evidence:` is what the implementer re-runs. (Measured: a 13-issue backlog carved from one such review carried a material error in **every** issue body by implementation time — one finding's branch-point table was 5 of 7 stale when its batch ran, because an earlier batch in the same backlog had changed the column type. See [`orchestrating-issue-backlog`](../orchestrating-issue-backlog/references/process-log.md), 2026-08-09.)
 
 ### Phase 3.5 — Verify before reporting
 
@@ -119,7 +124,7 @@ All four labels (`What:`, `Why it matters:`, `Suggested approach:`, `Effort/Blas
 NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
 ```
 
-- Each finding must cite a specific module, file, or directory — not a generic claim about "the architecture"
+- Each finding must cite a specific module, file, or directory — not a generic claim about "the architecture" — and its `Evidence:` must be the command you **actually ran** to reach that citation, not one reconstructed afterwards to look rigorous. If you cannot name what produced the citation, you do not have a finding yet
 - If any refactor was prototyped in this conversation, re-run the test suite and report failures as 🔴 findings regardless of cause
 - Do NOT claim a structural problem exists unless you have output from this session (file listing, dependency trace, line count) confirming it
 

@@ -43,6 +43,14 @@ invocation actually pays. Treating `tokens_live` as the success metric would mak
 every good run read as a regression, and would push an autonomous run toward
 deleting content instead of routing it.
 
+Phase 1 carried this and the archival exclusion inline until v1.9, in these words:
+
+  `totals.tokens_live` is a ceiling to **watch**, not to optimise: a successful
+  demotion *raises* it. The trend follows `policy.tokens`. Archival subtrees
+  (`docs/plans/`, `specs/`, `research/`, `audits/`, `archive/`, at any depth) are
+  excluded by default — a since-moved path inside a dated snapshot is a correct
+  historical record.
+
 ### Where 6,000 came from, and where it goes
 
 An earlier version of this file justified a 4,000 budget by saying four of twelve
@@ -291,6 +299,21 @@ incomparable row.
 
 So an interactive run in a repo whose `.env` holds the key needs nothing extra.
 Elsewhere, export the key first.
+
+### The Phase 1 credential note, in full
+
+Phase 1 restated the rule above inline until v1.9, when it was demoted here and
+replaced by a pointer. The words it carried:
+
+  A credential is not optional even interactively: an estimate records
+  `tokens_exact: false`, and `record-telemetry.sh` refuses that append against a
+  ledger of exact rows rather than nulling its own delta. A WARN from `--exact`
+  means the row is an estimate whatever credential was accepted — prefer stopping
+  to recording an incomparable row. An exact run also writes the observed
+  bytes-per-token ratio to `.skills/context-token-ratio`, which is what keeps the
+  offline estimators honest between runs
+  ([both](budget-and-metrics.md#measuring-tokens),
+  [the baseline pair](telemetry.md#the-baseline-row-is-not-optional-either)).
 
 ## The link graph
 

@@ -14,6 +14,7 @@
 # (The 14 entries that justified the #95 trim were removed on merge for exactly
 # that reason — CR round 2, finding 9. The trim itself is in git history.)
 #
-# The file is per-repo while --file is per-target, so an entry judged for one
-# target reports "matched nothing" on a run against another (#139). Read the
-# target before pruning.
+# The file is per-repo while --file is per-target, so an entry for one target
+# used to report "matched nothing" on a run against another. Scope it instead:
+# `PATH :: WARRANT :: CONTENT` is consulted only by runs whose --file contains
+# PATH, and the report says how many entries sat a run out (#139).

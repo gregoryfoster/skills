@@ -80,6 +80,19 @@ Warranted losses (.skills/context-loss-ok):
 
     WARRANT :: CONTENT        e.g.  retarget :: Full rules live in docs/STYLE.md §32
 
+  Optionally scoped to one target, since this file is per-repo while --file is
+  per-target and an entry judged for one target otherwise reports "matched
+  nothing" on a run against another:
+
+    PATH :: WARRANT :: CONTENT
+                              e.g.  docs/API.md :: retarget :: the shape lives in
+
+  PATH is a substring of the run's --file, the way .skills/context-seams-ok
+  pins an entry to one file. An entry scoped elsewhere is neither consulted nor
+  called stale here — the report says how many sat this run out. The form is
+  told apart by whether the first field names a warrant, so CONTENT may itself
+  contain a `::`.
+
   WARRANT names WHY, from a closed set — an unrecognised one is refused rather
   than ignored, because a mute allowlist is not a judgement:
 
@@ -118,6 +131,22 @@ What counts as "present":
                     promotion back to the root loses them. The target after the
                     `../` is not touched, so a REPOINTED link is still a
                     difference and still reports (#119).
+
+                    A demotion also re-aims in the opposite shape, by REMOVING
+                    the docs root from a link that already pointed inside it:
+                    `](docs/OTHER.md)` in AGENTS.md is `](OTHER.md)` in
+                    docs/STYLE.md. That leading prefix — and only that one,
+                    only at the start of the target — is erased too (#137).
+                    `](lib/x.md)` -> `](x.md)` is a repoint and still reports.
+
+  A leading YAML frontmatter block is not compared at all, on either side. Phase
+  7 MANDATES bumping SKILL.md's `version`, so a line-based check reported the
+  run that followed the skill's own instructions as losing `version: "1.6"` —
+  and the warrant vocabulary is closed, with no warrant meaning "this field is
+  required to change" (#136). Frontmatter is metadata, not the prose and
+  pointers this check protects. The report says how many lines it skipped. A
+  file opening with a `---` thematic rule is not frontmatter: the block counts
+  only when it is closed and everything inside it reads as YAML.
 
   Nothing else is normalised. Reflowed prose, changed wording, appended clauses,
   and dropped lines all fail, which is the point. Whole-line matching is what
@@ -273,11 +302,13 @@ done
 sort -u "$TMP/dests" >"$TMP/dests.u"
 
 RC=0
-python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" <<'PY' || RC=$?
+python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
+  "$DOCS_DIR" <<'PY' || RC=$?
+import os
 import re
 import sys
 
-before_path, policy, dests_path, show, ack_path = sys.argv[1:6]
+before_path, policy, dests_path, show, ack_path, docs_dir = sys.argv[1:7]
 
 # Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
 # this file is to record a judgement, and free text would make it a mute
@@ -309,6 +340,85 @@ HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 # report that wrong is worse than no check, because a reader who learns to
 # ignore it will ignore a real loss in it.
 LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
+# The mirror direction, and the one #119 could not see. A DEMOTION does not add
+# `../`; it REMOVES a directory prefix, because the target it points at is
+# already inside the directory the content moved into: `](docs/OTHER.md)` in a
+# root policy file becomes `](OTHER.md)` once the bullet lives in docs/STYLE.md.
+# That is the operation this skill recommends most often, and every link-carrying
+# bullet it moved reported LOST — one run needed 12 `retarget` warrants for
+# nothing else (#137).
+#
+# Erased for ONE prefix only: the reference-doc root this run was given. That is
+# the directory content is relocated INTO, so it is the only prefix a sanctioned
+# move can remove; `](lib/x.md)` -> `](x.md)` is a repoint and still reports. The
+# residual cost is named rather than hidden — `](docs/X.md)` and `](X.md)` now
+# compare equal, so a link repointed between those two exact paths is invisible
+# here, and a demotion into a SUBdirectory of the root still reports, because
+# only the root itself is erased. Every relaxation of whole-line matching is paid
+# out of the strength of the only gate that can see content loss, and this is the
+# smallest coin that buys the demotion case.
+#
+# The prefix a link actually carries is the docs root seen FROM THE FILE THE LINK
+# IS WRITTEN IN, which is not the repo-relative --docs-dir string unless the
+# policy file sits at the repo root. Built from the repo-relative string alone,
+# this fix could not fire for any skill curating its own surface: the run passes
+# `--docs-dir skills/x/references`, SKILL.md writes `](references/X.md)`, the
+# pattern was `](skills/x/references/`, and the substitution was a no-op on the
+# 21 links that needed it. So two prefixes are erasable, not one — the root as
+# the policy file sees it, and as the repo root sees it, because content moves
+# between exactly those two vantage points. They are the SAME string in the
+# canonical shape (`AGENTS.md` + `docs`), so nothing widens there. Leading `../`
+# is dropped from either because LINK_DEPTH has already erased it by then.
+def _erasable_prefixes(docs, pol):
+    seen = []
+    for cand in (docs, os.path.relpath(docs, os.path.dirname(pol) or ".")):
+        cand = os.path.normpath(cand).strip("/")
+        while cand.startswith("../"):
+            cand = cand[3:]
+        if cand and cand != ".." and cand != "." and cand not in seen:
+            seen.append(cand)
+    return sorted(seen, key=len, reverse=True)
+
+
+_roots = _erasable_prefixes(docs_dir, policy)
+LINK_ROOT = (re.compile(r"\]\((?:"
+                        + "|".join(re.escape(r) for r in _roots) + r")/")
+             if _roots else None)
+
+# A frontmatter key, loosely: `name:`, `  version: "1.7"`, or a `- ` list item.
+# Loose on purpose — the point is not to validate YAML but to tell a metadata
+# block from a document that opens with a thematic rule.
+YAML_ISH = re.compile(r"^(?:\s+\S|-\s|[\w.$-]+\s*:)")
+
+def strip_frontmatter(lines):
+    """Drop a leading YAML frontmatter block. Returns (lines, how many dropped).
+
+    Phase 7 REQUIRES bumping SKILL.md's frontmatter `version` whenever a change
+    would alter what a run does, and Phase 6 then reported the old
+    `version: "1.6"` as a line that existed at --base and exists nowhere now.
+    The run that follows the skill's own instructions could not pass the skill's
+    own gate, and the warrant file cannot absorb it: #111 shipped a CLOSED
+    vocabulary and none of the five warrants means "this field is required to
+    change" (#136).
+
+    Frontmatter is metadata the run is TOLD to change, not the prose and
+    pointers this check exists to protect, so it is not compared at all — on
+    either side, or a body line could be "relocated" into a destination's
+    metadata block and pass.
+
+    A document may legitimately open with a `---` thematic rule, and swallowing
+    everything up to the next one would hide real content. So a block counts
+    only when it is closed AND everything in it reads as YAML.
+    """
+    if not lines or lines[0].strip() != "---":
+        return lines, 0
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body = [x for x in lines[1:i] if x.strip()]
+            if body and all(YAML_ISH.match(x) for x in body):
+                return lines[i + 1:], i + 1
+            return lines, 0
+    return lines, 0
 
 def normalise(raw):
     """One line -> its comparable form, or "" when it carries no content.
@@ -317,10 +427,11 @@ def normalise(raw):
 
       link depth    a block moving between directories re-aims its relative
                     links, so `](tests/x.py)`, `](../tests/x.py)` and
-                    `](../../tests/x.py)` are the same line at three depths.
-                    Depth is erased in both directions and at any amount; the
-                    target after it is not, so a repointed link is still a
-                    difference.
+                    `](../../tests/x.py)` are the same line at three depths, and
+                    a link INTO the docs root loses that prefix when the block
+                    lands inside it. Depth is erased in both directions and at
+                    any amount; the target after it is not, so a repointed link
+                    is still a difference.
       heading level a `###` subsection promoted to its own document's `##`.
 
     Heading text is tagged rather than merely stripped of its hashes. Stripping
@@ -331,11 +442,14 @@ def normalise(raw):
     if not line:
         return ""
     line = LINK_DEPTH.sub("](", line)
+    if LINK_ROOT is not None:
+        line = LINK_ROOT.sub("](", line)
     m = HEADING.match(line)
     return "H:" + m.group(1).strip() if m else line
 
 try:
     before = open(before_path, encoding="utf-8", errors="replace").read().splitlines()
+    before, front_skipped = strip_frontmatter(before)
     dest_paths = [p for p in open(dests_path, encoding="utf-8").read().splitlines() if p]
     # A SET of whole lines per destination, not the raw text. Substring matching
     # against the text was the original implementation and it was far weaker than
@@ -348,6 +462,7 @@ try:
     dests = {}
     for path in dest_paths:
         lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        lines, _ = strip_frontmatter(lines)
         dests[path] = {n for n in (normalise(l) for l in lines) if n}
 except OSError as exc:
     print(f"ERROR {exc}", file=sys.stderr)
@@ -358,6 +473,21 @@ except OSError as exc:
 # the run hunting for content that is fine; refusing also errs toward NOT
 # passing, which is the only safe direction for a file that can turn exit 3
 # into exit 0.
+#
+# Two forms, told apart by whether the FIRST field names a warrant — never by
+# counting separators, which would truncate any entry whose judged line contains
+# a `::`:
+#
+#   WARRANT :: CONTENT           every target
+#   PATH :: WARRANT :: CONTENT   only runs whose --file contains PATH
+#
+# The scoped form exists because this file is per-repo while --file is
+# per-target, so an entry judged against AGENTS.md reported "matched nothing" on
+# the next run against a SKILL.md — the stale-entry warning, which is the thing
+# that makes expiry trustworthy, firing on entries that were simply about
+# another target (#139). PATH is matched as a substring of the target, the same
+# way .skills/context-seams-ok pins an entry to one file. Scoping only ever
+# NARROWS what an entry can reach.
 entries, malformed = [], []
 try:
     with open(ack_path, encoding="utf-8") as fh:
@@ -366,11 +496,21 @@ try:
             if not raw.strip() or raw.lstrip().startswith("#"):
                 continue
             head, sep, tail = raw.partition("::")
-            warrant, content = head.strip(), tail.strip()
+            scope, warrant, content = None, head.strip(), tail.strip()
+            if sep and warrant not in WARRANTS and "::" in tail:
+                second, _, rest = tail.partition("::")
+                scope, warrant, content = warrant, second.strip(), rest.strip()
             if not sep:
                 why = "no `::` — an entry is `WARRANT :: CONTENT`"
+            elif scope is not None and not scope:
+                why = ("empty PATH — an entry scoped to nothing matches every "
+                       "target; drop the PATH half instead")
             elif warrant not in WARRANTS:
-                why = (f"unknown warrant '{warrant}' — one of: "
+                # Name the form it was read as. A three-field entry whose
+                # warrant is typo'd is otherwise reported against a field the
+                # author thought was a path.
+                form = " (read as `PATH :: WARRANT :: CONTENT`)" if scope else ""
+                why = (f"unknown warrant '{warrant}'{form} — one of: "
                        + ", ".join(WARRANTS))
             elif not content:
                 why = "empty CONTENT — an entry with no content matches every line"
@@ -383,7 +523,7 @@ try:
                 why = (f"CONTENT is {len(content)} characters — an entry must be "
                        f"at least {WARRANT_MIN_CHARS} to identify one line")
             else:
-                entries.append((warrant, content))
+                entries.append((warrant, content, scope))
                 continue
             malformed.append((lineno, raw.strip()[:100], why))
 except OSError:
@@ -424,10 +564,20 @@ for raw in before:
 # A warrant only ever reaches a line that is ALREADY unaccounted for, so it can
 # neither mask a relocation nor manufacture one. First matching entry is charged
 # with the hit, which is what makes an entry's blast radius visible below.
+#
+# A scoped entry sits out a run against another target entirely: it cannot
+# warrant a line here, and it is not accused of having gone stale here either,
+# which is the whole point of the form.
+in_scope, out_of_scope = [], []
+for i, entry in enumerate(entries):
+    if entry[2] is None or entry[2] in policy:
+        in_scope.append(i)
+    else:
+        out_of_scope.append(entry)
 warranted, unwarranted = [], []
 charged = [[] for _ in entries]
 for line in lost:
-    idx = next((i for i, (_, c) in enumerate(entries) if c in line), None)
+    idx = next((i for i in in_scope if entries[i][1] in line), None)
     if idx is None:
         unwarranted.append(line)
     else:
@@ -441,7 +591,7 @@ for line in lost:
 # thing that can convert a content-loss failure into a pass, so it gets the same
 # treatment malformed syntax already gets — refusal, which errs toward NOT
 # passing. An acknowledgement is ONE judged line; two lines are two judgements.
-broad = [(w, c, len(h)) for (w, c), h in zip(entries, charged) if len(h) > 1]
+broad = [(w, c, len(h)) for (w, c, _), h in zip(entries, charged) if len(h) > 1]
 if broad:
     print(f"ERROR {ack_path} has {len(broad)} over-broad entry(ies) — an "
           "acknowledgement covers ONE judged line:", file=sys.stderr)
@@ -458,6 +608,11 @@ total = kept + sum(len(v) for v in relocated.values()) + len(lost)
 # Named, not "policy file": --file takes a reference doc when proving a split,
 # and a report headed "policy file" for docs/API.md reads as the wrong run.
 print(f"{policy} at base: {total} non-blank lines", file=out)
+# Named, because "not compared" is a claim a report owes its reader — this is
+# the one place the check deliberately looks away.
+if front_skipped:
+    print(f"  frontmatter not compared:   {front_skipped} "
+          "(metadata; Phase 7 mandates the version bump)", file=out)
 print(f"  still inline:               {kept}", file=out)
 for path in sorted(relocated):
     print(f"  relocated verbatim -> {path}: {len(relocated[path])}", file=out)
@@ -490,18 +645,27 @@ if warranted:
     # acknowledgement is ONE judged line, so anything above one hit is an
     # entry doing the job of judgement without the judging.
     print("\n  by entry:", file=out)
-    for (warrant, content), hits in zip(entries, charged):
+    for (warrant, content, _), hits in zip(entries, charged):
         if not hits:
             continue
         print(f"    {len(hits)} hit(s): {warrant} :: {content[:70]}", file=out)
 
-unused = [e for e, hits in zip(entries, charged) if not hits]
+unused = [entries[i] for i in in_scope if not charged[i]]
 if unused:
     print(f"\n  {len(unused)} entry(ies) matched nothing — the line each "
           "acknowledged has changed\n  or gone, which is when it needs "
           "re-judging; re-judge and prune:", file=out)
-    for warrant, content in unused:
+    for warrant, content, _ in unused:
         print(f"    {warrant} :: {content[:70]}", file=out)
+
+# Said out loud rather than silently skipped. An entry this run never consulted
+# is not evidence of anything about this run, but a file whose entries quietly
+# stop applying is one nobody can audit.
+if out_of_scope:
+    print(f"\n  {len(out_of_scope)} entry(ies) scoped to another target — not "
+          f"consulted for {policy}:", file=out)
+    for warrant, content, scope in out_of_scope:
+        print(f"    {scope} :: {warrant} :: {content[:60]}", file=out)
 
 if unwarranted:
     print(
