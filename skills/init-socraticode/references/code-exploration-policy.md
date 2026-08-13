@@ -221,6 +221,33 @@ collapses any prior duplication — which a skip-only dedupe would leave strande
 on the old, erroring command. (Step A has already written the script the
 canonical command points at.)
 
+**Step C — install the once-per-day health hook.** Copy
+[`../scripts/socraticode-health.sh`](../scripts/socraticode-health.sh) to
+`.claude/hooks/socraticode-health.sh` (overwrite in place; it carries no
+per-project state), `chmod +x`, and append a second SessionStart entry:
+
+```json
+{
+  "type": "command",
+  "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-health.sh\" # socraticode-health"
+}
+```
+
+Dedupe on `socraticode-health`, which is deliberately distinct from
+`socraticode-prefetch` / `socraticode-reminder` — a shared marker would make one
+hook's scan match the other's entry and skip an install. The hook is silent
+unless it finds something, runs at most once per UTC day, and exits 0 on every
+path; it re-checks the Phase 6 yield gate, `codebase_health`, and a failed last
+operation, so an install that was green in January is not assumed green in June
+([#107](https://github.com/gregoryfoster/skills/issues/107)). Set
+`SOCRATICODE_PROBE_FILE` in `.claude/settings.local.json`'s `env` block to a
+file with several first-party imports if you want the confirmatory graph probe.
+
+**It reports; it does not repair.** No re-index, no `docker start`, no file
+edit. A SessionStart hook runs before the agent has any context, and a hook that
+started a two-hour index — or rewrote `AGENTS.md` under an agent already at work
+— would be a worse failure than the one it detected.
+
 > **Duplicate-config trap.** If a session shows BOTH
 > `mcp__plugin_socraticode_socraticode__*` and a standalone
 > `mcp__socraticode__*`, the user has a duplicate MCP registration. Remove the

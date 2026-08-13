@@ -1,20 +1,21 @@
 ---
 name: init-socraticode
-description: Installs, configures, and indexes SocratiCode semantic code search on a project — Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + SessionStart prefetch hook, a context-artifacts manifest, and a full blocking index that waits for embeddings, graph, and artifacts to all complete. Use when adding semantic code search to a repo.
+description: Installs, configures, and indexes SocratiCode semantic code search on a project — Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + docs/SOCRATICODE.md, SessionStart prefetch and once-per-day health hooks, a context-artifacts manifest, and a full blocking index verified by edge yield rather than graph status. Use when adding semantic code search to a repo.
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18 <26, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
 # Initialize SocratiCode — Semantic Code Search
 
 Takes a project from "no semantic search" to a fully indexed SocratiCode setup:
-host preflight → plugin enabled → Code Exploration Policy + prefetch hook written
-→ context-artifacts manifest authored → full index run and **verified green**
-(embeddings 100%, graph READY, artifacts N/N, sample `codebase_search` returns
-hits).
+host preflight → plugin enabled → Code Exploration Policy + `docs/SOCRATICODE.md`
++ hooks written → context-artifacts manifest authored → full index run and
+**verified green** (embeddings 100%, graph READY *and clearing the edge-yield
+floor*, artifacts N/N, no failed last operation, sample `codebase_search`
+returns hits).
 
 SocratiCode gives agents `codebase_search` / `codebase_impact` / `codebase_flow`
 / `codebase_symbol` / `codebase_graph_*` / `codebase_context_*` MCP tools backed
@@ -39,7 +40,7 @@ Ask the user; each has a default they can accept silently.
 | `PROJECT_PATH` | repo root (`git rev-parse --show-toplevel`) | any abs path | what gets indexed; passed to every `codebase_*` call |
 | `EMBEDDING_BACKEND` | `ollama-docker` | `ollama-docker` \| `ollama-native` \| `openai` \| `google` | Phase 1 backend env, index speed — see [`references/embedding-backends.md`](references/embedding-backends.md) |
 | `POLICY_FILE` | `AGENTS.md` | `AGENTS.md` \| `CLAUDE.md` | Phase 3 — where the Code Exploration Policy block lands |
-| `INSTALL_HOOK` | `yes` | `yes` \| `no` | Phase 3 — install the SessionStart prefetch hook |
+| `INSTALL_HOOK` | `yes` | `yes` \| `no` | Phase 3 — install the two SessionStart hooks (prefetch reminder + once-per-day health check) |
 | `LINKED_PROJECTS` | none | comma-separated abs paths | Phase 3 — cross-repo search over sibling checkouts via `SOCRATICODE_LINKED_PROJECTS` |
 
 **Backend note (do not silently default for large repos).** `ollama-docker` needs
@@ -149,8 +150,10 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
       block beside the original unmarked one, where step (a) takes the marker-pair
       branch and would otherwise leave the unmarked copy behind.
    Never leave more than one policy section. Adapt any path examples to this
-   project's real layout, and pick the **variant** the Phase 6 yield gate calls
-   for (A standard / B degraded — Phase 6 re-runs this step if it returns `low`).
+   project's real layout. **Variant:** write **A** (standard) on a first install
+   — the graph does not exist yet, so there is nothing to measure — and let
+   Phase 6's yield gate send you back here to write **B** (degraded) if it
+   returns `low`. On an audit re-run, carry the variant Phase 6 last measured.
    **Rescue before replacing on the unmarked branch:** anything in that span the
    template does not itself carry is repo-authored. Move it, unchanged, to a
    `## Code Exploration Notes (repo-specific)` section after the END marker and
@@ -163,14 +166,18 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    what an agent needs on nearly every task; everything read once lives here.
    Create `docs/` if absent, and overwrite the file wholesale on a re-run (it
    has no marker pair because it *is* the block's overflow).
-3. **SessionStart hook** (when `INSTALL_HOOK=yes`) → write the reminder script
-   (`.claude/hooks/socraticode-reminder.sh`) and **merge** its hook entry into
-   `.claude/settings.json` (create if absent). Dedupe by scanning existing
-   command strings for `socraticode-prefetch` **or** `socraticode-reminder` (the
-   latter matches legacy script-file installs); when a match isn't already the
-   canonical command, upgrade that one command string in place (propagates the
-   `${CLAUDE_PROJECT_DIR:-.}` fallback to legacy installs). Preserve existing
-   `hooks`/`permissions`/other keys. Never clobber the file.
+3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → write **two** scripts and
+   **merge** their entries into `.claude/settings.json` (create if absent):
+   - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe by
+     scanning existing command strings for `socraticode-prefetch` **or**
+     `socraticode-reminder` (the latter matches legacy script-file installs);
+     when a match isn't already the canonical command, upgrade that one command
+     string in place (propagates the `${CLAUDE_PROJECT_DIR:-.}` fallback to
+     legacy installs).
+   - `.claude/hooks/socraticode-health.sh` — copy of
+     `scripts/socraticode-health.sh`, the once-per-day infra check. Dedupe on
+     the distinct marker `socraticode-health`. It reports; it never re-indexes.
+   Preserve existing `hooks`/`permissions`/other keys. Never clobber the file.
 4. **Linked projects** (when `LINKED_PROJECTS` is set) → write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
    of `.claude/settings.local.json` (create the file if absent, merge if present).
@@ -300,9 +307,37 @@ self-match (gotcha G) — and parses status strings loosely (gotcha H).
 Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PATH>"`:
 
 - A sample `codebase_search` returns hits.
-- `codebase_graph_status` is READY.
+- `codebase_graph_status` is READY **and clears the yield floor** (below).
 - `codebase_list_projects` shows the project.
-- `codebase_status`: last operation completed, artifacts N/N.
+- `codebase_status`: artifacts N/N, and the last operation **completed, not
+  FAILED**. A failed last operation fails verification even with every other
+  light green — the delta that failed is missing from the index. On usa-wa an
+  `Incremental update — FAILED (fetch failed)` sat unreported for ~21h behind
+  three green lights ([#107](https://github.com/gregoryfoster/skills/issues/107)).
+
+**Graph yield — READY is a status, not a result.** READY is reachable with a
+graph that resolved almost nothing: usa-wa reported READY over **3 dependency
+edges across 374 files, 81.8% unresolved**, because the resolver cannot follow
+the standard `uv`/hatch src layout (dashed distribution dir → `src/` →
+underscored module). Measure the yield:
+
+```bash
+node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
+  --probe <a file you know has several first-party imports>
+```
+
+| Verdict | Meaning | Do |
+|---|---|---|
+| `ok` | ≥ 0.1 edges per file | nothing; keep policy **variant A** |
+| `low` | < 0.1 edges per file (the probe confirms `codebase_graph_query` returns *empty*, not an error) | **return to Phase 3 and write policy variant B** — route imports/dependents/blast-radius to `grep`, warn that empty graph output is tool failure, not absence. Do **not** fail the install |
+| `unknown` | < 20 files, or the status string did not parse | report it; leave variant A |
+
+A low-yield graph is an upstream SocratiCode defect this skill cannot repair, so
+it must not fail the install — a repo left with *no* policy is worse off than one
+with a policy that routes around the broken tool. What it must never do is stay
+silent: `codebase_graph_query` answers a low-yield graph with the ordinary
+sentence "No dependency information found for this file", which an agent reads
+as a fact about the code rather than about the tool.
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 
@@ -313,26 +348,35 @@ Present a completion table:
 | Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) · Node `<version>` (>=18 <26) ✓ · npx ✓ |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
-| Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited) · `docs/SOCRATICODE.md` written |
-| Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` → `.claude/hooks/socraticode-reminder.sh` |
+| Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |
+| SessionStart hooks | `<INSTALL_HOOK>` — `.claude/hooks/socraticode-reminder.sh` (prefetch) · `.claude/hooks/socraticode-health.sh` (once-per-day infra check) |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
 | Index exclusions | `.socraticodeignore` (vendored skill trees excluded) |
-| Index | index run completed · graph READY · artifacts N/N |
+| Index | index run completed (no FAILED last operation) · graph READY · **yield `<ok/low/unknown>`** · artifacts N/N |
 | Sample search | returns hits |
 
 ## Re-run on an existing project (audit/repair)
 
 Running this skill on a project that already has SocratiCode is **safe and is
 the audit**: every file edit is idempotent (Phase 3's policy block replaces
-between markers, the hook merge dedupes, Phase 4 migrates a legacy array
-manifest in place and re-validates every artifact path), and Phase 6
-re-verifies the three completion signals. Use a re-run to repair partial
-installs — the common drift found across the cohort ([#65](https://github.com/gregoryfoster/skills/issues/65)):
+between markers, `docs/SOCRATICODE.md` is overwritten wholesale, both hook
+merges dedupe, Phase 4 migrates a legacy array manifest in place and re-validates
+every artifact path), and Phase 6 re-verifies the completion signals. Use a
+re-run to repair partial installs — the common drift found across the cohort ([#65](https://github.com/gregoryfoster/skills/issues/65)):
 a manifest with **no policy block or prefetch hook** (observo), or hook docs
 that drifted from `settings.json` (archiver). A re-run is also how a repo whose
 manifest was silently rejected gets caught — it has been reporting `artifacts
 0/0` as if healthy (gotcha K). Phases 1–2 are read-only when
 already satisfied; Phase 5 re-indexes only if the index is missing or stale.
+
+**One thing a re-run must not do quietly.** On the unmarked-section branch,
+Phase 3 replaces a whole `## Code Exploration Policy` span, and a repo that has
+been running for a while has usually grown its own prose in there. Rescue it to
+`## Code Exploration Notes (repo-specific)` and say what moved — the first
+audit re-run is exactly when this bites and exactly when nobody is watching for
+it ([#115](https://github.com/gregoryfoster/skills/issues/115)). A re-run also
+re-measures graph yield, so a repo installed before the yield gate existed gets
+its degraded policy the first time it is audited.
 
 ## Key invariants
 
@@ -341,6 +385,18 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
   artifacts N/N (troubleshooting gotcha C). None of the three is a percentage:
   the progress line disappears when the run finishes, so waiting to observe
   "100%" is waiting for something that will never arrive (gotcha J).
+- **Gate the graph on yield, not on status.** `READY` says a build finished, not
+  that it resolved anything: usa-wa reported READY over 3 edges across 374 files
+  (gotcha N). Measure edges per file, and on a `low` verdict write the degraded
+  policy rather than failing the install — a policy that points at broken
+  tooling is worse than no policy, because empty output reads as "no dependents"
+  rather than "tool failed" ([#107](https://github.com/gregoryfoster/skills/issues/107)).
+- **A failed last operation is a finding, not a footnote.** `codebase_status`
+  records it and nothing used to read it outside an in-flight index run. Phase 6
+  fails on it; the once-per-day health hook reports it if it appears later.
+- **The health hook reports; it never repairs.** No re-index, no Docker start,
+  no file edit from a SessionStart hook — it runs before an agent has context
+  and must cost a bounded, silent-when-clean moment.
 - **Never mutate the host toolchain.** Preflight detects and instructs; it does
   not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
 - **All file edits are idempotent.** The AGENTS.md policy block is
@@ -376,4 +432,4 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
   (gotcha E). Don't leave an orphaned node process to fake it.
 
 See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
-gotcha matrix (A–M) and the native-vs-fallback decision tree.
+gotcha matrix (A–N) and the native-vs-fallback decision tree.
