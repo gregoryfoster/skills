@@ -170,3 +170,7 @@ If nothing applies, omit this step entirely.
 - If `gh` CLI hits errors (e.g., Projects API changes), use `--json` flag workarounds as needed
 - The project's AGENTS.md is authoritative for commit conventions — read it before committing
 - `pre-ship.sh` auto-derives its per-SHA stamp prefix from `$(basename "$(git rev-parse --show-toplevel)")` — no project-name substitution needed
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

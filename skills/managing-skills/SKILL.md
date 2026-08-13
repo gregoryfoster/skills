@@ -392,3 +392,7 @@ Pass `--no-preflight` to skip the SSH ping if the operator already knows the age
 - `bash .skills/doctor.sh --version` prints the installed copy's stamp — worth including in a bug report, since the installed doctor and the vendored one can differ for one run after a submodule bump
 - The `skills-vendor/` directory should be treated as read-only — make changes upstream
 - The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed
+
+**Self-budget:** held to an **8,750-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
+6,000-token standard, set at current size so this file cannot grow.

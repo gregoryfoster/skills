@@ -167,3 +167,7 @@ If the review leads to structural changes:
 - README.md if module boundaries or service topology changed
 - Module-level docstrings affected by refactoring
 - An ADR (if directed) capturing *why* the change was made — the decision, the alternatives, the tradeoff — so the next reviewer inherits the reasoning, not just the result
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

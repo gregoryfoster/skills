@@ -138,3 +138,7 @@ Continue numbering from where the previous round ended. Never reset.
 ## Documentation sweep
 
 If changes affect schema, new APIs, user-facing behavior, or deployment — flag missing documentation updates as numbered findings.
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

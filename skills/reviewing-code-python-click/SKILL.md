@@ -157,3 +157,7 @@ Continue numbering from where the previous round ended. Never reset.
 ## Documentation sweep
 
 If changes affect command surface, new flags, user-facing behavior, deployment, or `--help` output — flag missing documentation updates as numbered findings. Spot-check AGENTS.md and README for drift: file paths still valid, conventions still match the code, command inventory still complete, `--help` output still matches documented behavior.
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

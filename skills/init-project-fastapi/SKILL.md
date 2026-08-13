@@ -502,3 +502,7 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 - When `ADMIN_UI=htmx`: `require_admin` fails closed (unconfigured `ADMIN_AUTH_HEADER` → 503, never open); the admin router mounts with `include_in_schema=False`; `htmx.min.js` is copied from this skill's assets (provenance = `<SKILL_SHA>`) — never hot-linked from a CDN.
 - `uv.lock` must be committed alongside `pyproject.toml`.
 - When `PRIVATE_WHEELHOUSE=find-links`: the order is always `auth → sync_wheelhouse.py → uv sync --frozen`. `uv.lock` records find-links wheels by filename with **no hash**, so a wheel of that exact filename must be present in `./.wheelhouse` *before* `uv sync --frozen` runs (syncing after is a hard resolution error), and the publish policy must be **immutable — never re-publish a filename, bump the version** (the sync script's same-size skip depends on it). The SA key is referenced by path via `GOOGLE_APPLICATION_CREDENTIALS` and never committed; CI is keyless WIF. See [`references/private-wheelhouse.md`](references/private-wheelhouse.md).
+
+**Self-budget:** held to a **17,100-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
+6,000-token standard, set at current size so this file cannot grow.

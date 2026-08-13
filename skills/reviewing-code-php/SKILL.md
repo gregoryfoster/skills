@@ -149,3 +149,7 @@ Continue numbering from where the previous round ended. Never reset.
 ## Documentation sweep
 
 If changes affect schema, new APIs, user-facing behavior, deployment, or theme/plugin inventory — flag missing documentation updates as numbered findings. Spot-check AGENTS.md and README for drift: file paths still valid, conventions still match the code, skill inventory still complete.
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

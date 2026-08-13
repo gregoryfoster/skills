@@ -433,3 +433,7 @@ its degraded policy the first time it is audited.
 
 See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
 gotcha matrix (A–N) and the native-vs-fallback decision tree.
+
+**Self-budget:** held to a **10,050-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
+6,000-token standard, set at current size so this file cannot grow.
