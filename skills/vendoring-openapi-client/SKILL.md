@@ -252,3 +252,7 @@ When a sidecar already exists:
   this global skill.
 - Secrets (spec-endpoint API keys, `GH_TOKEN`) come from env/secret stores —
   never committed, never inlined in scripts or workflows.
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

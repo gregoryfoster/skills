@@ -110,3 +110,7 @@ Present a summary:
 | Rule | Tool | Config | Wired into |
 |---|---|---|---|
 | `models` ⊄ `services` | import-linter | `pyproject.toml` | CI lint job + pre-commit |
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

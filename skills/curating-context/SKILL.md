@@ -63,10 +63,11 @@ behind. A member reporting "no ledger" is the expected pre-adoption state
 ## This skill's own surface
 
 `tests/structural/test_skill_self_budget.py` holds each `references/*.md` to the
-10,000-token per-doc budget and `SKILL.md` to a **7,600-token ratchet** — not the
-6,000 it enforces on `AGENTS.md`, because this file was 10,902 and the last 1,600
-cannot go without deleting procedure. That is Phase 4's escape clause, not a
-licence: the ratchet only ever comes down.
+10,000-token per-doc budget and `SKILL.md` to a **7,600-token ratchet (estimate
+and exact)** — not the 6,000 it enforces on `AGENTS.md`, because this file was
+10,902 and the last 1,600 cannot go without deleting procedure. That is Phase 4's
+escape clause, not a licence: the ratchet only ever comes down. Both readings
+must clear it, so no choice of measurement can loosen it.
 
 **Learnings carry an edit budget: +250 net tokens per round, or the headroom left
 under the ratchet — whichever is smaller.** The ratchet is the ceiling, the budget

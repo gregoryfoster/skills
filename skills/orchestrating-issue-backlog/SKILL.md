@@ -481,3 +481,7 @@ Session-specific institutional memory — interview answers, batch shapes, non-o
 - Q5 accept "no ceiling" as an answer (7th session, first negative result) — 2026-08-12
 
 When closing out a backlog orchestration session (Step 10), append a new entry to the reference file and update its index table. Promote any stable cross-session pattern into the body of this skill; leave one-off tactical details in the log.
+
+**Self-budget:** held to a **22,900-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
+6,000-token standard, set at current size so this file cannot grow.

@@ -193,6 +193,20 @@ enforced by the structural suite:
 Conditional-block delimiters and the `assets/` equivalents:
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
+## Self-budget
+
+Every `SKILL.md` is held to a **6,000-token ratchet** — the figure
+`curating-context` enforces on a consuming repo's `AGENTS.md` — by
+[tests/structural/test_skill_self_budget.py](tests/structural/test_skill_self_budget.py),
+which also holds every `references/*.md` to the 10,000-token per-doc budget.
+Thirteen of eighteen skills meet it; the rest carry a named exception with its
+reason beside it, and every file names its own figure in prose so the gate and
+the run read the same number. A ratchet only ever comes down.
+
+It binds **both** readings — the offline estimate pre-commit sees, and
+`count_tokens` when `ANTHROPIC_API_KEY` is loaded. They disagree by up to 12%
+here, so neither alone is the contract.
+
 ## Commit conventions
 
 Conventional Commits style:

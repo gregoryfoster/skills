@@ -118,3 +118,7 @@ Treat plan-review feedback as first-class. The plan is the artifact under review
 - Plans are commit-able artifacts. They survive the work that follows them and form a record of *why* the codebase looks the way it does.
 - The plans directory is project-configurable precisely because some projects keep plans alongside other design docs (`docs/plans/`), others under a tooling-vendored path. Use the resolution order; don't hardcode.
 - `Supersedes:` chains let a topic's planning history be reconstructed without git archaeology. Use them on pivot, not on every minor edit. The template's frontmatter exposes this as a lowercase YAML key — set `supersedes: <relative path to prior plan>` on the new plan.
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.

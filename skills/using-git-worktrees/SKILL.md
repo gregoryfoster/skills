@@ -169,3 +169,7 @@ Wrappers must not silently bypass the Iron Law gates. If the wrapper genuinely n
 - `git worktree list` is authoritative — never maintain a separate registry
 - A branch may be deleted while a worktree on it exists; reattach with `git worktree repair` if you need to recover
 - Bare repositories: out of scope; the consumers covered by this skill are all non-bare
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — both readings must clear it, so
+no choice of measurement can loosen it.
