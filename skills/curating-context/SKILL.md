@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.8"
+  version: "1.9"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -142,13 +142,8 @@ any edit. Without it the scored run is precisely the run that can never be score
 and the `docs_orphaned` gate has nothing to compare against. Phase 7 appends the
 after-row; **never rewrite the baseline row to match it**.
 
-A credential is not optional even interactively: an estimate records
-`tokens_exact: false`, and `record-telemetry.sh` refuses that append against a
-ledger of exact rows rather than nulling its own delta. A WARN from `--exact`
-means the row is an estimate whatever credential was accepted — prefer stopping
-to recording an incomparable row. An exact run also writes the observed
-bytes-per-token ratio to `.skills/context-token-ratio`, which is what keeps the
-offline estimators honest between runs
+A credential is not optional even interactively, and a WARN means the row is an
+estimate whatever credential was accepted
 ([both](references/budget-and-metrics.md#measuring-tokens),
 [the baseline pair](references/telemetry.md#the-baseline-row-is-not-optional-either)).
 
@@ -160,11 +155,9 @@ Read the baseline before touching anything. Four numbers drive the whole run:
 - `links.orphans` — live docs nothing points at. **The most common cohort defect.**
 - `docs[].over_budget` — reference docs too large to be worth loading.
 
-`totals.tokens_live` is a ceiling to **watch**, not to optimise: a successful
-demotion *raises* it. The trend follows `policy.tokens`. Archival subtrees
-(`docs/plans/`, `specs/`, `research/`, `audits/`, `archive/`, at any depth) are
-excluded by default — a since-moved path inside a dated snapshot is a correct
-historical record.
+`totals.tokens_live` is watched, not optimised — a good demotion *raises* it — and
+archival subtrees are excluded
+([both](references/budget-and-metrics.md#tokens_live-is-watched-not-optimised)).
 
 ## Phase 2 — Verify facts
 
@@ -341,26 +334,22 @@ Then get the branch a **fresh-eyes review pass**. If a late fix changes the coun
 Never push to the default branch. Never delete on an UNVERIFIABLE verdict, even
 under budget pressure.
 
-`cohort-report.sh --cohort-file .skills/cohort` gives the cross-repo view: which
-optimisation actually paid, per repo. Repos with no ledger are reported rather
-than skipped — on a weekly cadence, missing telemetry is itself the finding.
+The cross-repo view is `cohort-report.sh`
+([the roll-up](references/telemetry.md#cohort-roll-up)).
 
 ## Phase 8 — Wire the continuous surfaces
 
 Three surfaces keep the ground this run won. Offer all three once per repo, after
 the first successful curation:
 
-- **The cadence** — `install-cadence.sh`. What goes on the clock is a
-  **measurement, not a curation**. It needs the `ANTHROPIC_API_KEY` repository
-  secret, or the job records *nothing*, silently, every week
+- **The cadence** — `install-cadence.sh`. A **measurement, not a curation**, and
+  it needs the `ANTHROPIC_API_KEY` repository secret or records *nothing*
   ([references/cadence.md](references/cadence.md)).
-- **Review-time delta** — `context-delta.sh`, already called from the four
-  `reviewing-code*` variants' `gather-context.sh`, so it needs no wiring. It sees
-  what the guard cannot: the guard matches `Edit|Write|MultiEdit`, so a shell
-  redirect (`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it.
+- **Review-time delta** — `context-delta.sh`, already wired into the four
+  `reviewing-code*` variants. It sees what the guard's `Edit|Write|MultiEdit`
+  matcher cannot: a shell redirect, or a `NotebookEdit`.
 - **Write guard** — `install-guard.sh --budget 6000 --doc-budget 10000`, a
-  `PostToolUse` hook that flags an edit pushing a file further over budget. It
-  never blocks and stays silent when an edit reduces the count
+  `PostToolUse` hook that never blocks
   ([references/write-guard-hook.md](references/write-guard-hook.md)).
 
 The prompt to offer, the ratchet the three form together, and the hook-wiring
