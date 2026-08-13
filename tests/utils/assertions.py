@@ -142,8 +142,10 @@ def assert_sequential_numbering(text: str) -> None:
 # `Suggested approach:` since 547f615 (v1.1), and the prompts in
 # test_output_format.py asked the model for the stale wording — so the check
 # passed by MASKING the divergence rather than by detecting it. #142 then added
-# `Evidence:` and widened the gap. Keep these tables next to the SKILL.md that
-# owns each envelope; test_finding_evidence.py guards the architecture one.
+# `Evidence:` and widened the gap. Both envelopes are tabled here rather than
+# inferred, and test_finding_evidence.py pins the architecture one against
+# reviewing-architecture/SKILL.md — so a label changing in the skill fails
+# there, and this table is what the integration assertions read.
 _ENVELOPES = {
     "code": ("What:", "Why it matters:", "Suggested fix:"),
     "architecture": (

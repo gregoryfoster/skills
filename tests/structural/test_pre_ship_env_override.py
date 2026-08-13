@@ -257,7 +257,25 @@ def _extract_loader(variant: str) -> str:
     assert seen and out[-1].strip() == "}", (
         f"could not lift a complete load_env() out of {variant}'s block"
     )
-    return "\n".join(out)
+    loader = "\n".join(out)
+    # Extraction is positional (strip one `#`, then two spaces of indent), so a
+    # re-indented block or a stray `}` at column 0 would yield a DIFFERENT
+    # program from the one a consumer copies — and every test below would still
+    # pass, against something nobody ships. These are the load-bearing lines of
+    # the recipe; if the lift stops producing them, fail here rather than
+    # quietly testing a truncated loader.
+    for landmark in (
+        "while IFS= read -r line",
+        "case $key in",
+        'export "$key=$val"',
+        'done < "$1"',
+    ):
+        assert landmark in loader, (
+            f"{variant}: load_env() extraction lost {landmark!r}. The tests "
+            "below would have run against a truncated program. Check the "
+            "block's indentation against _extract_loader's assumptions."
+        )
+    return loader
 
 
 def _run_loader(variant: str, env_text: str, probe: str) -> subprocess.CompletedProcess:
