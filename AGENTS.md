@@ -136,6 +136,11 @@ Two conventions here carry a full template and a rationale, and live in
 - **Gate-script discipline.** A script whose output drives a ship/skip decision
   must never silently swallow the stderr of the tool producing that output.
   `TestPreShipGateHardening` enforces it for `shipping-work*/scripts/pre-ship.sh`.
+  Each of those four also publishes a project-local override point recommending
+  a *wrapper* — `exec` the vendored script through the `skills/…` symlink —
+  never a fork, which drifts silently on every submodule update.
+  `test_pre_ship_env_override.py` keeps the block from drifting back to one
+  variant ([#105](https://github.com/gregoryfoster/skills/issues/105)).
 
 ## Worktree root convention
 

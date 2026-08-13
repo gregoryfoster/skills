@@ -44,6 +44,62 @@ fi
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
+# --- Project-local env loading (optional override point) ---------------------
+# Upstream ships without env loading — most projects don't need it. If yours
+# does (test fixtures reading live secrets, a conftest that hard-fails on a
+# missing DSN), do NOT fork this script: a fork copies every gate below to add
+# a handful of lines, then stops receiving upstream fixes without saying so.
+# The skill's resolution loop (SKILL.md Step 1) probes `scripts/` first, so a
+# project-local WRAPPER wins and delegates back here:
+#
+#   #!/usr/bin/env bash
+#   set -euo pipefail
+#   PROJECT_ROOT=$(git rev-parse --show-toplevel); cd "$PROJECT_ROOT"
+#   DELEGATE="skills/shipping-work-python-click/scripts/pre-ship.sh"
+#   [[ -f "$DELEGATE" ]] || {
+#     echo "ERROR: vendored gate missing at $DELEGATE" >&2
+#     echo "       fix: git submodule update --init --recursive" >&2
+#     exit 2
+#   }
+#   ENV_KV=$(cat /etc/<project>/.env "$PROJECT_ROOT/.env" 2>/dev/null | xargs) || true
+#   if [ -n "$ENV_KV" ]; then
+#     set -f          # $ENV_KV is unquoted below; a glob char would match cwd
+#     # Word splitting is the mechanism here, not an oversight; set -f covers
+#     # the globbing half. Both suppressions below are deliberate.
+#     # shellcheck disable=SC2086,SC2163
+#     export $ENV_KV
+#     set +f
+#   fi
+#   exec bash "$DELEGATE" "$@"
+#
+# Every line there is a trap someone has already hit:
+#   - Delegate through the SYMLINK path (skills/...), never skills-vendor/... —
+#     the symlink is the stable interface, the vendor layout is not.
+#   - `exec`, so the exit code the Iron Law gates on propagates unchanged.
+#   - "$@", so `--help` still reaches this script.
+#   - The missing-delegate guard exits 2, matching this script's own
+#     tooling/infra code so operators read one exit-code table rather than
+#     two. Without the guard an unpopulated submodule (a clone without
+#     --recurse-submodules, a fresh `git worktree add`) fails as bash's
+#     generic "No such file or directory".
+#   - The `-n "$ENV_KV"` guard. With both env files absent the substitution is
+#     empty, and a bare `export $(...)` degenerates to plain `export`, which
+#     prints every exported variable — secrets included — into the ship-gate
+#     transcript. `|| true` keeps the same absent-file case from tripping
+#     `set -o pipefail` on `cat`.
+#   - `set -f`, because the expansion is deliberately unquoted (word-splitting
+#     is how the pairs separate): a `*` or `?` inside a secret would otherwise
+#     glob against the cwd.
+#   - Parse the env file, never source it (house rule — see
+#     skills/curating-context/scripts/measure-context.sh). `cat | xargs`
+#     handles plain KEY=value lines only; quoted or spaced values need a real
+#     parser, not `set -a; . file`.
+#
+# This variant makes the wrapper load-bearing rather than merely tidy: `exec`
+# leaves $0 pointing at the vendored copy, so SCRIPT_DIR above still resolves
+# detect-import-targets.sh / detect-test-dirs.sh next to it. A fork sitting in
+# the project's own scripts/ would look for those helpers there and exit 2.
+
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see
 # (operators using raw `git worktree remove`, post-destroy spawn races, etc.).

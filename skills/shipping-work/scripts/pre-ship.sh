@@ -42,6 +42,42 @@ exit 1
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
+# --- Project-local env loading (optional override point) ---------------------
+# Upstream ships without env loading — most projects don't need it. If yours
+# does (test fixtures reading live secrets, a bootstrap that hard-fails on a
+# missing DSN), load it here, at the top of your override:
+#
+#   ENV_KV=$(cat /etc/<project>/.env "$PROJECT_ROOT/.env" 2>/dev/null | xargs) || true
+#   if [ -n "$ENV_KV" ]; then
+#     set -f          # $ENV_KV is unquoted below; a glob char would match cwd
+#     # Word splitting is the mechanism here, not an oversight; set -f covers
+#     # the globbing half. Both suppressions below are deliberate.
+#     # shellcheck disable=SC2086,SC2163
+#     export $ENV_KV
+#     set +f
+#   fi
+#
+# Note how this differs from the language variants (-php, -python-click,
+# -python-fastapi). Those ship a real gate, so their advice is a project-local
+# WRAPPER that loads env and `exec`s the vendored script — one copy of the
+# logic, upstream fixes land automatically. This script is a stub that exits 1
+# above, so there is nothing to delegate to: your project-local copy IS the
+# gate, and the env loading belongs inside it.
+#
+# Three traps in those few lines:
+#   - The `-n "$ENV_KV"` guard. With both env files absent the substitution is
+#     empty, and a bare `export $(...)` degenerates to plain `export`, which
+#     prints every exported variable — secrets included — into the ship-gate
+#     transcript. `|| true` keeps the same absent-file case from tripping
+#     `set -o pipefail` on `cat`.
+#   - `set -f`, because the expansion is deliberately unquoted (word-splitting
+#     is how the pairs separate): a `*` or `?` inside a secret would otherwise
+#     glob against the cwd.
+#   - Parse the env file, never source it (house rule — see
+#     skills/curating-context/scripts/measure-context.sh). `cat | xargs`
+#     handles plain KEY=value lines only; quoted or spaced values need a real
+#     parser, not `set -a; . file`.
+
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see
 # (operators using raw `git worktree remove`, post-destroy spawn races, etc.).
