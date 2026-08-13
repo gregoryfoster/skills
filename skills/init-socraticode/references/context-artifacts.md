@@ -61,6 +61,7 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 | `agent-guidelines` | `./AGENTS.md` | always (every cohort repo registers it) |
 | `commands` | `./docs/COMMANDS.md` | the project keeps a command reference |
 | `skills-doc` | `./docs/SKILLS.md` | the project vendors skills |
+| `socraticode-doc` | `./docs/SOCRATICODE.md` | always (Phase 3 writes it) |
 | `design-plans` | `./docs/plans/` (dir) | plans dir exists (writing-plans default) |
 | `design-specs` | `./docs/specs/` and/or `./docs/research/` (dirs; one entry each) | separate spec/research trajectories exist |
 | `architecture` | `./docs/ARCHITECTURE.md` and/or `./README.md` (one entry each) | an architecture doc exists |

@@ -148,9 +148,22 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
       copy — e.g. a repo where an earlier `init-socraticode` run appended a marked
       block beside the original unmarked one, where step (a) takes the marker-pair
       branch and would otherwise leave the unmarked copy behind.
-   Never leave more than one policy section. Adapt the last tool-table row and any
-   path examples to this project's real layout.
-2. **SessionStart hook** (when `INSTALL_HOOK=yes`) → write the reminder script
+   Never leave more than one policy section. Adapt any path examples to this
+   project's real layout, and pick the **variant** the Phase 6 yield gate calls
+   for (A standard / B degraded — Phase 6 re-runs this step if it returns `low`).
+   **Rescue before replacing on the unmarked branch:** anything in that span the
+   template does not itself carry is repo-authored. Move it, unchanged, to a
+   `## Code Exploration Notes (repo-specific)` section after the END marker and
+   name every moved block in the report — a whole-span replace deletes it
+   otherwise, silently ([#115](https://github.com/gregoryfoster/skills/issues/115)).
+2. **Detail doc** → write `docs/SOCRATICODE.md` from
+   [`references/socraticode-doc.md`](references/socraticode-doc.md): the full
+   tool table, the `ToolSearch` prefetch string, per-tool notes, graph-health
+   and index-scope guidance. The `AGENTS.md` block links to it and carries only
+   what an agent needs on nearly every task; everything read once lives here.
+   Create `docs/` if absent, and overwrite the file wholesale on a re-run (it
+   has no marker pair because it *is* the block's overflow).
+3. **SessionStart hook** (when `INSTALL_HOOK=yes`) → write the reminder script
    (`.claude/hooks/socraticode-reminder.sh`) and **merge** its hook entry into
    `.claude/settings.json` (create if absent). Dedupe by scanning existing
    command strings for `socraticode-prefetch` **or** `socraticode-reminder` (the
@@ -158,7 +171,7 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    canonical command, upgrade that one command string in place (propagates the
    `${CLAUDE_PROJECT_DIR:-.}` fallback to legacy installs). Preserve existing
    `hooks`/`permissions`/other keys. Never clobber the file.
-3. **Linked projects** (when `LINKED_PROJECTS` is set) → write
+4. **Linked projects** (when `LINKED_PROJECTS` is set) → write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
    of `.claude/settings.local.json` (create the file if absent, merge if present).
    Enables cross-repo `codebase_search` over sibling service checkouts — archiver
@@ -300,7 +313,7 @@ Present a completion table:
 | Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) · Node `<version>` (>=18 <26) ✓ · npx ✓ |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
-| Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited) |
+| Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited) · `docs/SOCRATICODE.md` written |
 | Prefetch hook | `<INSTALL_HOOK>` — SessionStart in `.claude/settings.json` → `.claude/hooks/socraticode-reminder.sh` |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
 | Index exclusions | `.socraticodeignore` (vendored skill trees excluded) |
@@ -331,9 +344,21 @@ already satisfied; Phase 5 re-indexes only if the index is missing or stale.
 - **Never mutate the host toolchain.** Preflight detects and instructs; it does
   not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
 - **All file edits are idempotent.** The AGENTS.md policy block is
-  marker-delimited; the settings.json hook is merged and deduped. Re-running the
-  skill, or running it on a project that already has these files, must not
-  duplicate blocks or stack hooks.
+  marker-delimited; the settings.json hook is merged and deduped;
+  `docs/SOCRATICODE.md` is overwritten wholesale. Re-running the skill, or
+  running it on a project that already has these files, must not duplicate
+  blocks or stack hooks.
+- **The policy block pays rent on every invocation.** It is the one section
+  `curating-context` will not edit, so whatever lands in `AGENTS.md` is a fixed
+  cost the repo cannot curate away — 1,247 tokens and 15% of watcher's whole
+  curated file before the split. Keep the block at the negative rule plus the
+  two or three highest-traffic rows; everything else goes to
+  `docs/SOCRATICODE.md`. Adding a row to the block is a budget decision
+  ([#115](https://github.com/gregoryfoster/skills/issues/115)).
+- **Repo-authored content inside an unmarked policy section is rescued, never
+  replaced.** The unmarked branch replaces a whole span, and repos grow real
+  content in it. Move anything the template does not carry to
+  `## Code Exploration Notes (repo-specific)` outside the markers, and say so.
 - **The driver is a fenced fallback, not the default.** Prefer native tools;
   reach for `mcp-driver.mjs` only when the session won't expose the tools even
   after a restart. It owns its child process — no `pkill -f`.
