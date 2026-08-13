@@ -119,6 +119,15 @@ What counts as "present":
                     `../` is not touched, so a REPOINTED link is still a
                     difference and still reports (#119).
 
+  A leading YAML frontmatter block is not compared at all, on either side. Phase
+  7 MANDATES bumping SKILL.md's `version`, so a line-based check reported the
+  run that followed the skill's own instructions as losing `version: "1.6"` —
+  and the warrant vocabulary is closed, with no warrant meaning "this field is
+  required to change" (#136). Frontmatter is metadata, not the prose and
+  pointers this check protects. The report says how many lines it skipped. A
+  file opening with a `---` thematic rule is not frontmatter: the block counts
+  only when it is closed and everything inside it reads as YAML.
+
   Nothing else is normalised. Reflowed prose, changed wording, appended clauses,
   and dropped lines all fail, which is the point. Whole-line matching is what
   makes that true: substring matching passed a dropped `1. Commit and push`
@@ -310,6 +319,41 @@ HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 # ignore it will ignore a real loss in it.
 LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 
+# A frontmatter key, loosely: `name:`, `  version: "1.7"`, or a `- ` list item.
+# Loose on purpose — the point is not to validate YAML but to tell a metadata
+# block from a document that opens with a thematic rule.
+YAML_ISH = re.compile(r"^(?:\s+\S|-\s|[\w.$-]+\s*:)")
+
+def strip_frontmatter(lines):
+    """Drop a leading YAML frontmatter block. Returns (lines, how many dropped).
+
+    Phase 7 REQUIRES bumping SKILL.md's frontmatter `version` whenever a change
+    would alter what a run does, and Phase 6 then reported the old
+    `version: "1.6"` as a line that existed at --base and exists nowhere now.
+    The run that follows the skill's own instructions could not pass the skill's
+    own gate, and the warrant file cannot absorb it: #111 shipped a CLOSED
+    vocabulary and none of the five warrants means "this field is required to
+    change" (#136).
+
+    Frontmatter is metadata the run is TOLD to change, not the prose and
+    pointers this check exists to protect, so it is not compared at all — on
+    either side, or a body line could be "relocated" into a destination's
+    metadata block and pass.
+
+    A document may legitimately open with a `---` thematic rule, and swallowing
+    everything up to the next one would hide real content. So a block counts
+    only when it is closed AND everything in it reads as YAML.
+    """
+    if not lines or lines[0].strip() != "---":
+        return lines, 0
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body = [x for x in lines[1:i] if x.strip()]
+            if body and all(YAML_ISH.match(x) for x in body):
+                return lines[i + 1:], i + 1
+            return lines, 0
+    return lines, 0
+
 def normalise(raw):
     """One line -> its comparable form, or "" when it carries no content.
 
@@ -336,6 +380,7 @@ def normalise(raw):
 
 try:
     before = open(before_path, encoding="utf-8", errors="replace").read().splitlines()
+    before, front_skipped = strip_frontmatter(before)
     dest_paths = [p for p in open(dests_path, encoding="utf-8").read().splitlines() if p]
     # A SET of whole lines per destination, not the raw text. Substring matching
     # against the text was the original implementation and it was far weaker than
@@ -348,6 +393,7 @@ try:
     dests = {}
     for path in dest_paths:
         lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        lines, _ = strip_frontmatter(lines)
         dests[path] = {n for n in (normalise(l) for l in lines) if n}
 except OSError as exc:
     print(f"ERROR {exc}", file=sys.stderr)
@@ -458,6 +504,11 @@ total = kept + sum(len(v) for v in relocated.values()) + len(lost)
 # Named, not "policy file": --file takes a reference doc when proving a split,
 # and a report headed "policy file" for docs/API.md reads as the wrong run.
 print(f"{policy} at base: {total} non-blank lines", file=out)
+# Named, because "not compared" is a claim a report owes its reader — this is
+# the one place the check deliberately looks away.
+if front_skipped:
+    print(f"  frontmatter not compared:   {front_skipped} "
+          "(metadata; Phase 7 mandates the version bump)", file=out)
 print(f"  still inline:               {kept}", file=out)
 for path in sorted(relocated):
     print(f"  relocated verbatim -> {path}: {len(relocated[path])}", file=out)

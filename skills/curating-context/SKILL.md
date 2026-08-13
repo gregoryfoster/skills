@@ -251,8 +251,8 @@ clean file:
      Phase 6 reports a wave of dead links.
    - **A `###` subsection becomes `##`** at the top of its own document.
 
-   `prove-no-loss.sh` normalises exactly these two and nothing else, so any other
-   difference is reported as content loss.
+   `prove-no-loss.sh` normalises exactly these two, and skips frontmatter; any
+   other difference is reported as content loss.
 5. **Tighten class C**, then **delete class D**.
 
 ## Phase 6 — Prove no loss
