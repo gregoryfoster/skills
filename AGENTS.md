@@ -116,7 +116,11 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
   over `skills/*/scripts/`, `scripts/` and `.claude/hooks/`, and skips loudly when
-  the binary is absent; `SHELLCHECK_REQUIRED=1` turns that skip into a failure.
+  the binary is absent or older than 0.7.0 — the release that added
+  `--source-path=SCRIPTDIR`, without which an older build rejects the invocation
+  outright instead of linting
+  ([#140](https://github.com/gregoryfoster/skills/issues/140)).
+  `SHELLCHECK_REQUIRED=1` turns either skip into a failure.
 - A `# shellcheck disable=SCxxxx` **must** carry a reason comment on the line
   directly above it. `TestShellcheckSuppressionsCarryReasons` enforces the
   pairing, so a suppression stays a documented decision rather than a silencer
