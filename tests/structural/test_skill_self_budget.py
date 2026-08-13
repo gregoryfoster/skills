@@ -191,7 +191,23 @@ SKILL_MD_RATCHETS = {
     # outlier note below. Bound by its ESTIMATE, which reads 1,532 higher than
     # count_tokens — the reason this file learned that "exact is the contract"
     # does not survive contact with the gate that actually runs.
-    "orchestrating-issue-backlog": 22_900,
+    #
+    # Raised once, from 22,900, and the raise is the record of what it bought:
+    # the skill's own Orchestrator step 2 ("check out `batch/<X>` before
+    # spawning agents") took production down in a repo whose deploy units carry
+    # a checkout guard, across three separate batches before anyone connected
+    # the outage to this file (#146). A ratchet that forces a runbook to omit
+    # the rule its own instruction needs is optimising the wrong quantity.
+    #
+    # The session paid most of the way first, so the raise is the residue and
+    # not the bill: ~1,275 bytes of genuine double-writing removed — the
+    # stale-checkout paragraph told three times over (checklist item 0, Step
+    # 1–2, Rule 1), four Key Principles bullets restating Step 7 and the branch
+    # strategy, and nine provenance lines folded into the siblings that already
+    # named the same steps — against ~1,820 bytes of new rule. Net +207 tokens.
+    # Set at current size again: this file still cannot grow without someone
+    # arguing for it here.
+    "orchestrating-issue-backlog": 23_110,
 }
 
 # The two outliers, at 2.8x and 3.6x the standard, deserve more than one line.
