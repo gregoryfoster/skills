@@ -81,19 +81,29 @@ grepping an identifying symbol from its body rather than by trusting the body:
 
 ### Two corrections written back to GitHub
 
-**#143's proposed discriminator is disproven.** The issue asserts that restricting the
-check to `./`- and `../`-prefixed targets "passes all four carve-outs without an
-allowlist." A full sweep of `skills/**/*.md` found a **fifth** carve-out, and it is
-relative-prefixed:
+**#143's proposed discriminator needed replacing — but not for the reason recorded here
+at planning time. ~~Disproven by a fifth carve-out.~~ RETRACTED — see below.**
 
-```
-skills/curating-context/SKILL.md:250  ->  ](../tests/x.py)
-```
+*Planning-time claim (WRONG):* a sweep of `skills/**/*.md` found a fifth, relative-prefixed
+carve-out at `skills/curating-context/SKILL.md:250 -> ](../tests/x.py)`, so restricting the
+check to `./`/`../` targets does not clear it. Scored Scope Clarity 3 → 2 on that basis.
 
-It is an illustrative placeholder inside prose explaining that a demoted link *gains* a
-`../` — precisely the string the discriminator was built to catch. Scope Clarity 3 → 2,
-score 11 → 10. The exemption mechanism is left to the implementing agent (see Key
-decisions).
+*What the implementing agent established (CORRECT):* that string is **not a markdown link**.
+It is a bare `](…)` fragment inside an inline code span, with no `[label]`, in prose that
+quotes a link's *form*. Any extractor requiring the real `[label](target)` grammar never
+sees it. The planning sweep used a loose `\]\(…\)` regex that matched fragments — the same
+defect the agent then found in `measure-context.sh:533`, which is why that script reports
+four phantom dead links for this file.
+
+The real survey is **8 dead links across 5 files**, none relative-prefixed — so the issue's
+`./`/`../` discriminator would in fact have cleared the current tree. It was still the wrong
+shape, for a reason neither the issue nor this document identified: **all 8 sit inside a
+code fence or an inline code span**, so the true distinction is the *context a link sits in*,
+not its target string. A target-string discriminator passes today and breaks the moment
+someone writes a fenced example with a `../` prefix.
+
+Lesson recorded in the process log: an orchestrator's quick regex is exactly as falsifiable
+as the issue body it audits, and more dangerous, because it arrives as a *correction*.
 
 **#141's ratchet question is answered.** Shared standard plus named exceptions, and the
 gate does **not** assert on dead links. Scope Clarity 1 → 3, score 11 → 13.
