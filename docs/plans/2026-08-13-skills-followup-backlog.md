@@ -79,7 +79,7 @@ Both are written back to the issues.
 | File | Contending issues | Handling |
 |---|---|---|
 | `curating-context/scripts/measure-context.sh` | #147 (`extract_links` :525–535) · #145 (ratio :378, :813–854) | Separated windows — resolved by putting them in different batches, which is cheaper than defending a boundary |
-| `curating-context/references/budget-and-metrics.md` | #148 (2 "in full" blocks) · #145 (ratio prose :231, :242, :313) | Separated windows, different batches |
+| `curating-context/references/budget-and-metrics.md` | #148 (3 "in full" blocks) · #145 (ratio prose :231, :242 — **not :313**) | See the correction below |
 | `orchestrating-issue-backlog/SKILL.md` | #150 (Rule 3 :370–407, worker protocol :301–310) · #152 (reference links :33, :437) · #146/#153/#154 (7 promotions) | Sequenced across all three waves |
 | `references/process-log.md` | #152 (restructure) · #146/#151/#153/#154 (appends) | Appends land **first**; #152 migrates once |
 | `test_context_surface.py` (3,724 ln) | #147 (`links_dead` :1176–1277, :3678–3723) · #145 (`bytes_per_token` :3688) | **Line 3688 read-only for both** — one fixture row naming both concerns |
@@ -124,7 +124,7 @@ Gate: start immediately. No intra-wave merge ordering required.
 
 | Agent | Issues | Owns |
 |---|---|---|
-| **RATIO** | #145 | `measure-context.sh:370–390`, `:800–870`, `context-budget-guard.sh`, `budget-and-metrics.md:225–320` |
+| **RATIO** | #145 | `measure-context.sh` ratio machinery, `context-budget-guard.sh`, `budget-and-metrics.md` ratio prose at **`:231` and `:242` only** |
 | **APPENDS** | #146, #151, #153, #154 | `references/process-log.md` (index + EOF), `orchestrating-issue-backlog/SKILL.md` (promotions only) |
 
 Gate: `batch/c` on `main`. **APPENDS merges last** — its promotions edit the same SKILL.md
@@ -137,6 +137,50 @@ PROTO reshaped, so it rebases onto the merged result.
 | **JOURNAL** | #152 | `references/process-log.md` → indexed journal in yearly subdirectories, the four `references/*.md` globs, `DOC_BUDGET_EXCEPTIONS` |
 
 Single-agent batch; the feature branch serves directly.
+
+## Batch C execution — what the plan got wrong
+
+Merged as `8db23ba`. Suite 1956 → **2080 passed, 110 skipped, 147 deselected**. All four
+agents corrected the issue body, the brief, or both.
+
+**The Batch D ownership boundary above was wrong, and INFULL caught it before RATIO
+launched.** `budget-and-metrics.md`'s `### The Phase 1 credential note, in full` occupies
+lines **303–316** — inside the `:225–320` window this plan reserved for #145. Worse, the
+ratio site named at `:313` is a line *inside that demoted snapshot*, so RATIO would have
+been rewording a frozen copy of `SKILL.md` Phase 1 text rather than live prose. Only `:231`
+and `:242` are live. The table above is corrected; the original boundary is recorded here
+because the lesson is that **a line-window boundary drawn over a file containing demoted
+snapshots is not safe until you know where the snapshots are** — the window looks like
+prose from the outside.
+
+**Three of four agents found the provisioned worktree has no `.venv`,** which this plan's
+briefs mandated. Filed as [#156](https://github.com/gregoryfoster/skills/issues/156). This
+is a second instance of #150's own class — a brief prescribing state the worktree does not
+have — and it was in the brief written *to fix* the first instance.
+
+**#147 was not "mechanical, Scope 3".** The brief flagged the risk and it landed: the
+grammar ports from `test_relative_links.py`, the *masking* does not. Python has
+backreferences and lookarounds; awk has neither, so the code-span matcher is a hand-written
+character scanner and the "cannot cross a blank line" guard became paragraph buffering.
+125 lines of awk for a 3-line pipeline. Correct score was Scope 2.
+
+**#148's count was 8; the truth was 13.** The issue's grep saw two of the six phrasings the
+convention actually uses. One block had shipped *inside* a fenced ```` ```markdown ```` example
+since v1.7 — never a heading, unanchorable, first line lost in transit, and invisible to
+every gate because a fenced link is not a link.
+
+**#149's premise was inverted, and the correction came from evidence I had in hand.** The
+agent found every harness worktree `locked` and concluded `--unlock` was routinely required
+— then noted that this contradicted #144's eight successful manual teardowns and doubted
+the *record* rather than its own inference. One `git worktree list --porcelain` with two
+agents finished and two running settled it: **the lock tracks agent liveness**, so it is
+always gone by teardown. Teardown of all four worktrees then ran with no flags at all.
+
+**#150's own fix (2) was wrong as filed.** "Step 1, before the isolation pre-flight" would
+have a fallen-through worker run `git merge` — which writes files — in the main checkout,
+which is exactly what the pre-flight's abort clause exists to prevent. Implemented as step
+3, after it. Option (4) is rejected: pushing `batch/<X>` creates `origin/batch/<X>` and does
+not move `origin/main`, so it cannot change what the harness reaches for.
 
 ## Key decisions
 
