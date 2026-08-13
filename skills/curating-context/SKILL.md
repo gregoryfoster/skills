@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.7"
+  version: "1.8"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -246,13 +246,13 @@ clean file:
 
    Two mechanical adjustments come with every move, and only these two:
 
-   - **Relative links gain a level.** A block moving from the repo root into
-     `docs/` turns every `](tests/x.py)` into `](../tests/x.py)`. Skip this and
-     Phase 6 reports a wave of dead links.
+   - **Relative links are re-aimed.** A block moving from the repo root into
+     `docs/` turns `](tests/x.py)` into `](../tests/x.py)`, and `](docs/X.md)`
+     into `](X.md)`. Skip this and Phase 6 reports dead links.
    - **A `###` subsection becomes `##`** at the top of its own document.
 
-   `prove-no-loss.sh` normalises exactly these two and nothing else, so any other
-   difference is reported as content loss.
+   `prove-no-loss.sh` normalises exactly these two, and skips frontmatter; any
+   other difference is reported as content loss.
 5. **Tighten class C**, then **delete class D**.
 
 ## Phase 6 — Prove no loss
