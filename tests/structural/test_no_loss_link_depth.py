@@ -371,3 +371,130 @@ class TestPrefixErasureIsNotTargetBlind:
             "- See [other](OTHER.md) for the rules, all of them.",
         )
         assert _run_policy(repo).returncode == 3
+
+
+def _skill_demote_repo(tmp_path: Path, base_line: str, moved_line: str) -> Path:
+    """A demotion on a SKILL's OWN surface, where the policy file is not at the
+    repo root: `skills/demo/SKILL.md` demoting into `skills/demo/references/`.
+
+    This is the shape `curating-context` is run in when it curates itself, and
+    the shape every vendored skill has. Its links are written relative to the
+    skill directory — `](references/X.md)`, twenty-one times in this repo's own
+    SKILL.md — not relative to the repo root.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "skills" / "demo" / "references").mkdir(parents=True)
+    (repo / "skills" / "demo" / "SKILL.md").write_text(
+        f"# Demo\n\n## Rules\n\n{base_line}\n")
+    (repo / "skills" / "demo" / "references" / "OTHER.md").write_text(
+        "# Other\n\nthe rules\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "before")
+
+    (repo / "skills" / "demo" / "SKILL.md").write_text(
+        "# Demo\n\nSee [references/STYLE.md](references/STYLE.md).\n")
+    (repo / "skills" / "demo" / "references" / "STYLE.md").write_text(
+        f"# Style\n\n## Rules\n\n{moved_line}\n")
+    return repo
+
+
+def _run_skill(repo: Path, *extra: str):
+    return subprocess.run(
+        ["bash", str(PROVE), "--base", "HEAD",
+         "--file", "skills/demo/SKILL.md",
+         "--docs-dir", "skills/demo/references", *extra],
+        capture_output=True, text=True, cwd=str(repo),
+        env=_clean_env(), timeout=30,
+    )
+
+
+class TestThePrefixIsRelativeToThePolicyFile:
+    """#137's fix built the erasable prefix from the repo-relative --docs-dir
+    string, so it could only ever fire for a policy file at the repo root.
+
+    A skill curating its own surface passes `--docs-dir
+    skills/demo/references`, which made the pattern `](skills/demo/references/`
+    — but SKILL.md writes its links relative to its own directory, as
+    `](references/X.md)`. The prefixes never matched, the substitution was a
+    no-op, and the demotion case reported LOST on exactly the surface #137
+    exists to fix. A link is written relative to the file that carries it, so
+    the prefix a demotion removes is the docs root seen FROM the policy file.
+    """
+
+    def test_a_demoted_sibling_link_is_accounted_for(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](references/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        result = _run_skill(repo)
+        assert result.returncode == 0, (
+            f"a demotion on a skill's own surface reported lost:"
+            f"\n{result.stdout}{result.stderr}"
+        )
+        assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
+
+    def test_every_link_on_the_line_is_re_aimed(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- [a](references/A.md) and [b](references/B.md) and prose.",
+            "- [a](A.md) and [b](B.md) and prose.",
+        )
+        assert _run_skill(repo).returncode == 0
+
+    def test_the_repo_relative_prefix_still_works(self, tmp_path: Path):
+        """The canonical shape #137 shipped for is untouched — a policy file at
+        the repo root sees `docs` as both prefixes at once."""
+        repo = _demote_repo(
+            tmp_path,
+            "- See [other](docs/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        assert _run_policy(repo).returncode == 0
+
+
+class TestThePolicyRelativePrefixIsNotTargetBlind:
+    """The same bargain as every other relaxation here: the prefix is one
+    prefix, at the start of the target, anchored to `](`."""
+
+    def test_a_repointed_link_under_the_docs_root_is_still_lost(
+        self, tmp_path: Path
+    ):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](references/ALPHA.md) for the rules.",
+            "- See [other](BETA.md) for the rules.",
+        )
+        result = _run_skill(repo)
+        assert result.returncode == 3, (
+            f"a repointed link compared equal:\n{result.stdout}{result.stderr}"
+        )
+        assert "ALPHA.md" in result.stdout, result.stdout
+
+    def test_a_prefix_that_is_not_the_docs_root_is_kept(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](scripts/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules.",
+        )
+        assert _run_skill(repo).returncode == 3
+
+    def test_the_docs_root_outside_a_link_is_untouched(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- Run `cat references/OTHER.md` before editing the rules.",
+            "- Run `cat OTHER.md` before editing the rules.",
+        )
+        assert _run_skill(repo).returncode == 3
+
+    def test_a_reworded_demoted_line_is_still_lost(self, tmp_path: Path):
+        repo = _skill_demote_repo(
+            tmp_path,
+            "- See [other](references/OTHER.md) for the rules.",
+            "- See [other](OTHER.md) for the rules, all of them.",
+        )
+        assert _run_skill(repo).returncode == 3

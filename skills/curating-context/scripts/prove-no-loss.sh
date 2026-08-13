@@ -304,6 +304,7 @@ sort -u "$TMP/dests" >"$TMP/dests.u"
 RC=0
 python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
   "$DOCS_DIR" <<'PY' || RC=$?
+import os
 import re
 import sys
 
@@ -356,9 +357,33 @@ LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 # only the root itself is erased. Every relaxation of whole-line matching is paid
 # out of the strength of the only gate that can see content loss, and this is the
 # smallest coin that buys the demotion case.
-_root = docs_dir.strip("/")
-LINK_ROOT = (re.compile(r"\]\(" + re.escape(_root) + "/")
-             if _root and _root != "." else None)
+#
+# The prefix a link actually carries is the docs root seen FROM THE FILE THE LINK
+# IS WRITTEN IN, which is not the repo-relative --docs-dir string unless the
+# policy file sits at the repo root. Built from the repo-relative string alone,
+# this fix could not fire for any skill curating its own surface: the run passes
+# `--docs-dir skills/x/references`, SKILL.md writes `](references/X.md)`, the
+# pattern was `](skills/x/references/`, and the substitution was a no-op on the
+# 21 links that needed it. So two prefixes are erasable, not one — the root as
+# the policy file sees it, and as the repo root sees it, because content moves
+# between exactly those two vantage points. They are the SAME string in the
+# canonical shape (`AGENTS.md` + `docs`), so nothing widens there. Leading `../`
+# is dropped from either because LINK_DEPTH has already erased it by then.
+def _erasable_prefixes(docs, pol):
+    seen = []
+    for cand in (docs, os.path.relpath(docs, os.path.dirname(pol) or ".")):
+        cand = os.path.normpath(cand).strip("/")
+        while cand.startswith("../"):
+            cand = cand[3:]
+        if cand and cand != ".." and cand != "." and cand not in seen:
+            seen.append(cand)
+    return sorted(seen, key=len, reverse=True)
+
+
+_roots = _erasable_prefixes(docs_dir, policy)
+LINK_ROOT = (re.compile(r"\]\((?:"
+                        + "|".join(re.escape(r) for r in _roots) + r")/")
+             if _roots else None)
 
 # A frontmatter key, loosely: `name:`, `  version: "1.7"`, or a `- ` list item.
 # Loose on purpose — the point is not to validate YAML but to tell a metadata
