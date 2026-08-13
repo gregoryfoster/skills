@@ -30,6 +30,10 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 | 2026-08-13 | CannObserv/cannobserv | **Upstream-blocked backlog: check the sibling repo's blocker states before anything else** — all three blockers closed within 5 days, converting a "blocked" backlog to actionable, with a stale contract pin as the shared consequence; **a shared first step that is not an issue** (the re-pin) modeled as commit 1 of a Shape-A bundle, then read-only for the gated batch; **same-function overlap is the sharpest Shape-A signal yet** (two issues edit `test_write_bodies.py:22-23`); **a clarifying "Other" answer at a decision gate flipped the decision and exposed a latent read-time data drop** (wp/v2 observation adapter silently drops ACF `co_roles` — the issue body's "no such field on either backend" was true of the model, misleading about the data); hybrid preference degenerated to fully-sequential (every pairing shared a file); policy-deferral of a user-named issue (#278, async-parity) confirmed at Q3 |
 | 2026-08-13 | CannObserv/usa-wa | **The backlog contained the fix for its own ceiling** (shared-test-DB **7th recurrence** — #208 itself in the named set; old contract still binds during Batch A: workers unit-tier only, gate run authoritative); **operational mitigation is not partial shipment** (#211 kill-switched via env var → Correctness 3→2 but full scope retained; issue *comment* authoritative over body; plan gains a required **ops tail** with an observation window); verification-mode asymmetry 3rd recurrence, doubled (#208 fixture + #216 coverage gating + live-SOAP integration run → three non-worker causes for a red gate) |
+| 2026-08-11→13 | CannObserv/usa-wa (#207 execution) | **The skill's batch-branch checkout step took production down** — a repo whose units carry `ExecStartPre=assert-main-checkout.sh` could not start with `batch/g` checked out, across three separate batches (→ create the branch WITHOUT checkout, integrate in a worktree; **promoted** to Orchestrator step 2, where the instruction lived in *four* places, not the two the issue named); **a documented wrap-up restart resurrected a deliberately-held daemon mid-incident** (inactive + disabled + preset enabled = a hold, not a fault; **promoted** as a clause on the same rule); every worker report carried ≥1 verifiable discrepancy; `worktree-destroy.sh`'s path-scheme gap is **stale** — #149 shipped branch-first lookup |
+| 2026-08-13 | CannObserv/power-map | Q5 variant — the binding ceiling was a shared `TEST_DATABASE_URL` with a truncate-and-seed browser tier, not worktree provisioning; **resolution 2 of the existing ladder (serialize the gate) already covered it**, so the promotion was the recurrence *count* (Q5 is now 9 sessions across 4 projects, and SKILL.md was reading "six across three"); **a docstring naming pending follow-ups by number is an open-in-fact check** — merged with observo's zero-hits rule and promoted as one clause; module-local pytest fixtures are an invisible shared prerequisite |
+| 2026-08-13 | CannObserv/observo | **Zero hits for an issue's symbol is ambiguous, not exculpatory** — #109's deliverable had shipped under another name and its own contract doc named its approach as the *rejected* path (**promoted**: this is a false negative in the skill's own prescribed grep); a domain fact from the user **deleted** #443's mechanism rather than resolving it (5 production files → 2) and a dead setting *was* the replacement — both held as log entries at one sighting; shared-test-DB ceiling **8th** recurrence, not the 7th the issue claimed |
+| 2026-08-13 | CannObserv/cli | **First anti-disjoint backlog** — all 10 work items touch one 525 L hub file, so batches partition by **function-level region**; **promoted in reduced form**, since Step 5's line-window rule already generalized past test files — what was new is that a file-level "everything touches everything" must not be read as "serial"; **migrated-backlog provenance rejected** (its prior, "grep everything", is already unconditional in Step 1–2); the parallelism issue (#532) *introduced* a check-then-write race no body mentioned; 4th distinct ceiling driver — disk (~662 MB `.venv` per worktree) |
 
 ---
 
@@ -1718,3 +1722,427 @@ Shared-test-DB ceiling, **7th recurrence** — but for the first time the ceilin
 - Decisions written back before any agent existed (#208 option 3, #216 option 2), continuing 2026-08-09/-11/-12.
 - Negative results recorded: no chain-appending artifacts (no migrations — `APPLY_NOOP` is a constant); twelve-for-twelve live issues under the closed-in-fact grep, though it still caught line drift (`test_refresh_e2e.py:96`→`:120`).
 - Precedent (b) again: tracking issue #218 opened first, then the plan committed with the `#218` prefix.
+
+---
+
+## Session 2026-08-11→13 — CannObserv/usa-wa (#207 execution)
+
+Execution half of the plan the 2026-08-11 usa-wa entry records (filed as #146; companion to #129,
+which covered planning). 7 issues → 7 agents across 5 batches (A: 3 parallel on `batch/g`; B–E solo,
+PR-per-batch). All 7 closed; 4 follow-ups filed (usa-wa#208, #216, notes on #202; skills#145). A CR
+round ran after every batch and found real defects in four of five.
+
+### The skill's own batch-branch checkout step took production down — **promoted**
+
+`git checkout -b batch/<x>` in the main checkout is the skill's standing instruction. **In a repo
+that deploys from that checkout, it stops the deployment.** Every code-running unit in usa-wa carries
+`ExecStartPre=assert-main-checkout.sh` (usa-wa#87): with `batch/g` — and later a feature branch —
+checked out, `usa-wa.service` could not start, and a parallel operator had to stop it cleanly to keep
+it from flapping through its start limit into alert emails. The journal showed the same refusal from
+two *earlier* sessions (`batch/a`, `batch/b`, Aug 8/9). Recurrent, not a one-off, and invisible from
+inside the orchestration because the failure lands in the deploy unit rather than in git.
+
+The pattern that respects both the skill and such repos:
+
+- Multi-agent batch: `git branch batch/<x> main` — create, **never** check out — then merge, test and
+  fix inside a worktree on that branch.
+- Single-agent batch: create no local branch; push the worker's `worktree-agent-*` branch as the
+  feature branch (`git push origin worktree-agent-<id>:<feature>`) and PR from there.
+- Before walking away: `git -C <main> branch --show-current` must print the default branch, and the
+  deploy unit must be active.
+
+**Promoted into Orchestrator step 2**, with the detection grep (`ExecStartPre=.*assert.*main`) folded
+in. **Correction to #146's body:** it says the instruction lives in "orchestrator step 2 and Rule 3."
+It lived in *four* places — Orchestrator step 2, Rule 3's canonical pattern block, the Branch strategy
+section ("creates this branch and checks it out"), and the Key Principles worktrees bullet ("check out
+the batch branch first"). Promoting the rule in one place and leaving the other three would have left
+three copies of the instruction that caused the outage. Orchestrator step 2 is now the single
+conditional statement; the other three defer to it.
+
+### A repo-documented wrap-up restart resurrected a deliberately-held daemon — **promoted, folded in**
+
+usa-wa's AGENTS.md wrap-up says `sudo systemctl restart usa-wa usa-wa-sync-powermap`. Run verbatim
+after Batch A's merge, it restarted a daemon a parallel workstream had deliberately stopped 94 seconds
+earlier, mid-incident (PM API saturation, usa-wa#211). The operator then had to harden the hold with a
+`ConditionPathExists` drop-in so a start *fails* rather than succeeding silently.
+
+A unit that is `inactive` **and** `disabled` while its preset is `enabled` is a deliberate hold, not a
+fault. Check `systemctl is-enabled` and `systemctl cat` (for drop-ins) before running any
+repo-documented restart, and narrow the restart to what this work actually changed. An orchestrator
+running "always restart X and Y" boilerplate is an automation hazard precisely because it executes
+documentation that predates the incident.
+
+Promoted as a clause on the same Orchestrator step 2 rule rather than as its own: both findings are
+the same proposition — *the host repo is live, and the orchestrator's own boilerplate is written as if
+it were not* — and a reader who has just been told the main checkout is load-bearing is the reader who
+needs the restart caution.
+
+### Worker reports: one verifiable discrepancy per batch — re-verification is load-bearing
+
+Every completion report was materially useful AND contained at least one claim that did not survive
+checking:
+
+- **A (briefing defect, the worker caught it):** the orchestrator's DB-safety rule — "db-marked tests
+  are safe inside the savepointed fixture" — was wrong. The session-scoped `test_engine` fixture drops
+  every schema CASCADE at session start and teardown, so any db-marked *session* destroys concurrent
+  siblings, not just `reset_migration_schemas` callers. Filed as usa-wa#208; the ceiling note from
+  2026-06-16 upgrades from "contention" to "destruction".
+- **D:** "exits 0 with no flags" held only with a worktree-only test deselected; the plain command
+  reproduced exit 1. True in the main checkout, verified post-merge.
+- **E:** the orchestrator's own budget table (4 files over) was measured with the wrong tokenizer;
+  exact counts showed 2 (skills#145).
+- **C:** self-report accurate, but the CR still found a stale unit count in AGENTS.md and two docs
+  pushed over budget that the report understated ("+~2 net lines" was +9 lines / +408 bytes).
+
+The orchestrator re-running the workers' *own headline verification commands* — not merely the full
+suite — caught something every single time. Not promoted: Worker step 5 and the report-back slot
+already mandate the corrections, and the orchestrator's re-verification is Orchestrator step 6's
+existing gate run applied with more curiosity, not a new rule. Recorded here so a third recurrence can
+argue for it as a standing step.
+
+### Harness-worktree mechanics
+
+- **Stale in #146's body, corrected here.** It reports that `worktree-destroy.sh` resolves
+  `.worktrees/<branch-slug>` and therefore cannot drive harness worktrees. That was true when the
+  session ran; it is **fixed in this repo** — #149 shipped branch-first lookup, and
+  `using-git-worktrees/SKILL.md` now documents `worktree-agent-<id>` at `.claude/worktrees/agent-<id>`
+  explicitly. The manual equivalent the session used (`git merge-base --is-ancestor` →
+  `git worktree remove --force` → `git worktree prune` → `git branch -d`) remains the fallback for
+  consumers pinned to an older submodule.
+- Linked worktrees don't populate submodules: one submodule-dependent test fails in *every* worktree
+  and passes in the main checkout. Brief workers to ignore it by name.
+- Worktrees have no `.venv` (`uv sync --locked` once) and the sandbox refuses `export $(cat …)` — use
+  `uv run --env-file …`. Still live upstream as skills#156.
+
+### Tactical
+
+- PR-per-batch (user-chosen) worked well: 5 PRs, each with the batch's reasoning as the body; CR
+  directives (`N: fix/stet/GH`) between open and merge.
+- `--body-file` for every gh write, again. GitHub SSH-push 500s plus intermittent publickey refusals
+  hit during final ship while HTTPS API writes kept working — retry with `ls-remote` confirmation,
+  don't hammer.
+- A session hook's auto-commit (`chore: update skills submodules`) collided with a PR merge → rebase
+  the local-only commit onto the merged main rather than discarding it; an *uncommitted pre-existing*
+  edit belonging to another workstream is stashed across the rebase and restored, never committed.
+- Rescope-to-residual (#160, from the planning session's Q0) executed cleanly: the residual shipped as
+  ⅓ of Batch A with its design decision recorded in the commit.
+
+---
+
+## Session 2026-08-13 — CannObserv/power-map (test-infra micro-backlog)
+
+Four followup-derived issues (#367/#368/#373/#426 → tracking #433). Filed as skills#151. Labelled
+CannObserv/power-map: the issue numbering runs continuously from the 2026-05-09/-11
+`cannabis.observer/power-map` sessions through 2026-07-08's `CannObserv/power-map` #283, so this is
+one repo under two names, not two projects.
+
+- **Q5 variant — the binding ceiling was a shared test resource, not worktree provisioning.** Plain
+  worktrees, no port pool, no DB clone → the git-side ceiling was effectively unbounded. The real
+  constraint was a shared `TEST_DATABASE_URL` with a truncate-and-seed browser tier that must run
+  alone. Resolution: don't cap agent count — **serialize the verification step** (workers self-verify
+  with lint plus the non-browser tiers; the orchestrator runs the exclusive tier once per batch at the
+  gate). **Not promoted as a new question:** Q5 sub-question 2 already asks what the worktrees do *not*
+  clone and names a shared test database, and resolution 2 of the ladder is exactly "serialize the
+  verification gate". This is the ladder working, not a gap in it. What *did* change: the Q5
+  recurrence count. This is the **9th** — the SKILL.md line said "six sessions across three projects"
+  and was already one short of the log (the 2026-08-13 usa-wa entry records a 7th); with the 2026-08-13
+  observo session as the 8th and this one as the 9th, it now reads nine across four projects.
+- **Closed-in-fact confirmation source — promoted (merged).** The target test file's module docstring
+  named the pending follow-up issues by number ("axe-after-interaction … are deliberate follow-ups").
+  A docstring citing issue numbers is a cheap, high-signal **open**-in-fact check, the mirror of the
+  "credits the PR that retired it" pattern Step 1–2 already carried. Promoted as one clause on the
+  same bullet, merged with the observo session's zero-hits rule below — both are "the grep result is
+  ambiguous; a doc or docstring disambiguates it", and promoting them separately would have written
+  the same idea twice.
+- **Footprint grep caught a hidden shared prerequisite the issue bodies didn't state.** pytest fixtures
+  defined module-locally are invisible to sibling files, so *both* dependent issues implicitly required
+  hoisting fixtures to `conftest.py`. Left implicit, two parallel agents would have collided on the
+  hoist. For test-infra backlogs, check *where the shared fixtures live*, not just which files the
+  issues name. Not promoted: Step 5 item 2 already ends by naming a shared-fixture dependency as the
+  semantic conflict class, and 2026-08-11's escape-grep sharpened it. This is a third instance of that
+  rule firing, worth counting toward a future rewrite rather than a new bullet.
+- **Hoist placement.** The mechanical fixture hoist rode as a separate commit inside the *foundation*
+  issue's agent, not the higher-scored dependent — keeping the dependent batch fully parallel instead
+  of forcing a third batch. Generalization of Shape A: a shared mechanical prerequisite rides with the
+  foundation batch even when it differs in kind, if it is small and it buys full downstream
+  parallelism. Not promoted: Step 7's "differ in kind → split" heuristic now has a counter-example, and
+  one counter-example is a note, not a rewrite of the heuristic.
+- **Plan-doc authoring.** Host project mandates worktrees for all work plus all-PR history → docs-only
+  worktree, PR, merged before launching workers. Step 8 option 3 confirmed again.
+- **Step 10 under vendoring.** The skill is consumed via submodule + symlink, so this capture was filed
+  as an upstream issue rather than a direct edit — as were the other three entries in this batch. Not
+  promoted despite four instances in one batch: the destination of a process-log entry is a property of
+  the *consuming* repo's policy, not of this skill, and the skill has no way to detect it. The
+  observable fact — that four consecutive sessions across four repos all had to file issues — belongs
+  here, and belongs to whoever decides whether the log should accept upstream contributions by a route
+  cheaper than an issue.
+
+---
+
+## Session 2026-08-13 — CannObserv/observo (archival scheduling + isolation backlog)
+
+Third orchestration session in `observo`, after 2026-08-09's #434 provider/contracts backlog and
+2026-08-11's #444 test-isolation backlog. Filed as skills#153. The user named **five** issues — 71,
+109, 443, 445, 446 — a subset, not "the backlog". One closed during the disposition pass, one was
+rewritten down to a different mechanism entirely. Four issues, four agents, two batches. Tracking
+`#447`; plan `docs/plans/2026-08-13-archival-scheduling-and-isolation-backlog.md`.
+
+**Provenance was mixed and produced near-total disjointness.** #445/#446 are CR-surfaced from the #444
+shipping cycle (filed by two agents mid-batch); #71 is a Phase-A architectural residual dating to #55;
+#443 is a descope from #421, itself descoped during the 2026-08-11 session. One contested file in the
+whole set.
+
+**Interview answers:** Q0 — one close-as-superseded (#109) and one prerequisite pair (#71 → #443)
+resolved as Shape B. Q1 — **Correctness ×3** (`Foundation×2 + Correctness×3 + Scope`, max 18), same
+weight as 2026-08-11 in this repo; half the backlog fails silently. Q2 — pre-production, 3rd
+consecutive. Q3 — vacuous; four named issues, all in scope, said so and moved on. Q4 — hybrid,
+worktrees yes. Q5 — **3**, carried and re-verified with one `psql` query (`observo_a1/a2/a3_test` plus
+their `_gw*` children still present). Shared-test-DB ceiling: **8th recurrence**, not the 7th the issue
+body claims — the 2026-08-13 usa-wa entry already holds the 7th. Q6 — `--no-ff`; intra-batch fixed
+FF/regular.
+
+**Shape:** 4 issues → 4 agents across 2 batches, 3 / 1. Batch A is an exact fit to the ceiling, with
+zero contested files inside it, so no intra-batch merge ordering at all.
+
+### An issue whose deliverable shipped under a different name — **promoted**
+
+#109 tracked an opt-in `signal_ack_after` hook. The closed-in-fact grep for its identifying symbol
+found **zero hits repo-wide** — which naively reads as "still open, nothing done." The disposition came
+from reading the doc the issue names as its contract:
+
+- The cited anchor (`ARCHITECTURE.md` §"Cross-consumer Signal replay & crash recovery") no longer
+  exists; the contract moved to `CONSUMER-RECOVERY.md` §"Cross-consumer crash recovery (post-#158)".
+- That doc says the deliverable **shipped under another name**: *"#103's 'per-stage signal PEL' is
+  realised as `InputTopicSpec` on a dedicated data topic."*
+- It then names the issue's own approach as **the rejected path**: *"the path forward is per-stage
+  durable persistence of declared-input payloads rather than reverting to the pre-#158 signals-topic
+  multiplexing."*
+- And the harm is gone independently: signals are observability-only post-#158, so *"signal loss after
+  ACK can no longer cause cross-consumer data starvation."*
+
+**Zero hits for an issue's proposed symbol is ambiguous, not exculpatory** — it means "not done" *or*
+"done differently". This is a false negative in the skill's *own* prescribed instrument: Step 1–2 tells
+an orchestrator to grep an identifying symbol per issue, and a reader following it literally scores a
+shipped issue as open. Promoted for that reason above all: the strongest case for a promotion after a
+production incident is a defect in the instruction already there. Merged with the power-map docstring
+finding into one clause.
+
+Corroborating signal, not promoted: the issue's own 2026-05-04 check-in pinned the insertion point at
+`topics.py:426` and called it "unchanged"; it has since moved to `side_loops.py:120`. **A stale
+check-in comment asserting structural stability is itself a decay marker** — a good line, but Step 8's
+body-decay note and Worker step 5 already tell a reader that issue text ages, and this adds a symptom
+rather than a rule.
+
+### The user's domain knowledge can delete an issue's mechanism, not just resolve it — **not promoted**
+
+#443 ("thread `expected_duration_minutes` through so companions land in `SCHEDULED`") was presented
+with two options — rescope to the one reachable call site, or defer. The user answered with neither:
+
+> Does the archival job really need the duration value at creation time? We've already seen the
+> published estimates are wildly inaccurate as they represent the amount of time blocked off rather
+> than the actual meeting duration (often 1h vs. 15m for example).
+
+A **domain** fact no grep could have produced, and it invalidated the issue's premise rather than
+choosing between its options. Followed through: the duration existed only to *predict* when the
+realtime event ends, and #421 (shipped) already *observes* that end. Predicting an observable is
+strictly worse — worse by ~45 minutes under the 4× booked-block skew the user named. Footprint 5
+production files → 2, blast Med → Low, Scope 1 → 3, four call sites → zero.
+
+The generalization offered was: when an issue's mechanism rests on an estimate, ask whether the
+estimated thing is already observed elsewhere; the orchestrator can verify the observation exists, only
+the user knows the estimate's error distribution. **Held here rather than promoted.** Step 4's
+decide-then-rescore already routes exactly this class to the approval gate, and the increment — surface
+the *mechanism*, not only the options — is one session old. A second sighting turns it into a clause on
+that paragraph; on a file at its ratchet, one sighting does not.
+
+### A dead setting is a Step 5 grep target, and the finding can *be* the fix — **not promoted**
+
+Chasing #443's rescope, one grep for its governing setting:
+
+```
+grep -rn "tvw_publication_delay_minutes" --include='*.py' src/
+```
+
+Four hits, of which exactly one is a consumer — `archival_pairing.py:92`, **inside the dead `SCHEDULED`
+branch**. The setting is documented, admin-visible, bounded in `SETTING_SPECS`, and has no effect on
+anything. That was not a side observation; it *was* the replacement mechanism. The rescoped #443 is
+"land the companion in `SCHEDULED` with `scheduled_start_at = now + tvw_publication_delay_minutes`" —
+one transition edit that makes a dead setting live.
+
+Not promoted: the issue's own body calls this a cousin of the 2026-08-11 "X already has Y; just use it"
+grep run against the destination rather than the source, and that is the accurate reading — Step 5's
+bidirectional footprint grep already obliges an orchestrator to grep what an issue proposes to feed,
+not only what it proposes to change. One occurrence of a known rule pointed at a new target is a log
+entry.
+
+### Also captured
+
+- **Q3 was genuinely vacuous and saying so was correct.** Four explicitly-named issues, nothing to
+  defer. Stated in one line, then Q4/Q5/Q6 batched — all three carried obvious defaults from prior
+  sessions in this repo. The "one question at a time" rule protects against stacking *substantive*
+  questions; batching three confirmations of carried-forward values is not that.
+- **Bidirectional footprint grep, both directions in one issue.** #443 **overstated** (four call sites
+  → one reachable: the `SCHEDULED` branch also needs `realtime_job.scheduled_start_at is not None`, and
+  `tvw_schedule.py:585` creates its job as `PROVISIONING`) *and* **understated** (it never mentions the
+  `JobTransition` enum member or `test_transition_registry.py`). #446 understated too — its process
+  table lists four shim constructors; `worker/agent.py:736` makes five.
+- **Both hedges paid, and in opposite directions.** #445's *"worth checking whether `stop()` is
+  idempotent first"* → **yes** (`if self._task is None: return`), which *validated* its cheaper option.
+  #446's *"worth checking whether that use exists"* → **no such use**, which *eliminated* its weaker
+  option. Continues 2026-08-12's hedge-is-a-grep-target rule; the new note is that a resolved hedge can
+  either license the cheap path or close it off, so resolve it before presenting options rather than
+  presenting the hedge as an option.
+- **A claimed dependency already satisfied by construction.** #443 asserted `job_completion.py` must
+  learn to skip an already-`SCHEDULED` companion. `start_paired_archival_job` filters
+  `.where(Job.status == JobStatus.PENDING)` — skipped structurally, removing a whole file from the
+  footprint. Grep the *guard* whenever an issue claims two mechanisms will race.
+- **Chain-appending negative recorded deliberately** (2nd time, after 2026-08-12). `JobTransition` is
+  wire vocabulary for SSE, not a persisted column, so #443's new member needs no `ALTER TYPE` despite
+  this repo's prominent enum-migration footgun in AGENTS.md. Saying so in the design doc stops a reader
+  wondering whether it was considered.
+- **Verification-mode asymmetry, 3rd recurrence**, softer than the prior two (which were config
+  changes): #445 changes the *isolation properties* of a test file every sibling's suite run executes,
+  so `batch/a`'s post-merge run is the first with all three landed.
+- **Step 0 stray sweep caught a real one.** `.skills/doctor.sh` was dirty — the auto-refresh hook had
+  re-copied it after the previous commit bumped the `managing-skills` submodule. Committed as its own
+  chore before analysis. (`git push` was blocked by the permission classifier; local `main` was *ahead*
+  of origin, not behind, so worker worktrees still based correctly — the Rule 1 failure mode is
+  staleness, not divergence.)
+- Precedent (b) again: tracking issue `#447` opened first, then committed with the `#447 docs:` prefix.
+  The doc had `#447` written into it before the issue existed — a lucky guess off the last issue
+  number, worth *not* relying on.
+
+---
+
+## Session 2026-08-13 — CannObserv/cli (email-to-pdf backlog)
+
+Second orchestration session in `cli`. Filed as skills#154. Twenty-three open `email-to-pdf: ` issues
+(#449–#558), all bulk-migrated from the retired `CannObserv/process` repo, against
+`process email to-pdf`. Design doc `docs/plans/2026-08-13-email-to-pdf-backlog.md`; tracking
+CannObserv/cli#902.
+
+**Interview answers:** Q0 — one candidate pair, #449 ("handle large attachments gracefully", proposes
+`--max-attachment-size`) and #534 (`_assemble_pdf` holds everything in memory): same file, same root
+cause → bundled (Shape A), both issues stay open, one agent, closed together. Q1 — equal weights,
+standard `(F×2) + (C×2) + S`. Q2 — pre-production. Q3 — 11 of 23 deferred; the user's invocation
+carried the filter ("address the issues which do not require a more extensive design cycle"), so Q3
+became "confirm my proposed split" rather than an open question. Q4 — hybrid, worktrees yes. Q5 — **4**,
+bound by **disk**: no port pool, no DB clone, no vhost (`scripts/setup-worktree.sh` is symlink plus
+`uv sync`), but each worktree carries a ~662 MB `.venv`. A fourth distinct ceiling driver, after ports
+(2026-05-22), shared Postgres (2026-06-16, 2026-07-19) and "none binding" (2026-07-23). Q6 — regular
+merge commit batch→main; intra-batch fixed FF/regular.
+
+**Shape:** 11 in-scope issues → 10 work items → 10 agents across 4 batches. A (4 parallel: #449+#534,
+#456, #457, #490) → B (1: #458) → C (2: #500, #502) → D (3: #516, #538, #532).
+
+### The anti-disjoint backlog — **promoted, in reduced form**
+
+Every prior session found *some* disjointness to exploit; the recurring question was how much. This
+backlog had **none at file granularity**: all ten work items touch `to_pdf.py` (525 L) *and*
+`tests/test_email_to_pdf.py` (2,710 L). Taken literally, Step 7's "within a batch, all agents work on
+branches with disjoint file coverage" permits **one agent, ever** — the quote is accurate against the
+current file.
+
+Resolution: **partition by function-level region inside the shared file**, publish the region map in
+the design doc, and declare intra-batch merge order where regions abut. `to_pdf.py` decomposed cleanly
+into eight regions with a single genuine textual collision — the `@click.option` decorator stack, where
+three issues all append. That collision became the merge-order constraint (A1 → A2), not a
+batch-splitter.
+
+Promoted as one clause on Step 5's existing line-window bullet rather than as a new rule. **Correction
+to #154's framing:** it proposes this as a new escalation, but Step 5 already generalizes line-window
+ownership past test files to "any large shared file", with the "additions within the window only"
+clause — which is region partitioning under another name. The genuinely new part is the *trigger*: a
+file-level verdict of "everything touches everything" must not be read as "the backlog is serial". That
+is what landed.
+
+Also captured, not promoted: **the universally-contested test file was neutralized by an existing
+convention, not by design.** `tests/test_email_to_pdf.py` already followed a strict append-only shape —
+a `# Tests — #N <topic>` banner plus a new `class Test…` at EOF, most recently at line 2669. Codifying
+"every agent appends at EOF, no edits to existing classes" as a Key Decision converted the worst
+contested file into a clean-merge file at zero cost. Look for an existing append-only convention in a
+contested test file before treating it as a conflict zone — the repo may have solved it already. Held
+as a log note because Step 5's line-window rule already covers what to do; this only says the answer
+may be free.
+
+### Migrated-backlog provenance — **rejected as a provenance flavor**
+
+Prior provenance categories (CR-surfaced, feature-followup, spec-derived, deep-architectural) all
+describe backlogs filed *during* a work cycle by someone with the code in front of them. These 23 were
+bulk-migrated from a retired repo, and their bodies had drifted from the code by an unknown amount. The
+prior that follows is "grep everything, trust nothing" — and it paid three times:
+
+- **#558 fully closed-in-fact.** Body: "all output uses `click.echo` with ad-hoc formatting, no log
+  levels, no structured output." Reality: the `process` group already carries `logging_options`
+  (`-v`/`-vv`, `-q`, `--log-level`, `--log-file`, `--log-directory`, `--log-json`) and
+  `rg 'click.echo' src/.../email/` returns zero hits. Closed before scoring.
+- **#472 narrowed.** Body implies untagged output end-to-end. Reality: `tagged=True` is already passed
+  to `page.pdf()` and `/MarkInfo /Marked` is already set; the residual is only whether `StructTreeRoot`
+  survives the pikepdf page-merge. Still deferred, but the eventual design cycle starts from a much
+  smaller question.
+- **#457 narrowed.** Body implies parsing `In-Reply-To`/`References`. Reality: already parsed via
+  `join_references` into XMP; the residual is purely rendering.
+
+**Not promoted.** The flavor is real, but the prior it yields — grep everything — is already the
+skill's unconditional Step 1–2 instruction for *every* backlog, so adding the label changes no runtime
+behaviour. A provenance entry earns its place by predicting batch *geometry*, which is what the other
+five entries do; this one predicts body decay, which the skill already assumes.
+
+Its one operational increment is worth carrying forward for a second sighting: two of the three
+narrowings landed on *deferred* issues, so **running the footprint grep across the deferred set too**
+costs little and front-loads the design cycle those issues are waiting on. Held out of the body for
+budget: it is one session old and applies only where a substantial deferred set exists.
+
+### Non-obvious decisions captured
+
+- **The parallelism issue introduced a race no issue body mentioned.** #532 ("parallel rendering via
+  concurrent browser tabs") reads as a pure speedup. But `_unique_output_path` is check-then-write and
+  the actual write lands ~200 lines later in the same function — under concurrent tabs two workers can
+  select the same path and one silently overwrites the other. Serializing path allocation became #532's
+  *first* commit ("correctness fixes lead refactors", applied to a hazard the refactor *creates* rather
+  than one it inherits). Generalizable: when an issue proposes introducing concurrency into an existing
+  sequential loop, grep that loop for check-then-act patterns (path allocation, counters, caches,
+  `exists()` guards) *before* scoring — the hazard is invisible in the issue body by construction,
+  because the author was describing a speedup. Not promoted: a strong candidate, but one occurrence,
+  and Step 5's shared-fixture-escape grep is the nearest existing home rather than an exact one. Flagged
+  for the next concurrency-shaped issue.
+- **The upstream boundary reshaped two issues' implementations.** `extract_email_parts` lives in the
+  pinned `cannobserv` git-tag dependency, not in `cli`. #490 (MBOX input) and #500 (recursive `.eml`)
+  both read as "extend the parser"; both were instead scoped CLI-side — split the mbox *before* the
+  parser, recurse *around* it. Without this check, two agents would have hit the AGENTS.md
+  no-cross-repo-edits wall mid-implementation. When a backlog targets a command whose core
+  parsing/model layer is a pinned dependency, resolve the repo boundary during Step 1–2 and record it
+  as a Key Decision — it changes implementations, not just batch shape.
+- **Foundation-shared-file read-only rule applied at *function* granularity.** Batch B (#458) ships a
+  MIME-type dispatch table inside `_render_all_pages`; Batch C's two agents each add exactly one entry
+  and may not restructure it. Same rule as 2026-06-08's foundation-file declaration, scoped to a
+  function rather than a file — necessary here because the file itself is contested by everyone.
+
+**Correction to #154:** its title advertises "two suggested SKILL.md promotions", but the body carries
+four bolded generalizations (region granularity, the check-then-act grep, the append-only convention,
+and the pinned-dependency boundary). Only the first is marked as a promotion in the body itself. The
+count in the title is the one to distrust.
+
+### Worktree mechanics specific to `cli`
+
+The `cli` override of `using-git-worktrees` declares an Iron Law (worktrees only at
+`<repo>/.worktrees/<slug>/`) whose stated rationale is the `../cannobserv` **editable-path** dependency
+pin. The committed `[tool.uv.sources]` is on **git-tag** sources, so `uv sync` resolves from any path
+and Agent-tool worktrees are safe *in the committed state* — but the Iron Law would bite an author who
+has locally swapped to editable paths for cannobserv co-development. Recorded as an explicit
+conditional divergence in the design doc rather than a silent one.
+
+Also re-confirms 2026-07-19's fallback: the vendored `worktree-destroy.sh` / `worktree-list.sh`
+wrappers the SKILL.md orchestrator steps reference are deliberately absent from `cli`'s override, so
+use `git merge-base --is-ancestor <branch> batch/<X>` → `git worktree remove` → `git branch -d`.
+
+### Tactical confirmations
+
+- `gh issue create --body-file` from the scratchpad (apostrophe-safe) — holds.
+- Design-doc commit used precedent **(b)**: tracking issue opened first (CannObserv/cli#902), then
+  committed with the `#902: <topic> - <description>` prefix the repo convention wants. Cleaner than
+  2026-07-23's precedent (a), and costs nothing.
+- Pre-commit runs the full pytest suite (~2 min) even on a docs-only commit — budget the Bash timeout.
+- Q3 arrived pre-answered in the user's invocation. Reframing it as "here is my proposed defer/address
+  split, does it hold?" — with the reasoning per issue — preserved the approval gate while skipping an
+  open-ended question the user had already answered.
