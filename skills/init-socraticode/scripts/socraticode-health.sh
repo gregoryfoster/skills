@@ -9,6 +9,13 @@
 # needs a running MCP server and Docker, and the submodule refresh must not
 # start depending on either.
 set -euo pipefail
+# -E on its own line, not folded into `set -Eeuo` above: the structural suite
+# pins the literal `set -euo pipefail` as the house convention, and a superset
+# spelling passes shellcheck while failing that gate. Without -E the ERR trap
+# below is not inherited by functions, subshells or command substitutions, so
+# the backstop would cover only top-level commands — which is not what "any
+# unhandled error must exit 0" claims.
+set -E
 
 # Backstop: any unhandled error must exit 0. A SessionStart hook that fails
 # closed takes the session with it.

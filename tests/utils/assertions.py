@@ -24,11 +24,6 @@ _SEVERITY_BLUE = "💭"
 # Pattern for top-level numbered findings: lines starting with a digit and period
 _FINDING_PATTERN = re.compile(r"^\s*(\d+)\.", re.MULTILINE)
 
-# Per-finding required subfields
-_WHAT_PATTERN = re.compile(r"\bWhat:", re.MULTILINE)
-_WHY_PATTERN = re.compile(r"\bWhy it matters:", re.MULTILINE)
-_FIX_PATTERN = re.compile(r"\bSuggested fix:", re.MULTILINE)
-
 # Title patterns
 _CODE_REVIEW_TITLE = re.compile(r"^## Code & Documentation Review — .+", re.MULTILINE)
 _ARCH_REVIEW_TITLE = re.compile(r"^## Architectural Review — .+", re.MULTILINE)
@@ -141,15 +136,43 @@ def assert_sequential_numbering(text: str) -> None:
     )
 
 
-def assert_finding_subfields(text: str) -> None:
-    """Assert each numbered finding contains What:, Why it matters:, and Suggested fix:.
+# The two skills do NOT share a finding envelope, and asserting one against the
+# other is how the drift below went unnoticed for four versions: this helper
+# pinned `Suggested fix:` while reviewing-architecture has said
+# `Suggested approach:` since 547f615 (v1.1), and the prompts in
+# test_output_format.py asked the model for the stale wording — so the check
+# passed by MASKING the divergence rather than by detecting it. #142 then added
+# `Evidence:` and widened the gap. Keep these tables next to the SKILL.md that
+# owns each envelope; test_finding_evidence.py guards the architecture one.
+_ENVELOPES = {
+    "code": ("What:", "Why it matters:", "Suggested fix:"),
+    "architecture": (
+        "What:",
+        "Evidence:",
+        "Why it matters:",
+        "Suggested approach:",
+        "Effort/Blast radius:",
+    ),
+}
+
+
+def assert_finding_subfields(text: str, review_type: str = "code") -> None:
+    """Assert each numbered finding carries its review type's required subfields.
 
     Only numbered items within the findings body (between the first severity
     marker and ### Summary) are checked.
 
+    Args:
+        text: The review output.
+        review_type: "code" (What/Why it matters/Suggested fix) or
+            "architecture" (adds Evidence and Effort/Blast radius, and uses
+            Suggested approach). Defaults to "code".
+
     Raises:
         AssertionError: If any numbered finding is missing a required subfield.
+        KeyError: If review_type is not a known envelope.
     """
+    labels = _ENVELOPES[review_type]
     body = _findings_body(text)
     finding_matches = list(_FINDING_PATTERN.finditer(body))
     if not finding_matches:
@@ -161,15 +184,11 @@ def assert_finding_subfields(text: str) -> None:
         finding_text = body[start:end]
         finding_num = match.group(1)
 
-        assert _WHAT_PATTERN.search(finding_text), (
-            f"Finding {finding_num} is missing the 'What:' subfield"
-        )
-        assert _WHY_PATTERN.search(finding_text), (
-            f"Finding {finding_num} is missing the 'Why it matters:' subfield"
-        )
-        assert _FIX_PATTERN.search(finding_text), (
-            f"Finding {finding_num} is missing the 'Suggested fix:' subfield"
-        )
+        for label in labels:
+            assert re.search(rf"\b{re.escape(label)}", finding_text, re.MULTILINE), (
+                f"{review_type} finding {finding_num} is missing the "
+                f"'{label}' subfield"
+            )
 
 
 def assert_summary_section(text: str) -> None:
@@ -191,10 +210,15 @@ def assert_full_format_compliance(text: str, review_type: Optional[str] = None) 
 
     Args:
         text: The complete review response text.
-        review_type: Optional "code" or "architecture" to narrow the title check.
+        review_type: Optional "code" or "architecture". Narrows the title check
+            AND selects the finding envelope — passing "architecture" here is
+            what makes the composite check `Evidence:` and
+            `Suggested approach:` rather than the code skill's labels. Left
+            unset, the envelope check defaults to "code", so an architecture
+            response must name its type to be checked correctly.
     """
     assert_title_format(text, review_type)
     assert_severity_ordering(text)
     assert_sequential_numbering(text)
-    assert_finding_subfields(text)
+    assert_finding_subfields(text, review_type or "code")
     assert_summary_section(text)

@@ -36,7 +36,7 @@ non-code knowledge, and the prefetch string must list the tools this server
 build actually exposes (check `claude mcp list` / the session toolset if a tool
 name has drifted).
 
-```markdown
+````markdown
 # SocratiCode — code exploration reference
 
 Detail doc for the `## Code Exploration Policy` block in `AGENTS.md`. That
@@ -109,4 +109,4 @@ defaults and `.gitignore`) controls what gets embedded. Editing it affects
 **subsequent** scans only — re-index to apply it. Vendored trees dominate the
 index if left in, and vendored prose outranks first-party code in
 `codebase_search` results.
-```
+````

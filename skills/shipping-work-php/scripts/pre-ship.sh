@@ -34,7 +34,7 @@ cd "$PROJECT_ROOT"
 
 # --- Project-local env loading (optional override point) ---------------------
 # Upstream ships without env loading — most projects don't need it. If yours
-# does (test fixtures reading live secrets, a bootstrap that hard-fails on a
+# does (test fixtures reading live secrets, a conftest that hard-fails on a
 # missing DSN), do NOT fork this script: a fork copies every gate below to add
 # a handful of lines, then stops receiving upstream fixes without saying so.
 # The skill's resolution loop (SKILL.md Step 1) probes `scripts/` first, so a
@@ -49,15 +49,25 @@ cd "$PROJECT_ROOT"
 #     echo "       fix: git submodule update --init --recursive" >&2
 #     exit 2
 #   }
-#   ENV_KV=$(cat /etc/<project>/.env "$PROJECT_ROOT/.env" 2>/dev/null | xargs) || true
-#   if [ -n "$ENV_KV" ]; then
-#     set -f          # $ENV_KV is unquoted below; a glob char would match cwd
-#     # Word splitting is the mechanism here, not an oversight; set -f covers
-#     # the globbing half. Both suppressions below are deliberate.
-#     # shellcheck disable=SC2086,SC2163
-#     export $ENV_KV
-#     set +f
-#   fi
+#   load_env() {                                  # parse, never source
+#     [ -r "$1" ] || return 0
+#     while IFS= read -r line || [ -n "$line" ]; do
+#       line=${line#"${line%%[![:space:]]*}"}       # drop leading blanks
+#       case $line in ''|\#*) continue ;; esac       # blank or comment
+#       line=${line#export }                        # tolerate `export K=v`
+#       case $line in *=*) ;; *) continue ;; esac
+#       key=${line%%=*} val=${line#*=}
+#       key=${key%"${key##*[![:space:]]}"}
+#       case $key in ''|*[!A-Za-z0-9_]*) continue ;; esac
+#       case $val in                                # strip matched quotes
+#         \"*\") val=${val#\"} val=${val%\"} ;;
+#         \'*\') val=${val#\'} val=${val%\'} ;;
+#       esac
+#       export "$key=$val"
+#     done < "$1"
+#   }
+#   load_env /etc/<project>/.env
+#   load_env "$PROJECT_ROOT/.env"
 #   exec bash "$DELEGATE" "$@"
 #
 # Every line there is a trap someone has already hit:
@@ -70,18 +80,19 @@ cd "$PROJECT_ROOT"
 #     two. Without the guard an unpopulated submodule (a clone without
 #     --recurse-submodules, a fresh `git worktree add`) fails as bash's
 #     generic "No such file or directory".
-#   - The `-n "$ENV_KV"` guard. With both env files absent the substitution is
-#     empty, and a bare `export $(...)` degenerates to plain `export`, which
-#     prints every exported variable — secrets included — into the ship-gate
-#     transcript. `|| true` keeps the same absent-file case from tripping
-#     `set -o pipefail` on `cat`.
-#   - `set -f`, because the expansion is deliberately unquoted (word-splitting
-#     is how the pairs separate): a `*` or `?` inside a secret would otherwise
-#     glob against the cwd.
-#   - Parse the env file, never source it (house rule — see
-#     skills/curating-context/scripts/measure-context.sh). `cat | xargs`
-#     handles plain KEY=value lines only; quoted or spaced values need a real
-#     parser, not `set -a; . file`.
+#   - Parse the file line by line; never `set -a; . file`, and never
+#     `export $(cat ... | xargs)`. That one-liner shipped here until #144
+#     and had three defects: with both files absent it degenerated to a bare
+#     `export`, dumping every exported variable — secrets included — into the
+#     ship-gate transcript; a `#` comment line reached `export` as `'#': not a
+#     valid identifier`, so `set -e` killed the wrapper BEFORE the gate ran;
+#     and `xargs` word-split `PW=two words` into a wrong value with exit 0.
+#   - Quoting `export "$key=$val"` is what makes spaces, globs and quoted
+#     values survive, so no `set -f` dance and no shellcheck suppressions.
+#   - Skipping a key that is not a plain identifier, rather than aborting.
+#     A malformed line in a secrets file must not decide whether the gate
+#     runs — that is precisely the environmental-vs-real judgement call a
+#     gate should never put in front of an operator.
 #
 # A wrapper also keeps PRE_SHIP_PHP_LINT_JOBS working: env set before `exec`
 # is inherited, so tuning belongs in the wrapper, not in a forked copy of the

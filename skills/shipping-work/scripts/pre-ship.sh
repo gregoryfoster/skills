@@ -47,15 +47,25 @@ cd "$PROJECT_ROOT"
 # does (test fixtures reading live secrets, a bootstrap that hard-fails on a
 # missing DSN), load it here, at the top of your override:
 #
-#   ENV_KV=$(cat /etc/<project>/.env "$PROJECT_ROOT/.env" 2>/dev/null | xargs) || true
-#   if [ -n "$ENV_KV" ]; then
-#     set -f          # $ENV_KV is unquoted below; a glob char would match cwd
-#     # Word splitting is the mechanism here, not an oversight; set -f covers
-#     # the globbing half. Both suppressions below are deliberate.
-#     # shellcheck disable=SC2086,SC2163
-#     export $ENV_KV
-#     set +f
-#   fi
+#   load_env() {                                  # parse, never source
+#     [ -r "$1" ] || return 0
+#     while IFS= read -r line || [ -n "$line" ]; do
+#       line=${line#"${line%%[![:space:]]*}"}       # drop leading blanks
+#       case $line in ''|\#*) continue ;; esac       # blank or comment
+#       line=${line#export }                        # tolerate `export K=v`
+#       case $line in *=*) ;; *) continue ;; esac
+#       key=${line%%=*} val=${line#*=}
+#       key=${key%"${key##*[![:space:]]}"}
+#       case $key in ''|*[!A-Za-z0-9_]*) continue ;; esac
+#       case $val in                                # strip matched quotes
+#         \"*\") val=${val#\"} val=${val%\"} ;;
+#         \'*\') val=${val#\'} val=${val%\'} ;;
+#       esac
+#       export "$key=$val"
+#     done < "$1"
+#   }
+#   load_env /etc/<project>/.env
+#   load_env "$PROJECT_ROOT/.env"
 #
 # Note how this differs from the language variants (-php, -python-click,
 # -python-fastapi). Those ship a real gate, so their advice is a project-local
@@ -64,19 +74,17 @@ cd "$PROJECT_ROOT"
 # above, so there is nothing to delegate to: your project-local copy IS the
 # gate, and the env loading belongs inside it.
 #
-# Three traps in those few lines:
-#   - The `-n "$ENV_KV"` guard. With both env files absent the substitution is
-#     empty, and a bare `export $(...)` degenerates to plain `export`, which
-#     prints every exported variable — secrets included — into the ship-gate
-#     transcript. `|| true` keeps the same absent-file case from tripping
-#     `set -o pipefail` on `cat`.
-#   - `set -f`, because the expansion is deliberately unquoted (word-splitting
-#     is how the pairs separate): a `*` or `?` inside a secret would otherwise
-#     glob against the cwd.
-#   - Parse the env file, never source it (house rule — see
-#     skills/curating-context/scripts/measure-context.sh). `cat | xargs`
-#     handles plain KEY=value lines only; quoted or spaced values need a real
-#     parser, not `set -a; . file`.
+# Parse the file line by line; never `set -a; . file`, and never
+# `export $(cat ... | xargs)`. That one-liner shipped here until #144 and had
+# three defects: with both files absent it degenerated to a bare `export`,
+# dumping every exported variable — secrets included — into the ship-gate
+# transcript; a `#` comment line reached `export` as `'#': not a valid
+# identifier`, so `set -e` killed the caller BEFORE the gate ran; and `xargs`
+# word-split `PW=two words` into a wrong value with exit 0. Quoting
+# `export "$key=$val"` is what makes spaces, globs and quoted values survive,
+# so there is no `set -f` dance and no shellcheck suppressions. A key that is
+# not a plain identifier is skipped rather than aborting: a malformed line in
+# a secrets file must not decide whether the gate runs.
 
 # Pre-flight: warn (do not fail) if zombie processes from previously-destroyed
 # worktrees are still around. Helps surface drift the destroy script can't see

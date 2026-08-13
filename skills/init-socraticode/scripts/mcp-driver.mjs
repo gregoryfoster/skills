@@ -947,7 +947,15 @@ async function cmdHealthCheck(projectPath, probePath) {
   if (findings.length) {
     console.error('[driver] SocratiCode health findings:');
     for (const f of findings) console.error(`  - ${f}`);
-    process.exit(1);
+    // exitCode, not exit(): node's stdout is ASYNC on a pipe, and process.exit()
+    // abandons whatever has not drained — measured at 64 KiB through a pipe
+    // against 200 KiB written. The hook redirects to a file (synchronous, so it
+    // was safe there), but this command's contract is JSON on stdout, which
+    // means someone will pipe it to jq, and the truncation would only ever bite
+    // in the findings case — the one that matters. Setting the code lets the
+    // process leave normally once the write has flushed.
+    process.exitCode = 1;
+    return;
   }
   console.error('[driver] SocratiCode health: nothing to report');
 }
