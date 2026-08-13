@@ -119,6 +119,13 @@ What counts as "present":
                     `../` is not touched, so a REPOINTED link is still a
                     difference and still reports (#119).
 
+                    A demotion also re-aims in the opposite shape, by REMOVING
+                    the docs root from a link that already pointed inside it:
+                    `](docs/OTHER.md)` in AGENTS.md is `](OTHER.md)` in
+                    docs/STYLE.md. That leading prefix — and only that one,
+                    only at the start of the target — is erased too (#137).
+                    `](lib/x.md)` -> `](x.md)` is a repoint and still reports.
+
   A leading YAML frontmatter block is not compared at all, on either side. Phase
   7 MANDATES bumping SKILL.md's `version`, so a line-based check reported the
   run that followed the skill's own instructions as losing `version: "1.6"` —
@@ -282,11 +289,12 @@ done
 sort -u "$TMP/dests" >"$TMP/dests.u"
 
 RC=0
-python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" <<'PY' || RC=$?
+python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
+  "$DOCS_DIR" <<'PY' || RC=$?
 import re
 import sys
 
-before_path, policy, dests_path, show, ack_path = sys.argv[1:6]
+before_path, policy, dests_path, show, ack_path, docs_dir = sys.argv[1:7]
 
 # Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
 # this file is to record a judgement, and free text would make it a mute
@@ -318,6 +326,26 @@ HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 # report that wrong is worse than no check, because a reader who learns to
 # ignore it will ignore a real loss in it.
 LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
+# The mirror direction, and the one #119 could not see. A DEMOTION does not add
+# `../`; it REMOVES a directory prefix, because the target it points at is
+# already inside the directory the content moved into: `](docs/OTHER.md)` in a
+# root policy file becomes `](OTHER.md)` once the bullet lives in docs/STYLE.md.
+# That is the operation this skill recommends most often, and every link-carrying
+# bullet it moved reported LOST — one run needed 12 `retarget` warrants for
+# nothing else (#137).
+#
+# Erased for ONE prefix only: the reference-doc root this run was given. That is
+# the directory content is relocated INTO, so it is the only prefix a sanctioned
+# move can remove; `](lib/x.md)` -> `](x.md)` is a repoint and still reports. The
+# residual cost is named rather than hidden — `](docs/X.md)` and `](X.md)` now
+# compare equal, so a link repointed between those two exact paths is invisible
+# here, and a demotion into a SUBdirectory of the root still reports, because
+# only the root itself is erased. Every relaxation of whole-line matching is paid
+# out of the strength of the only gate that can see content loss, and this is the
+# smallest coin that buys the demotion case.
+_root = docs_dir.strip("/")
+LINK_ROOT = (re.compile(r"\]\(" + re.escape(_root) + "/")
+             if _root and _root != "." else None)
 
 # A frontmatter key, loosely: `name:`, `  version: "1.7"`, or a `- ` list item.
 # Loose on purpose — the point is not to validate YAML but to tell a metadata
@@ -361,10 +389,11 @@ def normalise(raw):
 
       link depth    a block moving between directories re-aims its relative
                     links, so `](tests/x.py)`, `](../tests/x.py)` and
-                    `](../../tests/x.py)` are the same line at three depths.
-                    Depth is erased in both directions and at any amount; the
-                    target after it is not, so a repointed link is still a
-                    difference.
+                    `](../../tests/x.py)` are the same line at three depths, and
+                    a link INTO the docs root loses that prefix when the block
+                    lands inside it. Depth is erased in both directions and at
+                    any amount; the target after it is not, so a repointed link
+                    is still a difference.
       heading level a `###` subsection promoted to its own document's `##`.
 
     Heading text is tagged rather than merely stripped of its hashes. Stripping
@@ -375,6 +404,8 @@ def normalise(raw):
     if not line:
         return ""
     line = LINK_DEPTH.sub("](", line)
+    if LINK_ROOT is not None:
+        line = LINK_ROOT.sub("](", line)
     m = HEADING.match(line)
     return "H:" + m.group(1).strip() if m else line
 

@@ -246,9 +246,9 @@ clean file:
 
    Two mechanical adjustments come with every move, and only these two:
 
-   - **Relative links gain a level.** A block moving from the repo root into
-     `docs/` turns every `](tests/x.py)` into `](../tests/x.py)`. Skip this and
-     Phase 6 reports a wave of dead links.
+   - **Relative links are re-aimed.** A block moving from the repo root into
+     `docs/` turns `](tests/x.py)` into `](../tests/x.py)`, and `](docs/X.md)`
+     into `](X.md)`. Skip this and Phase 6 reports dead links.
    - **A `###` subsection becomes `##`** at the top of its own document.
 
    `prove-no-loss.sh` normalises exactly these two, and skips frontmatter; any
