@@ -25,6 +25,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-10 | cannabis.observer-wordpress | **Generated artifact under a byte-for-byte sync test is a hard bundle signal** (openapi.json + `CoRestOpenApiSyncTest` → Shape A, conflict made impossible not just managed); **a CLOSED prerequisite is not a MET prerequisite** (#656 cited "finding 5 of #655" — #655 closed, but finding 5 was a different finding); **design-gate vs file-gate** (#669 gated behind #667 with zero file overlap, on the issue's own "decide the seam once" — paid off: the seam shipped with 4 consumers, 2 invisible until #667 merged); **sync local main before ANALYSIS**, not just before launch — a 7-commit-stale checkout produced a conflict map of a layout that no longer existed; **a grep sizes a footprint, only execution measures a leak** |
 | 2026-08-11 | gregoryfoster/skills | **Adoption-feedback backlog → owning-file agent unit** (new provenance shape: 15 defects filed by cohort repos against *one* skill's script family → 7 agents, one per owning script, not one per issue); **a shared test file has two conflict halves and "write a new file" solves only one** — grep the test file for the literal strings each fix rewrites, then partition the modify-half by line window; **semantic dependency inside one file** (#119's flood makes #111's judgment undecidable → Shape B on different regions of the same file); measure a lint-gate issue's debt *distribution* before choosing first-vs-last; verify the repo's real gate surface before honouring an issue's "add it to CI" |
 | 2026-08-11 | CannObserv/usa-wa | **A shared-fixture *escape* is a hard conflict zone, not a soft one** — a helper that opens its own engine and `DROP SCHEMA … CASCADE`s outside the savepointed fixture forces its issue solo (destruction, not contention — sharpens the shared-test-DB ceiling, **5th recurrence**); **closed-in-fact grep caught a partially-shipped issue** → rescope-to-residual, a 4th disposition beside keep/close/defer; 6th followup recurrence, across-the-stack; **a "split on headings" target with no headings** — measure structure before scoping a curation issue |
+| 2026-08-12 | gregoryfoster/skills | **The ceiling was genuinely absent** — 7th Q5 session, first to find neither a worktree-provisioning nor a shared-backing-service limit (negative result worth recording against six positives); **line-window ownership generalized from a test file to a policy file** (`AGENTS.md`, three concurrent writers, separated windows + "no restructuring"); **an issue body's own hedge is a grep target** ("worth confirming before committing to it" → discriminator disproven, Scope 3→2); **descope to decouple** (deleting a shared sub-problem from one issue removed an ordering constraint entirely); blast radius discovered in a **test assertion about prose**, not in any issue body; **a blocked residual defers rather than rescopes** when its blocker is outside a user-named subset |
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 
 ---
@@ -1305,3 +1306,148 @@ batch-A claimant.**
   issue #444 opened first, then committed `#444 docs: …` with the prefix.
 - `observo`'s pre-commit hook did **not** run the full suite on a docs-only commit — unlike `cli`,
   where the 2026-07-23 entry warns to budget ~2 min. Per-project; do not generalize the timeout advice.
+
+---
+
+## Session 2026-08-12 — gregoryfoster/skills (gate-correctness + cohort-adoption backlog)
+
+Second orchestration session in this repo in two days (after 2026-08-11's `curating-context` pre-pin
+bundle, #135). The user named a **subset** — "GH 105, 107, 115, 117, 136–143" — rather than "the
+backlog", which turned out to matter: one issue's blocker sat outside the named set. Twelve issues,
+eight agents, two batches. Tracking issue `#144`.
+
+**Provenance was mixed, and the mix produced disjointness.** #136–#141 are followup-derived from
+#135's Batch C but decompose on the *owning script* axis; #142/#143 are CR-surfaced from #112;
+#105/#107/#115 are adoption-feedback from cohort repos. The originating cycle spread defects
+one-per-layer, so the followup provenance produced the CR-like shape (cf. 2026-06-28) rather than a
+single-file critical path.
+
+**Interview answers:**
+- **Q0**: two bundles and two dispositions, all four resolved before scoring. #107+#115 → Shape A
+  (#115 splits the Code Exploration Policy template, #107 adds a *degraded variant* of the thing #115
+  just split — done independently the second agent overwrites the first). #136+#137+#139 → Shape A
+  (all in `prove-no-loss.sh`; #136 and #137 both edit `normalise()`). #141's stated "#136 blocks it"
+  → honored. #117 → **deferred**.
+- **Q1 Quality: correctness ×3** (`Foundation×2 + Correctness×3 + Scope`, max 18). Nine of eleven work
+  items are *gates that judge other work*; the failure mode is not "a bug ships" but "the gate that
+  would have caught it is distrusted and bypassed."
+- **Q2 Deployment: active production** — eleven cohort repos vendor these skills via `skills-vendor`
+  auto-refresh.
+- **Q3 Deferrals**: none beyond #117.
+- **Q4 Parallelism**: hybrid.
+- **Q5 Ceiling: 4, from host CPU/RAM — and *nothing else*.** See below.
+
+**Batch shape:** A1 (PNL #136+#137+#139, SOCRATI #107+#115, RA #142, SHELL #140) → A2 (SEAMS #138,
+SHIP #105, LINKS #143, merging last) → B (BUDGET #141, solo). Both sub-waves merge into one
+`batch/a`; regular merge commit to `main`.
+
+### The ceiling was genuinely absent — the first such session in seven
+
+Q5's text says six sessions across three projects found the real ceiling in sub-question 2 (a shared
+backing service), not sub-question 1. This is the seventh, and it found **neither**:
+`worktree-create.sh` is plain `git worktree` with no port pool or DB clone, and the structural suite
+is hermetic (per-test `tmp_path` git repos, `ANTHROPIC_API_KEY` stripped). Verified with one grep —
+no match for `docker|POSTGRES|DATABASE_URL|PORT_POOL` under `scripts/` or `tests/`.
+
+Worth recording as a **negative result**, because the accumulated weight of six positives makes it
+tempting to keep hunting until a ceiling is found. The check stays cheap and sometimes correctly
+returns "none — cap on host resources." The ceiling still bound: 7 disjoint agents against 4 slots
+forced the sub-wave chunking.
+
+### Line-window ownership generalized from a test file to a policy file
+
+2026-08-11 (this repo) established mapping owned line-windows inside one large shared test file. The
+same technique carried `AGENTS.md` — a 257-line policy file three Batch A agents needed to edit:
+SHELL owns `:116–119` (the shellcheck bullet), SHIP owns `:134` (the pre-ship bullet), LINKS owns
+`~:170–175` (the structural-rules list). Separated windows, so three concurrent writers merge cleanly
+and the file never became a serialization point.
+
+The governing property is the same as the read-only-foundation rule's: it is about *whether the
+windows overlap*, not about what kind of file it is. Promoted as a clause in Step 5 item 2. The one
+addition a policy file needs that a test file does not: **"no restructuring, additions within the
+window only"** — a reorder produces a clean-merging diff that silently reshuffles another agent's
+window.
+
+`test_context_surface.py` (3,636 lines) split the same way — PNL 736–1443, SEAMS 2029–2502 — with one
+genuinely shared point declared read-only for both: a `parametrize` list at `:2509–2514` naming
+*both* `prove-no-loss.sh` and `check-seams.sh`. Neither issue changes an invocation path, so neither
+agent has cause to touch it. Naming the shared line is cheaper than sequencing around it.
+
+### An issue body's own hedge is a Step 5 grep target, and it paid
+
+#143 proposed a discriminator (check only `./`- and `../`-prefixed link targets) and closed with
+*"Worth confirming before committing to it."* Confirming it took one sweep and **disproved it**:
+a fifth carve-out exists that the issue missed, and it is relative-prefixed —
+`curating-context/SKILL.md:250` carries `](../tests/x.py)` as prose *explaining that a demoted link
+gains a `../`*, i.e. the exact string the discriminator was built to catch. Scope Clarity 3 → 2.
+
+New cheap rule, promoted to Step 5: when an issue body **flags its own claim as unverified** — "worth
+confirming", "I think", "assuming" — that sentence is a grep target, and a high-yield one. The author
+already located the risk; they just did not spend the minute. Distinct from the bidirectional
+footprint grep, which hunts claims the body states *confidently*.
+
+### A decision at the scoring gate can remove a dependency edge, not just clarify scope
+
+2026-08-11 (observo) established mid-orchestration issue surgery — trimming an issue and descoping the
+remainder to a new issue. This session found the adjacent move: **descope to decouple.** #141's body
+flagged that a per-skill gate asserting `links.dead == []` would trip on seven pre-existing false dead
+links — the same illustrative-placeholder class that had just broken #143's discriminator. Deciding
+that **#141 simply does not assert on dead links** did three things at once: raised its Scope Clarity
+1 → 3, removed a would-be ordering constraint against #143 entirely, and prevented two incompatible
+placeholder-exemption mechanisms landing in one batch.
+
+The general form: when two issues are converging on the same unsolved sub-problem, deleting it from
+one of them is often cheaper than sequencing them.
+
+### Blast radius came from a test assertion on *prose*, not from any issue body
+
+#141 reads as a mid-sized parameterization job — its own body says "the mechanical work of extending
+it to all ~20 skills is small," and the gate does parameterize cleanly on `(skill_dir, ratchet)`. What
+makes it High-blast is four lines away:
+
+```python
+# test_skill_self_budget.py:164
+assert f"{SKILL_MD_RATCHET:,}-token ratchet" in SKILL_MD.read_text()
+```
+
+Each skill must **name its own ratchet in prose**. Generalized, that edits all 18 `SKILL.md` files and
+intersects *every other agent in the backlog*. It forced the 2026-06-29 isolate-in-its-own-batch rule
+on an issue whose score (13) would otherwise have seated it mid-table.
+
+Extends 2026-08-11's semantic-dependency finding: the coupling was not a shared symbol or a shared
+fixture but an **assertion about documentation content**. Reading the test that a "small
+parameterization" generalizes is worth the minute — the assertions describe the real contract, and
+some of them are about prose.
+
+### A blocked residual defers rather than rescopes
+
+2026-08-11 (usa-wa) added rescope-to-residual as a fourth disposition. #117 is that shape — proposal 4
+shipped in #125 (`689b21e`), proposals 1–3 open — but the residual is itself blocked, on #118 settling
+the arm-label question, and **#118 was not in the named set**. So the fourth disposition has a branch:
+rescope when the residual is schedulable, **defer when the residual's blocker is out of scope**. Any
+slot allocated to it would have been dead work.
+
+This only arises because the user named a subset. When the ask is "the backlog", a blocker is almost
+always inside it; when the ask enumerates issue numbers, check each survivor's blockers against the
+named set specifically.
+
+### Also captured
+
+- **Twelve closed-in-fact greps, twelve live issues** — the first session in a while where the sweep
+  found nothing already-shipped. It still paid: two of the twelve greps turned up *other* corrections
+  (#143's discriminator, #141's real blast radius). The grep's yield is not only the closed-in-fact
+  verdict.
+- **Verification-mode asymmetry, 2nd recurrence** (after 2026-08-11 observo's `--dist loadfile`). Here
+  *two* agents add gates — #140's shellcheck version floor and #143's link gate — that exist in no
+  sibling's worktree. Every agent self-verifies under the old gate set, so the orchestrator's
+  `batch/a` run is the first execution of the combined tree under the new ones. Recorded in Key
+  Decisions with the explicit warning not to attribute a failure there to the last-merged agent.
+- **Scope changes written back to three issues before any agent existed** (#143 the disproven
+  discriminator, #141 the two settled decisions, #117 the deferral and its unblocking path), each
+  preserving the rejected option's rationale rather than deleting it. Continues 2026-08-09 / 2026-08-11.
+- **No chain-appending artifact in the whole backlog** — no migrations, no numbered ADRs. Worth
+  checking for and recording the negative, so the design doc says so rather than leaving a reader to
+  wonder whether it was considered.
+- Precedent (b) again: tracking issue `#144` opened first, then committed `#144 docs: …` with the prefix.
+- `gh issue comment --body-file` from `/tmp` throughout; the #117 comment contains apostrophes and
+  backticks that would have broken a heredoc form.
