@@ -54,13 +54,6 @@ The shape to converge on. Present in `cannobserv`, `cli`,
 orphaned docs.
 
 ```markdown
-### Normalizing the index — the Phase 5 step in full
-
-   reference doc with a one-line purpose. See
-   [references/cohort-patterns.md](cohort-patterns.md) for the shape
-   the cohort has converged on, and the canonical section order and `docs/`
-   filenames to align with.
-
 ## Detail Docs
 
 - [docs/COMMANDS.md](docs/COMMANDS.md) — every runnable command, with flags
@@ -73,6 +66,16 @@ One line per live doc, each naming **what a task would need it for** — the lin
 the routing signal that decides whether an agent loads a 10k-token file, so
 "style guide" is worse than "code style and formatting rules". The index is class
 A by construction: it is the mechanism progressive disclosure runs on.
+
+### Normalizing the index — the Phase 5 step in full
+
+Phase 5's step 3 carried this inline until v1.7 demoted it here:
+
+   A `## Detail Docs` section listing every live
+   reference doc with a one-line purpose. See
+   [references/cohort-patterns.md](cohort-patterns.md) for the shape
+   the cohort has converged on, and the canonical section order and `docs/`
+   filenames to align with.
 
 ## Cross-repo surveys stay read-only
 
