@@ -394,6 +394,123 @@ function graphReady(text) {
   return /READY/i.test(text);
 }
 
+// ── graph YIELD (#107) ──────────────────────────────────────────────────────
+// READY is a *status*, not a result. On CannObserv/usa-wa — a uv workspace with
+// the standard src layout (packages/<dashed-name>/src/<underscored_module>/) —
+// codebase_graph_status reported READY with 3 dependency edges across 374 files
+// and 81.8% unresolved, because the resolver cannot follow the three-way
+// dashed-dir / src/ / underscored-module mismatch. Nothing noticed: the skill
+// gated on READY, the policy it writes then sent every agent to
+// codebase_graph_query first, and an empty answer there reads as "no
+// dependents" rather than "the tool failed".
+//
+// codebase_graph_status, healthy shape:
+//   Status: READY
+//   Files (nodes): 374
+//   Dependencies (edges): 3
+//   Symbols: 3767
+//   Call edges: 23237
+//   Unresolved: 81.8%
+//
+// Loose like every parser here (gotcha H): labels are matched individually and a
+// missing one yields null rather than throwing, so a server-side relabel
+// degrades this to `unknown` instead of to a false verdict.
+function parseGraphCounts(text) {
+  const num = (re) => {
+    const m = text.match(re);
+    return m ? Number(m[1].replace(/,/g, '')) : null;
+  };
+  // Anchored to line starts. Unanchored, the `Edges` fallback matches inside
+  // `Call edges: 23237` — a different statistic, three orders of magnitude
+  // larger on the very graph this gate exists to catch — and any build that
+  // relabelled the dependency line would silently read as a healthy graph.
+  // Failing to parse must degrade to `unknown`, never to a false `ok`.
+  return {
+    nodes: num(/^[ \t]*(?:Files\s*\(nodes\)|Nodes|Files)\s*:\s*([\d,]+)/im),
+    edges: num(/^[ \t]*(?:Dependencies\s*\(edges\)|Dependency edges|Edges)\s*:\s*([\d,]+)/im),
+    symbols: num(/^[ \t]*Symbols\s*:\s*([\d,]+)/im),
+    callEdges: num(/^[ \t]*Call edges\s*:\s*([\d,]+)/im),
+    unresolvedPct: num(/^[ \t]*Unresolved\s*:\s*([\d.,]+)\s*%/im),
+  };
+}
+
+// The gate's threshold, in one place so the driver, the tests and the docs
+// cannot disagree about it.
+//
+// EDGES PER NODE < 0.1 — the issue's own first suggestion (`edges < nodes / 10`)
+// and the only candidate that measures the thing the policy actually depends on:
+// can the graph answer "what imports this file". It is scale-free, so it reads
+// the same on a 40-file service and a 4,000-file monorepo. usa-wa sits at
+// 3/374 = 0.008, twelve times below the line; a Python repo where most modules
+// import one sibling sits near or above 1.0, so the threshold leaves a full
+// order of magnitude of headroom before a genuinely flat repo trips it.
+//
+// Rejected: "Average dependencies per file rounds to 0.0" is the same metric at
+// a threshold of 0.05, but read off a *printed, rounded* string — exactly the
+// server-formatting dependency gotcha H exists to avoid. Rejected as a gate:
+// `Unresolved %`, which is a call-graph statistic and is legitimately high in
+// dynamic code; it is reported as corroboration, never as the verdict.
+//
+// MIN_NODES — below 20 files, 0.1 edges/node is under two edges and noise
+// dominates; a repo that small is also one where grep is fine. Verdict
+// `unknown` there, never `low`.
+const GRAPH_YIELD_MIN_EDGES_PER_NODE = 0.1;
+const GRAPH_YIELD_MIN_NODES = 20;
+const GRAPH_UNRESOLVED_WARN_PCT = 50;
+
+// → { verdict: 'ok' | 'low' | 'unknown', reason, edgesPerNode, ...counts }
+//
+// Three verdicts, not two. `unknown` (unparseable, or too few files to judge) is
+// deliberately NOT folded into `low`: writing the degraded policy tells a repo
+// its graph is broken, and asserting that from a string we could not read would
+// be the same class of error as the one this gate exists to catch.
+function graphYield(text) {
+  const counts = parseGraphCounts(text);
+  const { nodes, edges } = counts;
+  const edgesPerNode = nodes && nodes > 0 && edges != null ? edges / nodes : null;
+  const out = { ...counts, edgesPerNode, verdict: 'unknown', reason: '' };
+
+  if (nodes == null || edges == null) {
+    out.reason = 'could not parse node/edge counts from codebase_graph_status';
+    return out;
+  }
+  if (nodes < GRAPH_YIELD_MIN_NODES) {
+    out.reason = `only ${nodes} file(s) in the graph — too few to judge yield (min ${GRAPH_YIELD_MIN_NODES})`;
+    return out;
+  }
+  if (edgesPerNode < GRAPH_YIELD_MIN_EDGES_PER_NODE) {
+    out.verdict = 'low';
+    out.reason = `${edges} edge(s) across ${nodes} files = ${edgesPerNode.toFixed(3)} edges/file, `
+      + `below the ${GRAPH_YIELD_MIN_EDGES_PER_NODE} floor`
+      + (counts.unresolvedPct != null ? ` (unresolved ${counts.unresolvedPct}%)` : '');
+    return out;
+  }
+  out.verdict = 'ok';
+  out.reason = `${edges} edge(s) across ${nodes} files = ${edgesPerNode.toFixed(3)} edges/file`;
+  return out;
+}
+
+// codebase_graph_query on a file with no resolved edges: an ordinary sentence,
+// not an error. This is the confirmatory probe's failure shape — and the exact
+// string an agent misreads as "nothing depends on this file".
+function graphQueryEmpty(text) {
+  return /No dependency information found/i.test(text);
+}
+
+// codebase_health: green when nothing is reported down. Matched by the negative
+// because the healthy rendering varies by build while the failure vocabulary
+// (✗ / not running / unavailable / missing) is what the tool exists to say.
+function healthProblems(text) {
+  const problems = [];
+  for (const line of String(text).split('\n')) {
+    if (/(✗|✘|\bnot running\b|\bunavailable\b|\bmissing\b|\bnot installed\b|\bfailed\b)/i.test(line)
+        && line.trim()) {
+      problems.push(line.trim());
+    }
+  }
+  return problems;
+}
+
 // ── manifest validation ─────────────────────────────────────────────────────
 const MANIFEST_NAME = '.socraticodecontextartifacts.json';
 
@@ -739,6 +856,102 @@ async function cmdIndex(projectPath) {
   });
 }
 
+// Yield gate + infra triage, for Phase 6 and for the once-per-day SessionStart
+// hook (scripts/socraticode-health.sh). Machine-readable verdict on stdout,
+// prose on stderr — the AGENTS.md script convention — so a shell hook can act
+// on it without parsing English.
+//
+// Exit 0 when there is nothing to report, 1 when there is. NOT 1 for a low-yield
+// graph alone... it is: a low-yield graph IS the finding, and the hook's whole
+// job is to surface it. What a `low` verdict must never do is fail the *install*
+// (Phase 6 keeps going and switches the policy to variant B), which is why this
+// is a separate command from `verify`.
+async function cmdHealthCheck(projectPath, probePath) {
+  const findings = [];
+  const report = { projectPath, healthy: true, findings: [] };
+
+  await withClient(async (client) => {
+    const call = async (tool, args) => {
+      try {
+        return { text: await client.callTool(tool, args), error: null };
+      } catch (e) {
+        return { text: '', error: e.message };
+      }
+    };
+
+    const health = await call('codebase_health', {});
+    if (health.error) {
+      findings.push(`codebase_health failed: ${health.error}`);
+    } else {
+      const problems = healthProblems(health.text);
+      report.health = { problems };
+      for (const p of problems) findings.push(`infrastructure: ${p}`);
+    }
+
+    const status = await call('codebase_status', { projectPath });
+    if (status.error) {
+      findings.push(`codebase_status failed: ${status.error}`);
+    } else {
+      // The signal #107 found reported nowhere: an "Incremental update — FAILED
+      // (fetch failed)" recorded ~21h earlier, while every green light was lit.
+      // cmdIndex already dies on this during its own run; nothing surfaced a
+      // failure that had already happened.
+      const failed = lastOperationFailed(status.text);
+      report.lastOperation = {
+        failed,
+        error: failed ? parseLastOpError(status.text) : null,
+      };
+      if (failed) {
+        findings.push(`last operation FAILED: ${report.lastOperation.error || 'see codebase_status'}`);
+      }
+      if (indexIncomplete(status.text)) findings.push('index is marked INCOMPLETE — a previous run was interrupted');
+    }
+
+    const graph = await call('codebase_graph_status', { projectPath });
+    if (graph.error) {
+      findings.push(`codebase_graph_status failed: ${graph.error}`);
+    } else {
+      const y = graphYield(graph.text);
+      report.graph = { ready: graphReady(graph.text), ...y };
+      if (!report.graph.ready) findings.push('graph is not READY');
+      if (y.verdict === 'low') {
+        findings.push(`graph yield LOW — ${y.reason}; install the degraded Code Exploration Policy (variant B)`);
+        // Confirmatory probe, as #107 asks: one graph query against a file the
+        // caller knows has first-party imports. Its value is the *shape* of the
+        // failure — an ordinary sentence, no error — which is what makes the
+        // defect invisible to a caller that only catches exceptions.
+        if (probePath) {
+          const probe = await call('codebase_graph_query', { projectPath, filePath: probePath });
+          report.probe = {
+            filePath: probePath,
+            empty: probe.error ? null : graphQueryEmpty(probe.text),
+            error: probe.error,
+            reply: probe.error ? null : probe.text.slice(0, 400),
+          };
+          if (report.probe.empty) {
+            findings.push(`probe confirms: codebase_graph_query on ${probePath} returned "No dependency information found" — empty, not an error`);
+          }
+        }
+      } else if (y.verdict === 'unknown') {
+        findings.push(`graph yield UNKNOWN — ${y.reason}`);
+      }
+      if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
+        findings.push(`graph unresolved ${y.unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — corroborates a resolver problem`);
+      }
+    }
+  });
+
+  report.findings = findings;
+  report.healthy = findings.length === 0;
+  process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+  if (findings.length) {
+    console.error('[driver] SocratiCode health findings:');
+    for (const f of findings) console.error(`  - ${f}`);
+    process.exit(1);
+  }
+  console.error('[driver] SocratiCode health: nothing to report');
+}
+
 async function cmdVerify(projectPath) {
   await withClient(async (client) => {
     const list = await client.callTool('codebase_list_projects', {});
@@ -758,6 +971,19 @@ async function cmdVerify(projectPath) {
     const search = await client.callTool('codebase_search', {
       projectPath, query: 'configuration and settings', minScore: 0,
     });
+    // A green index whose LAST recorded operation failed is not a verified
+    // index — the delta that failed is missing from it. #107 found exactly this
+    // going unreported for 21 hours behind three green lights, so verification
+    // reads status too, and fails on it rather than mentioning it in passing.
+    let statusText = '';
+    let statusError = null;
+    try {
+      statusText = await client.callTool('codebase_status', { projectPath });
+    } catch (e) {
+      statusError = e.message;
+    }
+    const lastOpFailed = !statusError && lastOperationFailed(statusText);
+
     const okGraph = graphReady(graph);
     // "Returns hits" has to mean hits. The server answers an empty search with
     // an ordinary sentence ("No results found for …"), so a non-empty-string
@@ -768,7 +994,25 @@ async function cmdVerify(projectPath) {
     console.error(`[driver] list_projects: ${okList ? 'ok' : 'empty'}`);
     console.error(`[driver] graph_status: ${okGraph ? 'READY' : graphError ? `ERROR — ${graphError}` : 'not-ready'}`);
     console.error(`[driver] sample search hits: ${okSearch ? 'yes' : 'none'}`);
+    if (statusError) {
+      console.error(`[driver] last operation: UNREADABLE — ${statusError}`);
+    } else {
+      console.error(`[driver] last operation: ${lastOpFailed ? `FAILED — ${parseLastOpError(statusText) || 'see codebase_status'}` : 'no failure recorded'}`);
+    }
+    // Yield is reported here but deliberately does NOT gate. A low-yield graph
+    // is an upstream resolver defect this skill cannot repair; failing the
+    // install would leave the repo with no policy at all, when the right answer
+    // is a policy that routes around the broken tool. Phase 6 reads this line
+    // and writes variant B (#107).
+    if (okGraph) {
+      const y = graphYield(graph);
+      console.error(`[driver] graph yield: ${y.verdict.toUpperCase()} — ${y.reason}`);
+      if (y.verdict === 'low') {
+        console.error('[driver] → write the DEGRADED Code Exploration Policy (variant B): route imports/dependents/blast-radius to grep, and warn that empty graph output is tool failure, not absence.');
+      }
+    }
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
+    if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
   });
 }
@@ -784,7 +1028,14 @@ Commands:
   index    run a full fresh index; block until the run reports complete, the
            graph is READY, and context artifacts are all indexed
   status   print codebase_status once and exit
-  verify   sample codebase_search + graph_status + list_projects; exit 0/1
+  verify   sample codebase_search + graph_status + list_projects + a check that
+           the last recorded operation did not FAIL; exit 0/1. Reports graph
+           yield without gating on it.
+  health-check
+           infra triage on a cadence: codebase_health + codebase_status +
+           codebase_graph_status, with the graph measured by EDGE YIELD rather
+           than by READY. JSON verdict on stdout, findings on stderr; exit 0
+           when there is nothing to report, 1 when there is.
   resolve  print the resolved server launch command as JSON and exit — does not
            start the server (no Docker, no network); use it to debug resolution
   validate-manifest
@@ -793,26 +1044,56 @@ Commands:
 
 projectPath defaults to the current working directory.
 
+Flags:
+  --probe <relpath>   health-check only: on a LOW yield verdict, run one
+                      codebase_graph_query against this file as a confirmatory
+                      probe. Give it a file you know has first-party imports.
+
 Env:
   SOCRATICODE_ENTRY   explicit path to the socraticode server entry (skips resolution)
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
                       installed_plugins.json (default ~/.claude)
   npm_config_cache    npm cache dir whose _npx/ subtree is searched (default ~/.npm)
   POLL_INTERVAL_MS    status poll cadence (default 15000)
-  INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)`;
+  INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)
+  HEALTH_TIMEOUT_MS   hard ceiling for health-check (default 120000 = 2min).
+                      It runs from a SessionStart hook, so it must not hang a
+                      session waiting on a server that will never answer.`;
 
 // Only dispatch when run as a script. Importing the module (to exercise the
 // PARSERS against captured status strings) must not spawn a server or exit.
 const RUN_AS_SCRIPT = process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (RUN_AS_SCRIPT) {
-  const [cmd, projectPathArg] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const probeIdx = argv.indexOf('--probe');
+  let probePath = null;
+  if (probeIdx !== -1) {
+    probePath = argv[probeIdx + 1] || null;
+    if (!probePath) die('--probe needs a file path');
+    argv.splice(probeIdx, 2);
+  }
+  const [cmd, projectPathArg] = argv;
   const projectPath = projectPathArg ? resolvePath(projectPathArg) : process.cwd();
 
   switch (cmd) {
     case 'index': await cmdIndex(projectPath); break;
     case 'status': await cmdStatus(projectPath); break;
     case 'verify': await cmdVerify(projectPath); break;
+    case 'health-check': {
+      // Hard ceiling. This runs from a SessionStart hook: a server that never
+      // answers must cost a bounded wait, not the session. Implemented here in
+      // node rather than with timeout(1), which is not on a stock macOS.
+      const ms = Number(process.env.HEALTH_TIMEOUT_MS || 120000);
+      const bomb = setTimeout(() => {
+        console.error(`[driver] health-check exceeded ${ms}ms — giving up`);
+        process.exit(1);
+      }, ms);
+      bomb.unref();
+      await cmdHealthCheck(projectPath, probePath);
+      clearTimeout(bomb);
+      break;
+    }
     case 'resolve': cmdResolve(); break;
     case 'validate-manifest': cmdValidateManifest(projectPath); break;
     case '--help': case '-h': console.log(USAGE); break;
@@ -825,6 +1106,10 @@ if (RUN_AS_SCRIPT) {
 export {
   validateManifest, MANIFEST_NAME,
   parseEmbedPercent, parseArtifacts, graphReady,
+  // graph yield (#107)
+  parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
+  GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
+  GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
   expectedArtifactCount, resolveServerLaunch,
