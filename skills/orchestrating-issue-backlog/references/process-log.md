@@ -25,6 +25,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-10 | cannabis.observer-wordpress | **Generated artifact under a byte-for-byte sync test is a hard bundle signal** (openapi.json + `CoRestOpenApiSyncTest` → Shape A, conflict made impossible not just managed); **a CLOSED prerequisite is not a MET prerequisite** (#656 cited "finding 5 of #655" — #655 closed, but finding 5 was a different finding); **design-gate vs file-gate** (#669 gated behind #667 with zero file overlap, on the issue's own "decide the seam once" — paid off: the seam shipped with 4 consumers, 2 invisible until #667 merged); **sync local main before ANALYSIS**, not just before launch — a 7-commit-stale checkout produced a conflict map of a layout that no longer existed; **a grep sizes a footprint, only execution measures a leak** |
 | 2026-08-11 | gregoryfoster/skills | **Adoption-feedback backlog → owning-file agent unit** (new provenance shape: 15 defects filed by cohort repos against *one* skill's script family → 7 agents, one per owning script, not one per issue); **a shared test file has two conflict halves and "write a new file" solves only one** — grep the test file for the literal strings each fix rewrites, then partition the modify-half by line window; **semantic dependency inside one file** (#119's flood makes #111's judgment undecidable → Shape B on different regions of the same file); measure a lint-gate issue's debt *distribution* before choosing first-vs-last; verify the repo's real gate surface before honouring an issue's "add it to CI" |
 | 2026-08-11 | CannObserv/usa-wa | **A shared-fixture *escape* is a hard conflict zone, not a soft one** — a helper that opens its own engine and `DROP SCHEMA … CASCADE`s outside the savepointed fixture forces its issue solo (destruction, not contention — sharpens the shared-test-DB ceiling, **5th recurrence**); **closed-in-fact grep caught a partially-shipped issue** → rescope-to-residual, a 4th disposition beside keep/close/defer; 6th followup recurrence, across-the-stack; **a "split on headings" target with no headings** — measure structure before scoping a curation issue |
+| 2026-08-13 | gregoryfoster/skills | **#144 execution addendum** — the report-back slot caught a material error in 9 of 10 issue bodies (incl. one that *implemented and measured* the suggested fix before rejecting it); **executable content shipped as documentation must be gated by executing it** (a comment-block recipe leaked the whole environment and died on a `.env` comment, under a 12-test suite that only matched its text); a merged fix can be structurally inoperative in a way its own tests confirm (#137); **a ratchet is the wrong instrument for an append-only artifact** — one set on the process log went red within the hour; harness worktrees are cut from `origin/main` (#150) and `worktree-destroy.sh` cannot address their paths (#149) |
 | 2026-08-12 | gregoryfoster/skills | **The ceiling was genuinely absent** — 7th Q5 session, first to find neither a worktree-provisioning nor a shared-backing-service limit (negative result worth recording against six positives); **line-window ownership generalized from a test file to a policy file** (`AGENTS.md`, three concurrent writers, separated windows + "no restructuring"); **an issue body's own hedge is a grep target — and so is the orchestrator's own grep** (a loose `\]\(…\)` sweep "disproved" #143's discriminator and was itself refuted by the implementing agent: the match was a bare fragment in an inline code span, not a link — design doc, score and issue comment all retracted); **three instances of the same shape in one session** — a link sweep, two test assertions and a code-review finding, all *absence* claims derived from a model of the artifact rather than from the artifact; **descope to decouple** (deleting a shared sub-problem from one issue removed an ordering constraint entirely); blast radius discovered in a **test assertion about prose**, not in any issue body; **a blocked residual defers rather than rescopes** when its blocker is outside a user-named subset |
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 | 2026-08-13 | CannObserv/cannobserv | **Upstream-blocked backlog: check the sibling repo's blocker states before anything else** — all three blockers closed within 5 days, converting a "blocked" backlog to actionable, with a stale contract pin as the shared consequence; **a shared first step that is not an issue** (the re-pin) modeled as commit 1 of a Shape-A bundle, then read-only for the gated batch; **same-function overlap is the sharpest Shape-A signal yet** (two issues edit `test_write_bodies.py:22-23`); **a clarifying "Other" answer at a decision gate flipped the decision and exposed a latent read-time data drop** (wp/v2 observation adapter silently drops ACF `co_roles` — the issue body's "no such field on either backend" was true of the model, misleading about the data); hybrid preference degenerated to fully-sequential (every pairing shared a file); policy-deferral of a user-named issue (#278, async-parity) confirmed at Q3 |
@@ -1553,3 +1554,110 @@ choice; (2) post-gate decision changes flow through the same write-back circuit 
 surgery (2026-08-11 observo): plan Key Decisions + issue comment + tracking-issue body, before any
 agent exists. The user chose the full rename with a cli adoption issue at ship time (adopt-a-release
 covers it); the plan gained Key Decision 9.
+
+---
+
+## Session 2026-08-13 — gregoryfoster/skills (#144 execution addendum)
+
+Execution record for the backlog planned in the 2026-08-12 entry. Eleven issues, nine agents
+(eight in Batch A across two sub-waves, one in Batch B), two CR rounds. All merged; `main` at
+`d08d0a0`, suite 1644 → 2004.
+
+### The report-back slot is the highest-yield instruction in the worker prompt
+
+**Nine of ten Batch A issue bodies carried a material error**, and every one surfaced because the
+prompt demanded corrections and said *"I want the corrections, not a report that matches the
+prediction."* The phrasing matters: an agent told a generic "verify your assumptions" reliably
+produces a report shaped like agreement.
+
+What it caught, by kind:
+
+- **A false premise** — #115's "`init-socraticode` already writes to `docs/`" (it does not;
+  `init-project-fastapi` writes `docs/SKILLS.md`). Its whole "the destination is not new
+  machinery" argument collapsed.
+- **A fix not implementable where the issue said** — #136's "skip frontmatter in `normalise()`";
+  `normalise()` is per-line and frontmatter is document-level.
+- **A wrong failure mode** — #140 predicted spurious `SC1091`; an old shellcheck actually rejects
+  the whole invocation and lints *nothing*.
+- **A right line number on the wrong concept** — #142's `:122` is a verification bullet, not the
+  format template. Implementing it literally would have shipped a half-fix.
+- **A suggested fix that measurement showed insufficient** — #138's basename derivation, which the
+  agent *implemented and measured* at 314 → 97 with 95 residual before rejecting it.
+
+The last one is the shape to ask for: not "the issue is wrong" but "I did what it said and here is
+the number." Cheap to demand, and unarguable.
+
+### Two defects existed only in execution, not in reading
+
+#105's ported recipe passed a 12-test suite that asserted its *text*. Running it found that
+`export $(cat … | xargs)` dumps the entire environment (73 `declare -x` lines, secrets included)
+when both files are absent, and dies with `'#': not a valid identifier` on any `.env` carrying a
+comment — killing the wrapper before `exec`, so the gate never runs. Both had been shipped advice.
+
+**Rule: when a skill ships executable content as documentation — a recipe in a comment, a template
+in a fence — the gate must execute it, not match it.** The follow-up added 24 execution tests that
+lift the recipe out of the comment block and run it, and they were proven red against the prior
+implementation rather than assumed to work.
+
+A corollary found the same day: proving redness requires the *actual* prior implementation. Deleting
+one line of the new parser did **not** turn the tests red, because the identifier check catches
+comments as a second line of defence. Defence-in-depth is good design and a bad regression proof.
+
+### A merged fix can be structurally incomplete in a way its own tests confirm
+
+#137 shipped, green, with new tests. It was then found to be inoperative for the case that motivated
+it: the erasable prefix was built from the repo-relative `--docs-dir`, so it could never match a
+skill's own `](references/X.md)` links. It worked only for the cohort's canonical shape.
+
+It surfaced because a *later agent pointed a real run at it* — the trim agent's demotions produced
+3 LOST, exactly the case #137 exists to fix, and it reported that instead of papering over it with
+warrants (which is what the prompt told it to do). **Where a batch fixes a gate, schedule something
+that exercises the gate afterwards**; an agent's own tests verify the code it wrote, not the
+behaviour the issue described.
+
+### The instrument defect, three times — see the 2026-08-12 entry
+
+The retracted link sweep, two test assertions checking for words that survive in prose explaining
+their removal, and a code-review finding claiming a call site was absent when it was two lines below
+the definition. All *absence* claims derived from a model of the artifact rather than the artifact.
+Journalled in full there; noted here because two of the three happened during execution rather than
+planning, so the rule is not planning-specific.
+
+### Harness facts worth carrying (both now filed)
+
+- **Worktrees are cut from `origin/main`, not the orchestrator's checked-out branch** — invisible in
+  sub-wave 1 because `batch/<X>` is `main` then, and increasingly wrong afterwards. Two A2 agents
+  detected it independently; both recovered only because their prompts quoted an expected test
+  baseline they could compare against. **Quote the expected baseline in every worker prompt** — one
+  line, and it is what makes a stale tree self-announcing (#150).
+- **`worktree-destroy.sh` cannot address harness worktree paths**, so the skill's own teardown step
+  never runs; the Iron Law has to be reproduced by hand with `git merge-base --is-ancestor` plus
+  `git branch -d` (#149).
+- **The `.venv` symlink**: every agent hit it. Put it in the prompt as its own command — chained onto
+  a `source` with `&&`, the sandbox refuses the compound and the symlink silently never gets made.
+
+### A ratchet is the wrong instrument for an append-only artifact
+
+Batch B set a per-doc ceiling on this very file at 60,750 against a measured 60,748, flagging it as
+"the least comfortable line". **It went red within the hour** — a concurrent session appended one
+entry. A ratchet says "this may not grow"; a ledger's contract is that it grows, and the only way to
+stay green is to raise the integer every session, which is the loosening-by-editing a ratchet exists
+to prevent. Now an explicit exemption with the reasoning recorded, and the split filed as #152.
+
+Generalisable: before ratcheting a file, ask whether its *purpose* is to accumulate. If so, the
+gate belongs on the index or on per-entry size, not on the total.
+
+### Also captured
+
+- **Sub-wave chunking held.** 7 file-disjoint agents against a ceiling of 4 → A1 (4) then A2 (3),
+  each merging into one `batch/a`. Slot reclaim was synchronous; no leak across five teardowns.
+- **The AGENTS.md line-window ownership worked exactly as designed** — three agents, three separated
+  windows, zero conflicts, +18/−2. The "additions within your window only, no restructuring" clause
+  is what made it safe; a reorder merges cleanly and silently reshuffles someone else's window.
+- **Verification-mode asymmetry, 3rd recurrence.** Two Batch A agents added gates that existed in no
+  sibling's worktree, so the orchestrator's post-merge run was the first execution of the combined
+  tree under them. Recorded in the design doc in advance, which is what kept it from being
+  misattributed.
+- **A concurrent session pushed to `main` twice mid-ship**, once between the merge and the push.
+  `git push` rejection is the cheap detector; the expensive version is a batch branch cut from a
+  `main` that moved. Re-pull immediately before every push, not just before every batch.
