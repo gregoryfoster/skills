@@ -128,7 +128,7 @@ bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch>
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --descoped "<reason>"
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --base <ref>   # verify merge into <ref> instead of project default
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --force        # required when the worktree contains submodules
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --unlock       # required when the worktree is locked (all agent-provisioned ones are)
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --unlock       # only when the destroy reports a held lock
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --dry-run      # preview the decision, change nothing
 ```
 
@@ -141,11 +141,11 @@ The script:
 - Runs `git worktree prune` to clean stale metadata
 - Exits 0 on success, 1 on Iron Law violation (unmerged work without `--descoped`), 2 on tooling failure
 
-**Agent-provisioned worktrees.** The Claude Code Agent tool's `isolation: "worktree"` checks out branch `worktree-agent-<id>` at `.claude/worktrees/agent-<id>/` — branch and directory leaf under different names, so no `WORKTREE_ROOT` override can reach it. Branch-first lookup handles it with no configuration. Those worktrees are also **locked**, so pass `--unlock`.
+**Agent-provisioned worktrees.** The Claude Code Agent tool's `isolation: "worktree"` checks out branch `worktree-agent-<id>` at `.claude/worktrees/agent-<id>/` — branch and directory leaf under different names, so no `WORKTREE_ROOT` override can reach it. Branch-first lookup handles it with no configuration and no extra flags.
 
 **When to pass `--force`:** git's `worktree remove` refuses to act on worktrees containing checked-out submodules (`fatal: working trees containing submodules cannot be moved or removed`). If the project ships submodules (e.g., `skills-vendor/*` consumed via `managing-skills`), every destroy will hit this — pass `--force` to bypass git's submodule refusal. The Iron Law's merge gate is unaffected — `--force` only controls the final removal mechanics. **Caveat:** `--force` also bypasses git's dirty-working-tree refusal, so any uncommitted changes in the worktree are silently discarded; verify the worktree is clean before forcing.
 
-**When to pass `--unlock`:** git refuses to remove a locked worktree, and `--force` is *not* the remedy — it is a single `-f`, and git demands `-f -f` for a lock. `--unlock` releases the lock and changes nothing else, so uncommitted work still blocks removal. A gitignored `.venv` symlink is invisible to git's clean check and needs neither flag.
+**When to pass `--unlock`:** normally never. The Agent tool releases its lock when the agent exits, and teardown runs after that, so the plain invocation is the normal path. Pass `--unlock` only when a destroy actually reports a held lock — which means the owner is still running or died without releasing, so check which before overriding. git refuses to remove a locked worktree and `--force` is *not* the remedy: it is a single `-f`, and git demands `-f -f` for a lock. `--unlock` releases the lock and changes nothing else, so uncommitted work still blocks removal. A gitignored `.venv` symlink is invisible to git's clean check and needs neither flag.
 
 **`--dry-run`** reports the resolved path, base ref, merge verdict, lock state and removal command, then exits without side effects — with the exit code the real run would return (1 on an Iron Law violation, 2 on a lock with no `--unlock`). Safe to point at a live worktree, including one an agent is working in.
 

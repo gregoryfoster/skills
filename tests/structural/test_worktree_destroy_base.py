@@ -10,11 +10,17 @@ Exercises the script end-to-end against a throwaway git repo:
 
 Plus the harness-worktree cases from #149. The Claude Code Agent tool's
 `isolation: "worktree"` provisions `.claude/worktrees/agent-<id>/` on branch
-`worktree-agent-<id>` and *locks* it, so the branch and the directory leaf
-carry different names and no WORKTREE_ROOT override can reach it. The
-`TestBranchFirstLookup` / `TestLockedWorktrees` / `TestDryRun` classes pin
-the registry-first resolution, the lock gate, and the side-effect-free
+`worktree-agent-<id>`, so the branch and the directory leaf carry different
+names and no WORKTREE_ROOT override can reach it. `TestBranchFirstLookup`
+pins the registry-first resolution; `TestDryRun` pins the side-effect-free
 preview that lets an agent verify resolution against a live worktree.
+
+`TestLockedWorktrees` covers the lock gate. Note that the Agent tool holds
+its lock only while the agent runs and releases it on exit, so a real
+teardown normally sees no lock at all — the gate exists for the agent that
+hung or died. Every test here therefore locks a throwaway worktree
+explicitly; none observes (or may observe) the live, transient harness lock,
+which would make the test pass or fail depending on what else is running.
 
 No API calls. Self-contained: each test gets a fresh tmp repo via the
 `tmp_repo` fixture.
