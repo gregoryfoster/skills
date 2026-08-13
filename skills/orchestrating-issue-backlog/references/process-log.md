@@ -1556,6 +1556,37 @@ surgery (2026-08-11 observo): plan Key Decisions + issue comment + tracking-issu
 agent exists. The user chose the full rename with a cli adoption issue at ship time (adopt-a-release
 covers it); the plan gained Key Decision 9.
 
+### Execution addendum (same day): both batches shipped
+
+Full pipeline ran to completion in-session: Batch A (worker → reconcile → independent verify →
+PR #331 → user-invoked CR round → merge) then Batch B (same shape → PR #332 → CR round → merge);
+cli adoption issue CannObserv/cli#903 filed at ship time from the audited call-site list; tracking
+#329 closed. Execution notes worth keeping:
+
+- **A per-batch CR skill round slotted cleanly between "PR opened" and "merge"** — the user invoked
+  `/reviewing-code-python-click` on each batch branch, and its directives ("N: fix … then proceed to
+  the next batch") doubled as the merge-gate confirmation. The orchestrator implemented CR fixes
+  directly on the PR branch (small, reviewed deltas) rather than re-dispatching the worker — right
+  call at that size.
+- **Review the reviewer's collapse**: Batch A's CR found that after #297 folded the walker into
+  strict validation, nothing guarded the *strictness itself* for the 24 non-replayed ops — a
+  re-pin could silently degrade the oracle back to types-only. The meta-test
+  (`test_request_schemas_stay_strict`) closes the same "nothing fails when it goes stale" class the
+  batch was retiring; look for this shape whenever a hand check collapses into an
+  externally-supplied property.
+- **Worker-report claims spot-verified cheaply**: the orchestrator re-ran the full suite + gates in
+  each worktree (same env, seconds) and independently probed Batch A's central claim (28/28 write
+  bodies strict at every reached level) with a ten-line script before opening the PR. Both workers'
+  reports proved accurate; the probes are what made "accurate" a verified word.
+- **Harness/tooling mismatch**: `worktree-destroy.sh` expects `.worktrees/`; `isolation: "worktree"`
+  provisions under `.claude/worktrees/`. Equivalent manual sequence: `merge-base --is-ancestor`
+  check → `git worktree remove` → `branch -D`. Also, the review skill's gather-context preflight
+  self-refreshed `.skills/doctor.sh` mid-pipeline — commit that noise promptly or it trips the
+  Rule 6 clean-checkout check on the next completion signal.
+- Both workers returned clean first-pass reports (4111→4139→4170 tests); the single-agent
+  sequential shape meant zero reconciliation surprises — no fall-through, no uncommitted work,
+  no custom branch names.
+
 ---
 
 ## Session 2026-08-13 — gregoryfoster/skills (#144 execution addendum)
