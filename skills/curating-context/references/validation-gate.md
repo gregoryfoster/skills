@@ -270,9 +270,30 @@ Ordering avoids the first — "split before demoting, never after" — and nothi
 avoids the second, which is why the answer had to be a warrant rather than a
 discipline.
 
+An entry may be scoped to one target by naming a path first:
+
+```
+WARRANT :: CONTENT           judged against every target
+PATH :: WARRANT :: CONTENT   judged only when --file contains PATH
+```
+
+The two forms are told apart by whether the **first** field names a warrant —
+never by counting `::`, which would truncate any entry whose judged line
+contains one. `PATH` is matched as a substring of the target, the same way
+`.skills/context-seams-ok` pins an entry to one file, and scoping only ever
+*narrows* what an entry can reach.
+
+Reach for it when one repo has more than one curated surface — a root
+`AGENTS.md` plus a skill's own `SKILL.md`. The file is per-repo but `--file` is
+per-target, so an entry judged against `AGENTS.md` reported "matched nothing" on
+the next run against a `SKILL.md` and aged into a stale-entry warning that was
+simply wrong. Expiry is only trustworthy while every warning means something,
+so an entry that cannot apply must say which target it was for rather than look
+dead (#139).
+
 ### Phase 6's remaining assertions in full
 
-  A line the run had to **rewrite** rather than move — a pointer whose target this same change relocated, a heading Phase 6.5 forces you to rename — is not a loss and must not be recorded as one. Give each a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, warrant from the closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as `--no-loss-warrants M`. Entries expire when their line changes and each is charged with its hits, so one blanket line is visible. **Never** warrant a line you have not read against its replacement.
+  A line the run had to **rewrite** rather than move — a pointer whose target this same change relocated, a heading Phase 6.5 forces you to rename — is not a loss and must not be recorded as one. Give each a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or `PATH :: WARRANT :: CONTENT` to scope it to one target — see [Warranted losses](#warranted-losses-are-not-the-same-claim-as-no-loss); warrant from the closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as `--no-loss-warrants M`. Entries expire when their line changes and each is charged with its hits, so one blanket line is visible. **Never** warrant a line you have not read against its replacement.
 
 - **No block was copied instead of moved.** The check is satisfied by presence *anywhere*, so a bullet left inline *and* in a destination is invisible to it, to Phase 6.5, and to `links.dead` — six shipped that way on one run. `duplicated: N` lists them; judge each, because a lead-in that is load-bearing in both places is a real state.
 
