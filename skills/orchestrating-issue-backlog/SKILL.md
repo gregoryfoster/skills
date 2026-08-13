@@ -86,7 +86,7 @@ For a shared test database specifically: read the suite's session-scoped fixture
 - **Read the guard before accepting serialization.** If it validates a *base* DB name before a worker suffix is appended, per-agent databases pass it and the ceiling reverts to the host's CPU/RAM limit (process-log 2026-08-09: `observo_a1_test` passed the `endswith("_test")` assert *and* stayed xdist-compatible as `observo_a1_test_gw0`).
 
 Three resolutions, in preference order:
-1. **Provision N slots up front** (N = desired ceiling). The only option preserving both parallelism *and* worker self-verification (Worker steps 5–7 run before the completion signal). Check whether the test role can create them — usually not, so it is a one-time superuser step. Verify with one real run, then put the per-agent DSN in every worker prompt.
+1. **Provision N slots up front** (N = desired ceiling). The only option preserving both parallelism *and* worker self-verification (Worker steps 7–9 run before the completion signal). Check whether the test role can create them — usually not, so it is a one-time superuser step. Verify with one real run, then put the per-agent DSN in every worker prompt.
 2. **Serialize the verification gate** — workers implement in parallel, the orchestrator runs the suite. Cheap, but workers can no longer self-verify before signalling.
 3. **Cap agents at 1 per batch.** Always available, wastes all disjointness.
 
@@ -265,7 +265,7 @@ After the plan is approved and committed, capture any adjustments made during th
 
 ### Branch strategy
 
-Each **multi-agent batch** gets a shared integration branch (e.g. `batch/a`, `batch/f`). The orchestrator creates this branch and checks it out **before spawning any agents** — it is the merge *target* for every worker in the batch. Worker agents use `isolation: "worktree"` for an isolated working directory, but **do not assume their completed work auto-merges onto the batch branch** — the harness's post-completion behavior is inconsistent (see Rule 3). The orchestrator reconciles and merges each worker explicitly on its completion signal (Orchestrator step 5).
+Each **multi-agent batch** gets a shared integration branch (e.g. `batch/a`, `batch/f`). The orchestrator creates this branch and checks it out **before spawning any agents** — it is the merge *target* for every worker, **not the base their worktrees are cut from** (Rule 3). Worker output does not reliably auto-merge back either; the orchestrator reconciles and merges each worker explicitly on its completion signal (Orchestrator step 5).
 
 **Single-agent batches** do not need a separate batch branch — the agent's feature branch serves directly.
 
@@ -278,8 +278,8 @@ Ask the user their preferred **batch→main** merge strategy (regular, squash, r
 ### Orchestrator agent
 
 The orchestrator reads the batch plan and manages progression. It:
-1. **Sync local main before every batch launch** — `git checkout main && git pull --ff-only`. Agents worktree from local main; if local main is stale, agents base their work on the wrong commit.
-2. **Check out the batch branch before spawning agents** — `git checkout -b batch/<X>`. This makes `batch/<X>` the intended merge target. Worker output does NOT reliably auto-merge there — the orchestrator reconciles and merges each worker explicitly on completion (step 5, Rule 3).
+1. **Sync local main before every batch launch** — `git checkout main && git pull --ff-only`. The pull advances `origin/main` too, which is the ref agents' worktrees are actually cut from (Rule 3).
+2. **Check out the batch branch before spawning agents** — `git checkout -b batch/<X>`. This makes it the merge target only — workers still branch from `origin/main` and must merge it in themselves (Rule 3).
 3. **Verify worktree slot availability** — before launching, check that consumed slots + planned agents ≤ project ceiling (Rule 5). Prefer the host project's own slot-status command if it exists (e.g., a `dev.sh worktree status` or listing files in the port-pool directory) — this reports the **actual** resource consumption. If only the git-worktree count is available, use `bash skills/using-git-worktrees/scripts/worktree-list.sh --porcelain | grep -c '^worktree '` (minus 1 for the main checkout) as a **lower-bound** proxy and apply a safety margin (e.g., treat the effective ceiling as `ceiling - 1`) to absorb port leaks from previously-destroyed worktrees whose project-side cleanup didn't run.
 4. Launches all worker agents whose batch gate is currently satisfied simultaneously
 5. **On each worker completion signal** (reconcile, then merge — do not assume auto-merge; Rule 3):
@@ -300,19 +300,21 @@ Never writes implementation code itself.
 
 Each worker agent follows this protocol before signaling completion:
 
-1. **Confirm your auto-provisioned worktree** — you are launched inside an isolated worktree created by `isolation: "worktree"` (typically on a `worktree-agent-<id>` branch); do NOT create your own. Work on the branch you're on — the orchestrator discovers and merges it by content, not by name (Orchestrator step 5). Worktree mechanics: [`using-git-worktrees`](../using-git-worktrees/).
+1. **Confirm your auto-provisioned worktree** — you are launched inside one created by `isolation: "worktree"` (typically on a `worktree-agent-<id>` branch); do NOT create your own. Work on the branch you are on — the orchestrator discovers and merges it by content, not name (Orchestrator step 5). Mechanics: [`using-git-worktrees`](../using-git-worktrees/).
 2. **Pre-flight: verify isolation** — confirm cwd is an isolated worktree, not the main checkout. Use either:
    - `[ -f "$(git rev-parse --show-toplevel)/.git" ]` — in a linked worktree, `.git` is a *file* pointing to the worktree's git-dir; in the main checkout it's a *directory*. Cheapest reliable check.
    - Or compare resolved paths: `[ "$(realpath "$(git rev-parse --git-dir)")" != "$(realpath "$(git rev-parse --git-common-dir)")" ]`. Do not compare the raw `git rev-parse` outputs without `realpath` — git may return one as absolute and the other as relative depending on cwd, producing false-unequal results that mask a fall-through.
 
    If the check fails, abort and signal the orchestrator that worktree provisioning fell through (Rule 5/6) — do NOT modify files in the main checkout.
-3. **Treat the issue body as a proposal, not a specification.** Verify every file:line, every claimed call site, and every prescribed implementation against the current tree before acting. Where the body is wrong, **report the correction** — do not implement around it silently. Across one 13-issue backlog the implementing agent found a material error in the body **every single time**; three would have shipped a defect as written, and staleness rose with batch depth because earlier batches moved the code the later bodies describe (process-log 2026-08-09). The direction is reliable; the specifics are not. Name the prior failures concretely in each worker prompt — an agent told a generic "verify your assumptions" tends to *confirm* them.
-4. **Implement with TDD** — red → green → refactor
-5. **Run full test suite** — all tests must pass
-6. **Run linter** — no violations
-7. **Self-review diff** — check: correctness, test coverage, project conventions, no unintended side effects outside issue scope
-8. **Address findings** — fix before signaling; do not signal with known issues
-9. **Signal completion** — notify orchestrator the branch is ready to merge into the batch branch. The orchestrator destroys the worktree after merge (see Orchestrator step 5); the worker does NOT destroy it itself (premature destruction can race with the merge).
+3. **Merge the batch branch** — `git merge batch/<X>`; expect a fast-forward, stop and report anything else. Your worktree is cut from `origin/main`, not the orchestrator's checkout (Rule 3), so after sub-wave 1 it is missing work already on `batch/<X>`. After step 2, never before — a merge writes files.
+4. **Verify your brief's baseline** — the expected test count on `batch/<X>` and the interpreter that produces it. If the suite disagrees, STOP and report; do not reconcile to it. If the brief names none, ask before implementing. Catches what step 3 cannot: a brief written against the wrong tree still merges cleanly.
+5. **Treat the issue body as a proposal, not a specification.** Verify every file:line, every claimed call site, and every prescribed implementation against the current tree before acting. Where the body is wrong, **report the correction** — do not implement around it silently. Across one 13-issue backlog the implementing agent found a material error in the body **every single time**; three would have shipped a defect as written, and staleness rose with batch depth because earlier batches moved the code the later bodies describe (process-log 2026-08-09). The direction is reliable; the specifics are not. Name those prior failures concretely in each worker prompt.
+6. **Implement with TDD** — red → green → refactor
+7. **Run full test suite** — all tests must pass
+8. **Run linter** — no violations
+9. **Self-review diff** — check: correctness, test coverage, project conventions, no unintended side effects outside issue scope
+10. **Address findings** — fix before signaling; do not signal with known issues
+11. **Signal completion** — notify orchestrator the branch is ready to merge into the batch branch. The orchestrator destroys the worktree after merge (see Orchestrator step 5); the worker does NOT destroy it itself (premature destruction can race with the merge).
 
 **Required report-back slot: everything in the issue body that turned out to be wrong or stale.** Phrase it with the second clause — *"I want the corrections, not a report that matches the prediction"* — because without it agents reliably produce a report shaped like agreement. This is what surfaces the body-decay corrections above; it is also how the orchestrator learns its own briefs were wrong, which happens (process-log 2026-08-10: two workers corrected the orchestrator's brief and were right both times). Escalations are evidence, not findings — verify one before acting on it.
 
@@ -325,7 +327,7 @@ Each worker agent follows this protocol before signaling completion:
 - **Blast radius ≠ priority** — a high-blast issue may score high but still must wait for lower-priority isolates to merge first. Three further variants: **score determines what gets done, ordering constraints determine when** — a zero-conflict issue is the most *schedulable* thing in a backlog, so it fills whichever slot would otherwise idle rather than earning Batch A by score (2026-08-11 observo: the top-scored issue went to Batch B); a **trivial issue can be a hard gate** when its guard must exist before a later issue widens the surface it guards (2026-08-07); and an issue whose deliverable is a **measurement or assessment of the final state** sequences last on epistemics rather than contention — run early, it measures a state that won't exist at merge time (2026-08-11 usa-wa)
 - **Correctness fixes lead refactors** — if a bug fix and a structural refactor both touch the same file, fix the bug in the first commit of the refactor branch, not in a separate earlier batch
 - **Pick a shape for same-file pairs** — bundle (Shape A: one agent, sequential commits) when both pieces fit in a single review session and form a define→use sequence; split (Shape B: prerequisite in parallel batch, dependent in its own) when the dependent dwarfs the prerequisite or the pieces differ in kind (e.g. mechanical refactor + UX feature). See Step 7 batch design rules.
-- **Worktrees always — and verify the host project can provision them** — use `isolation: "worktree"` for all worker agents; each gets an isolated working directory. Pre-create and check out the batch branch first so it is the merge target — but reconcile and merge each worker explicitly, since the parameter's auto-merge behavior is unreliable (Rule 3). The Agent tool parameter does NOT guarantee filesystem isolation if the host project's worktree-create script falls through (port pool exhausted, docker port collision, etc.); cap per-batch agents at the project's provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
+- **Worktrees always — and verify the host project can provision them** — use `isolation: "worktree"` for all worker agents. Check out the batch branch first so it is the merge target, but brief every worker to merge it themselves — worktrees are cut from `origin/main` — and reconcile each one explicitly rather than trusting auto-merge (Rule 3). The parameter does NOT guarantee filesystem isolation if the host project's worktree-create script falls through (port pool exhausted, docker port collision); cap per-batch agents at the provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
 - **Deferred is a decision** — explicitly name what is out of scope and why; don't silently omit
 - **Batch feature branches for multi-agent batches** — gives the user a single integration point to test and review before merging to main; surfaces intra-batch conflicts at the batch branch, not at main
 - **Single-agent batches skip the extra branch** — the agent's feature branch is the batch branch
@@ -341,7 +343,7 @@ These rules prevent the class of failures that produced the Batch B→C conflict
 
 ### Rule 1 — Sync local main before conflict analysis AND before every agent launch
 
-`git push origin HEAD:main` from a feature branch advances `origin/main` but does **not** move local `main`. Worktree agents branch from local `main`. If local `main` is behind `origin/main`, agents silently base their work on the wrong commit.
+`git push origin HEAD:main` from a feature branch advances `origin/main` but does **not** move local `main`. The orchestrator then analyses, plans, and merges against a tree that is behind. (Agents branch from `origin/main`, not local `main` — Rule 3.)
 
 The same staleness corrupts the *plan*, one step earlier and less visibly: a stale checkout produces a conflict map of a repo layout that no longer exists, and every downstream instruction inherits the fiction (process-log 2026-08-10: three workers were assigned an ownership boundary in a file that two merged PRs had already split apart; it surfaced only because a worker said so in its report). **So sync at Step 1–2 as well** — by launch time the plan is written and the tracking issue is filed.
 
@@ -369,41 +371,23 @@ git push origin main   # from local main after verifying it is up to date
 
 ### Rule 3 — Do not assume `isolation: "worktree"` auto-merges; verify and merge per worker
 
-The `isolation: "worktree"` Agent tool parameter creates a temporary worktree and runs the agent in it. Its post-completion behavior is **inconsistent** — it is NOT reliable that the agent's work auto-merges onto the orchestrator's current branch. Observed across sessions (process-log 2026-05-09, 2026-05-11), parallel volleys produced all of:
-- work left on a per-agent `worktree-agent-<id>` branch, un-merged (most common);
-- work committed directly onto the orchestrator's current branch (occasional);
-- work on a custom-named feature branch the agent picked;
-- work left **uncommitted** in the worktree directory despite a "completed" signal.
+The `isolation: "worktree"` parameter runs the agent in a temporary worktree. Its post-completion behavior is **inconsistent** — parallel volleys have produced all four of: an un-merged `worktree-agent-<id>` branch (most common), a commit straight onto the orchestrator's current branch, a custom-named branch the agent picked, and work left **uncommitted** despite a "completed" signal (process-log 2026-05-09, 2026-05-11).
 
-Branch base also varies: some agents branch from `origin/main` HEAD at worktree-creation time, others from the orchestrator's current local HEAD.
+**The base, by contrast, does not vary: worktrees are cut from `origin/main`, independent of the orchestrator's checked-out branch.** Sub-wave 1 hides this — `batch/<X>` still equals `main` — and by sub-wave 2 the batch branch carries everything merged since, so the gap widens with batch depth. Rule 1 does not cover it: local `main` can be current and the agent's tree still wrong. Two obligations follow, both the orchestrator's:
+- **Brief every worker to `git merge batch/<X>`** — worker protocol step 3, immediately after the isolation pre-flight. Expect a fast-forward.
+- **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; one had been told to trim a file to a target measured on a version it lacked. The other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
 
-**Operating rule: the orchestrator owns the merge.** Check out the batch branch *before* spawning agents so it is the intended merge target, but treat every worker completion as "reconcile, then merge explicitly" — never "assume it landed."
-
-**Canonical pattern for multi-agent batches:**
+**Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here. Canonical pattern:
 
 ```bash
 git checkout main
-git pull --ff-only               # sync (Rule 1)
-git checkout -b batch/f          # batch branch = merge target
-# spawn all worker agents with isolation: "worktree"
+git pull --ff-only               # sync (Rule 1); also advances origin/main
+git checkout -b batch/f          # merge TARGET; workers still branch from origin/main
+# spawn workers, each briefed to `git merge batch/f` first + the batch-branch baseline
 # reconcile + merge each one explicitly as it completes (see Orchestrator step 5)
 ```
 
-**On each worker completion signal, the orchestrator reconciles before trusting the result** — never assume the work landed. Because the branch may be `worktree-agent-*`, a custom name, or absent (work left uncommitted in the worktree), the orchestrator discovers the worker's actual output, commits anything left uncommitted, merges it into `batch/<X>` explicitly, then cleans up. The full runtime checklist is **Orchestrator step 5** — the single authoritative copy; follow it on every completion rather than duplicating it here.
-
-After human review and merge approval:
-
-```bash
-git checkout main
-git merge --ff-only batch/f      # or rebase/squash per agreed strategy
-git push origin main
-# sync local main before next batch (Rule 1)
-```
-
-Consequences of this model:
-- Per-agent worktree branches may persist after completion — the orchestrator merges and cleans them up; never assume they auto-merged
-- `main` is only updated when the human explicitly merges the batch branch
-- The next batch launch must start with `git pull --ff-only` on `main` (Rule 1) before creating the new batch branch
+`main` moves only when the human merges the batch branch, via Rule 2's push sequence.
 
 ### Rule 4 — Fix commit messages before continuing after a rebase conflict
 
@@ -466,7 +450,7 @@ Session-specific institutional memory — interview answers, batch shapes, non-o
 - Step 4 rubric variable-weight escape hatch — confirmed for **Foundation**-leading (×3), not just Correctness — 2026-05-24 (Correctness ×3), 2026-06-29 (Foundation ×3)
 - Step 4 / Key Principles "blast ≠ priority" refinement: a single issue whose blast intersects **multiple** otherwise-parallel agents → isolate in its own gated batch (grep call sites to verify) — 2026-06-29; further variants (zero-conflict issue is a slot-filler; a trivial issue can be a hard gate; a measurement issue sequences last on epistemics) — 2026-08-07, 2026-08-11
 - Q5 shared-backing-service sub-question + the provision / serialize / cap resolution ladder + read-the-guard clause — 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, 2026-08-11 usa-wa, 2026-08-11 observo (six recurrences across three projects; the ceiling was in a shared service, not the worktree tooling, in all six)
-- Worker step 3 "issue body is a proposal, not a specification" + the report-back corrections slot + Step 8 body-decay note — 2026-08-09 (13/13 bodies materially wrong), 2026-08-10
+- Worker step 5 "issue body is a proposal, not a specification" + the report-back corrections slot + Step 8 body-decay note — 2026-08-09 (13/13 bodies materially wrong), 2026-08-10
 - Rule 1 extended to fire before conflict analysis, not only before launch — 2026-08-10
 - Step 7 chain-appending rule (one migration/ADR/sequence-generating agent per batch) — 2026-08-07
 - Step 5 shared-fixture-*escape* grep (hard conflict zone, vs. 2026-07-08's soft one) — 2026-08-11
