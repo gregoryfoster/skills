@@ -12,14 +12,23 @@ Three things this gate deliberately is, and is not:
   `.github/workflows/`; the only gate is `.pre-commit-config.yaml` running
   `pytest tests/structural/`, and `AGENTS.md` already ships gates as structural
   tests (`TestNoBareScriptPaths`, `TestPreShipGateHardening`).
-- **Always-on offline, opportunistically exact.** Pre-commit has no
-  `ANTHROPIC_API_KEY`, so the always-on tests read the skill's calibrated
-  offline estimate (`.skills/context-token-ratio`, 2.65 bytes/token). A gate
-  that only fails when someone happens to hold a key is not a gate — but an
-  estimate is not the contract either, so `TestTheContractMeasuredExactly`
-  re-runs the same ratchets against `count_tokens` whenever a credential is
-  available, and skips when one is not. See "Which number is the contract"
-  below.
+- **Always-on offline, exact on request.** The always-on tests read the
+  skill's calibrated offline estimate (`.skills/context-token-ratio`, 2.65
+  bytes/token). A gate that only fails when someone happens to hold a key is
+  not a gate — but an estimate is not the contract either, so
+  `TestTheContractMeasuredExactly` re-runs the same ratchets against
+  `count_tokens` when `SKILL_BUDGET_EXACT=1` is set.
+
+  It is opt-in rather than opportunistic, and the first draft got this wrong
+  in both directions. It assumed "pre-commit has no `ANTHROPIC_API_KEY`" —
+  false here, because `measure-context.sh` loads one from a repo-root `.env`
+  *itself*, so the exact path ran on every commit, costing ~20s and ~36 API
+  calls in a repo whose only gate is pre-commit. And it treated a credential
+  that was present but UNUSABLE as a hard failure rather than a skip, so an
+  expired key, a rate-limit or a plane meant no commits at all. Both are fixed;
+  the second was the same absent-vs-unusable shape #140 removed from the
+  shellcheck gate in the same batch. Ship time is where exact belongs. See
+  "Which number is the contract" below.
 - **The skill's own machinery.** The measurement shells out to
   `measure-context.sh` with the flags #95 named rather than reimplementing the
   estimator in Python, so the gate and the weekly run cannot disagree about a
@@ -124,6 +133,7 @@ same time. Lines are not tokens; neither cap substitutes for the other.
 import json
 import os
 import subprocess
+import warnings
 from pathlib import Path
 
 import pytest
@@ -348,15 +358,72 @@ def _has_credential() -> bool:
     return result.returncode == 0
 
 
+# Opt-in, not opportunistic. Two reasons, both learned the hard way (#144 CR):
+#
+#   1. `measure-context.sh` loads a key from a repo-root `.env` ITSELF, so
+#      "pre-commit has no credential" was false here — the exact path was the
+#      DEFAULT, adding ~20s and ~36 API calls to every commit in a repo whose
+#      only gate is pre-commit.
+#   2. Worse, a credential that was present but UNUSABLE (expired, rotated,
+#      rate-limited, or simply offline) hard-failed 18 tests instead of
+#      skipping, so a bad key meant no commits at all — including a one-line
+#      docs fix. That is the same shape as the absent-vs-too-old shellcheck
+#      binary #140 fixed in this very batch.
+#
+# So: the always-on gate is the offline estimate, and the exact contract is
+# verified when asked for. `shipping-work`'s pre-ship gate is the natural place
+# to ask — commit-time stays fast and offline, ship-time is exact.
+EXACT_ENV = "SKILL_BUDGET_EXACT"
+
+
+def _exact_requested() -> bool:
+    return os.environ.get(EXACT_ENV, "") not in ("", "0")
+
+
 @pytest.fixture(scope="module")
 def exact_surfaces() -> dict:
     """Every skill's surface, measured by count_tokens. ~20s, needs a key."""
-    if not _has_credential():
+    if not _exact_requested():
         pytest.skip(
-            "no credential count_tokens accepts; the offline gate still ran. "
-            "Load one with `set -a && source .env && set +a`."
+            f"exact verification is opt-in: set {EXACT_ENV}=1 to run it. The "
+            "offline gate ran and is the always-on contract; this pass costs "
+            "~20s and one API call per surface, so it is not on the "
+            "pre-commit path."
         )
-    return {name: _measure(name, exact=True) for name in SKILLS}
+    measured = (
+        {name: _measure(name, exact=True) for name in SKILLS}
+        if _has_credential() else {}
+    )
+
+    # `--check-credential` answers "is a key string reachable", NOT "does the
+    # API accept it" — it exits 0 on any non-empty value in `.env`. So the
+    # honest test of usability is whether the run actually reached
+    # count_tokens, which is only knowable after measuring. Detect the
+    # fallback HERE and skip the class once, rather than letting eighteen
+    # per-skill assertions each fail on the same infrastructure condition.
+    #
+    # Skip, do not fail. An expired key, a rate limit or a plane is not a
+    # budget violation, and failing here blocks every commit in a repo whose
+    # only gate is pre-commit — the same absent-vs-unusable shape #140 removed
+    # from the shellcheck gate. The warning is loud because silently skipping
+    # a check that was explicitly REQUESTED is the other way to get this wrong.
+    if not measured or not all(
+        s["policy"]["tokens_exact"] for s in measured.values()
+    ):
+        warnings.warn(
+            f"{EXACT_ENV} was set but the run could not reach count_tokens, so "
+            "the exact contract WAS NOT VERIFIED — only the offline estimate "
+            "ran. Check the key is current and the API reachable: "
+            "`bash skills/curating-context/scripts/measure-context.sh "
+            "--check-credential`.",
+            UserWarning,
+            stacklevel=2,
+        )
+        pytest.skip(
+            f"{EXACT_ENV} set but count_tokens was not reached; see the "
+            "warning above."
+        )
+    return measured
 
 
 class TestTheGateItself:
@@ -413,6 +480,49 @@ class TestTheGateItself:
             "than leaving a ratchet that permits growing back."
         )
 
+    def test_no_doc_exception_survives_the_doc_conforming(self, surfaces: dict):
+        """The sibling of the ratchet staleness guard, for reference docs.
+
+        A numeric doc exception whose file has since shrunk under the per-doc
+        budget is an unused licence to grow back, exactly as a stale
+        SKILL_MD_RATCHETS entry is. `None` entries are exempt by construction
+        and cannot go stale — they assert nothing to outgrow.
+        """
+        doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
+        unambiguous = doc_budget * (1 + ESTIMATE_BAND[0])
+        measured = {
+            d["path"]: d["tokens"]
+            for skill in SKILLS for d in surfaces[skill]["docs"]
+        }
+        stale = [
+            path for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
+            if ceiling is not None
+            and path in measured
+            and measured[path] <= unambiguous
+        ]
+        assert not stale, (
+            f"these docs now fit the {doc_budget:,}-token per-doc budget and "
+            f"no longer need an exception: {stale}. Delete their entries from "
+            "DOC_BUDGET_EXCEPTIONS rather than leaving a ceiling that permits "
+            "growing back."
+        )
+
+    def test_every_doc_exception_value_is_well_formed(self):
+        """`None` means exempt; anything else must be a usable ceiling.
+
+        A typo'd value would otherwise reach `_doc_over` and either crash with
+        a TypeError or, worse, compare truthily and silently change what the
+        gate enforces.
+        """
+        bad = {
+            path: value for path, value in DOC_BUDGET_EXCEPTIONS.items()
+            if not (value is None or (isinstance(value, int) and value > 0))
+        }
+        assert not bad, (
+            f"DOC_BUDGET_EXCEPTIONS values must be None (exempt) or a positive "
+            f"int (ceiling); got {bad}"
+        )
+
     def test_every_exception_is_a_skill_that_exists(self):
         """A ratchet for a renamed or deleted skill gates nothing."""
         unknown = sorted(set(SKILL_MD_RATCHETS) - set(SKILLS))
@@ -442,6 +552,55 @@ class TestTheGateItself:
             "the offline estimate falls back to an uncalibrated 2.7 without "
             f"{RATIO_KNOB.relative_to(REPO_ROOT)}"
         )
+
+
+class TestTheExemptionMechanism:
+    """`_doc_over` decides which docs the per-doc budget binds.
+
+    Added in #144 CR round 3 because the helper shipped untested, and its
+    `None` branch is load-bearing: a bare `or doc_budget` there would silently
+    re-impose the 10,000 default on the one file the exemption exists for, and
+    every test in this module would stay green while the gate did the opposite
+    of what its comment claims.
+    """
+
+    def test_none_exempts(self):
+        doc = {"path": "x/y.md", "tokens": 10_000_000}
+        assert _doc_over(doc, 10_000) is True, "sanity: no exemption binds it"
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["x/y.md"] = None
+            assert _doc_over(doc, 10_000) is False, (
+                "a None entry must exempt the file, not fall through to the "
+                "default budget"
+            )
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
+
+    def test_a_numeric_entry_still_binds(self):
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["x/y.md"] = 500
+            assert _doc_over({"path": "x/y.md", "tokens": 501}, 10_000) is True
+            assert _doc_over({"path": "x/y.md", "tokens": 500}, 10_000) is False
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
+
+    def test_an_unlisted_doc_gets_the_default_budget(self):
+        assert _doc_over({"path": "not/listed.md", "tokens": 10_001}, 10_000) is True
+        assert _doc_over({"path": "not/listed.md", "tokens": 10_000}, 10_000) is False
+
+    def test_the_exemption_is_scoped_to_the_named_path(self):
+        """The exemption must not leak to a sibling in the same directory."""
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["a/exempt.md"] = None
+            assert _doc_over({"path": "a/other.md", "tokens": 10_001}, 10_000) is True
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
 
 
 @pytest.mark.parametrize("skill", SKILLS)
