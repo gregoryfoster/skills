@@ -212,3 +212,9 @@ bash "<SKILL_SCRIPTS>/cohort-report.sh" --cohort-file .skills/cohort
 The `best reduction` column names which optimisation actually paid, per repo.
 Repos with no ledger are reported rather than skipped — on a weekly cadence,
 missing telemetry is itself the finding.
+
+Phase 7 also carried the one-line form inline until v1.9:
+
+  `cohort-report.sh --cohort-file .skills/cohort` gives the cross-repo view: which
+  optimisation actually paid, per repo. Repos with no ledger are reported rather
+  than skipped — on a weekly cadence, missing telemetry is itself the finding.
