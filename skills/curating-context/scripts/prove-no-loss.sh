@@ -80,6 +80,19 @@ Warranted losses (.skills/context-loss-ok):
 
     WARRANT :: CONTENT        e.g.  retarget :: Full rules live in docs/STYLE.md §32
 
+  Optionally scoped to one target, since this file is per-repo while --file is
+  per-target and an entry judged for one target otherwise reports "matched
+  nothing" on a run against another:
+
+    PATH :: WARRANT :: CONTENT
+                              e.g.  docs/API.md :: retarget :: the shape lives in
+
+  PATH is a substring of the run's --file, the way .skills/context-seams-ok
+  pins an entry to one file. An entry scoped elsewhere is neither consulted nor
+  called stale here — the report says how many sat this run out. The form is
+  told apart by whether the first field names a warrant, so CONTENT may itself
+  contain a `::`.
+
   WARRANT names WHY, from a closed set — an unrecognised one is refused rather
   than ignored, because a mute allowlist is not a judgement:
 
@@ -435,6 +448,21 @@ except OSError as exc:
 # the run hunting for content that is fine; refusing also errs toward NOT
 # passing, which is the only safe direction for a file that can turn exit 3
 # into exit 0.
+#
+# Two forms, told apart by whether the FIRST field names a warrant — never by
+# counting separators, which would truncate any entry whose judged line contains
+# a `::`:
+#
+#   WARRANT :: CONTENT           every target
+#   PATH :: WARRANT :: CONTENT   only runs whose --file contains PATH
+#
+# The scoped form exists because this file is per-repo while --file is
+# per-target, so an entry judged against AGENTS.md reported "matched nothing" on
+# the next run against a SKILL.md — the stale-entry warning, which is the thing
+# that makes expiry trustworthy, firing on entries that were simply about
+# another target (#139). PATH is matched as a substring of the target, the same
+# way .skills/context-seams-ok pins an entry to one file. Scoping only ever
+# NARROWS what an entry can reach.
 entries, malformed = [], []
 try:
     with open(ack_path, encoding="utf-8") as fh:
@@ -443,11 +471,21 @@ try:
             if not raw.strip() or raw.lstrip().startswith("#"):
                 continue
             head, sep, tail = raw.partition("::")
-            warrant, content = head.strip(), tail.strip()
+            scope, warrant, content = None, head.strip(), tail.strip()
+            if sep and warrant not in WARRANTS and "::" in tail:
+                second, _, rest = tail.partition("::")
+                scope, warrant, content = warrant, second.strip(), rest.strip()
             if not sep:
                 why = "no `::` — an entry is `WARRANT :: CONTENT`"
+            elif scope is not None and not scope:
+                why = ("empty PATH — an entry scoped to nothing matches every "
+                       "target; drop the PATH half instead")
             elif warrant not in WARRANTS:
-                why = (f"unknown warrant '{warrant}' — one of: "
+                # Name the form it was read as. A three-field entry whose
+                # warrant is typo'd is otherwise reported against a field the
+                # author thought was a path.
+                form = " (read as `PATH :: WARRANT :: CONTENT`)" if scope else ""
+                why = (f"unknown warrant '{warrant}'{form} — one of: "
                        + ", ".join(WARRANTS))
             elif not content:
                 why = "empty CONTENT — an entry with no content matches every line"
@@ -460,7 +498,7 @@ try:
                 why = (f"CONTENT is {len(content)} characters — an entry must be "
                        f"at least {WARRANT_MIN_CHARS} to identify one line")
             else:
-                entries.append((warrant, content))
+                entries.append((warrant, content, scope))
                 continue
             malformed.append((lineno, raw.strip()[:100], why))
 except OSError:
@@ -501,10 +539,20 @@ for raw in before:
 # A warrant only ever reaches a line that is ALREADY unaccounted for, so it can
 # neither mask a relocation nor manufacture one. First matching entry is charged
 # with the hit, which is what makes an entry's blast radius visible below.
+#
+# A scoped entry sits out a run against another target entirely: it cannot
+# warrant a line here, and it is not accused of having gone stale here either,
+# which is the whole point of the form.
+in_scope, out_of_scope = [], []
+for i, entry in enumerate(entries):
+    if entry[2] is None or entry[2] in policy:
+        in_scope.append(i)
+    else:
+        out_of_scope.append(entry)
 warranted, unwarranted = [], []
 charged = [[] for _ in entries]
 for line in lost:
-    idx = next((i for i, (_, c) in enumerate(entries) if c in line), None)
+    idx = next((i for i in in_scope if entries[i][1] in line), None)
     if idx is None:
         unwarranted.append(line)
     else:
@@ -518,7 +566,7 @@ for line in lost:
 # thing that can convert a content-loss failure into a pass, so it gets the same
 # treatment malformed syntax already gets — refusal, which errs toward NOT
 # passing. An acknowledgement is ONE judged line; two lines are two judgements.
-broad = [(w, c, len(h)) for (w, c), h in zip(entries, charged) if len(h) > 1]
+broad = [(w, c, len(h)) for (w, c, _), h in zip(entries, charged) if len(h) > 1]
 if broad:
     print(f"ERROR {ack_path} has {len(broad)} over-broad entry(ies) — an "
           "acknowledgement covers ONE judged line:", file=sys.stderr)
@@ -572,18 +620,27 @@ if warranted:
     # acknowledgement is ONE judged line, so anything above one hit is an
     # entry doing the job of judgement without the judging.
     print("\n  by entry:", file=out)
-    for (warrant, content), hits in zip(entries, charged):
+    for (warrant, content, _), hits in zip(entries, charged):
         if not hits:
             continue
         print(f"    {len(hits)} hit(s): {warrant} :: {content[:70]}", file=out)
 
-unused = [e for e, hits in zip(entries, charged) if not hits]
+unused = [entries[i] for i in in_scope if not charged[i]]
 if unused:
     print(f"\n  {len(unused)} entry(ies) matched nothing — the line each "
           "acknowledged has changed\n  or gone, which is when it needs "
           "re-judging; re-judge and prune:", file=out)
-    for warrant, content in unused:
+    for warrant, content, _ in unused:
         print(f"    {warrant} :: {content[:70]}", file=out)
+
+# Said out loud rather than silently skipped. An entry this run never consulted
+# is not evidence of anything about this run, but a file whose entries quietly
+# stop applying is one nobody can audit.
+if out_of_scope:
+    print(f"\n  {len(out_of_scope)} entry(ies) scoped to another target — not "
+          f"consulted for {policy}:", file=out)
+    for warrant, content, scope in out_of_scope:
+        print(f"    {scope} :: {warrant} :: {content[:60]}", file=out)
 
 if unwarranted:
     print(
