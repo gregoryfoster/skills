@@ -275,6 +275,11 @@ fi
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 TAB="$(printf '\t')"
+# Files every link extraction can APPEND to but that may legitimately stay
+# empty. json_list reads with `<"$f"`, which aborts under set -e on a file no
+# failure ever created — so the clean run, not the broken one, would be the
+# one that crashed.
+: >"$TMP/unchecked"
 
 # --- token counting -------------------------------------------------------
 # Default is the calibrated offline estimate, not a measurement. --exact calls
@@ -549,10 +554,19 @@ extract_links() {
   # Deliberately not modelled, matching that gate: indented (four-space) code
   # blocks, which are not reliably distinguishable from a paragraph continuing
   # inside a list — and a list continuation is where most of these links live;
-  # reference-style definitions (`[ref]: target`); and angle-bracket
-  # destinations (`[l](<a b.md>)`), which the prose guard drops anyway. A target
+  # reference-style definitions (`[ref]: target`); angle-bracket destinations
+  # (`[l](<a b.md>)`), which the prose guard drops anyway; and targets holding a
+  # parenthesis (`[l](a_(b).md)`), which are skipped entirely rather than
+  # truncated at the first `)` the way the grep this replaced truncated them —
+  # both are wrong, and reporting no link beats reporting a wrong one. A target
   # containing whitespace is not matched at all, which is what keeps a
   # CommonMark title (`[l](t "Title")`) from being glued onto the path.
+  #
+  # DOES nest one level: `[![alt](img.png)](target.md)`, an image inside a link
+  # label — the only nesting CommonMark permits, and the standard badge idiom in
+  # a README. Both targets are emitted. The first cut of #147 matched the inner
+  # image and skipped past the outer link entirely, which the grep it replaced
+  # had caught; that made the gate blind to a dead badge target (CR finding 21).
   local rc=0
   LC_ALL=C awk '
     # Blank the CONTENTS of a code span, keeping its backticks and its length.
@@ -590,12 +604,24 @@ extract_links() {
       return out
     }
 
-    function emit(line,   m, p, t) {
-      while (match(line, /!?\[[^]]*\]\([ \t]*[^()\t ]+([ \t]+"[^"]*")?[ \t]*\)/)) {
+    function emit(line,   m, i, c, n, depth, start, lbl, t) {
+      while (match(line, /!?\[([^][]|!?\[[^]]*\]\([^()]*\))*\]\([ \t]*[^()\t ]+([ \t]+"[^"]*")?[ \t]*\)/)) {
         m = substr(line, RSTART, RLENGTH)
         line = substr(line, RSTART + RLENGTH)
-        p = index(m, "](")        # a label may not hold a `]`, so this one is ours
-        t = substr(m, p + 2)
+        # Find the closing `]` that belongs to THIS label, by bracket depth.
+        # index(m, "](") was right only while a label could not contain one;
+        # with an image nested inside, the first `](` belongs to the image, so
+        # using it yields that image target twice and drops the outer one.
+        start = (substr(m, 1, 1) == "!") ? 2 : 1
+        n = length(m); depth = 0
+        for (i = start; i <= n; i++) {
+          c = substr(m, i, 1)
+          if (c == "[") depth++
+          else if (c == "]") { depth--; if (depth == 0) break }
+        }
+        lbl = substr(m, start + 1, i - start - 1)
+        if (lbl ~ /\]\(/) emit(lbl)   # the nested image, before its container
+        t = substr(m, i + 2)
         sub(/^[ \t]+/, "", t)     # padding: [l](  target )
         sub(/[ \t].*$/, "", t)    # a CommonMark title: [l](target "Title")
         sub(/\)$/, "", t)         # and the closing paren, if nothing else took it
@@ -654,8 +680,25 @@ extract_links() {
   # Not fatal — one unreadable file should not sink a whole measurement — but not
   # silent either. The grep this replaced failed silently, and a link extractor
   # that quietly returns nothing is indistinguishable from a clean run.
+  #
+  # The WARN alone was not enough, because it goes to stderr and the verdict
+  # goes to stdout: a file that could not be read contributes no links, so it
+  # contributes no DEAD links, and `links.dead` reports the repo clean on a file
+  # nothing looked at (CR finding 22). Phase 6 and the telemetry rows consume the
+  # JSON, not the transcript. So record the path as well, and let `links.unchecked`
+  # carry it — an empty list is the only honest way to read `dead: []`.
+  #
+  # Not yet reachable end-to-end, and deliberately shipped anyway: the only
+  # condition that makes awk fail here is an unreadable file, the traversal only
+  # follows links into the docs dir, and every such file is also read by the doc
+  # inventory further down — which dies on it with a raw redirect error (#157)
+  # before this JSON is ever printed. Verified to the boundary: the WARN and this
+  # append both fire, then the run is killed. So #157 currently suppresses the
+  # observability fix for its own failure mode, which is a reason to raise it
+  # rather than to defer this half.
   if [ "$rc" -ne 0 ]; then
     echo "WARN could not extract links from $1 (awk exit $rc); its links are unchecked" >&2
+    printf '%s\n' "$1" >>"$TMP/unchecked"
   fi
 }
 
@@ -1020,6 +1063,10 @@ printf ', "dead_anchors": '
 json_list "$TMP/dead_anchors.sorted"
 printf ', "orphans": '
 json_list "$TMP/orphans"
+# Files whose link extraction failed. Non-empty means `dead` above is a verdict
+# on a SUBSET of the tree — read the two together or not at all (CR finding 22).
+printf ', "unchecked": '
+json_list "$TMP/unchecked"
 printf '},\n'
 
 # tokens_live = policy + every live (non-archival) doc reachable from it. This

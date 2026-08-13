@@ -59,7 +59,9 @@ usage() {
   echo "  uncommitted work still blocks removal."
   echo ""
   echo "  --dry-run reports what would happen — resolved path, base ref, merge"
-  echo "  verdict, lock state, removal command — and exits WITHOUT side effects."
+  echo "  verdict, lock state, the port kill, and the removal command — and"
+  echo "  exits WITHOUT side effects. The port line is there because that step"
+  echo "  is the only one reaching outside the worktree directory."
   echo "  It exits with the code the real run would: 1 on an Iron Law violation,"
   echo "  2 on a lock with no --unlock. A preview that always succeeds predicts"
   echo "  nothing. Safe to point at a live worktree, including one in use."
@@ -212,9 +214,20 @@ fi
 
 # Self-destruction guard. Resolving by branch is what makes this reachable:
 # before, a harness worktree could not be addressed at all, so an agent could
-# not target its own. PROJECT_ROOT is this invocation's own worktree top
-# level, and both it and the registry path come from git already resolved.
-if [[ "$PROJECT_ROOT" == "$WORKTREE_PATH" ]]; then
+# not target its own.
+#
+# Compare RESOLVED paths, not the raw strings. `git rev-parse --show-toplevel`
+# resolves symlinks; the registry stores whatever path the worktree was created
+# with, and those differ whenever a link sits above the worktree — on macOS the
+# /tmp -> /private/tmp link does it to anything created under /tmp, which is
+# where the tests build theirs. A false-negative here fails OPEN on the one case
+# this guard exists to catch, so it gets the same treatment the orchestration
+# skill already prescribes for comparing `git rev-parse` outputs (CR finding 24).
+# Fall back to the raw value if realpath is unavailable: a guard that degrades to
+# the previous behaviour beats one that aborts the destroy.
+SELF_ROOT=$(realpath "$PROJECT_ROOT" 2>/dev/null || printf '%s' "$PROJECT_ROOT")
+TARGET_ROOT=$(realpath "$WORKTREE_PATH" 2>/dev/null || printf '%s' "$WORKTREE_PATH")
+if [[ "$SELF_ROOT" == "$TARGET_ROOT" ]]; then
   echo "ERROR: refusing to destroy '$WORKTREE_PATH' — it is the worktree this command is running from" >&2
   echo "cd to the main checkout first: git worktree list | head -n1" >&2
   exit 2
@@ -317,6 +330,30 @@ if [[ $DRY_RUN -eq 1 ]]; then
     fi
   else
     echo "  locked:    no"
+  fi
+  # Preview the process kill too. It is the only step that reaches OUTSIDE the
+  # worktree directory, so omitting it understated what the operator was about
+  # to authorise — a preview that lists only the removal reads as "one rmdir"
+  # (CR finding 23). Reported, never acted on: this whole branch is read-only.
+  if [[ -f "$WORKTREE_PATH/.port" ]]; then
+    DRY_PORT=$(cat "$WORKTREE_PATH/.port" 2>/dev/null || true)
+    if [[ -n "$DRY_PORT" ]]; then
+      DRY_PIDS=""
+      if command -v lsof >/dev/null 2>&1; then
+        DRY_PIDS=$(lsof -ti ":$DRY_PORT" 2>/dev/null || true)
+      fi
+      if [[ -n "$DRY_PIDS" ]]; then
+        echo "  port:      $DRY_PORT — would kill $(echo "$DRY_PIDS" | tr '\n' ' ')"
+      elif command -v lsof >/dev/null 2>&1; then
+        echo "  port:      $DRY_PORT — nothing bound"
+      else
+        echo "  port:      $DRY_PORT — lsof not installed; port would NOT be freed"
+      fi
+    else
+      echo "  port:      .port present but empty — nothing to free"
+    fi
+  else
+    echo "  port:      none recorded"
   fi
   echo "  removal:   $REMOVE_PREVIEW \"$WORKTREE_PATH\""
   exit "$DRY_RC"

@@ -315,3 +315,54 @@ class TestCuratingContextSkillCanSatisfyItsOwnPhaseSix:
             policy.read_text() + "\n\nSee [the rubric](references/NOT-THERE.md).\n"
         )
         assert _dead(repo) == ["AGENTS.md -> references/NOT-THERE.md"]
+
+
+class TestAnImageMayNestInsideALinkLabel:
+    """`[![alt](img.png)](target.md)` — the badge idiom. An image inside a link
+    label is the only nesting CommonMark permits, and BOTH targets are real
+    links a reader can follow to something missing.
+
+    The first cut of #147 matched the inner image and then advanced past the
+    whole match, so the outer target was never extracted — a regression against
+    the grep it replaced, which caught both. It was invisible here because no
+    file in this repo uses the idiom; it is a README staple in consuming ones,
+    which is the tree this script actually measures (CR finding 21).
+    """
+
+    def test_both_targets_are_reported_dead(self, tmp_path: Path):
+        repo = _repo(tmp_path, "# P\n\n[![badge](docs/b.png)](docs/CI.md)\n")
+        assert _dead(repo) == [
+            "AGENTS.md -> docs/CI.md",
+            "AGENTS.md -> docs/b.png",
+        ]
+
+    def test_the_outer_target_is_caught_when_the_inner_one_resolves(
+        self, tmp_path: Path
+    ):
+        """The regression's signature: inner fine, outer dead, nothing reported."""
+        repo = _repo(tmp_path, "# P\n\n[![badge](docs/b.png)](docs/CI.md)\n")
+        (repo / "docs" / "b.png").write_bytes(b"\x89PNG")
+        assert _dead(repo) == ["AGENTS.md -> docs/CI.md"]
+
+    def test_the_inner_target_is_caught_when_the_outer_one_resolves(
+        self, tmp_path: Path
+    ):
+        repo = _repo(tmp_path, "# P\n\n[![badge](docs/b.png)](docs/CI.md)\n")
+        (repo / "docs" / "CI.md").write_text("# CI\n")
+        assert _dead(repo) == ["AGENTS.md -> docs/b.png"]
+
+    def test_an_absolute_outer_target_still_yields_the_inner_one(
+        self, tmp_path: Path
+    ):
+        """The common real shape: a badge linking out to a CI dashboard, with a
+        locally-committed image. Only the image is checkable."""
+        repo = _repo(
+            tmp_path,
+            "# P\n\n[![badge](docs/b.png)](https://ci.example.test/status)\n",
+        )
+        assert _dead(repo) == ["AGENTS.md -> docs/b.png"]
+
+    def test_nesting_inside_a_code_span_is_still_masked(self, tmp_path: Path):
+        """The nesting support must not reopen what the masking closed."""
+        repo = _repo(tmp_path, "# P\n\nwrite `[![a](x.png)](y.md)` for a badge\n")
+        assert _dead(repo) == []
