@@ -1759,6 +1759,16 @@ the batch branch first"). Promoting the rule in one place and leaving the other 
 three copies of the instruction that caused the outage. Orchestrator step 2 is now the single
 conditional statement; the other three defer to it.
 
+**And the fourth site was still missed on the first pass** — caught in review, worth recording as its
+own small rule. Three of the four sites are *prose*, and rewriting prose to defer to a new condition
+is the natural motion. The fourth was Rule 3's copy-paste runbook block, a fenced `bash` snippet whose
+`git checkout -b batch/f` line carried no caveat at all. It was the last one noticed and it is the
+**most** dangerous, because a runbook block is executed rather than read: an orchestrator pastes it,
+and the prose two sections away that says "unless the repo deploys from this checkout" never enters
+the transaction. **When promoting a conditional rule, enumerate the executable sites first and the
+prose sites second** — a fenced command block is the site the condition has to reach, and it is the
+one a prose-shaped edit pass slides past.
+
 ### A repo-documented wrap-up restart resurrected a deliberately-held daemon — **promoted, folded in**
 
 usa-wa's AGENTS.md wrap-up says `sudo systemctl restart usa-wa usa-wa-sync-powermap`. Run verbatim
