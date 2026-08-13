@@ -48,13 +48,15 @@ usage() {
   echo "  Iron Law's merge gate is unaffected — --force only changes removal"
   echo "  mechanics, not merge verification."
   echo ""
-  echo "  --unlock releases a 'git worktree lock' before removing. A lock marks a"
-  echo "  worktree as in-use; the Claude Code Agent tool locks every worktree its"
-  echo "  isolation mode provisions, so an orchestrated batch cannot be torn down"
-  echo "  without it. --force is NOT the remedy: it is a single -f and git demands"
-  echo "  '-f -f' to remove a locked worktree. --unlock is deliberately narrow —"
-  echo "  it releases the lock and nothing else, so uncommitted work still blocks"
-  echo "  removal. Without it, a locked worktree is reported and exits 2."
+  echo "  --unlock releases a 'git worktree lock' before removing. Most destroys"
+  echo "  never need it: the Claude Code Agent tool locks each worktree it"
+  echo "  provisions but releases the lock when the agent exits, and teardown"
+  echo "  runs after that. A lock still present at teardown means the agent is"
+  echo "  STILL RUNNING, or died without releasing — so read the reported reason"
+  echo "  before reaching for this. --force is NOT the remedy: it is a single -f"
+  echo "  and git demands '-f -f' to remove a locked worktree. --unlock is"
+  echo "  deliberately narrow — it releases the lock and nothing else, so"
+  echo "  uncommitted work still blocks removal."
   echo ""
   echo "  --dry-run reports what would happen — resolved path, base ref, merge"
   echo "  verdict, lock state, removal command — and exits WITHOUT side effects."
@@ -326,12 +328,20 @@ fi
 # both insufficient here and too broad — it would also discard uncommitted
 # work. --unlock is the narrow instrument: it releases the lock and changes
 # nothing else, leaving git's dirty-tree refusal intact.
+#
+# This gate rarely fires. The Claude Code Agent tool locks each worktree it
+# provisions and releases the lock when the agent exits, and teardown runs
+# after the agent completes — so at destroy time the lock is normally already
+# gone. A lock that IS still held therefore carries information: the owner is
+# still running, or it died without releasing. Report the reason rather than
+# unlocking silently, so the operator can tell those two apart.
 if [[ -n "$LOCK_REASON" ]]; then
   if [[ $UNLOCK -eq 0 ]]; then
     echo "ERROR: worktree '$WORKTREE_PATH' is locked: $LOCK_REASON" >&2
-    echo "A lock marks a worktree as in-use — the Claude Code Agent tool locks every" >&2
-    echo "worktree its isolation mode provisions. Confirm nothing is still using it," >&2
-    echo "then re-run with --unlock. (--force does not override a lock.)" >&2
+    echo "A held lock means the owner is still running, or exited without releasing." >&2
+    echo "Check the reason above before overriding — destroying a worktree out from" >&2
+    echo "under a live agent loses its uncommitted work. Once satisfied it is stale," >&2
+    echo "re-run with --unlock. (--force does not override a lock.)" >&2
     exit 2
   fi
   echo "Releasing lock ($LOCK_REASON)..."
