@@ -1,7 +1,7 @@
 # Skills follow-up backlog — the carve-outs from #144, plus the journal
 
 **Date:** 2026-08-13
-**Tracking issue:** TBD
+**Tracking issue:** [#155](https://github.com/gregoryfoster/skills/issues/155)
 **Predecessor:** [2026-08-12 gates-and-adoption backlog](2026-08-12-skills-gates-and-adoption-backlog.md) (#144, eleven issues, closed)
 
 ## Goal
