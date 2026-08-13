@@ -292,3 +292,159 @@ class TestSourceSweep:
         r = _run(repo)
         assert r.returncode == 0, r.stdout
         assert "seams_acked: 1" in r.stdout
+
+
+SKILL_BASE = (
+    "# Demo\n\n## Build\n\nrun make\n\n"
+    "## Deployment Topology\n\nThe workers connect to the bus directly.\n"
+)
+
+SKILL_NOW = (
+    "# Demo\n\n## Build\n\nrun make\n\n"
+    "- [references/TOPOLOGY.md](references/TOPOLOGY.md) — topology\n"
+)
+
+
+def _skill_repo(tmp_path: Path, name: str = "skillseams") -> Path:
+    """A skill's OWN surface: the policy file is `skills/demo/SKILL.md` and the
+    docs root is its sibling `references/`. `AGENTS.md` exists at the root too,
+    because a real repo has one — and it must not become the sweep's target
+    just by existing."""
+    repo = tmp_path / name
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    _write(repo, "AGENTS.md", "# Repo policy\n\nnothing moved from here.\n")
+    _write(repo, "skills/demo/SKILL.md", SKILL_BASE)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pre")
+    _write(repo, "skills/demo/SKILL.md", SKILL_NOW)
+    _write(repo, "skills/demo/references/TOPOLOGY.md",
+           "# Topology\n\n## Deployment Topology\n\nThe workers connect to "
+           "the bus directly.\n")
+    return repo
+
+
+def _run_skill(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return _run(repo, "--file", "skills/demo/SKILL.md",
+                "--docs-dir", "skills/demo/references", *args)
+
+
+class TestBackReferencesFollowTheNamedPolicyFile:
+    """#138: `--file` selected the target for every class except this one.
+
+    `policy_names` was the hardcoded tuple `("AGENTS.md", "CLAUDE.md")`, so a
+    run against `skills/curating-context/SKILL.md` hunted for the literal
+    strings `AGENTS.md`/`CLAUDE.md` — and in a skill *about* curating
+    `AGENTS.md` that returned 296 hits, every one subject matter and none a
+    back-reference to the swept file. The only ack entry that silences noise at
+    that scale is a blanket pattern, so the class was unusable rather than
+    merely noisy: it forced a choice between ignoring the run and poisoning the
+    repo's real seam ledger.
+    """
+
+    def test_the_policy_files_own_name_is_the_back_reference(
+            self, tmp_path: Path):
+        repo = _skill_repo(tmp_path)
+        _write(repo, "skills/demo/references/TOPOLOGY.md",
+               "# Topology\n\n## Deployment Topology\n\nThe workers connect "
+               "to the bus directly.\n\nSee SKILL.md for the rest.\n")
+        r = _run_skill(repo)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "back-reference" in r.stdout, r.stdout
+        assert "See SKILL.md for the rest." in r.stdout, r.stdout
+
+    def test_the_default_policy_names_are_not_swept_for_another_target(
+            self, tmp_path: Path):
+        """The 296-hit case. A doc that discusses `AGENTS.md` is discussing a
+        file this run is not sweeping; it is subject matter, not a seam."""
+        repo = _skill_repo(tmp_path)
+        _write(repo, "skills/demo/references/TOPOLOGY.md",
+               "# Topology\n\n## Deployment Topology\n\nThe workers connect "
+               "to the bus directly.\n\nCurate AGENTS.md against a budget, "
+               "and CLAUDE.md when it is a real file.\n")
+        r = _run_skill(repo)
+        assert r.returncode == 0, (
+            f"a mention of another repo's policy file was called a seam:"
+            f"\n{r.stdout}{r.stderr}"
+        )
+
+    def test_the_source_class_follows_the_target_too(self, tmp_path: Path):
+        """The second call site, added by #113. Its guard is `src and moved`,
+        so it needs a moved title present to run at all."""
+        repo = _skill_repo(tmp_path)
+        _write(repo, "src/app.py",
+               '"""Curating AGENTS.md is what the demo skill documents."""\n')
+        _git(repo, "add", "-A")
+        r = _run_skill(repo)
+        assert r.returncode == 0, (
+            f"the source class swept for the wrong policy name:\n{r.stdout}"
+        )
+
+    def test_the_source_class_still_catches_the_named_policy_file(
+            self, tmp_path: Path):
+        repo = _skill_repo(tmp_path)
+        _write(repo, "src/app.py",
+               '"""Bounds semantics live in skills/demo/SKILL.md."""\n')
+        _git(repo, "add", "-A")
+        r = _run_skill(repo)
+        assert r.returncode == 3, r.stdout
+        assert "source-back-reference" in r.stdout, r.stdout
+
+    def test_autodetection_still_sweeps_for_both_default_names(
+            self, tmp_path: Path):
+        """The cohort norm is `CLAUDE.md -> ./AGENTS.md`, so a doc naming
+        either one back-references the one policy file. An autodetected run
+        must not lose the sibling name."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "docs/ENTITIES.md",
+               "# Entities\n\n## People\n\nEvery person carries a canonical "
+               "name.\n\n## Organizations\n\nOrgs own assignments.\n\n"
+               "## Deployment Topology\n\nThe workers connect to the bus "
+               "directly.\n\nSee CLAUDE.md for the rest.\n")
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout
+        assert "See CLAUDE.md for the rest." in r.stdout, r.stdout
+
+    def test_a_bare_name_outside_the_policy_files_own_tree_is_not_a_hit(
+            self, tmp_path: Path):
+        """The basename alone is not enough when the target is a SKILL.md.
+
+        Deriving `policy_names` from the basename and stopping there trades 296
+        AGENTS.md hits for 95 SKILL.md ones: this repo has twenty skills, and
+        `SKILL.md` written in another skill's script or in a test is that other
+        file's name, not a reference to the swept one. A bare mention resolves
+        to the swept file only from inside its own directory tree; from
+        anywhere else it takes a path.
+        """
+        repo = _skill_repo(tmp_path)
+        _write(repo, "skills/other/SKILL.md", "# Other\n")
+        _write(repo, "src/app.py",
+               '"""Every skill ships a SKILL.md at its root."""\n')
+        _git(repo, "add", "-A")
+        r = _run_skill(repo)
+        assert r.returncode == 0, (
+            f"another skill's SKILL.md was called a back-reference:\n{r.stdout}"
+        )
+
+    def test_a_bare_name_inside_the_policy_files_own_tree_is_a_hit(
+            self, tmp_path: Path):
+        repo = _skill_repo(tmp_path)
+        _write(repo, "skills/demo/scripts/run.sh",
+               '# Bounds semantics live in SKILL.md.\n')
+        _git(repo, "add", "-A")
+        r = _run_skill(repo)
+        assert r.returncode == 3, r.stdout
+        assert "skills/demo/scripts/run.sh:1" in r.stdout, r.stdout
+
+    def test_a_root_policy_file_is_swept_bare_everywhere(self, tmp_path: Path):
+        """The scoping must not narrow the canonical shape: a policy file at
+        the repo root owns the whole tree, so every file is inside it."""
+        repo = _moved_repo(tmp_path)
+        _write(repo, "src/deep/nested/app.py",
+               '"""Bounds semantics live in AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout
+        assert "src/deep/nested/app.py:1" in r.stdout, r.stdout
