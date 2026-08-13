@@ -3,15 +3,21 @@
 # Destroys the worktree for <branch>. Refuses if the branch is NOT merged
 # into the base ref AND --descoped <reason> was not supplied (Iron Law).
 #
-# Usage: bash <SKILL_SCRIPTS>/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force] [--help]
+# Usage: bash <SKILL_SCRIPTS>/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force] [--unlock] [--dry-run] [--help]
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash \"$0\" <branch> [--base <ref>] [--descoped <reason>] [--force]"
+  echo "Usage: bash \"$0\" <branch> [--base <ref>] [--descoped <reason>] [--force] [--unlock] [--dry-run]"
   echo ""
-  echo "Destroys the worktree for <branch> (resolved via the same path scheme"
-  echo "as worktree-create.sh). Iron Law: refuses if the branch has NOT been"
-  echo "merged into the base ref unless --descoped <reason> is supplied."
+  echo "Destroys the worktree for <branch>. Iron Law: refuses if the branch has"
+  echo "NOT been merged into the base ref unless --descoped <reason> is supplied."
+  echo ""
+  echo "Worktree lookup:"
+  echo "  The branch is looked up in git's worktree registry, so any layout works"
+  echo "  ('.worktrees/', '.claude/worktrees/', anywhere else) regardless of how"
+  echo "  the directory leaf is named. Only when the branch has no registered"
+  echo "  worktree does it fall back to worktree-create.sh's '<root>/<slug>'"
+  echo "  scheme, so a mistyped branch still reports a concrete path."
   echo ""
   echo "Side effects:"
   echo "  - If <worktree>/.port exists, kills any process bound to that port"
@@ -42,13 +48,31 @@ usage() {
   echo "  Iron Law's merge gate is unaffected — --force only changes removal"
   echo "  mechanics, not merge verification."
   echo ""
+  echo "  --unlock releases a 'git worktree lock' before removing. Most destroys"
+  echo "  never need it: the Claude Code Agent tool locks each worktree it"
+  echo "  provisions but releases the lock when the agent exits, and teardown"
+  echo "  runs after that. A lock still present at teardown means the agent is"
+  echo "  STILL RUNNING, or died without releasing — so read the reported reason"
+  echo "  before reaching for this. --force is NOT the remedy: it is a single -f"
+  echo "  and git demands '-f -f' to remove a locked worktree. --unlock is"
+  echo "  deliberately narrow — it releases the lock and nothing else, so"
+  echo "  uncommitted work still blocks removal."
+  echo ""
+  echo "  --dry-run reports what would happen — resolved path, base ref, merge"
+  echo "  verdict, lock state, removal command — and exits WITHOUT side effects."
+  echo "  It exits with the code the real run would: 1 on an Iron Law violation,"
+  echo "  2 on a lock with no --unlock. A preview that always succeeds predicts"
+  echo "  nothing. Safe to point at a live worktree, including one in use."
+  echo ""
   echo "Does NOT delete the branch ref. Use 'git branch -d <branch>' afterward"
   echo "if you also want to drop the local ref."
   echo ""
   echo "Exit codes:"
-  echo "  0  Worktree removed"
+  echo "  0  Worktree removed (or --dry-run reported a removable worktree)"
   echo "  1  Iron Law violation (unmerged work without --descoped)"
-  echo "  2  Tooling/infra failure (not a git repo, missing arg, worktree not found, git remove failed)"
+  echo "  2  Tooling/infra failure (not a git repo, missing arg, worktree not"
+  echo "     found, worktree locked without --unlock, target is the worktree this"
+  echo "     command runs from, git list/unlock/remove failed)"
 }
 
 if [[ "${1:-}" == "--help" ]]; then
@@ -68,6 +92,8 @@ DESCOPED=0
 DESCOPE_REASON=""
 BASE_OVERRIDE=""
 FORCE=0
+UNLOCK=0
+DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --descoped)
@@ -93,6 +119,14 @@ while [[ $# -gt 0 ]]; do
       FORCE=1
       shift
       ;;
+    --unlock)
+      UNLOCK=1
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
     *)
       echo "ERROR: unknown flag '$1'" >&2
       usage >&2
@@ -114,10 +148,75 @@ ROOT=$(bash "$SCRIPT_DIR/resolve-worktree-root.sh") || {
 }
 
 SLUG="${BRANCH//\//-}"
-WORKTREE_PATH="$ROOT/$SLUG"
+FALLBACK_PATH="$ROOT/$SLUG"
+
+# Locate the worktree by BRANCH, via git's own registry, rather than by
+# reconstructing worktree-create.sh's '<root>/<slug>' path. That scheme only
+# describes worktrees this skill created. Externally provisioned ones put the
+# branch and the directory leaf under different names — the Claude Code Agent
+# tool's isolation mode checks out 'worktree-agent-<id>' at
+# '.claude/worktrees/agent-<id>/' — so no WORKTREE_ROOT override can reach
+# them: the root is wrong AND the leaf is wrong. The registry knows both.
+# The constructed path stays as the fallback, so a mistyped branch with no
+# registered worktree still reports a concrete path to look at.
+#
+# Parsing notes — each guards a case the obvious one-liner gets wrong:
+#   - RS="" reads one worktree block per record. git emits 'locked' AFTER
+#     'branch', so a line-at-a-time scan that prints on the branch match has
+#     not seen the lock yet.
+#   - substr($i, 10) takes the path as the entire remainder of the line.
+#     Splitting on whitespace ($2) truncates any path containing a space.
+#   - -v want= passes the branch as DATA. Interpolating it into the awk
+#     program text is an injection: git permits '"' in refnames, which closes
+#     awk's string literal and makes the program a syntax error.
+#   - A detached-HEAD worktree emits 'detached' and no 'branch' line, and a
+#     bare one emits 'bare', so neither can ever match.
+#   - Gate discipline: this output decides which directory gets removed, so a
+#     failing 'git worktree list' must be an error, not an empty result that
+#     silently falls back to the constructed path. pipefail makes the
+#     substitution fail, and the '||' turns it into exit 2.
+WT_RECORD=$(git worktree list --porcelain | awk -v want="branch refs/heads/$BRANCH" '
+  BEGIN { RS = ""; FS = "\n" }
+  {
+    path = ""; matched = 0; lock = ""
+    for (i = 1; i <= NF; i++) {
+      if (substr($i, 1, 9) == "worktree ") path = substr($i, 10)
+      else if ($i == want) matched = 1
+      else if ($i == "locked") lock = "(no reason recorded)"
+      else if (substr($i, 1, 7) == "locked ") lock = substr($i, 8)
+    }
+    if (matched) { printf "%s\n%s\n", lock, path; exit }
+  }
+') || {
+  echo "ERROR: failed to enumerate worktrees (git worktree list --porcelain)" >&2
+  exit 2
+}
+
+# Line 1 is the lock reason (empty if unlocked), line 2 the path. Both are
+# empty when the branch has no registered worktree.
+LOCK_REASON="${WT_RECORD%%$'\n'*}"
+WORKTREE_PATH="${WT_RECORD#*$'\n'}"
+WORKTREE_PATH="${WORKTREE_PATH%$'\n'}"
+
+REGISTERED=1
+if [[ -z "$WORKTREE_PATH" ]]; then
+  REGISTERED=0
+  LOCK_REASON=""
+  WORKTREE_PATH="$FALLBACK_PATH"
+fi
 
 if [[ ! -d "$WORKTREE_PATH" ]]; then
   echo "ERROR: no worktree at '$WORKTREE_PATH'" >&2
+  exit 2
+fi
+
+# Self-destruction guard. Resolving by branch is what makes this reachable:
+# before, a harness worktree could not be addressed at all, so an agent could
+# not target its own. PROJECT_ROOT is this invocation's own worktree top
+# level, and both it and the registry path come from git already resolved.
+if [[ "$PROJECT_ROOT" == "$WORKTREE_PATH" ]]; then
+  echo "ERROR: refusing to destroy '$WORKTREE_PATH' — it is the worktree this command is running from" >&2
+  echo "cd to the main checkout first: git worktree list | head -n1" >&2
   exit 2
 fi
 
@@ -135,8 +234,8 @@ fi
 #     2. git symbolic-ref refs/remotes/origin/HEAD (whatever origin's HEAD points to)
 #     3. "main" fallback
 #     Then prefer origin/<base> over local <base> for authoritative remote state.
+BASE_REF=""
 if [[ $DESCOPED -eq 0 ]]; then
-  BASE_REF=""
   if [[ -n "$BASE_OVERRIDE" ]]; then
     if git rev-parse --verify --quiet "$BASE_OVERRIDE" >/dev/null; then
       BASE_REF="$BASE_OVERRIDE"
@@ -184,6 +283,73 @@ if [[ $DESCOPED -eq 0 ]]; then
   fi
 else
   echo "Descoped: $DESCOPE_REASON"
+fi
+
+# --- Dry run ---------------------------------------------------------------
+# Everything above this line is read-only; everything below kills processes and
+# removes directories. Reporting here — after the Iron Law has run for real —
+# is what lets --dry-run exit 1 on an unmerged branch instead of claiming a
+# destroy would succeed. A preview that cannot fail is not a preview.
+if [[ $DRY_RUN -eq 1 ]]; then
+  DRY_RC=0
+  REMOVE_PREVIEW="git worktree remove"
+  [[ $FORCE -eq 1 ]] && REMOVE_PREVIEW="$REMOVE_PREVIEW --force"
+  echo "DRY RUN — no changes made."
+  echo "  branch:    $BRANCH"
+  echo "  worktree:  $WORKTREE_PATH"
+  if [[ $REGISTERED -eq 1 ]]; then
+    echo "  resolved:  git worktree registry (by branch)"
+  else
+    echo "  resolved:  constructed path — branch has NO registered worktree"
+  fi
+  if [[ $DESCOPED -eq 1 ]]; then
+    echo "  merge:     skipped — descoped: $DESCOPE_REASON"
+  else
+    echo "  merge:     verified — '$BRANCH' is an ancestor of '$BASE_REF'"
+  fi
+  if [[ -n "$LOCK_REASON" ]]; then
+    if [[ $UNLOCK -eq 1 ]]; then
+      echo "  locked:    $LOCK_REASON  → would be released by --unlock"
+    else
+      echo "  locked:    $LOCK_REASON  → WOULD FAIL; re-run with --unlock"
+      # Mirror the lock gate's exit code so the preview predicts the real run.
+      DRY_RC=2
+    fi
+  else
+    echo "  locked:    no"
+  fi
+  echo "  removal:   $REMOVE_PREVIEW \"$WORKTREE_PATH\""
+  exit "$DRY_RC"
+fi
+
+# --- Lock gate -------------------------------------------------------------
+# git refuses to remove a locked worktree, and --force does NOT override it:
+# --force is a single -f, and git demands '-f -f' for a lock. So --force is
+# both insufficient here and too broad — it would also discard uncommitted
+# work. --unlock is the narrow instrument: it releases the lock and changes
+# nothing else, leaving git's dirty-tree refusal intact.
+#
+# This gate rarely fires. The Claude Code Agent tool locks each worktree it
+# provisions and releases the lock when the agent exits, and teardown runs
+# after the agent completes — so at destroy time the lock is normally already
+# gone. A lock that IS still held therefore carries information: the owner is
+# still running, or it died without releasing. Report the reason rather than
+# unlocking silently, so the operator can tell those two apart.
+if [[ -n "$LOCK_REASON" ]]; then
+  if [[ $UNLOCK -eq 0 ]]; then
+    echo "ERROR: worktree '$WORKTREE_PATH' is locked: $LOCK_REASON" >&2
+    echo "A held lock means the owner is still running, or exited without releasing." >&2
+    echo "Check the reason above before overriding — destroying a worktree out from" >&2
+    echo "under a live agent loses its uncommitted work. Once satisfied it is stale," >&2
+    echo "re-run with --unlock. (--force does not override a lock.)" >&2
+    exit 2
+  fi
+  echo "Releasing lock ($LOCK_REASON)..."
+  if ! UNLOCK_ERR=$(git worktree unlock "$WORKTREE_PATH" 2>&1 >/dev/null); then
+    echo "ERROR: git worktree unlock failed:" >&2
+    echo "$UNLOCK_ERR" >&2
+    exit 2
+  fi
 fi
 
 # Free the port if the worktree recorded one. Use lsof (portable: macOS + Linux)

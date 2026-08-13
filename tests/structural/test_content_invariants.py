@@ -563,6 +563,124 @@ class TestOrchestratingIssueBacklog:
             "design docs land in the plans directory governed by that skill"
         )
 
+    # -- worktree base (#150) ------------------------------------------------
+    #
+    # The harness cuts every agent worktree from `origin/main`, regardless of
+    # what the orchestrator has checked out. Sub-wave 1 hides it (the batch
+    # branch still equals main); by sub-wave 2 the batch branch carries merged
+    # work the agent's tree does not have. In #144 Batch A two of four agents
+    # in one sub-wave caught it; the other two would have measured and edited
+    # a tree missing eight merged issues. The three assertions below pin the
+    # statement, the remediation, and the detector respectively — the skill
+    # previously described this as variance ("some agents branch from
+    # origin/main, others from the orchestrator's current local HEAD"), which
+    # is unfalsifiable advice and produced no action.
+
+    def test_worktree_base_stated_as_fact_not_variance(self):
+        body = self.s.body
+        assert "independent of the orchestrator's checked-out branch" in body, (
+            "Rule 3 must state the worktree base as fact: worktrees are created "
+            "from `origin/main`, independent of the orchestrator's checked-out "
+            "branch. `git checkout -b batch/<X>` sets the merge TARGET, not the "
+            "base — a reader who believes otherwise skips the remediation."
+        )
+        assert "Branch base also varies" not in body, (
+            "Rule 3 must not describe the worktree base as varying. It does not "
+            "vary; describing it as variance is what left the remediation "
+            "optional (#150)."
+        )
+
+    def test_worker_protocol_merges_batch_branch_after_isolation_check(self):
+        body = self.s.body
+        isolation = body.find('[ -f "$(git rev-parse --show-toplevel)/.git" ]')
+        merge = body.find("git merge batch/<X>")
+        implement = body.find("**Implement with TDD**")
+        assert -1 not in (isolation, merge, implement), (
+            "The worker protocol must carry all three of: the isolation "
+            "pre-flight, a `git merge batch/<X>` step, and the TDD step. "
+            f"Found offsets isolation={isolation} merge={merge} "
+            f"implement={implement} (-1 means absent)."
+        )
+        # Order is the contract, not merely presence. The merge WRITES FILES,
+        # so it must not run before isolation is proven — #150 proposed it as
+        # step 1, ahead of the pre-flight, which would have a fallen-through
+        # worker mutate the main checkout, the exact outcome the pre-flight's
+        # abort clause exists to prevent.
+        assert isolation < merge < implement, (
+            "Worker protocol ordering must be: verify isolation → merge "
+            "`batch/<X>` → implement. Merging before the isolation check would "
+            "write files into the main checkout on a provisioning "
+            "fall-through; merging after implementation is too late to fix the "
+            "base the work was measured against."
+        )
+
+    def test_worker_step_cross_references_point_at_the_right_step(self):
+        """Every "Worker step(s) N" citation must land on the step it means.
+
+        Inserting #150's two new steps renumbered the protocol and silently
+        invalidated two citations elsewhere in the file: the Q5 answer cited
+        "Worker steps 5-7" for the run-tests/lint/self-review trio (now 7-9),
+        and the adopted-improvements list cited "Worker step 3" for the
+        issue-body rule (now 5). Both are prose an orchestrator follows
+        literally.
+
+        Checking that a cited number is merely IN RANGE does not catch this —
+        3, 5 and 7 all still exist, they just mean other things now. So each
+        citation is resolved against the cited step's TITLE.
+        """
+        body = self.s.body
+        protocol = body[body.index("### Worker agents"):body.index("## Key Principles")]
+        steps = {
+            int(n): title
+            for n, title in re.findall(r"(?m)^(\d+)\. \*\*(.+?)\*\*", protocol)
+        }
+        assert steps and set(steps) == set(range(1, len(steps) + 1)), (
+            f"Worker protocol steps must be contiguous from 1; found {sorted(steps)}."
+        )
+
+        def step_titled(fragment: str) -> int:
+            matches = [n for n, t in steps.items() if fragment.lower() in t.lower()]
+            assert len(matches) == 1, (
+                f"Expected exactly one worker step titled like {fragment!r}; "
+                f"found {matches} in {steps}."
+            )
+            return matches[0]
+
+        cited_body = re.search(r"Worker step (\d+) \"issue body is a proposal", body)
+        assert cited_body, (
+            "The adopted-improvements list must still cite the issue-body rule "
+            'as `Worker step N "issue body is a proposal, not a specification"`.'
+        )
+        expected = step_titled("issue body as a proposal")
+        assert int(cited_body.group(1)) == expected, (
+            f"Adopted improvements cites 'Worker step {cited_body.group(1)}' for "
+            f"the issue-body rule, which is now step {expected}."
+        )
+
+        cited_verify = re.search(
+            r"Worker steps (\d+)[-–](\d+) run before the completion signal", body
+        )
+        assert cited_verify, (
+            "The Q5 answer must still cite the pre-signal verification steps as "
+            "`Worker steps N-M run before the completion signal`."
+        )
+        want = (step_titled("Run full test suite"), step_titled("Self-review diff"))
+        assert tuple(int(g) for g in cited_verify.groups()) == want, (
+            f"Q5 cites 'Worker steps {cited_verify.group(1)}-"
+            f"{cited_verify.group(2)}' for the run-tests → self-review trio, "
+            f"which is now steps {want[0]}-{want[1]}."
+        )
+
+    def test_worker_prompts_must_carry_a_falsifiable_baseline(self):
+        body = self.s.body
+        assert "expected test count on `batch/<X>`" in body, (
+            "Every worker prompt must carry the expected test count on the "
+            "batch branch with a stop-if-it-does-not-match instruction. That "
+            "is the only detector that has actually caught a stale worktree "
+            "base (#144 Batch A) — a merge step alone fails silently when the "
+            "brief itself was written against the wrong tree."
+        )
+
 
 # ---------------------------------------------------------------------------
 # reviewing-code (baseline + variants)

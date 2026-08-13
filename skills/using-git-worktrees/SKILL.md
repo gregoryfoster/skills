@@ -128,16 +128,26 @@ bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch>
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --descoped "<reason>"
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --base <ref>   # verify merge into <ref> instead of project default
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --force        # required when the worktree contains submodules
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --unlock       # only when the destroy reports a held lock
+bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --dry-run      # preview the decision, change nothing
 ```
 
 The script:
+- **Finds the worktree by branch**, via `git worktree list --porcelain`, so any layout works regardless of how the directory leaf is named. Only when the branch has no registered worktree does it fall back to the `<root>/<slug>` scheme `worktree-create.sh` uses, so a mistyped branch still names a concrete path.
 - Verifies the branch is an ancestor of the base ref (the actual "merged" check, not just "pushed"). Default base resolution: `.skills/default_branch` → origin's HEAD → `main`, preferring `origin/<base>` over local `<base>` so unpublished local merges don't fool the gate. Pass `--base <ref>` to verify against an explicit non-default integration branch instead (e.g., `batch/<x>` in a multi-agent orchestration); the supplied ref is used as-given. Refuses if the branch is not merged AND `--descoped <reason>` was not supplied.
+- Refuses to destroy the worktree it is being run from. `cd` to the main checkout first.
 - If `<worktree>/.port` exists, kills any process bound to that port via `lsof -ti tcp:<port>` (portable to macOS + Linux). Falls back to a warning if `lsof` isn't installed.
 - Runs `git worktree remove <path>` (or `git worktree remove --force <path>` if `--force` was supplied)
 - Runs `git worktree prune` to clean stale metadata
 - Exits 0 on success, 1 on Iron Law violation (unmerged work without `--descoped`), 2 on tooling failure
 
+**Agent-provisioned worktrees.** The Claude Code Agent tool's `isolation: "worktree"` checks out branch `worktree-agent-<id>` at `.claude/worktrees/agent-<id>/` — branch and directory leaf under different names, so no `WORKTREE_ROOT` override can reach it. Branch-first lookup handles it with no configuration and no extra flags.
+
 **When to pass `--force`:** git's `worktree remove` refuses to act on worktrees containing checked-out submodules (`fatal: working trees containing submodules cannot be moved or removed`). If the project ships submodules (e.g., `skills-vendor/*` consumed via `managing-skills`), every destroy will hit this — pass `--force` to bypass git's submodule refusal. The Iron Law's merge gate is unaffected — `--force` only controls the final removal mechanics. **Caveat:** `--force` also bypasses git's dirty-working-tree refusal, so any uncommitted changes in the worktree are silently discarded; verify the worktree is clean before forcing.
+
+**When to pass `--unlock`:** normally never. The Agent tool releases its lock when the agent exits, and teardown runs after that, so the plain invocation is the normal path. Pass `--unlock` only when a destroy actually reports a held lock — which means the owner is still running or died without releasing, so check which before overriding. git refuses to remove a locked worktree and `--force` is *not* the remedy: it is a single `-f`, and git demands `-f -f` for a lock. `--unlock` releases the lock and changes nothing else, so uncommitted work still blocks removal. A gitignored `.venv` symlink is invisible to git's clean check and needs neither flag.
+
+**`--dry-run`** reports the resolved path, base ref, merge verdict, lock state and removal command, then exits without side effects — with the exit code the real run would return (1 on an Iron Law violation, 2 on a lock with no `--unlock`). Safe to point at a live worktree, including one an agent is working in.
 
 The branch ref itself is **not** deleted — that's a separate decision. Use `git branch -d <branch>` afterward if you also want to drop the local ref.
 

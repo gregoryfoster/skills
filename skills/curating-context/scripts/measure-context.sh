@@ -529,9 +529,134 @@ extract_links() {
   # this skill encourages, since splitting an over-budget doc moves headings out
   # of a file while leaving the file in place (#120, #124). Callers split the
   # target on the first `#` and apply the prose guard to each half; see is_prose.
-  grep -oE '\]\([^)]+\)' "$1" 2>/dev/null \
-    | sed -e 's/^](//' -e 's/)$//' \
-    | grep -vE '^(https?:|mailto:|//|$)' || true
+  #
+  # A link is `[label](target)` — or `![alt](target)` — sitting OUTSIDE code.
+  # Both halves of that sentence are load-bearing, and this used to match a bare
+  # `](…)` anywhere in the file (#147):
+  #
+  # - Without the label, a `](…)` fragment quoted in prose is extracted as a
+  #   link. A skill about curating documents is full of prose about links, and
+  #   this skill's own SKILL.md reported four dead links from the two lines that
+  #   explain how a demotion re-aims one — so it could never satisfy the Phase 6
+  #   assertion it itself makes.
+  # - Without the masking, a link inside a fence or a code span is extracted. It
+  #   never renders as a link, so no reader can click it and it cannot be dead in
+  #   any sense they experience. That is the same rule, and the same reasoning,
+  #   as this repo's own tests/structural/test_relative_links.py (#143); the two
+  #   cannot share code, because that gate reads this repo and this function
+  #   reads a consuming one.
+  #
+  # Deliberately not modelled, matching that gate: indented (four-space) code
+  # blocks, which are not reliably distinguishable from a paragraph continuing
+  # inside a list — and a list continuation is where most of these links live;
+  # reference-style definitions (`[ref]: target`); and angle-bracket
+  # destinations (`[l](<a b.md>)`), which the prose guard drops anyway. A target
+  # containing whitespace is not matched at all, which is what keeps a
+  # CommonMark title (`[l](t "Title")`) from being glued onto the path.
+  local rc=0
+  LC_ALL=C awk '
+    # Blank the CONTENTS of a code span, keeping its backticks and its length.
+    # The contents, not the span: dropping a span outright takes the brackets of
+    # a label like [ `name` ](path) with it, and loses a link that renders
+    # perfectly well, in the most common link shape this cohort writes.
+    function mask(s,   out, i, n, from, run, k, m, stop, body) {
+      out = ""; i = 1; n = length(s)
+      while (i <= n) {
+        if (substr(s, i, 1) != "`") { out = out substr(s, i, 1); i++; continue }
+        from = i
+        while (i <= n && substr(s, i, 1) == "`") i++
+        run = i - from
+        # The closing run must be the SAME length, per CommonMark: that is what
+        # lets a lone backtick be written as a literal inside a longer span.
+        stop = 0; k = i
+        while (k <= n) {
+          if (substr(s, k, 1) != "`") { k++; continue }
+          m = k
+          while (m <= n && substr(s, m, 1) == "`") m++
+          if (m - k == run) { stop = k; break }
+          k = m
+        }
+        if (stop == 0) {
+          # Unpaired: literal backticks, and the scan continues past them. The
+          # paragraph boundary below is what keeps this from mattering much.
+          out = out substr(s, from, run)
+          continue
+        }
+        body = substr(s, from + run, stop - from - run)
+        gsub(/[^\n]/, "x", body)
+        out = out substr(s, from, run) body substr(s, stop, run)
+        i = stop + run
+      }
+      return out
+    }
+
+    function emit(line,   m, p, t) {
+      while (match(line, /!?\[[^]]*\]\([ \t]*[^()\t ]+([ \t]+"[^"]*")?[ \t]*\)/)) {
+        m = substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+        p = index(m, "](")        # a label may not hold a `]`, so this one is ours
+        t = substr(m, p + 2)
+        sub(/^[ \t]+/, "", t)     # padding: [l](  target )
+        sub(/[ \t].*$/, "", t)    # a CommonMark title: [l](target "Title")
+        sub(/\)$/, "", t)         # and the closing paren, if nothing else took it
+        if (t == "" || t ~ /^https?:/ || t ~ /^mailto:/ || t ~ /^\/\//) continue
+        print t
+      }
+    }
+
+    function hold(l) { if (para == "") para = l; else para = para "\n" l }
+    function flush(   i, n, parts) {
+      if (para == "") return
+      n = split(mask(para), parts, "\n")
+      for (i = 1; i <= n; i++) emit(parts[i])
+      para = ""
+    }
+
+    # Buffered a paragraph at a time, because a code span may wrap onto the next
+    # line but never across a blank one. Without that boundary a single stray
+    # backtick pairs with the next one hundreds of lines away and masks every
+    # link in between — turning the check off in exactly the files most likely
+    # to have drifted. A link itself is still matched within one line, as it has
+    # been since this function existed.
+    {
+      line = $0
+      sub(/\r$/, "", line)        # CRLF: a lone \r otherwise closes no fence
+      stripped = line
+      sub(/^ +/, "", stripped)
+      indent = length(line) - length(stripped)
+      fchar = substr(stripped, 1, 1)
+      run = 0
+      if (indent < 4 && (fchar == "`" || fchar == "~")) {
+        while (substr(stripped, run + 1, 1) == fchar) run++
+        if (run < 3) run = 0
+      }
+      if (run > 0) {
+        info = substr(stripped, run + 1)
+        if (!fence) {
+          # The info string of an OPENING backtick fence may not contain a
+          # backtick. That is what separates a fence carrying a language tag
+          # from a line holding nothing but a long code span.
+          if (fchar == "`" && index(info, "`") > 0) { hold(line); next }
+          flush(); fence = 1; ffchar = fchar; frun = run; next
+        }
+        # A ``` example inside a ~~~ block does not close it, nor does a shorter
+        # run, nor one carrying an info string.
+        if (fchar == ffchar && run >= frun && info ~ /^[ \t]*$/) fence = 0
+        next
+      }
+      if (fence) next
+      if (stripped == "") { flush(); next }
+      hold(line)
+    }
+
+    END { flush() }
+  ' "$1" 2>/dev/null || rc=$?
+  # Not fatal — one unreadable file should not sink a whole measurement — but not
+  # silent either. The grep this replaced failed silently, and a link extractor
+  # that quietly returns nothing is indistinguishable from a clean run.
+  if [ "$rc" -ne 0 ]; then
+    echo "WARN could not extract links from $1 (awk exit $rc); its links are unchecked" >&2
+  fi
 }
 
 is_prose() {
