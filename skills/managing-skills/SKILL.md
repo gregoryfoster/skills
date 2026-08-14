@@ -160,80 +160,38 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - **Commits the doctor it installed** ([#86](https://github.com/gregoryfoster/skills/issues/86)). The install is a working-tree repair and runs on every branch; the commit stays behind the `main`-only and once-per-day gates. Without this the hook wrote a file nothing ever tracked — four of twelve audited consumers had been reinstalling an untracked doctor for weeks, so their fresh worktrees and CI clones had none and the Phase 1 preflight silently short-circuited.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
 
-#### Step 0 — Skip if already installed
-
-Re-runs of `/managing-skills` must never double-wire the hook. Bail out of the procedure if **both** of these are already true:
-
-- The symlink at `.claude/hooks/skills-submodule-update.sh` exists and resolves to the vendored script (`../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh`).
-- `.claude/settings.json` contains the string `.claude/hooks/skills-submodule-update.sh` at least once. Match the script path, not the whole command — an install written before the `$CLAUDE_PROJECT_DIR` form ([#110](https://github.com/gregoryfoster/skills/issues/110)) uses a cwd-relative command and must still be recognised.
-
-Otherwise — fresh install or partial install — continue. Steps 1 and 2 are individually idempotent (`ln -sf` and a jq merge that dedupes the entry first), so they repair partial state without creating duplicates.
-
-#### Step 1 — Symlink the hook script
-
-Install via **symlink**, not copy, so upstream fixes to the script propagate via the normal submodule refresh. Use `-f` so a re-run replaces an existing symlink rather than failing:
+**Run the installer. Do not hand-execute the steps below.**
 
 ```bash
-mkdir -p .claude/hooks
-ln -sf ../../skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/skills-submodule-update.sh \
-   .claude/hooks/skills-submodule-update.sh
+bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-refresh.sh
 ```
 
-The `../../` prefix resolves from `.claude/hooks/` back to the project root, then into the vendored script path.
+It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 either missing); remove both with `--uninstall`.
 
-#### Step 2 — Merge the hook into `.claude/settings.json`
+**The contract is TWO artifacts, and only the second one makes the hook run:**
 
-**Merge, don't overwrite.** If `.claude/settings.json` already has `hooks.SessionStart` entries, append to that array — never clobber the file. The jq expression below is defensive in two ways: it creates `.hooks` and `.hooks.SessionStart` if they don't exist, and it **strips any pre-existing entry for this hook before appending** so re-runs never produce duplicates. It works against an empty `{}`, a partial settings.json without a `hooks` block, a populated one with other hooks, and one where this hook is already present:
+1. `.claude/hooks/skills-submodule-update.sh` — a symlink into the vendor
+2. a `SessionStart` entry in `.claude/settings.json` — the registration
 
-```bash
-jq '(.hooks //= {}) |
-    (.hooks.SessionStart //= []) |
-    .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not)) |
-    .hooks.SessionStart += [{
-      "matcher": ".*",
-      "hooks": [{
-        "type": "command",
-        "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\""
-      }]
-    }]' .claude/settings.json > .claude/settings.json.tmp \
-  && mv .claude/settings.json.tmp .claude/settings.json
-```
+A repo carrying artifact 1 without artifact 2 looks installed to anyone who lists `.claude/hooks/` and refreshes nothing. Four of twelve audited consumers were in exactly that state — symlink present and tracked, registration absent — pinned at one commit for over a week while the rest of the cohort moved through four skill versions ([#167](https://github.com/gregoryfoster/skills/issues/167)). This procedure was prose and `install-doctor.sh` was a script, which is the only difference between them that predicts the failure population. `.skills/doctor.sh` now warns when it sees that half-installed state.
 
-Two details in that expression are load-bearing:
+<details>
+<summary>What the installer does — read this when debugging it, not to execute it</summary>
 
-- **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not on the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). Claude Code normally runs hooks from the project dir, so the older `bash .claude/hooks/…` form works today — but it is an undocumented assumption, and a repo whose `settings.json` mixes both styles is what made this visible in review. The `${CLAUDE_PROJECT_DIR:-.}` fallback is the same one `init-socraticode` uses: with the variable unset, a bare `"$CLAUDE_PROJECT_DIR/…"` degrades to `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
-- **The strip matches the script path, not the whole command string.** An equality test against the current command would skip an entry written in the older form — duplicating the hook here, and leaving it unremovable by the uninstall filter below.
+1. **Symlinks** rather than copies, so upstream fixes propagate through the normal submodule refresh. The target is relative and derived from the vendor directory actually found, not from a hand-substituted `<owner>-<repo>` — that substitution is how a symlink ends up pointing at a plausible path that does not exist.
+2. **Merges** `.claude/settings.json` with jq, dedupe-then-append: it creates `.hooks`/`.hooks.SessionStart` when absent, preserves every other hook and key, and strips any pre-existing entry for this hook first so a re-run cannot duplicate it.
 
-If `.claude/settings.json` does not exist yet, create it with `echo '{}' > .claude/settings.json` before running the jq command.
+Two details in that merge are load-bearing, and `install-refresh.sh` carries the full reasoning inline:
 
-The merged result should look like:
+- **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). The `${CLAUDE_PROJECT_DIR:-.}` fallback matters: unset, a bare `"$CLAUDE_PROJECT_DIR/…"` becomes `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
+- **The strip matches the script path, not the whole command.** An equality test would skip an entry written in the older cwd-relative form — duplicating the hook, and leaving the original unremovable by the uninstall filter.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\""
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+</details>
 
-#### Step 3 — Commit
-
-```bash
-git add .claude/hooks/skills-submodule-update.sh .claude/settings.json
-git commit -m "chore: enable skills auto-refresh hook"
-```
 
 ### Uninstalling the auto-refresh hook
+
+`install-refresh.sh --uninstall` does both halves. The manual equivalent:
 
 Remove the symlink:
 
