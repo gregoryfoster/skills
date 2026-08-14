@@ -185,9 +185,13 @@ reports "the guard never fires".
   constants is worse than none) and silent-but-logged for the hook.
 - **Offline estimate, never `count_tokens`.** A hook runs on every edit and must
   be fast, so it divides bytes by a calibrated ratio rather than calling the API.
-  The default is 2.7 bytes/token and `measure-context.sh --exact` refines it per
-  repo into `.skills/context-token-ratio`; on this repo the calibrated estimate
-  reproduces the exact count to the token. It is still an estimate — it only
+  The default is 2.7 bytes/token; `measure-context.sh --exact` refines it per
+  repo into `.skills/context-token-ratio` and then per FILE into
+  `.skills/context-token-counts`, which the guard prefers where it has one
+  ([#145](https://github.com/gregoryfoster/skills/issues/145) — the repo ratio is
+  derived from the policy file alone, and across this repo's surface it is wrong
+  by -23% to +14% depending on which file it is pointed at). It is still an
+  estimate — it only
   decides whether to speak, which is why the guard never gates anything. Note
   what the earlier `bytes/4` divisor cost: it under-reports this cohort's markdown
   by 56–65%, so with a 6,000 budget the guard would silently tolerate a real file
