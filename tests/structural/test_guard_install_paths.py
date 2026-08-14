@@ -286,7 +286,33 @@ class TestGuardCommandForm:
 class TestManagingSkillsHookCommand:
     """#110's second and third installers. The documented jq snippets are run
     verbatim, because a removal filter that stops matching the old form is how
-    an existing install becomes unremovable."""
+    an existing install becomes unremovable.
+
+    The INSTALL half is now install-refresh.sh rather than a jq block in
+    SKILL.md (#167) — a hand-executed procedure left four of twelve consumers
+    half-installed — so these two run the script. The rule is unchanged and
+    still belongs here; only its implementation moved from prose to code. The
+    uninstall filter below is still documented prose and still run verbatim."""
+
+    def _consumer(self, tmp_path: Path) -> Path:
+        """A checkout install-refresh.sh will act on: a git repo with the hook
+        script vendored where the installer's glob looks for it."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True,
+                       env=_clean_env())
+        vendor = (tmp_path / "skills-vendor" / "acme-skills" / "skills"
+                  / "managing-skills" / "scripts")
+        vendor.mkdir(parents=True)
+        (vendor / "skills-submodule-update.sh").write_text(
+            (MS_SCRIPTS / "skills-submodule-update.sh").read_text())
+        return tmp_path
+
+    def _install(self, cwd: Path):
+        result = subprocess.run(
+            ["bash", str(MS_SCRIPTS / "install-refresh.sh"), "--quiet"],
+            capture_output=True, text=True, cwd=str(cwd), env=_clean_env(),
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def _fenced_blocks(self, text: str) -> list[str]:
         return re.findall(r"```(?:bash|json)\n(.*?)```", text, re.DOTALL)
@@ -330,17 +356,19 @@ class TestManagingSkillsHookCommand:
         assert result.returncode == 0, result.stdout + result.stderr
 
     @requires_jq
-    def test_documented_install_snippet_writes_the_anchored_command(self, tmp_path):
-        settings = self._seed(tmp_path, "bash unrelated-only.sh")
+    def test_the_installer_writes_the_anchored_command(self, tmp_path):
+        repo = self._consumer(tmp_path)
+        settings = self._seed(repo, "bash unrelated-only.sh")
         settings.write_text(json.dumps({}))
-        self._run_block(self._jq_block("SessionStart +="), tmp_path)
+        self._install(repo)
 
         assert self._session_commands(settings) == [UPDATE_COMMAND]
 
     @requires_jq
-    def test_documented_install_snippet_replaces_a_legacy_entry(self, tmp_path):
-        settings = self._seed(tmp_path, LEGACY_UPDATE_COMMAND)
-        self._run_block(self._jq_block("SessionStart +="), tmp_path)
+    def test_the_installer_replaces_a_legacy_entry(self, tmp_path):
+        repo = self._consumer(tmp_path)
+        settings = self._seed(repo, LEGACY_UPDATE_COMMAND)
+        self._install(repo)
 
         assert self._session_commands(settings) == [
             "bash unrelated.sh", UPDATE_COMMAND
