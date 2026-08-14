@@ -30,6 +30,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 | 2026-08-13 | CannObserv/cannobserv | **Upstream-blocked backlog: check the sibling repo's blocker states before anything else** — all three blockers closed within 5 days, converting a "blocked" backlog to actionable, with a stale contract pin as the shared consequence; **a shared first step that is not an issue** (the re-pin) modeled as commit 1 of a Shape-A bundle, then read-only for the gated batch; **same-function overlap is the sharpest Shape-A signal yet** (two issues edit `test_write_bodies.py:22-23`); **a clarifying "Other" answer at a decision gate flipped the decision and exposed a latent read-time data drop** (wp/v2 observation adapter silently drops ACF `co_roles` — the issue body's "no such field on either backend" was true of the model, misleading about the data); hybrid preference degenerated to fully-sequential (every pairing shared a file); policy-deferral of a user-named issue (#278, async-parity) confirmed at Q3 |
 | 2026-08-13 | CannObserv/usa-wa | **The backlog contained the fix for its own ceiling** (shared-test-DB **7th recurrence** — #208 itself in the named set; old contract still binds during Batch A: workers unit-tier only, gate run authoritative); **operational mitigation is not partial shipment** (#211 kill-switched via env var → Correctness 3→2 but full scope retained; issue *comment* authoritative over body; plan gains a required **ops tail** with an observation window); verification-mode asymmetry 3rd recurrence, doubled (#208 fixture + #216 coverage gating + live-SOAP integration run → three non-worker causes for a red gate) |
+| 2026-08-13/14 | CannObserv/usa-wa | **Execution addendum** — the **ops tail is where the claims get falsified**: production's first pass reported the `healed=0` that #212 argued was structurally unreachable (no test could produce it), while the worker's confident `budget_exhausted` prediction was simply wrong; **verify a restart picked up new code by filtering the journal on the restart timestamp** (I diagnosed a phantom deploy failure off a line stamped 22s *before* the restart); a "0 requests since T" window measured 18s after T is not a quiet period; **the duty-cycle win is a ratio, not an absence of traffic** (same ~2 req/s ceiling during a pass, 465s per 3600s cadence ≈ 11% vs >100%); 4/4 workers corrected their briefs |
 | 2026-08-11→13 | CannObserv/usa-wa (#207 execution) | **The skill's batch-branch checkout step took production down** — a repo whose units carry `ExecStartPre=assert-main-checkout.sh` could not start with `batch/g` checked out, across three separate batches (→ create the branch WITHOUT checkout, integrate in a worktree; **promoted** to Orchestrator step 2, where the instruction lived in *four* places, not the two the issue named); **a documented wrap-up restart resurrected a deliberately-held daemon mid-incident** (inactive + disabled + preset enabled = a hold, not a fault; **promoted** as a clause on the same rule); every worker report carried ≥1 verifiable discrepancy; `worktree-destroy.sh`'s path-scheme gap is **stale** — #149 shipped branch-first lookup |
 | 2026-08-13 | CannObserv/power-map | Q5 variant — the binding ceiling was a shared `TEST_DATABASE_URL` with a truncate-and-seed browser tier, not worktree provisioning; **resolution 2 of the existing ladder (serialize the gate) already covered it**, so the promotion was the recurrence *count* (Q5 is now 9 sessions across 4 projects, and SKILL.md was reading "six across three"); **a docstring naming pending follow-ups by number is an open-in-fact check** — merged with observo's zero-hits rule and promoted as one clause; module-local pytest fixtures are an invisible shared prerequisite |
 | 2026-08-13 | CannObserv/observo | **Zero hits for an issue's symbol is ambiguous, not exculpatory** — #109's deliverable had shipped under another name and its own contract doc named its approach as the *rejected* path (**promoted**: this is a false negative in the skill's own prescribed grep); a domain fact from the user **deleted** #443's mechanism rather than resolving it (5 production files → 2) and a dead setting *was* the replacement — both held as log entries at one sighting; shared-test-DB ceiling **8th** recurrence, not the 7th the issue claimed |
@@ -2156,3 +2157,66 @@ use `git merge-base --is-ancestor <branch> batch/<X>` → `git worktree remove` 
 - Q3 arrived pre-answered in the user's invocation. Reframing it as "here is my proposed defer/address
   split, does it hold?" — with the reasoning per issue — preserved the approval gate while skipping an
   open-ended question the user had already answered.
+
+---
+
+## Session 2026-08-13/14 (CannObserv/usa-wa) — execution addendum
+
+Execution of the #218 plan (planning entry above). Batch A (3 parallel) + Batch B (solo) + an ops
+tail, all merged; #208/#211/#212/#213/#216 closed. Two CR rounds, 8 findings, zero bugs found in
+either — the findings were documentation surface, one graceful-degradation gap, and stamp-authority
+drift.
+
+### The ops tail is where a backlog's claims get falsified, and it belongs in the plan
+
+The plan's third row — "delete the kill switch, restart, observe ≥2 passes" — was the only step that
+could distinguish a merged fix from a working one. It paid immediately: the first production pass
+reported **`healed=0`**, the exact number #212 argued was structurally unreachable (it had read 3,290
+every hour, forever). No test could have produced that evidence; it required the real converged
+cohort. Conversely, the worker's own confident prediction — that re-enabling would show
+`budget_exhausted=true` for hours while a hold-period backlog drained — **was wrong**: the pass
+enumerated 913 items against a 2,000 budget and caught up in one go. A plan that ended at "merged"
+would have shipped both the unverified win and the wrong prediction as if settled.
+
+### An operationally-mitigated issue keeps its scope and loses its urgency (planning entry) — and its
+### *evidence* moves to the ops tail
+
+The corollary discovered in execution: because #211's symptom was already suppressed by a kill
+switch, nothing in the merge could show the fix worked. The observation window is not optional
+polish on such an issue — it is the only test that runs against the failure the issue described.
+
+### Reading a log line without checking its timestamp against the restart
+
+I reported the new summary fields "missing from the live log" and started diagnosing a deploy
+failure. The line was stamped 22 seconds *before* the restart I was verifying — the old process's
+output. The tell was available in the same JSON blob I was already parsing. **When verifying that a
+restart picked up new code, filter the journal by the restart timestamp before reading anything**
+(`--since "$(systemctl show -p ExecMainStartTimestamp --value <unit>)"`), rather than reading
+`tail -1` of a window that spans the restart. Same failure shape as reading a stale checkout (Rule 1):
+the artifact looked current and was not.
+
+### Also captured
+
+- **A "0 requests since T" measurement taken 18 seconds after T is not a quiet period.** I nearly
+  reported traffic had gone quiet using a window that had barely opened. Bounding the *claim* by a
+  window that actually elapsed (a background waiter to a wall-clock time) is the cheap fix; the
+  instinct to publish the first favorable number is the expensive habit.
+- **The duty-cycle win is a ratio, not an absence of traffic.** During its pass the sidecar still ran
+  at the ~2 req/s pacing ceiling — identical instantaneous rate to the incident. What changed is that
+  the pass *ends*: 465s of work per 3,600s cadence ≈ 11% duty vs >100%. Reporting "still at the rate
+  limit" or "quiet now" would both have been true-but-misleading; the honest unit is duty cycle.
+- **Every worker again corrected its brief, including mine.** The #212/#213 worker found the issue's
+  central cost claim stale (the no-op *write* it described had already been eliminated by #109's
+  parity skip; only the misreported outcome was real) and rejected the issue's suggested mechanism
+  (`is_modified` after a function that flushes is always False). The #211 worker found the issue's
+  "refuse overlapping passes" presumed a concurrency that does not exist — passes are sequential in
+  one event loop; the defect was *start*-stamping the cadence. Four for four across two batches.
+- **A batch that fixes the concurrency ceiling still runs under the old ceiling.** Batch A shipped
+  #208's advisory lock, but its own three workers ran under the pre-#208 contract (one DB-capable
+  worker, siblings unit-tier only, orchestrator's gate run authoritative). "We're fixing it in this
+  batch" is not a licence to rely on the fix mid-batch.
+- **`worktree-destroy.sh` cannot address harness worktree paths** (`.claude/worktrees/agent-*`;
+  gregoryfoster/skills#149), and `git worktree remove` refuses any worktree whose submodules a worker
+  initialized — `--force` is required, with `git branch -d` (not `-D`) left as the real merge guard.
+- Fresh harness worktrees have **uninitialized submodules**, failing a skills-symlink test in the
+  unit tier until `git submodule update --init`. Two workers hit it independently; brief it up front.
