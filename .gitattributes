@@ -1,0 +1,4 @@
+
+# Append-only telemetry: concurrent appends must union-merge, or a
+# scheduled measurement racing a human commit conflicts and is lost.
+.skills/context-metrics.jsonl merge=union
