@@ -30,7 +30,7 @@ Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 | 2026-08-11 | CannObserv/observo | **Mid-orchestration issue surgery** (product decision at the scoring gate → trim #421 to one option, descope the other to a new blocked issue #443, comment the decision onto #436) — decisions changed two scores and one blast radius *before* batch design; **unbounded-sweep issue sized by grep** (#438 "worth a sweep" → 17 files / ~64 sites) and cross-checked against co-batch agents' test footprints to license full-ceiling parallelism; **highest-scored issue placed in the second batch** because batch-A slots are claimed by ordering constraints, not by score; shared-test-DB ceiling **6th recurrence** (carried forward and re-verified with one `psql -l`) |
 | 2026-08-13 | CannObserv/cannobserv | **Upstream-blocked backlog: check the sibling repo's blocker states before anything else** — all three blockers closed within 5 days, converting a "blocked" backlog to actionable, with a stale contract pin as the shared consequence; **a shared first step that is not an issue** (the re-pin) modeled as commit 1 of a Shape-A bundle, then read-only for the gated batch; **same-function overlap is the sharpest Shape-A signal yet** (two issues edit `test_write_bodies.py:22-23`); **a clarifying "Other" answer at a decision gate flipped the decision and exposed a latent read-time data drop** (wp/v2 observation adapter silently drops ACF `co_roles` — the issue body's "no such field on either backend" was true of the model, misleading about the data); hybrid preference degenerated to fully-sequential (every pairing shared a file); policy-deferral of a user-named issue (#278, async-parity) confirmed at Q3 |
 | 2026-08-13 | CannObserv/usa-wa | **The backlog contained the fix for its own ceiling** (shared-test-DB **7th recurrence** — #208 itself in the named set; old contract still binds during Batch A: workers unit-tier only, gate run authoritative); **operational mitigation is not partial shipment** (#211 kill-switched via env var → Correctness 3→2 but full scope retained; issue *comment* authoritative over body; plan gains a required **ops tail** with an observation window); verification-mode asymmetry 3rd recurrence, doubled (#208 fixture + #216 coverage gating + live-SOAP integration run → three non-worker causes for a red gate) |
-| 2026-08-13/14 | CannObserv/usa-wa | **Execution addendum** — the **ops tail is where the claims get falsified**: production's first pass reported the `healed=0` that #212 argued was structurally unreachable (no test could produce it), while the worker's confident `budget_exhausted` prediction was simply wrong; **verify a restart picked up new code by filtering the journal on the restart timestamp** (I diagnosed a phantom deploy failure off a line stamped 22s *before* the restart); a "0 requests since T" window measured 18s after T is not a quiet period; **the duty-cycle win is a ratio, not an absence of traffic** (same ~2 req/s ceiling during a pass, 465s per 3600s cadence ≈ 11% vs >100%); 4/4 workers corrected their briefs |
+| 2026-08-13/14 | CannObserv/usa-wa | **Execution addendum** — the **ops tail is where the claims get falsified**: production's first pass reported the `healed=0` that #212 argued was structurally unreachable (no test could produce it), while the worker's confident `budget_exhausted` prediction was simply wrong; **verify a restart picked up new code by filtering the journal on the restart timestamp** (I diagnosed a phantom deploy failure off a line stamped 22s *before* the restart); a "0 requests since T" window measured 18s after T is not a quiet period; **the duty-cycle win is a ratio, not an absence of traffic** (same ~2 req/s ceiling during a pass, 465s per 3600s cadence ≈ 11% vs >100%); 4/4 workers corrected their briefs; **2nd independent hit on the batch-checkout guard** — nine timer jobs wedged by `assert-main-checkout`, and the rule that would have prevented it *already existed upstream* but reached my working copy only via a mid-session submodule pull: **skill text in context is a session-start snapshot, so re-read a skill after updating it**; put `list-units --failed` in the ops tail |
 | 2026-08-11→13 | CannObserv/usa-wa (#207 execution) | **The skill's batch-branch checkout step took production down** — a repo whose units carry `ExecStartPre=assert-main-checkout.sh` could not start with `batch/g` checked out, across three separate batches (→ create the branch WITHOUT checkout, integrate in a worktree; **promoted** to Orchestrator step 2, where the instruction lived in *four* places, not the two the issue named); **a documented wrap-up restart resurrected a deliberately-held daemon mid-incident** (inactive + disabled + preset enabled = a hold, not a fault; **promoted** as a clause on the same rule); every worker report carried ≥1 verifiable discrepancy; `worktree-destroy.sh`'s path-scheme gap is **stale** — #149 shipped branch-first lookup |
 | 2026-08-13 | CannObserv/power-map | Q5 variant — the binding ceiling was a shared `TEST_DATABASE_URL` with a truncate-and-seed browser tier, not worktree provisioning; **resolution 2 of the existing ladder (serialize the gate) already covered it**, so the promotion was the recurrence *count* (Q5 is now 9 sessions across 4 projects, and SKILL.md was reading "six across three"); **a docstring naming pending follow-ups by number is an open-in-fact check** — merged with observo's zero-hits rule and promoted as one clause; module-local pytest fixtures are an invisible shared prerequisite |
 | 2026-08-13 | CannObserv/observo | **Zero hits for an issue's symbol is ambiguous, not exculpatory** — #109's deliverable had shipped under another name and its own contract doc named its approach as the *rejected* path (**promoted**: this is a false negative in the skill's own prescribed grep); a domain fact from the user **deleted** #443's mechanism rather than resolving it (5 production files → 2) and a dead setting *was* the replacement — both held as log entries at one sighting; shared-test-DB ceiling **8th** recurrence, not the 7th the issue claimed |
@@ -2194,6 +2194,36 @@ restart picked up new code, filter the journal by the restart timestamp before r
 (`--since "$(systemctl show -p ExecMainStartTimestamp --value <unit>)"`), rather than reading
 `tail -1` of a window that spans the restart. Same failure shape as reading a stale checkout (Rule 1):
 the artifact looked current and was not.
+
+### Second, independent hit on the batch-checkout guard — and why the rule did not reach me
+
+Orchestrator step 2's caution about repos that deploy from the main checkout **already existed
+upstream** when this ran (added by the #146/#151/#153/#154 session, citing this same repo). It did
+not help, and the reason is worth more than the incident: **the skill text in an agent's context is
+a snapshot taken at session start.** Mine was cut at submodule SHA `3b374bb`, where step 2 read only
+"Check out the batch branch before spawning agents — `git checkout -b batch/<X>`". The guarded
+version arrived in the working tree when I pulled the submodule mid-session to append this log —
+by which point both batch branches had already been checked out for hours. The file on disk was
+right; the file in context was not.
+
+The incident is therefore a clean *independent* corroboration of the rule rather than a discovery:
+`batch/a` and `batch/b` sat checked out in the prod checkout across the orchestration, and this
+repo's `ExecStartPre=assert-main-checkout.sh` (usa-wa#87) failed **nine** timer-fired one-shots —
+WSL refresh, SOS archive+rebuild, PDC archive+rebuild, both corroborations, succession invariants,
+committee lineage invariants — each logging `refusing to start — checkout on 'batch/b', expected
+'main'`. Recovery was `reset-failed` + `start` per unit once main was restored; all nine returned
+`outcome=ok`, so the cost was delay, not data.
+
+Two things to carry:
+
+1. **When a session opens by pulling or updating a vendored skill, re-read the skill body before
+   acting on it.** A mid-session `git pull` of the skills submodule silently desynchronizes the
+   instructions being followed from the instructions on disk, and nothing surfaces the gap.
+2. **`systemctl list-units --failed` (or the project's equivalent) belongs in the ops tail.** Here it
+   ran only because a post-deploy health check happened to include it; the batch merged green and
+   the test gate was clean while nine scheduled jobs had been wedged for hours. Two rounds were
+   needed — four more units surfaced after the first five were cleared, because their timers had
+   fired later in the window.
 
 ### Also captured
 
