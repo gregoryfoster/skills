@@ -30,7 +30,7 @@ Create a task for each item and complete them in order. Item numbers match the `
 7. **Design batch plan** — assign issues to merge batches; get approval
 8. **Write design doc** — `docs/plans/YYYY-MM-DD-<topic>-backlog.md`; commit
 9. **Open GitHub tracking issue** — link to design doc; list batches
-10. **Capture session learnings** — append a session entry to `references/process-log.md`; promote patterns into this skill only when they recur or introduce a new rule
+10. **Capture session learnings** — journal the session via `references/process-log.md`; promote patterns into this skill only when they recur or introduce a new rule
 
 ---
 
