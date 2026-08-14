@@ -224,25 +224,50 @@ This mattered concretely rather than academically: with `bytes/4` and a 6,000
 budget, the write guard would enforce an effective ceiling near 15,000 real tokens
 and stay silent the whole way there.
 
-Two mechanisms fix it:
+Three mechanisms fix it:
 
 - **Default 2.7 bytes/token**, from the measurement above.
 - **Per-repo calibration.** Every `--exact` run writes the observed ratio to
   `.skills/context-token-ratio`, and the offline estimators (the write guard,
-  `context-delta.sh`, and `measure-context.sh` without `--exact`) read it. On this
-  repo the calibrated estimate reproduces the exact count to the token. An
+  `context-delta.sh`, and `measure-context.sh` without `--exact`) read it. An
   estimate-only run never writes the file — deriving a calibration from an
   estimate would just re-record the default and freeze whatever error it carries.
+- **Per-file calibration** ([#145](https://github.com/gregoryfoster/skills/issues/145)).
+  The repo ratio is derived from **one** file — `P_BYTES / P_TOKENS`, the policy
+  file — and then divides every other file in the repo. So an `--exact` run also
+  writes `<bytes> <tokens> <path>` per measured file to
+  `.skills/context-token-counts`, and the estimators prefer a file's own last
+  exact measurement, falling back to the repo ratio for a file never counted or
+  since drifted more than 25% from the size recorded there. Two integers rather
+  than a stored ratio: `tokens × bytes_now / bytes_then` is the exact count when
+  the file has not changed, with no rounding step at all.
 
 The estimate is still an estimate: use it to rank sections against each other and
 to decide whether the guard should speak, and use `--exact` for anything that lands
 in the ledger or a budget decision.
 
-An exact run also writes the repo's observed bytes-per-token ratio to
-`.skills/context-token-ratio`, which is what keeps the offline estimators (the
-write guard, `context-delta.sh`) honest between runs. The conventional `bytes/4`
-heuristic under-reports this cohort's markdown by 56–65%, so an uncalibrated
-estimate would let a 6k budget pass a 15k file in silence.
+**One ratio is not enough, and it is not enough in both directions.** Measured
+across this repo's own 56-file surface, the per-file ratio runs **2.041** (a
+scaffolding doc that is mostly TOML and Python) to **3.029** (a review-dimensions
+doc that is mostly prose and tables) against a global of 2.65 — so a single
+divisor is wrong by **-23.0% to +14.3%**, under-reporting 37 of the 56 files and
+over-reporting 19. Both errors cost something, and not the same thing:
+over-reporting flags files that are under budget, which trains the reader to
+ignore the guard; under-reporting is silence on a file that is genuinely over,
+which is the decay the guard exists to catch.
+
+Do not reach for a code-fraction heuristic. #145 was filed from a repo whose
+code-block-heavy docs measured 2.485 and 2.549 against a 2.32 global — *over*-
+reported — while here the code-heaviest files are the *densest* and are
+*under*-reported. Both readings are correct about their own repo. What varies is
+how well the content compresses, which a fenced-code fraction does not measure,
+so any such heuristic would have to predict opposite signs in two repos of one
+cohort. Measure the file instead.
+
+Every row of the measurement JSON carries `tokens_source` — `exact`, `file` or
+`repo` — so a number can be weighed by whoever quotes it. #145's cost was not an
+estimate being wrong but an unattributed one being copied into a plan document,
+an issue comment and several status reports before anyone re-derived it.
 
 ### Keeping a ledger single-method
 

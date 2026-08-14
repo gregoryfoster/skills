@@ -141,17 +141,20 @@ sort -u "$TMP/surface" >"$TMP/surface.u"
 : >"$TMP/rows"
 while IFS="$(printf '\t')" read -r kind f; do
   [ -n "$f" ] || continue
-  now=0
-  [ -f "$f" ] && now=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)")
-  prev=0
+  nb=""
+  [ ! -f "$f" ] || nb="$(LC_ALL=C wc -c <"$f" 2>/dev/null || echo 0)"
   pb="$(ctx_prev_bytes "$BASE" "$f")" || pb=""
   # Field 1 only; see the TAB note in context-budget-guard.sh for why the
   # delimiter is spelled out instead of typed literally.
   pb="${pb%%"$CTX_TAB"*}"
-  case "$pb" in
-    ''|*[!0-9]*) prev=0 ;;
-    *) prev=$(ctx_est_from_bytes "$pb") ;;
-  esac
+  # Per file where the repo has been measured exactly, per repo otherwise, and
+  # never one of each on the two sides of a delta — ctx_est_pair, the same call
+  # the write guard makes, so the review delta and the hook cannot report two
+  # different numbers for one file (#145).
+  est="$(ctx_est_pair "$ROOT" "$f" "$nb" "$pb")"
+  now="${est%%"$CTX_TAB"*}"
+  est="${est#*"$CTX_TAB"}"
+  prev="${est%%"$CTX_TAB"*}"
 
   if [ "$kind" = "policy" ]; then b="$BUDGET"; else b="$DOC_BUDGET"; fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$f" "$now" "$prev" "$b" >>"$TMP/rows"
