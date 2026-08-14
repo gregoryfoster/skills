@@ -3527,19 +3527,23 @@ class TestCadenceDescribesTheRepoNotTheInvocation:
             self, tmp_path: Path):
         r = self._run(self._repo(tmp_path), "--uninstall")
         assert r.returncode == 0
-        assert "removed the .gitattributes union merge" not in r.stdout
+        assert "removed the .gitattributes entry" not in r.stdout
         assert "recorded rows were left in place" in r.stdout
 
-    def test_uninstall_removes_the_attribute_it_installed(self, tmp_path: Path):
+    def test_uninstall_removes_the_attributes_it_installed(self, tmp_path: Path):
         """The installer's contract is two artifacts, so uninstall reverses
         both. The rows stay — removing the mechanism that adds to the series is
-        not a reason to discard what it already collected."""
+        not a reason to discard what it already collected.
+
+        All THREE attribute lines, not just the ledger's: an uninstall that
+        leaves the calibration entries behind is the same half-state --check
+        exists to catch (#173)."""
         repo = self._repo(tmp_path)
         self._run(repo)
         assert (repo / ".gitattributes").exists()
         r = self._run(repo, "--uninstall")
         assert r.returncode == 0, r.stderr
-        assert "removed the .gitattributes union merge" in r.stdout
+        assert r.stdout.count("removed the .gitattributes entry") == 3, r.stdout
         # The file was ours, so it goes with it.
         assert not (repo / ".gitattributes").exists(), (
             repo / ".gitattributes").read_text()
