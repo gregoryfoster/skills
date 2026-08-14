@@ -214,6 +214,12 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # `ours` is the one built-in merge driver git does NOT define for you:
+          # the .gitattributes entry alone is inert, and the calibration files
+          # would conflict exactly as if it were absent. `true` is the whole
+          # driver — it succeeds without writing, which leaves the branch's copy
+          # in place, and the next --exact run recomputes both (#173).
+          git config merge.ours.driver true
           # Staged separately, and the row is NOT tolerant of failure. One
           # `git add` over both paths stages NOTHING when either is missing —
           # it exits 128 on the unmatched pathspec — so `|| true` turned a
@@ -251,8 +257,22 @@ jobs:
             # the error line below, making "3 attempts" really one.
             git pull --rebase --autostash origin "$BRANCH" || {
               echo "::error::rebase onto origin/$BRANCH failed — the row was not pushed."
-              echo "::error::If the ledger conflicted, .gitattributes is missing"
-              echo "::error::`.skills/context-metrics.jsonl merge=union` — re-run install-cadence.sh."
+              # Name the file that actually conflicted rather than asserting it
+              # was the ledger. Blaming a ledger attribute that is present and
+              # correct sent the reader to the one file that was protected,
+              # while the calibration files were the unprotected ones (#173).
+              #
+              # \\` — escaped for BOTH layers. A single \` renders a live
+              # backtick into the workflow, where bash runs the attribute line
+              # as a command and the substitution eats the very filename this
+              # message exists to name (#171). The seams ::warning:: below has
+              # always had this right; this line did not.
+              git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
+              echo "::error::Re-run install-cadence.sh, then confirm with --check that"
+              echo "::error::every staged path carries a merge attribute:"
+              echo "::error::  \`.skills/context-metrics.jsonl merge=union\`"
+              echo "::error::  \`.skills/context-token-ratio merge=ours\`"
+              echo "::error::  \`.skills/context-token-counts merge=ours\`"
               exit 1
             }
           done

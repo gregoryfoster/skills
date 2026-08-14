@@ -144,8 +144,29 @@ fi
 ATTR_FILE="$ROOT/.gitattributes"
 ATTR_LINE="$LEDGER merge=union"
 
+# The two calibration files the same --exact run rewrites (#145). The workflow
+# stages all THREE paths, so protecting only the ledger left the other two to
+# conflict on exactly the race the ledger was protected against (#173).
+#
+# merge=ours, not merge=union. Union-merging these produces two lines for the
+# same path with different counts, and the estimators would silently read
+# whichever they hit first — worse than a conflict, because nothing reports it.
+#
+# They are pure functions of the tree at measurement time, so the right answer
+# on a collision is always "recompute", never "reconcile". `ours` during a
+# rebase keeps whatever is already on the branch and drops the replayed
+# version; the next --exact run recomputes both from scratch. A week of stale
+# calibration is self-correcting. A lost row is not — it is a hole in the
+# series this whole mechanism exists to accumulate.
+RATIO_PATH=".skills/context-token-ratio"
+COUNTS_PATH=".skills/context-token-counts"
+ATTR_RATIO="$RATIO_PATH merge=ours"
+ATTR_COUNTS="$COUNTS_PATH merge=ours"
+
 ATTR_NOTE_1="# Append-only telemetry: concurrent appends must union-merge, or a"
 ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost."
+ATTR_NOTE_3="# Calibration is regenerated, never reconciled: on a collision keep"
+ATTR_NOTE_4="# the branch's copy and let the next --exact run recompute it."
 
 # Remove OUR block for a given ledger: the attribute line and the two comment
 # lines that introduce it. Factored rather than inlined twice — a superseded
@@ -153,9 +174,10 @@ ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost
 # second time is the duplication the last three rounds kept finding.
 strip_attr() {
   [ -f "$ATTR_FILE" ] || return 0
-  awk -v want="$1" -v n1="$ATTR_NOTE_1" -v n2="$ATTR_NOTE_2" '
+  awk -v want="$1" -v n1="$ATTR_NOTE_1" -v n2="$ATTR_NOTE_2" \
+      -v n3="$ATTR_NOTE_3" -v n4="$ATTR_NOTE_4" '
     { line = $0; sub(/^[ \t]+/, "", line) }
-    line == n1 || line == n2 { next }
+    line == n1 || line == n2 || line == n3 || line == n4 { next }
     line !~ /^#/ && index(line, want) == 1 { next }
     { print }
   ' "$ATTR_FILE" >"$ATTR_FILE.tmp" && mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
@@ -171,12 +193,31 @@ strip_attr() {
 # and the failure landed later as a row lost to a race.
 has_attr() {
   [ -f "$ATTR_FILE" ] || return 1
-  awk -v want="$ATTR_LINE" '
+  awk -v want="$1" '
     { line = $0; sub(/^[ \t]+/, "", line) }
     line ~ /^#/ { next }
     index(line, want) == 1 { found = 1; exit }
     END { exit !found }
   ' "$ATTR_FILE"
+}
+
+# Every path the rendered workflow stages, paired with the attribute that keeps
+# a concurrent commit from destroying it. Iterated rather than checked one by
+# one, so adding a staged path to the template and forgetting its attribute is
+# a diff in ONE list instead of a silent gap between two places — which is
+# exactly how the calibration files went unprotected for #145's whole life.
+ATTR_ALL="$ATTR_LINE
+$ATTR_RATIO
+$ATTR_COUNTS"
+
+has_all_attrs() {
+  local line
+  while IFS= read -r line; do
+    has_attr "$line" || return 1
+  done <<EOF
+$ATTR_ALL
+EOF
+  return 0
 }
 
 if [ "$MODE" = "check" ]; then
@@ -192,11 +233,23 @@ if [ "$MODE" = "check" ]; then
     echo "workflow:           MISSING ($WF_PATH)"
     rc=3
   fi
-  if has_attr; then
+  if has_attr "$ATTR_LINE"; then
     echo "ledger union merge: yes ($ATTR_LINE)"
   else
     echo "ledger union merge: MISSING — concurrent appends will conflict and the"
     echo "                    row is lost. Re-run install-cadence.sh to add it."
+    rc=3
+  fi
+  # Reported as its own line, not folded into the one above. The workflow
+  # stages three paths and each is a separate way to lose the row; a single
+  # "attributes: ok" would have read green through the whole of #173.
+  if has_attr "$ATTR_RATIO" && has_attr "$ATTR_COUNTS"; then
+    echo "calibration merge:  yes (regenerate-on-collision for both)"
+  else
+    echo "calibration merge:  MISSING — the workflow also stages"
+    echo "                    $RATIO_PATH and $COUNTS_PATH,"
+    echo "                    which conflict on the same race the ledger is"
+    echo "                    protected against. Re-run install-cadence.sh."
     rc=3
   fi
   exit "$rc"
@@ -209,10 +262,17 @@ if [ "$MODE" = "uninstall" ]; then
   else
     echo "nothing to remove: no $WF_PATH"
   fi
-  if has_attr; then
-    strip_attr "$ATTR_LINE"
-    echo "removed the .gitattributes union merge for $LEDGER"
-  fi
+  # Every attribute this installer wrote, not just the ledger's — an uninstall
+  # that leaves two of the three behind is the same half-state --check exists
+  # to catch.
+  while IFS= read -r attr; do
+    if has_attr "$attr"; then
+      strip_attr "$attr"
+      echo "removed the .gitattributes entry: $attr"
+    fi
+  done <<EOF
+$ATTR_ALL
+EOF
   echo "note: the recorded rows were left in place — they are the series."
   exit 0
 fi
@@ -261,8 +321,8 @@ ensure_attr() {
       echo "removed superseded .gitattributes line: $stale"
     fi
   fi
-  if has_attr; then
-    echo "unchanged: .gitattributes already carries the union merge for the ledger"
+  if has_all_attrs; then
+    echo "unchanged: .gitattributes already protects all three staged paths"
     return 0
   fi
   # Append rather than overwrite: the file routinely carries linguist and
@@ -270,10 +330,23 @@ ensure_attr() {
   if [ -s "$ATTR_FILE" ] && [ "$(tail -c 1 "$ATTR_FILE" | wc -l)" -eq 0 ]; then
     printf '\n' >>"$ATTR_FILE"
   fi
-  {
-    printf '\n%s\n%s\n%s\n' "$ATTR_NOTE_1" "$ATTR_NOTE_2" "$ATTR_LINE"
-  } >>"$ATTR_FILE"
-  echo "wrote .gitattributes: $ATTR_LINE"
+  # Each line appended only if absent, so a repo that installed before the
+  # calibration attributes existed (#173) gains exactly the two it is missing
+  # rather than a duplicated ledger line beside them. That population is every
+  # repo the cohort adopted between #145 and this fix.
+  if ! has_attr "$ATTR_LINE"; then
+    printf '\n%s\n%s\n%s\n' "$ATTR_NOTE_1" "$ATTR_NOTE_2" "$ATTR_LINE" >>"$ATTR_FILE"
+    echo "wrote .gitattributes: $ATTR_LINE"
+  fi
+  if ! has_attr "$ATTR_RATIO" || ! has_attr "$ATTR_COUNTS"; then
+    printf '\n%s\n%s\n' "$ATTR_NOTE_3" "$ATTR_NOTE_4" >>"$ATTR_FILE"
+    for attr in "$ATTR_RATIO" "$ATTR_COUNTS"; do
+      if ! has_attr "$attr"; then
+        printf '%s\n' "$attr" >>"$ATTR_FILE"
+        echo "wrote .gitattributes: $attr"
+      fi
+    done
+  fi
 }
 
 render() {
@@ -377,6 +450,12 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # \`ours\` is the one built-in merge driver git does NOT define for you:
+          # the .gitattributes entry alone is inert, and the calibration files
+          # would conflict exactly as if it were absent. \`true\` is the whole
+          # driver — it succeeds without writing, which leaves the branch's copy
+          # in place, and the next --exact run recomputes both (#173).
+          git config merge.ours.driver true
           # Staged separately, and the row is NOT tolerant of failure. One
           # \`git add\` over both paths stages NOTHING when either is missing —
           # it exits 128 on the unmatched pathspec — so \`|| true\` turned a
@@ -414,8 +493,22 @@ jobs:
             # the error line below, making "3 attempts" really one.
             git pull --rebase --autostash origin "\$BRANCH" || {
               echo "::error::rebase onto origin/\$BRANCH failed — the row was not pushed."
-              echo "::error::If the ledger conflicted, .gitattributes is missing"
-              echo "::error::\`$ATTR_LINE\` — re-run install-cadence.sh."
+              # Name the file that actually conflicted rather than asserting it
+              # was the ledger. Blaming a ledger attribute that is present and
+              # correct sent the reader to the one file that was protected,
+              # while the calibration files were the unprotected ones (#173).
+              #
+              # \\\\\` — escaped for BOTH layers. A single \\\` renders a live
+              # backtick into the workflow, where bash runs the attribute line
+              # as a command and the substitution eats the very filename this
+              # message exists to name (#171). The seams ::warning:: below has
+              # always had this right; this line did not.
+              git diff --name-only --diff-filter=U | sed 's/^/::error::  conflicted: /'
+              echo "::error::Re-run install-cadence.sh, then confirm with --check that"
+              echo "::error::every staged path carries a merge attribute:"
+              echo "::error::  \\\`$ATTR_LINE\\\`"
+              echo "::error::  \\\`$ATTR_RATIO\\\`"
+              echo "::error::  \\\`$ATTR_COUNTS\\\`"
               exit 1
             }
           done
