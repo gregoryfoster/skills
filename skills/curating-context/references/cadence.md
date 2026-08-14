@@ -219,6 +219,14 @@ jobs:
           if [ -f .skills/context-token-ratio ]; then
             git add -- .skills/context-token-ratio
           fi
+          # The per-file calibration the same --exact run refreshes (#145).
+          # Unstaged it would be recomputed and discarded every week, and the
+          # estimators between runs would stay on the repo-wide ratio forever —
+          # a feature that writes a file nobody ever commits is a feature that
+          # does not exist.
+          if [ -f .skills/context-token-counts ]; then
+            git add -- .skills/context-token-counts
+          fi
           if git diff --cached --quiet; then
             echo "no new row — nothing to commit"
             exit 0

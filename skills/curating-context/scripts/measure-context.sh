@@ -60,16 +60,18 @@ Options:
                      the repo root. Default: ".env env" (bare `env` is the name
                      this cohort used before 2026-08-05). Only
                      ANTHROPIC_API_KEY is read, by parsing — never by sourcing.
-  --no-write         Touch nothing. Suppresses the one side effect an --exact run
+  --no-write         Touch nothing. Suppresses the side effects an --exact run
                      otherwise has: writing the observed bytes-per-token ratio to
-                     .skills/context-token-ratio. Required when measuring a repo
-                     you are only surveying — cohort remediation is filed as
-                     issues, never written across repos.
+                     .skills/context-token-ratio, and the per-file calibration
+                     (<bytes> <tokens> <path>) to .skills/context-token-counts.
+                     Required when measuring a repo you are only surveying —
+                     cohort remediation is filed as issues, never written across
+                     repos.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
-  policy    { path, lines, bytes, tokens, tokens_exact, bytes_per_token,
-              budget, over_budget }
+  policy    { path, lines, bytes, tokens, tokens_exact, tokens_source,
+              bytes_per_token, budget, over_budget }
   skill     { name, version, commit }  which skill version measured this, so a
               ledger row can be attributed to a skill change
   sections  [ { title, lines, bytes, tokens, share } ]  `##`, descending by size
@@ -78,11 +80,18 @@ Output (stdout, JSON):
   subsections [ { title, parent, lines, bytes, tokens, share } ]  `###`, ditto
               The unit most demotions actually act on: a large `##` section is
               usually kept-plus-demoted rather than moved whole.
-  docs      [ { path, lines, bytes, tokens, tokens_exact, linked, over_budget } ]
+  docs      [ { path, lines, bytes, tokens, tokens_exact, tokens_source,
+                linked, over_budget } ]
               live only. `tokens_exact` is PER ROW: one transient count_tokens
               failure no longer disowns the rows that were counted exactly.
               policy.tokens_exact stays run-wide — true only when every count in
               the run was exact — because the ledger compares whole runs.
+              `tokens_source` says which estimator produced the number: "exact"
+              from count_tokens, "file" from that file's own cached measurement
+              in .skills/context-token-counts, "repo" from the repo-wide ratio.
+              A number quoted without it is a number nobody downstream can
+              weigh — which is how #145's over-estimate reached a plan document,
+              an issue comment and several status reports.
   links     { refs, dead, dead_anchors, orphans }
               `dead` is a link whose FILE does not exist. `dead_anchors` is a
               link whose file exists and whose #fragment names no heading in it
@@ -382,15 +391,23 @@ fi
 # cannot disagree with this script about it.
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
 
-est_from_bytes() { ctx_est_from_bytes "$1"; }
-
-est_tokens() { est_from_bytes "$(LC_ALL=C wc -c <"$1" | tr -d ' ')"; }
+est_tokens() {
+  # "<tokens>\t<source>" — a file's own last exact measurement first, the
+  # repo-wide ratio second. The same order the write guard and context-delta.sh
+  # use, so an estimate-only run and the hook report the same number for the
+  # same file rather than two numbers a reader has to reconcile (#145).
+  ctx_est_tokens_for "$ROOT" "$1" "$(LC_ALL=C wc -c <"$1" | tr -d ' ')"
+}
 
 count_tokens() {
   # count_tokens <file> -> token count on stdout. Falls back to the estimate on any
   # per-file failure, so one bad response degrades a number rather than the run.
-  local f="$1" est out rc=0
-  est="$(est_tokens "$f")"
+  local f="$1" est_out est out rc=0
+  est_out="$(est_tokens "$f")"
+  est="${est_out%%"$CTX_TAB"*}"
+  # Which estimator produced the fallback, recorded for the caller the same way
+  # and for the same reason as the exactness marker below.
+  printf '%s' "${est_out#*"$CTX_TAB"}" >"$TMP/last_est_source"
   # Clear the PER-CALL marker before counting, so last_count_exact answers for
   # this file and not for whichever file failed earlier in the run (#123).
   rm -f "$TMP/last_fell_back" 2>/dev/null || true
@@ -427,6 +444,24 @@ last_count_exact() {
   fi
 }
 
+last_token_source() {
+  # Where the number that JUST came back came from: "exact" from count_tokens,
+  # "file" from that file's own cached measurement, "repo" from the repo-wide
+  # ratio. Read it immediately after the call, as for last_count_exact.
+  #
+  # #145 is a case study in the cost of leaving this out. A guard estimate that
+  # over-reported four docs was quoted into a plan document, an issue comment and
+  # several status reports before anyone re-derived it; nothing the tool emitted
+  # said which of two figures, up to 23% apart, had produced the number. An
+  # estimate that cannot say where it came from is an estimate readers either
+  # over-trust or learn to ignore, and both are how the advisory decays.
+  if [ "$EXACT_OK" -eq 1 ] && [ ! -f "$TMP/last_fell_back" ]; then
+    printf 'exact'
+  else
+    cat "$TMP/last_est_source" 2>/dev/null || printf 'repo'
+  fi
+}
+
 jesc() {
   # Minimal JSON string escaping for the values this script emits (repo-relative
   # paths and markdown headings): backslash, double quote, tab.
@@ -437,6 +472,7 @@ jesc() {
 P_LINES=$(LC_ALL=C wc -l <"$POLICY" | tr -d ' ')
 P_BYTES=$(LC_ALL=C wc -c <"$POLICY" | tr -d ' ')
 P_TOKENS=$(count_tokens "$POLICY")
+P_SOURCE="$(last_token_source)"
 # An empty policy file yields zero tokens, which the bytes-per-token ratio below
 # divides by. Refuse it here, before a single byte of JSON is emitted: falling
 # through printed a bare "{" to stdout and exited 1, so a caller piping into
@@ -918,10 +954,11 @@ if [ -d "$DOCS_DIR" ]; then
     db=$(LC_ALL=C wc -c <"$d" | tr -d ' ')
     dt=$(count_tokens "$d")
     dexact="$(last_count_exact)"
+    dsource="$(last_token_source)"
     linked=false
     grep -Fxq "$d" "$TMP/reachable" && linked=true
-    printf '%s%s%s%s%s%s%s%s%s%s%s\n' "$dl" "$TAB" "$db" "$TAB" "$dt" "$TAB" \
-      "$dexact" "$TAB" "$linked" "$TAB" "$d" >>"$TMP/docs.tsv"
+    printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$dl" "$TAB" "$db" "$TAB" "$dt" "$TAB" \
+      "$dexact" "$TAB" "$linked" "$TAB" "$d" "$TAB" "$dsource" >>"$TMP/docs.tsv"
   done <"$TMP/docfiles"
 else
   ARCHIVAL_SKIPPED=0
@@ -984,7 +1021,7 @@ RATIO_X100=$(( P_BYTES * 100 / P_TOKENS ))
 # generated table, a wall of single-character lines), and freezing it would skew
 # every later offline estimate. The reader has a matching floor, but writing
 # nonsense and relying on the reader to reject it is worse than not writing it.
-if [ "$RATIO_X100" -lt 150 ] || [ "$RATIO_X100" -gt 600 ]; then
+if [ "$RATIO_X100" -lt "$CTX_RATIO_MIN_X100" ] || [ "$RATIO_X100" -gt "$CTX_RATIO_MAX_X100" ]; then
   if [ "$exact_flag" = true ]; then
     echo "WARN observed ratio $(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))) bytes/token is outside the plausible 1.50-6.00 band; not persisting it" >&2
   fi
@@ -1002,8 +1039,87 @@ elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE"
   echo "INFO --no-write: not persisting the observed ratio ($(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))))" >&2
 fi
 
-printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \
+# --- per-file calibration (#145) ------------------------------------------
+# The ratio above is derived from ONE file — the policy file — and then divides
+# every other file in the repo. Across this repo's own 56-file surface the
+# per-file ratio spans 2.04 to 3.03 against a 2.65 global, so the estimate is
+# wrong by -23% to +14% depending on which file it is pointed at. This run
+# already knows every number needed to fix that for the files it just counted,
+# so it writes them down: two integers per file, which the estimators divide
+# once in full precision rather than twice through a rounded ratio.
+#
+# Gated exactly as the ratio is, and for the same reason: a calibration derived
+# from an estimate re-records the divisor it was computed with, which is a
+# self-confirming measurement that then outranks the global for every later run.
+emit_count_row() {
+  # <bytes> <tokens> <path> -> one persistable row, or a refusal on stderr.
+  local b="$1" t="$2" p="$3" r
+  printf '%s\n' "$p" >>"$TMP/counts.measured"
+  { [ "$b" -gt 0 ] && [ "$t" -gt 0 ]; } || return 0
+  r=$(( b * 100 / t ))
+  # The same band the global ratio is held to, from the same constant. A file
+  # outside it is degenerate or unrepresentative, and freezing its ratio would
+  # skew every later estimate OF THAT FILE — worse than the global, not better,
+  # which would make the calibration a liability rather than a correction.
+  if [ "$r" -lt "$CTX_RATIO_MIN_X100" ] || [ "$r" -gt "$CTX_RATIO_MAX_X100" ]; then
+    echo "WARN $p measures $(( r / 100 )).$(printf '%02d' $(( r % 100 ))) bytes/token, outside the plausible band; not persisting its calibration" >&2
+    return 0
+  fi
+  printf '%s %s %s\n' "$b" "$t" "$p" >>"$TMP/counts.new"
+}
+
+COUNTS_FILE="$ROOT/.skills/$CTX_COUNTS_BASENAME"
+if [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 0 ]; then
+  : >"$TMP/counts.new"
+  : >"$TMP/counts.measured"
+  emit_count_row "$P_BYTES" "$P_TOKENS" "$POLICY"
+  while IFS="$TAB" read -r dl db dt dexact dlinked dpath dsource; do
+    [ -n "${dl:-}" ] || continue
+    emit_count_row "$db" "$dt" "$dpath"
+  done <"$TMP/docs.tsv"
+
+  if [ -s "$TMP/counts.new" ] || [ -f "$COUNTS_FILE" ]; then
+    # MERGED, not rewritten. `--file`/`--docs-dir` measure one corner of a repo
+    # — the self-budget gate measures eighteen corners, one skill at a time — so
+    # a run that rewrote the whole artifact from its own scope would delete the
+    # calibration for every file it never looked at, and the narrowest caller
+    # would win.
+    #
+    # Dropped by MEASURED path rather than by persisted row: a file that has
+    # since become degenerate is refused above, and its stale row has to go with
+    # it. Kept, it would outlive the measurement that justified it.
+    {
+      printf '# <bytes> <tokens> <path> — per-file token calibration (#145)\n'
+      printf '# Written by measure-context.sh --exact; regenerate rather than hand-edit.\n'
+      printf '# The offline estimators prefer a file'"'"'s own last exact measurement to the\n'
+      printf '# repo-wide figure in .skills/context-token-ratio, falling back to it for a\n'
+      printf '# file never counted exactly or since drifted far from the size recorded here.\n'
+      {
+        cat "$TMP/counts.new"
+        if [ -f "$COUNTS_FILE" ]; then
+          # The path is the rest of the line, not the third field: a markdown
+          # file may legitimately have a space in its name, and splitting on the
+          # third field alone would silently truncate it to its first word and
+          # then keep a duplicate row for the real path on every later merge.
+          awk 'NR == FNR { drop[$0] = 1; next }
+               /^[[:space:]]*#/ || NF < 3 { next }
+               { p = $3; for (i = 4; i <= NF; i++) p = p " " $i
+                 if (!(p in drop)) print $1, $2, p }' \
+            "$TMP/counts.measured" "$COUNTS_FILE"
+        fi
+      } | LC_ALL=C sort -k3
+    } >"$TMP/counts.out"
+    mkdir -p "$ROOT/.skills" 2>/dev/null || true
+    mv -f "$TMP/counts.out" "$COUNTS_FILE" 2>/dev/null \
+      || echo "WARN could not write $COUNTS_FILE" >&2
+  fi
+elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ]; then
+  echo "INFO --no-write: not persisting the per-file calibration" >&2
+fi
+
+printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \
   "$(jesc "$POLICY")" "$P_LINES" "$P_BYTES" "$P_TOKENS" "$exact_flag" \
+  "$(jesc "$P_SOURCE")" \
   $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) "$BUDGET" "$over_policy"
 
 printf '  "skill": {"name": "curating-context", "version": "%s", "commit": "%s"},\n' \
@@ -1042,15 +1158,16 @@ printf '  ],\n'
 printf '  "docs": [\n'
 first=1
 docs_tokens=0
-while IFS="$TAB" read -r dl db dt dexact dlinked dpath; do
+while IFS="$TAB" read -r dl db dt dexact dlinked dpath dsource; do
   [ -n "${dl:-}" ] || continue
   docs_tokens=$(( docs_tokens + dt ))
   dover=false
   [ "$dt" -gt "$DOC_BUDGET" ] && dover=true
   [ "$first" -eq 1 ] || printf ',\n'
   first=0
-  printf '    {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "linked": %s, "over_budget": %s}' \
-    "$(jesc "$dpath")" "$dl" "$db" "$dt" "$dexact" "$dlinked" "$dover"
+  printf '    {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "linked": %s, "over_budget": %s}' \
+    "$(jesc "$dpath")" "$dl" "$db" "$dt" "$dexact" "$(jesc "$dsource")" \
+    "$dlinked" "$dover"
 done <"$TMP/docs.sorted"
 [ "$first" -eq 1 ] || printf '\n'
 printf '  ],\n'
@@ -1072,7 +1189,7 @@ printf '},\n'
 # tokens_live = policy + every live (non-archival) doc reachable from it. This
 # is the ceiling on what one session can pull in from the repo's own guidance.
 live_tokens="$P_TOKENS"
-while IFS="$TAB" read -r dl db dt dexact dlinked dpath; do
+while IFS="$TAB" read -r dl db dt dexact dlinked dpath dsource; do
   [ -n "${dl:-}" ] || continue
   [ "$dlinked" = "true" ] && live_tokens=$(( live_tokens + dt ))
 done <"$TMP/docs.tsv"

@@ -54,6 +54,20 @@ Provides:
   ctx_est_from_bytes <bytes>
       Offline token estimate, using CTX_BPT_X100.
 
+  ctx_est_tokens_for <root> <repo-relative-path> <bytes>
+      Offline token estimate for ONE named file: "<tokens>\t<source>", source
+      being "file" when <root>/.skills/context-token-counts holds a usable
+      anchor for that path and "repo" when the global ratio was used. Split on
+      $CTX_TAB. Assign CTX_BPT_X100 before calling, as for ctx_est_from_bytes —
+      the fallback path uses it.
+
+  ctx_est_pair <root> <repo-relative-path> <now-bytes> <prev-bytes>
+      Both sides of a now-vs-then comparison, priced by one method:
+      "<now>\t<prev>\t<source>". Either byte count may be empty, giving 0 for
+      that side. When the two sides would resolve to different sources, BOTH
+      fall back to the repo ratio, so the difference is never taken between two
+      incomparable numbers.
+
   ctx_is_archival <path>
       True when any path component names an archival subtree. Reads
       CTX_ARCHIVAL, which defaults to CTX_ARCHIVAL_DEFAULT.
@@ -139,6 +153,37 @@ CTX_ARCHIVAL="${CTX_ARCHIVAL:-$CTX_ARCHIVAL_DEFAULT}"
 # checked against it is 60% too lenient.
 CTX_BPT_DEFAULT_X100=270
 CTX_BPT_X100="${CTX_BPT_X100:-$CTX_BPT_DEFAULT_X100}"
+
+# The band a bytes-per-token figure has to fall in to be believed at all. Real
+# markdown measures 2.0-4.0; outside 1.5-6.0 the file is degenerate or
+# unrepresentative (a generated table, a wall of single-character lines) and the
+# figure describes that accident rather than the content. Held here rather than
+# in measure-context.sh because the writer and BOTH readers — the global ratio
+# and the per-file anchor — have to mean the same thing by "plausible"; the
+# floor and the ceiling used to be two literals in two files, which is precisely
+# the drift this library exists to prevent.
+CTX_RATIO_MIN_X100=150
+CTX_RATIO_MAX_X100=600
+
+# Per-file calibration, written by measure-context.sh --exact (#145).
+#
+# One global ratio describes exactly one file well: the one it is derived from,
+# which is the policy file. Measured across this repo's own 56-file surface the
+# per-file ratio runs 2.04 to 3.03 against a 2.65 global, so the estimate it
+# yields is wrong by -23% to +14% — in BOTH directions, and "code-heavy" does
+# not predict which. Under-reporting is the direction that matters: an over-flag
+# wastes attention, an under-flag lets a file sit over budget in silence.
+CTX_COUNTS_BASENAME="context-token-counts"
+
+# How far a file may drift from the size it was measured at before its anchor
+# stops describing it. The anchor prices the WHOLE file at its own ratio, so the
+# error is the drift times the gap between the old content's ratio and the new
+# content's. At 25%, with this repo's observed extremes (2.04 and 3.03 against a
+# 2.65 global), the worst case is -5.6%/+2.6% even if every added byte tokenizes
+# at the opposite end of the range — better than the global estimator manages on
+# its BEST files. At 100% the same worst case reaches -13%, which is global-tier,
+# so the anchor has stopped earning its keep well before then.
+CTX_DRIFT_PCT=25
 
 ctx_read_num_knob() {
   local override="${1-}" envval="${2-}" file="${3-}" fallback="${4-}" v=""
@@ -254,6 +299,140 @@ ctx_bytes_per_token_x100() {
 
 ctx_est_from_bytes() {
   echo $(( $1 * 100 / CTX_BPT_X100 ))
+}
+
+ctx_est_tokens_for() {
+  # Estimate ONE file's tokens, preferring its own last exact measurement over
+  # the repo-wide ratio. Emits "<tokens><TAB><source>".
+  #
+  # Two integers per row rather than a ratio, and the estimate is
+  # `tokens * bytes_now / bytes_then` rather than `bytes_now / ratio`. The
+  # division by the anchor happens once, in full precision, instead of twice
+  # through a two-decimal figure: at the measured size the result is the exact
+  # count itself, with no rounding step at all. Storing 2.656 as "2.65" and
+  # dividing back costs 13 tokens on this repo's AGENTS.md before anyone has
+  # edited anything, and that error is systematic rather than noise.
+  #
+  # The source is returned, not inferred, because a caller that reports a number
+  # should be able to say where it came from — #145 is a case study in an
+  # unattributed estimate being copied into a plan, an issue comment and several
+  # status reports before anyone checked it. Both halves come back on stdout for
+  # the reason ctx_prev_bytes documents: the caller reads this in a command
+  # substitution, whose subshell cannot set a variable in the caller's shell.
+  local root="$1" rel="$2" bytes="$3"
+  local file b t p lo hi
+  # `wc -c` pads on BSD/macOS; see ctx_est_pair for what a padded count costs.
+  bytes="${bytes//[[:space:]]/}"
+  case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+  file="$root/.skills/$CTX_COUNTS_BASENAME"
+  if [ -f "$file" ]; then
+    while read -r b t p || [ -n "${p:-}" ]; do
+      case "${b:-}" in ''|'#'*) continue ;; esac
+      # A CR survives the field split — it is not IFS whitespace — and would
+      # make every path in a CRLF checkout miss its lookup silently, which looks
+      # exactly like "this repo has no calibration". Stripped the same way the
+      # knob readers strip theirs.
+      p="${p%$'\r'}"
+      # Parsed then validated, never stripped (#132). This value divides every
+      # byte count of the file it names, so a row the library cannot understand
+      # must produce NO number rather than a different one — and must say so,
+      # because silence is how a wrong divisor survives.
+      #
+      # Shape is checked BEFORE the path, deliberately. Checked after, a row
+      # whose PATH field is the thing that is missing — "20000 8000", the shape
+      # a hand-edit or a truncated write leaves behind — never matches any
+      # lookup and so never warns: the artifact is broken and the estimator is
+      # silently back on the global ratio, which is the exact failure mode this
+      # function was added to remove.
+      case "$b$t" in
+        ''|*[!0-9]*)
+          printf 'WARN %s: "%s %s %s" is not "<bytes> <tokens> <path>" — the row is ignored\n' \
+            "$file" "$b" "$t" "$p" >&2
+          continue ;;
+      esac
+      if [ -z "${p:-}" ]; then
+        printf 'WARN %s: "%s %s" names no path — the row is ignored\n' \
+          "$file" "$b" "$t" >&2
+        continue
+      fi
+      # Value complaints are scoped to the file being asked about: an odd
+      # measurement is a fact about one file, and reporting every repo's worth of
+      # them on every edit is the advisory fatigue #145 is about.
+      [ "$p" = "$rel" ] || continue
+      if [ "$b" -le 0 ] || [ "$t" -le 0 ]; then
+        printf 'WARN %s: %s has a zero byte or token count — using the repo ratio\n' \
+          "$file" "$rel" >&2
+        continue
+      fi
+      if [ $(( b * 100 / t )) -lt "$CTX_RATIO_MIN_X100" ] \
+        || [ $(( b * 100 / t )) -gt "$CTX_RATIO_MAX_X100" ]; then
+        printf 'WARN %s: %s measures %s.%02d bytes/token, outside the plausible %s.%02d-%s.%02d band — using the repo ratio\n' \
+          "$file" "$rel" $(( b * 100 / t / 100 )) $(( b * 100 / t % 100 )) \
+          $(( CTX_RATIO_MIN_X100 / 100 )) $(( CTX_RATIO_MIN_X100 % 100 )) \
+          $(( CTX_RATIO_MAX_X100 / 100 )) $(( CTX_RATIO_MAX_X100 % 100 )) >&2
+        continue
+      fi
+      # Past the drift band the anchor is not wrong so much as unevidenced, and
+      # the global ratio at least describes the repo. Silent, unlike the cases
+      # above: a file growing is normal, and a warning on every edit is the
+      # advisory-fatigue this whole issue is about.
+      lo=$(( b * (100 - CTX_DRIFT_PCT) / 100 ))
+      hi=$(( b * (100 + CTX_DRIFT_PCT) / 100 ))
+      if [ "$bytes" -lt "$lo" ] || [ "$bytes" -gt "$hi" ]; then
+        continue
+      fi
+      printf '%s\t%s' $(( t * bytes / b )) file
+      return 0
+    done <"$file"
+  fi
+  printf '%s\t%s' "$(ctx_est_from_bytes "$bytes")" repo
+}
+
+ctx_est_pair() {
+  # Both sides of a "now vs then" comparison, priced by ONE method. Emits
+  # "<now><TAB><prev><TAB><source>"; either byte count may be empty or
+  # non-numeric, which yields 0 for that side and lets the other decide.
+  #
+  # The two sides can genuinely resolve differently: a file's committed size may
+  # sit outside its anchor's drift band while the working copy sits inside it.
+  # Differencing a calibrated number against a global one reports the gap
+  # between two methods as if it were growth someone wrote — on a file 10% off
+  # the global that is a phantom several hundred tokens wide, and it appears in
+  # the one sentence the guard puts in front of a human. So when the sides
+  # disagree, both drop to the repo ratio: a slightly worse pair of numbers
+  # beats a difference between two incomparable ones.
+  #
+  # This is the rule record-telemetry.sh already applies to the ledger, where a
+  # row whose method differs from the previous one is refused rather than
+  # silently differenced. It lives here because the guard and context-delta.sh
+  # both need it, and two copies of a rule about agreement is the drift this
+  # library exists to prevent.
+  local root="$1" rel="$2" nb="$3" pb="$4"
+  local now=0 prev=0 nsrc="" psrc="" out
+  # Callers hand this straight from `wc -c`, which pads with leading spaces on
+  # BSD/macOS. Arithmetic and `[` both tolerate that; the digit test below does
+  # not, and rejecting a padded count would silently zero the side it came from
+  # — a guard that reported every file as 0 tokens and therefore never spoke.
+  nb="${nb//[[:space:]]/}"
+  pb="${pb//[[:space:]]/}"
+  case "$nb" in ''|*[!0-9]*) nb="" ;; esac
+  case "$pb" in ''|*[!0-9]*) pb="" ;; esac
+  if [ -n "$nb" ]; then
+    out="$(ctx_est_tokens_for "$root" "$rel" "$nb")"
+    now="${out%%"$CTX_TAB"*}"
+    nsrc="${out#*"$CTX_TAB"}"
+  fi
+  if [ -n "$pb" ]; then
+    out="$(ctx_est_tokens_for "$root" "$rel" "$pb")"
+    prev="${out%%"$CTX_TAB"*}"
+    psrc="${out#*"$CTX_TAB"}"
+  fi
+  if [ -n "$nsrc" ] && [ -n "$psrc" ] && [ "$nsrc" != "$psrc" ]; then
+    now="$(ctx_est_from_bytes "$nb")"
+    prev="$(ctx_est_from_bytes "$pb")"
+    nsrc=repo
+  fi
+  printf '%s\t%s\t%s' "$now" "$prev" "${nsrc:-$psrc}"
 }
 
 ctx_is_archival() {

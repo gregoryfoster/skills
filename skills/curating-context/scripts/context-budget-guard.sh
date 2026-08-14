@@ -57,9 +57,18 @@ When it stays quiet:
   - the edit REDUCED the token count — someone curating is never nagged
 
 Tokens are estimated offline at ~2.7 bytes/token, refined per repo by
-.skills/context-token-ratio when measure-context.sh --exact has written one. A
-hook must be fast and offline, so it never calls count_tokens; the estimate only
-decides whether to speak.
+.skills/context-token-ratio and then per FILE by .skills/context-token-counts,
+both written by measure-context.sh --exact. A hook must be fast and offline, so
+it never calls count_tokens; the estimate only decides whether to speak.
+
+The per-file figures matter because one repo-wide ratio is derived from one file
+— the policy file — and then divides every other. Measured across this repo's
+own surface the per-file ratio runs 2.04 to 3.03 against a 2.65 global, so a
+single divisor is wrong by -23% to +14% depending on the file, in both
+directions at once. Over-flagging trains the reader to ignore the guard;
+under-flagging is silence on a file that is genuinely over budget.
+
+Which figure produced a number is recorded in the log as est=file or est=repo.
 
 Logs every decision to <git-dir>/context-budget.log (truncated at 64 KiB), where
 <git-dir> is `git rev-parse --absolute-git-dir` — the per-worktree git dir, so a
@@ -213,8 +222,7 @@ fi
 # estimate only decides whether to speak; the authoritative count is
 # measure-context.sh --exact, which also recalibrates the ratio for this repo.
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
-NOW=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
-[ "$NOW" -gt 0 ] || exit 0
+NOW_BYTES="$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)"
 
 # The committed version is the comparison point, so the advisory reads as "your
 # uncommitted changes add N tokens" rather than "this file is big" — which is
@@ -223,7 +231,6 @@ NOW=$(ctx_est_from_bytes "$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)")
 # One call returning both halves: the byte count, and the reason there isn't one.
 # Without the reason, "prev=0" on a file that plainly has history is the kind of
 # number someone reasonably distrusts.
-PREV=0
 PREV_OUT="$(ctx_prev_bytes HEAD "$REL")" || PREV_OUT=""
 # The delimiter comes from the library that emits it, as $CTX_TAB, rather than
 # being typed literally into the expansions below. A literal tab there is
@@ -235,10 +242,23 @@ PREV_OUT="$(ctx_prev_bytes HEAD "$REL")" || PREV_OUT=""
 PREV_BYTES="${PREV_OUT%%"$CTX_TAB"*}"
 PREV_NOTE="${PREV_OUT#*"$CTX_TAB"}"
 [ -z "$PREV_NOTE" ] || log "note: $PREV_NOTE"
-case "$PREV_BYTES" in
-  ''|*[!0-9]*) PREV=0 ;;
-  *) PREV=$(ctx_est_from_bytes "$PREV_BYTES") ;;
-esac
+# Per file, not per repo. One ratio describes well only the file it was derived
+# from — which is the policy file — and on this repo the per-file ratio spans
+# 2.04 to 3.03 against a 2.65 global, so the same divisor is wrong by -23% to
+# +14% depending on which file it is pointed at. Both signs cost something: over
+# the budget it flags files that are under it, which trains the reader to ignore
+# the guard; under it, the guard is silent on a file that is genuinely over,
+# which is the decay it exists to catch (#145).
+#
+# Both sides in one call, priced by one method — see ctx_est_pair for why a
+# calibrated `now` differenced against a global `prev` reports the gap between
+# two methods as growth someone wrote.
+EST="$(ctx_est_pair "$ROOT" "$REL" "$NOW_BYTES" "$PREV_BYTES")"
+NOW="${EST%%"$CTX_TAB"*}"
+EST="${EST#*"$CTX_TAB"}"
+PREV="${EST%%"$CTX_TAB"*}"
+EST_SRC="${EST#*"$CTX_TAB"}"
+[ "$NOW" -gt 0 ] || exit 0
 
 # --- decide ---------------------------------------------------------------
 # Two conditions must both hold. Over-budget alone would fire on every edit to a
@@ -246,13 +266,13 @@ esac
 # increase alone would fire on healthy growth inside budget. Notably an edit that
 # REDUCES the count is never flagged, so curating is never nagged.
 if [ "$NOW" -le "$BUDGET" ] || [ "$NOW" -le "$PREV" ]; then
-  log "ok: $REL now=${NOW} prev=${PREV} budget=${BUDGET} ($KIND)"
+  log "ok: $REL now=${NOW} prev=${PREV} budget=${BUDGET} ($KIND, est=${EST_SRC})"
   exit 0
 fi
 
 DELTA=$(( NOW - PREV ))
 OVER=$(( NOW - BUDGET ))
-log "WARN: $REL now=${NOW} prev=${PREV} (+${DELTA}) budget=${BUDGET} over=${OVER} ($KIND)"
+log "WARN: $REL now=${NOW} prev=${PREV} (+${DELTA}) budget=${BUDGET} over=${OVER} ($KIND, est=${EST_SRC})"
 
 if [ "$KIND" = "policy" ]; then
   ADVICE="This file is loaded on every invocation, so the cost is paid on every task. Move the addition to a docs/ reference doc and link it from the Detail Docs index, or run the curating-context skill to rebalance."
