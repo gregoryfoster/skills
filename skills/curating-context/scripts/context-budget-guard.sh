@@ -222,6 +222,9 @@ fi
 # estimate only decides whether to speak; the authoritative count is
 # measure-context.sh --exact, which also recalibrates the ratio for this repo.
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
+# Report a broken calibration artifact once, here, rather than once per
+# file priced (CR finding 26). Advisory: never changes the exit code.
+ctx_validate_counts "$ROOT"
 NOW_BYTES="$(LC_ALL=C wc -c <"$REL" 2>/dev/null || echo 0)"
 
 # The committed version is the comparison point, so the advisory reads as "your

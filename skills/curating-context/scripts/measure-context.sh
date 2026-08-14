@@ -390,6 +390,9 @@ fi
 # and its calibration live in the library so the guard and context-delta.sh
 # cannot disagree with this script about it.
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
+# Report a broken calibration artifact once, here, rather than once per
+# file priced (CR finding 26). Advisory: never changes the exit code.
+ctx_validate_counts "$ROOT"
 
 est_tokens() {
   # "<tokens>\t<source>" — a file's own last exact measurement first, the

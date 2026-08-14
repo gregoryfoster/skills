@@ -54,6 +54,12 @@ Provides:
   ctx_est_from_bytes <bytes>
       Offline token estimate, using CTX_BPT_X100.
 
+  ctx_validate_counts <root>
+      Report structurally broken rows in <root>/.skills/context-token-counts to
+      stderr, once. Advisory — always returns 0. Call it after ROOT resolves and
+      before the first estimate; ctx_est_tokens_for skips such rows silently, so
+      without this call a broken artifact degrades the estimate without saying so.
+
   ctx_est_tokens_for <root> <repo-relative-path> <bytes>
       Offline token estimate for ONE named file: "<tokens>\t<source>", source
       being "file" when <root>/.skills/context-token-counts holds a usable
@@ -301,6 +307,58 @@ ctx_est_from_bytes() {
   echo $(( $1 * 100 / CTX_BPT_X100 ))
 }
 
+ctx_validate_counts() {
+  # Report structurally broken rows in .skills/context-token-counts, ONCE.
+  # Advisory: always returns 0, because a broken calibration artifact degrades
+  # the estimate to the repo ratio rather than invalidating the run.
+  #
+  # Separate from ctx_est_tokens_for because the two answer different questions.
+  # "Is this row usable for the file I am pricing?" is asked once per file and
+  # must stay quiet. "Is this artifact intact?" is asked once per run and must
+  # not. Folding the second into the first is what made one bad row emit one
+  # warning per file looked up (CR finding 26); and the state that would let the
+  # hot path warn only once cannot live in a shell variable, because callers
+  # invoke it inside a command substitution whose subshell cannot write back.
+  #
+  # Call this after resolving ROOT and before the first estimate.
+  local root="$1"
+  local file b t p n=0
+  file="$root/.skills/$CTX_COUNTS_BASENAME"
+  [ -f "$file" ] || return 0
+  # Guarded on `b` — see ctx_est_tokens_for; a truncated final row is precisely
+  # what this function exists to catch, so it must not be the row that escapes.
+  while read -r b t p || [ -n "${b:-}" ]; do
+    case "${b:-}" in ''|'#'*) continue ;; esac
+    p="${p%$'\r'}"
+    case "$b$t" in
+      ''|*[!0-9]*)
+        printf 'WARN %s: "%s %s %s" is not "<bytes> <tokens> <path>" — the row is ignored\n' \
+          "$file" "$b" "$t" "$p" >&2
+        n=$(( n + 1 ))
+        continue ;;
+    esac
+    if [ -z "${p:-}" ]; then
+      printf 'WARN %s: "%s %s" names no path — the row is ignored\n' \
+        "$file" "$b" "$t" >&2
+      n=$(( n + 1 ))
+      continue
+    fi
+    # A zero on either side belongs here rather than with the value complaints
+    # below it in ctx_est_tokens_for. An implausible RATIO is a real measurement
+    # of a degenerate file, and is worth saying at the moment that file is
+    # priced. A zero is not a measurement at all — it can never price anything,
+    # for any file, so it is a fact about the artifact.
+    if [ "$b" -le 0 ] || [ "$t" -le 0 ]; then
+      printf 'WARN %s: %s has a zero or negative byte or token count — the row is ignored\n' \
+        "$file" "$p" >&2
+      n=$(( n + 1 ))
+    fi
+  done <"$file"
+  [ "$n" -eq 0 ] || printf 'WARN %s: %s unusable row(s); those files fall back to the repo ratio. Regenerate with measure-context.sh --exact\n' \
+    "$file" "$n" >&2
+  return 0
+}
+
 ctx_est_tokens_for() {
   # Estimate ONE file's tokens, preferring its own last exact measurement over
   # the repo-wide ratio. Emits "<tokens><TAB><source>".
@@ -326,7 +384,13 @@ ctx_est_tokens_for() {
   case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
   file="$root/.skills/$CTX_COUNTS_BASENAME"
   if [ -f "$file" ]; then
-    while read -r b t p || [ -n "${p:-}" ]; do
+    # Guarded on `b`, not `p`. A final line with no trailing newline leaves
+    # `read` non-zero with the fields it did parse still set, and `p` is exactly
+    # the field a truncated row is missing — so guarding on `p` dropped
+    # "20000 8000" silently, which is the row shape a truncated write leaves and
+    # the one ctx_validate_counts exists to report (CR finding 27). `b` is set
+    # for any non-empty final line however few fields it has.
+    while read -r b t p || [ -n "${b:-}" ]; do
       case "${b:-}" in ''|'#'*) continue ;; esac
       # A CR survives the field split — it is not IFS whitespace — and would
       # make every path in a CRLF checkout miss its lookup silently, which looks
@@ -335,29 +399,24 @@ ctx_est_tokens_for() {
       p="${p%$'\r'}"
       # Parsed then validated, never stripped (#132). This value divides every
       # byte count of the file it names, so a row the library cannot understand
-      # must produce NO number rather than a different one — and must say so,
-      # because silence is how a wrong divisor survives.
+      # must produce NO number rather than a different one.
       #
-      # Shape is checked BEFORE the path, deliberately. Checked after, a row
-      # whose PATH field is the thing that is missing — "20000 8000", the shape
-      # a hand-edit or a truncated write leaves behind — never matches any
-      # lookup and so never warns: the artifact is broken and the estimator is
-      # silently back on the global ratio, which is the exact failure mode this
-      # function was added to remove.
-      case "$b$t" in
-        ''|*[!0-9]*)
-          printf 'WARN %s: "%s %s %s" is not "<bytes> <tokens> <path>" — the row is ignored\n' \
-            "$file" "$b" "$t" "$p" >&2
-          continue ;;
-      esac
-      if [ -z "${p:-}" ]; then
-        printf 'WARN %s: "%s %s" names no path — the row is ignored\n' \
-          "$file" "$b" "$t" >&2
-        continue
-      fi
-      # Value complaints are scoped to the file being asked about: an odd
-      # measurement is a fact about one file, and reporting every repo's worth of
-      # them on every edit is the advisory fatigue #145 is about.
+      # Silent here, by design. A malformed row is a fact about the ARTIFACT,
+      # not about the file being priced, so reporting it belongs to
+      # ctx_validate_counts — which each caller runs once. Warning from this
+      # function instead meant one bad row produced one warning per file looked
+      # up: four on a three-doc repo, thirty on a thirty-doc one, all identical.
+      # That is the advisory fatigue #145 was filed about, reproduced by the fix
+      # for it (CR finding 26).
+      case "$b$t" in ''|*[!0-9]*) continue ;; esac
+      [ -n "${p:-}" ] || continue
+      # First row wins. The writer sorts and de-duplicates so this should not
+      # arise, but the artifact's header invites regeneration over hand-editing,
+      # which concedes that hand-edits happen (CR finding 29).
+      #
+      # Value complaints below ARE scoped to the file being asked about: an odd
+      # measurement is a fact about one file, so it is worth saying at the moment
+      # that file is priced.
       [ "$p" = "$rel" ] || continue
       if [ "$b" -le 0 ] || [ "$t" -le 0 ]; then
         printf 'WARN %s: %s has a zero byte or token count — using the repo ratio\n' \

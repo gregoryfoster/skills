@@ -107,6 +107,9 @@ DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" 
 # whether a section belongs in docs/. measure-context.sh --exact is the
 # authoritative count, and also recalibrates the ratio for this repo.
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
+# Report a broken calibration artifact once, here, rather than once per
+# file priced (CR finding 26). Advisory: never changes the exit code.
+ctx_validate_counts "$ROOT"
 DOCS_DIR="$(ctx_docs_dir "$ROOT")"
 
 # Changed files vs BASE, staged and unstaged, plus untracked. Deleted paths are

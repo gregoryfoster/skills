@@ -216,9 +216,15 @@ class TestAMalformedRowProducesNoNumberRatherThanADifferentOne:
     A calibration the library cannot understand must degrade to the global ratio
     and say so. Silence is how a wrong divisor survives — and this one divides
     every byte count on the file it names.
+
+    Falling back and saying so are different jobs, split after CR finding 26.
+    Whether a row is usable is asked once per file priced and must stay quiet;
+    whether the artifact is intact is asked once per run and must not. Folded
+    together, one bad row emitted one identical warning per file looked up —
+    four on a three-doc repo — which is the advisory fatigue #145 was about.
     """
 
-    @pytest.mark.parametrize("row", [
+    MALFORMED = [
         "20000 docs/D.md",            # two fields, no token count
         "20000 v2 docs/D.md",         # token count is not an integer
         "2e4 8000 docs/D.md",         # byte count is not an integer
@@ -226,15 +232,55 @@ class TestAMalformedRowProducesNoNumberRatherThanADifferentOne:
         "-20000 8000 docs/D.md",      # negative byte count
         "20000 0 docs/D.md",          # would divide by zero
         "0 8000 docs/D.md",           # would divide by zero the other way
-    ])
-    def test_it_falls_back_and_says_so(self, tmp_path: Path, row: str):
+    ]
+
+    @pytest.mark.parametrize("row", MALFORMED)
+    def test_it_falls_back(self, tmp_path: Path, row: str):
         _write_counts(tmp_path, row + "\n")
         r = _call("ctx_est_tokens_for", str(tmp_path), "docs/D.md", "20000")
         assert r.returncode == 0, r.stderr
         tokens, _, source = r.stdout.partition("\t")
         assert source == "repo", f"a malformed row was believed: {row!r}"
         assert int(tokens) == 20_000 * 100 // DEFAULT_RATIO_X100
+
+    @pytest.mark.parametrize("row", MALFORMED)
+    def test_the_validator_says_so(self, tmp_path: Path, row: str):
+        _write_counts(tmp_path, row + "\n")
+        r = _call("ctx_validate_counts", str(tmp_path))
+        assert r.returncode == 0, r.stderr
         assert "WARN" in r.stderr and COUNTS in r.stderr, r.stderr
+
+    def test_a_truncated_final_row_is_not_the_one_that_escapes(
+        self, tmp_path: Path
+    ):
+        """CR finding 27. The loop guard tested `p` — the very field a truncated
+        row lacks — so a path-less row written without a trailing newline was
+        dropped in silence. A truncated write is exactly how a file ends up
+        without a trailing newline, so the check was bypassed in its motivating
+        case."""
+        _write_counts(tmp_path, "20000 8000")   # deliberately no "\n"
+        r = _call("ctx_validate_counts", str(tmp_path))
+        assert r.returncode == 0, r.stderr
+        assert "names no path" in r.stderr, r.stderr
+
+    def test_the_hot_path_stays_quiet_however_many_files_are_priced(
+        self, tmp_path: Path
+    ):
+        """One bad row must not scale its warning by the size of the repo."""
+        _write_counts(tmp_path, "GARBAGE\n15600 5873 AGENTS.md\n")
+        for rel in ("docs/A.md", "docs/B.md", "docs/C.md"):
+            r = _call("ctx_est_tokens_for", str(tmp_path), rel, "5120")
+            assert r.returncode == 0, r.stderr
+            assert r.stderr == "", f"{rel} warned from the hot path: {r.stderr!r}"
+
+    def test_a_valid_row_after_a_broken_one_is_still_found(
+        self, tmp_path: Path
+    ):
+        """Skipping quietly must not mean skipping the rest of the file."""
+        _write_counts(tmp_path, "GARBAGE\n15600 5873 AGENTS.md\n")
+        tokens, source = _est(tmp_path, "AGENTS.md", 15_600)
+        assert source == "file"
+        assert tokens == 5_873
 
     @pytest.mark.parametrize("row,ratio", [
         ("20000 20000 docs/D.md", "1.00"),
