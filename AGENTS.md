@@ -180,7 +180,8 @@ enforced by the structural suite:
 
 - **No frontmatter**, and **every `references/<name>.md` must be linked from its
   sibling SKILL.md** — orphans fail [tests/structural/test_references.py](tests/structural/test_references.py).
-- **Flat directory**, `lowercase-kebab.md`. No length cap: escaping the body
+- **`lowercase-kebab.md`**, flat unless the doc is an *index*, which may hold its
+  entries in a subdirectory it links ([#152](https://github.com/gregoryfoster/skills/issues/152)). No length cap: escaping the body
   recommendation is the point of a reference file.
 - **Relative links resolve from the file that contains them.** Every rendered
   link in any `skills/**/*.md` — SKILL.md and references alike — must point at a

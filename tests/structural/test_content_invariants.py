@@ -1516,13 +1516,16 @@ class TestNoBareScriptPaths:
     any project that does have a root scripts/ directory.
 
     references/ files are scanned alongside SKILL.md: they are loaded into
-    context and can carry invocations just as SKILL.md does.
+    context and can carry invocations just as SKILL.md does. Recursively, since
+    #152: a reference in `references/<subdir>/` is loaded exactly as one at the
+    top level is, and a non-recursive glob would have let the whole
+    `process-log/` journal out of this check without failing anything.
     """
 
     @pytest.fixture(
         params=sorted(
             list(SKILLS_DIR.glob("*/SKILL.md"))
-            + list(SKILLS_DIR.glob("*/references/*.md"))
+            + list(SKILLS_DIR.glob("*/references/**/*.md"))
         ),
         ids=lambda p: str(p.relative_to(SKILLS_DIR)),
     )
@@ -1671,11 +1674,11 @@ class TestScriptResolutionBlock:
         # carry 30 such sites between them; deleting the single publishing
         # line would strand all of them.
         #
-        # references/*.md is scanned alongside SKILL.md (matching the surface
+        # references/**/*.md is scanned alongside SKILL.md (matching the surface
         # TestNoBareScriptPaths already covers): a reference file may carry a
         # substitution site, but only SKILL.md's block publishes the path.
         skill_dir = skill_md.parent
-        docs = [skill_md, *sorted(skill_dir.glob("references/*.md"))]
+        docs = [skill_md, *sorted(skill_dir.glob("references/**/*.md"))]
         uses = sum(p.read_text().count('bash "<SKILL_SCRIPTS>/') for p in docs)
         if not uses:
             pytest.skip("skill has no <SKILL_SCRIPTS> substitution sites")

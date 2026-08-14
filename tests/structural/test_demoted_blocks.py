@@ -150,7 +150,11 @@ def _discover(path: Path) -> list[Block]:
 
 def discover_blocks() -> list[Block]:
     found: list[Block] = []
-    for path in sorted(REFERENCES.glob("*.md")):
+    # Recursive. `curating-context/references/` is flat today, so this changes
+    # nothing now — it is the guard against the discovery set going quietly
+    # incomplete if a block is ever demoted into a subdirectory, which #152 made
+    # a layout the suite permits.
+    for path in sorted(REFERENCES.rglob("*.md")):
         found.extend(_discover(path))
     return found
 
