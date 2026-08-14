@@ -237,31 +237,30 @@ SKILL_MD_RATCHETS = {
 #
 # Neither trim belongs to #141. This gate stops growth; #96 reclaims size.
 
-# Reference docs are held to the repo's 10,000-token per-doc knob, with one
-# named exception, on the same shared-standard-plus-exceptions model.
-DOC_BUDGET_EXCEPTIONS = {
-    # An append-only session ledger with an index table at the top, not a
-    # document anyone loads whole: a run reads the index, then the one entry it
-    # needs, then appends. The per-doc budget exists because past it, loading a
-    # doc stops costing less than carrying it inline — a premise that does not
-    # describe a ledger.
-    #
-    # UNBOUNDED, and deliberately so. A numeric ratchet was tried first and was
-    # wrong within the hour: it was set at 60,750 against a measured 60,748, and
-    # a concurrent session appended one entry and pushed it to 61,280 — red on
-    # `main`, from a session that did nothing but journal correctly. A ratchet
-    # says "this may not grow"; an append-only ledger's whole contract is that
-    # it grows. Holding both means every future journaling session must also
-    # trim the ledger to afford its own entry, which inverts the point of
-    # keeping one, and the only way to stay green is to raise the integer each
-    # time — which is exactly the loosening-by-editing a ratchet exists to stop.
-    #
-    # So the honest state is recorded rather than a number nobody can hold: this
-    # file is exempt, the exemption is visible here, and the real fix is content
-    # work (split by year, or truncate behind a summary) tracked separately.
-    # `None` means exempt; every other entry is a hard ceiling.
-    "skills/orchestrating-issue-backlog/references/process-log.md": None,
-}
+# Reference docs are held to the repo's 10,000-token per-doc knob.
+#
+# EMPTY, and that is the finding. It held one entry until #152: the
+# `orchestrating-issue-backlog` process log, exempt with a `None` because a
+# numeric ratchet had already been tried and was wrong within the hour — set at
+# 60,750 against a measured 60,748, then pushed to 61,280 by a concurrent
+# session that did nothing but journal correctly. A ratchet says "this may not
+# grow"; an append-only ledger's whole contract is that it grows, and holding
+# both means every future journaling session must trim the ledger to afford its
+# own entry.
+#
+# The exemption was honest and it was not a fix. What resolved it was changing
+# the artifact rather than the rule: the ledger became an indexed journal, one
+# file per session under `references/process-log/<year>/`, and the per-doc
+# budget — which measures with `find`, recursively — now binds each entry on its
+# own. The index reads ~6,600 tokens and the largest entry ~6,100, against
+# 10,000. Nothing is exempt, and the append-only artifact still grows without
+# any file growing.
+#
+# `None` would mean exempt; any other value is a hard ceiling. The mechanism is
+# kept, and proven by TestTheExemptionMechanism, because the next doc that needs
+# it should find a tested one — but it is deliberately unused, so an exemption
+# has to be argued for in a diff rather than joined to an existing list.
+DOC_BUDGET_EXCEPTIONS: dict[str, int | None] = {}
 
 
 def _doc_over(doc: dict, doc_budget: int) -> bool:
