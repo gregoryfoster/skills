@@ -48,6 +48,7 @@ Keep this list current — it is the file's index.
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -72,6 +73,21 @@ def _clean_env() -> dict:
     """Env without inherited GIT_* vars — pre-commit sets GIT_INDEX_FILE etc.,
     which would leak into the script's git calls."""
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _path_without_jq(tmp_path: Path) -> Path:
+    """A PATH carrying the tools the script needs and no jq, to exercise the
+    degraded paths without touching the developer's environment."""
+    bin_dir = tmp_path / "nojq-bin"
+    bin_dir.mkdir(exist_ok=True)
+    for tool in ("bash", "git", "sed", "grep", "awk", "readlink", "mkdir",
+                 "ln", "rm", "mv", "cat", "printf", "command"):
+        found = shutil.which(tool)
+        if found:
+            target = bin_dir / tool
+            if not target.exists():
+                target.symlink_to(found)
+    return bin_dir
 
 
 def _run(repo: Path, script: Path, *args: str) -> subprocess.CompletedProcess:
@@ -324,6 +340,60 @@ class TestInstallRefresh:
         assert not (repo / HOOK_REL).exists()
         assert not (repo / HOOK_REL).is_symlink()
         assert _commands(repo) == ["bash .skills/doctor.sh"]
+
+    def test_uninstall_without_jq_fails_loudly_rather_than_half_finishing(
+        self, tmp_path: Path, repo: Path
+    ):
+        """Routing the registration test through jq made a jq-less --uninstall
+        remove the symlink, skip the strip, and exit 0 — leaving an entry that
+        runs bash on a path that no longer exists, every session start. A silent
+        half-UNINSTALL, the mirror of the half-install this script exists for
+        (CR finding 7)."""
+        _run(repo, INSTALL_REFRESH)
+        env = _clean_env()
+        env["PATH"] = str(_path_without_jq(tmp_path))
+        r = subprocess.run(
+            ["bash", str(INSTALL_REFRESH), "--uninstall"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode != 0, (
+            "exited 0 having removed only the symlink:\n" + r.stdout + r.stderr
+        )
+        assert "jq" in r.stderr, r.stderr
+        # And it must not have claimed success for the half it did not do.
+        assert "removed the SessionStart entry" not in r.stdout
+        # Nothing removed at all: a machine that cannot finish must not start,
+        # so there is no partial state to reason about.
+        assert (repo / HOOK_REL).is_symlink(), r.stdout + r.stderr
+        assert len(_commands(repo)) == 1
+
+    def test_uninstall_without_jq_still_works_with_no_settings_file(
+        self, tmp_path: Path, repo: Path
+    ):
+        """jq is only needed to strip a registration. With no settings.json
+        there is nothing to strip, so removing the symlink must still work."""
+        _half_install(repo)
+        assert not (repo / SETTINGS_REL).exists()
+        env = _clean_env()
+        env["PATH"] = str(_path_without_jq(tmp_path))
+        r = subprocess.run(
+            ["bash", str(INSTALL_REFRESH), "--uninstall"],
+            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert not (repo / HOOK_REL).is_symlink()
+
+    def test_an_unparseable_settings_file_is_not_reported_as_missing(
+        self, repo: Path
+    ):
+        """MISSING would advise re-running the installer, which dies on the same
+        parse error (CR finding 10)."""
+        _half_install(repo)
+        (repo / SETTINGS_REL).write_text("{not json,,,")
+        r = _run(repo, INSTALL_REFRESH, "--check")
+        assert r.returncode == 3
+        assert "UNREADABLE" in r.stdout, r.stdout
+        assert "MISSING —" not in r.stdout
 
     def test_it_refuses_without_a_vendored_hook(self, tmp_path: Path):
         bare = tmp_path / "bare"
