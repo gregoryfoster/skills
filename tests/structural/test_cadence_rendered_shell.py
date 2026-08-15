@@ -213,6 +213,25 @@ class TestCheckAndRepair:
         assert attrs.count(f"{COUNTS} merge=ours") == 1, attrs
         assert _run(repo, "--check").returncode == 0
 
+    def test_a_partial_calibration_repair_does_not_duplicate_the_heading(
+        self, tmp_path: Path
+    ):
+        """One calibration line missing is the partial-repair path this branch
+        exists for, and it re-emitted the two-line heading above the lone
+        repaired entry (CR finding 4)."""
+        repo = _repo(tmp_path)
+        _run(repo)
+        attrs = (repo / ".gitattributes").read_text()
+        kept = "\n".join(
+            ln for ln in attrs.splitlines() if COUNTS not in ln
+        ) + "\n"
+        (repo / ".gitattributes").write_text(kept)
+        _run(repo)
+        final = (repo / ".gitattributes").read_text()
+        assert final.count("Calibration is regenerated") == 1, final
+        assert final.count(f"{COUNTS} merge=ours") == 1, final
+        assert _run(repo, "--check").returncode == 0
+
     def test_uninstall_removes_all_three(self, tmp_path: Path):
         repo = _repo(tmp_path)
         (repo / ".gitattributes").write_text("*.png binary\n")

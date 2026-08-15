@@ -30,10 +30,12 @@ Options:
                    the workflow's `git add`, and its error message — because a
                    cadence that measures correctly and stages the wrong path
                    records nothing.
-  --check          Report what is installed; change nothing. The contract is
-                   TWO artifacts, so both are reported independently and the
-                   exit code reflects either being absent.
-                   Exit 0 both present, 3 either missing.
+  --check          Report what is installed; change nothing. Three guarantees
+                   are reported independently — the workflow, the ledger's union
+                   merge, and the calibration files' regenerate-on-collision
+                   merge — because each is its own way to lose a row, and one
+                   combined "ok" would have read green through all of #173.
+                   Exit 0 all present, 3 any missing.
   --uninstall      Remove the workflow file AND the union-merge attribute it
                    installed, leaving .gitattributes as it found it (the file
                    itself goes only if nothing else was in it). The recorded
@@ -75,7 +77,8 @@ It does not commit. Review the diff and commit with your normal gate.
 Exit codes:
   0  installed, uninstalled, unchanged, or printed
   1  usage error, or not in a git repo
-  3  --check only: the workflow is not installed
+  2  could not rewrite .gitattributes — nothing was changed
+  3  --check only: a workflow or merge attribute is missing
 USAGE
 }
 
@@ -168,6 +171,11 @@ ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost
 ATTR_NOTE_3="# Calibration is regenerated, never reconciled: on a collision keep"
 ATTR_NOTE_4="# the branch's copy and let the next --exact run recompute it."
 
+# strip_attr's failure path removes this itself; the trap covers the signal case
+# it cannot, so a killed run never strands a temp file beside .gitattributes for
+# `git add -A` to collect (CR finding 16).
+trap 'rm -f "$ATTR_FILE.tmp"' EXIT
+
 # Remove OUR block for a given ledger: the attribute line and the two comment
 # lines that introduce it. Factored rather than inlined twice — a superseded
 # ledger and an uninstall want the same operation, and hand-rolling this awk a
@@ -180,7 +188,17 @@ strip_attr() {
     line == n1 || line == n2 || line == n3 || line == n4 { next }
     line !~ /^#/ && index(line, want) == 1 { next }
     { print }
-  ' "$ATTR_FILE" >"$ATTR_FILE.tmp" && mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+  ' "$ATTR_FILE" >"$ATTR_FILE.tmp" || {
+    # `awk … >tmp && mv` with an unconditional "removed …" after it is the shape
+    # that let install-refresh.sh report a change it had not made: under set -e
+    # the failure of the FIRST element of an && list is exempt, so the log ran
+    # anyway and the temp file was orphaned (CR findings 11, 13). Far less
+    # likely to fire here than a jq parse error on operator-edited JSON, but it
+    # is the same idiom and would tell the same lie.
+    rm -f "$ATTR_FILE.tmp"
+    echo "ERROR could not rewrite .gitattributes — nothing was changed" >&2
+    exit 2; }
+  mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
   # If nothing but blank lines is left, the file was ours to begin with.
   if [ ! -s "$ATTR_FILE" ] || ! grep -q '[^[:space:]]' "$ATTR_FILE"; then
     rm -f "$ATTR_FILE"
@@ -338,8 +356,13 @@ ensure_attr() {
     printf '\n%s\n%s\n%s\n' "$ATTR_NOTE_1" "$ATTR_NOTE_2" "$ATTR_LINE" >>"$ATTR_FILE"
     echo "wrote .gitattributes: $ATTR_LINE"
   fi
-  if ! has_attr "$ATTR_RATIO" || ! has_attr "$ATTR_COUNTS"; then
+  # The heading goes in only when NEITHER line is present. Emitting it whenever
+  # either was missing left a second copy of it above a lone repaired line, on
+  # exactly the partial-repair path this branch exists for (CR finding 4).
+  if ! has_attr "$ATTR_RATIO" && ! has_attr "$ATTR_COUNTS"; then
     printf '\n%s\n%s\n' "$ATTR_NOTE_3" "$ATTR_NOTE_4" >>"$ATTR_FILE"
+  fi
+  if ! has_attr "$ATTR_RATIO" || ! has_attr "$ATTR_COUNTS"; then
     for attr in "$ATTR_RATIO" "$ATTR_COUNTS"; do
       if ! has_attr "$attr"; then
         printf '%s\n' "$attr" >>"$ATTR_FILE"

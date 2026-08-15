@@ -63,10 +63,19 @@ ln -s ../../skills-vendor/gregoryfoster-skills/skills/shipping-work skills/shipp
 #    worktrees, shallow CI clones, etc.)
 bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-doctor.sh
 
-# 4. Commit
-git add .gitmodules skills-vendor/gregoryfoster-skills skills/ .skills/doctor.sh
+# 4. Install the auto-refresh hook — OPTIONAL, but skipping it means the
+#    submodule pointer only ever moves when somebody bumps it by hand.
+#    Four of twelve audited consumers skipped it and sat on one commit for
+#    over a week: https://github.com/gregoryfoster/skills/issues/167
+bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-refresh.sh
+
+# 5. Commit
+git add .gitmodules skills-vendor/gregoryfoster-skills skills/ .skills/doctor.sh \
+        .claude/hooks/skills-submodule-update.sh .claude/settings.json
 git commit -m "feat: add gregoryfoster/skills submodule"
 ```
+
+The hook needs **both** the symlink and the `.claude/settings.json` entry — Claude Code runs what `settings.json` names, so a symlink alone looks installed and refreshes nothing. `install-refresh.sh --check` reports both (exit 0 present, 3 missing).
 
 Symlinked skills are auto-discovered by the agent framework. To override a global skill with project-specific behavior, replace the symlink with a committed directory of the same name.
 
