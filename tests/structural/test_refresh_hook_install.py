@@ -409,8 +409,14 @@ class TestInstallRefresh:
         assert "registered the SessionStart entry" not in r.stdout, (
             "claimed a registration it did not write:\n" + r.stdout
         )
-        assert "nothing was changed" in r.stderr, r.stderr
+        assert "nothing was changed" in r.stderr.lower(), r.stderr
         assert "skills-submodule-update" not in (repo / SETTINGS_REL).read_text()
+        # And it must not have started: failing at the registration after the
+        # symlink is written leaves the half-installed state this script exists
+        # to prevent, and reports it as nothing having happened (CR finding 14).
+        assert not (repo / HOOK_REL).is_symlink(), (
+            "created the symlink it could not pair with a registration"
+        )
 
     def test_a_failed_rewrite_leaves_no_temp_file(self, repo: Path):
         """`git add -A` would otherwise pick up .claude/settings.json.tmp."""

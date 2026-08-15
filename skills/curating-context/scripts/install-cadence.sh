@@ -171,6 +171,11 @@ ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost
 ATTR_NOTE_3="# Calibration is regenerated, never reconciled: on a collision keep"
 ATTR_NOTE_4="# the branch's copy and let the next --exact run recompute it."
 
+# strip_attr's failure path removes this itself; the trap covers the signal case
+# it cannot, so a killed run never strands a temp file beside .gitattributes for
+# `git add -A` to collect (CR finding 16).
+trap 'rm -f "$ATTR_FILE.tmp"' EXIT
+
 # Remove OUR block for a given ledger: the attribute line and the two comment
 # lines that introduce it. Factored rather than inlined twice — a superseded
 # ledger and an uninstall want the same operation, and hand-rolling this awk a

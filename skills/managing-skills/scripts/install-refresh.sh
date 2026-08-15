@@ -65,7 +65,8 @@ It does not commit. Review the diff and commit with your normal gate:
 
 Exit codes:
   0  installed, repaired, unchanged, or uninstalled
-  1  usage error, not in a consumer repo, no vendored hook script, or no jq
+  1  usage error, not in a consumer repo, no vendored hook script, no jq, or
+     settings.json could not be read or rewritten
   3  --check only: one or both artifacts are missing
 USAGE
 }
@@ -120,7 +121,11 @@ settings_rewrite() {
     return 0
   fi
   rm -f "$SETTINGS.tmp"
-  err "could not rewrite $SETTINGS_REL (see the error above) — nothing was changed"
+  # "$SETTINGS_REL was not modified", not "nothing was changed": the install
+  # path may already have written the symlink, and a blanket claim contradicted
+  # the `linked …` line printed immediately above it (CR finding 14). Say only
+  # what this function can vouch for.
+  err "could not rewrite $SETTINGS_REL (see the error above) — it was not modified"
   exit 1
 }
 
@@ -340,6 +345,23 @@ done
   exit 1; }
 
 need_jq
+
+# Validate the settings file BEFORE the symlink is written, mirroring the
+# uninstall branch. Failing at the registration instead left the repo holding a
+# symlink and no entry — the half-installed state this whole script exists to
+# prevent — and printed it one line under `linked …`, so the run both created
+# the state and reported it as nothing having happened (CR finding 14).
+#
+# A run that cannot finish must not start. Checked here rather than inside
+# settings_rewrite because by then the symlink is already on disk.
+if [ -f "$SETTINGS" ]; then
+  hc_rc=0
+  hook_command >/dev/null || hc_rc=$?
+  [ "$hc_rc" -eq 0 ] || {
+    err "$SETTINGS_REL is not valid JSON, so the SessionStart entry cannot be"
+    err "written. Nothing was changed — fix the JSON and re-run."
+    exit 1; }
+fi
 
 # Relative, and derived from the vendor directory that was actually found
 # rather than from a placeholder the caller was asked to substitute. The
