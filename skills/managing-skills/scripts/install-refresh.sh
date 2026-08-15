@@ -99,14 +99,36 @@ SETTINGS="$ROOT/$SETTINGS_REL"
 # drift — the lesson install-cadence.sh learned when its --check reported "yes"
 # against a line the installer no longer wrote.
 #
-# Matches the SCRIPT PATH, not the whole command, exactly as SKILL.md's Step 0
-# specifies: an install predating the $CLAUDE_PROJECT_DIR form (#110) uses a
-# cwd-relative command and is still a real registration. grep, not jq, because
-# this runs on the --check path in repos that may not have jq and a missing jq
-# must not make a present registration read as absent.
+# The registered SessionStart command naming this hook, or empty. ONE lookup,
+# because is_registered and is_current both need it and a second reader written
+# separately is how the two drift.
+#
+# jq, and scoped to .hooks.SessionStart[].hooks[].command — NOT a grep over the
+# file. The basename appears in settings.json for reasons that are not
+# registrations: a `permissions.allow` entry like
+# `Bash(bash .claude/hooks/skills-submodule-update.sh)` is the common one, and
+# the fewer-permission-prompts skill writes exactly that shape. A whole-file
+# grep called that "registered", so --check exited 0 saying `SessionStart entry:
+# yes` on a repo whose SessionStart was empty — reproducing the #167 failure
+# inside the tool built to detect it. The jq WRITER below was always correctly
+# scoped; only the reader was not, which is the reader/writer drift this repo
+# keeps finding.
+#
+# The command is returned rather than a boolean so the caller can ask which FORM
+# it is in, and matched by script path rather than whole string: an install
+# predating the $CLAUDE_PROJECT_DIR form (#110) is cwd-relative and still real.
+hook_command() {
+  [ -f "$SETTINGS" ] || return 0
+  have_jq || return 0
+  jq -r '[.hooks.SessionStart[]?.hooks[]?.command // ""]
+         | map(select(contains("skills-submodule-update.sh"))) | first // ""' \
+      "$SETTINGS" 2>/dev/null || true
+}
+
+have_jq() { command -v jq >/dev/null 2>&1; }
+
 is_registered() {
-  [ -f "$SETTINGS" ] || return 1
-  grep -q "$HOOK_NAME" "$SETTINGS"
+  [ -n "$(hook_command)" ]
 }
 
 # Registered AND in the current anchored form. The two are deliberately
@@ -124,12 +146,14 @@ is_registered() {
 # Collapsing these into one test is what made a re-run a no-op on exactly the
 # repos that most needed it.
 is_current() {
-  [ -f "$SETTINGS" ] || return 1
-  # The literal ${CLAUDE_PROJECT_DIR:-.} is the text being searched FOR, not an
-  # expansion to perform — single quotes and -F are both the point. Expanding it
-  # here would search for the runner's own project dir and never match.
+  # The literal ${CLAUDE_PROJECT_DIR:-.} is the text being matched, not an
+  # expansion to perform — the single quotes are the point. Expanding it here
+  # would compare against the runner's own project dir and never match.
   # shellcheck disable=SC2016
-  grep -qF '${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/'"$HOOK_NAME" "$SETTINGS"
+  case "$(hook_command)" in
+    *'${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/'"$HOOK_NAME"*) return 0 ;;
+  esac
+  return 1
 }
 
 # Resolves, not merely exists. A dangling symlink is the state doctor.sh exists
@@ -155,7 +179,17 @@ if [ "$MODE" = "check" ]; then
     echo "hook symlink:       MISSING ($HOOK_REL)"
     rc=3
   fi
-  if is_registered; then
+  if ! have_jq; then
+    # UNKNOWN, not "MISSING" and not "yes". Reading the hook list needs jq, and
+    # the whole-file grep that used to stand in for it is what made this report
+    # lie (finding 1). A probe that cannot answer must say so — the per-repo
+    # repair issues tell people to trust this exit code.
+    echo "SessionStart entry: UNKNOWN — jq is not installed, and the hook list"
+    echo "                    cannot be read safely without it. Install jq and"
+    echo "                    re-run; a guess here is what this check exists to"
+    echo "                    replace."
+    rc=3
+  elif is_registered; then
     echo "SessionStart entry: yes (in $SETTINGS_REL)"
   elif [ -L "$HOOK" ]; then
     # The half-installed state this script exists for. Say what it costs, not

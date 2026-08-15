@@ -234,6 +234,57 @@ class TestInstallRefresh:
             'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh"'
         ]
 
+    def test_a_permissions_mention_is_not_a_registration(self, repo: Path):
+        """The basename appears in settings.json for reasons that are not
+        registrations — a `permissions.allow` Bash entry is the common one, and
+        fewer-permission-prompts writes exactly that shape. A whole-file grep
+        called it registered, so --check exited 0 saying `yes` on a repo whose
+        SessionStart was empty: the #167 failure reproduced inside the tool
+        built to detect it (CR finding 1)."""
+        _half_install(
+            repo,
+            {
+                "permissions": {
+                    "allow": ["Bash(bash .claude/hooks/skills-submodule-update.sh)"]
+                }
+            },
+        )
+        r = _run(repo, INSTALL_REFRESH, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "SessionStart entry: MISSING" in r.stdout, r.stdout
+
+        # And the repair must leave the permissions entry alone.
+        assert _run(repo, INSTALL_REFRESH).returncode == 0
+        assert _settings(repo)["permissions"]["allow"] == [
+            "Bash(bash .claude/hooks/skills-submodule-update.sh)"
+        ]
+        assert len(_commands(repo)) == 1
+
+    def test_a_wrong_event_is_not_a_registration(self, repo: Path):
+        """Same class: registered under PostToolUse rather than SessionStart is
+        a hook that never runs at session start."""
+        _half_install(
+            repo,
+            {
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": ".*",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "bash .claude/hooks/skills-submodule-update.sh",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+        r = _run(repo, INSTALL_REFRESH, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "SessionStart entry: MISSING" in r.stdout
+
     def test_a_rerun_is_idempotent(self, repo: Path):
         _run(repo, INSTALL_REFRESH)
         before = (repo / SETTINGS_REL).read_text()
@@ -325,6 +376,21 @@ class TestDoctorReportsAHalfInstall:
         r = self._doctor(repo)
         assert r.returncode == 0
         assert "does not register it" not in r.stderr
+
+    def test_a_permissions_mention_does_not_silence_it(self, repo: Path):
+        """The doctor carried the same whole-file grep, so it stayed quiet on
+        exactly the half-installed repos it was added for (CR finding 1)."""
+        _half_install(
+            repo,
+            {
+                "permissions": {
+                    "allow": ["Bash(bash .claude/hooks/skills-submodule-update.sh)"]
+                }
+            },
+        )
+        r = self._doctor(repo)
+        assert r.returncode == 0, r.stderr
+        assert "does not register it" in r.stderr, r.stderr
 
     def test_it_is_silent_when_the_hook_was_never_installed(self, repo: Path):
         """A consumer that declined the hook is not broken. Nagging that group

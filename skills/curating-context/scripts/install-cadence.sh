@@ -30,10 +30,12 @@ Options:
                    the workflow's `git add`, and its error message — because a
                    cadence that measures correctly and stages the wrong path
                    records nothing.
-  --check          Report what is installed; change nothing. The contract is
-                   TWO artifacts, so both are reported independently and the
-                   exit code reflects either being absent.
-                   Exit 0 both present, 3 either missing.
+  --check          Report what is installed; change nothing. Three guarantees
+                   are reported independently — the workflow, the ledger's union
+                   merge, and the calibration files' regenerate-on-collision
+                   merge — because each is its own way to lose a row, and one
+                   combined "ok" would have read green through all of #173.
+                   Exit 0 all present, 3 any missing.
   --uninstall      Remove the workflow file AND the union-merge attribute it
                    installed, leaving .gitattributes as it found it (the file
                    itself goes only if nothing else was in it). The recorded
@@ -338,8 +340,13 @@ ensure_attr() {
     printf '\n%s\n%s\n%s\n' "$ATTR_NOTE_1" "$ATTR_NOTE_2" "$ATTR_LINE" >>"$ATTR_FILE"
     echo "wrote .gitattributes: $ATTR_LINE"
   fi
-  if ! has_attr "$ATTR_RATIO" || ! has_attr "$ATTR_COUNTS"; then
+  # The heading goes in only when NEITHER line is present. Emitting it whenever
+  # either was missing left a second copy of it above a lone repaired line, on
+  # exactly the partial-repair path this branch exists for (CR finding 4).
+  if ! has_attr "$ATTR_RATIO" && ! has_attr "$ATTR_COUNTS"; then
     printf '\n%s\n%s\n' "$ATTR_NOTE_3" "$ATTR_NOTE_4" >>"$ATTR_FILE"
+  fi
+  if ! has_attr "$ATTR_RATIO" || ! has_attr "$ATTR_COUNTS"; then
     for attr in "$ATTR_RATIO" "$ATTR_COUNTS"; do
       if ! has_attr "$attr"; then
         printf '%s\n' "$attr" >>"$ATTR_FILE"
