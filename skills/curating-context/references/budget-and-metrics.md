@@ -232,9 +232,21 @@ Three mechanisms fix it:
   `context-delta.sh`, and `measure-context.sh` without `--exact`) read it. An
   estimate-only run never writes the file — deriving a calibration from an
   estimate would just re-record the default and freeze whatever error it carries.
+
+  The persisted figure is fitted over the **whole measured surface**, not the
+  policy file alone ([#172](https://github.com/gregoryfoster/skills/issues/172)).
+  It used to be `P_BYTES / P_TOKENS`, and since the policy file is the most
+  prose-heavy thing on the surface, the fallback over-reported every doc priced
+  by it — worst on the class densest in tables, inline code and links, which is
+  also the class most likely to sit near budget. Measured on `usa-wa`'s 24-file
+  surface, the change takes mean absolute error from **8.2% to 3.1%** and files
+  over-reported by more than 5% from **19 of 24 down to 2**. The bias moves, not
+  just the spread. What the run *reports* as `policy.bytes_per_token` is still
+  the policy file's own ratio, and the section figures still divide by it so the
+  parts sum to the whole; only the persisted value is surface-wide.
 - **Per-file calibration** ([#145](https://github.com/gregoryfoster/skills/issues/145)).
-  The repo ratio is derived from **one** file — `P_BYTES / P_TOKENS`, the policy
-  file — and then divides every other file in the repo. So an `--exact` run also
+  The repo ratio still describes a whole surface rather than any one file in it,
+  so an `--exact` run also
   writes `<bytes> <tokens> <path>` per measured file to
   `.skills/context-token-counts`, and the estimators prefer a file's own last
   exact measurement, falling back to the repo ratio for a file never counted or

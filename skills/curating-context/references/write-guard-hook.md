@@ -188,10 +188,14 @@ reports "the guard never fires".
   The default is 2.7 bytes/token; `measure-context.sh --exact` refines it per
   repo into `.skills/context-token-ratio` and then per FILE into
   `.skills/context-token-counts`, which the guard prefers where it has one
-  ([#145](https://github.com/gregoryfoster/skills/issues/145) — the repo ratio is
-  derived from the policy file alone, and across this repo's surface it is wrong
-  by -23% to +14% depending on which file it is pointed at). It is still an
-  estimate — it only
+  ([#145](https://github.com/gregoryfoster/skills/issues/145) — one ratio for a
+  whole repo is wrong by -23% to +14% across this repo's surface depending on
+  which file it is pointed at). The repo ratio is the fallback for a file with no
+  row, and is fitted over the whole surface rather than the policy file alone
+  ([#172](https://github.com/gregoryfoster/skills/issues/172) — fitting it to the
+  most prose-heavy file over-reported the doc class nearest its budget by up to
+  15%, which is how the guard came to warn `385 tokens over` on a file 848 tokens
+  under). It is still an estimate — it only
   decides whether to speak, which is why the guard never gates anything. Note
   what the earlier `bytes/4` divisor cost: it under-reports this cohort's markdown
   by 56–65%, so with a 6,000 budget the guard would silently tolerate a real file

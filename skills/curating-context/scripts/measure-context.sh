@@ -1019,27 +1019,68 @@ printf '{\n'
 # self-confirming fake measurement, comfortably inside the plausibility band,
 # which would then be trusted by every later offline estimate in the repo.
 RATIO_X100=$(( P_BYTES * 100 / P_TOKENS ))
+
+# The ratio this run REPORTS (policy.bytes_per_token) and the ratio it PERSISTS
+# are deliberately different numbers, because they answer different questions.
+#
+# RATIO_X100 above describes the policy file, and stays policy-only: the section
+# and subsection token figures below divide by it so the parts sum to the whole,
+# which is the contradiction their own comment records fixing. Reporting a
+# surface-wide figure as `policy.bytes_per_token` would also just be false.
+#
+# What gets persisted is read back by the write guard and context-delta.sh and
+# applied to EVERY file on the surface, so fitting it to one file — the most
+# prose-heavy one — biased every doc priced by it. Markdown does not tokenize at
+# one rate: on this repo the per-file ratio spans 2.04 to 3.03, and the doc class
+# nearest its budget (dense in tables, inline code and links) is the one the
+# policy-fitted figure over-reports hardest. That produced a `385 tokens over`
+# warning on a file 848 tokens UNDER budget, and a maintainer opened an issue and
+# deferred work on it (#172). A guard that cries wolf on the class nearest budget
+# is the failure mode SKILL.md already names: a warning routinely ignored stops
+# being a signal.
+#
+# Only rows this run counted EXACTLY are aggregated. Folding an estimated doc
+# into the calibration would re-derive the divisor it was computed with — the
+# same self-confirming measurement the exact_flag gate below exists to refuse.
+#
+# Orphaned docs are included even though tokens_live excludes them: the guard
+# prices any file under the docs dir, linked or not, so the calibration should
+# describe what is actually priced rather than what is reachable.
+SURFACE_BYTES="$P_BYTES"
+SURFACE_TOKENS="$P_TOKENS"
+while IFS="$TAB" read -r dl db dt dexact dlinked dpath dsource; do
+  [ -n "${dl:-}" ] || continue
+  [ "$dexact" = "true" ] || continue
+  SURFACE_BYTES=$(( SURFACE_BYTES + db ))
+  SURFACE_TOKENS=$(( SURFACE_TOKENS + dt ))
+done <"$TMP/docs.tsv"
+if [ "$SURFACE_TOKENS" -gt 0 ]; then
+  SURFACE_RATIO_X100=$(( SURFACE_BYTES * 100 / SURFACE_TOKENS ))
+else
+  SURFACE_RATIO_X100="$RATIO_X100"
+fi
+
 # Persist only a plausible ratio. Real markdown measures 2.0-4.0 bytes/token; a
-# value outside 1.5-6.0 means the file is degenerate or unrepresentative (a
+# value outside 1.5-6.0 means the surface is degenerate or unrepresentative (a
 # generated table, a wall of single-character lines), and freezing it would skew
 # every later offline estimate. The reader has a matching floor, but writing
 # nonsense and relying on the reader to reject it is worse than not writing it.
-if [ "$RATIO_X100" -lt "$CTX_RATIO_MIN_X100" ] || [ "$RATIO_X100" -gt "$CTX_RATIO_MAX_X100" ]; then
+if [ "$SURFACE_RATIO_X100" -lt "$CTX_RATIO_MIN_X100" ] || [ "$SURFACE_RATIO_X100" -gt "$CTX_RATIO_MAX_X100" ]; then
   if [ "$exact_flag" = true ]; then
-    echo "WARN observed ratio $(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))) bytes/token is outside the plausible 1.50-6.00 band; not persisting it" >&2
+    echo "WARN observed ratio $(( SURFACE_RATIO_X100 / 100 )).$(printf '%02d' $(( SURFACE_RATIO_X100 % 100 ))) bytes/token is outside the plausible 1.50-6.00 band; not persisting it" >&2
   fi
   RATIO_PERSISTABLE=0
 else
   RATIO_PERSISTABLE=1
 fi
 
-if [ "$exact_flag" = true ] && [ "$P_TOKENS" -gt 0 ] && [ "$NO_WRITE" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$NO_WRITE" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   mkdir -p "$ROOT/.skills" 2>/dev/null || true
-  printf '%d.%02d\n' $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) \
+  printf '%d.%02d\n' $(( SURFACE_RATIO_X100 / 100 )) $(( SURFACE_RATIO_X100 % 100 )) \
     >"$ROOT/.skills/context-token-ratio" 2>/dev/null \
     || echo "WARN could not write .skills/context-token-ratio" >&2
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
-  echo "INFO --no-write: not persisting the observed ratio ($(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))))" >&2
+  echo "INFO --no-write: not persisting the observed surface ratio ($(( SURFACE_RATIO_X100 / 100 )).$(printf '%02d' $(( SURFACE_RATIO_X100 % 100 ))), policy-only was $(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))))" >&2
 fi
 
 # --- per-file calibration (#145) ------------------------------------------
