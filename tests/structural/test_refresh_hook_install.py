@@ -395,6 +395,45 @@ class TestInstallRefresh:
         assert "UNREADABLE" in r.stdout, r.stdout
         assert "MISSING —" not in r.stdout
 
+    # A settings.json whose FIRST value parses and whose trailer does not. jq
+    # emits the leading value's result before erroring, so this is the input
+    # that made hook_command return non-zero WITH output — and the installer
+    # claim a registration it had not written (CR findings 11, 12).
+    TRAILING_GARBAGE = '{"permissions":{"allow":[]}}\n,,,garbage\n'
+
+    def test_install_against_unparseable_settings_fails_loudly(self, repo: Path):
+        (repo / ".claude").mkdir(exist_ok=True)
+        (repo / SETTINGS_REL).write_text(self.TRAILING_GARBAGE)
+        r = _run(repo, INSTALL_REFRESH)
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "registered the SessionStart entry" not in r.stdout, (
+            "claimed a registration it did not write:\n" + r.stdout
+        )
+        assert "nothing was changed" in r.stderr, r.stderr
+        assert "skills-submodule-update" not in (repo / SETTINGS_REL).read_text()
+
+    def test_a_failed_rewrite_leaves_no_temp_file(self, repo: Path):
+        """`git add -A` would otherwise pick up .claude/settings.json.tmp."""
+        (repo / ".claude").mkdir(exist_ok=True)
+        (repo / SETTINGS_REL).write_text(self.TRAILING_GARBAGE)
+        _run(repo, INSTALL_REFRESH)
+        assert not (repo / ".claude" / "settings.json.tmp").exists(), sorted(
+            p.name for p in (repo / ".claude").iterdir()
+        )
+
+    def test_uninstall_against_unparseable_settings_changes_nothing(
+        self, repo: Path
+    ):
+        """Discovering the file is unreadable after the symlink is gone leaves
+        the half-state the need_jq ordering exists to prevent."""
+        _run(repo, INSTALL_REFRESH)
+        good = (repo / SETTINGS_REL).read_text()
+        (repo / SETTINGS_REL).write_text(good + ",,,broken")
+        r = _run(repo, INSTALL_REFRESH, "--uninstall")
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "removed the SessionStart entry" not in r.stdout, r.stdout
+        assert (repo / HOOK_REL).is_symlink(), "symlink was removed anyway"
+
     def test_it_refuses_without_a_vendored_hook(self, tmp_path: Path):
         bare = tmp_path / "bare"
         bare.mkdir()

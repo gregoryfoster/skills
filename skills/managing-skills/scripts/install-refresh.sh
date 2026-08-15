@@ -97,6 +97,33 @@ SETTINGS="$ROOT/$SETTINGS_REL"
 
 have_jq() { command -v jq >/dev/null 2>&1; }
 
+# A temp file that cannot outlive the run. Without this, a failed rewrite left
+# .claude/settings.json.tmp behind for `git add -A` to pick up (CR finding 11).
+trap 'rm -f "$SETTINGS.tmp"' EXIT
+
+# Rewrite settings.json through a temp file, or fail having changed nothing.
+#
+# `jq … >tmp && mv` with a `log "…"` after it is the shape that reported a
+# registration which did not exist: under `set -e` the failure of the FIRST
+# element of an && list is exempt, so a jq parse error neither aborted the
+# script nor skipped the log line. mv never ran, the temp file was orphaned, and
+# install printed `registered the SessionStart entry` and exited 0 against a
+# file it had not touched — the #167 lie, produced by the tool written to detect
+# it (CR finding 11).
+#
+# The `if` is what fixes it: the list's status governs the branch, so success is
+# logged only when the file actually moved.
+settings_rewrite() {
+  local desc="$1"; shift
+  if jq "$@" "$SETTINGS" >"$SETTINGS.tmp" && mv -f "$SETTINGS.tmp" "$SETTINGS"; then
+    log "$desc"
+    return 0
+  fi
+  rm -f "$SETTINGS.tmp"
+  err "could not rewrite $SETTINGS_REL (see the error above) — nothing was changed"
+  exit 1
+}
+
 # The exact command an install writes. Defined once, in shell, and passed to jq
 # with --arg rather than typed into each jq program: the basename appeared in
 # three jq filters in three notations, which is the reader/writer drift this
@@ -136,8 +163,17 @@ hook_command() {
       "$SETTINGS" 2>/dev/null || return 2
 }
 
+# Honours hook_command's STATUS, not just its output. jq prints the extracted
+# command for a leading valid value before erroring on a malformed trailer, so
+# hook_command can return 2 WITH non-empty stdout; taking the text alone read
+# that as "registered" and routed a file jq cannot parse into the strip. --check
+# already honoured the status, so the two readers disagreed about the same file
+# — the drift this header is about (CR finding 12).
 is_registered() {
-  [ -n "$(hook_command)" ]
+  local out rc=0
+  out="$(hook_command)" || rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  [ -n "$out" ]
 }
 
 # Registered AND in the current anchored form. The two are deliberately
@@ -248,23 +284,38 @@ if [ "$MODE" = "uninstall" ]; then
   # reason about at all — only "nothing happened, and here is why". Skipped
   # entirely when there is no settings.json, since then there is nothing to
   # strip and jq is not needed to remove a symlink.
-  [ ! -f "$SETTINGS" ] || need_jq
+  #
+  # An unparseable settings.json is fatal for the same reason, and is checked
+  # here rather than at the strip: jq cannot remove an entry from a file it
+  # cannot read, and discovering that after the symlink is gone leaves exactly
+  # the half-state this ordering exists to prevent (CR findings 11, 12).
+  UNINSTALL_CMD=""
+  if [ -f "$SETTINGS" ]; then
+    need_jq
+    hc_rc=0
+    UNINSTALL_CMD="$(hook_command)" || hc_rc=$?
+    [ "$hc_rc" -eq 0 ] || {
+      err "$SETTINGS_REL is not valid JSON, so the SessionStart entry cannot be"
+      err "removed. Nothing was changed — fix the JSON and re-run."
+      exit 1; }
+  fi
   if [ -L "$HOOK" ] || [ -e "$HOOK" ]; then
     rm -f "$HOOK"
     log "removed $HOOK_REL"
   else
     log "nothing to remove: no $HOOK_REL"
   fi
-  if [ -f "$SETTINGS" ]; then
-    if is_registered; then
-      jq --arg n "$HOOK_NAME" \
-         'if .hooks.SessionStart then
-            .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
-              | tostring | contains($n) | not))
-          else . end' "$SETTINGS" >"$SETTINGS.tmp" \
-        && mv -f "$SETTINGS.tmp" "$SETTINGS"
-      log "removed the SessionStart entry from $SETTINGS_REL"
-    fi
+  if [ -n "$UNINSTALL_CMD" ]; then
+    # $n is a jq variable bound by --arg, not a shell one. shellcheck can see
+    # that when the filter is an argument to `jq` itself; behind a wrapper it
+    # cannot.
+    # shellcheck disable=SC2016
+    settings_rewrite "removed the SessionStart entry from $SETTINGS_REL" \
+      --arg n "$HOOK_NAME" \
+      'if .hooks.SessionStart then
+         .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
+           | tostring | contains($n) | not))
+       else . end'
   fi
   log "not committed — review and commit with your normal gate."
   exit 0
@@ -325,20 +376,22 @@ else
   # that is an undocumented assumption. The :-. fallback matters: with the
   # variable unset a bare "$CLAUDE_PROJECT_DIR/..." becomes "/.claude/hooks/..."
   # and errors on every session start, where "." degrades to the old behaviour.
-  jq --arg n "$HOOK_NAME" --arg cmd "$HOOK_COMMAND" \
-     '(.hooks //= {}) |
-      (.hooks.SessionStart //= []) |
-      .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
-        | tostring | contains($n) | not)) |
-      .hooks.SessionStart += [{
-        "matcher": ".*",
-        "hooks": [{
-          "type": "command",
-          "command": $cmd
-        }]
-      }]' "$SETTINGS" >"$SETTINGS.tmp" \
-    && mv -f "$SETTINGS.tmp" "$SETTINGS"
-  log "registered the SessionStart entry in $SETTINGS_REL"
+  # $n and $cmd are jq variables bound by --arg, not shell ones — see the
+  # matching note on the uninstall rewrite.
+  # shellcheck disable=SC2016
+  settings_rewrite "registered the SessionStart entry in $SETTINGS_REL" \
+    --arg n "$HOOK_NAME" --arg cmd "$HOOK_COMMAND" \
+    '(.hooks //= {}) |
+     (.hooks.SessionStart //= []) |
+     .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
+       | tostring | contains($n) | not)) |
+     .hooks.SessionStart += [{
+       "matcher": ".*",
+       "hooks": [{
+         "type": "command",
+         "command": $cmd
+       }]
+     }]'
 fi
 
 [ "$QUIET" = "1" ] || cat <<NEXT

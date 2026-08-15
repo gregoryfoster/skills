@@ -77,7 +77,8 @@ It does not commit. Review the diff and commit with your normal gate.
 Exit codes:
   0  installed, uninstalled, unchanged, or printed
   1  usage error, or not in a git repo
-  3  --check only: the workflow is not installed
+  2  could not rewrite .gitattributes — nothing was changed
+  3  --check only: a workflow or merge attribute is missing
 USAGE
 }
 
@@ -182,7 +183,17 @@ strip_attr() {
     line == n1 || line == n2 || line == n3 || line == n4 { next }
     line !~ /^#/ && index(line, want) == 1 { next }
     { print }
-  ' "$ATTR_FILE" >"$ATTR_FILE.tmp" && mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+  ' "$ATTR_FILE" >"$ATTR_FILE.tmp" || {
+    # `awk … >tmp && mv` with an unconditional "removed …" after it is the shape
+    # that let install-refresh.sh report a change it had not made: under set -e
+    # the failure of the FIRST element of an && list is exempt, so the log ran
+    # anyway and the temp file was orphaned (CR findings 11, 13). Far less
+    # likely to fire here than a jq parse error on operator-edited JSON, but it
+    # is the same idiom and would tell the same lie.
+    rm -f "$ATTR_FILE.tmp"
+    echo "ERROR could not rewrite .gitattributes — nothing was changed" >&2
+    exit 2; }
+  mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
   # If nothing but blank lines is left, the file was ours to begin with.
   if [ ! -s "$ATTR_FILE" ] || ! grep -q '[^[:space:]]' "$ATTR_FILE"; then
     rm -f "$ATTR_FILE"
