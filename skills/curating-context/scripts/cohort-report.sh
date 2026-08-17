@@ -91,8 +91,8 @@ command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; ex
 
 # --- shared library -------------------------------------------------------
 # After argument parsing, deliberately: the roster parser and the ledger fetch
-# are shared with score-cohort.sh so the two cannot disagree about which repo is
-# in which arm of the experiment.
+# are shared with score-cohort.sh so the two cannot disagree about which rollout
+# wave a repo is in, or about which row each ledger's scored run is.
 _self="${BASH_SOURCE[0]}"
 _n=0
 while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
@@ -390,15 +390,20 @@ if versions:
     if len(versions) == 1:
         print("  one version across the cohort — a baseline, not a comparison.")
 
-# The roster's wave assignment, if it carries one. Printed here rather than only
-# inside score-cohort.sh because the split is a property of the cohort, and the
-# roll-up is where someone looks to see what the cohort is doing.
+# The roster's wave annotation, if it carries one. Printed here rather than only
+# inside score-cohort.sh because rollout order is a property of the cohort, and
+# the roll-up is where someone looks to see what the cohort is doing.
+#
+# Labelled as rollout order, NOT as an arm assignment. A wave has never held a
+# repo at a version and cannot: the arm a run belongs to is the skill_version on
+# its own row (#168). This is the higher-traffic of the two outputs, so a header
+# calling it a validation split is where that claim would keep being re-learned.
 waves = {}
 for r in records:
     if r["wave"]:
         waves.setdefault(r["wave"], []).append(r["repo"])
 if waves:
-    print("\nvalidation split (roster wave assignment):")
+    print("\nrollout waves (roster annotation — not an arm assignment, #168):")
     for wv in sorted(waves):
         arm = sorted(waves[wv])
         adopted = sorted(

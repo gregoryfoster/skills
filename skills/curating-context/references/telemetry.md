@@ -35,7 +35,7 @@ and only a pair records a change.
 | `no_loss_warrants` | how many of that verdict's unaccounted lines carried a judged entry in `.skills/context-loss-ok` — [`prove-no-loss.sh`](../scripts/prove-no-loss.sh)'s `loss_warranted:` line. `null` when the run did not report it, which is never the same as `0`: `0` says the run read the report and warranted nothing, `null` says it did not say. Without it `ok` cannot distinguish "nothing was unaccounted for" from "eight lines were judged and waved through", and two cohort adoptions recorded that same state in opposite ways — one leaving the ledger untouched, one recording a bare `ok` ([#111](https://github.com/gregoryfoster/skills/issues/111)). Recorded, surfaced as `ok+Nw`, and deliberately **not** gated; [the validation gate](validation-gate.md#the-safety-gates) says why. Watch the **delta**, as with `seams_acked` |
 | `seams`, `seams_acked` | `check-seams.sh`'s counts after Phase 6.5's report was judged: **unacknowledged** hits, and hits judged legitimate and carried in `.skills/context-seams-ok`. Both `null` when the sweep was not run, which is never the same as `0`. Both recorded because `0 new / 0 acked` and `0 new / 50 acked` are different states — the second may be an acknowledged set quietly ballooning, which one number alone cannot show. Watch the **delta** on `seams`: a stable acknowledged set with `0` new hits is the healthy steady state, and a run that "improves" either number by deleting legitimate references has made the surface worse — the `tokens_live` mistake with a different metric. These fields are what make the cross-reference defect class visible to the gate at all; on the run that motivated the sweep, ten review findings were invisible to every other field on this row. |
 | `skill_version`, `skill_commit` | which version of this skill produced the row; `null` on rows predating the field |
-| `repo_commit` | short commit of **this** repo at measurement time — which state of the tree the rest of the row describes. Distinct from `skill_commit`, which names the *skill's* repo and can never stand in for it. The scheduled seam sweep reads it back off the previous row (`check-seams.sh --base-ledger`) to bound the interval `seams` covers, so a row without it sends the next sweep back to an empty interval. `null` outside a git repo with a commit, and on rows predating the field ([#169](https://github.com/gregoryfoster/skills/issues/169)) |
+| `repo_commit` | short commit of **this** repo at measurement time — which state of the tree the rest of the row describes. Distinct from `skill_commit`, which names the *skill's* repo and can never stand in for it. The scheduled seam sweep reads it back off the previous row (`check-seams.sh --base-ledger`) to bound the interval `seams` covers, so a row without it sends the next sweep back to an empty interval. `null` outside a git repo with a commit, and on rows predating the field ([#169](https://github.com/gregoryfoster/skills/issues/169)). Two consecutive rows for one file bound an interval, and that is what the longitudinal covariates are **derived** from rather than recorded: `commits_since` — `git log <prev>..<this> -- <policy> <docs>`, which normalises regrowth by what causes it instead of by the calendar — and whether that run's seam sweep spanned anything at all, empty exactly when the previous row's `repo_commit` is `null`. A recorded field would be `null` on every row already written and could disagree with the commits; a derivation recomputes for history and cannot ([#118](https://github.com/gregoryfoster/skills/issues/118)) |
 | `top_section`, `top_section_share` | largest section and its % of the file |
 | `delta_tokens`, `delta_days` | change since the previous row for this file; `null` on the first |
 | `actions` | action tags — see below |
@@ -133,8 +133,8 @@ Then get the branch a **fresh-eyes review pass** before it ships. Whoever just
 moved three hundred lines has exactly the implementation blindness that misses
 "and now this other file lies about it" — the seam sweep catches the mechanical
 cases, a reviewer catches the rest. If a late fix changes the count, **rewrite
-this run's row to match what ships; across runs, only ever append** — the same
-distinction in [references/telemetry.md](telemetry.md).
+this run's row to match what ships; across runs, only ever append** — the
+distinction this section opens with.
 
 ### Tagging the row — the Phase 7 text in full
 
@@ -143,10 +143,13 @@ a later run — or the cohort roll-up — attribute a token delta to what caused
 `"cleanup"` teaches nothing; `"demote:Project Layout"` does. Schema and budget
 rationale: [references/budget-and-metrics.md](budget-and-metrics.md).
 
-version makes the cohort look uniform when it isn't, and the roll-up's
-`skill versions in play` footer is what surfaces that.
-
-distinction in [references/budget-and-metrics.md](budget-and-metrics.md).
+Rows also carry `skill_version` and `skill_commit`, so an outcome can be
+attributed to a *skill* change and not just a repo one, plus `repo_commit` —
+which state of *this* tree the row describes, and where the next scheduled seam
+sweep starts. Bump the frontmatter `version` whenever a change would plausibly
+alter what a run does — an unbumped version makes the cohort look uniform when
+it isn't, and the roll-up's `skill versions in play` footer is what surfaces
+that.
 
 ### Reading the trend
 

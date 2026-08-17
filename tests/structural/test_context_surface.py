@@ -1539,8 +1539,12 @@ class TestRosterAnnotations:
         assert all(sorted(v) == ["a", "b"] for v in by_pair.values())
 
     def test_rollup_reports_the_split(self, tmp_path: Path):
-        """The split is a property of the cohort, so it belongs in the roll-up
-        and not only inside the gate."""
+        """Rollout order is a property of the cohort, so it belongs in the
+        roll-up and not only inside the gate.
+
+        Labelled as rollout order rather than as a validation split: the wave
+        annotation has never determined which version a repo runs, and this is
+        the output a reader reaches for first (#168)."""
         _arm(tmp_path, "one", 9000, 5000, "1.1")
         _arm(tmp_path, "two", 9000, None, "1.1")
         roster = _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])
@@ -1549,7 +1553,8 @@ class TestRosterAnnotations:
             capture_output=True, text=True, env=_clean_env(), timeout=30,
         )
         assert r.returncode == 0, r.stderr
-        assert "validation split" in r.stdout
+        assert "rollout waves" in r.stdout
+        assert "not an arm assignment" in r.stdout
         assert "wave a: 1 repos, 1 adopted" in r.stdout
         assert "wave b: 1 repos, 0 adopted" in r.stdout
 
@@ -1697,8 +1702,11 @@ class TestValidationGateRoundSix:
             "ctl1", "ctl2", "ctl3", "trt1", "trt2", "trt3"}
 
     def test_inverted_arms_are_detected_and_refuse_to_reject(self, tmp_path: Path):
-        """Wave A adopts first and holds the OLDER version, so running the
-        script bare during round one inverts the comparison.
+        """In experiment 1 wave A adopted first and held the OLDER version, so
+        running the script bare during that round inverted the comparison. Past
+        tense: a wave never held a version and the arms are read off each row's
+        skill_version now (#168), but an inverted pair of arms is still a state
+        the ledgers can present, and this is what the gate owes when they do.
 
         Detection alone was not enough: the WARN printed at the top and the
         verdict then rejected the winning change and told the reader to file it

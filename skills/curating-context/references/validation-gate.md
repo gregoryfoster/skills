@@ -44,40 +44,29 @@ Three details decide whether that run is scored at all:
   whichever was measured most recently. A ledger may track several, so "what did
   this repo do" is unanswerable until one is named.
 
-  Most-recent alone was the first rule and it was too fragile: one incidental
-  `docs/GUIDE.md` baseline re-defined a repo that had curated `AGENTS.md`
-  50,000 → 6,800 over three runs, dropping it out of the experiment and
-  collapsing the roll-up's headline to 4,000 tokens, one run and no net — a
-  number that then fed the cohort total. Row count is what a stray append cannot
-  flip.
-
-  `score-cohort.sh` and `cohort-report.sh` use the **same rule**, and a test pins
-  them to the same answer: when they disagreed, one ledger yielded two
-  irreconcilable pictures of a single repo, the gate scoring a 100-token prune on
-  `sub/AGENTS.md` (3.3% closure) while the roll-up reported the 43,000-token
-  curation on `AGENTS.md`. If the primary file was never curated the repo is
-  unscorable and the report names both the file and how many others were skipped;
-  when any ledger held more than one file, the report names which was scored,
-  because the table has no room for the column.
+  Most-recent alone was the first rule and it was too fragile — one incidental
+  baseline row re-defined a repo and collapsed the roll-up's headline — and
+  `score-cohort.sh` and `cohort-report.sh` use the **same** rule, pinned by a
+  test, because when they disagreed one ledger yielded two irreconcilable
+  pictures of a single repo. Both defects are written up where the rule is
+  implemented, in [`score-cohort.sh`](../scripts/score-cohort.sh)'s
+  `score_repo()`. If the primary file was never curated the repo is unscorable,
+  and a multi-file ledger has the scored file named beneath the table, which has
+  no room for the column.
 - **The before-state comes from that same file** — and it has to *exist*. Taking
   whichever row happens to precede the curation produced a fabricated closure: a
   repo that really went 50,000 → 9,000 scored **−2900%** against an unrelated
   file's 6,100, and handed the pair to the other arm.
 
-  The deeper failure is that for a first curation there was no preceding row at
-  all. It is the run that *creates* the ledger, so the scored run was exactly the
-  run that could never be scored — which is why experiment 1 scored nothing
-  ([#116](https://github.com/gregoryfoster/skills/issues/116)). Phase 1 now
-  records a `baseline` row (`record-telemetry.sh --baseline`) and both rows ship
-  in one commit, so a run carries the state it is compared against. Rows
-  predating that rule stay unscorable; the gate says so as a **gate defect**
-  when every repo in both arms is blocked by one and the same reason, instead of
-  reporting an empty experiment.
-
-  The same absence disarmed a safety gate. `docs_orphaned` trips on a *rise*
-  against the previous row, so with no previous row it could not trip at all —
-  on all twelve first curations. The recorded values were `0`, so nothing was
-  missed in fact, but the check had not run.
+  The deeper failure is that a first curation had no preceding row at all — it is
+  the run that *creates* the ledger — so the scored run was exactly the run that
+  could never be scored, and it disarmed `docs_orphaned` along with it. Phase 1
+  now records a `baseline` row, which
+  [telemetry.md](telemetry.md#the-baseline-row-is-not-optional-either) covers in
+  full. Rows predating that rule stay unscorable, and when every repo in both
+  arms is blocked by one and the same reason the gate says so as a **gate
+  defect** rather than reporting an empty experiment
+  ([#116](https://github.com/gregoryfoster/skills/issues/116)).
 - **An untagged run makes the repo unscorable.** `record-telemetry.sh` emits
   `actions: []` when `--actions` was omitted, and such a row cannot be told from
   a baseline. Scoring it as a curation would attribute its near-zero closure to
@@ -86,31 +75,38 @@ Three details decide whether that run is scored at all:
 
 ## Staging, and which arm is which
 
-Wave A adopts now. Wave B is held. When a change to the skill is proposed, wave B
-adopts *on the proposed version* while wave A keeps running the version before it.
-
-**Wave A therefore holds the older version, and the first experiment runs
-`--treatment b --control a`.** The script's defaults (`--treatment a`) suit later
-rounds, once A is the arm carrying a proposal.
+In experiment 1 wave A adopted first and wave B took the proposed version, so
+**wave A held the older one and that run inverts the script's defaults:
+`--treatment b --control a`.** Written in the past tense on purpose — see below.
 
 > **Superseded after experiment 1.** This describes how the first experiment was
 > staged, and it worked — the arms came out version-clean. It does not describe
-> how later ones can be. Every cohort repo is on skills-vendor auto-refresh and
-> follow-up issues keep necessitating updates, so **a wave cannot hold a version**:
-> `observo` moved itself to v1.3 within a day of that version existing. Going
-> forward the arms are defined by each row's recorded `skill_version`, not by wave
-> membership, and the `wave:`/`pair:` annotations keep only their staging value —
-> rolling a proposal out to half the cohort first.
-> [#118](https://github.com/gregoryfoster/skills/issues/118) carries the
-> replacement design.
+> how later ones can be.
+>
+> **Settled 2026-08-17: the arms are observed, not assigned**
+> ([#118](https://github.com/gregoryfoster/skills/issues/118),
+> [#168](https://github.com/gregoryfoster/skills/issues/168)). Staging by pin was
+> the alternative, and drift does not refute it — CI checks out with
+> `submodules: recursive`, so a scheduled run resolves the *committed* gitlink
+> whatever a working tree holds. What refuses it is that **a pin cannot label a
+> scored run**: the cadence writes `baseline:scheduled`, and the scored run is
+> the first row whose actions are *not* purely `baseline*`, so the rows a pin
+> versions deterministically are the rows this gate skips. `.skills/skills-pin`
+> is also installed in **none** of the twelve, so no arm was ever held back.
+>
+> The arm is therefore the `skill_version` on the row, and `wave:`/`pair:` are
+> **rollout order** — which half a change reaches first, and which two repos were
+> size-matched. `score-cohort.sh` says so when its own table has gone historical.
+> Keep [#100](https://github.com/gregoryfoster/skills/issues/100)'s pin mechanism
+> regardless: holding one repo at a known-good commit is worth having whether or
+> not an experiment uses it.
 
 Getting the direction backwards turns a winning change into a losing one, so the
 gate detects it: when the treatment arm's versions are all *older* than the
 control's, it prints a `WARN` naming the inversion and the flags that fix it —
 **and returns INCONCLUSIVE rather than a rejection.** Detection alone was not
-enough. The first implementation warned at the top and then rejected the winning
-change and told the reader to file it in `rejected-changes.md`, twenty lines
-below the warning saying not to trust the result.
+enough: the first implementation warned at the top and rejected the winning
+change twenty lines below.
 
 Comparison is by numeric component, not by string — `1.10` is newer than `1.9`
 and sorts below it lexically. That ordering decides only whether to *stop*, never
@@ -119,47 +115,28 @@ score and not fine for scoring.
 
 The verdict also refuses when **either arm is split across versions**. "Adopt
 only if strictly better" presumes one proposal; an arm running two names no
-coherent change, and a sweep could be carried by whichever version drew the
-easier pairs. That test runs *before* the inversion one — an arm that is not
-internally coherent compares older than anything, so diagnosing inversion first
-walked the reader through two problems to reach one.
+coherent change. That test runs *before* the inversion one, because an arm that
+is not internally coherent compares older than anything.
 
 Every "is this even an experiment?" test compares **canonical** versions, where
 `1.2` and `1.2.0` are one release. Comparing the raw strings made them two, and
 the gate returned ADOPT for a release scored against itself — the mirror of
-adopting on zero evidence. Canonicalisation only strips trailing zero
-components; it is deliberately *not* the numeric key used for the older/newer
-test, which maps every non-numeric component to zero and would collapse
-`2.0-alpha` and `2.0-beta` into one version.
+adopting on zero evidence. Canonicalisation is deliberately not the numeric key
+above; `version_canon()` says why.
 
 ## The pairs
 
-Adjacent in the 2026-08-05 exact baseline, so both members of a pair started at a
-comparable size. Within each pair, the wave assignment balances the secondary
-axis — whether the repo already had a Detail Docs index — two indexed repos in
-each arm.
+Six, adjacent in the 2026-08-05 exact baseline so both members started at a
+comparable size, with the wave assignment balancing whether the repo already had
+a Detail Docs index — two indexed repos in each arm.
 
-| Pair | Wave A | | Wave B | | Apart |
-|---:|---|---:|---|---:|---:|
-| 1 | `usa-wa` | 52,953 | `cannabis.observer-wordpress` | 49,103 | 7% |
-| 2 | `observo` | 28,110 | `cannobserv` | 25,949 | 8% |
-| 3 | `replicator` | 14,633 | `watcher` | 19,715 | **29%** |
-| 4 | `archiver` | 14,358 | `power-map` | 13,298 | 7% |
-| 5 | `cli` | 6,013 | `address-validator` | 6,322 | 5% |
-| 6 | `notifier` | 5,468 | `wslcb-licensing-tracker` | 5,331 | 3% |
-
-Pair 3 is the weakest match in the roster. `watcher` has no size neighbour —
-every other pair is within 8% — and a difference on pair 3 is partly a difference
-in difficulty. Read it accordingly rather than dropping it. It is also the one
-row where **wave A holds the smaller member**; every other row runs
-larger-then-smaller, so the ordering looks like a transcription error and is
-not.
-
-Pairs 5 and 6 are expected to be **uninformative for effectiveness**, and it is
-better to know that now than to discover it after the run. Pair 6 starts under
-budget: there is no gap to close. Pair 5 starts within 6% of budget, so both arms
-will close their gap completely and the metric saturates. Both pairs still carry
-the safety gates.
+**The pairing itself lives in `.skills/cohort`**, one comment per pair carrying
+both sizes: why pair 3 is the weakest match at 29% apart where every other pair
+is within 8%, and why pairs 5 and 6 are expected to be uninformative for
+effectiveness — pair 6 starts under budget and pair 5 within 6% of it, so closure
+saturates. Both still carry the safety gates. Kept in one place deliberately: a
+second copy here is the roster and the gate disagreeing about the experiment's
+own assignment.
 
 **That leaves four informative pairs at best.** A clean sweep of four is p=0.062
 under a one-sided sign test — suggestive, not significant. The gate says so in its
@@ -179,16 +156,38 @@ A fraction rather than a token count, because the cohort spans 5,331 to 52,953
 and an absolute reduction would let `usa-wa` decide every verdict on its own.
 
 Closure is **capped at 1.0**: a run that cuts far past the budget scores exactly
-the same as one that lands on it. Over-cutting earns nothing, deliberately —
-`tokens_live` rising while the always-paid cost halves was already recorded as a
-[rejected metric](rejected-changes.md), and rewarding depth of cut here would
-reintroduce the same pressure to delete rather than route.
+the same as one that lands on it. Over-cutting earns nothing, deliberately:
+rewarding depth of cut would reintroduce the pressure to delete rather than
+route that made `tokens_live` a [rejected metric](rejected-changes.md).
 
 The cap has a cost: when both arms reach budget, the metric has no room left to
 express a difference. Such a pair is reported as **uninformative — saturated**,
 not as a tie. Calling it a tie would make the adoption rule unsatisfiable for any
 pair that starts close to budget, and "the metric cannot separate them" is a
 different claim from "they are equal."
+
+### The steady-state metric
+
+Closure scores first curations and those are spent, so proposals are judged on
+maintenance runs. Registered primary, **truthfulness**: the share of scheduled
+rows reading `seams: 0`. A *rate*, because seam **accrual** is not available —
+`seams` is a standing count plus an interval count and the row records only the
+sum, so summing across rows re-counts the standing half every week, while the
+latest row alone loses every interval hit, which self-heals as the base advances
+past the move. Rows whose sweep spanned an **empty** interval leave the
+denominator rather than counting as clean; that state is derived, the previous
+row for the file carrying no `repo_commit`.
+
+Secondary, **effectiveness**: regrowth per surface-touching commit, since
+`delta_days` measures the calendar and a quiet repo reads as a well-behaved one.
+Both divisors are derived from the `repo_commit` pair rather than recorded, which
+recomputes for history where a field would be null on every row already written;
+the row schema in [telemetry.md](telemetry.md) gives the command.
+
+`tokens_live` is **not registerable**: a
+[recorded rejection](rejected-changes.md), and a proposed primary is checked
+against that file first. Nor is a proposal ever scored on **a metric it
+introduced** — v1.3 added `seams`.
 
 ## The safety gates
 
@@ -299,11 +298,9 @@ dead (#139).
 
 - **Every demoted block sits at the right heading depth.** Compare each against its neighbours in the destination: a `###` inserted directly under an existing `##` silently reparents everything below it — 24 pre-existing bullets, on the run that found this — and no gate sees depth.
 
-### Two more Phase 6 notes
+### Two more Phase 6 notes, in full
 
-     Phase 6 reports a wave of dead links — the check catches it, but the run
-     fails rather than succeeding.
-
+- `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes — several cohort repos have structural tests that read `AGENTS.md`.
 
 ## The adoption rule
