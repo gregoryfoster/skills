@@ -167,6 +167,14 @@ def discover_blocks() -> list[Block]:
 #   pins    tokens that must survive in BOTH the block and that section.
 #   dated   set instead of pins when no single token carries the contract; the
 #           block must then name the version it was demoted from.
+#   kind    what the block claims to be — `record` or `excerpt` (#158).
+#   covers  excerpts only: the span of `source` this block is "in full" of.
+#
+# `kind` and `covers` are #158's axis and are orthogonal to `pins`/`dated`,
+# which are #148's. `pins` asks *how agreement is verified*; `kind` asks *what
+# the block is claiming*, which decides whether agreement is owed in one
+# direction or two. `tests/structural/test_demoted_block_kinds.py` enforces
+# them; the classification itself is argued there.
 # --------------------------------------------------------------------------
 
 PHASE_0 = "## Phase 0 — Preflight the credential"
@@ -181,6 +189,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
     # -- budget-and-metrics.md -------------------------------------------------
     ("budget-and-metrics.md", "Phase 1 carried this and the archival exclusion inline"): {
         "source": PHASE_1,
+        "kind": "record",  # "carried this ... inline until v1.9, in these words:"
         "pins": (
             "`totals.tokens_live`",
             "`policy.tokens`",
@@ -190,6 +199,10 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("budget-and-metrics.md", "### The Phase 0 preflight, in full"): {
         "source": PHASE_0,
+        # Undated and present tense: SKILL.md kept a *tightened* Phase 0 and this
+        # is the long form a reader comes here for. It must track additions.
+        "kind": "excerpt",
+        "covers": ("One command, before anything else.", "refuses at the very end."),
         "pins": (
             "One command, before anything else",
             "Exit 0 means `--exact` will work",
@@ -200,6 +213,10 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("budget-and-metrics.md", "### The Phase 1 credential note, in full"): {
         "source": PHASE_1,
+        # "restated the rule above inline until v1.9, when it was demoted here
+        # and replaced by a pointer. The words it carried:" — history, and the
+        # heading's "in full" describes the quote, not a current claim.
+        "kind": "record",
         "pins": (
             "A credential is not optional even interactively",
             "estimate whatever credential was accepted",
@@ -210,6 +227,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
     # -- cohort-patterns.md ----------------------------------------------------
     ("cohort-patterns.md", "### Normalizing the index — the Phase 5 step in full"): {
         "source": PHASE_5,
+        "kind": "record",  # "carried this inline until v1.7 demoted it here:"
         "pins": (
             "`## Detail Docs` section listing every live reference doc with a one-line purpose",
             "canonical section order",
@@ -218,6 +236,11 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("cohort-patterns.md", "### The rule in full"): {
         "source": SCOPE,
+        # The block #158 was filed about. No date, no past tense, and a heading
+        # promising the rule *in full* — so it owes the bidirectional check, and
+        # failed it: SKILL.md's Scope grew `--no-write` after v1.7.
+        "kind": "excerpt",
+        "covers": ("This skill edits", "expected pre-adoption state"),
         "pins": (
             "This skill edits **the repo it is invoked in**",
             "It never writes to a sibling checkout, even one it just measured",
@@ -231,10 +254,12 @@ REGISTRY: dict[tuple[str, str], dict] = {
         # no flag, no script and no format — the only falsifiable thing in it is
         # *when* SKILL.md stopped carrying the three surfaces inline. Pinning
         # "three surfaces" against Phase 8 would assert a word, not a contract.
+        "kind": "record",  # "as SKILL.md carried them before v1.7 demoted them here"
         "dated": True,
     },
     ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.9:", 1): {
         "source": PHASE_8,
+        "kind": "record",  # "summarised it inline until v1.9:"
         "pins": (
             "`install-cadence.sh`",
             "**measurement, not a curation**",
@@ -243,6 +268,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.9:", 2): {
         "source": PHASE_8,
+        "kind": "record",
         "pins": (
             "`context-delta.sh`",
             "`reviewing-code*`",
@@ -253,6 +279,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.9:", 3): {
         "source": PHASE_8,
+        "kind": "record",
         "pins": (
             "`install-guard.sh --budget 6000 --doc-budget 10000`",
             "`PostToolUse` hook",
@@ -262,6 +289,14 @@ REGISTRY: dict[tuple[str, str], dict] = {
     # -- telemetry.md ----------------------------------------------------------
     ("telemetry.md", "### Tagging the row — the Phase 7 text in full"): {
         "source": PHASE_7,
+        # Undated, present tense, "in full". Covers the tagging paragraph and
+        # the attribution paragraph that follows it — not all of Phase 7, whose
+        # remaining paragraphs went to four other destinations.
+        "kind": "excerpt",
+        "covers": (
+            "`<N>` and `<M>` are Phase 6.5's two counts",
+            "makes the cohort look uniform when it isn't.",
+        ),
         "pins": (
             "`<N>`",
             "`<M>`",
@@ -274,6 +309,10 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("telemetry.md", "### The cross-repo view, as Phase 7 carried it"): {
         "source": PHASE_7,
+        # Past tense in the heading itself, and its inner quote is dated to
+        # v1.9. SKILL.md points readers at `## Cohort roll-up` above it, which
+        # is the live statement; this is the record of the demoted wording.
+        "kind": "record",
         # Unbackticked: the block spells the script inside a bash fence and in a
         # flagged invocation, never as a bare code span.
         "pins": (
@@ -284,6 +323,11 @@ REGISTRY: dict[tuple[str, str], dict] = {
     # -- validation-gate.md ----------------------------------------------------
     ("validation-gate.md", "### The Phase 6 no-loss bullet in full"): {
         "source": PHASE_6,
+        "kind": "excerpt",
+        "covers": (
+            "Every non-blank line of the policy file",
+            "unscorable, never a pass.",
+        ),
         "pins": (
             "present verbatim, inline or in a destination",
             "Exit 3 lists what is not",
@@ -294,6 +338,11 @@ REGISTRY: dict[tuple[str, str], dict] = {
     },
     ("validation-gate.md", "### Phase 6's remaining assertions in full"): {
         "source": PHASE_6,
+        "kind": "excerpt",
+        "covers": (
+            "A line the run had to **rewrite** rather than move",
+            "and no gate sees depth.",
+        ),
         "pins": (
             "`.skills/context-loss-ok`",
             "`WARRANT :: CONTENT`",
@@ -303,6 +352,23 @@ REGISTRY: dict[tuple[str, str], dict] = {
             "`duplicated: N` lists them",
             "silently reparents everything below it",
             "**Never** warrant a line you have not read against its replacement",
+        ),
+    },
+    ("validation-gate.md", "### Two more Phase 6 notes, in full"): {
+        # Registered by #158. It was a demoted block all along — Phase 6's last
+        # two bullets — but its heading did not speak the convention, so
+        # `_discover` never saw it and #148 could not count it. It shipped with
+        # the first of its two notes replaced by a stray tail of Phase 5's step
+        # 4, five-space indented; `test_demotion_debris.py` is what found it.
+        "source": PHASE_6,
+        "kind": "excerpt",
+        "covers": (
+            "`policy.tokens` is at or under budget",
+            "structural tests that read `AGENTS.md`.",
+        ),
+        "pins": (
+            "or the Phase 4 report explains why not",
+            "several cohort repos have structural tests",
         ),
     },
 }
