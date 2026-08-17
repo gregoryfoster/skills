@@ -57,11 +57,12 @@ Behaviour:
   - Logs to .git/socraticode-health.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every condition.
 
-Resolution of the driver, first hit wins:
+Resolution of the driver, first hit wins. The vendor path is preferred over the
+two symlink dirs, which point at it anyway (#177):
   1. \$SOCRATICODE_DRIVER               (env var; one-off override)
-  2. skills/init-socraticode/scripts/mcp-driver.mjs
-  3. .claude/skills/init-socraticode/scripts/mcp-driver.mjs
-  4. skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs
+  2. skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs
+  3. skills/init-socraticode/scripts/mcp-driver.mjs
+  4. .claude/skills/init-socraticode/scripts/mcp-driver.mjs
   5. \$HOME/.claude/skills/init-socraticode/scripts/mcp-driver.mjs
 
 Env:
@@ -115,11 +116,17 @@ date -u +%Y%m%d > "$LOCK" || true
 command -v node >/dev/null 2>&1 || { _log "node not on PATH — skipped"; exit 0; }
 
 DRIVER=""
+# skills-vendor/*/ BEFORE the two symlink dirs, which are symlinks into it and
+# so resolve to the same file. Preferring the real path costs nothing on a
+# current install, and keeps this hook working against a vendored driver that
+# predates the #177 fix — where reaching mcp-driver.mjs through the symlink made
+# it exit 0 having printed nothing, which a silent-when-clean hook reports as a
+# healthy install.
 for candidate in \
   "${SOCRATICODE_DRIVER:-}" \
+  skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs \
   "skills/init-socraticode/scripts/mcp-driver.mjs" \
   ".claude/skills/init-socraticode/scripts/mcp-driver.mjs" \
-  skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs \
   "$HOME/.claude/skills/init-socraticode/scripts/mcp-driver.mjs"; do
   if [ -n "$candidate" ] && [ -f "$candidate" ]; then
     DRIVER="$candidate"
