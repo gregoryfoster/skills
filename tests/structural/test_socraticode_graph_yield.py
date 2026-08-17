@@ -89,6 +89,93 @@ class TestParserSelftestRuns:
         )
 
 
+class TestDriverRunsThroughASymlink:
+    """The driver must dispatch when reached through the vendoring symlink (#177).
+
+    `RUN_AS_SCRIPT` compared `path.resolve(process.argv[1])` — which does not
+    follow symlinks — against `fileURLToPath(import.meta.url)`, which is the
+    realpath, because Node resolves the ESM main through symlinks. Through a
+    symlink the two disagreed, the guard was false, and the process exited 0
+    having printed nothing.
+
+    That is the *normal* path: `skills/<name>` IS a symlink into
+    `skills-vendor/` under the `managing-skills` pattern, so both documented
+    invocation routes named the silent one. The failure signature is absence,
+    which is why it needs its own test — a no-op driver and a healthy install
+    look identical to every other assertion in this file.
+    """
+
+    @requires_node
+    def test_help_prints_through_a_symlink(self, tmp_path: Path) -> None:
+        link = tmp_path / "mcp-driver.mjs"
+        link.symlink_to(DRIVER)
+        result = subprocess.run(
+            ["node", str(link), "--help"],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip(), (
+            "the driver printed NOTHING when invoked through a symlink and "
+            "still exited 0 (#177). Every documented invocation goes through "
+            f"skills/init-socraticode/scripts/, which is a symlink.\n{result.stderr}"
+        )
+
+    @requires_node
+    def test_an_unknown_command_still_fails_through_a_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        """Exit 0 with no output was the bug; a real dispatch must reject."""
+        link = tmp_path / "mcp-driver.mjs"
+        link.symlink_to(DRIVER)
+        result = subprocess.run(
+            ["node", str(link), "no-such-command"],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 2, (
+            "an unrecognised command must exit 2 through a symlink just as it "
+            f"does through the real path; got {result.returncode}"
+        )
+
+    @requires_node
+    def test_import_still_does_not_dispatch(self) -> None:
+        """The property the guard exists for, preserved.
+
+        `parser-selftest.mjs` imports this module for its parsers. A guard
+        loosened until an import dispatches would spawn a server from the test
+        suite.
+        """
+        script = f"await import({json.dumps(str(DRIVER))});"
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", (
+            "importing mcp-driver.mjs dispatched — the module must stay inert "
+            f"when it is not the main script; got {result.stdout!r}"
+        )
+
+    @requires_node
+    def test_a_symlinked_importer_does_not_dispatch(self, tmp_path: Path) -> None:
+        """The realpath comparison must not collapse to 'any argv[1]'.
+
+        A sibling script that imports the driver has a different realpath, so
+        it must stay inert even though both resolve successfully.
+        """
+        importer = tmp_path / "importer.mjs"
+        importer.write_text(f"await import({json.dumps(str(DRIVER))});\n")
+        link = tmp_path / "importer-link.mjs"
+        link.symlink_to(importer)
+        result = subprocess.run(
+            ["node", str(link)],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", (
+            f"a symlinked importer dispatched the driver; got {result.stdout!r}"
+        )
+
+
 class TestYieldVerdicts:
     """The threshold's behaviour, asserted from Python via a one-shot node eval."""
 
@@ -310,6 +397,78 @@ class TestHealthHook:
             repo, SOCRATICODE_DRIVER=str(stub), SOCRATICODE_HEALTH_FORCE="1"
         )
         assert "graph yield LOW" in forced.stdout
+
+
+class TestHookPrefersTheRealDriver:
+    """Resolution must prefer `skills-vendor/*/…` over the symlink dirs (#177).
+
+    `skills/init-socraticode/scripts/mcp-driver.mjs` and
+    `.claude/skills/init-socraticode/scripts/mcp-driver.mjs` are both symlinks
+    into `skills-vendor/`. They resolve to the same file, so preferring the
+    vendor path costs nothing — and it keeps the hook working against a
+    consumer whose vendored driver predates the #177 fix, which is exactly the
+    population that cannot report its own silence.
+    """
+
+    @staticmethod
+    def _plant(repo: Path, rel: str, marker: str) -> Path:
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"process.stderr.write({json.dumps(f'  - {marker}' + chr(10))});\n"
+            "process.exit(1);\n"
+        )
+        return path
+
+    @requires_node
+    def test_vendor_wins_over_the_symlink_dirs(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        self._plant(
+            repo,
+            "skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs",
+            "resolved via skills-vendor",
+        )
+        for rel in (
+            "skills/init-socraticode/scripts/mcp-driver.mjs",
+            ".claude/skills/init-socraticode/scripts/mcp-driver.mjs",
+        ):
+            self._plant(repo, rel, "resolved via a symlink dir")
+
+        result = _run_hook(repo)
+        assert result.returncode == 0, result.stderr
+        assert "resolved via skills-vendor" in result.stdout, (
+            "the hook resolved a symlink-dir candidate ahead of the real "
+            f"skills-vendor path (#177); got {result.stdout!r}"
+        )
+
+    @requires_node
+    def test_env_override_still_wins(self, tmp_path: Path) -> None:
+        """Reordering must not demote the one-off override to second place."""
+        repo = _repo(tmp_path)
+        self._plant(
+            repo,
+            "skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs",
+            "resolved via skills-vendor",
+        )
+        stub = _stub_driver(repo, exit_code=1, findings="  - resolved via env\n")
+        result = _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
+        assert "resolved via env" in result.stdout, result.stdout
+
+    def test_help_documents_the_order_it_uses(self) -> None:
+        """The --help block is the only place the order is stated in prose."""
+        body = HOOK.read_text()
+        start = body.index("Resolution of the driver")
+        block = [
+            line.split(". ", 1)[-1].strip()
+            for line in body[start:body.index("Env:", start)].splitlines()
+        ]
+        vendor = block.index("skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs")
+        symlinked = block.index("skills/init-socraticode/scripts/mcp-driver.mjs")
+        assert vendor < symlinked, (
+            "socraticode-health.sh --help still lists the symlink candidates "
+            "ahead of skills-vendor/*/ — the documented order and the loop "
+            "must agree, and both must prefer the real path (#177)"
+        )
 
 
 class TestHookIsInstalled:
