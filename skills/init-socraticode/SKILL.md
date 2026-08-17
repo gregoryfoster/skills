@@ -58,8 +58,11 @@ Confirm all parameters before Phase 1.
 This skill's scripts (`preflight.sh`, `mcp-driver.mjs`) live in *this* skill
 directory. If you're running inside a project that already vendors
 `gregoryfoster/skills` (submodule + symlink), reference them at
-`skills/init-socraticode/scripts/…` and skip this phase. Otherwise clone once to
-a scratch dir and reference scripts through the captured path:
+`skills-vendor/<owner>-<repo>/skills/init-socraticode/scripts/…` — the real
+path that `skills/…` symlinks to, and the one the health hook resolves first
+([#177](https://github.com/gregoryfoster/skills/issues/177)) — and skip this
+phase. Otherwise clone once to a scratch dir and reference scripts through the
+captured path:
 
 ```bash
 set -euo pipefail
@@ -174,9 +177,13 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
      when a match isn't already the canonical command, upgrade that one command
      string in place (propagates the `${CLAUDE_PROJECT_DIR:-.}` fallback to
      legacy installs).
-   - `.claude/hooks/socraticode-health.sh` — copy of
-     `scripts/socraticode-health.sh`, the once-per-day infra check. Dedupe on
-     the distinct marker `socraticode-health`. It reports; it never re-indexes.
+   - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check.
+     **Symlink** it into `skills-vendor/*/…/scripts/`, as `managing-skills`
+     installs its sibling hook into the same directory; **copy** only where
+     there is no `skills-vendor/` tree. A copy freezes at install day and
+     `.skills/doctor.sh` sees only *dangling* symlinks, so on a hook that is
+     silent when clean the drift reads as a healthy install. Dedupe on the
+     distinct marker `socraticode-health`. It reports; it never re-indexes.
    Preserve existing `hooks`/`permissions`/other keys. Never clobber the file.
 4. **Linked projects** (when `LINKED_PROJECTS` is set) → write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
@@ -349,7 +356,7 @@ Present a completion table:
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |
-| SessionStart hooks | `<INSTALL_HOOK>` — `.claude/hooks/socraticode-reminder.sh` (prefetch) · `.claude/hooks/socraticode-health.sh` (once-per-day infra check) |
+| SessionStart hooks | `<INSTALL_HOOK>` — `.claude/hooks/socraticode-reminder.sh` (prefetch) · `.claude/hooks/socraticode-health.sh` (once-per-day infra check, `<symlink/copy>`) |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
 | Index exclusions | `.socraticodeignore` (vendored skill trees excluded) |
 | Index | index run completed (no FAILED last operation) · graph READY · **yield `<ok/low/unknown>`** · artifacts N/N |
