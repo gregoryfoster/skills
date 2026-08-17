@@ -143,10 +143,13 @@ a later run — or the cohort roll-up — attribute a token delta to what caused
 `"cleanup"` teaches nothing; `"demote:Project Layout"` does. Schema and budget
 rationale: [references/budget-and-metrics.md](budget-and-metrics.md).
 
-version makes the cohort look uniform when it isn't, and the roll-up's
-`skill versions in play` footer is what surfaces that.
-
-distinction in [references/budget-and-metrics.md](budget-and-metrics.md).
+Rows also carry `skill_version` and `skill_commit`, so an outcome can be
+attributed to a *skill* change and not just a repo one, plus `repo_commit` —
+which state of *this* tree the row describes, and where the next scheduled seam
+sweep starts. Bump the frontmatter `version` whenever a change would plausibly
+alter what a run does — an unbumped version makes the cohort look uniform when
+it isn't, and the roll-up's `skill versions in play` footer is what surfaces
+that.
 
 ### Reading the trend
 

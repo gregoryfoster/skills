@@ -299,11 +299,9 @@ dead (#139).
 
 - **Every demoted block sits at the right heading depth.** Compare each against its neighbours in the destination: a `###` inserted directly under an existing `##` silently reparents everything below it — 24 pre-existing bullets, on the run that found this — and no gate sees depth.
 
-### Two more Phase 6 notes
+### Two more Phase 6 notes, in full
 
-     Phase 6 reports a wave of dead links — the check catches it, but the run
-     fails rather than succeeding.
-
+- `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes — several cohort repos have structural tests that read `AGENTS.md`.
 
 ## The adoption rule
