@@ -157,8 +157,8 @@ Exit codes:
      sweep below the rejection floor, safety unverified, every repo in both arms
      unscorable for one reason, both arms on one version, an arm split across
      versions, the arms look inverted, the arms are not the ones the
-     registration named, or the registered metric is null across the whole
-     control arm (the proposal added its own instrument)
+     registration named, the registered metric is on no row at all, or it is
+     null across the whole control arm (the proposal added its own instrument)
 
 Every question of the form "is this even an experiment?" is answered BEFORE any
 verdict that would reject, because a REJECT tells the reader to write the change
@@ -1020,13 +1020,26 @@ def attributed(wave):
 
 
 # Null across the WHOLE control arm, and present somewhere in the treatment arm.
-# Both halves are load-bearing: null on both sides is a field nobody records,
-# which is a different problem with a different fix, and the pairs already say so.
+# Both halves are load-bearing: null on both sides is not a proposal that added an
+# instrument, it is a metric this gate cannot read at all — the branch below.
 instrument_only = bool(
     experiment and metric != "closure"
     and attributed(control)
     and all(r["metric_raw"] is None for r in attributed(control))
     and any(r["metric_raw"] is not None for r in attributed(treatment)))
+
+# Recorded on NO scored row anywhere. The registered metric is not a field the
+# ledger carries — a derived rate (`truthfulness` is a share of scheduled rows,
+# and this gate skips every scheduled row), a typo, or a measurement nobody has
+# added yet. Without this branch all three land on "no informative pairs —
+# nothing was measured", which is true, sends the reader to look at pair scoring,
+# and never mentions that the metric was unreadable. That is the silent success
+# this gate exists to stop producing.
+unreadable_metric = bool(
+    experiment and metric != "closure" and not instrument_only
+    and (attributed(treatment) or attributed(control))
+    and all(r["metric_raw"] is None
+            for r in attributed(treatment) + attributed(control)))
 
 # Order matters, and it is the opposite of the obvious one. Every question of
 # the form "is this even an experiment?" is asked BEFORE any verdict that would
@@ -1149,6 +1162,18 @@ elif systemic is not None:
         "proposal is in question — fix the gate and re-score")
     if systemic_hint:
         reasons.append(systemic_hint)
+elif unreadable_metric:
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(
+        f"the registered primary metric `{metric}` is recorded on no scored row "
+        "in either arm — this gate reads a metric as a FIELD off the run it "
+        "scores, and that is not one")
+    reasons.append(
+        "a derived rate is not registerable as it stands: `truthfulness` is a "
+        "share of SCHEDULED rows, and every `baseline*` row is skipped when "
+        "looking for the run to score. Register a field the row carries — see "
+        "the row schema in references/telemetry.md — or add the measurement "
+        "before the experiment that needs it")
 elif instrument_only:
     # Proposal 2 (#117), as a NAMED OUTCOME rather than as asymmetric scoring.
     # A field null on every control-arm row is a field the control version did
@@ -1241,6 +1266,7 @@ if fmt == "json":
         "primary_metric": metric, "metric_direction": direction,
         "saturated_pairs": len(saturated),
         "added_its_own_instrument": instrument_only,
+        "metric_unreadable": unreadable_metric,
         "min_pairs": min_pairs, "reject_floor": reject_floor,
         "systemic_unscorable": systemic,
         # Populated whichever way it lands: a reader distinguishing "no newer

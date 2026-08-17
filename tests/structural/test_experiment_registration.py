@@ -420,6 +420,50 @@ class TestAProposalIsNotJudgedByAnInstrumentItAdded:
         assert "REJECT" in r.stdout, r.stdout
 
 
+class TestAMetricTheLedgerDoesNotCarryIsNamed:
+    """The silent-success case, and the one this backlog is named after.
+
+    `validation-gate.md` registers **truthfulness** — the share of scheduled
+    rows reading `seams: 0` — as the steady-state primary. It is a derived rate
+    over rows, not a field on one, and every scheduled row is a `baseline*` row
+    this gate skips when looking for the run to score. Registered as it stands,
+    it would produce no informative pairs and a verdict reading "nothing was
+    measured", which is true and says nothing about the cause.
+    """
+
+    def test_a_metric_on_no_row_at_all_is_named_as_the_reason(
+            self, tmp_path: Path):
+        roster = _cohort(tmp_path)
+        _register(tmp_path, primary_metric="truthfulness", direction="higher")
+        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
+                   "--experiment", "02", "--format", "json")
+        payload = json.loads(r.stdout)
+        assert payload["verdict"] == "INCONCLUSIVE"
+        assert payload["metric_unreadable"] is True
+        blob = " ".join(payload["reasons"])
+        assert "truthfulness" in blob, blob
+        assert "no scored row" in blob, blob
+
+    def test_it_is_told_apart_from_the_instrument_case(self, tmp_path: Path):
+        """Null in both arms and null in only the control arm are different
+        findings with different fixes, and they were one branch apart from
+        reading identically."""
+        roster = _cohort(tmp_path, t_extra={"seams": 0})
+        _register(tmp_path, primary_metric="seams", direction="lower")
+        payload = json.loads(_score(
+            roster, "--experiments-dir", str(tmp_path / "experiments"),
+            "--experiment", "02", "--format", "json").stdout)
+        assert payload["added_its_own_instrument"] is True
+        assert payload["metric_unreadable"] is False
+
+    def test_it_points_at_the_row_schema(self, tmp_path: Path):
+        roster = _cohort(tmp_path)
+        _register(tmp_path, primary_metric="truthfulness", direction="higher")
+        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
+                   "--experiment", "02")
+        assert "telemetry.md" in r.stdout, r.stdout
+
+
 class TestTheRegisteredDirectionDecidesTheWinner:
     def test_lower_is_better_inverts_who_wins(self, tmp_path: Path):
         roster = _cohort(tmp_path, t_extra={"seams": 2}, c_extra={"seams": 7})
