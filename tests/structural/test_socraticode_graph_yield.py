@@ -28,6 +28,7 @@ imported for its parsers, and the hook is pointed at a stub.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -592,6 +593,18 @@ class TestHookPrefersTheRealDriver:
         )
 
 
+def _health_hook_install_step() -> str:
+    """Step C of the policy reference — where the install is actually written.
+
+    #179 attributes this prose to `SKILL.md` Phase 3 step C. SKILL.md has no
+    lettered steps; Phase 3 item 3 delegates to
+    `references/code-exploration-policy.md`, which is where Step C lives.
+    """
+    body = POLICY_REF.read_text()
+    start = body.index("**Step C —")
+    return body[start:body.index("**It reports; it does not repair.**", start)]
+
+
 class TestHookIsInstalled:
     """A hook nothing installs is a file, not a cadence."""
 
@@ -601,6 +614,61 @@ class TestHookIsInstalled:
             "SKILL.md Phase 3 must install .claude/hooks/socraticode-health.sh "
             "— #107 ask 2 is a cadence, and a script the skill never wires up "
             "runs zero times"
+        )
+
+    def test_it_is_installed_as_a_symlink_not_a_copy(self) -> None:
+        """#179: two vendored hooks in one `.claude/hooks/` installed by
+        opposite mechanisms.
+
+        `managing-skills` installs its sibling refresh hook as a symlink into
+        the vendor, so upstream fixes arrive on the normal submodule refresh.
+        This skill said *copy*, which freezes at the day of install and drifts
+        silently — and `.skills/doctor.sh` scans for DANGLING symlinks, so a
+        copy is a valid regular file it can never see. On a hook that is silent
+        when clean, a stale copy that has stopped detecting something is
+        indistinguishable from a healthy install.
+        """
+        step = _health_hook_install_step()
+        assert "ln -s" in step, (
+            "the health hook install step must create a symlink into "
+            "skills-vendor/, the way managing-skills installs its sibling "
+            f"refresh hook (#179).\n---\n{step}"
+        )
+        assert not re.search(r"^\*\*Step C[^*]*\*\*\s*Copy", step), (
+            "the install step still leads with an unconditional Copy (#179)"
+        )
+
+    def test_the_copy_is_retained_as_the_fallback(self) -> None:
+        """A consumer with no `skills-vendor/` tree has nothing to point at.
+
+        The hook's own driver resolution already makes exactly this branch, so
+        the shape is established rather than invented here.
+        """
+        step = _health_hook_install_step()
+        assert "copy" in step.lower(), (
+            "the copy must survive as the fallback for a consumer that does "
+            f"not vendor via managing-skills (#179).\n---\n{step}"
+        )
+
+    def test_skill_md_does_not_contradict_the_reference(self) -> None:
+        """The contradiction is what let one cohort repo end up with one hook
+        of each kind in the same directory."""
+        body = SKILL_MD.read_text()
+        idx = body.index(".claude/hooks/socraticode-health.sh")
+        window = body[idx:idx + 500]
+        assert "symlink" in window.lower(), (
+            "SKILL.md Phase 3 still describes the health hook as a copy while "
+            f"the reference installs a symlink (#179).\n---\n{window}"
+        )
+
+    def test_managing_skills_still_states_the_rule_being_matched(self) -> None:
+        """Read-only anchor. If the sibling ever stops installing a symlink,
+        this alignment is stale and the failure should say so here rather than
+        surface as two skills disagreeing again."""
+        ms = (REPO_ROOT / "skills" / "managing-skills" / "SKILL.md").read_text()
+        assert "a symlink into the vendor" in ms, (
+            "managing-skills no longer states the symlink rule this skill was "
+            "aligned to (#179) — re-check both before trusting either"
         )
 
     def test_dedupe_marker_is_distinct_from_the_prefetch_hook(self) -> None:
