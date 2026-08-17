@@ -732,11 +732,18 @@ class TestUnreadableDocInTheInventory:
         assert "ERROR could not read docs/D.md" in result.stderr, result.stderr
         assert "doc inventory" in result.stderr, result.stderr
 
-    def test_bash_never_reports_the_failure_in_its_own_words(self, tmp_path: Path):
-        """A raw `line NNN: <path>: Permission denied` leaves the operator to
-        work out which script, which stage, and whether a number was lost."""
+    def test_bashs_own_words_appear_only_as_the_quoted_cause(self, tmp_path: Path):
+        """`line NNN: <path>: Permission denied` standing alone leaves the
+        operator to work out which script, which stage, and whether a number was
+        lost. Quoted inside the ERROR it is the cause, the way `find.err` and
+        `ct.err` are already carried; on a line of its own it is the defect."""
         result = self._measure(self._repo_with_unreadable_doc(tmp_path))
-        assert "measure-context.sh: line" not in result.stderr, result.stderr
+        stray = [
+            line for line in result.stderr.splitlines()
+            if re.search(r"measure-context\.sh: line \d+:", line)
+            and not line.startswith(("ERROR", "WARN", "INFO"))
+        ]
+        assert stray == [], result.stderr
 
 
 class TestDryRunDescribesTheRealCommand:
