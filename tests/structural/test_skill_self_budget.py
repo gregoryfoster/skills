@@ -13,9 +13,10 @@ Three things this gate deliberately is, and is not:
   `pytest tests/structural/`, and `AGENTS.md` already ships gates as structural
   tests (`TestNoBareScriptPaths`, `TestPreShipGateHardening`).
 - **Always-on offline, exact on request.** The always-on tests read the
-  skill's calibrated offline estimate (`.skills/context-token-ratio`, 2.65
-  bytes/token). A gate that only fails when someone happens to hold a key is
-  not a gate — but an estimate is not the contract either, so
+  skill's calibrated offline estimate (`.skills/context-token-ratio`, 2.68
+  bytes/token since #172 refit it over the whole surface). A gate that only
+  fails when someone happens to hold a key is not a gate — but an estimate is
+  not the contract either, so
   `TestTheContractMeasuredExactly` re-runs the same ratchets against
   `count_tokens` when `SKILL_BUDGET_EXACT=1` is set.
 
@@ -82,15 +83,23 @@ and asked which one the ratchet actually names.
 Measuring all eighteen both ways settles it, and disproves the assumption #95
 wrote into this file. #95 recorded that the estimate "errs high, which is the
 safe direction for a gate". That was true of `curating-context` and is false of
-the library: **the estimator runs LOW on 11 of 18 `SKILL.md` files**, by as much
-as **-12.4%** on `init-project-fastapi` (14,940 estimated vs 17,057 exact), and
-by as much as -23.0% on a single reference doc
-(`init-project-fastapi/references/postgres-provisioning.md`, 1,225 vs 1,591).
+the library: **the estimator runs LOW on 12 of 18 `SKILL.md` files**, by as much
+as **-13.4%** on `init-project-fastapi` (14,773 estimated vs 17,057 exact), and
+by as much as -23.9% on a single reference doc
+(`init-project-fastapi/references/postgres-provisioning.md`, 1,211 vs 1,591).
 The cause is visible in the per-file `bytes_per_token`, which ranges 2.32
-(`init-project-fastapi`) to 2.84 (`orchestrating-issue-backlog`) against the
-single global 2.65 the estimator assumes: code-and-path-dense files tokenize
+(`init-project-fastapi`) to 2.84 (`orchestrating-issue-backlog`) across the
+`SKILL.md` files, and 2.04 to 3.03 once the reference docs are included, against
+the single global 2.68 the estimator assumes: code-and-path-dense files tokenize
 denser than the prose the ratio was calibrated on. Low is the permissive
 direction, so the error #95 believed was impossible is the common case.
+
+Those figures are a 2026-08-17 remeasurement of all 87 files, and they are NOT
+the ones this file carried before #159. #172 refit the ratio from 2.65 to 2.68,
+which lowered every estimate by ~1.1% and so made the permissive direction
+uniformly *worse*, not better: -12.4% became -13.4% and -23.0% became -23.9%.
+A refit that improves the fit in aggregate can still widen the tail, and the
+tail is the side a budget gate cares about.
 
 The ruling, and the three questions Batch A raised:
 
@@ -99,10 +108,10 @@ The ruling, and the three questions Batch A raised:
    it *and* `count_tokens` is under it — so the effective bound is always the
    stricter of the two readings, and no one can loosen a ratchet by choosing a
    measurement. "Exact is the contract" was tried first and is wrong: it fails
-   `orchestrating-issue-backlog`, whose estimate runs 1,532 tokens HIGH, in the
+   `orchestrating-issue-backlog`, whose estimate runs 1,252 tokens HIGH, in the
    only gate that actually runs. "Estimate is the contract" is worse: it is a
    number that does not describe what a run loads, and it would let
-   `init-project-fastapi` carry 2,117 unbudgeted real tokens. Binding both costs
+   `init-project-fastapi` carry 2,284 unbudgeted real tokens. Binding both costs
    nothing but honesty about which reading is in force, and every `SKILL.md`
    names its own figure *and* that it holds under both — `"6,000-token ratchet
    (estimate and exact)"` — so the prose and the test describe the same
@@ -114,12 +123,23 @@ The ruling, and the three questions Batch A raised:
    already removes the hazard the margin was proposed to cover: the straddle
    Batch A found now fails rather than passes, because the higher reading is the
    one that has to clear.
-3. **The divergence is pinned.** `ESTIMATE_BAND` records how far the estimator
-   may stray from `count_tokens` before someone has to look. It fails if the
-   ratio knob drifts out of calibration, or if a skill's content mix moves far
+3. **The divergence is pinned — in two bands, one per population.**
+   `POLICY_ESTIMATE_BAND` and `DOC_ESTIMATE_BAND` record how far the estimator
+   may stray from `count_tokens` before someone has to look. Either fails if the
+   ratio knob drifts out of calibration, or if a file's content mix moves far
    enough that the two readings pull apart — turning an invisible hazard into a
-   maintained number. It is also the reason `SKILL_MD_RATCHETS` can carry one
+   maintained number. They are also the reason `SKILL_MD_RATCHETS` can carry one
    integer instead of two: the gap between the readings is bounded and watched.
+
+   There are two constants because #159 found there had only ever been one, and
+   it was asserted against the eighteen `SKILL.md` files alone while this
+   paragraph claimed it pinned the estimator generally. The sixty-nine reference
+   docs — the larger part of the surface, and the part carrying the repo's
+   widest error at -23.9% — were checked by nothing. One band cannot cover both:
+   the doc spread is 37 points wide against the policy spread's 19, so a single
+   band is either red on four well-behaved docs or 15 points too slack for every
+   `SKILL.md`. The constants carry their own measurements and the reasoning for
+   each edge.
 
 Because the ratchet binds the higher reading, an exception's recorded size is
 `max(estimate, exact)` rounded up to the next 50 — which for two of the five is
@@ -173,9 +193,10 @@ SKILL_MD_RATCHETS = {
     # A bootstrap runbook that emits a whole project: pyproject, FastAPI
     # skeleton, structured logging, TDD scaffold, deploy key, systemd unit. Most
     # of the body is literal file content and command sequences, which is why it
-    # tokenizes at 2.32 bytes/token — the densest file in the repo. See the
-    # outlier note below. Bound by its EXACT count; its estimate reads 2,117
-    # lower, the worst calibration gap in the repo.
+    # tokenizes at 2.32 bytes/token — the densest SKILL.md in the repo, though
+    # three of its own reference docs are denser still (2.04 to 2.12). See the
+    # outlier note below. Bound by its EXACT count; its estimate reads 2,284
+    # lower, the worst calibration gap of any SKILL.md.
     "init-project-fastapi": 17_100,
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Grew during
@@ -188,7 +209,7 @@ SKILL_MD_RATCHETS = {
     "managing-skills": 8_750,
     # A ten-step orchestration procedure with scoring rubrics, conflict-zone
     # analysis, and batch-plan templates. The largest file in the repo. See the
-    # outlier note below. Bound by its ESTIMATE, which reads 1,532 higher than
+    # outlier note below. Bound by its ESTIMATE, which reads 1,252 higher than
     # count_tokens — the reason this file learned that "exact is the contract"
     # does not survive contact with the gate that actually runs.
     #
@@ -252,9 +273,15 @@ SKILL_MD_RATCHETS = {
 # the artifact rather than the rule: the ledger became an indexed journal, one
 # file per session under `references/process-log/<year>/`, and the per-doc
 # budget — which measures with `find`, recursively — now binds each entry on its
-# own. The index reads ~6,600 tokens and the largest entry ~6,100, against
-# 10,000. Nothing is exempt, and the append-only artifact still grows without
-# any file growing.
+# own. Nothing is exempt, and the append-only artifact still grows without any
+# file growing.
+#
+# The index is nonetheless the doc to watch, and it has moved since #152: at
+# 2026-08-17 it reads 8,018 estimated / 8,050 exact against 10,000, up from the
+# ~6,600 recorded here, while the largest single entry reads 6,010 / 5,845. The
+# index is the one file in this tree that every journaling session appends to,
+# so it is the one whose growth is structural rather than incidental. When it
+# crosses, splitting it by year is the move — not an exception.
 #
 # `None` would mean exempt; any other value is a hard ceiling. The mechanism is
 # kept, and proven by TestTheExemptionMechanism, because the next doc that needs
@@ -276,12 +303,65 @@ def _doc_over(doc: dict, doc_budget: int) -> bool:
     return doc["tokens"] > ceiling
 
 # How far the offline estimate may stray from count_tokens before someone has to
-# look. Measured across all eighteen SKILL.md files on 2026-08-13: the estimator
-# ran from -12.4% (init-project-fastapi, the permissive direction and the one
-# that matters) to +7.2% (orchestrating-issue-backlog, reviewing-architecture).
-# Widening this band is not a fix — it is the record of a blind spot getting
-# bigger, and the reason to recalibrate `.skills/context-token-ratio` instead.
-ESTIMATE_BAND = (-0.15, 0.15)
+# look. TWO bands, because the surface is two populations and #159 found that one
+# number cannot honestly describe both.
+#
+# Widening either is not a fix — it is the record of a blind spot getting bigger,
+# and the reason to recalibrate `.skills/context-token-ratio` instead. Both are
+# set from a full both-ways measurement of all 87 files (18 SKILL.md + 69
+# reference docs) on 2026-08-17, at the 2.68 ratio in force since #172.
+#
+# POLICY — the eighteen SKILL.md files. Measured -13.4%
+# (`init-project-fastapi`, the permissive direction and the one that matters) to
+# +5.8% (`reviewing-architecture`). Kept at ±15%: the low edge now has only 1.6
+# points of headroom, which is the band doing its job rather than a reason to
+# move it. If `init-project-fastapi` crosses, the answer is the ratio, not this.
+POLICY_ESTIMATE_BAND = (-0.15, 0.15)
+
+# DOCS — the sixty-nine reference docs, and the population #159 found uncovered
+# while the docstring above claimed the estimator was pinned generally. Measured
+# -23.9% (`init-project-fastapi/references/postgres-provisioning.md`, mostly TOML
+# and Python) to +13.0% (`reviewing-architecture/references/dimensions.md`, prose
+# and tables). Four docs sit outside the policy band — three under
+# `init-project-fastapi/references/`, one under `vendoring-openapi-client/` —
+# which is what makes reusing the policy band here a false negative machine
+# rather than a stricter gate.
+#
+# Wider is not laxer here, for two reasons:
+#
+# - Docs carry the wider content mix by construction. A SKILL.md is always part
+#   prose; a reference doc can be a single TOML file or a single rubric table,
+#   and per-file bytes_per_token spans 2.04 to 3.03 across this population
+#   against 2.32 to 2.84 across the SKILL.md files.
+# - Nothing depends on this band to keep a doc under budget.
+#   `TestTheContractMeasuredExactly` already binds every doc's EXACT count to the
+#   per-doc budget, so this band is a calibration tripwire, not the safety net.
+#   The one place it does gate — `_stale_doc_exceptions` — is made stricter by
+#   widening it, not looser.
+#
+# Each edge sits 6-7 points beyond the measured extreme. That is deliberate and
+# it is sized: refitting the ratio from 2.65 to 2.68 in #172 moved every reading
+# here by about 1.1 points, so a band with one point of slack would be a band
+# that fires on the next recalibration rather than on a content change.
+DOC_ESTIMATE_BAND = (-0.30, 0.20)
+
+
+def _stale_doc_exceptions(measured: dict[str, int], doc_budget: int) -> list[str]:
+    """Numeric doc exceptions whose file is now unambiguously under the budget.
+
+    Discounted by DOC_ESTIMATE_BAND, not the policy band (#159). These are doc
+    rows and a doc row's estimate runs as much as 24% low here, so the policy
+    band's -15% would call an exception stale at 8,500 estimated tokens — a file
+    that can be over 11,000 exactly and still needs the exception it is about to
+    lose. `None` entries are exempt by construction and cannot go stale.
+    """
+    unambiguous = doc_budget * (1 + DOC_ESTIMATE_BAND[0])
+    return [
+        path for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
+        if ceiling is not None
+        and path in measured
+        and measured[path] <= unambiguous
+    ]
 
 
 def ratchet_for(skill: str) -> int:
@@ -294,7 +374,7 @@ def ratchet_phrase(skill: str) -> str:
     Naming the METHOD alongside the figure is not decoration: the always-on gate
     reads an estimate and the credential-gated one reads count_tokens, so prose
     that said "6,000 tokens" and stopped would leave a reader unable to tell
-    which of two numbers, up to 12% apart, it meant.
+    which of two numbers, up to 13% apart, it meant.
     """
     return f"{ratchet_for(skill):,}-token ratchet (estimate and exact)"
 
@@ -311,9 +391,10 @@ def estimate_caveat(skill: str) -> str:
     return (
         "This is the calibrated OFFLINE ESTIMATE at "
         f"{RATIO_KNOB.name} bytes/token, not an exact count — pre-commit has "
-        "no ANTHROPIC_API_KEY. Across this library it runs anywhere from 12% "
-        "low to 7% high, and the ratchet binds BOTH readings — so clearing "
-        "this one is necessary, not sufficient. The other:\n  "
+        "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 6% high "
+        "on SKILL.md files and 24% low to 13% high on reference docs, and the "
+        "budget binds BOTH readings — so clearing this one is necessary, not "
+        "sufficient. The other:\n  "
         + exact_cmd(skill)
     )
 
@@ -483,7 +564,7 @@ class TestTheGateItself:
         only where the estimate is under by more than the estimator can be
         wrong.
         """
-        unambiguous = SKILL_MD_STANDARD * (1 + ESTIMATE_BAND[0])
+        unambiguous = SKILL_MD_STANDARD * (1 + POLICY_ESTIMATE_BAND[0])
         stale = [
             s for s in SKILL_MD_RATCHETS
             if surfaces[s]["policy"]["tokens"] <= unambiguous
@@ -504,17 +585,11 @@ class TestTheGateItself:
         and cannot go stale — they assert nothing to outgrow.
         """
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
-        unambiguous = doc_budget * (1 + ESTIMATE_BAND[0])
         measured = {
             d["path"]: d["tokens"]
             for skill in SKILLS for d in surfaces[skill]["docs"]
         }
-        stale = [
-            path for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
-            if ceiling is not None
-            and path in measured
-            and measured[path] <= unambiguous
-        ]
+        stale = _stale_doc_exceptions(measured, doc_budget)
         assert not stale, (
             f"these docs now fit the {doc_budget:,}-token per-doc budget and "
             f"no longer need an exception: {stale}. Delete their entries from "
@@ -606,6 +681,37 @@ class TestTheExemptionMechanism:
     def test_an_unlisted_doc_gets_the_default_budget(self):
         assert _doc_over({"path": "not/listed.md", "tokens": 10_001}, 10_000) is True
         assert _doc_over({"path": "not/listed.md", "tokens": 10_000}, 10_000) is False
+
+    def test_a_doc_the_policy_band_clears_is_not_called_stale(self):
+        """#159. The staleness guard must discount by the DOC population's error.
+
+        A doc reading 8,500 tokens offline clears a 10,000 ceiling discounted by
+        the SKILL.md band's -15%, so today's guard reports its exception stale
+        and tells a maintainer to delete it. But a reference doc's estimate runs
+        as much as 24% low on this library, so 8,500 estimated can be over
+        11,000 exactly — the exception is doing its job and deleting it would
+        put the doc over budget in silence.
+        """
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["x/y.md"] = 10_000
+            assert _stale_doc_exceptions({"x/y.md": 8_500}, 10_000) == [], (
+                "the doc staleness guard is discounting by the SKILL.md band, "
+                "not the wider band reference docs actually estimate within"
+            )
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
+
+    def test_a_doc_no_band_could_excuse_is_still_called_stale(self):
+        """The guard still has to fire, or widening it has disabled it."""
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["x/y.md"] = 10_000
+            assert _stale_doc_exceptions({"x/y.md": 5_000}, 10_000) == ["x/y.md"]
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
 
     def test_the_exemption_is_scoped_to_the_named_path(self):
         """The exemption must not leak to a sibling in the same directory."""
@@ -724,7 +830,7 @@ class TestTheContractMeasuredExactly:
             f"skills/{skill}/SKILL.md is {policy['tokens']:,} EXACT tokens "
             f"against its {ratchet:,}-token ratchet "
             f"({policy['tokens'] - ratchet:,} over).\n\n"
-            "The offline gate may well be green: the estimator runs up to 12% "
+            "The offline gate may well be green: the estimator runs up to 13% "
             "low on this library. The ratchet binds both readings, so this one "
             "failing is enough."
         )
@@ -736,7 +842,7 @@ class TestTheContractMeasuredExactly:
         """The per-doc budget binds both readings too.
 
         The estimator's largest errors in this repo are on reference docs, not
-        on SKILL.md — up to -23% — so a doc gate that only ever saw the
+        on SKILL.md — up to -23.9% — so a doc gate that only ever saw the
         estimate would have the widest blind spot in the file.
         """
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
@@ -764,7 +870,7 @@ class TestTheContractMeasuredExactly:
         est = surfaces[skill]["policy"]["tokens"]
         exact = exact_surfaces[skill]["policy"]["tokens"]
         drift = (est - exact) / exact
-        low, high = ESTIMATE_BAND
+        low, high = POLICY_ESTIMATE_BAND
         assert low <= drift <= high, (
             f"skills/{skill}/SKILL.md: offline estimate {est:,} vs exact "
             f"{exact:,} is {drift:+.1%}, outside the pinned "
@@ -772,8 +878,52 @@ class TestTheContractMeasuredExactly:
             "Below the band means the always-on gate is passing files that are "
             "over — recalibrate .skills/context-token-ratio (currently "
             f"{RATIO_KNOB.read_text().strip()} bytes/token) against this "
-            "library rather than widening ESTIMATE_BAND. Above it only wastes "
-            "headroom, but is the same calibration drift."
+            "library rather than widening POLICY_ESTIMATE_BAND. Above it only "
+            "wastes headroom, but is the same calibration drift."
+        )
+
+    @pytest.mark.parametrize("skill", SKILLS)
+    def test_the_offline_estimate_tracks_the_exact_count_for_docs(
+        self, skill: str, surfaces: dict, exact_surfaces: dict
+    ):
+        """#159: the same pin, for the population it was never applied to.
+
+        The band was asserted only against the eighteen SKILL.md files, while
+        the module docstring claimed it pinned the estimator generally. The
+        reference docs are the larger population (sixty-nine of the surface's
+        eighty-seven files) AND carry the wider error, so the widest divergence
+        in the repo sat outside the only assertion that would have flagged it.
+
+        A doc row is checked against DOC_ESTIMATE_BAND, not the policy band. The
+        two are separate constants because the measured populations do not
+        overlap enough for one to describe both, and collapsing them would mean
+        either failing four docs that are behaving normally or loosening the
+        SKILL.md band by 15 points to accommodate them.
+        """
+        exact_rows = {
+            d["path"]: d["tokens"] for d in exact_surfaces[skill]["docs"]
+        }
+        low, high = DOC_ESTIMATE_BAND
+        outside = []
+        for d in surfaces[skill]["docs"]:
+            exact = exact_rows[d["path"]]
+            drift = (d["tokens"] - exact) / exact
+            if not low <= drift <= high:
+                outside.append((d["path"], d["tokens"], exact, drift))
+        assert not outside, (
+            f"skills/{skill} reference docs outside the pinned "
+            f"{low:+.0%}..{high:+.0%} DOC band:\n"
+            + "\n".join(
+                f"  {p} estimate {e:,} vs exact {x:,} is {dr:+.1%}"
+                for p, e, x, dr in outside
+            )
+            + "\n\nBelow the band means the always-on gate is pricing this doc "
+            "well under what a run actually loads. Recalibrate "
+            ".skills/context-token-ratio (currently "
+            f"{RATIO_KNOB.read_text().strip()} bytes/token), or give the file "
+            "its own anchor in .skills/context-token-counts, rather than "
+            "widening DOC_ESTIMATE_BAND — this band is already 6-7 points wider "
+            "than the measured spread it was set from."
         )
 
 
