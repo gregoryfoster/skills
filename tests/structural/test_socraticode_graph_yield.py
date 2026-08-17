@@ -421,6 +421,27 @@ class TestHealthHook:
         )
 
     @requires_node
+    @pytest.mark.parametrize(
+        "body, id_",
+        [("process.exit(1);\n", "clean-exit"), ("throw new Error('boom');\n", "crash")],
+    )
+    def test_the_findings_scratch_file_never_survives(
+        self, tmp_path: Path, body: str, id_: str
+    ) -> None:
+        """It lives in the COMMON git dir now (#180), shared by every checkout.
+
+        A leftover is not cosmetic there: `git status` does not see inside
+        `.git`, so an orphan from a crashed run accumulates unnoticed in the
+        directory every worktree of the repo also writes to.
+        """
+        repo = _repo(tmp_path)
+        stub = repo / "stub.mjs"
+        stub.write_text(body)
+        _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
+        leftovers = list((repo / ".git").glob("socraticode-health.findings*"))
+        assert leftovers == [], f"{id_}: left {leftovers} behind in .git"
+
+    @requires_node
     def test_force_bypasses_the_lock(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)
         stub = _stub_driver(repo, exit_code=1, findings=self.FINDINGS)

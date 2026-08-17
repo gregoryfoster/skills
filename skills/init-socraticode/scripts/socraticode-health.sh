@@ -200,7 +200,15 @@ export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 # Findings land on the driver's stderr, one per line; the JSON verdict is on
 # stdout and goes to the log, not to the session — a session-context injection
 # should be the sentence, not the payload.
-FINDINGS_FILE="$gitdir/socraticode-health.findings"
+#
+# Per-PID, and removed on every exit path. $gitdir is the COMMON git dir now
+# (#180), so this file is shared by every checkout of the repo: two sessions
+# starting in the same second both clear the lock before either stamps it, and
+# a single fixed name would let one truncate the other's findings mid-report.
+# The lock makes that rare, not impossible, and the failure would be a garbled
+# report — which is the one thing a reporter must not produce.
+FINDINGS_FILE="$gitdir/socraticode-health.findings.$$"
+trap 'rm -f "${FINDINGS_FILE:-}"' EXIT
 RC=0
 # `${A[@]+"${A[@]}"}`, not `"${A[@]}"`: under `set -u`, bash 3.2 — which is what
 # macOS ships — treats an empty array expansion as an unbound variable and kills
@@ -219,6 +227,7 @@ fi
 
 _log "health-check exited $RC"
 cat "$FINDINGS_FILE" >>"$LOG" 2>/dev/null || true
-rm -f "$FINDINGS_FILE"
+# Removal is the EXIT trap's job — it also covers the _hook_panic path, which
+# used to leave the file behind in the shared .git.
 
 exit 0
