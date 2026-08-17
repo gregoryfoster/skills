@@ -284,6 +284,22 @@ def _doc_over(doc: dict, doc_budget: int) -> bool:
 ESTIMATE_BAND = (-0.15, 0.15)
 
 
+def _stale_doc_exceptions(measured: dict[str, int], doc_budget: int) -> list[str]:
+    """Numeric doc exceptions whose file is now unambiguously under the budget.
+
+    Extracted verbatim from `test_no_doc_exception_survives_the_doc_conforming`
+    so the band it judges against is a thing a test can name. `None` entries are
+    exempt by construction and cannot go stale — they assert nothing to outgrow.
+    """
+    unambiguous = doc_budget * (1 + ESTIMATE_BAND[0])
+    return [
+        path for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
+        if ceiling is not None
+        and path in measured
+        and measured[path] <= unambiguous
+    ]
+
+
 def ratchet_for(skill: str) -> int:
     return SKILL_MD_RATCHETS.get(skill, SKILL_MD_STANDARD)
 
@@ -504,17 +520,11 @@ class TestTheGateItself:
         and cannot go stale — they assert nothing to outgrow.
         """
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
-        unambiguous = doc_budget * (1 + ESTIMATE_BAND[0])
         measured = {
             d["path"]: d["tokens"]
             for skill in SKILLS for d in surfaces[skill]["docs"]
         }
-        stale = [
-            path for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
-            if ceiling is not None
-            and path in measured
-            and measured[path] <= unambiguous
-        ]
+        stale = _stale_doc_exceptions(measured, doc_budget)
         assert not stale, (
             f"these docs now fit the {doc_budget:,}-token per-doc budget and "
             f"no longer need an exception: {stale}. Delete their entries from "
@@ -606,6 +616,37 @@ class TestTheExemptionMechanism:
     def test_an_unlisted_doc_gets_the_default_budget(self):
         assert _doc_over({"path": "not/listed.md", "tokens": 10_001}, 10_000) is True
         assert _doc_over({"path": "not/listed.md", "tokens": 10_000}, 10_000) is False
+
+    def test_a_doc_the_policy_band_clears_is_not_called_stale(self):
+        """#159. The staleness guard must discount by the DOC population's error.
+
+        A doc reading 8,500 tokens offline clears a 10,000 ceiling discounted by
+        the SKILL.md band's -15%, so today's guard reports its exception stale
+        and tells a maintainer to delete it. But a reference doc's estimate runs
+        as much as 24% low on this library, so 8,500 estimated can be over
+        11,000 exactly — the exception is doing its job and deleting it would
+        put the doc over budget in silence.
+        """
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["x/y.md"] = 10_000
+            assert _stale_doc_exceptions({"x/y.md": 8_500}, 10_000) == [], (
+                "the doc staleness guard is discounting by the SKILL.md band, "
+                "not the wider band reference docs actually estimate within"
+            )
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
+
+    def test_a_doc_no_band_could_excuse_is_still_called_stale(self):
+        """The guard still has to fire, or widening it has disabled it."""
+        exempt = dict(DOC_BUDGET_EXCEPTIONS)
+        try:
+            DOC_BUDGET_EXCEPTIONS["x/y.md"] = 10_000
+            assert _stale_doc_exceptions({"x/y.md": 5_000}, 10_000) == ["x/y.md"]
+        finally:
+            DOC_BUDGET_EXCEPTIONS.clear()
+            DOC_BUDGET_EXCEPTIONS.update(exempt)
 
     def test_the_exemption_is_scoped_to_the_named_path(self):
         """The exemption must not leak to a sibling in the same directory."""
@@ -774,6 +815,41 @@ class TestTheContractMeasuredExactly:
             f"{RATIO_KNOB.read_text().strip()} bytes/token) against this "
             "library rather than widening ESTIMATE_BAND. Above it only wastes "
             "headroom, but is the same calibration drift."
+        )
+
+    @pytest.mark.parametrize("skill", SKILLS)
+    def test_the_offline_estimate_tracks_the_exact_count_for_docs(
+        self, skill: str, surfaces: dict, exact_surfaces: dict
+    ):
+        """#159: the same pin, for the population it was never applied to.
+
+        `ESTIMATE_BAND` was asserted only against the eighteen SKILL.md files,
+        while the module docstring claimed it pinned the estimator generally.
+        The reference docs are the larger population AND carry the wider error,
+        so the widest divergence in the repo sat outside the only assertion that
+        would have flagged it.
+        """
+        exact_rows = {
+            d["path"]: d["tokens"] for d in exact_surfaces[skill]["docs"]
+        }
+        low, high = ESTIMATE_BAND
+        outside = []
+        for d in surfaces[skill]["docs"]:
+            exact = exact_rows[d["path"]]
+            drift = (d["tokens"] - exact) / exact
+            if not low <= drift <= high:
+                outside.append((d["path"], d["tokens"], exact, drift))
+        assert not outside, (
+            f"skills/{skill} reference docs outside the pinned "
+            f"{low:+.0%}..{high:+.0%} band:\n"
+            + "\n".join(
+                f"  {p} estimate {e:,} vs exact {x:,} is {dr:+.1%}"
+                for p, e, x, dr in outside
+            )
+            + "\n\nBelow the band means the always-on gate is passing docs that "
+            "are over. Recalibrate .skills/context-token-ratio (currently "
+            f"{RATIO_KNOB.read_text().strip()} bytes/token) rather than widening "
+            "the band."
         )
 
 
