@@ -319,9 +319,11 @@ a later run, or the cohort roll-up, attribute a token delta to what caused it.
 vocabulary: [references/telemetry.md](references/telemetry.md).
 
 Rows also carry `skill_version` and `skill_commit`, so an outcome can be
-attributed to a *skill* change and not just a repo one. Bump the frontmatter
-`version` whenever a change would plausibly alter what a run does — an unbumped
-version makes the cohort look uniform when it isn't.
+attributed to a *skill* change and not just a repo one, plus `repo_commit` —
+which state of *this* tree the row describes, and where the next scheduled seam
+sweep starts. Bump the frontmatter `version` whenever a change would plausibly
+alter what a run does — an unbumped version makes the cohort look uniform when
+it isn't.
 
 Commit the ledger with the edits, on a branch, and open a PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated

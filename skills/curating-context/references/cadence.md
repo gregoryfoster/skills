@@ -21,7 +21,7 @@ comes from measuring rather than curating:
 |---|---|
 | Regrowth rate — `delta_tokens / delta_days` | a measurement |
 | Budget adherence — `over_budget` over time | a measurement |
-| Seam accrual — `seams` | `check-seams.sh`, which is mechanical |
+| Seam accrual — `seams` | `check-seams.sh`, which is mechanical — but read *What the scheduled `seams` count means* below before treating it as pure accrual |
 | Work to restore — `actions` vs tokens recovered | real curations |
 | ~~Live-surface trend — `tokens_live`~~ | **refuted**, see [rejected-changes.md](rejected-changes.md) |
 
@@ -77,12 +77,17 @@ the retry loop was found not to work.
 in `.gitattributes`, appending to whatever is already there. With it, the same
 race rebases cleanly and both rows survive in order.
 
-The path tracks `--ledger`, and so do the workflow's `git add` and the
-recorder's own `--ledger` — three places that must name one file, because a
-cadence measuring into one path and staging another records nothing. Re-running
-the installer without the flag reads the ledger back out of the installed
-workflow rather than reverting to the default, and changing it removes the line
-it supersedes.
+The path tracks `--ledger`, and so do the workflow's `git add`, the recorder's
+own `--ledger`, and the seam sweep's `--base-ledger` — four places that must name
+one file, because a cadence measuring into one path and staging another records
+nothing, and a sweep reading a third finds no predecessor and reports an empty
+interval every week. The renderer interpolates one variable into all four, so
+they cannot drift through the installer; hand-editing the rendered workflow is
+the only way to break it, which is why the file says to re-run the installer
+instead. Re-running it without the flag reads the ledger back out of the
+installed workflow — from the `git add --` line, which is why adding
+`--base-ledger` did not disturb it — rather than reverting to the default, and
+changing it removes the line it supersedes.
 
 **Commit it before the first concurrent run.** Git resolves a merge using the
 attributes in the tree being *replayed onto*, so an attribute added after the
@@ -93,6 +98,69 @@ tells you to stage both files together.
 `.gitattributes` as it found it — the file itself goes only if nothing else was
 in it. The recorded rows stay either way: they are the series, and removing the
 mechanism that adds to it is not a reason to discard what it already collected.
+
+## What the scheduled `seams` count means
+
+The cadence used to sweep with `--base HEAD`. `check-seams.sh` reads the base
+policy file with `git show "$BASE:$REL"` and compares it against the policy file
+in the **working tree**, so on a clean CI checkout those are the same content
+and the diff is empty. *moved-title* — references to a title that left the
+policy file — is computed from that diff and was therefore **zero in every
+scheduled run, in every repo, forever, by construction**. A curation that
+relocated a section and left danglers behind contributed nothing to any weekly
+row, because by the next run the relocation was already in `HEAD`
+([#169](https://github.com/gregoryfoster/skills/issues/169)).
+
+**Two classes, not one.** The source sweep is gated on the same set — `if src
+and moved:` — so an empty `moved` skipped every tracked file outside the docs
+tree and the report printed *"N tracked source file(s) not swept"*. The
+scheduled run had never opened a source file in any repo, which also takes
+`source-back-reference` with it: the class [#113](https://github.com/gregoryfoster/skills/issues/113)
+added after 16 stale docstrings shipped across 13 files under a clean exit.
+
+The sweep now passes `--base-ledger`, which takes its base from the **newest
+ledger row carrying a `repo_commit`** — the state of the tree at the last
+recorded measurement. So each week's sweep spans the interval since the week
+before.
+
+**`seams` is a sum of two different quantities, and always was.** Widening the
+base widens only half of it:
+
+| Class | Scope |
+|---|---|
+| back-references — the policy file named in a live reference doc | **standing**: read off the live surface, identical under any base |
+| duplicate headings, provenance baked into a heading | **standing**, likewise |
+| moved-title — a reference to a title that left the policy file | **interval**: since the previous measurement |
+| source refs in tracked source outside the docs tree | **interval**: gated on the same "something moved" set |
+
+So the honest reading of a scheduled row is *"seams standing on the surface,
+plus seams accrued since the last measurement"* — not a pure accrual, and not a
+pure state. `check-seams.sh --help` says the same thing next to the exit codes,
+and the report's `seam_base:` line names the revision each count started from.
+
+**The interval half is a flow, not a stock — sum it, do not read the latest.**
+A moved-title hit is a *pulse*. If week 2 reports one and nobody fixes it, week
+3's base is week 2's commit, the title left the policy file before that, and the
+hit is gone from week 3's count with the dangler still in the tree. The standing
+half behaves the opposite way: a back-reference persists in every row until
+somebody fixes or acknowledges it. So a reader comparing two rows is comparing a
+stock plus a flow, and anything aggregating `seams` across a series should
+**sum** the interval contribution rather than take the latest value.
+
+**The first run has no predecessor, and says so.** With no ledger, no rows, or
+no row carrying a `repo_commit` — which is every repo adopting the cadence, and
+every ledger written before the field existed — the base is `HEAD`, the interval
+is empty, the two interval classes contribute nothing, and the report prints a
+`note:` saying exactly that. The row that run feeds records its own
+`repo_commit`, so the *second* scheduled run is the first one with a real
+interval. A recorded commit that is not in the repo's history — a rewrite, a
+shallow clone — falls back the same way with a `WARN` naming the commit, rather
+than failing the sweep and losing the classes that do not need a base.
+
+**The interval start is derivable, not stored twice.** The row records only
+`repo_commit`; the base a given row's sweep used is the *previous* row's
+`repo_commit`, and `null` there means that row's sweep had an empty interval.
+The one case where that inference is wrong is the loud fallback above.
 
 ## The workflow
 
@@ -191,9 +259,17 @@ jobs:
 
       # Exits 3 when there are new seams, which is a finding rather than a
       # failure here — the count goes on the row either way.
+      #
+      # --base-ledger, NOT --base HEAD. On a clean checkout the policy file at
+      # HEAD and the one in the working tree are the same content, so the diff
+      # is empty and the one class that needs a base — moved-title — was zero
+      # in every scheduled run, in every repo, forever (#169). The ledger's
+      # newest repo_commit is the previous measurement, so the sweep spans the
+      # interval since it. With no such row the report SAYS the interval is
+      # empty rather than presenting a standing count as a week's accrual.
       - name: Sweep the seams
         run: |
-          bash "$SKILL_SCRIPTS/check-seams.sh" --base HEAD >/tmp/seams.txt 2>&1 || true
+          bash "$SKILL_SCRIPTS/check-seams.sh" --base-ledger ".skills/context-metrics.jsonl" >/tmp/seams.txt 2>&1 || true
           tail -20 /tmp/seams.txt
           echo "SEAMS=$(sed -n 's/^seams: \([0-9]*\)$/\1/p' /tmp/seams.txt | tail -1)" >>"$GITHUB_ENV"
           echo "SEAMS_ACKED=$(sed -n 's/^seams_acked: \([0-9]*\)$/\1/p' /tmp/seams.txt | tail -1)" >>"$GITHUB_ENV"

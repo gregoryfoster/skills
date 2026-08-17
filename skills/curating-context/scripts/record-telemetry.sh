@@ -103,6 +103,15 @@ Row schema (one JSON object per line):
                     cohort A/B groups by. Null for rows predating the field.
   skill_commit      short commit of the skill repo, so an unbumped version is
                     still attributable after the fact
+  repo_commit       short commit of THIS repo at measurement time — the state of
+                    the tree the rest of the row describes. Distinct from
+                    skill_commit, which names the skill's repo and can never
+                    stand in for it. The scheduled seam sweep reads this back
+                    out of the previous row (`check-seams.sh --base-ledger`) to
+                    span the interval since the last measurement, so a row
+                    without it sends the next sweep back to an empty interval.
+                    Null when the measurement was not taken inside a git repo
+                    with a commit, and null on rows predating the field
   lines, bytes      policy-file size
   budget            budget in force for this run
   over_budget       tokens > budget
@@ -297,17 +306,26 @@ else
 fi
 [ -n "$REPO_NAME" ] || REPO_NAME="$(basename "$ROOT")"
 
+# WHICH STATE of this repo the row describes. `skill_commit` is the skill's
+# commit and was never a candidate — the two repos are different repos.
+#
+# The scheduled seam sweep reads this back out of the previous row to bound the
+# week it measures (#169). Empty here becomes null on the row rather than a
+# guess: a fabricated revision would send the next sweep to a tree nobody
+# measured, and null already means "cannot name an interval" to the reader.
+REPO_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || REPO_COMMIT=""
+
 mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
 [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" <<'PY' || RC=$?
 import datetime as dt
 import json
 import sys
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
- no_loss, seams, seams_acked, no_loss_warrants) = sys.argv[1:14]
+ no_loss, seams, seams_acked, no_loss_warrants, repo_commit) = sys.argv[1:15]
 
 try:
     m = json.load(open(src, encoding="utf-8"))
@@ -349,6 +367,10 @@ row = {
     "tokens_exact": policy["tokens_exact"],
     "skill_version": skill.get("version") or None,
     "skill_commit": skill.get("commit") or None,
+    # The repo's own commit, not the skill's (#169). The next scheduled sweep
+    # takes its `--base` from here, which is what makes `seams` span a week
+    # instead of an empty diff.
+    "repo_commit": repo_commit or None,
     "lines": policy["lines"],
     "bytes": policy["bytes"],
     "budget": policy["budget"],

@@ -26,6 +26,23 @@ Usage:
 Options:
   --base REF       Revision holding the pre-curation policy file. Default: HEAD.
                    Use the branch point when the curation spans several commits.
+  --base-ledger PATH
+                   Take the base from the newest row in the telemetry ledger
+                   PATH that carries a `repo_commit`, so the sweep spans the
+                   interval since the last recorded measurement. This is what
+                   the scheduled cadence passes, and it exists because `--base
+                   HEAD` on a clean checkout compares the policy file against
+                   itself: the diff is empty, so the moved-title class — the
+                   only one that needs a base — was structurally zero in every
+                   scheduled run, forever (#169).
+                   Mutually exclusive with --base; naming a revision by hand is
+                   how you override this deliberately.
+                   NO PREDECESSOR is defined rather than fallen into: with no
+                   ledger, no rows, or no row carrying a `repo_commit`, the base
+                   is HEAD, the report SAYS the interval is empty, and the
+                   base-dependent classes contribute nothing that run. A commit
+                   that is not in this repo's history — a rewrite, a shallow
+                   clone — falls back the same way with a WARN naming it.
   --file PATH      Policy file. Default: AGENTS.md, else CLAUDE.md.
   --docs-dir DIR   Reference-doc root. Default: CONTEXT_DOCS_DIR, then
                    .skills/context-docs-dir, then docs.
@@ -108,14 +125,33 @@ What it reports, in four classes:
                    anything binary or over 500 KB.
 
 Sections whose titles still exist in the policy file are not reported as moved.
-The report goes to stdout in full. The last two lines are machine-readable:
 
+WHAT THE BASE CHANGES, and what it does not: back-references and the heading
+defects are read off the live surface and are a STANDING count, the same under
+any base. moved-title, and the source classes it gates, are scoped to what left
+the policy file since --base — an INTERVAL count. `seams` is the sum, so it is
+never purely an accrual, and widening the base widens only half of it.
+
+The report goes to stdout in full. The last four lines are machine-readable:
+
+  seam_interval: empty | <REF>..worktree
+  seam_base: <REF>
   seams_acked: <M>
   seams: <N>
 
-which are the numbers to record with `record-telemetry.sh --seams N
---seams-acked M` after the hits have been resolved or judged legitimate (re-run
-to confirm the counts).
+The two counts are what `record-telemetry.sh --seams N --seams-acked M` records
+after the hits have been resolved or judged legitimate (re-run to confirm them).
+`seam_base` is the revision they were measured from — not recorded, because the
+row already carries `repo_commit` and the previous row's is where this one
+started. `seam_interval` says whether that base spans anything: `empty` is a
+first run, a ledger with no `repo_commit`, or the rewrite fallback, and in all
+three the base-dependent classes contributed nothing. `seam_base: HEAD` alone
+cannot tell those apart from a deliberate `--base HEAD`.
+
+The counts are matched by anchored PREFIX (`^seams:`, `^seams_acked:`), not by
+offset from the end — the cadence template's three copies all use `sed -n
+'s/^seams: \([0-9]*\)$/\1/p' | tail -1`. Keep the prefixes stable; adding a line
+above them is safe.
 
 A hit judged LEGITIMATE goes in the acknowledgement file, not in the bin: a
 reference to the policy file is often correct navigation, and deleting it to
@@ -138,6 +174,8 @@ USAGE
 }
 
 BASE="HEAD"
+BASE_SET=0
+BASE_LEDGER=""
 POLICY=""
 DOCS_DIR=""
 ACK_FILE=".skills/context-seams-ok"
@@ -145,7 +183,8 @@ SWEEP_SOURCE=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --base) BASE="${2:?--base needs a revision}"; shift 2 ;;
+    --base) BASE="${2:?--base needs a revision}"; BASE_SET=1; shift 2 ;;
+    --base-ledger) BASE_LEDGER="${2:?--base-ledger needs a path}"; shift 2 ;;
     --file) POLICY="${2:?--file needs a path}"; shift 2 ;;
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
     --no-source) SWEEP_SOURCE=0; shift ;;
@@ -154,6 +193,21 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# Refused rather than ranked. A precedence rule here would be invisible at the
+# call site: whichever of the two lost, the sweep would still print a report and
+# a count, and the reader would have no way to tell which interval it covered.
+if [ -n "$BASE_LEDGER" ] && [ "$BASE_SET" -eq 1 ]; then
+  echo "ERROR --base and --base-ledger are mutually exclusive: one names the" >&2
+  echo "      interval start, the other reads it from the ledger. Pick one." >&2
+  exit 1
+fi
+
+# What `seam_base` alone cannot say. Set after parsing, so it reflects the base
+# the caller actually chose. Without --base-ledger the caller named the revision
+# and the interval is whatever they meant by it; only the ledger path can report
+# `empty` on their behalf, and it overrides this below.
+SEAM_INTERVAL="$BASE..worktree"
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
@@ -183,6 +237,88 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 2; }
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
+
+# --- the interval this sweep spans ----------------------------------------
+# Paths are resolved from the repo root, like every other path option here.
+#
+# The ledger records one repo_commit per measurement, so the newest one is the
+# state of the tree the last row described — the start of the interval this run
+# closes. Read newest-wins over the whole file rather than matched to `file`:
+# the commit is a property of the REPO, and "since this repo was last measured"
+# is the interval, whichever policy file that measurement named.
+if [ -n "$BASE_LEDGER" ]; then
+  LAST_COMMIT=""
+  if [ -f "$BASE_LEDGER" ]; then
+    LAST_COMMIT="$(python3 - "$BASE_LEDGER" <<'PY'
+import json
+import sys
+
+found = ""
+# A malformed line is skipped, never fatal: the ledger is append-only and a
+# half-written row from an interrupted run must not blind every future sweep.
+with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            commit = row.get("repo_commit")
+            if isinstance(commit, str) and commit.strip():
+                found = commit.strip()
+print(found)
+PY
+)" || LAST_COMMIT=""
+  fi
+  # Set alongside BASE and printed as its own machine-readable line: `empty`
+  # or `<base>..worktree`. `seam_base: HEAD` alone cannot distinguish a
+  # deliberate --base HEAD from a first run from the rewrite fallback, and the
+  # interval a count covers is the one thing a reader of a row of counts needs.
+  SEAM_INTERVAL="empty"
+  BASE_WARN=""
+  if [ ! -f "$BASE_LEDGER" ]; then
+    # Distinct from "a ledger with no repo_commit anywhere". A missing ledger in
+    # a repo that should have one is a setup error to fix today; a ledger whose
+    # rows predate the field is the expected one-week transition that fixes
+    # itself. Collapsing them costs the operator the difference.
+    BASE="HEAD"
+    BASE_NOTE="note: no ledger at $BASE_LEDGER, so this run has no predecessor. The interval is EMPTY: moved-title and the source classes cannot contribute, and the count below is the standing surface only. If this repo is supposed to be recording telemetry, that absence is the finding."
+  elif [ -z "$LAST_COMMIT" ]; then
+    # Defined, not fallen into. HEAD is the same revision the working tree is
+    # on, so the interval is EMPTY — which is the truth about a first run, and
+    # the report has to say it rather than present a standing count as a week's
+    # accrual. The row this sweep feeds carries its repo_commit, so the next
+    # run has a real interval.
+    BASE="HEAD"
+    BASE_NOTE="note: no row in $BASE_LEDGER carries a repo_commit, so this run has no predecessor. The interval is EMPTY: moved-title and the source classes cannot contribute, and the count below is the standing surface only. The row this run feeds records its commit, so the next sweep spans a real interval."
+  elif git rev-parse --verify --quiet "$LAST_COMMIT^{commit}" >/dev/null 2>&1; then
+    BASE="$LAST_COMMIT"
+    SEAM_INTERVAL="$LAST_COMMIT..worktree"
+    BASE_NOTE="note: sweeping the interval since the last recorded measurement ($LAST_COMMIT, from $BASE_LEDGER)."
+  else
+    # Loudly, because the silent version is permanent: a rewritten history
+    # zeroes the base-dependent classes every week thereafter and the count
+    # keeps looking healthy.
+    #
+    # To STDERR, unlike the two `note:` cases. Every other diagnostic in this
+    # script goes there, and this is the one condition worth a monitor: a
+    # consumer that greps stderr for WARN would otherwise never see the failure
+    # that keeps reporting healthy-looking counts forever.
+    BASE="HEAD"
+    BASE_WARN="WARN the last recorded measurement names commit $LAST_COMMIT, which is not in this repo's history — a rewrite, or a shallow clone. Falling back to HEAD, so the interval is EMPTY this run and moved-title cannot contribute."
+    BASE_NOTE="note: the interval is EMPTY this run — see the WARN on stderr."
+  fi
+  # An `if`, not `[ -n … ] && printf`. Under `set -e` an AND-list whose first
+  # element fails is the shape #181 is a sweep for, and a gate script is the
+  # last place to rely on remembering which half errexit exempts.
+  if [ -n "$BASE_WARN" ]; then
+    printf '%s\n' "$BASE_WARN" >&2
+  fi
+  printf '%s\n' "$BASE_NOTE"
+fi
 
 if [ -z "$POLICY" ]; then
   for f in AGENTS.md CLAUDE.md; do
@@ -246,13 +382,13 @@ fi
 
 RC=0
 python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" "$TMP/src" \
-  "$SWEEP_SOURCE" <<'PY' || RC=$?
+  "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" <<'PY' || RC=$?
 import os
 import re
 import sys
 
 (base_policy_path, policy_rel, docs_list, ack_file, src_list,
- sweep_source) = sys.argv[1:7]
+ sweep_source, base_ref, seam_interval) = sys.argv[1:9]
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
@@ -578,7 +714,19 @@ if acked:
         for p in unused:
             print(f"    {p[:70]}")
 
-print(f"\nseams_acked: {len(acked)}")
+# ABOVE the two counts, which stay the last two lines. The three readers in the
+# cadence template match `^seams:` / `^seams_acked:` anchored, then `tail -1` —
+# they are pattern-based, not positional, so what must stay stable is the line
+# PREFIX, not the offset from the end. Inserting above them is safe for that
+# reason, not by luck.
+#
+# `seam_interval` exists because `seam_base` cannot carry it: HEAD is what a
+# deliberate --base HEAD, a first run, and the rewrite fallback all report, and
+# only the first of those covers a real interval. `seams` mixes a standing half
+# with an interval half, so a row of counts is uninterpretable without it.
+print(f"\nseam_interval: {seam_interval}")
+print(f"seam_base: {base_ref}")
+print(f"seams_acked: {len(acked)}")
 print(f"seams: {len(new)}")
 sys.exit(3 if new else 0)
 PY

@@ -175,14 +175,12 @@ A pinned submodule is excluded from both the update and the auto-commit, and eac
 ## References convention
 
 Skills may carry supplementary `references/*.md` files for content that exceeds the
-SKILL.md body cap. They are loaded on demand, not on activation. Three rules are
+SKILL.md body cap. They are loaded on demand, not on activation. Two rules are
 enforced by the structural suite:
 
-- **No frontmatter**, and **every `references/<name>.md` must be linked from its
-  sibling SKILL.md** — orphans fail [tests/structural/test_references.py](tests/structural/test_references.py).
-- **`lowercase-kebab.md`**, flat unless the doc is an *index*, which may hold its
-  entries in a subdirectory it links ([#152](https://github.com/gregoryfoster/skills/issues/152)). No length cap: escaping the body
-  recommendation is the point of a reference file.
+- **Every `references/<name>.md` must be linked from its sibling SKILL.md** —
+  orphans fail [tests/structural/test_references.py](tests/structural/test_references.py),
+  which lets an *index* keep entries in a subdirectory it links ([#152](https://github.com/gregoryfoster/skills/issues/152)).
 - **Relative links resolve from the file that contains them.** Every rendered
   link in any `skills/**/*.md` — SKILL.md and references alike — must point at a
   real path, or [tests/structural/test_relative_links.py](tests/structural/test_relative_links.py)
@@ -190,6 +188,9 @@ enforced by the structural suite:
   render as links, which is where illustrative paths belonging to a *consuming*
   repo live. An illustrative link in prose needs an `EXEMPT_LINKS` entry naming
   the file, the target and the reason ([#143](https://github.com/gregoryfoster/skills/issues/143)).
+
+Convention, not enforced: **no frontmatter**, **`lowercase-kebab.md`** names, and
+no length cap — escaping that body cap is the point of a reference file.
 
 Conditional-block delimiters and the `assets/` equivalents:
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md).

@@ -38,7 +38,7 @@ Create a task for each item and complete them in order. Item numbers match the `
 
 ### Step 1–2: Context gathering
 
-**Sync `main` before analysing, not just before launching** (Rule 1) — `git checkout main && git pull --ff-only`, then clear any untracked stray from the main checkout. Rule 1 carries why a stale checkout corrupts the plan. The stray sweep is Rule 6 hygiene — its fall-through detection assumes a clean baseline, or it reports a dirty tree on every completion signal.
+**Sync `main` before analysing, not just before launching** (Rule 1, which carries both the commands and why a stale checkout corrupts the plan), then clear any untracked stray from the main checkout. The stray sweep is Rule 6 hygiene — its fall-through detection assumes a clean baseline, or it reports a dirty tree on every completion signal.
 
 Then fetch issues and read project context before asking any questions. Go into the interview knowing:
 - Rough categories of issues (architectural, bug, feature, infra)
@@ -125,7 +125,7 @@ Identify files touched by 2+ issues — these drive sequencing decisions:
    - **A grep sizes a *surface*; only execution measures a *behaviour*.** Where an issue reports a **measured** number, beating it requires measuring, not counting occurrences (process-log 2026-08-10: a reference grep found 15 classes and "corrected" an issue's 2-class claim as a 2× understatement; running them in isolation showed **6** actually leaked, and the issue's own number was closer). The grep is authoritative about existence of a call site, not about frequency of an effect.
    - **An issue body's own hedge is a grep target — but write the grep to the artifact's real grammar, or you become the next wrong claim.** Where a body flags its own claim as unverified ("worth confirming before committing to it", "I think", "assuming"), the author located the risk and didn't spend the minute; spend it. Then check your own instrument before reporting: an orchestrator's quick regex is exactly as falsifiable as the issue body it is auditing, and it carries more authority because it arrives as a *correction* (process-log 2026-08-12: a loose `\]\(…\)` sweep of #143's hedge reported a carve-out the issue missed; the implementing agent showed the match was a bare fragment inside inline code, and a correct `[label](target)` extractor found nothing — the re-scoring, design doc and issue comment were all retracted). Distinct from the bidirectional footprint grep, which hunts claims the body states *confidently*.
    - **Size an unbounded "sweep" or "audit" issue, then intersect it.** Such an issue is neither automatically high-blast nor automatically batch-isolating. Enumerate the set (one `grep -rl` plus a per-file counter), then intersect it with co-batch agents' footprints — zero overlap licenses full-ceiling parallelism (process-log 2026-08-11 observo: "worth a sweep" resolved to 17 files / ~64 sites, disjoint from both co-batch agents')
-2. **Grep the test surface for the literal strings each fix rewrites.** A large shared test file is two conflict zones, and only one is visible from source-file overlap. The **append** half (every worker adding a test class at EOF) is solved by routing new tests to a new per-agent file. The **modify** half — existing assertions that a fix *invalidates* — is invisible to both the source grep and the issue bodies, which describe script changes and say nothing about tests. Grep the test file for the exact strings, paths and JSON keys each issue changes (process-log 2026-08-11 skills: a 3,560-line test file hardcoded the literal hook command one issue rewrote and the literal log path another changed; neither issue mentioned a test). Then **map each agent's owned line-window before assigning**: separated windows merge cleanly and the file stays contested without serializing the batch, but overlapping windows mean sequencing — which has to be decided here, not discovered at merge time. The technique is not test-specific — the governing property is whether the windows overlap, not the file's kind, so it carries any large shared file including the policy file itself (2026-08-12: three Batch A agents wrote `AGENTS.md` in three separated windows). A non-test file needs one extra clause: **no restructuring, additions within the window only** — a reorder merges cleanly and silently reshuffles another agent's window. Name any genuinely shared line **read-only for both** rather than sequencing around it (2026-08-12: one `parametrize` list naming both contested scripts). When the file-level pass returns *everything touches everything*, escalate to function/region granularity before concluding the backlog is serial — a hub file is usually a set of independent regions (2026-08-13 cli: ten work items on one 525-line file ran 4-wide). Distinct from a shared *fixture* dependency (process-log 2026-07-08: `conftest.py`), which is semantic and needs sequencing rather than a new file
+2. **Grep the test surface for the literal strings each fix rewrites.** A large shared test file is two conflict zones, and only one is visible from source-file overlap. The **append** half (every worker adding a test class at EOF) is solved by routing new tests to a new per-agent file. The **modify** half — existing assertions that a fix *invalidates* — is invisible to both the source grep and the issue bodies, which describe script changes and say nothing about tests. Grep the test file for the exact strings, paths and JSON keys each issue changes (process-log 2026-08-11 skills: a 3,560-line test file hardcoded the literal hook command one issue rewrote and the literal log path another changed; neither issue mentioned a test). Then **map each agent's owned line-window before assigning**: separated windows merge cleanly and the file stays contested without serializing the batch, but overlapping windows mean sequencing — which has to be decided here, not discovered at merge time. The technique is not test-specific — the governing property is whether the windows overlap, not the file's kind, so it carries any large shared file including the policy file itself (2026-08-12: three Batch A agents wrote `AGENTS.md` in three separated windows). A non-test file needs one extra clause: **no restructuring, additions within the window only** — a reorder merges cleanly and silently reshuffles another agent's window. Name any genuinely shared line **read-only for both** rather than sequencing around it (2026-08-12: one `parametrize` list naming both contested scripts). When the file-level pass returns *everything touches everything*, escalate to function/region granularity before concluding the backlog is serial — a hub file is usually a set of independent regions (2026-08-13 cli: ten work items on one 525-line file ran 4-wide). Distinct from a shared *fixture* dependency (process-log 2026-07-08: `conftest.py`), which is semantic and needs sequencing rather than a new file. **Then grep for the assertions the fix makes *vacuous*, not only the ones it breaks** — the modify-half goes red and the suite says so; this half goes **green**. When a change moves *which* column carries a piece of state, an assertion comparing the old column to a snapshot of itself degrades to `None == None`: still passing, verifying nothing, and reachable by no keyword sweep, since it names neither the literal the fix removes nor the one it adds (2026-08-14 observo: two idempotency tests silently stopped checking the issue's own acceptance criterion). Re-anchor them on the new field *and* assert it non-null, so the replacement cannot degrade the same way
 3. **Where a shared backing service sets the ceiling (Q5), grep for the helpers that *escape* the isolation fixture.** A helper that opens its own engine/connection and destroys shared state is a *hard* conflict zone — not the **soft** fixture dependency item 2 ends by naming: it does not degrade other agents, it corrupts them mid-run, and the failure presents as an unrelated worker's mysterious red. It forces its issue solo on a database property with no file-overlap footprint at all (process-log 2026-08-11 usa-wa: a `reset_migration_schemas` helper documented as deliberately bypassing the savepointed `db_session` fixture forced a three-line test fix into its own batch). One grep, run alongside the contested-file grep:
    ```bash
    grep -rnE 'DROP (SCHEMA|DATABASE)|TRUNCATE|create_async_engine|create_engine' --include='*.py' <test trees> <testing helper modules>
@@ -135,12 +135,7 @@ Identify files touched by 2+ issues — these drive sequencing decisions:
 
 Present the conflict zones and dependency graph. Get approval.
 
-**Low-discovery backlog mode (compressed Steps 5/6).** Two recurring backlog shapes already name their contested files before the orchestrator arrives, collapsing Steps 5/6 to "confirm what the parent artifact already shows":
-
-- **Spec-derived** — issues carved out of a just-merged design spec. The spec already declares the foundation file(s) and the downstream split.
-- **Followup-derived** — issues filed during a just-completed shipping cycle as deliberate carve-outs. The shipping cycle's PRs already named the contested files.
-
-Recognize either flavor when the backlog issues were filed in the same session as the artifact they're derived from. Compress Steps 5/6 to "list contested files + confirm there's nothing surprising"; the formal dependency-graph subsection is mostly ceremony when there's one edge. Run the skill anyway — its value moves to Step 7 (batch shape, including the Shape A vs. Shape B decision) and Step 8 (design-doc as a permanent ops manual for the orchestrator runtime: Rules 1–6 checklist, branch strategy, Key Decisions).
+**Low-discovery backlog mode (compressed Steps 5/6).** Two shapes already name their contested files before the orchestrator arrives: **spec-derived** (issues carved out of a just-merged design spec, which declares the foundation file and the downstream split) and **followup-derived** (issues filed during a just-completed shipping cycle, whose PRs named the contested files). Recognize either when the issues were filed in the same session as the artifact they derive from. Compress Steps 5/6 to "list contested files, confirm nothing is surprising" — the formal dependency graph is ceremony when there is one edge. Run the skill anyway: its value moves to Step 7 (batch shape, including Shape A vs. B) and Step 8 (the design doc as a permanent ops manual for the orchestrator runtime — Rules 1–6 checklist, branch strategy, Key Decisions).
 
 **Backlog provenance is a prior on batch geometry — confirm it with the grep, don't trust it.** Recognizing a backlog's origin front-runs the Step 7 batch shape, but it predicts *where issues came from*, not *whether they're disjoint* — always confirm via the contested-file grep (Step 5), never substitute the prior for it:
 
@@ -156,7 +151,7 @@ Group issues into **merge batches**. The core principle: within a batch, all age
 
 **Batch design rules:**
 - **Batch 0 / Batch A**: truly isolated issues — each touches files no other issue in this batch touches. Maximum agent count.
-- **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`. Exceeding the ceiling produces silent fall-through, not a graceful error — see Rule 5.
+- **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`; exceeding it produces silent fall-through, not a graceful error.
 - **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free). Agents within a sub-wave run in parallel up to the ceiling; sub-waves themselves run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves.
 - **Subsequent batches**: ordered by the dependency chain of contested files. One agent per batch on the critical path; parallelize only where file coverage is genuinely disjoint.
 - **Pick a shape for same-file issue pairs** — when two issues share a file (typically a small prerequisite + a larger dependent), there are two clean shapes:
@@ -197,18 +192,11 @@ Sections:
 - **Dependency graph** — ASCII or text
 - **Batch execution plan** — per-batch table with agents, issues, files, gate condition
 - **Key decisions** — rationale for non-obvious choices (e.g. why a correctness fix leads a refactor batch); name any read-only shared files, the batch's single chain-appending agent, and any verification-mode asymmetry (an agent that changes the test runner's config verifies under the *old* mode in its own worktree, so the orchestrator's post-merge run is the first under the new one — say so, or a distribution-mode interaction gets misattributed to one agent's defect)
-- **Runtime note on issue-body decay** — issue bodies are a snapshot; the backlog is N sequential mutations of what they describe. Re-verify the specifics of any issue whose files an earlier batch touched — the later the batch, the staler the body
+- **Runtime note on issue-body decay** — the backlog is N sequential mutations of what the bodies describe, so re-verify the specifics of any issue whose files an earlier batch touched (Worker step 5); the later the batch, the staler the body
 - **Deferred items** — what was explicitly excluded and why
 - **Out of scope** — anything that came up but was ruled out
 
-**Where to commit.**
-
-Default: directly on `main`. Matches the orchestrator's "workers branch from local main" assumption (Rule 1) and avoids an extra merge gate before launching agents.
-
-Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook that names "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint before launching agents. Ask if the project's conventions aren't already clear. In that case, choose one of:
-- **Merge the doc PR before launching workers** (cleanest; workers' local main sees the doc on disk), OR
-- **Include the plan in the Agent tool's prompt when launching each worker** (workers don't actually need the doc on disk to function; acceptable if the user wants the doc PR to land alongside the batch branch), OR
-- **Write the plan inside a docs-only worktree, then merge from main** — for projects whose worktree-create tooling supports a lightweight "no DB clone / docs-only" flag (e.g. `--shared-db` in cannabis.observer-wordpress). Provision the worktree, write the plan inside it, and commit with `git -C <worktree> commit -F /tmp/<branch>-msg.txt` (apostrophe-safe). Then `git merge --no-ff <branch>` from the main checkout and destroy the worktree.
+**Where to commit.** Default: directly on `main` — it matches the orchestrator's "workers branch from local main" assumption (Rule 1) and avoids an extra merge gate before launching agents. Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook naming "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint first; ask if the conventions aren't already clear. The three routes for that case — merge-then-launch, plan-in-the-prompt, and the docs-only worktree — are in [`references/design-doc-authoring.md`](references/design-doc-authoring.md).
 
 **Commit format.**
 
@@ -251,11 +239,7 @@ Report the issue number.
 
 ### Step 10: Process documentation
 
-After the plan is approved and committed, capture any adjustments made during this session:
-- Did the user adjust rubric weights? Document the new formula.
-- Were any standard questions skipped or reordered? Note why.
-- Did any conflict analysis surface surprises? Record the pattern.
-- Were any rubric dimensions inadequate for this project type? Flag for skill revision.
+After the plan is approved and committed, capture this session's adjustments: rubric weights the user changed (document the new formula), standard questions skipped or reordered (note why), surprises the conflict analysis surfaced (record the pattern), and rubric dimensions that proved inadequate for this project type (flag for skill revision).
 
 **Where to capture them.** Write a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in the index that is [`references/process-log.md`](references/process-log.md). The log is the default destination — it preserves chronology and session-specific context. Promote a pattern into the body of this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the body now carries the load.
 
@@ -271,9 +255,9 @@ Each **multi-agent batch** gets a shared integration branch (e.g. `batch/a`, `ba
 
 The human review happens against the **batch branch**: run tests, inspect the combined diff, then merge to `main`. After merge, the orchestrator checks `main` back out, pulls to sync, and uses it as the base for the next batch branch.
 
-**Intra-batch worker→batch integration must be fast-forward or regular-merge — not squash or rebase.** The orchestrator destroys completed workers' worktrees via `worktree-destroy.sh --base batch/<X>` (Orchestrator step 5), which verifies the worker branch is an ancestor of `batch/<X>`. Squash merges drop the parent link and rebase rewrites commits; both break the ancestor check and force the orchestrator to descope the destroy, defeating the merge-safety gate. Separate from the batch→main strategy below, which the user picks.
+**Intra-batch worker→batch integration must be fast-forward or regular-merge — not squash or rebase.** Orchestrator step 5's `worktree-destroy.sh --base batch/<X>` verifies the worker branch is an ancestor of `batch/<X>`; squash drops the parent link and rebase rewrites commits, so both break that check and force the orchestrator to descope the destroy, defeating the merge-safety gate. Separate from the batch→main strategy below, which the user picks.
 
-Ask the user their preferred **batch→main** merge strategy (regular, squash, rebase) and record it in the design doc. The intra-batch strategy is fixed at FF/regular-merge regardless.
+Ask the user their preferred **batch→main** merge strategy (regular, squash, rebase) and record it in the design doc; a regular merge commit is the default, since it preserves per-agent commit history. The intra-batch strategy is fixed at FF/regular-merge regardless.
 
 ### Orchestrator agent
 
@@ -282,11 +266,11 @@ The orchestrator reads the batch plan and manages progression. It:
 2. **Create the batch branch before spawning agents** — `git checkout -b batch/<X>`. This makes it the merge target only — workers still branch from `origin/main` and must merge it in themselves (Rule 3). **But where the host repo deploys from the main checkout, that checkout's branch must never move.** Grep the deploy units for a checkout guard (`ExecStartPre=.*assert.*main`) before Batch A; where one exists, `git branch batch/<X> main` *without* checking out and integrate in a worktree, and give a single-agent batch no local branch at all — push the worker's own branch as the feature branch. Same caution at wrap-up: run `systemctl is-enabled` and `systemctl cat` before any repo-documented restart, because a unit that is inactive *and* disabled while its preset is enabled is a deliberate hold, not a fault (process-log 2026-08-13 usa-wa: this step stopped production across three separate batches; a documented restart then resurrected a held daemon 94 seconds into an incident).
 3. **Verify worktree slot availability** — before launching, check that consumed slots + planned agents ≤ project ceiling (Rule 5). Prefer the host project's own slot-status command (e.g. `dev.sh worktree status`, or listing the port-pool directory) — it reports **actual** resource consumption. Otherwise use `bash skills/using-git-worktrees/scripts/worktree-list.sh --porcelain | grep -c '^worktree '` (minus 1 for the main checkout) as a **lower-bound** proxy, with a safety margin of `ceiling - 1` to absorb port leaks from destroys whose project-side cleanup didn't run.
 4. Launches all worker agents whose batch gate is currently satisfied simultaneously
-5. **On each worker completion signal** (reconcile, then merge — do not assume auto-merge; Rule 3):
-   - Run `git -C <main> status --porcelain` (Rule 6). Any output → halt the batch and salvage.
+5. **On each worker signal — a `failed` one takes the same path as a `completed` one** (reconcile, then merge — do not assume auto-merge; Rule 3). A killed agent is not an empty worktree, and from outside it "died" and "fell through" are indistinguishable, so run this procedure before concluding anything; then **resume that agent rather than spawning a fresh one**, or you discard both a coherent phase and the context that produced it (2026-08-14 observo: a mid-TDD kill left four modified test files at 6 failed / 15 passed, every failure describing intended behaviour):
+   - Run `git -C <main> status --porcelain` (Rule 6). Any output — **or a non-zero exit** → halt the batch and salvage.
    - Locate the worker's work: run `git branch --no-merged batch/<X>` to surface every local branch carrying commits not yet on the batch branch — this catches both `worktree-agent-*` and custom-named branches regardless of the orchestrator's current checkout (don't rely on `git log batch/<X>..HEAD`, which only sees a branch if the workspace shifted onto it). Also check `git branch --show-current` (the workspace may have shifted off `batch/<X>`) and the worktree directory (e.g. `.claude/worktrees/agent-<id>/`) for uncommitted changes; if work was left uncommitted, commit it on the worker's branch with the prescribed message format first.
    - Merge the worker's branch into `batch/<X>` if it isn't already an ancestor (`git merge --no-ff <agent-branch>`), respecting any intra-batch ordering; merge conflicts return to the responsible worker agent to resolve.
-   - Destroy the merged worker's worktree: `bash skills/using-git-worktrees/scripts/worktree-destroy.sh <agent-branch> --base batch/<X>`. The `--base` flag tells the destroy script to verify the merge against the batch branch rather than `main`, since the human batch-to-main merge hasn't happened yet (would otherwise refuse). Frees the slot for a chunked sub-wave.
+   - Destroy the merged worker's worktree: `bash skills/using-git-worktrees/scripts/worktree-destroy.sh <agent-branch> --base batch/<X>`. `--base` verifies the merge against the batch branch rather than `main`, since the human batch→main merge hasn't happened yet (it would otherwise refuse). Frees the slot for a chunked sub-wave.
    - Drop the now-unused ref: `git branch -d <agent-branch>`. The lowercase `-d` refuses if the branch isn't merged into HEAD, providing a second guard against the same merge-safety class as the destroy script's Iron Law. If `-d` refuses, the worker's commits are not actually on `batch/<X>` — escalate before forcing.
 6. When all workers are merged, runs the full test suite against `batch/<X>`
 7. **Between sub-waves of a chunked batch** — after destroying completed workers' worktrees in sub-wave Aₙ, re-verify slot availability (step 3) before launching Aₙ₊₁
@@ -309,14 +293,14 @@ Each worker agent follows this protocol before signaling completion:
 3. **Merge the batch branch** — `git merge batch/<X>`; expect a fast-forward, stop and report anything else. Your worktree is cut from `origin/main`, not the orchestrator's checkout (Rule 3), so after sub-wave 1 it is missing work already on `batch/<X>`. After step 2, never before — a merge writes files.
 4. **Verify your brief's baseline** — the expected test count on `batch/<X>` and the interpreter that produces it. If the suite disagrees, STOP and report; do not reconcile to it. If the brief names none, ask before implementing. Catches what step 3 cannot: a brief written against the wrong tree still merges cleanly.
 5. **Treat the issue body as a proposal, not a specification.** Verify every file:line, every claimed call site, and every prescribed implementation against the current tree before acting. Where the body is wrong, **report the correction** — do not implement around it silently. Across one 13-issue backlog the implementing agent found a material error in the body **every single time**; three would have shipped a defect as written, and staleness rose with batch depth because earlier batches moved the code the later bodies describe (process-log 2026-08-09). The direction is reliable; the specifics are not. Name those prior failures concretely in each worker prompt.
-6. **Implement with TDD** — red → green → refactor
+6. **Implement with TDD** — red → green → refactor, and **commit the red phase separately** rather than squashing. It is the only way a reviewer can check the ordering afterwards instead of assuming it, and it leaves an interrupted agent's salvage already coherent. The red commit lands cleanly *only where the pre-commit hook does not run the suite* — check which yours is, and where it does, use `--no-verify` and say so in the commit body
 7. **Run full test suite** — all tests must pass
 8. **Run linter** — no violations
 9. **Self-review diff** — check: correctness, test coverage, project conventions, no unintended side effects outside issue scope
 10. **Address findings** — fix before signaling; do not signal with known issues
 11. **Signal completion** — notify orchestrator the branch is ready to merge into the batch branch. The orchestrator destroys the worktree after merge (see Orchestrator step 5); the worker does NOT destroy it itself (premature destruction can race with the merge).
 
-**Required report-back slot: everything in the issue body that turned out to be wrong or stale.** Phrase it with the second clause — *"I want the corrections, not a report that matches the prediction"* — because without it agents reliably produce a report shaped like agreement. This is what surfaces the body-decay corrections above; it is also how the orchestrator learns its own briefs were wrong, which happens (process-log 2026-08-10: two workers corrected the orchestrator's brief and were right both times). Escalations are evidence, not findings — verify one before acting on it.
+**Required report-back slot: the suite's collected count (`N passed, M skipped` — never a bare "green"), and everything in the issue body that turned out to be wrong or stale.** The count is Rule 3's number seen from the worker's end: N verdicts cannot be reconciled against each other, N counts can (2026-08-16 skills: baseline + 4 + 6 + 15 + 17 matched the merged gate exactly), and a stale briefed baseline then surfaces as arithmetic instead of being silently adopted — three of four workers diagnosed one that way. Phrase the corrections half with its second clause — *"I want the corrections, not a report that matches the prediction"* — because without it agents reliably produce a report shaped like agreement. This is what surfaces the body-decay corrections above; it is also how the orchestrator learns its own briefs were wrong, which happens (process-log 2026-08-10: two workers corrected the orchestrator's brief and were right both times). Escalations are evidence, not findings — verify one before acting on it.
 
 **No PR is opened by the worker.** The orchestrator merges into the batch branch; the user reviews the batch branch as a whole.
 
@@ -325,15 +309,9 @@ Each worker agent follows this protocol before signaling completion:
 - **One question at a time** — stacking questions gets partial answers
 - **Approval gates are real** — do not proceed past a section without explicit user sign-off
 - **Blast radius ≠ priority** — a high-blast issue may score high but still wait for lower-priority isolates to merge first. Three variants: **score determines what gets done, ordering constraints determine when** — a zero-conflict issue is the most *schedulable* thing in a backlog, so it fills whichever slot would otherwise idle rather than earning Batch A by score (2026-08-11 observo); a **trivial issue can be a hard gate** when its guard must exist before a later issue widens the surface it guards (2026-08-07); and an issue whose deliverable is a **measurement of the final state** sequences last on epistemics, not contention — run early, it measures a state that won't exist at merge time (2026-08-11 usa-wa)
-- **Correctness fixes lead refactors** — if a bug fix and a structural refactor both touch the same file, fix the bug in the first commit of the refactor branch, not in a separate earlier batch
-- **Pick a shape for same-file pairs** — bundle (Shape A) or split (Shape B); the heuristic is in Step 7's batch design rules.
-- **Worktrees always — and verify the host project can provision them** — `isolation: "worktree"` for every worker. The batch branch is the merge *target*, not the base: brief each worker to merge it itself and reconcile each explicitly rather than trusting auto-merge (Rule 3). The parameter does NOT guarantee filesystem isolation if the host project's worktree-create script falls through; cap per-batch agents at the provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
+- **Worktrees always — and verify the host project can provision them** — `isolation: "worktree"` for every worker; the batch branch is the merge *target*, not the base, so brief each worker to merge it and reconcile each explicitly (Rule 3). The parameter does NOT guarantee filesystem isolation: cap per-batch agents at the provisioning ceiling (Rule 5) and detect fall-through at runtime (Rule 6).
 - **Deferred is a decision** — explicitly name what is out of scope and why; don't silently omit
-- **Batch feature branches for multi-agent batches** — one integration point to test and review, surfacing intra-batch conflicts at the batch branch rather than at main; a single-agent batch skips it and uses the agent's own branch
-- **No worker PRs** — workers signal to the orchestrator, which merges into the batch branch and returns any conflict to the responsible worker; the user reviews the batch branch
-- **Self-review before signal** — worker agents resolve all findings before signaling; no known issues at signal time
 - **Orchestrator launches all unblocked batches** — not just the next one in sequence; if two independent batches become unblocked simultaneously, launch both
-- **Regular merge commit to main** — preserves per-agent commit history; ask user preference at design time
 
 ## Branch Hygiene Rules
 
@@ -362,10 +340,7 @@ git merge --ff-only batch/x   # or rebase; whatever the agreed strategy is
 git push origin main
 ```
 
-If local `main` is already up to date with the merged batch (the human merged `batch/<X>` → `main` per Rule 3), just:
-```bash
-git push origin main   # from local main after verifying it is up to date
-```
+Where local `main` already carries the merged batch (the human merged `batch/<X>` → `main` per Rule 3), the push alone is the whole sequence.
 
 ### Rule 3 — Do not assume `isolation: "worktree"` auto-merges; verify and merge per worker
 
@@ -373,19 +348,9 @@ The `isolation: "worktree"` parameter runs the agent in a temporary worktree. It
 
 **The base, by contrast, does not vary: worktrees are cut from `origin/main`, independent of the orchestrator's checked-out branch.** Sub-wave 1 hides this — `batch/<X>` still equals `main` — and by sub-wave 2 the batch branch carries everything merged since, so the gap widens with batch depth. Rule 1 does not cover it: local `main` can be current and the agent's tree still wrong. Two obligations follow, both the orchestrator's:
 - **Brief every worker to `git merge batch/<X>`** — worker protocol step 3, immediately after the isolation pre-flight. Expect a fast-forward.
-- **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; one had been told to trim a file to a target measured on a version it lacked. The other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
+- **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; one had been told to trim a file to a target measured on a version it lacked, and the other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
 
-**Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here. Canonical pattern:
-
-```bash
-git checkout main
-git pull --ff-only               # sync (Rule 1); also advances origin/main
-git checkout -b batch/f          # merge TARGET; workers still branch from origin/main
-                                 # deploys from this checkout? `git branch batch/f main`
-                                 # instead — never move it (Orchestrator step 2)
-# spawn workers, each briefed to `git merge batch/f` first + the batch-branch baseline
-# reconcile + merge each one explicitly as it completes (see Orchestrator step 5)
-```
+**Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here — Rule 1 carries the sync, Orchestrator step 2 the branch creation and the never-move-a-deploying-checkout caveat.
 
 `main` moves only when the human merges the batch branch, via Rule 2's push sequence.
 
@@ -407,16 +372,19 @@ git commit --amend -m "..."    # fix message before doing anything else
 
 **Slot-reclaim semantics**: a well-behaved host-project `worktree destroy` synchronously frees its slot (port, vhost, DB clone) and the next `worktree create` reclaims the lowest-available number. The ceiling check therefore counts *concurrently-live* worktrees, not lifetime-allocated — a stale-slot leak is only possible when `destroy` fails partway, not under normal operation. This is what makes chunking work: destroying a sub-wave's completed worktrees before launching the next is sufficient; you don't need a wider pool.
 
-**Recording the ceiling**: capture it in the design doc's "Approved approach" section so subsequent sessions inherit it without re-interviewing. To cheaply *re-verify* an established ceiling in a follow-up session, just read the port number off any in-session `worktree create` output (e.g. the plan-doc worktree) — the pool's bounds don't change between sessions, so one assignment confirms it. Avoids re-interviewing or re-grepping the host script.
+**Recording the ceiling**: capture it in the design doc's "Approved approach" section so subsequent sessions inherit it without re-interviewing. To cheaply *re-verify* an established ceiling in a follow-up session, just read the port number off any in-session `worktree create` output (e.g. the plan-doc worktree) — the pool's bounds don't change between sessions, so one assignment confirms it without re-interviewing or re-grepping the host script.
 
 ### Rule 6 — Detect worktree fall-through at runtime
 
 A ceiling check is a precondition, not a guarantee — Q5 answers can be wrong, port pools can shrink mid-run, scripts can fail in new ways. The orchestrator MUST detect when an agent fell through into the main checkout.
 
-**Between worker completion signals**, the orchestrator runs:
+**Between worker signals**, the orchestrator runs:
 ```bash
+git -C <main checkout> rev-parse --is-inside-work-tree   # must print true
 git -C <main checkout> status --porcelain
 ```
+
+**Read the exit code, not only stdout.** A linked worktree *shares* `.git/config` with the main checkout, so a worker's stray `git config` — or a bare `git init --bare` whose path mis-resolves — can set `core.bare = true` there, and that makes `git status` **fail** with empty stdout. To a caller reading output alone, that is indistinguishable from "clean": the corruption **disables** this detector rather than tripping it, and keeps answering "clean" forever (#189, twice in one four-agent batch). Hence the canary above, and hence a non-zero exit is as much a halt as any output. Brief workers to give every repo-creating git command an explicit path (`git -C <tmpdir> init`).
 
 Any output indicates a worker fell through and is modifying files in the main checkout. Stop processing further completion signals from this batch until the salvage completes and `git -C <main> status --porcelain` is clean again. Identify the responsible agent (most recently signaled, or — if commits ended up on the wrong branch — via `git log main..HEAD` on the main checkout), and salvage per the Recovery procedure in [`references/recovery.md`](references/recovery.md).
 
@@ -426,7 +394,7 @@ This check is cheap and runs on the orchestrator's host, not in any agent's work
 
 ## Recovery
 
-When Rule 6 fires — or a worker's pre-flight isolation check (Worker step 2) does — halt the batch's completion signals and follow the salvage procedure in [`references/recovery.md`](references/recovery.md). The procedure preserves the worker's intended commits, replays uncommitted modifications onto the correct feature branch, and re-runs verification (the agent's pre-salvage test pass is invalid — it ran against the main checkout's working tree, not an isolated copy).
+When Rule 6 fires — or a worker's pre-flight isolation check (Worker step 2) does — halt the batch's signals and follow [`references/recovery.md`](references/recovery.md). It preserves the worker's intended commits, replays uncommitted modifications onto the correct feature branch, and re-runs verification (the agent's pre-salvage test pass is invalid — it ran against the main checkout's working tree, not an isolated copy).
 
 Do not relaunch a salvaged agent in the same wave that hit the ceiling. Resolve the ceiling first (destroy a completed worktree, widen the host-project pool, or chunk the remaining work into smaller sub-waves per Step 7).
 
@@ -455,9 +423,7 @@ Session-specific institutional memory — interview answers, batch shapes, non-o
 - Step 5 stated-*relationships*-are-hypotheses, grep-sizes-surface-not-behaviour, sweep enumeration, and an issue body's own hedge ("worth confirming") as a grep target — 2026-08-09, 2026-08-10, 2026-08-11, 2026-08-12
 - Step 4 decide-then-rescore at the approval gate + write scope changes back to GitHub — 2026-08-09, 2026-08-11
 
-Closing out a session (Step 10) writes an entry file and an index row. Promote any stable cross-session pattern into the body of this skill; leave one-off tactical details in the log.
-
 **Self-budget:** held to a **23,110-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow. Raised once,
+6,000-token standard, set so this file cannot grow. Raised once,
 from 22,900; that test's comment carries the argument.
