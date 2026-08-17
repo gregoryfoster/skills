@@ -143,6 +143,13 @@ which then made `worktree-destroy.sh` refuse. `cp` the wheels in instead.
   integration worktree whose HEAD *is* the batch branch.
 - **GitHub needs the closing keyword before every number.** `Closes #262, #256,
   #250, #260` closed exactly one issue. The rest needed explicit `gh issue close`.
+- **And the parser has no notion of negation.** A merge message reading
+  *"CR round 3 applied. Does NOT close #259 — the operator step remains."*
+  **closed #259**, because `close #259` appears in it. The issue sat wrongly
+  closed for two hours on the strength of a sentence saying the opposite. Never
+  write a closing keyword adjacent to an issue number you do not mean to close —
+  say "#259 stays open" instead. Cheap to hit, silent, and it desynchronises the
+  tracking issue from reality precisely when a long run is hardest to audit.
 
 Also: `gh` returned HTTP 503 on roughly a third of calls for a stretch. Every
 `gh` invocation in a long orchestration wants a retry loop; a single failure
