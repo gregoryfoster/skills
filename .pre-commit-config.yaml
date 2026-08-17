@@ -3,7 +3,11 @@ repos:
     hooks:
       - id: structural-tests
         name: Structural Tests
-        entry: bash -c 'source .venv/bin/activate && pytest tests/structural/ -v'
+        # Not an inline `source .venv/bin/activate` (#156): a linked worktree
+        # has no .venv, so that form rejected a finished commit with bash's
+        # raw "No such file or directory" after a green suite. The script
+        # links the main checkout's venv, or names the remedy.
+        entry: bash scripts/structural-tests.sh
         language: system
         pass_filenames: false
         always_run: true

@@ -953,8 +953,33 @@ if [ -d "$DOCS_DIR" ]; then
       scan_anchors_only "$d"
       continue
     fi
-    dl=$(LC_ALL=C wc -l <"$d" | tr -d ' ')
-    db=$(LC_ALL=C wc -c <"$d" | tr -d ' ')
+    # A file the inventory FOUND but cannot READ — permissions, a symlink that
+    # broke, a file deleted between the find and this line. Fatal, and not a
+    # skip-and-WARN: this output drives budget decisions and telemetry appends,
+    # so it sits in the non-reporting bucket of docs/STYLE.md's gate-discipline
+    # rule, and a measurement that cannot see part of the tree must not report a
+    # number as if it could (#157).
+    #
+    # The bare redirects this replaces failed in bash's own words — `<script>:
+    # line NNN: docs/D.md: Permission denied` — and exited 1, a code a caller
+    # reads as a usage error, naming neither the stage nor the fact that a doc
+    # was lost. That text is still the truest description of the cause, so it is
+    # captured and quoted rather than discarded, the way find.err and ct.err
+    # already are.
+    #
+    # Two subtleties. `2>` comes BEFORE `<"$d"`, because bash applies
+    # redirections left to right and the input redirect is the one that fails:
+    # set up later, its diagnosis would land on the terminal rather than in the
+    # file this reads back. And the two counts are one `wc -l -c` rather than two
+    # calls, so an unreadable file is one failure to diagnose rather than two.
+    DOC_RC=0
+    DOC_WC=$(LC_ALL=C wc -l -c 2>"$TMP/docread.err" <"$d") || DOC_RC=$?
+    if [ "$DOC_RC" -ne 0 ]; then
+      echo "ERROR could not read $d during the doc inventory (wc exit $DOC_RC):" \
+        "$(tr -d '\n' <"$TMP/docread.err")" >&2
+      exit 2
+    fi
+    read -r dl db <<<"$DOC_WC"
     dt=$(count_tokens "$d")
     dexact="$(last_count_exact)"
     dsource="$(last_token_source)"

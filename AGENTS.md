@@ -243,12 +243,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-test.txt
 pre-commit install                       # structural tests run on every commit
-pre-commit install --hook-type pre-push  # integration tests run on every push
 ```
 
-Hooks use `.venv/` directly, so the venv must be at the repo root.
+Hooks use `.venv/` at the repo root. A worktree has none; link it, never
+re-create: `ln -s <main>/.venv .venv`.
 
-Tests run automatically from that point on. To run them manually:
+Structural tests are the only gate; integration tests are never wired to
+pre-push. Run either by hand:
 
 ```bash
 pytest tests/structural/ -v              # fast, no API key needed

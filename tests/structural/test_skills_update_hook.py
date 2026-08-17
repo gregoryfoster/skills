@@ -41,6 +41,17 @@ cannot show that. Those tests build real superproject/submodule pairs over the
 - SKILLS_PIN_FILE overrides the file location
 - the pin file itself is never staged
 
+Uninitialized submodules (issue #176) reuse `pinned_repo` for the same reason:
+whether a pointer moved is the only honest evidence. `git submodule update`
+skips an unregistered submodule and exits 0, so the hook reported success
+forever and never advanced anything:
+- deinitialized submodules                   → initialized and refreshed
+- a pin over a deinitialized submodule       → still held, sibling still moves
+- skills-vendor/ with no registered
+  submodules at all                          → reported, not a bare header
+- a path still uninitialized after the
+  refresh                                    → reported to log and stderr
+
 Keep this list current — it is the file's index, and it undercounted for two
 rounds while tests were added around it.
 """
@@ -130,20 +141,24 @@ def _shim_dir(repo: Path) -> Path:
     return repo.parent / "bin"
 
 
-def _write_git_shim(repo: Path, extra_arms: str = "") -> None:
+def _write_git_shim(
+    repo: Path, extra_arms: str = "", submodule_body: str = "exit 0"
+) -> None:
     """Install a fake `git` on the hook's PATH.
 
     `submodule` is always intercepted with a silent success — the hook's real
     submodule update needs a network remote and no test here is about that.
-    `extra_arms` injects further subcommand interceptions (each a complete
-    `if` statement) ahead of the delegation to real git, so a test can make a
-    specific subcommand fail without restating the base shim.
+    `submodule_body` replaces that body for the tests that are about what git
+    reports back from a submodule call (#176). `extra_arms` injects further
+    subcommand interceptions (each a complete `if` statement) ahead of the
+    delegation to real git, so a test can make a specific subcommand fail
+    without restating the base shim.
     """
     real_git = shutil.which("git") or "/usr/bin/git"
     shim = _shim_dir(repo) / "git"
     shim.write_text(
         "#!/usr/bin/env bash\n"
-        'if [ "$1" = "submodule" ]; then exit 0; fi\n'
+        f'if [ "$1" = "submodule" ]; then\n{submodule_body}\nfi\n'
         f"{extra_arms}"
         f'exec {real_git} "$@"\n'
     )
@@ -698,3 +713,121 @@ class TestUnhonourablePinRefusesTheRefresh:
                 f"{rel} moved although every submodule was pinned — the "
                 "pathspec collapsed to empty and git updated everything"
             )
+
+
+# --------------------------------------------------------------------------
+# Uninitialized submodules (#176)
+#
+# `git submodule update --remote --merge` skips a submodule that is not
+# registered in .git/config, prints "not initialized", and exits **0**. The
+# hook's `if !` guard passes, nothing is committed, and the day's lock — which
+# is stamped before the update, deliberately — is already consumed. Found in
+# a consumer checkout that had been "succeeding" this way for days.
+# --------------------------------------------------------------------------
+
+
+def _deinit(repo: Path) -> None:
+    """Drop every submodule's .git/config registration, leaving the gitlinks
+    in HEAD and the (now empty) directories on disk.
+
+    This is the half-healed state from #176: `git submodule status` prefixes
+    every path with '-', and the doctor does not repair it because its own
+    init is gated on a dangling `skills/*` symlink."""
+    _git(repo, "submodule", "deinit", "-f", "--all", "-q")
+    assert not _git(repo, "config", "--get-regexp", r"^submodule\.", check=False).stdout
+
+
+class TestUninitializedSubmodulesStillRefresh:
+    def test_deinitialized_submodules_are_initialized_and_refreshed(
+        self, pinned_repo
+    ):
+        """The #176 case. Without `--init` git skips both submodules, says so
+        on stdout, and exits 0 — so the hook reports success forever and never
+        advances a pointer."""
+        _deinit(pinned_repo.path)
+
+        _run_pin_hook(pinned_repo)
+
+        for rel in (VENDOR_A, VENDOR_B):
+            assert _gitlink(pinned_repo.path, rel) == pinned_repo.after[rel], (
+                f"{rel} did not refresh from an uninitialized checkout — the "
+                f"log said:\n{_log_text(pinned_repo.path)}"
+            )
+
+    def test_init_stays_behind_the_pin_filter(self, pinned_repo):
+        """`--init` must not become a back door around a pin: a pinned path is
+        absent from the pathspec, so it is neither initialized nor refreshed,
+        while its uninitialized sibling still gets both."""
+        _deinit(pinned_repo.path)
+        _write_pin(pinned_repo.path, f"{VENDOR_A} {pinned_repo.before[VENDOR_A]}\n")
+
+        _run_pin_hook(pinned_repo)
+
+        assert _gitlink(pinned_repo.path, VENDOR_A) == pinned_repo.before[VENDOR_A], (
+            "the held submodule's pointer moved — `--init` refreshed a path "
+            "the pin had removed from the pathspec"
+        )
+        assert _gitlink(pinned_repo.path, VENDOR_B) == pinned_repo.after[VENDOR_B], (
+            "the unpinned sibling must still initialize and refresh"
+        )
+
+
+class TestNothingRefreshedReadsAsAProblem:
+    """The skip was indistinguishable from success in the log's *structure*:
+    a header line, two lines of git's output, no verdict. Whatever the cause,
+    a refresh that moved nothing because nothing was there to move has to read
+    as a problem — that is what makes the state findable without a repro."""
+
+    def test_no_registered_submodules_is_reported(self, repo):
+        """`skills-vendor/` full of content that is not tracked as submodules:
+        the pathspec matches nothing, git exits 0, and the hook can never
+        advance a pointer here. Say so instead of logging a bare header."""
+        assert not (repo / ".gitmodules").exists(), (
+            "fixture precondition: the vendored tree is committed as plain files"
+        )
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0, result.stderr
+        log = _log_text(repo)
+        assert "no registered skills-vendor/ submodules" in log, (
+            f"nothing in the log distinguishes this from a successful "
+            f"refresh:\n{log}"
+        )
+        assert "skills-vendor/" in result.stderr, (
+            f"the operator sees stderr, not .git/skills-update.log: "
+            f"{result.stderr!r}"
+        )
+
+    def test_still_uninitialized_after_the_refresh_is_reported(self, repo):
+        """Belt and braces for the shape of the bug rather than its one known
+        cause: if git ever again reports a path as uninitialized *after* the
+        refresh, the hook must not let that pass as success."""
+        (repo / ".gitmodules").write_text(
+            '[submodule "acme-skills"]\n'
+            "\tpath = skills-vendor/acme-skills\n"
+            "\turl = https://example.invalid/acme-skills.git\n"
+        )
+        _write_git_shim(
+            repo,
+            submodule_body=(
+                'if [ "$2" = "status" ]; then\n'
+                '  echo "-1111111111111111111111111111111111111111 '
+                'skills-vendor/acme-skills"\n'
+                "  exit 0\n"
+                "fi\n"
+                "echo \"Submodule path 'skills-vendor/acme-skills' not initialized\"\n"
+                "exit 0\n"
+            ),
+        )
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0, result.stderr
+        log = _log_text(repo)
+        assert "still uninitialized" in log, (
+            f"a refresh that left a submodule uninitialized logged nothing "
+            f"that reads as a problem:\n{log}"
+        )
+        assert "skills-vendor/acme-skills" in log, log
+        assert "skills-vendor/acme-skills" in result.stderr, result.stderr

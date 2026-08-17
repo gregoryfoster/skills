@@ -177,6 +177,18 @@ governing property is whether the *windows* overlap, not whether the file is sha
 **no restructuring**. A reorder merges cleanly and silently reshuffles another
 agent's window. This applies to `AGENTS.md`, `validation-gate.md` and `telemetry.md`.
 
+**A skill's `references/` tree travels with its `SKILL.md` for ownership purposes.**
+Naming only `SKILL.md` in an owned-files list is under-scoping: a skill routinely
+states a phase in `SKILL.md` and carries the actual instruction in a reference doc,
+so an agent assigned the phase cannot finish without the reference. Batch A proved
+it — #179's "Phase 3 step C" is not in `init-socraticode/SKILL.md` at all; it lives
+in `references/code-exploration-policy.md`, and the agent had to cross a boundary it
+had been given (it disclosed the crossing, and the file was disjoint from every
+other agent, so nothing collided). Batches B–D inherit the corrected rule: assigning
+`<skill>/SKILL.md` assigns `<skill>/references/**` with it, unless the plan says
+otherwise. This matters most for C1 and C2, which own **different windows of the same
+reference docs** — there the rule is the line window, not the tree.
+
 ### The ratchet headroom is the hidden constraint
 
 `tests/structural/test_skill_self_budget.py` is not contested by file overlap — it is

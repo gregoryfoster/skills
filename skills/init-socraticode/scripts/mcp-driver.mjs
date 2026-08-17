@@ -43,7 +43,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve as resolvePath, join as joinPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1070,7 +1070,35 @@ Env:
 
 // Only dispatch when run as a script. Importing the module (to exercise the
 // PARSERS against captured status strings) must not spawn a server or exit.
-const RUN_AS_SCRIPT = process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.meta.url);
+//
+// Realpaths on BOTH sides (#177). `path.resolve` does not follow symlinks;
+// `import.meta.url` is already the realpath, because Node resolves the ESM main
+// through symlinks unless --preserve-symlinks-main is passed. So through a
+// symlink the two disagreed, the guard was false, and the process exited 0
+// having printed NOTHING. That is the normal invocation path — `skills/<name>`
+// IS a symlink into `skills-vendor/` under the managing-skills pattern, so both
+// documented routes to this driver named the silent one, and the health hook's
+// silent-when-clean contract made a driver that could never speak
+// indistinguishable from a healthy install.
+//
+// Comparing realpaths does not weaken the guard: a module IMPORTED by
+// parser-selftest.mjs still has a different realpath from the runner's argv[1],
+// so it still does not dispatch.
+const _realOrNull = (p) => {
+  // A path that does not resolve is not this file. realpathSync throws ENOENT
+  // on a missing argv[1] (`node -e` with trailing args), and a throw from the
+  // module's top level would replace a silent no-op with a crash — no better.
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+};
+const RUN_AS_SCRIPT = (() => {
+  if (!process.argv[1]) return false;
+  const invoked = _realOrNull(resolvePath(process.argv[1]));
+  return invoked !== null && invoked === _realOrNull(fileURLToPath(import.meta.url));
+})();
 
 if (RUN_AS_SCRIPT) {
   const argv = process.argv.slice(2);

@@ -221,10 +221,42 @@ collapses any prior duplication — which a skip-only dedupe would leave strande
 on the old, erroring command. (Step A has already written the script the
 canonical command points at.)
 
-**Step C — install the once-per-day health hook.** Copy
-[`../scripts/socraticode-health.sh`](../scripts/socraticode-health.sh) to
-`.claude/hooks/socraticode-health.sh` (overwrite in place; it carries no
-per-project state), `chmod +x`, and append a second SessionStart entry:
+**Step C — install the once-per-day health hook.** **Symlink**
+[`../scripts/socraticode-health.sh`](../scripts/socraticode-health.sh) into
+`.claude/hooks/socraticode-health.sh`, relative and derived from the vendor
+directory actually found rather than a hand-substituted `<owner>-<repo>` —
+that substitution is how a symlink ends up pointing at a plausible path which
+does not exist:
+
+```bash
+for d in skills-vendor/*/skills/init-socraticode/scripts; do
+  [ -f "$d/socraticode-health.sh" ] || continue
+  mkdir -p .claude/hooks
+  ln -sfn "../../$d/socraticode-health.sh" .claude/hooks/socraticode-health.sh
+  break
+done
+```
+
+`managing-skills` installs its sibling refresh hook exactly this way, and both
+hooks land in the same `.claude/hooks/` of the same consumer — they must not be
+installed by opposite mechanisms. A **copy** freezes at whatever version was
+current the day it was installed and drifts silently thereafter; `.skills/doctor.sh`
+scans that directory for *dangling symlinks*, so a copy is a perfectly valid
+regular file it can never see. This hook is the worst candidate for that: it is
+silent when clean by design, so a stale copy that has stopped detecting
+something is indistinguishable from a healthy install
+([#179](https://github.com/gregoryfoster/skills/issues/179)). "It carries no
+per-project state" is the argument *for* the symlink — a file with no
+per-project state is exactly the one that should track upstream automatically.
+
+**Fallback — copy when there is nothing to link to.** A consumer that does not
+vendor via `managing-skills` has no `skills-vendor/` tree, so the loop above
+finds nothing: copy the script to the same path and `chmod +x` instead
+(overwrite in place). That is the same branch this hook's own driver resolution
+already makes. Say which of the two you did in Phase 6's completion table — a
+copy means upstream fixes arrive only on a re-run of this skill.
+
+Then append a second SessionStart entry either way:
 
 ```json
 {

@@ -684,6 +684,68 @@ class TestExactFlagReflectsCountsNotCredentials:
         )
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod 000 does not restrict root, so the unreadable file is readable",
+)
+class TestUnreadableDocInTheInventory:
+    """The doc inventory read every discovered .md through a bare redirect, so a
+    file it had just FOUND but could not READ killed the run in bash's own words
+    — `measure-context.sh: line 956: docs/D.md: Permission denied` — with exit 1,
+    no JSON, and nothing naming the inventory as the stage that failed (#157).
+
+    Exit 2 and a named file, because this output is not reporting-only: it drives
+    budget decisions and telemetry appends, so a measurement that cannot see part
+    of the tree must not report a number as if it could.
+    """
+
+    def _repo_with_unreadable_doc(self, tmp_path: Path) -> Path:
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / "AGENTS.md").write_text(
+            POLICY_LINE * 50 + "\n[live](docs/D.md)\n"
+        )
+        (repo / "docs").mkdir()
+        doc = repo / "docs" / "D.md"
+        doc.write_text("# D\n\nsome live reference prose\n")
+        doc.chmod(0o000)
+        return repo
+
+    def _measure(self, repo: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+
+    def test_exits_two_with_no_partial_json(self, tmp_path: Path):
+        result = self._measure(self._repo_with_unreadable_doc(tmp_path))
+        assert result.returncode == 2, (
+            f"expected exit 2 (infrastructure failure), got {result.returncode}: "
+            f"{result.stderr}"
+        )
+        assert result.stdout.strip() == "", (
+            f"emitted partial JSON before failing: {result.stdout!r}"
+        )
+
+    def test_the_diagnosis_names_the_file_and_the_stage(self, tmp_path: Path):
+        result = self._measure(self._repo_with_unreadable_doc(tmp_path))
+        assert "ERROR could not read docs/D.md" in result.stderr, result.stderr
+        assert "doc inventory" in result.stderr, result.stderr
+
+    def test_bashs_own_words_appear_only_as_the_quoted_cause(self, tmp_path: Path):
+        """`line NNN: <path>: Permission denied` standing alone leaves the
+        operator to work out which script, which stage, and whether a number was
+        lost. Quoted inside the ERROR it is the cause, the way `find.err` and
+        `ct.err` are already carried; on a line of its own it is the defect."""
+        result = self._measure(self._repo_with_unreadable_doc(tmp_path))
+        stray = [
+            line for line in result.stderr.splitlines()
+            if re.search(r"measure-context\.sh: line \d+:", line)
+            and not line.startswith(("ERROR", "WARN", "INFO"))
+        ]
+        assert stray == [], result.stderr
+
+
 class TestDryRunDescribesTheRealCommand:
     def test_dry_run_announces_the_refusal_it_would_hit(self, tmp_path: Path):
         """A preview consulted about a decision must answer for the branch the
