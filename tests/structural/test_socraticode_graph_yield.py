@@ -28,6 +28,7 @@ imported for its parsers, and the hook is pointed at a stub.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -86,6 +87,93 @@ class TestParserSelftestRuns:
             "parser-selftest.mjs must exercise the yield parsers — the #107 "
             "fixture (3 edges / 374 nodes / 81.8% unresolved, Status: READY) is "
             "the whole point of the gate"
+        )
+
+
+class TestDriverRunsThroughASymlink:
+    """The driver must dispatch when reached through the vendoring symlink (#177).
+
+    `RUN_AS_SCRIPT` compared `path.resolve(process.argv[1])` — which does not
+    follow symlinks — against `fileURLToPath(import.meta.url)`, which is the
+    realpath, because Node resolves the ESM main through symlinks. Through a
+    symlink the two disagreed, the guard was false, and the process exited 0
+    having printed nothing.
+
+    That is the *normal* path: `skills/<name>` IS a symlink into
+    `skills-vendor/` under the `managing-skills` pattern, so both documented
+    invocation routes named the silent one. The failure signature is absence,
+    which is why it needs its own test — a no-op driver and a healthy install
+    look identical to every other assertion in this file.
+    """
+
+    @requires_node
+    def test_help_prints_through_a_symlink(self, tmp_path: Path) -> None:
+        link = tmp_path / "mcp-driver.mjs"
+        link.symlink_to(DRIVER)
+        result = subprocess.run(
+            ["node", str(link), "--help"],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip(), (
+            "the driver printed NOTHING when invoked through a symlink and "
+            "still exited 0 (#177). Every documented invocation goes through "
+            f"skills/init-socraticode/scripts/, which is a symlink.\n{result.stderr}"
+        )
+
+    @requires_node
+    def test_an_unknown_command_still_fails_through_a_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        """Exit 0 with no output was the bug; a real dispatch must reject."""
+        link = tmp_path / "mcp-driver.mjs"
+        link.symlink_to(DRIVER)
+        result = subprocess.run(
+            ["node", str(link), "no-such-command"],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 2, (
+            "an unrecognised command must exit 2 through a symlink just as it "
+            f"does through the real path; got {result.returncode}"
+        )
+
+    @requires_node
+    def test_import_still_does_not_dispatch(self) -> None:
+        """The property the guard exists for, preserved.
+
+        `parser-selftest.mjs` imports this module for its parsers. A guard
+        loosened until an import dispatches would spawn a server from the test
+        suite.
+        """
+        script = f"await import({json.dumps(str(DRIVER))});"
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", (
+            "importing mcp-driver.mjs dispatched — the module must stay inert "
+            f"when it is not the main script; got {result.stdout!r}"
+        )
+
+    @requires_node
+    def test_a_symlinked_importer_does_not_dispatch(self, tmp_path: Path) -> None:
+        """The realpath comparison must not collapse to 'any argv[1]'.
+
+        A sibling script that imports the driver has a different realpath, so
+        it must stay inert even though both resolve successfully.
+        """
+        importer = tmp_path / "importer.mjs"
+        importer.write_text(f"await import({json.dumps(str(DRIVER))});\n")
+        link = tmp_path / "importer-link.mjs"
+        link.symlink_to(importer)
+        result = subprocess.run(
+            ["node", str(link)],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", (
+            f"a symlinked importer dispatched the driver; got {result.stdout!r}"
         )
 
 
@@ -180,14 +268,45 @@ class TestSkillGatesOnYield:
         )
 
 
-def _repo(tmp_path: Path, *, manifest: bool = True) -> Path:
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@example.com",
+         "-c", "user.name=t", *args],
+        check=True, capture_output=True, text=True, env=_clean_env(),
+    )
+
+
+def _repo(tmp_path: Path, *, manifest: bool = True, commit: bool = False) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"],
                    check=True, capture_output=True, env=_clean_env())
     if manifest:
         (repo / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
+    if commit:
+        # The manifest is TRACKED, which is the whole reason the `-f` guard
+        # cannot tell a worktree apart from an unindexed repo (#180).
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
     return repo
+
+
+def _worktree(repo: Path, tmp_path: Path, name: str = "wt") -> Path:
+    path = tmp_path / name
+    _git(repo, "worktree", "add", "-q", "-b", name, str(path))
+    return path
+
+
+def _arg_recording_driver(repo: Path) -> Path:
+    """A stub that records the argv the hook handed it, and reports nothing."""
+    stub = repo / "record-args.mjs"
+    stub.write_text(
+        "import { writeFileSync } from 'node:fs';\n"
+        "writeFileSync(process.env.HEALTH_ARGS_OUT, "
+        "process.argv.slice(2).join('\\n'));\n"
+        "process.exit(0);\n"
+    )
+    return stub
 
 
 def _stub_driver(repo: Path, *, exit_code: int, findings: str = "") -> Path:
@@ -302,6 +421,27 @@ class TestHealthHook:
         )
 
     @requires_node
+    @pytest.mark.parametrize(
+        "body, id_",
+        [("process.exit(1);\n", "clean-exit"), ("throw new Error('boom');\n", "crash")],
+    )
+    def test_the_findings_scratch_file_never_survives(
+        self, tmp_path: Path, body: str, id_: str
+    ) -> None:
+        """It lives in the COMMON git dir now (#180), shared by every checkout.
+
+        A leftover is not cosmetic there: `git status` does not see inside
+        `.git`, so an orphan from a crashed run accumulates unnoticed in the
+        directory every worktree of the repo also writes to.
+        """
+        repo = _repo(tmp_path)
+        stub = repo / "stub.mjs"
+        stub.write_text(body)
+        _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
+        leftovers = list((repo / ".git").glob("socraticode-health.findings*"))
+        assert leftovers == [], f"{id_}: left {leftovers} behind in .git"
+
+    @requires_node
     def test_force_bypasses_the_lock(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)
         stub = _stub_driver(repo, exit_code=1, findings=self.FINDINGS)
@@ -310,6 +450,180 @@ class TestHealthHook:
             repo, SOCRATICODE_DRIVER=str(stub), SOCRATICODE_HEALTH_FORCE="1"
         )
         assert "graph yield LOW" in forced.stdout
+
+
+class TestHookMeasuresTheIndexedProject:
+    """The hook must ask about the path SocratiCode actually indexed (#180).
+
+    SocratiCode indexes by ABSOLUTE project path, and a `git worktree` is a
+    different absolute path. The hook passed the literal `.`, so from any
+    worktree it asked about a project that was never indexed and reported
+    `graph is not READY` on a repo whose index is perfectly healthy — verified
+    on CannObserv/replicator, same index and same day, `ok` from the main
+    checkout and broken from a worktree.
+
+    The `-f .socraticodecontextartifacts.json` guard does not catch it: the
+    manifest is tracked, so it is present in every worktree. And this lands on
+    the workflow the cohort is pushed toward — repos that deploy from their
+    main checkout are told to do feature work in worktrees, so the false report
+    is the COMMON case. A once-per-day reporter that cries wolf on most
+    sessions gets tuned out, and then the one true finding scrolls past too.
+    """
+
+    @staticmethod
+    def _measured(cwd: Path, stub: Path, out: Path, **env: str) -> str:
+        result = subprocess.run(
+            ["bash", str(HOOK)],
+            cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            env=_clean_env(
+                SOCRATICODE_DRIVER=str(stub), HEALTH_ARGS_OUT=str(out), **env
+            ),
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.exists(), (
+            f"the driver never ran: {result.stdout!r} / {result.stderr!r}"
+        )
+        return out.read_text().splitlines()[-1]
+
+    @requires_node
+    def test_a_worktree_session_measures_the_main_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        stub = _arg_recording_driver(repo)
+        measured = self._measured(wt, stub, tmp_path / "args.txt")
+        assert Path(measured).resolve() == repo.resolve(), (
+            "from a worktree the hook measured the worktree's own path, which "
+            "SocratiCode never indexed, so a healthy index reports as broken "
+            f"(#180). Measured {measured!r}, expected {str(repo.resolve())!r}"
+        )
+
+    @requires_node
+    def test_the_main_checkout_still_measures_itself(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path, commit=True)
+        stub = _arg_recording_driver(repo)
+        measured = self._measured(repo, stub, tmp_path / "args.txt")
+        assert Path(measured).resolve() == repo.resolve(), (
+            f"the main checkout must measure itself; got {measured!r}"
+        )
+
+    @requires_node
+    def test_the_probe_flag_survives_the_path_change(self, tmp_path: Path) -> None:
+        """projectPath is positional; --probe must still precede it."""
+        repo = _repo(tmp_path, commit=True)
+        stub = _arg_recording_driver(repo)
+        out = tmp_path / "args.txt"
+        self._measured(repo, stub, out, SOCRATICODE_PROBE_FILE="src/app.py")
+        assert out.read_text().splitlines()[:3] == [
+            "health-check", "--probe", "src/app.py"
+        ], out.read_text()
+
+    @requires_node
+    def test_the_daily_lock_is_shared_with_the_main_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        """One project, one report per day — not one per checkout of it.
+
+        Once every worktree measures the SAME project, a per-worktree lock
+        turns one finding into N identical reports a day, which is the
+        tuned-out failure this fix exists to stop.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        stub = _stub_driver(repo, exit_code=1, findings=TestHealthHook.FINDINGS)
+
+        first = _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
+        assert "graph yield LOW" in first.stdout, first.stdout
+        second = _run_hook(wt, SOCRATICODE_DRIVER=str(stub))
+        assert second.stdout == "", (
+            "a worktree session re-reported a finding the main checkout had "
+            f"already reported today; got {second.stdout!r}"
+        )
+
+
+class TestHookPrefersTheRealDriver:
+    """Resolution must prefer `skills-vendor/*/…` over the symlink dirs (#177).
+
+    `skills/init-socraticode/scripts/mcp-driver.mjs` and
+    `.claude/skills/init-socraticode/scripts/mcp-driver.mjs` are both symlinks
+    into `skills-vendor/`. They resolve to the same file, so preferring the
+    vendor path costs nothing — and it keeps the hook working against a
+    consumer whose vendored driver predates the #177 fix, which is exactly the
+    population that cannot report its own silence.
+    """
+
+    @staticmethod
+    def _plant(repo: Path, rel: str, marker: str) -> Path:
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"process.stderr.write({json.dumps(f'  - {marker}' + chr(10))});\n"
+            "process.exit(1);\n"
+        )
+        return path
+
+    @requires_node
+    def test_vendor_wins_over_the_symlink_dirs(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        self._plant(
+            repo,
+            "skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs",
+            "resolved via skills-vendor",
+        )
+        for rel in (
+            "skills/init-socraticode/scripts/mcp-driver.mjs",
+            ".claude/skills/init-socraticode/scripts/mcp-driver.mjs",
+        ):
+            self._plant(repo, rel, "resolved via a symlink dir")
+
+        result = _run_hook(repo)
+        assert result.returncode == 0, result.stderr
+        assert "resolved via skills-vendor" in result.stdout, (
+            "the hook resolved a symlink-dir candidate ahead of the real "
+            f"skills-vendor path (#177); got {result.stdout!r}"
+        )
+
+    @requires_node
+    def test_env_override_still_wins(self, tmp_path: Path) -> None:
+        """Reordering must not demote the one-off override to second place."""
+        repo = _repo(tmp_path)
+        self._plant(
+            repo,
+            "skills-vendor/gregoryfoster-skills/skills/init-socraticode/scripts/mcp-driver.mjs",
+            "resolved via skills-vendor",
+        )
+        stub = _stub_driver(repo, exit_code=1, findings="  - resolved via env\n")
+        result = _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
+        assert "resolved via env" in result.stdout, result.stdout
+
+    def test_help_documents_the_order_it_uses(self) -> None:
+        """The --help block is the only place the order is stated in prose."""
+        body = HOOK.read_text()
+        start = body.index("Resolution of the driver")
+        block = [
+            line.split(". ", 1)[-1].strip()
+            for line in body[start:body.index("Env:", start)].splitlines()
+        ]
+        vendor = block.index("skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs")
+        symlinked = block.index("skills/init-socraticode/scripts/mcp-driver.mjs")
+        assert vendor < symlinked, (
+            "socraticode-health.sh --help still lists the symlink candidates "
+            "ahead of skills-vendor/*/ — the documented order and the loop "
+            "must agree, and both must prefer the real path (#177)"
+        )
+
+
+def _health_hook_install_step() -> str:
+    """Step C of the policy reference — where the install is actually written.
+
+    #179 attributes this prose to `SKILL.md` Phase 3 step C. SKILL.md has no
+    lettered steps; Phase 3 item 3 delegates to
+    `references/code-exploration-policy.md`, which is where Step C lives.
+    """
+    body = POLICY_REF.read_text()
+    start = body.index("**Step C —")
+    return body[start:body.index("**It reports; it does not repair.**", start)]
 
 
 class TestHookIsInstalled:
@@ -321,6 +635,61 @@ class TestHookIsInstalled:
             "SKILL.md Phase 3 must install .claude/hooks/socraticode-health.sh "
             "— #107 ask 2 is a cadence, and a script the skill never wires up "
             "runs zero times"
+        )
+
+    def test_it_is_installed_as_a_symlink_not_a_copy(self) -> None:
+        """#179: two vendored hooks in one `.claude/hooks/` installed by
+        opposite mechanisms.
+
+        `managing-skills` installs its sibling refresh hook as a symlink into
+        the vendor, so upstream fixes arrive on the normal submodule refresh.
+        This skill said *copy*, which freezes at the day of install and drifts
+        silently — and `.skills/doctor.sh` scans for DANGLING symlinks, so a
+        copy is a valid regular file it can never see. On a hook that is silent
+        when clean, a stale copy that has stopped detecting something is
+        indistinguishable from a healthy install.
+        """
+        step = _health_hook_install_step()
+        assert "ln -s" in step, (
+            "the health hook install step must create a symlink into "
+            "skills-vendor/, the way managing-skills installs its sibling "
+            f"refresh hook (#179).\n---\n{step}"
+        )
+        assert not re.search(r"^\*\*Step C[^*]*\*\*\s*Copy", step), (
+            "the install step still leads with an unconditional Copy (#179)"
+        )
+
+    def test_the_copy_is_retained_as_the_fallback(self) -> None:
+        """A consumer with no `skills-vendor/` tree has nothing to point at.
+
+        The hook's own driver resolution already makes exactly this branch, so
+        the shape is established rather than invented here.
+        """
+        step = _health_hook_install_step()
+        assert "copy" in step.lower(), (
+            "the copy must survive as the fallback for a consumer that does "
+            f"not vendor via managing-skills (#179).\n---\n{step}"
+        )
+
+    def test_skill_md_does_not_contradict_the_reference(self) -> None:
+        """The contradiction is what let one cohort repo end up with one hook
+        of each kind in the same directory."""
+        body = SKILL_MD.read_text()
+        idx = body.index(".claude/hooks/socraticode-health.sh")
+        window = body[idx:idx + 500]
+        assert "symlink" in window.lower(), (
+            "SKILL.md Phase 3 still describes the health hook as a copy while "
+            f"the reference installs a symlink (#179).\n---\n{window}"
+        )
+
+    def test_managing_skills_still_states_the_rule_being_matched(self) -> None:
+        """Read-only anchor. If the sibling ever stops installing a symlink,
+        this alignment is stale and the failure should say so here rather than
+        surface as two skills disagreeing again."""
+        ms = (REPO_ROOT / "skills" / "managing-skills" / "SKILL.md").read_text()
+        assert "a symlink into the vendor" in ms, (
+            "managing-skills no longer states the symlink rule this skill was "
+            "aligned to (#179) — re-check both before trusting either"
         )
 
     def test_dedupe_marker_is_distinct_from_the_prefetch_hook(self) -> None:

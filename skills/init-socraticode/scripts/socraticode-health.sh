@@ -50,18 +50,26 @@ session-start hook is the wrong place to spend an hour of CPU or to change the
 repo under an agent that has already begun work.
 
 Behaviour:
-  - Runs at most once per UTC day (.git/socraticode-health.lock).
+  - Measures the MAIN CHECKOUT, not the session's cwd (#180). SocratiCode
+    indexes by absolute project path, so from a git worktree the old literal
+    '.' asked about a project that was never indexed and reported a healthy
+    index as broken. The path is the parent of --git-common-dir, and it is
+    skipped unless the manifest is found there.
+  - Runs at most once per UTC day, per PROJECT — the lock lives in the common
+    git dir, so N worktrees of one repo produce one report a day, not N.
   - Silent when there is nothing to report, and on every infrastructure
     condition it cannot judge (no node, no driver, no manifest).
   - Bounded: HEALTH_TIMEOUT_MS caps the driver run (default 60000).
-  - Logs to .git/socraticode-health.log (bounded to ~64 KiB / 200 lines).
+  - Logs to <common .git>/socraticode-health.log (~64 KiB / 200 lines).
   - Exits 0 on every condition.
 
-Resolution of the driver, first hit wins:
+Resolution of the driver, first hit wins. Paths below are relative to the main
+checkout, and the vendor path is preferred over the two symlink dirs, which
+point at it anyway (#177):
   1. \$SOCRATICODE_DRIVER               (env var; one-off override)
-  2. skills/init-socraticode/scripts/mcp-driver.mjs
-  3. .claude/skills/init-socraticode/scripts/mcp-driver.mjs
-  4. skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs
+  2. skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs
+  3. skills/init-socraticode/scripts/mcp-driver.mjs
+  4. .claude/skills/init-socraticode/scripts/mcp-driver.mjs
   5. \$HOME/.claude/skills/init-socraticode/scripts/mcp-driver.mjs
 
 Env:
@@ -83,13 +91,53 @@ EOF
   fi
 done
 
-gitdir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+
+# The COMMON git dir, not this checkout's private one. `git rev-parse --git-dir`
+# in a worktree yields .git/worktrees/<name>; --git-common-dir yields the shared
+# .git for both a worktree and the primary checkout, and its parent is the
+# directory SocratiCode indexed (#180).
+#
+# Two things hang off that, and they are the same question asked twice:
+#
+#   PROJECT — SocratiCode indexes by ABSOLUTE project path, so from a worktree
+#     the old literal `.` asked about a project that was never indexed and
+#     reported `graph is not READY` against a perfectly healthy index. Repos
+#     that deploy from their main checkout are told to do feature work in
+#     worktrees, so that false report was the common case, not the exception —
+#     and a once-per-day reporter that cries wolf on most sessions gets tuned
+#     out, taking the one true finding with it.
+#
+#   LOCK/LOG — one project now yields one report per day rather than one per
+#     checkout of it. Leaving these in the private dir would answer #180's false
+#     positive with N identical true ones.
+#
+# --path-format=absolute needs git >= 2.31; without it --git-common-dir is
+# relative to cwd in the primary checkout (plain `.git`) and absolute in a
+# worktree, so the fallback resolves it against the current directory.
+commondir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  || commondir=""
+if [ -z "$commondir" ]; then
+  commondir="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
+  case "$commondir" in /*) ;; *) commondir="$PWD/$commondir" ;; esac
+fi
+gitdir="$commondir"
 LOCK="$gitdir/socraticode-health.lock"
 LOG="$gitdir/socraticode-health.log"
 
+PROJECT="$(dirname "$commondir")"
+
 # Nothing to check if this repo was never indexed. The manifest is the cheapest
 # reliable marker that init-socraticode ran here, and it costs no process.
-[ -f .socraticodecontextartifacts.json ] || exit 0
+#
+# Probed at $PROJECT, the path that is about to be measured — not at `.`. In a
+# worktree those differ, and asking about the wrong one is the bug above in
+# miniature. It also verifies the resolution: a layout where dirname(commondir)
+# is not the checkout (a bare repo's worktree, a --separate-git-dir clone) has
+# no manifest there, so the hook stays silent rather than measuring a path it
+# guessed. That is the issue's option 2 — resolve, then verify — settled
+# locally, at no round trip.
+[ -f "$PROJECT/.socraticodecontextartifacts.json" ] || exit 0
 
 if [ "${SOCRATICODE_HEALTH_FORCE:-0}" != "1" ] \
   && [ -f "$LOCK" ] \
@@ -115,11 +163,22 @@ date -u +%Y%m%d > "$LOCK" || true
 command -v node >/dev/null 2>&1 || { _log "node not on PATH — skipped"; exit 0; }
 
 DRIVER=""
+# skills-vendor/*/ BEFORE the two symlink dirs, which are symlinks into it and
+# so resolve to the same file. Preferring the real path costs nothing on a
+# current install, and keeps this hook working against a vendored driver that
+# predates the #177 fix — where reaching mcp-driver.mjs through the symlink made
+# it exit 0 having printed nothing, which a silent-when-clean hook reports as a
+# healthy install.
+#
+# Anchored at $PROJECT rather than cwd, for the same reason the measurement is
+# (#180): from a worktree with uninitialized submodules — which is the state
+# managing-skills' doctor exists to repair — the vendor tree is absent here but
+# present in the checkout being measured.
 for candidate in \
   "${SOCRATICODE_DRIVER:-}" \
-  "skills/init-socraticode/scripts/mcp-driver.mjs" \
-  ".claude/skills/init-socraticode/scripts/mcp-driver.mjs" \
-  skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs \
+  "$PROJECT"/skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs \
+  "$PROJECT/skills/init-socraticode/scripts/mcp-driver.mjs" \
+  "$PROJECT/.claude/skills/init-socraticode/scripts/mcp-driver.mjs" \
   "$HOME/.claude/skills/init-socraticode/scripts/mcp-driver.mjs"; do
   if [ -n "$candidate" ] && [ -f "$candidate" ]; then
     DRIVER="$candidate"
@@ -141,12 +200,20 @@ export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 # Findings land on the driver's stderr, one per line; the JSON verdict is on
 # stdout and goes to the log, not to the session — a session-context injection
 # should be the sentence, not the payload.
-FINDINGS_FILE="$gitdir/socraticode-health.findings"
+#
+# Per-PID, and removed on every exit path. $gitdir is the COMMON git dir now
+# (#180), so this file is shared by every checkout of the repo: two sessions
+# starting in the same second both clear the lock before either stamps it, and
+# a single fixed name would let one truncate the other's findings mid-report.
+# The lock makes that rare, not impossible, and the failure would be a garbled
+# report — which is the one thing a reporter must not produce.
+FINDINGS_FILE="$gitdir/socraticode-health.findings.$$"
+trap 'rm -f "${FINDINGS_FILE:-}"' EXIT
 RC=0
 # `${A[@]+"${A[@]}"}`, not `"${A[@]}"`: under `set -u`, bash 3.2 — which is what
 # macOS ships — treats an empty array expansion as an unbound variable and kills
 # the hook before it can report anything.
-node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} . \
+node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "$PROJECT" \
   >>"$LOG" 2>"$FINDINGS_FILE" \
   || RC=$?
 
@@ -160,6 +227,7 @@ fi
 
 _log "health-check exited $RC"
 cat "$FINDINGS_FILE" >>"$LOG" 2>/dev/null || true
-rm -f "$FINDINGS_FILE"
+# Removal is the EXIT trap's job — it also covers the _hook_panic path, which
+# used to leave the file behind in the shared .git.
 
 exit 0
