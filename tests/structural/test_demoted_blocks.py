@@ -22,14 +22,18 @@ Two mechanisms, chosen per block rather than by blanket rule:
             script name, an anchor — pins those tokens on *both* sides. This is
             the shape `test_finding_evidence.py` already uses for the
             `SKILL.md` <-> `dimensions.md` envelope, and it is the only one that
-            catches **rewording**, the failure mode actually observed. Fourteen
-            of the sixteen blocks quote such a contract.
+            catches **rewording**, the failure mode actually observed. Nearly
+            every block quotes such a contract.
   dated     A block with no single token carrying the contract — either pure
             narrative, or a demotion so total that `SKILL.md` no longer states
             the rule at all — instead names the version it left, so a reader can
-            see it is a historical record rather than current text. Two blocks
-            qualify: `continuous-surfaces.md`'s document preamble, and
+            see it is a historical record rather than current text. The
+            exceptions: `continuous-surfaces.md`'s document preamble, and
             `cohort-patterns.md`'s no-`docs/`-tree note.
+
+REGISTRY is the count of each. Writing the totals into this docstring would put a
+number here that the next demotion falsifies — the drift this module exists to
+catch, in the file that catches it.
 
 Every discovered block must be covered by one or the other, and discovery is by
 prose convention rather than by a hand-kept list — a newly demoted block that

@@ -15,12 +15,17 @@ invites both:
   record    A **historical record**: this is what `SKILL.md` said, at the
             version named. Being out of date is what it is *for*. It owes the
             reader exactly one thing — the version, so the record cannot be
-            mistaken for current text. Ten blocks.
+            mistaken for current text.
   excerpt   A **living excerpt**: the long form of a section `SKILL.md` still
             states in compressed form, presented in the present tense with no
             date. A reader treats it as current, so it must track its source in
             **both** directions — no reworded token (#148) and no unrepresented
-            clause (this module). Six blocks.
+            clause (this module).
+
+How many blocks are in each class is deliberately not written down here. The
+registry is the count, `_entries_of` reads it, and a number in prose is one more
+thing that goes stale the next time a block is demoted — the failure this whole
+module is about, reproduced in its own docstring.
 
 ## How the split is drawn, and why not the other way
 
@@ -219,10 +224,11 @@ class TestEveryBlockCommitsToOneKind:
 class TestARecordCarriesItsDate:
     """The one thing a record owes: the version it left SKILL.md at.
 
-    `test_demoted_blocks.py::TestDatedBlocksSayWhenTheyLeft` asserts this for
-    the single entry whose *pins* are unavailable. That is a different question
-    — it asks "can this block be pinned?", not "does this block claim to be
-    current?" — and it reached one of the eight records. This reaches all eight.
+    `test_demoted_blocks.py::TestDatedBlocksSayWhenTheyLeft` asserts this only
+    for entries whose *pins* are unavailable. That is a different question — it
+    asks "can this block be pinned?", not "does this block claim to be current?"
+    — and most records are pinnable, so it reaches almost none of them. This
+    reaches every record, by construction.
     """
 
     @pytest.mark.parametrize("key,entry", _entries_of("record"))

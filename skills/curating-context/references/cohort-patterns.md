@@ -77,6 +77,38 @@ Phase 5's step 3 carried this inline until v1.7 demoted it here:
    the cohort has converged on, and the canonical section order and `docs/`
    filenames to align with.
 
+### Demoting class B — the Phase 5 step 4 text in full
+
+It sits beside step 3 above rather than under `## Recurring defects`, where the
+demotion originally stranded it — an unnumbered heading interrupting that
+section's numbered run reads as procedure misfiled as a defect.
+
+Phase 5's step 4 carried this inline until v1.7 demoted it here:
+
+   **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text;
+   do not paraphrase it in transit. A paraphrase during a move is an
+   unreviewable content change wearing a refactor's clothes — and it is the one
+   thing a reader skimming the diff will not notice, because the words are all
+   still there.
+
+   Before **extending** an existing doc, read its `##` headings first: if the
+   destination already covers the incoming topic, merge into the canonical
+   section rather than appending a near-duplicate beside it — the cohort's
+   defect #5 created at the destination by the run itself. And keep provenance
+   out of headings: "Demoted from AGENTS.md (#412)" belongs in the commit, not
+   baked into a permanent anchor slug. Phase 6.5 checks both.
+
+   Two mechanical adjustments come with every move, and only these two:
+
+   - **Relative links gain a level.** A block moving from the repo root into
+     `docs/` turns every `](tests/x.py)` into `](../tests/x.py)`. Skip this and
+     Phase 6 reports a wave of dead links — the check catches it, but the run
+     fails rather than succeeding.
+   - **A `###` subsection becomes `##`** at the top of its own document.
+
+   `prove-no-loss.sh` normalises exactly these two and nothing else, so any
+   other difference is reported as content loss.
+
 ## Cross-repo surveys stay read-only
 
 Two mechanics enforce this:
@@ -247,34 +279,6 @@ Both `notifier` and `usa-wa` carry a long fenced `## Common Commands` block *and
 a `docs/COMMANDS.md`. Keep the two or three commands needed on nearly every task
 inline (class A); the full reference is class B. When they disagree, that is
 warrant #1 for deletion of the copy — but establish which is correct first.
-
-### Demoting class B — the Phase 5 step 4 text in full
-
-Phase 5's step 4 carried this inline until v1.7 demoted it here:
-
-   **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text;
-   do not paraphrase it in transit. A paraphrase during a move is an
-   unreviewable content change wearing a refactor's clothes — and it is the one
-   thing a reader skimming the diff will not notice, because the words are all
-   still there.
-
-   Before **extending** an existing doc, read its `##` headings first: if the
-   destination already covers the incoming topic, merge into the canonical
-   section rather than appending a near-duplicate beside it — the cohort's
-   defect #5 created at the destination by the run itself. And keep provenance
-   out of headings: "Demoted from AGENTS.md (#412)" belongs in the commit, not
-   baked into a permanent anchor slug. Phase 6.5 checks both.
-
-   Two mechanical adjustments come with every move, and only these two:
-
-   - **Relative links gain a level.** A block moving from the repo root into
-     `docs/` turns every `](tests/x.py)` into `](../tests/x.py)`. Skip this and
-     Phase 6 reports a wave of dead links — the check catches it, but the run
-     fails rather than succeeding.
-   - **A `###` subsection becomes `##`** at the top of its own document.
-
-   `prove-no-loss.sh` normalises exactly these two and nothing else, so any
-   other difference is reported as content loss.
 
 ### 6. Cross-repo and moved link targets
 

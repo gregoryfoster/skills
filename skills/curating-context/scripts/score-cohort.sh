@@ -700,11 +700,20 @@ c_canon = {version_canon(v) for v in c_versions}
 #
 # DERIVED from the ledgers already fetched, never asserted, so it cannot go stale
 # the way the claim it replaces did. If the newest version recorded anywhere in
-# either arm is newer than every version being scored, the comparison is
+# the ROSTER is newer than every version attributed to an arm, the comparison is
 # historical and the notice names both.
+#
+# Roster-wide, not arm-wide, and the notice says "these ledgers" to match: a repo
+# carrying no wave: annotation still evidences that the cohort has moved on, and
+# narrowing this to the arms would let an unwaved member run six versions ahead
+# with the table claiming to be current.
 ledger_versions = {r.get("skill_version") for info in repos.values()
                    for r in info["rows"] if r.get("skill_version")}
-newest_in_ledgers = max(ledger_versions, key=version_key, default=None)
+# sorted() first: max() returns the FIRST maximal element, and set iteration order
+# is not stable across runs. Two spellings of one release (1.2 / v1.2 / 1.2.0 —
+# the collisions version_canon exists to absorb) key equal, so without this the
+# reported spelling varies run to run for a value callers diff.
+newest_in_ledgers = max(sorted(ledger_versions), key=version_key, default=None)
 scored_versions = t_versions + c_versions
 arms_are_historical = bool(
     newest_in_ledgers and scored_versions

@@ -22,7 +22,9 @@ cannot is one somebody switches off:
 
 That leaves four real ones, all in `curating-context`. Sites outside this agent's
 line windows are inventoried rather than fixed, because editing another agent's
-file to satisfy a gate is how two branches end up disagreeing.
+file to satisfy a gate is how two branches end up disagreeing. The inventory
+exempts a *site*, never a file: the docs holding known debris stay under the
+gate, so a self-link written into one tomorrow still fails.
 """
 
 from __future__ import annotations
@@ -41,17 +43,27 @@ QUOTATION_MARKERS = ("in full", "as phase", "carried it", "puts it", "states the
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)#\s]+)(#[^)\s]*)?\)")
 
-# Known debris this agent does not own, each with who does. An entry that is
-# FIXED must be deleted from here — `test_no_stale_entries` fails otherwise, so
-# the inventory can only shrink. It is deliberately not a permanent exemption:
-# the defect is real at every one of these sites.
+# Known debris this agent does not own, each with the exact link text and who
+# owns it. An entry that is FIXED must be deleted from here — `test_no_stale_entries`
+# fails otherwise, so the inventory can only shrink. It is deliberately not a
+# permanent exemption: the defect is real at every one of these sites.
+#
+# Keyed by link text rather than by file, and that is the whole point. A
+# file-level skip would exempt these three docs from the gate entirely, so the
+# NEXT self-link written into one of them would ship unseen — an inventory that
+# grows silent coverage gaps is worse than no inventory. Line numbers would be
+# the obvious key and are the wrong one: they move under every edit, and a
+# stale number reads as a fixed site.
 NOT_MINE_TO_FIX = {
     "curating-context/references/cadence.md":
-        "read-only this batch — changed in batch A/B (#128, #169)",
+        ("[references/cadence.md](cadence.md)",
+         "read-only this batch — changed in batch A/B (#128, #169)"),
     "curating-context/references/validation-gate.md":
-        "inside `## The adoption rule`, which is #117's window in batch D",
+        ("[references/validation-gate.md](validation-gate.md)",
+         "inside `## The adoption rule`, which is #117's window in batch D"),
     "curating-context/references/write-guard-hook.md":
-        "unassigned in this batch; no agent owns the file",
+        ("[references/write-guard-hook.md](write-guard-hook.md)",
+         "unassigned in this batch; no agent owns the file"),
 }
 
 
@@ -91,8 +103,23 @@ def _rel(md: Path) -> str:
 @pytest.mark.parametrize("doc", _docs(), ids=_rel)
 def test_no_doc_links_to_itself(doc: Path):
     hits = _self_links(doc)
-    if _rel(doc) in NOT_MINE_TO_FIX:
-        pytest.skip(f"inventoried: {NOT_MINE_TO_FIX[_rel(doc)]}")
+    known = NOT_MINE_TO_FIX.get(_rel(doc))
+    if known:
+        link, why = known
+        surplus = [(n, text) for n, text in hits if text != link]
+        assert not surplus, (
+            f"{_rel(doc)} carries a self-link the inventory does not cover:\n"
+            + "\n".join(f"  line {n}: {text}" for n, text in surplus)
+            + f"\n\nThe inventoried site ({link}) is exempt because it is {why}. "
+            "Nothing else in this file is — fix this one, or add it to "
+            "NOT_MINE_TO_FIX with who owns it."
+        )
+        assert len(hits) == 1, (
+            f"{_rel(doc)} carries {len(hits)} copies of the inventoried "
+            f"self-link {link}; only one is accounted for:\n"
+            + "\n".join(f"  line {n}: {text}" for n, text in hits)
+        )
+        return
     assert not hits, (
         f"{_rel(doc)} links to itself:\n"
         + "\n".join(f"  line {n}: {text}" for n, text in hits)
@@ -111,12 +138,13 @@ def test_no_stale_entries():
     wave annotations had.
     """
     stale = [
-        rel for rel in NOT_MINE_TO_FIX
-        if (SKILLS / rel).exists() and not _self_links(SKILLS / rel)
+        rel for rel, (link, _why) in NOT_MINE_TO_FIX.items()
+        if (SKILLS / rel).exists()
+        and link not in {text for _n, text in _self_links(SKILLS / rel)}
     ]
     assert not stale, (
-        "these are listed in NOT_MINE_TO_FIX but carry no self-link any more; "
-        f"delete the entries: {stale}"
+        "these are listed in NOT_MINE_TO_FIX but no longer carry the self-link "
+        f"the entry names; delete the entries: {stale}"
     )
 
 
