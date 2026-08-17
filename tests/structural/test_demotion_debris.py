@@ -18,7 +18,15 @@ visible to any existing gate:
               fragment, which CommonMark renders as a *code block* — prose
               displayed as source, inside the doc that teaches how to demote.
 
-A third shape, a heading demoted **inside a fenced example**, was found and
+  unheaded    The copy arrived without the heading or lead-in that says what it
+              is. `cohort-patterns.md` carries two — an indented block sitting
+              under the filenames table introduced by nothing, and a **`4.`**
+              opening an ordered list with no `1.`, `2.` or `3.` above it,
+              stranded under `### 5. Command blocks duplicating docs/COMMANDS.md`
+              which is about something else entirely. Both are Phase 5 step 4,
+              demoted out of a numbered list and never re-seated.
+
+A fourth shape, a heading demoted **inside a fenced example**, was found and
 fixed under #148 and is asserted by
 `test_demoted_blocks.py::test_no_marker_is_buried_in_a_code_fence`.
 
@@ -44,6 +52,8 @@ SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "curating
 REFERENCES = SKILL_DIR / "references"
 
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+ORDERED_ITEM = re.compile(r"^(\s*)(\d+)[.)]\s")
+HEADING = re.compile(r"^#{1,6} ")
 FENCE = re.compile(r"^\s*```")
 
 # A paragraph opening with one of these is a continuation by construction, not a
@@ -115,6 +125,36 @@ def _all_paragraphs() -> list[Paragraph]:
     return [p for path in sorted(REFERENCES.rglob("*.md")) for p in _paragraphs(path)]
 
 
+def _orphaned_ordered_items(path: Path) -> list[str]:
+    """Ordered-list items numbered n > 1 with no n-1 above them.
+
+    Scoped to the nearest heading above, because a list cannot span one. The
+    predecessor may be many lines up — a numbered step often carries paragraphs
+    of continuation — so this looks back through the section rather than at the
+    immediately preceding line.
+    """
+    out: list[str] = []
+    seen: dict[int, set[int]] = {}
+    fenced = False
+    for i, line in enumerate(path.read_text().splitlines(), start=1):
+        if FENCE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if HEADING.match(line):
+            seen = {}
+            continue
+        m = ORDERED_ITEM.match(line)
+        if not m:
+            continue
+        indent, number = len(m.group(1)), int(m.group(2))
+        if number > 1 and (number - 1) not in seen.get(indent, set()):
+            out.append(f"{path.name}:{i}: {line.strip()[:70]!r}")
+        seen.setdefault(indent, set()).add(number)
+    return out
+
+
 @pytest.fixture(scope="module")
 def paragraphs() -> list[Paragraph]:
     found = _all_paragraphs()
@@ -151,6 +191,57 @@ class TestNoParagraphArrivedTruncated:
             "or remove the tail under a duplication warrant if the whole sentence "
             "already lives elsewhere. `prove-no-loss.sh` cannot see this: the line "
             "arrived, so the check passed (#158)."
+        )
+
+
+class TestNoBlockArrivedWithoutItsFrame:
+    """A demoted block must say what it is; the two ways of not saying it.
+
+    This is the same defect `test_demoted_blocks.py` exists for, one step
+    earlier: a block with no heading and no lead-in cannot be *discovered*, so
+    it cannot be registered, so no pin protects it. Two of the three blocks
+    #158 sent this branch after were invisible to #148 for exactly that reason.
+    """
+
+    def test_no_ordered_list_starts_mid_sequence(self):
+        stranded = [
+            line for path in sorted(REFERENCES.rglob("*.md"))
+            for line in _orphaned_ordered_items(path)
+        ]
+        assert not stranded, (
+            "Ordered-list items with no predecessor in their section:\n  "
+            + "\n  ".join(stranded) + "\n"
+            "A numbered step demoted out of `SKILL.md`'s Phase list keeps its number "
+            "and loses its siblings, so it renders as a list of one that begins at "
+            "four. Give it a heading and a lead-in naming the phase and version it "
+            "came from, as the demotion convention does everywhere else (#158)."
+        )
+
+    def test_no_indented_block_stands_without_a_lead_in(self, paragraphs):
+        """The convention indents a quoted snapshot; a heading or `:` introduces it.
+
+        `### Normalizing the index` is the shape: a heading, a lead-in ending in
+        a colon, then the snapshot indented three spaces. An indented block with
+        neither is a quotation of nothing — the reader cannot tell whose words
+        they are, or when they were true.
+        """
+        unframed = [
+            f"{p.key}: {p.line.strip()[:60]!r} (after {p.prev_nonblank.strip()[:40]!r})"
+            for p in paragraphs
+            if p.indent >= 2
+            and not p.inside_a_list
+            and not p.after_fence
+            and not LIST_ITEM.match(p.line)
+            and p.prev_nonblank is not None
+            and not HEADING.match(p.prev_nonblank)
+            and not p.prev_nonblank.rstrip().endswith(":")
+        ]
+        assert not unframed, (
+            "Indented blocks introduced by nothing:\n  " + "\n  ".join(unframed) + "\n"
+            "An indented block is the demotion convention's quotation mark. Introduce "
+            "it with a heading or a lead-in ending in a colon that names the section "
+            "and version it was demoted from, or un-indent it if it is this doc's own "
+            "prose rather than a quotation (#158)."
         )
 
 
