@@ -450,9 +450,17 @@ jobs:
 
       # Exits 3 when there are new seams, which is a finding rather than a
       # failure here — the count goes on the row either way.
+      #
+      # --base-ledger, NOT --base HEAD. On a clean checkout the policy file at
+      # HEAD and the one in the working tree are the same content, so the diff
+      # is empty and the one class that needs a base — moved-title — was zero
+      # in every scheduled run, in every repo, forever (#169). The ledger's
+      # newest repo_commit is the previous measurement, so the sweep spans the
+      # interval since it. With no such row the report SAYS the interval is
+      # empty rather than presenting a standing count as a week's accrual.
       - name: Sweep the seams
         run: |
-          bash "\$SKILL_SCRIPTS/check-seams.sh" --base HEAD >/tmp/seams.txt 2>&1 || true
+          bash "\$SKILL_SCRIPTS/check-seams.sh" --base-ledger "$LEDGER" >/tmp/seams.txt 2>&1 || true
           tail -20 /tmp/seams.txt
           echo "SEAMS=\$(sed -n 's/^seams: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
           echo "SEAMS_ACKED=\$(sed -n 's/^seams_acked: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
