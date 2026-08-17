@@ -28,6 +28,9 @@ Behaviour:
   - Runs only on the main branch.
   - Scopes the submodule update to skills-vendor/ — never touches other
     submodules.
+  - Initializes an unregistered skills-vendor/ submodule (--init) rather
+    than skipping it. A refresh that still moved nothing is reported, not
+    logged as a bare success.
   - Honours per-submodule pins, so one vendored repo can be held at a
     commit while the rest keep refreshing (see Pin file below).
   - Stages and commits exactly two kinds of path: the skills-vendor/
@@ -235,14 +238,43 @@ date -u +%Y%m%d > "$LOCK" || true
 
 # Scope the update to the unpinned skills-vendor/ paths — never touch other
 # submodules, and never a pinned one.
+#
+# `--init` is what makes this hook work on a half-healed checkout: content
+# present under skills-vendor/, nothing registered in .git/config. Without it
+# git skips every such submodule, prints "not initialized", and exits **0** —
+# so the guard below passes, no pointer moves, and the lock (stamped above,
+# deliberately) is spent. A consumer sat in that state for days reporting
+# success (#176). `--init` is idempotent on an already-registered submodule,
+# and it stays behind the pin filter because a pinned path was already removed
+# from UPDATE_PATHS — a held submodule is neither initialized nor refreshed.
+#
+# .skills/doctor.sh does not cover this: its own `--init --recursive` runs
+# only when a skills/* symlink dangles, and in this state they all resolve.
 if [ "${#UPDATE_PATHS[@]}" -eq 0 ]; then
   _log "submodule update skipped — no unpinned skills-vendor/ submodules to refresh"
+elif [ -z "$(printf '%s' "$REGISTERED" | tr -d '[:space:]')" ]; then
+  # skills-vendor/ exists but .gitmodules records nothing under it, so the
+  # pathspec matches no submodule and git exits 0 having done nothing. That is
+  # a permanent no-op, not a quiet success — name it (#176).
+  _log "submodule update did nothing — no registered skills-vendor/ submodules in .gitmodules; this hook cannot advance a pointer here"
+  echo "skills update: no submodules registered under skills-vendor/ — nothing to refresh (see $LOG)" >&2
 elif ! {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] submodule update (${UPDATE_PATHS[*]}):"
-  git submodule update --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
+  git submodule update --init --remote --merge -- "${UPDATE_PATHS[@]}" 2>&1
 } >>"$LOG"; then
   echo "skills update failed (see $LOG)" >&2
   exit 0
+else
+  # Post-condition, because the failure mode of #176 was a *silent* one: git
+  # can decline to touch a submodule and still exit 0. `git submodule status`
+  # prefixes an uninitialized path with '-'. Reported, never fatal — this hook
+  # must not block a session, and the next run retries.
+  UNINIT="$(git submodule status -- "${UPDATE_PATHS[@]}" 2>/dev/null |
+    awk '/^-/ {printf "%s ", $2}' || true)"
+  if [ -n "$UNINIT" ]; then
+    _log "submodule refresh incomplete — still uninitialized after --init: ${UNINIT% }"
+    echo "skills update: still uninitialized after refresh: ${UNINIT% } (see $LOG)" >&2
+  fi
 fi
 
 # Paths this hook is allowed to stage. Enumerated explicitly, and NEVER
