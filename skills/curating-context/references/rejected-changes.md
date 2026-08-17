@@ -116,6 +116,14 @@ ceiling, for a doc tree growing without being read.
 **Generalisable lesson:** check that the metric moves the right way on a known-good
 outcome before making it the target.
 
+**Still not registerable, 2026-08-17.** It came back as a candidate **primary**
+metric in [#118](https://github.com/gregoryfoster/skills/issues/118)'s table —
+which is this file's own failure mode occurring in the issue that proposes the
+next round of metrics. Hence the rule now in
+[validation-gate.md](validation-gate.md#the-steady-state-metric): **a proposed
+primary is checked against this file before registering it.** The check is one
+read and it is the one nobody did.
+
 ## `ant auth` as the second credential source
 
 **Proposed:** when `ANTHROPIC_API_KEY` is unset, fall back to an `ant auth login`

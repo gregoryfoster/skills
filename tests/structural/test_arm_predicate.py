@@ -39,6 +39,16 @@ def _clean_env() -> dict:
     return env
 
 
+def _flat(text: str) -> str:
+    """Prose with its wrapping and emphasis removed.
+
+    A phrase assertion against raw markdown is really an assertion about where
+    the line breaks fell and whether a word is bold, which is not the claim any
+    of these tests are making — and a reflow would fail them for no reason.
+    """
+    return " ".join(text.replace("**", "").replace("*", "").split())
+
+
 def _row(**kw) -> str:
     row = {
         "ts": "2026-08-05", "repo": "x", "file": "AGENTS.md",
@@ -157,14 +167,14 @@ class TestTheRosterSaysWhatItsAnnotationsAre:
     def test_header_calls_the_annotations_rollout_order(self):
         head = ROSTER.read_text().split("\n# pair 1")[0]
         low = head.lower()
-        assert "rollout order" in low, head
-        assert "not in force" in low or "not an assignment" in low, head
+        assert "rollout order" in _flat(low), head
+        assert "not in force" in _flat(low) or "not an assignment" in _flat(low), head
 
     def test_header_no_longer_claims_the_split_holds_a_version(self):
         """The forfeited claim, verbatim from the old header. Kept as a
         tripwire: if it comes back, so does the reasoning it licensed."""
         head = ROSTER.read_text().split("\n# pair 1")[0]
-        assert "forfeits the comparison permanently" not in head, head
+        assert "forfeits the comparison permanently" not in _flat(head), head
 
     def test_the_annotations_themselves_survive(self):
         """Retired as a control, retained as staging. Removing them would take
@@ -181,7 +191,7 @@ class TestTheGateRecordsTheDecision:
     def test_the_arm_predicate_is_settled_and_dated(self):
         text = self.GATE.read_text()
         assert "2026-08-17" in text
-        assert "observed, not assigned" in text
+        assert "observed, not assigned" in _flat(text)
 
     def test_it_gives_the_reason_a_pin_cannot_label_a_scored_run(self):
         """The load-bearing half. Without it the entry reads as a concession to
@@ -199,7 +209,7 @@ class TestTheGateRecordsTheDecision:
         and #118's last comment refuted it: CI resolves the committed gitlink,
         so drift in a working tree says nothing about a scheduled run."""
         text = self.GATE.read_text()
-        assert "moved itself to v1.3 within a day" not in text
+        assert "moved itself to v1.3 within a day" not in _flat(text)
 
 
 class TestTheSteadyStateMetric:
@@ -240,14 +250,14 @@ class TestTheSteadyStateMetric:
         proposing the next round of metrics. The gate already cites the entry
         for the closure cap; what it lacked was the registration rule."""
         text = self.GATE.read_text()
-        assert "not registerable" in text, text[-3000:]
+        assert "not registerable" in _flat(text), text[-3000:]
 
     def test_a_proposal_is_not_scored_on_the_metric_it_introduced(self):
         """v1.3 added `seams`, and registering seam-cleanliness is exactly where
         someone will be tempted to score v1.3 on it. That is what made v1.3
         unjudgeable in the first place (#117)."""
         text = self.GATE.read_text()
-        assert "a metric it introduced" in text, text[-3000:]
+        assert "a metric it introduced" in _flat(text), text[-3000:]
 
 
 class TestTheRowSchemaSaysTheCovariateIsDerived:

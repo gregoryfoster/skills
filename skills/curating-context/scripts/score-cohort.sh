@@ -21,14 +21,19 @@ Options:
   --treatment WAVE    Wave running the PROPOSED version. Default: a
   --control WAVE      Wave running the CURRENT version. Default: b
 
-                      Note the direction. Wave A adopts FIRST and therefore
-                      holds the OLDER version, so the first experiment inverts
-                      the defaults: --treatment b --control a. The defaults suit
-                      later rounds, once A has caught up and is the arm carrying
-                      a proposal. Get this backwards and a winning change reads
-                      as a losing one — so an arm carrying only older versions
-                      than the other is detected and returns INCONCLUSIVE rather
-                      than a rejection.
+                      Note the direction. In experiment 1 wave A adopted first
+                      and held the OLDER version, so that run inverts the
+                      defaults: --treatment b --control a. Get this backwards
+                      and a winning change reads as a losing one — so an arm
+                      carrying only older versions than the other is detected
+                      and returns INCONCLUSIVE rather than a rejection.
+
+                      wave:/pair: no longer ASSIGN a version (#118/#168). They
+                      are rollout order; the arm a run belongs to is the
+                      skill_version on its own row. Which wave carries which
+                      version is therefore an observation about the ledgers, not
+                      a property of the roster — read it off the two header
+                      lines rather than assuming a direction.
   --ledger PATH       Ledger path within each repo.
                       Default: .skills/context-metrics.jsonl
   --branch NAME       Branch to read for owner/repo entries.
@@ -682,6 +687,29 @@ def version_key(v):
 t_canon = {version_canon(v) for v in t_versions}
 c_canon = {version_canon(v) for v in c_versions}
 
+# The scored run is each repo's FIRST attributed curation, and that never moves.
+# Six releases on, this table still reports experiment 1's arms — `wave b: 1.3`
+# against `wave a: 1.2` — off rows written in August, with nothing saying those
+# versions are spent. That is the failure #168 raises against the roster's
+# wave:/pair: annotations, a reader taking an annotation as describing reality,
+# sitting in the script instead. wave:/pair: are rollout order now, not a version
+# assignment (#118/#168): nothing has ever held an arm at a version, because
+# .skills/skills-pin is installed in none of the twelve and a pin could not label
+# a scored run anyway — the cadence writes baseline:scheduled and classify_run()
+# skips it.
+#
+# DERIVED from the ledgers already fetched, never asserted, so it cannot go stale
+# the way the claim it replaces did. If the newest version recorded anywhere in
+# either arm is newer than every version being scored, the comparison is
+# historical and the notice names both.
+ledger_versions = {r.get("skill_version") for info in repos.values()
+                   for r in info["rows"] if r.get("skill_version")}
+newest_in_ledgers = max(ledger_versions, key=version_key, default=None)
+scored_versions = t_versions + c_versions
+arms_are_historical = bool(
+    newest_in_ledgers and scored_versions
+    and version_key(newest_in_ledgers) > max(map(version_key, scored_versions)))
+
 
 # Wave A adopts first and therefore holds the OLDER version, so the first
 # experiment runs `--treatment b --control a` — and running the script bare
@@ -856,6 +884,11 @@ if fmt == "json":
         "informative_pairs": len(informative), "treatment_wins": len(wins),
         "min_pairs": min_pairs, "reject_floor": reject_floor,
         "systemic_unscorable": systemic,
+        # Populated whichever way it lands: a reader distinguishing "no newer
+        # version exists" from "the field was not computed" needs the version
+        # either way, and null would collapse the two.
+        "newest_version_in_ledgers": newest_in_ledgers,
+        "arms_are_historical": arms_are_historical,
         "verdict": verdict, "reasons": reasons,
         "treatment_arm_failures": [r["repo"] for r in t_failures],
         "treatment_arm_unverified": [r["repo"] for r in t_unverified],
@@ -891,6 +924,19 @@ def no_loss_cell(r):
 w = max([len(r["repo"]) for r in records] + [4])
 print(f"treatment wave {treatment}: {', '.join(t_versions) or 'no attributed runs'}")
 print(f"control   wave {control}: {', '.join(c_versions) or 'no attributed runs'}")
+# Above the inversion warning on purpose: "these versions are spent" is context
+# for reading the whole table, where the inversion warning is about one comparison
+# within it. It never touches the verdict — a historical table is not a reason to
+# reject anything, and a notice that moved an exit code would be a gate.
+if arms_are_historical:
+    print()
+    print(f"NOTE the arms above are HISTORICAL. The scored run is each repo's "
+          f"first attributed\n"
+          f"     curation, which never moves, and these ledgers already carry "
+          f"{newest_in_ledgers}. This is\n"
+          f"     the experiment that ran, not the cohort as it is now. "
+          f"wave:/pair: are rollout\n"
+          f"     order, not a version assignment in force (#168).")
 if inversion_warning:
     print()
     print(inversion_warning)
