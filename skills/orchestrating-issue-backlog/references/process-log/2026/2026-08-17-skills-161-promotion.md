@@ -104,7 +104,7 @@ eleven cohort repos vendor. This is the "issue body is a proposal, not a specifi
 
 ### What the net-neutral constraint actually cost, and what it bought
 
-Additions ran ~2,400 bytes. Payment came to ~2,540, and **none of it was content**:
+Additions ran ~2,400 bytes. Payment matched them, and **none of it was content**:
 
 | Cut | Why it was free |
 |---|---|
@@ -130,9 +130,14 @@ an independent one.
 - **"13 tokens of headroom" was stale.** `.skills/context-token-ratio` moved 2.65 → 2.68 on
   2026-08-14 (`2025bca`, fitting the ratio over the whole surface rather than the policy file).
   Under the ratio actually in force the file measured **22,838 / 23,110 — 272 tokens of headroom**,
-  and 21,513 exact. The decision to stay net-neutral survives the correction (a re-fit ratio can move
-  back, and byte-neutrality is robust to it where token-neutrality is not), but the constraint that
-  justified it was ~20× looser than believed, and #189's body repeats the same 13.
+  and 21,586 exact (1,524). The decision to stay net-neutral survives the correction (a re-fit ratio
+  can move back, and byte-neutrality is robust to it where token-neutrality is not), but the
+  constraint that justified it was ~20× looser than believed, and #189's body repeats the same 13.
+  The general lesson is the one the orchestrator drew: `bytes / <remembered ratio>` computed in a
+  shell is an estimate standing in for a measurement, and it was optimistic in one direction
+  (stale ratio) and pessimistic in another (this file carries the repo's largest estimator drift,
+  +5.8%) for the same reason. Two clauses were cut under the wrong number and restored after
+  measuring — the trim is only "paid for" once the exact reading agrees.
 - **`SKILL.md` still reads "Nine sessions across four projects" for Q5.** The 2026-08-17 watcher
   entry records the **11th session / 10th positive**. Left alone deliberately — it is the watcher
   session's own count to fold in, and the 2026-08-13 power-map entry shows this exact number has gone
@@ -149,5 +154,6 @@ an independent one.
 
 ### Numbers
 
-`2296 passed, 127 skipped` at baseline and after. `SKILL.md`: 61,208 → 61,071 bytes; estimate
-22,838 → 22,787 tokens; exact 21,513. Ratchet unchanged at 23,110.
+`2296 passed, 127 skipped` at baseline and after. `SKILL.md`: 61,208 → 61,202 bytes; estimate
+22,838 → 22,836 tokens; exact 21,586 → 21,554. Ratchet unchanged at 23,110, and the binding
+(estimate) reading keeps 274 tokens of headroom.

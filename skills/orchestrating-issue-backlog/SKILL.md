@@ -151,7 +151,7 @@ Group issues into **merge batches**. The core principle: within a batch, all age
 
 **Batch design rules:**
 - **Batch 0 / Batch A**: truly isolated issues — each touches files no other issue in this batch touches. Maximum agent count.
-- **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`.
+- **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`; exceeding it produces silent fall-through, not a graceful error.
 - **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free). Agents within a sub-wave run in parallel up to the ceiling; sub-waves themselves run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves.
 - **Subsequent batches**: ordered by the dependency chain of contested files. One agent per batch on the critical path; parallelize only where file coverage is genuinely disjoint.
 - **Pick a shape for same-file issue pairs** — when two issues share a file (typically a small prerequisite + a larger dependent), there are two clean shapes:
@@ -348,7 +348,7 @@ The `isolation: "worktree"` parameter runs the agent in a temporary worktree. It
 
 **The base, by contrast, does not vary: worktrees are cut from `origin/main`, independent of the orchestrator's checked-out branch.** Sub-wave 1 hides this — `batch/<X>` still equals `main` — and by sub-wave 2 the batch branch carries everything merged since, so the gap widens with batch depth. Rule 1 does not cover it: local `main` can be current and the agent's tree still wrong. Two obligations follow, both the orchestrator's:
 - **Brief every worker to `git merge batch/<X>`** — worker protocol step 3, immediately after the isolation pre-flight. Expect a fast-forward.
-- **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; the other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
+- **Give every worker prompt the expected test count on `batch/<X>`**, plus "stop if it does not match" — the only detector that has caught this. In #144 Batch A two of four agents found it because a briefed `1740 passed` read `1644` in their tree; one had been told to trim a file to a target measured on a version it lacked, and the other two would have edited a tree missing eight merged issues. Give a number, not an exhortation to "verify your assumptions" — that gets confirmation.
 
 **Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here — Rule 1 carries the sync, Orchestrator step 2 the branch creation and the never-move-a-deploying-checkout caveat.
 
@@ -425,5 +425,5 @@ Session-specific institutional memory — interview answers, batch shapes, non-o
 
 **Self-budget:** held to a **23,110-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow. Raised once,
+6,000-token standard, set so this file cannot grow. Raised once,
 from 22,900; that test's comment carries the argument.
