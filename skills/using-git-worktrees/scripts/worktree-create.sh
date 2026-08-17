@@ -92,4 +92,35 @@ else
   git worktree add "$WORKTREE_PATH" "$BRANCH" || exit 2
 fi
 
+# A worktree inherits no virtualenv, so the first `.venv/bin/python -m pytest`
+# in it dies before any test runs (#156). Link the parent's when there is one:
+# a symlink is by construction the same interpreter and the same installed
+# packages, where a freshly resolved venv is a different environment that can
+# collect fewer tests and still report green.
+#
+# Opportunistic, never a gate — this script is vendored into repos that have no
+# venv at all, and a worktree without one is not a failed worktree. Notes go to
+# stderr; stdout stays the worktree path, which is this script's contract.
+#
+# Does NOT reach harness-provisioned worktrees (the Agent tool's
+# `isolation: "worktree"`), which call `git worktree add` directly and never
+# run this script. Those rely on the consuming repo's own hook, plus the
+# by-hand `ln -s` in SKILL.md Phase 3.
+#
+# Every failure path here is swallowed. The worktree already exists by this
+# point, so a `set -e` abort would return non-zero for a creation that
+# succeeded — and leave the caller without the path on stdout.
+if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" ]]; then
+  # `pwd -P` resolves through a .venv that is itself a symlink (a worktree
+  # provisioning a worktree), so we never build a link to a link.
+  VENV_TARGET=$(cd "$PROJECT_ROOT/.venv" 2>/dev/null && pwd -P) || VENV_TARGET=""
+  if [[ -z "$VENV_TARGET" ]]; then
+    echo "WARN: could not resolve $PROJECT_ROOT/.venv — no venv linked into $WORKTREE_PATH" >&2
+  elif ln -s "$VENV_TARGET" "$WORKTREE_PATH/.venv" 2>/dev/null; then
+    echo "NOTE: linked .venv -> $VENV_TARGET" >&2
+  else
+    echo "WARN: could not link .venv into $WORKTREE_PATH — run 'ln -s $VENV_TARGET .venv' there" >&2
+  fi
+fi
+
 echo "$WORKTREE_PATH"

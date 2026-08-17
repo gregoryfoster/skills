@@ -264,8 +264,12 @@ class TestWorktreeCreateLinksVenv:
         assert result.returncode == 0, (
             f"expected exit 0, got {result.returncode}\nstderr: {result.stderr}"
         )
-        wt = Path(result.stdout.strip())
-        assert wt.is_dir(), f"stdout must stay the worktree path; got {result.stdout!r}"
+        # Last line, not the whole of stdout: `git worktree add` prints its own
+        # "HEAD is now at <sha>" there, a pre-existing leak this change neither
+        # introduces nor fixes. What matters here is that the venv NOTE went to
+        # stderr and so did not add a second polluting line.
+        wt = Path(result.stdout.strip().splitlines()[-1])
+        assert wt.is_dir(), f"stdout must end with the worktree path; got {result.stdout!r}"
         link = wt / ".venv"
         assert link.is_symlink(), (
             "worktree-create.sh must link the parent's .venv into the new "
@@ -287,4 +291,5 @@ class TestWorktreeCreateLinksVenv:
         assert result.returncode == 0, (
             f"a parent without .venv must not fail creation; stderr: {result.stderr}"
         )
-        assert not (Path(result.stdout.strip()) / ".venv").exists()
+        wt = Path(result.stdout.strip().splitlines()[-1])
+        assert not (wt / ".venv").exists()

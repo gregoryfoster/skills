@@ -246,7 +246,8 @@ pre-commit install                       # structural tests run on every commit
 pre-commit install --hook-type pre-push  # integration tests run on every push
 ```
 
-Hooks use `.venv/` directly, so the venv must be at the repo root.
+Hooks use `.venv/` at the repo root. A worktree has none; link it, never
+re-create: `ln -s <main>/.venv .venv`.
 
 Tests run automatically from that point on. To run them manually:
 
