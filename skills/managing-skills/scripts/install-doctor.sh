@@ -41,7 +41,8 @@ Options:
 
 Exit codes:
   0  Success (installed, updated, or no-op).
-  1  Source doctor.sh not found, or destination is a non-doctor file.
+  1  Source doctor.sh not found, or the destination is a non-doctor file
+     or not a regular file at all (e.g. a directory).
 EOF
       exit 0
       ;;
@@ -79,6 +80,22 @@ mkdir -p "$DEST_DIR"
 # an exotic filesystem) costs nothing by printing — whereas swallowing it
 # would make "swept nothing" and "could not look" indistinguishable.
 find "$DEST_DIR" -maxdepth 1 -name '.doctor.sh.tmp.*' -mmin +1440 -delete || true
+
+# Refuse a destination that exists but is not a regular file — in practice a
+# directory. Every check below is `[ -f "$DEST" ]`, so such a path falls through
+# all of them, and then SURVIVES the write: `mv -f "$TMP" "$DEST"` moves the temp
+# file *into* a directory and exits 0. The installer printed `installed …
+# /.skills/doctor.sh` and exited 0 with the doctor stranded inside under its temp
+# name, which the auto-refresh hook and sync_self both read as success (#181).
+#
+# `-f` is true through a symlink to a file, so the case the doctor exists to
+# repair — a symlinked .skills/doctor.sh, which mv then replaces with a real
+# file — is deliberately not caught here.
+if [ -e "$DEST" ] && [ ! -f "$DEST" ]; then
+  err "refusing to write $DEST — it exists and is not a regular file"
+  err "remove it manually if you want to install the doctor"
+  exit 1
+fi
 
 # If destination exists and isn't recognizably a doctor, refuse to clobber.
 # Grep for the stable marker comment that doctor.sh carries near the top of

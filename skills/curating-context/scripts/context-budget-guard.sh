@@ -122,6 +122,10 @@ log() {
   if [ -f "$LOG" ] && [ "$(LC_ALL=C wc -c <"$LOG" 2>/dev/null || echo 0)" -gt 65536 ]; then
     # Truncation is best-effort: `|| true` is the C branch on purpose, so a
     # failed tail and a failed mv both leave the log as-is and the hook silent.
+    # unchecked-write-ok: the log is a diagnostic, not state anything reads
+    # back, and this is a PostToolUse hook that must never block an edit. The
+    # marker is required because `|| true` on a temp-file write is #187's shape
+    # by default — this is the one place it is a decision (#181).
     # shellcheck disable=SC2015
     tail -n 200 "$LOG" >"$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG" 2>/dev/null || true
   fi

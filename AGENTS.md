@@ -112,13 +112,14 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - No interactive prompts — agents run in non-interactive shells
 - Use structured output (JSON, TSV) on stdout; diagnostics to stderr
 - Use `set -euo pipefail` in bash scripts
+- A write through a temp file must be checked — `set -e` exempts the first element
+  of an `&&` list — and a success message must sit inside the branch that succeeded
+  ([#181](https://github.com/gregoryfoster/skills/issues/181))
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
   over `skills/*/scripts/`, `scripts/` and `.claude/hooks/`, and skips loudly when
-  the binary is absent or older than 0.7.0 — the release that added
-  `--source-path=SCRIPTDIR`, without which an older build rejects the invocation
-  outright instead of linting
+  the binary is absent or older than 0.7.0
   ([#140](https://github.com/gregoryfoster/skills/issues/140)).
   `SHELLCHECK_REQUIRED=1` turns either skip into a failure.
 - A `# shellcheck disable=SCxxxx` **must** carry a reason comment on the line
