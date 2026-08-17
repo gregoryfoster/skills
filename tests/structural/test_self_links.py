@@ -58,9 +58,6 @@ NOT_MINE_TO_FIX = {
     "curating-context/references/cadence.md":
         ("[references/cadence.md](cadence.md)",
          "read-only this batch — changed in batch A/B (#128, #169)"),
-    "curating-context/references/validation-gate.md":
-        ("[references/validation-gate.md](validation-gate.md)",
-         "inside `## The adoption rule`, which is #117's window in batch D"),
     "curating-context/references/write-guard-hook.md":
         ("[references/write-guard-hook.md](write-guard-hook.md)",
          "unassigned in this batch; no agent owns the file"),

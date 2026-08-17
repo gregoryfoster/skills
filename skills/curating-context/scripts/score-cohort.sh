@@ -48,6 +48,27 @@ Options:
                       sweep is INCONCLUSIVE. A tripped SAFETY gate is exempt —
                       one repo that dropped content rejects on its own, with no
                       pairs at all.
+
+                      A registration (--experiment) carries its own floor. Left
+                      unset, that floor is used; set, the STRICTER of the two
+                      wins. The floor is a pre-registered parameter of the
+                      experiment, so a flag may tighten it and may not loosen
+                      it — loosening after the pair count is known is the same
+                      move as choosing the metric after seeing the rows.
+  --experiment NN     Score against the COMMITTED registration numbered NN --
+                      .skills/experiments/NN-<slug>.yml. It names the primary
+                      metric, which direction is better, the two versions the
+                      arms are expected to carry, and the pair floor. Without
+                      it the gate scores budget-gap closure, the default
+                      pre-registered in references/validation-gate.md.
+  --experiments-dir DIR
+                      Where registrations live. Default: .skills/experiments
+
+  There is NO --metric flag, deliberately. A flag naming a metric lets the same
+  run be repeated until the answer is agreeable, which is the identical failure
+  to picking the before-state after seeing the after-values. The metric comes
+  from a committed file whose git history is the pre-registration proof, or it
+  is the default this gate has always scored.
   --format FMT        table (default) or json
   -h, --help          Show this help and exit 0.
 
@@ -135,7 +156,9 @@ Exit codes:
   5  INCONCLUSIVE — nothing was decided: too few informative pairs, a failed
      sweep below the rejection floor, safety unverified, every repo in both arms
      unscorable for one reason, both arms on one version, an arm split across
-     versions, or the arms look inverted
+     versions, the arms look inverted, the arms are not the ones the
+     registration named, or the registered metric is null across the whole
+     control arm (the proposal added its own instrument)
 
 Every question of the form "is this even an experiment?" is answered BEFORE any
 verdict that would reject, because a REJECT tells the reader to write the change
@@ -153,6 +176,11 @@ LEDGER=".skills/context-metrics.jsonl"
 BRANCH=""
 MIN_PAIRS=3
 FORMAT="table"
+EXPERIMENT=""
+EXPERIMENTS_DIR=".skills/experiments"
+# Set when --min-pairs was typed, so a registration's floor can override the
+# DEFAULT without silently overriding a number the caller actually asked for.
+MIN_PAIRS_SET=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -161,7 +189,11 @@ while [ $# -gt 0 ]; do
     --control) CONTROL="${2:?--control needs a wave}"; shift 2 ;;
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
     --branch) BRANCH="${2:?--branch needs a name}"; shift 2 ;;
-    --min-pairs) MIN_PAIRS="${2:?--min-pairs needs a number}"; shift 2 ;;
+    --min-pairs) MIN_PAIRS="${2:?--min-pairs needs a number}"
+                 MIN_PAIRS_SET=1; shift 2 ;;
+    --experiment) EXPERIMENT="${2:?--experiment needs a number}"; shift 2 ;;
+    --experiments-dir) EXPERIMENTS_DIR="${2:?--experiments-dir needs a path}"
+                       shift 2 ;;
     --format) FORMAT="${2:?--format needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -214,6 +246,183 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
+
+# --- the pre-registration ---------------------------------------------------
+# Resolved and validated BEFORE a single ledger is fetched. A registration that
+# names a rejected metric or an illegal arm predicate is a usage error, and
+# making the caller wait out twelve gh round-trips to be told so trains them to
+# skip the flag.
+#
+# Its own python3 pass rather than a branch inside the scorer, so there is one
+# parser and it runs first. The file is deliberately FLAT `key: value` — a
+# pre-registration nobody can read is not evidence of anything, and a flat file
+# is parseable in twenty lines here rather than requiring PyYAML, which the
+# cohort repos this script runs in are not guaranteed to have.
+: >"$TMP/experiment.json"
+if [ -n "$EXPERIMENT" ]; then
+  python3 - "$EXPERIMENTS_DIR" "$EXPERIMENT" \
+      "$_libdir/../references/rejected-changes.md" \
+      >"$TMP/experiment.json" <<'PY' || exit 1
+import json
+import re
+import sys
+from pathlib import Path
+
+directory, number, rejected_path = sys.argv[1:4]
+
+
+def die(*lines):
+    for line in lines:
+        print(line, file=sys.stderr)
+    sys.exit(1)
+
+
+if not number.isdigit():
+    die(f"ERROR --experiment must be a number, not {number!r}")
+
+d = Path(directory)
+if not d.is_dir():
+    die(f"ERROR no experiments directory at {directory}",
+        "      A registration is a COMMITTED file — its git history is what "
+        "proves the",
+        "      metric was chosen before the rows were read. Create "
+        f"{directory}/NN-<slug>.yml.")
+
+# Matched on the numeric VALUE of the prefix, so `--experiment 2` and
+# `--experiment 02` resolve the same file. A registration is cited by number in
+# issues and commit messages, where nobody preserves the zero padding.
+found = sorted(p for p in d.glob("*.yml")
+               if re.match(r"^\d+-", p.name)
+               and int(p.name.split("-", 1)[0]) == int(number))
+if not found:
+    die(f"ERROR no registration numbered {number} in {directory}",
+        f"      Expected {directory}/{int(number):02d}-<slug>.yml, committed "
+        "before the",
+        "      treatment arm adopted. Without it there is no pre-registered "
+        "metric to score.")
+if len(found) > 1:
+    die(f"ERROR {len(found)} files claim experiment {number} in {directory}:",
+        *(f"        {p.name}" for p in found),
+        "      Which one was registered is exactly the question the number "
+        "answers.")
+
+path = found[0]
+
+REQUIRED = ("experiment", "proposal", "registered", "treatment_version",
+            "control_version", "arm_predicate", "primary_metric", "direction",
+            "min_pairs")
+OPTIONAL = ("notes",)
+
+fields = {}
+for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    line = raw.strip()
+    # Full-line comments only. An inline `#` is left in the value on purpose:
+    # `proposal:` carries a URL, and stripping from the first `#` would silently
+    # truncate a fragment into a different link.
+    if not line or line.startswith("#"):
+        continue
+    if ":" not in line:
+        die(f"ERROR {path.name}:{n}: not a `key: value` line: {raw!r}",
+            "      A registration is flat by design — no nesting, no lists.")
+    key, _, value = line.partition(":")
+    key, value = key.strip(), value.strip()
+    if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    if key in fields:
+        # The second one silently winning is how an edited copy of another
+        # registration keeps claiming to be the original.
+        die(f"ERROR {path.name}:{n}: `{key}` is set twice")
+    if key not in REQUIRED + OPTIONAL:
+        die(f"ERROR {path.name}:{n}: unknown key `{key}`",
+            f"      Known keys: {', '.join(REQUIRED + OPTIONAL)}.",
+            "      Refused rather than ignored: a misspelled key reads as a "
+            "declaration that",
+            "      was never honoured, which is worse than one that was never "
+            "made.")
+    fields[key] = value
+
+missing = [k for k in REQUIRED if k not in fields]
+if missing:
+    die(f"ERROR {path.name} omits required key(s): {', '.join(missing)}")
+
+stem = int(path.name.split("-", 1)[0])
+if not fields["experiment"].isdigit() or int(fields["experiment"]) != stem:
+    die(f"ERROR {path.name} says `experiment: {fields['experiment']}` but is "
+        f"filed as {stem:02d}",
+        "      The file it is scored as and the file it says it is have to be "
+        "the same file,",
+        "      or the history proving pre-registration belongs to a different "
+        "experiment.")
+
+# The arm predicate. #118/#168 settled that the arm a run belongs to is the
+# skill_version stamped on its OWN ROW — observed, never assigned — so there is
+# exactly one legal value and the schema names it rather than leaving it
+# implied. `wave` is refused BY NAME because it is the specific wrong answer: a
+# generic "not a legal value" would read as a typo to the next author.
+if fields["arm_predicate"] == "wave":
+    die(f"ERROR {path.name}: `arm_predicate: wave` — wave:/pair: are rollout "
+        "order, not an",
+        "      arm assignment (#118/#168). A pin could hold a version in CI, "
+        "but it cannot",
+        "      label a SCORED run: the weekly cadence writes "
+        "`baseline:scheduled`, and this",
+        "      script skips every baseline* row when it looks for the run to "
+        "score. The rows",
+        "      a pin versions deterministically are exactly the rows the gate "
+        "refuses to",
+        "      score. Use `arm_predicate: skill_version`.")
+if fields["arm_predicate"] != "skill_version":
+    die(f"ERROR {path.name}: `arm_predicate: {fields['arm_predicate']}` — the "
+        "only legal value",
+        "      is `skill_version`, the version stamped on the scored row "
+        "(#118/#168).")
+
+if fields["direction"] not in ("higher", "lower"):
+    die(f"ERROR {path.name}: `direction: {fields['direction']}` — must be "
+        "`higher` or `lower`.",
+        "      Which way is better is half of what registering a metric means; "
+        "leaving it",
+        "      implicit restores exactly the freedom the file exists to "
+        "remove.")
+
+if not fields["min_pairs"].isdigit() or int(fields["min_pairs"]) < 1:
+    die(f"ERROR {path.name}: `min_pairs: {fields['min_pairs']}` — must be a "
+        "positive integer.")
+
+# A proposed primary metric is checked against rejected-changes.md before it is
+# registered. `tokens_live` was proposed as a candidate in #118 despite already
+# carrying an entry there — the exact failure that file exists to prevent,
+# happening in the issue proposing the next round of metrics.
+#
+# READ from the file, never a list kept here. Adding an entry is what retires a
+# metric, in one place; a copy of the list in this script is a second place to
+# forget.
+rejected = {}
+try:
+    for line in Path(rejected_path).read_text(encoding="utf-8").splitlines():
+        if not line.startswith("## "):
+            continue
+        for ident in re.findall(r"`([a-z_][a-z0-9_]*)`", line):
+            rejected.setdefault(ident, line[3:].strip())
+except OSError:
+    # Not fatal, but not silent either: the check is the point of the step.
+    print(f"WARN could not read {rejected_path}; the registered metric was NOT "
+          "checked against the recorded rejections", file=sys.stderr)
+
+metric = fields["primary_metric"]
+if metric in rejected:
+    die(f"ERROR {path.name}: `{metric}` is a recorded rejection and cannot be "
+        "registered.",
+        f"      references/rejected-changes.md: {rejected[metric]}",
+        "      A metric already refuted cannot be the metric a later proposal "
+        "is judged by.")
+
+fields["experiment"] = f"{stem:02d}"
+fields["min_pairs"] = int(fields["min_pairs"])
+fields["file"] = str(path)
+print(json.dumps(fields, sort_keys=True))
+PY
+fi
 
 [ -f "$COHORT_FILE" ] || {
   echo "ERROR no cohort file at $COHORT_FILE" >&2; exit 1; }
@@ -278,12 +487,30 @@ while IFS="$CTX_US" read -r kind entry wave pair; do
 done <"$TMP/roster"
 
 RC=0
-python3 - "$TMP/all.jsonl" "$TREATMENT" "$CONTROL" "$MIN_PAIRS" "$FORMAT" <<'PY' || RC=$?
+python3 - "$TMP/all.jsonl" "$TREATMENT" "$CONTROL" "$MIN_PAIRS" "$FORMAT" \
+         "$TMP/experiment.json" "$MIN_PAIRS_SET" <<'PY' || RC=$?
 import json
 import sys
 
-src, treatment, control, min_pairs, fmt = sys.argv[1:6]
+src, treatment, control, min_pairs, fmt, exp_src, min_pairs_set = sys.argv[1:8]
 min_pairs = int(min_pairs)
+
+# The registration, already resolved and validated above. Absent, the gate scores
+# budget-gap closure with higher-is-better — which is not an unregistered metric
+# but the one pre-registered in references/validation-gate.md's `## The metric`,
+# committed long before any of these rows existed.
+with open(exp_src, encoding="utf-8") as fh:
+    _raw = fh.read().strip()
+experiment = json.loads(_raw) if _raw else None
+metric = experiment["primary_metric"] if experiment else "closure"
+direction = experiment["direction"] if experiment else "higher"
+if experiment:
+    # A flag may TIGHTEN the registered floor and may not loosen it. Loosening
+    # once the pair count is known is the same move as choosing the metric after
+    # seeing the rows, and it is the move --min-pairs 2 nearly made in
+    # experiment 1.
+    min_pairs = (max(min_pairs, experiment["min_pairs"]) if min_pairs_set
+                 else experiment["min_pairs"])
 
 repos = {}
 order = []
@@ -344,6 +571,12 @@ def score_repo(key, info):
         "pair": info["pair"], "status": None, "why": None, "why_code": None,
         "before": None,
         "after": None, "budget": None, "closure": None, "no_loss": None,
+        # The registered metric's raw value off the scored row, when the metric
+        # is a ledger FIELD rather than the derived closure. Null here means the
+        # row did not record it — which is the whole content of the
+        # added-its-own-instrument outcome below, so it must not be conflated
+        # with a zero.
+        "metric_raw": None,
         "no_loss_warrants": None,
         "skill_version": None, "ts": None, "file": None, "other_files": 0,
         "gates": [], "unverified": [],
@@ -428,6 +661,8 @@ def score_repo(key, info):
     rec["budget"] = scored.get("budget")
     rec["no_loss"] = scored.get("no_loss")
     rec["no_loss_warrants"] = scored.get("no_loss_warrants")
+    if metric != "closure":
+        rec["metric_raw"] = scored.get(metric)
 
     # Safety first, and independent of whether the run is scorable for
     # effectiveness: a run that dropped content is a failure even if its
@@ -466,6 +701,28 @@ def score_repo(key, info):
     if rec["unverified"]:
         rec["status"] = "unverified"
         rec["why"] = "; ".join(rec["unverified"])
+        return rec
+
+    # Everything below is CLOSURE's prerequisite, not the ledger's. A before-
+    # state, a consistent measurement method and a token count are what the gap
+    # arithmetic needs; a metric read straight off the scored row needs none of
+    # them, and refusing such a row for a missing `tokens` would drop pairs from
+    # an experiment the numbers have nothing to do with.
+    if metric != "closure":
+        # Still reported, just not required: the before/after token columns are
+        # context for reading any experiment, and a blank one reads as a ledger
+        # with nothing in it rather than as a metric that does not need it.
+        if prev is not None and isinstance(prev.get("tokens"), int):
+            rec["before"] = prev["tokens"]
+        if not isinstance(rec["metric_raw"], (int, float)) \
+                or isinstance(rec["metric_raw"], bool):
+            # Scored, but with nothing to compare — the same shape as a repo
+            # already under budget. The pair reports why rather than the repo
+            # being called unscorable, which would suggest its ledger is at
+            # fault when the field simply is not there.
+            rec["metric_raw"] = None
+            rec["why"] = f"no {metric} recorded on the scored run"
+        rec["status"] = "scored"
         return rec
 
     if prev is None:
@@ -510,20 +767,29 @@ for pid in sorted(set(by_arm[treatment]) | set(by_arm[control]),
     c = by_arm[control].get(pid, [])
     entry = {"pair": pid, "treatment": t[0] if len(t) == 1 else None,
              "control": c[0] if len(c) == 1 else None,
-             "informative": False, "winner": None, "margin": None, "why": None}
+             "informative": False, "winner": None, "margin": None,
+             "saturated": False, "why": None}
     if len(t) != 1 or len(c) != 1:
         entry["why"] = (f"pair {pid} has {len(t)} treatment and {len(c)} control "
                         "repos; a pair needs exactly one of each")
         pairs.append(entry)
         continue
     tr, cr = t[0], c[0]
+    # One accessor for both metric shapes, so every rule below — saturation,
+    # ties, the winner, the margin — is written once and cannot drift between
+    # them.
+    key = "closure" if metric == "closure" else "metric_raw"
+    tv, cv = tr[key], cr[key]
     if tr["status"] != "scored" or cr["status"] != "scored":
         bad = tr if tr["status"] != "scored" else cr
         entry["why"] = f"{bad['repo']}: {bad['status']} — {bad['why']}"
-    elif tr["closure"] is None or cr["closure"] is None:
-        side = tr if tr["closure"] is None else cr
-        entry["why"] = f"{side['repo']} had no budget gap to close"
-    elif tr["closure"] >= 1.0 and cr["closure"] >= 1.0:
+    elif tv is None or cv is None:
+        side = tr if tv is None else cr
+        entry["why"] = (f"{side['repo']} had no budget gap to close"
+                        if metric == "closure"
+                        else f"{side['repo']}: {side['why']}")
+    elif metric == "closure" and tv >= 1.0 and cv >= 1.0:
+        entry["saturated"] = True
         # Closure is capped at 1.0 — a run that cuts far past the budget scores
         # the same as one that lands on it, deliberately, so over-cutting earns
         # nothing. The cost is that when both arms reach budget the metric has no
@@ -535,17 +801,30 @@ for pid in sorted(set(by_arm[treatment]) | set(by_arm[control]),
                         "and cannot separate them")
     else:
         entry["informative"] = True
-        entry["margin"] = tr["closure"] - cr["closure"]
-        if tr["closure"] > cr["closure"]:
-            entry["winner"] = "treatment"
-        elif cr["closure"] > tr["closure"]:
-            entry["winner"] = "control"
-        else:
+        # Signed so a positive margin always means "the treatment did better",
+        # whichever way the registered direction runs. Reading a lower-is-better
+        # metric off an unsigned difference is how a winning change reads as a
+        # losing one in a table nobody re-derives.
+        entry["margin"] = (tv - cv) if direction == "higher" else (cv - tv)
+        if tv == cv:
+            # A TIE, not an uninformative pair, and deliberately so: "no
+            # measurable difference" is a rejection under the adoption rule.
+            # Saturation is the one exception, above, because there the metric
+            # ran out of room rather than finding the arms equal.
             entry["winner"] = "tie"
+        elif entry["margin"] > 0:
+            entry["winner"] = "treatment"
+        else:
+            entry["winner"] = "control"
     pairs.append(entry)
 
 informative = [p for p in pairs if p["informative"]]
 wins = [p for p in informative if p["winner"] == "treatment"]
+# Proposal 3 (#117). Four uninformative pairs out of six in experiment 1 because
+# closure hit its cap is a finding about the BUDGET no longer binding for most of
+# the cohort, and it read as "nothing happened". Counted and printed; it never
+# moves the verdict.
+saturated = [p for p in pairs if p["saturated"]]
 
 # An ADOPT and a REJECT are not symmetric outputs, so they do not share a floor.
 # An ADOPT is a decision to ship, revisited every time the skill changes again; a
@@ -729,6 +1008,26 @@ inverted = bool(t_versions and c_versions
                 and max(map(version_key, t_versions))
                 < min(map(version_key, c_versions)))
 
+
+def attributed(wave):
+    """Records with a scored run — the only rows that could carry the metric.
+
+    A repo with no attributed curation has not failed to record the field; it
+    has not been curated. Counting it as a null would let one un-run repo
+    declare the whole arm blind.
+    """
+    return [r for r in records if r["wave"] == wave and r["skill_version"]]
+
+
+# Null across the WHOLE control arm, and present somewhere in the treatment arm.
+# Both halves are load-bearing: null on both sides is a field nobody records,
+# which is a different problem with a different fix, and the pairs already say so.
+instrument_only = bool(
+    experiment and metric != "closure"
+    and attributed(control)
+    and all(r["metric_raw"] is None for r in attributed(control))
+    and any(r["metric_raw"] is not None for r in attributed(treatment)))
+
 # Order matters, and it is the opposite of the obvious one. Every question of
 # the form "is this even an experiment?" is asked BEFORE any verdict that would
 # reject, because a REJECT tells the reader to write the change into
@@ -795,6 +1094,23 @@ elif inverted:
                    f"{control} ({', '.join(c_versions)}). Re-run with "
                    f"--treatment {control} --control {treatment}; as scored "
                    "here a winning change reads as a losing one")
+elif experiment and (t_canon != {version_canon(experiment["treatment_version"])}
+                     or c_canon != {version_canon(experiment["control_version"])}):
+    # The last "is this even an experiment?" test, and it belongs with them: a
+    # registration for 1.4-over-1.3 scored against 1.3-over-1.2 is not a weak
+    # verdict but a verdict about a different comparison — and the reason a
+    # registration is worth having is that this is now checkable at all.
+    # Ahead of the REJECT branch, because writing the wrong change into
+    # rejected-changes.md is the worst output this script can produce.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(
+        f"registration {experiment['experiment']} "
+        f"({experiment['file']}) is for treatment "
+        f"{experiment['treatment_version']} over control "
+        f"{experiment['control_version']}, but these arms carry "
+        f"{', '.join(t_versions)} over {', '.join(c_versions)} — the rows in "
+        "front of this run are not the experiment that was registered, so "
+        "nothing here bears on it")
 elif t_failures:
     verdict, code = "REJECT", 3
     # Named in the body rather than enumerated twice. The body block is what
@@ -833,6 +1149,32 @@ elif systemic is not None:
         "proposal is in question — fix the gate and re-score")
     if systemic_hint:
         reasons.append(systemic_hint)
+elif instrument_only:
+    # Proposal 2 (#117), as a NAMED OUTCOME rather than as asymmetric scoring.
+    # A field null on every control-arm row is a field the control version did
+    # not record, so the proposal added its own instrument — and a gate that can
+    # only score fields both arms share can never credit that.
+    #
+    # The alternative was to score across the asymmetry: control surfaces
+    # re-measured with the new instrument against treatment surfaces produced
+    # with it. Refused. It is an n=1 shape (`observo` re-run at v1.3 over its own
+    # v1.2 surface), the two sides measure different things — detection on an
+    # unswept surface against resolution during a run — and the script has no way
+    # to check the comparison is being made honestly. Naming the outcome is
+    # cheap, true, and not reachable for cases it does not fit.
+    #
+    # Below the safety branches on purpose: content lost under the proposed
+    # version is lost whether or not the metric could see anything.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(
+        f"the registered primary metric `{metric}` is null on every "
+        f"control-arm row (wave {control}) — this proposal added its own "
+        "instrument and cannot be judged by it")
+    reasons.append(
+        "a proposal aimed at a defect class the row cannot see yet should add "
+        "its measurement first, as v1.3 did with `seams` — and doing so buys "
+        "measurability for LATER rounds, not for its own experiment. Register "
+        f"`{metric}` for the next proposal, once both arms record it")
 elif not informative:
     # Independent of --min-pairs. With --min-pairs 0 the sweep test below reads
     # `0 == 0` and adopts on no evidence whatever — a vacuous pass in the one
@@ -892,6 +1234,13 @@ if fmt == "json":
         "treatment_versions": t_versions, "control_versions": c_versions,
         "repos": records, "pairs": pairs,
         "informative_pairs": len(informative), "treatment_wins": len(wins),
+        # Null when no registration was named — the default is closure with
+        # higher-is-better, and `primary_metric` says so either way rather than
+        # leaving a reader to infer it from the absence of a file.
+        "experiment": experiment,
+        "primary_metric": metric, "metric_direction": direction,
+        "saturated_pairs": len(saturated),
+        "added_its_own_instrument": instrument_only,
         "min_pairs": min_pairs, "reject_floor": reject_floor,
         "systemic_unscorable": systemic,
         # Populated whichever way it lands: a reader distinguishing "no newer
@@ -931,9 +1280,29 @@ def no_loss_cell(r):
     return f"{base}+{n}w" if isinstance(n, int) and n > 0 else base
 
 
+def metric_cell(r):
+    """The scored column, whichever metric is registered."""
+    if metric == "closure":
+        return pct(r["closure"])
+    v = r["metric_raw"]
+    return "-" if v is None else (f"{v:g}" if isinstance(v, float) else str(v))
+
+
 w = max([len(r["repo"]) for r in records] + [4])
 print(f"treatment wave {treatment}: {', '.join(t_versions) or 'no attributed runs'}")
 print(f"control   wave {control}: {', '.join(c_versions) or 'no attributed runs'}")
+# Named before the table rather than after it. Which metric produced these
+# numbers is the first thing a reader needs, and a registration cited by path is
+# a registration whose history they can go and check.
+if experiment:
+    print(f"registration:    {experiment['file']} — primary metric "
+          f"`{metric}`, {direction} is better, min-pairs "
+          f"{experiment['min_pairs']}")
+else:
+    print(f"metric:          `{metric}` ({direction} is better), the default "
+          "pre-registered in\n"
+          "                 references/validation-gate.md. No --experiment "
+          "was named.")
 # Above the inversion warning on purpose: "these versions are spent" is context
 # for reading the whole table, where the inversion warning is about one comparison
 # within it. It never touches the verdict — a historical table is not a reason to
@@ -952,7 +1321,7 @@ if inversion_warning:
     print(inversion_warning)
 print()
 print(f"{'pair':>4}  {'arm':<3} {'repo':<{w}} {'before':>8} {'after':>8} "
-      f"{'budget':>7} {'closure':>8}  no_loss")
+      f"{'budget':>7} {metric[:8]:>8}  no_loss")
 print("-" * (w + 48))
 for p in pairs:
     for tag, r in (("T", p["treatment"]), ("C", p["control"])):
@@ -960,14 +1329,47 @@ for p in pairs:
             print(f"{p['pair']:>4}  {tag:<3} (missing)")
             continue
         print(f"{p['pair']:>4}  {tag:<3} {r['repo']:<{w}} {num(r['before']):>8} "
-              f"{num(r['after']):>8} {num(r['budget']):>7} {pct(r['closure']):>8}"
+              f"{num(r['after']):>8} {num(r['budget']):>7} {metric_cell(r):>8}"
               f"  {no_loss_cell(r)}")
     if p["informative"]:
-        margin = p["margin"] * 100
-        print(f"{'':>4}  -> {p['winner']} ({margin:+.1f}pp)")
+        # Percentage points for closure, which is a fraction; the raw signed
+        # difference for a ledger field, where "pp" would be a unit it does not
+        # have.
+        m = (f"{p['margin'] * 100:+.1f}pp" if metric == "closure"
+             else f"{p['margin']:+g}")
+        print(f"{'':>4}  -> {p['winner']} ({m})")
     else:
         print(f"{'':>4}  -> uninformative: {p['why']}")
 print()
+
+# Proposal 3 (#117): saturation counted rather than left to be inferred from a
+# column of 100.0% cells.
+if saturated:
+    print(f"saturated pairs: {len(saturated)} of {len(pairs)} — both arms "
+          "closed the gap completely, so")
+    print("                 closure had no room left to express a difference.")
+    if len(saturated) * 2 > len(pairs):
+        print()
+        print("FINDING most pairs saturated. The budget is no longer the "
+              "binding constraint")
+        print("        for most of the cohort, which is a finding about the "
+              "budget rather than")
+        print("        a tie between the arms.")
+        print("        It is NOT a reason to tighten the budget now. A budget "
+              "changed after")
+        print("        seeing where the cohort landed is a retroactive "
+              "parameter — the same")
+        print("        integrity failure as choosing the metric late, and "
+              "references/rejected-changes.md")
+        print("        already carries that precedent. If the budget moves it "
+              "moves as a")
+        print("        pre-registered parameter of a FUTURE experiment, never "
+              "applied backwards")
+        print("        to score a past one. The durable answer to saturation "
+              "is a metric that")
+        print("        measures the axis the proposal changed (#118), not a "
+              "rescued closure.")
+    print()
 
 # Which file each score is actually about. The table has no room for a column,
 # and without this a multi-file ledger reads as though its whole history were in

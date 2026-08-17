@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -189,10 +190,13 @@ class TestTheMetricCannotComeFromAFlag:
         assert "unknown argument" in r.stderr, r.stderr
 
     def test_the_help_offers_no_way_to_name_a_metric(self):
+        """Matched as an OPTION LINE, not as a substring: the help says "there
+        is NO --metric flag" in prose, and a substring test would read the
+        sentence promising the flag does not exist as evidence that it does."""
         r = subprocess.run(["bash", str(SCORE), "--help"],
                            capture_output=True, text=True, timeout=30)
-        assert "--metric " not in r.stdout, r.stdout
-        assert "--experiment" in r.stdout, r.stdout
+        assert not re.search(r"^\s+--metric\b", r.stdout, re.M), r.stdout
+        assert re.search(r"^\s+--experiment\b", r.stdout, re.M), r.stdout
 
     def test_the_help_says_why_there_is_no_flag(self):
         r = subprocess.run(["bash", str(SCORE), "--help"],
@@ -309,15 +313,20 @@ class TestARejectedMetricCannotBeRegistered:
         assert "tokens_live" in err, err
         assert "rejected-changes.md" in err, err
 
-    def test_the_refusal_reads_the_shipped_file_rather_than_a_hardcoded_list(
-            self):
+    def test_the_refusal_quotes_the_entry_it_read(self, tmp_path: Path):
         """The coupling that makes this maintainable: adding a rejection entry
-        is what retires a metric, in one place. Pinned so that a later
-        `REJECTED_METRICS = {...}` constant in the script fails here."""
-        assert "`tokens_live`" in REJECTED.read_text()
-        assert "tokens_live" not in SCORE.read_text(), (
-            "the rejected-metric check must read references/rejected-changes.md, "
-            "not carry its own copy of the list")
+        is what retires a metric, in one place. Proven by quoting — the error
+        carries the entry's own heading, which a hardcoded set of names could
+        not produce.
+        """
+        heading = next(
+            line[3:].strip() for line in REJECTED.read_text().splitlines()
+            if line.startswith("## ") and "`tokens_live`" in line)
+        roster = _cohort(tmp_path)
+        _register(tmp_path, primary_metric="tokens_live")
+        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
+                   "--experiment", "02")
+        assert heading in _refused(r)
 
     def test_a_metric_with_no_rejection_entry_is_allowed(self, tmp_path: Path):
         roster = _cohort(tmp_path, t_extra={"seams": 0}, c_extra={"seams": 4})
@@ -431,28 +440,50 @@ class TestTheRegisteredDirectionDecidesTheWinner:
                    "--experiment", "02")
         assert "direction" in _refused(r)
 
-    def test_equal_values_are_uninformative_not_a_tie(self, tmp_path: Path):
-        """Same rule closure already applies at its cap: "the metric cannot
-        separate them" is a different claim from "they are equal"."""
+    def test_equal_values_are_a_tie_and_a_tie_loses(self, tmp_path: Path):
+        """The adoption rule already settles this and a registered metric does
+        not get its own version of it: "no measurable difference" is a
+        rejection. Saturation is the one exception, and only because the metric
+        ran out of room rather than finding the arms equal."""
         roster = _cohort(tmp_path, t_extra={"seams": 3}, c_extra={"seams": 3})
         _register(tmp_path, primary_metric="seams", direction="lower")
         r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
                    "--experiment", "02", "--format", "json")
         payload = json.loads(r.stdout)
-        assert payload["informative_pairs"] == 0
-        assert payload["verdict"] == "INCONCLUSIVE"
+        assert payload["informative_pairs"] == 3
+        assert {p["winner"] for p in payload["pairs"]} == {"tie"}
+        assert payload["verdict"] == "REJECT"
 
     def test_the_registered_pair_floor_is_used(self, tmp_path: Path):
         """The floor is a pre-registered parameter of the experiment, not a
         flag chosen once the pair count is known — the same argument as the
-        metric, applied to the number the metric is judged against."""
+        metric, applied to the number the metric is judged against. Registered
+        BELOW the default here, so a run that would be INCONCLUSIVE on the
+        default proves the file was read."""
         roster = _cohort(tmp_path, sizes=[(52000, 20000, 49000, 12000)])
-        _register(tmp_path, min_pairs="3")
+        _register(tmp_path, min_pairs="1")
         r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
                    "--experiment", "02", "--format", "json")
         payload = json.loads(r.stdout)
-        assert payload["min_pairs"] == 3
-        assert payload["verdict"] == "INCONCLUSIVE"
+        assert payload["min_pairs"] == 1
+        assert payload["verdict"] == "ADOPT"
+
+    def test_a_flag_may_tighten_the_registered_floor_but_not_loosen_it(
+            self, tmp_path: Path):
+        """Loosening after the pair count is known is the move `--min-pairs 2`
+        nearly made in experiment 1. Tightening is always safe."""
+        roster = _cohort(tmp_path, sizes=[(52000, 20000, 49000, 12000)])
+        _register(tmp_path, min_pairs="1")
+        args = ("--experiments-dir", str(tmp_path / "experiments"),
+                "--experiment", "02", "--format", "json")
+        tightened = json.loads(_score(roster, *args, "--min-pairs", "3").stdout)
+        assert tightened["min_pairs"] == 3
+        assert tightened["verdict"] == "INCONCLUSIVE"
+
+        _register(tmp_path, min_pairs="3")
+        loosened = json.loads(_score(roster, *args, "--min-pairs", "1").stdout)
+        assert loosened["min_pairs"] == 3, (
+            "a flag must not lower a registered floor")
 
 
 class TestSaturationIsCountedAndPrinted:
@@ -498,16 +529,20 @@ class TestSaturationIsCountedAndPrinted:
         payload = json.loads(_score(roster, "--format", "json").stdout)
         assert payload["saturated_pairs"] == 1
 
-    def test_it_does_not_move_the_verdict(self, tmp_path: Path):
-        """It reports. A saturated round is not a reason to adopt or reject
-        anything, and a notice that moved an exit code would be a gate."""
-        clean = _score(_cohort(tmp_path / "a"))
-        (tmp_path / "b").mkdir(parents=True, exist_ok=True)
-        sat = _score(_cohort(tmp_path / "b",
-                             sizes=[(52000, 3000, 49000, 3000),
-                                    (28000, 12000, 26000, 9000),
-                                    (19000, 10000, 18000, 8000)]))
-        assert clean.returncode == sat.returncode, (clean.stdout, sat.stdout)
+    def test_the_finding_does_not_gate(self, tmp_path: Path):
+        """It reports. A majority-saturated round the treatment swept is still
+        an ADOPT — a notice that moved an exit code would be a gate, and this
+        one is a finding about the budget rather than about the proposal.
+
+        Compared against its own printed output rather than against a second
+        cohort: saturation legitimately removes pairs, so two different rosters
+        would differ for a reason that is not the finding."""
+        roster = _cohort(tmp_path, sizes=[(52000, 3000, 49000, 3000),
+                                          (28000, 3000, 26000, 3000),
+                                          (19000, 10000, 18000, 8000)])
+        r = _score(roster, "--min-pairs", "1")
+        assert "FINDING" in r.stdout, r.stdout
+        assert r.returncode == 0, r.stdout
 
 
 class TestTheCommittedRegistrationsAreValid:
@@ -554,7 +589,7 @@ class TestTheGateRecordsTheRule:
 
     def test_the_absence_of_a_metric_flag_is_stated_as_the_guarantee(self):
         flat = _flat(GATE.read_text())
-        assert "no --metric flag" in flat, flat[-2000:]
+        assert "no `--metric` flag" in flat, flat[-2000:]
 
     def test_the_arm_predicate_field_is_named(self):
         flat = _flat(GATE.read_text())
