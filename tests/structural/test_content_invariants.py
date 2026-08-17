@@ -447,6 +447,24 @@ class TestUsingGitWorktrees:
             "integration branch such as 'batch/<x>' in multi-agent orchestrations)"
         )
 
+    def test_venv_remedy_documented(self):
+        """#156: a linked worktree inherits no virtualenv.
+
+        worktree-create.sh links the parent's, but a harness-provisioned
+        worktree never runs that script — so the manual one-liner has to be
+        readable here too, or the next agent rediscovers it the way three of
+        four did in #155 Batch C: as a rejected commit after a green suite.
+        """
+        body = self.s.body
+        assert "ln -s" in body and ".venv" in body, (
+            "SKILL.md must state the `ln -s <main-checkout>/.venv .venv` remedy "
+            "for a linked worktree that has no virtualenv (#156)"
+        )
+        assert "isolation" in body or "harness" in body, (
+            "SKILL.md must say the remedy is still needed by hand in "
+            "harness-provisioned worktrees, which do not run worktree-create.sh"
+        )
+
 
 # ---------------------------------------------------------------------------
 # writing-plans

@@ -89,13 +89,21 @@ The script:
 - Resolves the worktree root
 - Refuses if `<branch>` is already checked out elsewhere (per the Iron Law)
 - Runs `git worktree add <root>/<slug> <branch>` (or `add -b <branch> <root>/<slug>` with `--new`)
+- Symlinks the main checkout's `.venv` into the worktree when it has one (see below)
 - Prints the absolute worktree path on stdout
 - Exits 0 on success, 1 on Iron Law violation (double checkout), 2 on tooling failure
 
 ### Phase 3 — Work inside the worktree
 
-`cd` into the worktree path printed by Phase 2. Two responsibilities the calling agent must handle (the upstream skill cannot prescribe specifics — projects vary):
+`cd` into the worktree path printed by Phase 2. Three responsibilities the calling agent must handle (the upstream skill cannot prescribe specifics — projects vary):
 
+- **Interpreter environment** — a worktree inherits no `.venv` / `node_modules`. `worktree-create.sh` links a `.venv` for you, but a worktree provisioned by something else — notably the Claude Code Agent tool's `isolation: "worktree"`, which calls `git worktree add` directly — never runs it. There, link it by hand **before the first test run**:
+
+  ```bash
+  ln -s "$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd)")/.venv" .venv
+  ```
+
+  Link, don't re-create. A symlink is by construction the same interpreter and the same installed packages; a freshly resolved environment is a *different* one that can silently collect fewer tests and still report a green suite — a failure with no error message to notice.
 - **Env separation** — if the project ships env files (`.env`, `/etc/<project>/.env`), copy or symlink them into the worktree. Consult the project's AGENTS.md.
 - **Port allocation** — if the branch runs a dev server, allocate a distinct port so it doesn't collide with the main checkout's. Project AGENTS.md is authoritative for the scheme; if none is documented, pick an unused port and record it in `<worktree>/.port` so destroy can free it.
 
