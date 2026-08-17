@@ -185,29 +185,14 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
      silent when clean the drift reads as a healthy install. Dedupe on the
      distinct marker `socraticode-health`. It reports; it never re-indexes.
    Preserve existing `hooks`/`permissions`/other keys. Never clobber the file.
-4. **Linked projects** (when `LINKED_PROJECTS` is set) → write
+4. **Linked projects** (only when `LINKED_PROJECTS` is set — it defaults to
+   none, so most installs skip this) → follow
+   [`references/linked-projects.md`](references/linked-projects.md): write
    `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
-   of `.claude/settings.local.json` (create the file if absent, merge if present).
-   Enables cross-repo `codebase_search` over sibling service checkouts — archiver
-   links watcher + notifier this way. Each linked project must itself be indexed
-   to contribute results.
-   These are absolute paths to one VM's checkouts, so the file must stay out of
-   version control. Don't assume an upstream template ignored it: if
-   `git check-ignore -q .claude/settings.local.json` fails, append a
-   newline-safe block to `.gitignore` (create it if absent) — matching the
-   `init-project-fastapi` template's header:
-
-   ```gitignore
-   # Machine-specific Claude Code settings (local permissions, env, linked projects)
-   .claude/settings.local.json
-   ```
-
-   Ensure a preceding blank line so the block can't fuse onto a
-   trailing-newline-less last rule (e.g. `printf '\n%s\n%s\n' '# Machine-specific
-   Claude Code settings (local permissions, env, linked projects)'
-   '.claude/settings.local.json' >> .gitignore`). Repos bootstrapped by
-   `init-project-fastapi` already carry this rule; the guard covers repos indexed
-   standalone.
+   of `.claude/settings.local.json` (merge, never clobber), then make sure that
+   file is git-ignored — it holds one VM's absolute paths. Enables cross-repo
+   `codebase_search` over sibling checkouts; each linked project must itself be
+   indexed to contribute results.
 
 ### Phase 4 — Configure context artifacts
 
@@ -365,25 +350,14 @@ Present a completion table:
 ## Re-run on an existing project (audit/repair)
 
 Running this skill on a project that already has SocratiCode is **safe and is
-the audit**: every file edit is idempotent (Phase 3's policy block replaces
-between markers, `docs/SOCRATICODE.md` is overwritten wholesale, both hook
-merges dedupe, Phase 4 migrates a legacy array manifest in place and re-validates
-every artifact path), and Phase 6 re-verifies the completion signals. Use a
-re-run to repair partial installs — the common drift found across the cohort ([#65](https://github.com/gregoryfoster/skills/issues/65)):
-a manifest with **no policy block or prefetch hook** (observo), or hook docs
-that drifted from `settings.json` (archiver). A re-run is also how a repo whose
-manifest was silently rejected gets caught — it has been reporting `artifacts
-0/0` as if healthy (gotcha K). Phases 1–2 are read-only when
-already satisfied; Phase 5 re-indexes only if the index is missing or stale.
-
-**One thing a re-run must not do quietly.** On the unmarked-section branch,
-Phase 3 replaces a whole `## Code Exploration Policy` span, and a repo that has
-been running for a while has usually grown its own prose in there. Rescue it to
-`## Code Exploration Notes (repo-specific)` and say what moved — the first
-audit re-run is exactly when this bites and exactly when nobody is watching for
-it ([#115](https://github.com/gregoryfoster/skills/issues/115)). A re-run also
-re-measures graph yield, so a repo installed before the yield gate existed gets
-its degraded policy the first time it is audited.
+the audit**: every file edit is idempotent and Phase 6 re-verifies the
+completion signals. Before an audit re-run read
+[`references/audit-rerun.md`](references/audit-rerun.md) — what each phase
+re-does, the partial installs a re-run repairs (including a manifest the server
+silently rejected, which has been reporting `artifacts 0/0` as if healthy), and
+the one thing a re-run must not do quietly: rescue repo-authored prose out of an
+unmarked policy section before Phase 3 replaces the span
+([#115](https://github.com/gregoryfoster/skills/issues/115)).
 
 ## Key invariants
 
