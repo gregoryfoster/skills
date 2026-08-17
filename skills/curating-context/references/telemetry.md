@@ -103,7 +103,7 @@ the same file, and a first curation is the run that *creates* the ledger — so
 without this row the scored run is precisely the run that can never be scored,
 and the `docs_orphaned` safety gate has nothing to compare against and cannot
 trip. That is not hypothetical: it is what happened to all twelve cohort repos
-in [experiment 1](validation-gate.md), which scored nothing
+in [experiment 1](experiment-log.md), which scored nothing
 ([#116](https://github.com/gregoryfoster/skills/issues/116)).
 
 The row costs one command and lands in the same commit as the curation. Phase 7
