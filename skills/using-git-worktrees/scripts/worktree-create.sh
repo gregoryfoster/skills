@@ -110,7 +110,11 @@ fi
 # Every failure path here is swallowed. The worktree already exists by this
 # point, so a `set -e` abort would return non-zero for a creation that
 # succeeded — and leave the caller without the path on stdout.
-if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" ]]; then
+# `! -e && ! -L`, matching scripts/structural-tests.sh: a BROKEN symlink at
+# .venv is `-e` false and `-L` true, so testing -e alone would fall through to
+# an `ln -s` that fails on the existing name. It lands in the WARN branch either
+# way, but the two linkers must read identically or a later edit fixes one.
+if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" && ! -L "$WORKTREE_PATH/.venv" ]]; then
   # `pwd -P` resolves through a .venv that is itself a symlink (a worktree
   # provisioning a worktree), so we never build a link to a link.
   VENV_TARGET=$(cd "$PROJECT_ROOT/.venv" 2>/dev/null && pwd -P) || VENV_TARGET=""

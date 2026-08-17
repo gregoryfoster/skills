@@ -158,7 +158,17 @@ _log() {
 
 # Stamp the lock BEFORE the check, like the submodule hook: a transient failure
 # (Docker mid-restart) must not re-run and re-log on every same-day session.
-date -u +%Y%m%d > "$LOCK" || true
+#
+# Checked, not `|| true`. The lock is the hook's only state, and it now lives in
+# the COMMON git dir — so a write that fails silently no longer re-reports in one
+# checkout, it re-reports in EVERY checkout of the repo, every session. That is
+# the tuned-out reporter #180 exists to prevent, reached by a different route.
+# Reported, never fatal: this is a session hook that must not block, so a failed
+# stamp degrades to noisier reporting rather than to no session.
+if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
+  _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
+  echo "socraticode-health: cannot write $LOCK; this check will repeat every session (see $LOG)" >&2
+fi
 
 command -v node >/dev/null 2>&1 || { _log "node not on PATH — skipped"; exit 0; }
 
@@ -207,6 +217,25 @@ export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 # a single fixed name would let one truncate the other's findings mid-report.
 # The lock makes that rare, not impossible, and the failure would be a garbled
 # report — which is the one thing a reporter must not produce.
+#
+# Sweeping first is what keeps per-PID from trading one stale file for many.
+# bash runs an EXIT trap on an untrapped SIGTERM (verified), so ordinary
+# termination is covered and only SIGKILL can strand one — but a strand is now
+# unbounded where the old fixed name self-limited to a single file, and it
+# accumulates in state shared by every checkout.
+#
+# Only files whose PID is gone. A blanket `rm -f …findings.*` would delete a
+# concurrent session's file mid-write, which is precisely the garbled report the
+# per-PID name exists to prevent — the sweep must not reintroduce the race it is
+# cleaning up after.
+for _stale in "$gitdir"/socraticode-health.findings.*; do
+  [ -f "$_stale" ] || continue          # unmatched glob stays literal
+  _pid="${_stale##*.}"
+  case "$_pid" in
+    ''|*[!0-9]*) continue ;;            # not a PID suffix — leave it alone
+  esac
+  kill -0 "$_pid" 2>/dev/null || rm -f "$_stale"
+done
 FINDINGS_FILE="$gitdir/socraticode-health.findings.$$"
 trap 'rm -f "${FINDINGS_FILE:-}"' EXIT
 RC=0
@@ -228,6 +257,6 @@ fi
 _log "health-check exited $RC"
 cat "$FINDINGS_FILE" >>"$LOG" 2>/dev/null || true
 # Removal is the EXIT trap's job — it also covers the _hook_panic path, which
-# used to leave the file behind in the shared .git.
+# used to leave the file behind in the git dir.
 
 exit 0

@@ -33,17 +33,25 @@ usage() {
   echo ""
   echo "Exit codes:"
   echo "  0  venv resolved (and, without --check, the suite passed)"
-  echo "  1  no venv could be resolved, or the suite failed"
-  echo "  2  not inside a git repository"
+  echo "  1  no venv could be resolved"
+  echo "  2  not inside a git repository, or a bad argument"
+  echo "  *  otherwise the suite's OWN exit code, passed through unchanged:"
+  echo "     pytest exits 1 on failures, 5 on nothing collected, and the shell"
+  echo "     reports 127 if pytest is missing from a venv that did resolve."
 }
 
+# Every argument, not just the first: a script on the commit path that rejects
+# `--bogus` but silently swallows `--check --bogus` is worse than one that
+# rejects neither, because the strictness is what makes a caller stop checking.
 CHECK_ONLY=0
-case "${1:-}" in
-  --help) usage; exit 0 ;;
-  --check) CHECK_ONLY=1 ;;
-  "") ;;
-  *) echo "ERROR: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
-esac
+for arg in "$@"; do
+  case "$arg" in
+    --help) usage; exit 0 ;;
+    --check) CHECK_ONLY=1 ;;
+    "") ;;
+    *) echo "ERROR: unknown argument '$arg'" >&2; usage >&2; exit 2 ;;
+  esac
+done
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "ERROR: not inside a git repository" >&2
@@ -90,4 +98,6 @@ fi
 
 # shellcheck source=/dev/null
 source .venv/bin/activate
+# `exec` replaces this shell, so pytest's exit code IS this script's — see the
+# usage block, which documents the pass-through rather than claiming a 1.
 exec pytest tests/structural/ -v
