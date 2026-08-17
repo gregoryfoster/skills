@@ -104,6 +104,9 @@ read-only, then open an adoption issue per repo carrying that repo's numbers and
 findings. The repo's own maintainers (or an agent invoked inside it) run the
 curation.
 
+Always pass `--no-write` when surveying a repo you are not curating — without it
+an `--exact` run leaves an untracked ratio file behind.
+
 ## Reference-doc filenames
 
 `UPPERCASE.md` under `docs/`. Observed frequency across the twelve:
@@ -123,6 +126,10 @@ curation.
 When demoting, prefer an existing name from this table over a new one. A
 thirteenth distinct filename for the same concept is how the cohort loses its
 shared shape.
+
+### Starting with no `docs/` tree — the Phase 5 step 4 note in full
+
+Phase 5's step 4 carried this inline until v1.7 demoted it here:
 
    When the repo has **no `docs/` tree at all** — as this one did — the run is
    creating it. Take filenames from the frequency table in
@@ -241,7 +248,11 @@ a `docs/COMMANDS.md`. Keep the two or three commands needed on nearly every task
 inline (class A); the full reference is class B. When they disagree, that is
 warrant #1 for deletion of the copy — but establish which is correct first.
 
-4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text;
+### Demoting class B — the Phase 5 step 4 text in full
+
+Phase 5's step 4 carried this inline until v1.7 demoted it here:
+
+   **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text;
    do not paraphrase it in transit. A paraphrase during a move is an
    unreviewable content change wearing a refactor's clothes — and it is the one
    thing a reader skimming the diff will not notice, because the words are all
@@ -253,6 +264,17 @@ warrant #1 for deletion of the copy — but establish which is correct first.
    defect #5 created at the destination by the run itself. And keep provenance
    out of headings: "Demoted from AGENTS.md (#412)" belongs in the commit, not
    baked into a permanent anchor slug. Phase 6.5 checks both.
+
+   Two mechanical adjustments come with every move, and only these two:
+
+   - **Relative links gain a level.** A block moving from the repo root into
+     `docs/` turns every `](tests/x.py)` into `](../tests/x.py)`. Skip this and
+     Phase 6 reports a wave of dead links — the check catches it, but the run
+     fails rather than succeeding.
+   - **A `###` subsection becomes `##`** at the top of its own document.
+
+   `prove-no-loss.sh` normalises exactly these two and nothing else, so any
+   other difference is reported as content loss.
 
 ### 6. Cross-repo and moved link targets
 
