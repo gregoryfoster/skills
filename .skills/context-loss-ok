@@ -18,10 +18,3 @@
 # used to report "matched nothing" on a run against another. Scope it instead:
 # `PATH :: WARRANT :: CONTENT` is consulted only by runs whose --file contains
 # PATH, and the report says how many entries sat a run out (#139).
-
-# 2026-08-17 — `## Experiment 1` demoted out of validation-gate.md into
-# references/experiment-log.md. The pointer that sent a reader "below" now has
-# to send them to another file, so the line is rewritten rather than moved.
-# Scoped: this line only ever existed in validation-gate.md, and an unscoped
-# entry would report "matched nothing" on every AGENTS.md run (#139).
-validation-gate.md :: retarget :: see the record below

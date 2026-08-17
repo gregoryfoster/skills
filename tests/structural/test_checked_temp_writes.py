@@ -105,16 +105,23 @@ def _logical_lines(path: Path):
 def _offenders(path: Path):
     out = []
     for lineno, joined, head, preamble in _logical_lines(path):
-        if not REDIRECT_THEN_AND.search(joined):
+        m = REDIRECT_THEN_AND.search(joined)
+        if not m:
             continue
         if CONDITION_HEAD.match(head):
             continue          # the list's status governs a branch
         if EXEMPT_MARKER in joined or EXEMPT_MARKER in preamble:
             continue          # named, at the line, with a reason
-        if re.search(r"\|\|\s*true\b", joined):
+        # A handler belongs to THIS list only if it FOLLOWS the `&&`. Testing the
+        # whole logical line instead let a `||` anywhere on it — inside an
+        # earlier command substitution, most plausibly — exempt an unchecked
+        # write further along, in the one rule that is supposed to be
+        # mechanism-shaped rather than symptom-shaped (CR finding 26).
+        tail = joined[m.end():]
+        if re.search(r"\|\|\s*true\b", tail):
             out.append((lineno, joined))   # #187's shape; needs the marker
             continue
-        if "||" in joined:
+        if "||" in tail:
             continue          # a real handler runs on failure
         if re.search(r";\s*then\b", joined) or joined.rstrip().endswith("then"):
             continue
@@ -190,3 +197,26 @@ def test_a_bare_or_true_is_not_an_exemption(tmp_path: Path):
         '# unchecked-write-ok: best-effort log trim in a hook that must not block\n'
     )
     assert not _offenders(sample)
+
+
+def test_an_unrelated_handler_earlier_on_the_line_is_not_an_exemption(tmp_path: Path):
+    """The gap CR finding 26 closed. `||` belongs to this list only if it
+    follows the `&&`; one inside an earlier command substitution says nothing
+    about whether the write was checked, and used to exempt it."""
+    s = tmp_path / "x.sh"
+    s.write_text(
+        '#!/usr/bin/env bash\n'
+        'v="$(get_it || echo default)"; jq . "$F" >"$F.tmp" && mv -f "$F.tmp" "$F"\n'
+    )
+    assert [n for n, _ in _offenders(s)] == [2]
+
+
+def test_a_handler_after_the_and_still_exempts(tmp_path: Path):
+    """The other half: scoping the test must not start reporting the checked
+    form. A handler that really does run on this list's failure is evidence."""
+    s = tmp_path / "x.sh"
+    s.write_text(
+        '#!/usr/bin/env bash\n'
+        'jq . "$F" >"$F.tmp" && mv -f "$F.tmp" "$F" || die "rewrite failed"\n'
+    )
+    assert _offenders(s) == []

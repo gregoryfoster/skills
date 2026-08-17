@@ -99,8 +99,15 @@ SETTINGS="$ROOT/$SETTINGS_REL"
 have_jq() { command -v jq >/dev/null 2>&1; }
 
 # A temp file that cannot outlive the run. Without this, a failed rewrite left
-# .claude/settings.json.tmp behind for `git add -A` to pick up (CR finding 11).
-trap 'rm -f "$SETTINGS.tmp"' EXIT
+# a temp file behind for `git add -A` to pick up (CR finding 11).
+#
+# PID-suffixed, because the trap is what makes a shared name dangerous: it fires
+# on EVERY exit, including runs that never call settings_rewrite. With a fixed
+# `$SETTINGS.tmp` a concurrent invocation would delete an in-flight write this
+# one was midway through — a two-writer race widened into "any invocation
+# clobbers any writer". install-doctor.sh already had the right shape (#181 CR).
+SETTINGS_TMP="$SETTINGS.tmp.$$"
+trap 'rm -f "$SETTINGS_TMP"' EXIT
 
 # Rewrite settings.json through a temp file, or fail having changed nothing.
 #
@@ -116,11 +123,11 @@ trap 'rm -f "$SETTINGS.tmp"' EXIT
 # logged only when the file actually moved.
 settings_rewrite() {
   local desc="$1"; shift
-  if jq "$@" "$SETTINGS" >"$SETTINGS.tmp" && mv -f "$SETTINGS.tmp" "$SETTINGS"; then
+  if jq "$@" "$SETTINGS" >"$SETTINGS_TMP" && mv -f "$SETTINGS_TMP" "$SETTINGS"; then
     log "$desc"
     return 0
   fi
-  rm -f "$SETTINGS.tmp"
+  rm -f "$SETTINGS_TMP"
   # "$SETTINGS_REL was not modified", not "nothing was changed": the install
   # path may already have written the symlink, and a blanket claim contradicted
   # the `linked …` line printed immediately above it (CR finding 14). Say only

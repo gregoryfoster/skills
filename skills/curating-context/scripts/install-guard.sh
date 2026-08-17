@@ -96,9 +96,16 @@ LIB="$SRC_DIR/_context-lib.sh"
 
 # A temp file that cannot outlive the run. merge_settings removes it on its own
 # failure path; this covers the signal case it cannot, so a killed run never
-# strands .claude/settings.json.tmp for `git add -A` to collect (#181, and the
-# same CR finding 11 that install-refresh.sh carries).
-trap 'rm -f "$SETTINGS.tmp"' EXIT
+# strands a temp file for `git add -A` to collect (#181, and the same CR finding
+# 11 that install-refresh.sh carries).
+#
+# PID-suffixed, because the trap is what makes a shared name dangerous: it fires
+# on EVERY exit, including `--check`, which writes nothing. With a fixed
+# `$SETTINGS.tmp` a concurrent `--check` would delete an in-flight write this
+# script was midway through — turning a two-writer race into "any invocation
+# clobbers any writer". install-doctor.sh already had the right shape (#181 CR).
+SETTINGS_TMP="$SETTINGS.tmp.$$"
+trap 'rm -f "$SETTINGS_TMP"' EXIT
 
 if [ "$MODE" = "check" ]; then
   ok=0
@@ -195,11 +202,11 @@ merge_settings() {
   # that parses but whose `.hooks` is the wrong TYPE, which is what a hand edit
   # produces and what makes this filter error mid-run.
   if jq --arg cmd "$COMMAND" --arg marker "$COMMAND_MARKER" \
-      "$expr" "$SETTINGS" >"$SETTINGS.tmp" \
-      && mv -f "$SETTINGS.tmp" "$SETTINGS"; then
+      "$expr" "$SETTINGS" >"$SETTINGS_TMP" \
+      && mv -f "$SETTINGS_TMP" "$SETTINGS"; then
     return 0
   fi
-  rm -f "$SETTINGS.tmp"
+  rm -f "$SETTINGS_TMP"
   # Name the file, and claim nothing about the symlink: on the install path it
   # has already been written and reported one line above, so a blanket "nothing
   # was changed" would contradict the output the reader just saw (the CR finding
