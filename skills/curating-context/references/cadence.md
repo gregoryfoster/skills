@@ -77,12 +77,17 @@ the retry loop was found not to work.
 in `.gitattributes`, appending to whatever is already there. With it, the same
 race rebases cleanly and both rows survive in order.
 
-The path tracks `--ledger`, and so do the workflow's `git add` and the
-recorder's own `--ledger` — three places that must name one file, because a
-cadence measuring into one path and staging another records nothing. Re-running
-the installer without the flag reads the ledger back out of the installed
-workflow rather than reverting to the default, and changing it removes the line
-it supersedes.
+The path tracks `--ledger`, and so do the workflow's `git add`, the recorder's
+own `--ledger`, and the seam sweep's `--base-ledger` — four places that must name
+one file, because a cadence measuring into one path and staging another records
+nothing, and a sweep reading a third finds no predecessor and reports an empty
+interval every week. The renderer interpolates one variable into all four, so
+they cannot drift through the installer; hand-editing the rendered workflow is
+the only way to break it, which is why the file says to re-run the installer
+instead. Re-running it without the flag reads the ledger back out of the
+installed workflow — from the `git add --` line, which is why adding
+`--base-ledger` did not disturb it — rather than reverting to the default, and
+changing it removes the line it supersedes.
 
 **Commit it before the first concurrent run.** Git resolves a merge using the
 attributes in the tree being *replayed onto*, so an attribute added after the

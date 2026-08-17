@@ -240,7 +240,10 @@ class TestBaseLedgerResolvesTheInterval:
         assert f"seam_base: {measured}" in r.stdout, r.stdout
 
     def test_the_counts_are_still_the_last_two_lines(self, tmp_path: Path):
-        """Three readers parse the tail. The base line goes ABOVE them."""
+        """The cadence's three readers match `^seams:` / `^seams_acked:`
+        anchored, then `tail -1` — pattern-based, not positional. What must stay
+        stable is the line PREFIX, so anything new goes ABOVE them and this test
+        pins the tail order that keeps a human reading the report oriented."""
         repo, measured = _curated_repo(tmp_path, "tail")
         _ledger(repo, repo_commit=measured)
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
@@ -248,6 +251,7 @@ class TestBaseLedgerResolvesTheInterval:
         assert lines[-1].startswith("seams: "), lines[-4:]
         assert lines[-2].startswith("seams_acked: "), lines[-4:]
         assert lines[-3].startswith("seam_base: "), lines[-4:]
+        assert lines[-4].startswith("seam_interval: "), lines[-5:]
 
     def test_the_newest_row_wins(self, tmp_path: Path):
         """The interval starts at the LAST measurement, not the first one."""
@@ -324,14 +328,21 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
         repo, _ = _curated_repo(tmp_path, "noledger")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
         assert r.returncode == 0, r.stdout
-        assert "no previous measurement" in r.stdout, r.stdout
+        assert "no ledger at" in r.stdout, r.stdout
         assert "seam_base: HEAD" in r.stdout, r.stdout
+        assert "seam_interval: empty" in r.stdout, r.stdout
 
-    def test_an_empty_ledger_is_the_same_case(self, tmp_path: Path):
+    def test_an_empty_ledger_reports_the_OTHER_no_predecessor_reason(
+            self, tmp_path: Path):
+        """A missing ledger is a setup error to fix today; a ledger whose rows
+        carry no repo_commit is the expected one-week transition that fixes
+        itself. Same base, same empty interval, different operator response."""
         repo, _ = _curated_repo(tmp_path, "emptyledger")
         _write(repo, LEDGER_REL, "")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
-        assert "no previous measurement" in r.stdout, r.stdout
+        assert "no row in" in r.stdout, r.stdout
+        assert "no ledger at" not in r.stdout, r.stdout
+        assert "seam_interval: empty" in r.stdout, r.stdout
 
     def test_the_standing_classes_still_fire_on_a_first_run(
             self, tmp_path: Path):
@@ -349,9 +360,15 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
         repo, _ = _curated_repo(tmp_path, "unreachable")
         _ledger(repo, repo_commit="deadbee")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
-        assert "deadbee" in r.stdout, r.stdout
-        assert "WARN" in r.stdout, r.stdout
+        assert "WARN" in r.stderr, r.stderr
+        assert "deadbee" in r.stderr, r.stderr
+        # The WARN LINE is on stderr; stdout keeps a pointer to it, so a reader
+        # who only has stdout is told where to look rather than left with an
+        # unexplained empty interval. Assert the line, not the word.
+        assert not [ln for ln in r.stdout.splitlines() if ln.startswith("WARN")], r.stdout
+        assert "see the WARN on stderr" in r.stdout, r.stdout
         assert "seam_base: HEAD" in r.stdout, r.stdout
+        assert "seam_interval: empty" in r.stdout, r.stdout
 
 
 class TestBaseAndBaseLedgerAreMutuallyExclusive:

@@ -132,8 +132,9 @@ any base. moved-title, and the source classes it gates, are scoped to what left
 the policy file since --base — an INTERVAL count. `seams` is the sum, so it is
 never purely an accrual, and widening the base widens only half of it.
 
-The report goes to stdout in full. The last three lines are machine-readable:
+The report goes to stdout in full. The last four lines are machine-readable:
 
+  seam_interval: empty | <REF>..worktree
   seam_base: <REF>
   seams_acked: <M>
   seams: <N>
@@ -142,7 +143,15 @@ The two counts are what `record-telemetry.sh --seams N --seams-acked M` records
 after the hits have been resolved or judged legitimate (re-run to confirm them).
 `seam_base` is the revision they were measured from — not recorded, because the
 row already carries `repo_commit` and the previous row's is where this one
-started.
+started. `seam_interval` says whether that base spans anything: `empty` is a
+first run, a ledger with no `repo_commit`, or the rewrite fallback, and in all
+three the base-dependent classes contributed nothing. `seam_base: HEAD` alone
+cannot tell those apart from a deliberate `--base HEAD`.
+
+The counts are matched by anchored PREFIX (`^seams:`, `^seams_acked:`), not by
+offset from the end — the cadence template's three copies all use `sed -n
+'s/^seams: \([0-9]*\)$/\1/p' | tail -1`. Keep the prefixes stable; adding a line
+above them is safe.
 
 A hit judged LEGITIMATE goes in the acknowledgement file, not in the bin: a
 reference to the policy file is often correct navigation, and deleting it to
@@ -193,6 +202,12 @@ if [ -n "$BASE_LEDGER" ] && [ "$BASE_SET" -eq 1 ]; then
   echo "      interval start, the other reads it from the ledger. Pick one." >&2
   exit 1
 fi
+
+# What `seam_base` alone cannot say. Set after parsing, so it reflects the base
+# the caller actually chose. Without --base-ledger the caller named the revision
+# and the interval is whatever they meant by it; only the ledger path can report
+# `empty` on their behalf, and it overrides this below.
+SEAM_INTERVAL="$BASE..worktree"
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
@@ -258,23 +273,49 @@ print(found)
 PY
 )" || LAST_COMMIT=""
   fi
-  if [ -z "$LAST_COMMIT" ]; then
+  # Set alongside BASE and printed as its own machine-readable line: `empty`
+  # or `<base>..worktree`. `seam_base: HEAD` alone cannot distinguish a
+  # deliberate --base HEAD from a first run from the rewrite fallback, and the
+  # interval a count covers is the one thing a reader of a row of counts needs.
+  SEAM_INTERVAL="empty"
+  BASE_WARN=""
+  if [ ! -f "$BASE_LEDGER" ]; then
+    # Distinct from "a ledger with no repo_commit anywhere". A missing ledger in
+    # a repo that should have one is a setup error to fix today; a ledger whose
+    # rows predate the field is the expected one-week transition that fixes
+    # itself. Collapsing them costs the operator the difference.
+    BASE="HEAD"
+    BASE_NOTE="note: no ledger at $BASE_LEDGER, so this run has no predecessor. The interval is EMPTY: moved-title and the source classes cannot contribute, and the count below is the standing surface only. If this repo is supposed to be recording telemetry, that absence is the finding."
+  elif [ -z "$LAST_COMMIT" ]; then
     # Defined, not fallen into. HEAD is the same revision the working tree is
     # on, so the interval is EMPTY — which is the truth about a first run, and
     # the report has to say it rather than present a standing count as a week's
     # accrual. The row this sweep feeds carries its repo_commit, so the next
     # run has a real interval.
     BASE="HEAD"
-    BASE_NOTE="note: no previous measurement in $BASE_LEDGER carries a repo_commit, so this run has no predecessor. The interval is EMPTY: moved-title and the source classes cannot contribute, and the count below is the standing surface only. The row this run feeds records its commit, so the next sweep spans a real interval."
+    BASE_NOTE="note: no row in $BASE_LEDGER carries a repo_commit, so this run has no predecessor. The interval is EMPTY: moved-title and the source classes cannot contribute, and the count below is the standing surface only. The row this run feeds records its commit, so the next sweep spans a real interval."
   elif git rev-parse --verify --quiet "$LAST_COMMIT^{commit}" >/dev/null 2>&1; then
     BASE="$LAST_COMMIT"
+    SEAM_INTERVAL="$LAST_COMMIT..worktree"
     BASE_NOTE="note: sweeping the interval since the last recorded measurement ($LAST_COMMIT, from $BASE_LEDGER)."
   else
     # Loudly, because the silent version is permanent: a rewritten history
     # zeroes the base-dependent classes every week thereafter and the count
     # keeps looking healthy.
+    #
+    # To STDERR, unlike the two `note:` cases. Every other diagnostic in this
+    # script goes there, and this is the one condition worth a monitor: a
+    # consumer that greps stderr for WARN would otherwise never see the failure
+    # that keeps reporting healthy-looking counts forever.
     BASE="HEAD"
-    BASE_NOTE="WARN the last recorded measurement names commit $LAST_COMMIT, which is not in this repo's history — a rewrite, or a shallow clone. Falling back to HEAD, so the interval is EMPTY this run and moved-title cannot contribute."
+    BASE_WARN="WARN the last recorded measurement names commit $LAST_COMMIT, which is not in this repo's history — a rewrite, or a shallow clone. Falling back to HEAD, so the interval is EMPTY this run and moved-title cannot contribute."
+    BASE_NOTE="note: the interval is EMPTY this run — see the WARN on stderr."
+  fi
+  # An `if`, not `[ -n … ] && printf`. Under `set -e` an AND-list whose first
+  # element fails is the shape #181 is a sweep for, and a gate script is the
+  # last place to rely on remembering which half errexit exempts.
+  if [ -n "$BASE_WARN" ]; then
+    printf '%s\n' "$BASE_WARN" >&2
   fi
   printf '%s\n' "$BASE_NOTE"
 fi
@@ -341,13 +382,13 @@ fi
 
 RC=0
 python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" "$TMP/src" \
-  "$SWEEP_SOURCE" "$BASE" <<'PY' || RC=$?
+  "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" <<'PY' || RC=$?
 import os
 import re
 import sys
 
 (base_policy_path, policy_rel, docs_list, ack_file, src_list,
- sweep_source, base_ref) = sys.argv[1:8]
+ sweep_source, base_ref, seam_interval) = sys.argv[1:9]
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
@@ -673,11 +714,18 @@ if acked:
         for p in unused:
             print(f"    {p[:70]}")
 
-# ABOVE the two counts, which stay the last two lines — three readers parse the
-# tail by position. The interval a count covers is not recoverable from the
-# count, and `seams` mixes a standing half with an interval half, so a row of
-# them is uninterpretable without knowing where each one started.
-print(f"\nseam_base: {base_ref}")
+# ABOVE the two counts, which stay the last two lines. The three readers in the
+# cadence template match `^seams:` / `^seams_acked:` anchored, then `tail -1` —
+# they are pattern-based, not positional, so what must stay stable is the line
+# PREFIX, not the offset from the end. Inserting above them is safe for that
+# reason, not by luck.
+#
+# `seam_interval` exists because `seam_base` cannot carry it: HEAD is what a
+# deliberate --base HEAD, a first run, and the rewrite fallback all report, and
+# only the first of those covers a real interval. `seams` mixes a standing half
+# with an interval half, so a row of counts is uninterpretable without it.
+print(f"\nseam_interval: {seam_interval}")
+print(f"seam_base: {base_ref}")
 print(f"seams_acked: {len(acked)}")
 print(f"seams: {len(new)}")
 sys.exit(3 if new else 0)
