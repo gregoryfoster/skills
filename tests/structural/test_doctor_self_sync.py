@@ -415,3 +415,75 @@ class TestInstallerReplacesByRename:
             "the age floor is what makes the sweep safe — a concurrent "
             "installer's in-flight temp file must never be removed"
         )
+
+
+class TestInstallerRefusesANonFileDestination:
+    """#181 — a write through a temp file that reports success when it failed.
+
+    The no-clobber guard tests `[ -f "$DEST" ]`, so anything at `.skills/`
+    that is not a regular file falls through it. A directory then survives
+    `mv -f "$TMP" "$DEST"` intact: `mv` moves the temp file *into* it and
+    exits 0, so the installer prints `installed …/.skills/doctor.sh` and
+    exits 0 while `.skills/doctor.sh` is still a directory and the doctor is
+    stranded inside it under its temp name.
+
+    Different mechanism from the `&&`-list defect — here nothing fails, `mv`
+    just does something other than what the success line claims — but the same
+    outcome, and the same class: a caller (the auto-refresh hook, sync_self)
+    that reads exit 0 as "the doctor is installed" is wrong.
+    """
+
+    def test_a_directory_at_the_destination_is_refused(self, tmp_path: Path):
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        vendor = _install_vendor(repo)
+        dest = repo / ".skills" / "doctor.sh"
+        (dest / "blocker").mkdir(parents=True)
+
+        result = subprocess.run(
+            ["bash", str(vendor / "install-doctor.sh")],
+            capture_output=True, text=True, cwd=repo, env=_clean_env(),
+        )
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "installed" not in result.stdout, (
+            "claimed an install that did not happen:\n" + result.stdout
+        )
+        assert dest.is_dir(), "the destination was not ours to remove"
+        assert sorted(p.name for p in dest.iterdir()) == ["blocker"], (
+            "stranded the doctor inside the directory it could not replace"
+        )
+
+    def test_the_refusal_names_the_path(self, tmp_path: Path):
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        vendor = _install_vendor(repo)
+        (repo / ".skills" / "doctor.sh").mkdir(parents=True)
+
+        result = subprocess.run(
+            ["bash", str(vendor / "install-doctor.sh")],
+            capture_output=True, text=True, cwd=repo, env=_clean_env(),
+        )
+        assert "doctor.sh" in result.stderr, result.stderr
+        assert "not a regular file" in result.stderr, result.stderr
+
+    def test_a_symlinked_doctor_is_still_healed(self, tmp_path: Path):
+        """The refusal must not catch the case the doctor exists to repair: a
+        symlink at .skills/doctor.sh is exactly what install-doctor.sh is
+        supposed to replace with a real file."""
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        vendor = _install_vendor(repo)
+        real = repo / ".skills" / "elsewhere.sh"
+        real.parent.mkdir(parents=True, exist_ok=True)
+        real.write_text(_stale_doctor_text())
+        dest = repo / ".skills" / "doctor.sh"
+        dest.symlink_to(real)
+
+        result = subprocess.run(
+            ["bash", str(vendor / "install-doctor.sh")],
+            capture_output=True, text=True, cwd=repo, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not dest.is_symlink(), "the doctor must end up a real file"
+        assert dest.read_text() == DOCTOR.read_text()
