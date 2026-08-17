@@ -15,7 +15,7 @@ invites both:
   record    A **historical record**: this is what `SKILL.md` said, at the
             version named. Being out of date is what it is *for*. It owes the
             reader exactly one thing — the version, so the record cannot be
-            mistaken for current text. Eight blocks.
+            mistaken for current text. Ten blocks.
   excerpt   A **living excerpt**: the long form of a section `SKILL.md` still
             states in compressed form, presented in the present tense with no
             date. A reader treats it as current, so it must track its source in
@@ -27,21 +27,25 @@ invites both:
 #158 proposed a two-part test: a record is "dated, explicitly frozen, and
 `SKILL.md` does not point at it as current". The second half does not survive
 contact with the tree. **No `SKILL.md` link names any block's anchor** — every
-one of the fourteen is reached through a doc-level link or a link to the parent
-`##`, so "does SKILL.md point at it" is either false for all fourteen or true
-for all fourteen depending on how loosely you read a doc-level link. It cannot
-be operationalised, and a criterion a gate cannot evaluate is a convention that
+one of the sixteen is reached through a doc-level link or a link to the parent
+`##`, so "does SKILL.md point at it" is either false for all sixteen or true for
+all sixteen depending on how loosely you read a doc-level link. It cannot be
+operationalised, and a criterion a gate cannot evaluate is a convention that
 will be settled case-by-case forever, which is the state #158 was filed to end.
 
 So the split is drawn on the first half alone: **does the block name the version
 it left `SKILL.md` at?** Three reasons.
 
 1. It is local and decidable. The evidence is inside the block.
-2. It is the criterion the demoting agents already used, without naming it.
-   Eight of the fourteen volunteer a version in their lead-in ("carried this
-   inline until v1.9, in these words:"), six do not, and the split falls exactly
-   where the writing is past tense. This module does not invent a convention; it
-   names the one already in the file and makes it load-bearing.
+2. It is the criterion the demoting agents already used, without naming it. Of
+   the thirteen blocks that existed before #158, **eight** volunteer a version
+   in their lead-in ("carried this inline until v1.9, in these words:") and five
+   do not, and the split falls exactly where the writing is past tense. This
+   module does not invent a convention; it names the one already in the file and
+   makes it load-bearing. (The three blocks #158 gave headings are counted
+   separately and prove nothing about the convention — two were written into the
+   record class and one into the excerpt class by the same commit that named the
+   classes. The evidence is the thirteen.)
 3. It matches the observed defect. `### The rule in full` misleads *precisely
    because* it does not date itself. Had it said "as Scope carried it until
    v1.7", the missing `--no-write` would have been correct rather than a bug.

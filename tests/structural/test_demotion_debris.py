@@ -56,11 +56,6 @@ ORDERED_ITEM = re.compile(r"^(\s*)(\d+)[.)]\s")
 HEADING = re.compile(r"^#{1,6} ")
 FENCE = re.compile(r"^\s*```")
 
-# A paragraph opening with one of these is a continuation by construction, not a
-# truncation: a code span, a link, an emphasis run, or a list marker can all
-# legitimately begin a block and can all legitimately be lowercase.
-SENTENCE_START_EXEMPT = ("`", "*", "_", "-", "[", "(", "|", ">", "#", "+", "<")
-
 # CommonMark makes four spaces an indented code block. Three is the deepest
 # indent the demotion convention itself uses (`### Normalizing the index` quotes
 # its snapshot at three), so the threshold sits exactly between them.
@@ -175,14 +170,18 @@ class TestNoParagraphArrivedTruncated:
         that continues *around* a fence is the one legitimate way a block starts
         lowercase, so a paragraph immediately following a closing fence is
         exempt and nothing else is.
+
+        The test is the **first character**, deliberately. A tail that begins
+        with a code span, a link or a bold run opens with punctuation and is not
+        caught — `_flat`-ing the line to find its first *letter* would flag
+        every legitimate paragraph opening "`docs/` filenames …". Both live
+        instances began with a bare lowercase word; a narrow rule that fires is
+        worth more than a wide one that has to be exempted into silence.
         """
         orphans = [
             f"{p.key}: {p.line.strip()[:70]!r}"
             for p in paragraphs
-            if not p.after_fence
-            and (word := p.line.strip())
-            and word[0].islower()
-            and not word.startswith(SENTENCE_START_EXEMPT)
+            if not p.after_fence and (word := p.line.strip()) and word[0].islower()
         ]
         assert not orphans, (
             "Paragraphs beginning mid-sentence — a demoted tail whose head was left "

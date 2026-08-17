@@ -22,33 +22,36 @@ Two mechanisms, chosen per block rather than by blanket rule:
             script name, an anchor — pins those tokens on *both* sides. This is
             the shape `test_finding_evidence.py` already uses for the
             `SKILL.md` <-> `dimensions.md` envelope, and it is the only one that
-            catches **rewording**, the failure mode actually observed. Twelve of
-            the thirteen blocks quote such a contract.
-  dated     A block that is pure narrative, with no single token carrying the
-            contract, instead names the version it was demoted from, so a reader
-            can see it is a historical record rather than current text. One
-            block qualifies: `continuous-surfaces.md`'s document preamble.
+            catches **rewording**, the failure mode actually observed. Fourteen
+            of the sixteen blocks quote such a contract.
+  dated     A block with no single token carrying the contract — either pure
+            narrative, or a demotion so total that `SKILL.md` no longer states
+            the rule at all — instead names the version it left, so a reader can
+            see it is a historical record rather than current text. Two blocks
+            qualify: `continuous-surfaces.md`'s document preamble, and
+            `cohort-patterns.md`'s no-`docs/`-tree note.
 
 Every discovered block must be covered by one or the other, and discovery is by
 prose convention rather than by a hand-kept list — a newly demoted block that
 nobody registers fails the first test in this module rather than joining the
-unguarded set. That matters: the issue counted 8 blocks from one grep, and the
-convention is actually spoken in six different phrasings across **13** sites.
+unguarded set. That matters: the issue counted 8 blocks from one grep, #148
+found 13, and #158 found three more that no grep could reach because their
+headings never spoke the convention at all.
 
 What this does NOT catch, stated so it is not rediscovered later:
 
-- **Additions to `SKILL.md`.** A snapshot is complete as of its demotion; when
-  `SKILL.md` later grows a clause the block never had, no pin fires. `### The
-  rule in full` is already in this state — `SKILL.md`'s scope section has since
-  grown the `--no-write` sentence the snapshot predates. That is correct for a
-  dated historical record and wrong for a block a reader treats as current, and
-  no mechanism here can tell those apart.
 - **Prose between the pins.** Pins are tokens, not the paragraph around them; a
   reworded justification with the flag name intact passes.
 - **Other skills.** Discovery is scoped to `curating-context/references/`, whose
   Phase 4 owns this convention. A demoted block in another skill is unguarded.
 - **Whether the snapshot is *useful*.** A block can agree with `SKILL.md` on
   every pinned token and still be redundant with it.
+
+**Additions to `SKILL.md`** used to be on that list and no longer are.
+`test_demoted_block_kinds.py` (#158) classifies every entry here as a historical
+`record` or a living `excerpt` and holds excerpts to a check derived from the
+source rather than registered — which is what it takes to catch a clause that
+had not been written when the block was registered.
 
 No API calls required.
 """
@@ -232,6 +235,27 @@ REGISTRY: dict[tuple[str, str], dict] = {
             "`## Detail Docs` section listing every live reference doc with a one-line purpose",
             "canonical section order",
             "`docs/` filenames to align with",
+        ),
+    },
+    ("cohort-patterns.md", "### Starting with no `docs/` tree — the Phase 5 step 4 note in full"): {
+        "source": PHASE_5,
+        # Headed and dated by #158: it shipped as an indented block under the
+        # filenames table introduced by nothing at all. Phase 5 no longer says
+        # any of this — the demotion was total — so there is no token to pin on
+        # both sides, and the date is the whole of what it owes.
+        "kind": "record",
+        "dated": True,
+    },
+    ("cohort-patterns.md", "### Demoting class B — the Phase 5 step 4 text in full"): {
+        "source": PHASE_5,
+        # Headed and dated by #158: it shipped as a bare `4.` opening a list of
+        # one, under a heading about command blocks. The tail of its
+        # relative-links bullet had been left behind in `validation-gate.md`.
+        "kind": "record",
+        "pins": (
+            "unreviewable content change wearing a refactor's clothes",
+            "Phase 6.5 checks both",
+            "`prove-no-loss.sh` normalises exactly these two",
         ),
     },
     ("cohort-patterns.md", "### The rule in full"): {
