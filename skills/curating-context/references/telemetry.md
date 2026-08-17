@@ -133,8 +133,8 @@ Then get the branch a **fresh-eyes review pass** before it ships. Whoever just
 moved three hundred lines has exactly the implementation blindness that misses
 "and now this other file lies about it" — the seam sweep catches the mechanical
 cases, a reviewer catches the rest. If a late fix changes the count, **rewrite
-this run's row to match what ships; across runs, only ever append** — the same
-distinction in [references/telemetry.md](telemetry.md).
+this run's row to match what ships; across runs, only ever append** — the
+distinction this section opens with.
 
 ### Tagging the row — the Phase 7 text in full
 

@@ -711,10 +711,11 @@ arms_are_historical = bool(
     and version_key(newest_in_ledgers) > max(map(version_key, scored_versions)))
 
 
-# Wave A adopts first and therefore holds the OLDER version, so the first
-# experiment runs `--treatment b --control a` — and running the script bare
-# inverts it, turning a winning change into a losing one. Detectable, so detect
-# it rather than relying on three places in the docs saying so.
+# In experiment 1 wave A adopted first and held the OLDER version, so that run
+# needs `--treatment b --control a` — and running the script bare inverts it,
+# turning a winning change into a losing one. Which wave holds which version is
+# now an observation rather than an assignment (#118/#168), so the direction is
+# detected from the rows rather than assumed from the flags.
 inverted = bool(t_versions and c_versions
                 and max(map(version_key, t_versions))
                 < min(map(version_key, c_versions)))
@@ -871,9 +872,9 @@ else:
 inversion_warning = (
     f"WARN wave {treatment} carries only older versions than wave {control} "
     f"({', '.join(t_versions)} vs {', '.join(c_versions)}). The arms look "
-    f"inverted: wave A adopts first and holds the older version, so the first "
-    f"experiment runs --treatment {control} --control {treatment}. As scored "
-    f"here, a winning change reads as a losing one."
+    f"inverted: the arm carrying the proposal is the treatment, so re-run with "
+    f"--treatment {control} --control {treatment}. As scored here, a winning "
+    f"change reads as a losing one."
 ) if inversion_is_the_verdict else None
 
 if fmt == "json":
