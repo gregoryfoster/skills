@@ -267,14 +267,45 @@ class TestSkillGatesOnYield:
         )
 
 
-def _repo(tmp_path: Path, *, manifest: bool = True) -> Path:
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@example.com",
+         "-c", "user.name=t", *args],
+        check=True, capture_output=True, text=True, env=_clean_env(),
+    )
+
+
+def _repo(tmp_path: Path, *, manifest: bool = True, commit: bool = False) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"],
                    check=True, capture_output=True, env=_clean_env())
     if manifest:
         (repo / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
+    if commit:
+        # The manifest is TRACKED, which is the whole reason the `-f` guard
+        # cannot tell a worktree apart from an unindexed repo (#180).
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
     return repo
+
+
+def _worktree(repo: Path, tmp_path: Path, name: str = "wt") -> Path:
+    path = tmp_path / name
+    _git(repo, "worktree", "add", "-q", "-b", name, str(path))
+    return path
+
+
+def _arg_recording_driver(repo: Path) -> Path:
+    """A stub that records the argv the hook handed it, and reports nothing."""
+    stub = repo / "record-args.mjs"
+    stub.write_text(
+        "import { writeFileSync } from 'node:fs';\n"
+        "writeFileSync(process.env.HEALTH_ARGS_OUT, "
+        "process.argv.slice(2).join('\\n'));\n"
+        "process.exit(0);\n"
+    )
+    return stub
 
 
 def _stub_driver(repo: Path, *, exit_code: int, findings: str = "") -> Path:
@@ -397,6 +428,96 @@ class TestHealthHook:
             repo, SOCRATICODE_DRIVER=str(stub), SOCRATICODE_HEALTH_FORCE="1"
         )
         assert "graph yield LOW" in forced.stdout
+
+
+class TestHookMeasuresTheIndexedProject:
+    """The hook must ask about the path SocratiCode actually indexed (#180).
+
+    SocratiCode indexes by ABSOLUTE project path, and a `git worktree` is a
+    different absolute path. The hook passed the literal `.`, so from any
+    worktree it asked about a project that was never indexed and reported
+    `graph is not READY` on a repo whose index is perfectly healthy — verified
+    on CannObserv/replicator, same index and same day, `ok` from the main
+    checkout and broken from a worktree.
+
+    The `-f .socraticodecontextartifacts.json` guard does not catch it: the
+    manifest is tracked, so it is present in every worktree. And this lands on
+    the workflow the cohort is pushed toward — repos that deploy from their
+    main checkout are told to do feature work in worktrees, so the false report
+    is the COMMON case. A once-per-day reporter that cries wolf on most
+    sessions gets tuned out, and then the one true finding scrolls past too.
+    """
+
+    @staticmethod
+    def _measured(cwd: Path, stub: Path, out: Path, **env: str) -> str:
+        result = subprocess.run(
+            ["bash", str(HOOK)],
+            cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            env=_clean_env(
+                SOCRATICODE_DRIVER=str(stub), HEALTH_ARGS_OUT=str(out), **env
+            ),
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.exists(), (
+            f"the driver never ran: {result.stdout!r} / {result.stderr!r}"
+        )
+        return out.read_text().splitlines()[-1]
+
+    @requires_node
+    def test_a_worktree_session_measures_the_main_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        stub = _arg_recording_driver(repo)
+        measured = self._measured(wt, stub, tmp_path / "args.txt")
+        assert Path(measured).resolve() == repo.resolve(), (
+            "from a worktree the hook measured the worktree's own path, which "
+            "SocratiCode never indexed, so a healthy index reports as broken "
+            f"(#180). Measured {measured!r}, expected {str(repo.resolve())!r}"
+        )
+
+    @requires_node
+    def test_the_main_checkout_still_measures_itself(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path, commit=True)
+        stub = _arg_recording_driver(repo)
+        measured = self._measured(repo, stub, tmp_path / "args.txt")
+        assert Path(measured).resolve() == repo.resolve(), (
+            f"the main checkout must measure itself; got {measured!r}"
+        )
+
+    @requires_node
+    def test_the_probe_flag_survives_the_path_change(self, tmp_path: Path) -> None:
+        """projectPath is positional; --probe must still precede it."""
+        repo = _repo(tmp_path, commit=True)
+        stub = _arg_recording_driver(repo)
+        out = tmp_path / "args.txt"
+        self._measured(repo, stub, out, SOCRATICODE_PROBE_FILE="src/app.py")
+        assert out.read_text().splitlines()[:3] == [
+            "health-check", "--probe", "src/app.py"
+        ], out.read_text()
+
+    @requires_node
+    def test_the_daily_lock_is_shared_with_the_main_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        """One project, one report per day — not one per checkout of it.
+
+        Once every worktree measures the SAME project, a per-worktree lock
+        turns one finding into N identical reports a day, which is the
+        tuned-out failure this fix exists to stop.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        stub = _stub_driver(repo, exit_code=1, findings=TestHealthHook.FINDINGS)
+
+        first = _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
+        assert "graph yield LOW" in first.stdout, first.stdout
+        second = _run_hook(wt, SOCRATICODE_DRIVER=str(stub))
+        assert second.stdout == "", (
+            "a worktree session re-reported a finding the main checkout had "
+            f"already reported today; got {second.stdout!r}"
+        )
 
 
 class TestHookPrefersTheRealDriver:
