@@ -153,6 +153,46 @@ class TestTheRowCarriesTheMeasuredRepoCommit:
         assert row["repo_commit"] is None, row
 
 
+class TestTheWeeklyCycleRoundTrips:
+    """The two halves are written in different scripts and joined only by a
+    field name and a revision format. Both fixtures above hand-write the row, so
+    neither would notice `repo_commit` being recorded long and read short, or
+    the writer and the reader disagreeing about the key."""
+
+    def test_a_recorded_row_is_the_next_sweeps_base(self, tmp_path: Path):
+        repo = tmp_path / "roundtrip"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(repo, "AGENTS.md", BASE_POLICY)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "week 1")
+
+        # Week 1: measure and record, exactly as the cadence does.
+        rec = subprocess.run(
+            ["bash", "-c",
+             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+             f' | bash "{RECORD}" --baseline=scheduled'],
+            capture_output=True, text=True, env=_clean_env(), timeout=90)
+        assert rec.returncode == 0, rec.stderr
+        assert (repo / LEDGER_REL).read_text().strip(), rec.stderr
+
+        # The week's work: a curation that relocates a section and leaves a
+        # dangler, landed and committed.
+        _write(repo, "AGENTS.md", NOW_POLICY)
+        _write(repo, "docs/TOPOLOGY.md", TOPOLOGY_DOC)
+        _write(repo, "docs/API.md", STALE_REF)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "week 2's curation")
+
+        # Week 2: the sweep reads week 1's commit back off the row.
+        r = _sweep(repo, "--base-ledger", LEDGER_REL)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "moved-title" in r.stdout, r.stdout
+        assert "docs/API.md:3" in r.stdout, r.stdout
+
+
 class TestBaseLedgerResolvesTheInterval:
     def test_it_sweeps_from_the_commit_the_last_row_recorded(
             self, tmp_path: Path):
@@ -171,6 +211,27 @@ class TestBaseLedgerResolvesTheInterval:
         r = _sweep(repo, "--base", "HEAD")
         assert "moved-title" not in r.stdout, r.stdout
         assert "seams: 0" in r.stdout, r.stdout
+
+    def test_the_source_classes_were_unreachable_too(self, tmp_path: Path):
+        """#169 counted the source classes among the three that "still fire"
+        under `--base HEAD`. They do not. The source sweep is gated on
+        `src and moved`, so an empty `moved` set skips every tracked file and
+        the report says "not swept" — which means TWO classes were structurally
+        unreachable in a scheduled run, not one, and the second is the class
+        #113 added after 16 real misses across 13 shipped files."""
+        repo, measured = _curated_repo(tmp_path, "sourcegate")
+        _write(repo, "src/app.py", '"""Bounds live in AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "a shipped docstring naming the policy file")
+
+        old = _sweep(repo, "--base", "HEAD")
+        assert "not swept" in old.stdout, old.stdout
+        assert "source-back-reference" not in old.stdout, old.stdout
+
+        _ledger(repo, repo_commit=measured)
+        new = _sweep(repo, "--base-ledger", LEDGER_REL)
+        assert "source-back-reference" in new.stdout, new.stdout
+        assert "src/app.py:1" in new.stdout, new.stdout
 
     def test_the_resolved_base_is_reported(self, tmp_path: Path):
         repo, measured = _curated_repo(tmp_path, "reported")
@@ -224,6 +285,33 @@ class TestBaseLedgerResolvesTheInterval:
                     "repo_commit": measured}, sort_keys=True) + "\n")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
         assert f"seam_base: {measured}" in r.stdout, r.stdout
+
+
+class TestTheIntervalHalfIsAFlow:
+    """Documented in references/cadence.md, and pinned here because it is the
+    thing a reader is most likely to get wrong: a moved-title hit is a PULSE.
+    Anything aggregating `seams` across a series has to sum the interval
+    contribution rather than take the latest row's value."""
+
+    def test_an_unfixed_moved_title_seam_is_gone_the_following_week(
+            self, tmp_path: Path):
+        repo, measured = _curated_repo(tmp_path, "pulse")
+        _ledger(repo, repo_commit=measured)
+        first = _sweep(repo, "--base-ledger", LEDGER_REL)
+        assert "moved-title" in first.stdout, first.stdout
+
+        # The following week: nothing was fixed, and the base has advanced to
+        # the commit the last measurement recorded.
+        _write(repo, "ignore.txt", "the week's unrelated work\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "a week of other work")
+        _ledger(repo, repo_commit=_git(
+            repo, "rev-parse", "--short", "HEAD~1").stdout.strip())
+        second = _sweep(repo, "--base-ledger", LEDGER_REL)
+        assert "moved-title" not in second.stdout, (
+            "the dangler is still in the tree — the point is that the CLASS "
+            "measures a flow, so it stops reporting it:\n" + second.stdout)
+        assert (repo / "docs" / "API.md").read_text() == STALE_REF
 
 
 class TestTheFirstRunIsDefinedRatherThanFallenInto:
