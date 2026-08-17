@@ -282,6 +282,57 @@ class TestArchivalSubtreesAreScannedAsSources:
         assert data["links"]["orphans"] == ["docs/plans/2026-01-01-old.md"]
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod 000 does not restrict root, so the unreadable file is readable",
+)
+class TestUncheckedLinksAreReportedHonestly:
+    """`dead: []` on a file nothing could read reports the repo clean on evidence
+    nobody gathered. `extract_links` records the path in `links.unchecked` so an
+    empty `dead` can be read honestly (#147) — and this is the run in which that
+    is observable end-to-end, which #157 claimed was impossible.
+
+    It is observable because the two halves of that claim come apart. An
+    unreadable LIVE doc is fatal: the inventory reads it, cannot, and exits 2
+    (see TestUnreadableDocInTheInventory in test_context_surface.py). An
+    unreadable ARCHIVAL doc is not: it is excluded from the inventory by design,
+    contributes no number to defend, and is only ever read as a source of
+    anchors — so the honest thing is a completed run that says which file went
+    unchecked, not a refusal to measure the rest of the tree.
+    """
+
+    def _repo_with_unreadable_plan(self, tmp_path: Path) -> Path:
+        repo = _repo(tmp_path, "# P\n\n[g](docs/GUIDE.md)\n[p](docs/plans/old.md)\n")
+        (repo / "docs" / "GUIDE.md").write_text("# G\n\n## Kept\n")
+        (repo / "docs" / "plans").mkdir()
+        plan = repo / "docs" / "plans" / "old.md"
+        plan.write_text("# Plan\n\n[g](../GUIDE.md#kept)\n")
+        plan.chmod(0o000)
+        return repo
+
+    def test_the_run_completes_and_names_the_unchecked_file(self, tmp_path: Path):
+        data = _measure(self._repo_with_unreadable_plan(tmp_path))
+        assert data["links"]["unchecked"] == ["docs/plans/old.md"]
+
+    def test_dead_is_empty_but_not_unqualified(self, tmp_path: Path):
+        """The pairing is the point: `dead: []` is only readable as "clean" when
+        `unchecked` is empty too."""
+        data = _measure(self._repo_with_unreadable_plan(tmp_path))
+        assert data["links"]["dead"] == []
+        assert data["links"]["unchecked"], (
+            "a file whose links nobody could read must not be folded into a "
+            "clean `dead` report"
+        )
+
+    def test_a_readable_plan_leaves_unchecked_empty(self, tmp_path: Path):
+        """The control: `unchecked` is populated by failure, not by archival."""
+        repo = self._repo_with_unreadable_plan(tmp_path)
+        (repo / "docs" / "plans" / "old.md").chmod(0o644)
+        data = _measure(repo)
+        assert data["links"]["unchecked"] == []
+        assert data["links"]["dead"] == []
+
+
 def _bin_with_real_tools(bin_dir: Path) -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
     for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc", "sort",
