@@ -141,9 +141,9 @@ an independent one.
 - **`SKILL.md` still reads "Nine sessions across four projects" for Q5.** The 2026-08-17 watcher
   entry records the **11th session / 10th positive**. Left alone deliberately — it is the watcher
   session's own count to fold in, and the 2026-08-13 power-map entry shows this exact number has gone
-  stale before (the file was reading "six across three" then). Flagged rather than fixed, because
-  correcting it costs bytes this pass had already committed.
-
+  stale before (the file was reading "six across three" then). Flagged rather than fixed: the count
+  and its provenance line are the watcher session's own to fold in, and #182's Step 10 pass lands on
+  the same lines.
 - **The index is now the next budget to bind.** `references/process-log.md` reads **8,452 of its
   10,000-token per-doc ceiling** after this row — roughly four more rows at the size the last three
   sessions have been writing them. #152 resolved the ratchet-vs-append-only contradiction by making
@@ -154,6 +154,9 @@ an independent one.
 
 ### Numbers
 
-`2296 passed, 127 skipped` at baseline and after. `SKILL.md`: 61,208 → 61,202 bytes; estimate
+`2296 passed, 127 skipped` at baseline; **`2305 passed, 127 skipped`** after. The `+9` is five new
+assertions plus four parametrized cases the two new markdown files pick up in `test_relative_links`
+and `TestNoBareScriptPaths` — which is the whole argument for reporting the count: a verdict would
+have hidden a `+9` that needed explaining. `SKILL.md`: 61,208 → 61,202 bytes; estimate
 22,838 → 22,836 tokens; exact 21,586 → 21,554. Ratchet unchanged at 23,110, and the binding
 (estimate) reading keeps 274 tokens of headroom.
