@@ -699,6 +699,134 @@ class TestOrchestratingIssueBacklog:
             "brief itself was written against the wrong tree."
         )
 
+    # -- execution-phase addendum (#161) -------------------------------------
+    #
+    # Four promotions, and what unites the first two is that each defeats a
+    # detector the skill already prescribes rather than merely evading it: a
+    # vacuous assertion keeps the suite GREEN, and a corrupted `.git/config`
+    # keeps Rule 6 answering "clean". A rule whose own check reports success
+    # under the failure is worth pinning, because nothing else will notice it
+    # going missing.
+
+    def test_test_surface_grep_covers_vacuous_assertions(self):
+        """Step 5's test-surface grep must hunt green failures, not only red.
+
+        The existing bullet finds assertions a fix *invalidates* — they go red
+        and the gate says so. An assertion the fix makes vacuous
+        (`None == None`, after the state moved to another column) stays green
+        while verifying nothing, and no keyword sweep reaches it: it names
+        neither the literal the fix removes nor the one it adds.
+        """
+        body = self.s.body
+        section = body[
+            body.index("### Step 5–6: Conflict zone analysis"):
+            body.index("### Step 7: Batch design")
+        ]
+        assert "vacuous" in section, (
+            "Step 5's conflict-zone analysis must tell the orchestrator to grep "
+            "for the assertions a change makes VACUOUS, not only the ones it "
+            "breaks. The invalidated half is caught by the suite; the vacuous "
+            "half is exactly what the suite cannot report."
+        )
+
+    def test_rule_6_reads_the_exit_code_not_only_stdout(self):
+        """Rule 6's check must not be satisfiable by a failed `git status`.
+
+        A linked worktree shares `.git/config` with the main checkout, so a
+        worker's stray `git config` can set `core.bare = true` there. That makes
+        `git status` FAIL with empty stdout — indistinguishable from "clean" to
+        a caller reading output alone. The corruption disables the detector
+        instead of tripping it (#189, twice in one four-agent batch).
+        """
+        body = self.s.body
+        rule6 = body[
+            body.index("### Rule 6 — Detect worktree fall-through at runtime"):
+            body.index("## Recovery")
+        ]
+        assert "exit" in rule6, (
+            "Rule 6 must instruct the orchestrator to read the exit code of "
+            "`git status --porcelain`, not only its stdout — an empty stdout "
+            "from a FAILED status reads as 'clean' (#189)."
+        )
+        assert "core.bare" in rule6, (
+            "Rule 6 must name the corruption it now guards against "
+            "(`core.bare = true` written through a linked worktree's shared "
+            "`.git/config`), or the exit-code clause reads as pedantry and gets "
+            "dropped by the next editor."
+        )
+        assert "--is-inside-work-tree" in rule6, (
+            "Rule 6 must carry the positive canary as well as the exit-code "
+            "check: `git rev-parse --is-inside-work-tree` on the main checkout "
+            "catches the whole class rather than this one flag (#189)."
+        )
+
+    def test_orchestrator_reconciliation_covers_a_failed_signal(self):
+        """`failed` and `completed` reach the same reconciliation.
+
+        A subagent killed mid-run (weekly limit, timeout) signals `failed`, and
+        the instinct is to relaunch from scratch — which discards a coherent,
+        committed phase. From outside the worktree "died" and "fell through"
+        are indistinguishable, so Rule 6 plus reconciliation is the correct
+        first move for either signal.
+        """
+        body = self.s.body
+        orchestrator = body[
+            body.index("### Orchestrator agent"):body.index("### Worker agents")
+        ]
+        assert "failed" in orchestrator, (
+            "Orchestrator step 5 must state that a `failed` worker signal takes "
+            "the same reconcile-then-merge path as a `completed` one. Naming "
+            "only 'completion signal' is what makes relaunching-from-scratch "
+            "look correct."
+        )
+
+    def test_report_back_slot_requires_a_collected_count(self):
+        """A verdict cannot be reconciled across workers; a count can.
+
+        `2252 + 4 + 6 + 15 + 17 = 2294` is what let one batch gate confirm that
+        four green claims were green on the same tree — and it is how three of
+        four workers diagnosed a stale briefed baseline instead of silently
+        reconciling to it (#182 Batch A, sourced from #156).
+        """
+        protocol = self.s.body[self.s.body.index("### Worker agents"):]
+        assert "N passed, M skipped" in protocol, (
+            "The worker protocol's required report-back slot must demand the "
+            "suite's COLLECTED COUNT (`N passed, M skipped`), not a bare "
+            "'green'. Verdicts from N workers cannot be reconciled against each "
+            "other; counts can."
+        )
+
+    def test_red_phase_commit_advice_is_conditional_on_what_the_hook_runs(self):
+        """The promoted candidate's own claim about pre-commit was wrong.
+
+        #161's Candidate B asserted "the pre-commit hook runs ruff, not pytest,
+        so a red commit lands cleanly" — true of the repository it was observed
+        in, false of this one, whose single hook runs the whole structural
+        suite and therefore REJECTS a red commit. The claim was copied into
+        four worker briefs unchecked and caught independently by three agents.
+        Promoting it unqualified would carry the error upstream into the skill,
+        where every consumer inherits it.
+        """
+        body = self.s.body
+        assert not re.search(r"hook runs ruff|runs ruff, not pytest", body), (
+            "The skill must not assert that the pre-commit hook runs a linter "
+            "rather than the test suite. That is true of the repo the finding "
+            "was observed in and false of others — including this one (#161)."
+        )
+        assert "--no-verify" in body, (
+            "The red-phase-commit rule must name `--no-verify`, since a hook "
+            "that runs the suite rejects the red commit outright."
+        )
+        paragraph = next(
+            p for p in body.split("\n") if "--no-verify" in p
+        )
+        assert re.search(r"\bonly where\b|\bcheck\b", paragraph), (
+            "The red commit lands cleanly ONLY where the pre-commit hook does "
+            "not run the suite, and checking which is the worker's job. State "
+            "the condition in the same breath as the advice, or the reader "
+            "inherits the wrong repo's fact:\n  " + paragraph
+        )
+
 
 # ---------------------------------------------------------------------------
 # reviewing-code (baseline + variants)
