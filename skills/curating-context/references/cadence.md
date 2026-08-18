@@ -94,10 +94,50 @@ attributes in the tree being *replayed onto*, so an attribute added after the
 fact does not rescue the conflict that motivated it. That is why the installer
 tells you to stage both files together.
 
+The same weekly run rewrites two more files, and they need a *different* merge.
+`measure-context.sh --exact` refreshes `.skills/context-token-ratio` and
+`.skills/context-token-counts`, the workflow stages all three paths, and for a
+while the installer protected one — so the calibration files lost exactly the
+race the ledger was protected against (#173). Union is the wrong answer here:
+it would leave two values for one path and the estimators would read whichever
+they hit first, which is worse than a conflict because nothing reports it.
+These are pure functions of the tree at measurement time, so on a collision the
+answer is always *recompute*, never *reconcile*:
+
+```
+.skills/context-token-ratio merge=ours
+.skills/context-token-counts merge=ours
+```
+
+**And `ours` is the one merge driver git does not define for you.** `union` is
+built in, which is why the ledger line above works the moment it lands. `ours`
+is not, and an attribute naming a driver that does not exist is inert — git
+falls back to the 3-way merge and leaves conflict markers in a file that is
+regenerated and must never be hand-merged. The driver is one line, and it is
+what makes the two entries above mean anything:
+
+```
+git config merge.ours.driver true
+```
+
+`install-cadence.sh` sets that in the clone it runs in, and it cannot do more:
+**git config is not versioned**, so unlike the attributes it does not travel
+with the commit. A fresh clone of a correctly installed repo therefore arrives
+protected on paper and unprotected in fact, which is why `--check` reports the
+driver as its own line instead of folding it into the calibration one. The tree
+and the config are two independent ways to lose the same file, and in the second
+cadence pilot the audit read green on the attribute while the mechanism behind
+it was absent (#192). Run the installer — or the one-liner — once per checkout.
+
 `--uninstall` removes the attribute along with the workflow, leaving
 `.gitattributes` as it found it — the file itself goes only if nothing else was
 in it. The recorded rows stay either way: they are the series, and removing the
 mechanism that adds to it is not a reason to discard what it already collected.
+
+It leaves `merge.ours.driver` set, deliberately. The driver is generic, any
+other `merge=ours` rule in the repo depends on it, and with nothing pointing at
+it a defined driver simply never runs — so unsetting it could only break
+attributes this installer never wrote.
 
 ## What the scheduled `seams` count means
 
