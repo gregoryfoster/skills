@@ -1,4 +1,4 @@
-"""#181 — a write through a temp file must be checked.
+r"""#181 — a write through a temp file must be checked.
 
     cmd … >"$FILE.tmp" && mv -f "$FILE.tmp" "$FILE"
     log "wrote the thing"          # runs even when cmd failed
@@ -31,16 +31,41 @@ a file redirect that is a NON-FINAL element of an `&&` list, which is the one
 position errexit does not cover. Measured on the same tree it finds the #181
 defect and nothing else.
 
-What this rule does NOT reach
------------------------------
-The second spelling of the same family — `date -u +%Y%m%d > "$LOCK" || true`,
-a write the script's contract depends on whose failure is swallowed outright
-(#187). Its failure presents as the absence of a state change, not as a false
-success message, so there is no `&&` list to find. Widening to "any write with
-`|| true`" was also measured: it sweeps up every `>>"$LOG" … || true` audit
-line and every `grep … >"$TMP/x" || true` where an empty result is normal, and
-lands back above 20 false positives. That one stays a review lesson and the
-AGENTS.md convention, not a test.
+The second spelling (#193)
+--------------------------
+    date -u +%Y%m%d > "$LOCK" || true
+
+The same family, and the one this file originally declined to gate. Its failure
+presents as the *absence* of a state change rather than as a false success
+message, so there is no `&&` list to find. It has now escaped two sweeps
+written for the `&&` shape — #187 in `socraticode-health.sh`, then #193 in
+`skills-submodule-update.sh`, whose file matched #181's `grep -rln '\.tmp'`
+enumeration on a genuinely-correct `.tmp` site and was filed READ-ONLY without
+ever being re-read for this spelling. Two escapes is the evidence that the
+convention alone does not hold.
+
+The widening this docstring previously rejected was "any write with `|| true`".
+That rejection was correct and still is: re-measured on this tree with #193's
+defect still in place, it reports 16 sites, 1 of them real. Three exclusions,
+each naming a mechanism rather than a symptom, take it to 16 → 1 with no false
+positive left:
+
+- **`>>` is not a write, it is an append.** Every one of them here is an audit
+  line to `$LOG`, where a lost line costs a breadcrumb and nothing else. Only a
+  truncating `>` replaces state something later reads back.
+- **A pipeline's exit status belongs to its last command, which may be entitled
+  to fail.** `grep … | sort -u >"$TMP/units" || true` swallows an empty grep,
+  not a failed write; `cmd >/dev/null || true` discards output rather than
+  storing it. Neither is a state write.
+- **A heredoc body is data this script emits, not code it runs.** The `|| true`
+  in `install-cadence.sh`'s emitted workflow belongs to a GitHub Actions step
+  whose tool exits 3 on a finding. If emitted text lands in a `.sh` in this
+  tree, this gate reaches it there, in the file that runs it.
+
+What remains is a truncating redirect, outside a pipeline and outside a
+heredoc, whose failure is discarded — which is the mechanism exactly. As with
+the `&&` rule, a deliberate one is not forbidden, only required to say so:
+`# unchecked-write-ok: <reason>`.
 """
 
 import re
@@ -129,6 +154,76 @@ def _offenders(path: Path):
     return out
 
 
+# ------------------------------------------------------------------ #193
+# The second spelling: a truncating write whose failure is discarded.
+
+# A truncating redirect to a file: `>` but not `>>`, not `>&2`, not `2>`, not
+# a `->` arrow or `>=`. The target must start like a path or a variable.
+TRUNCATING_REDIRECT = re.compile(r'(?<![0-9&\->=])>(?!>)\s*"?\$?[A-Za-z_./{]')
+
+# The swallow. `:` is `true` spelled shorter and hides the same failure, but
+# only as the WHOLE handler — `|| : >"$TMP/code"` truncates the file on
+# failure, which is a real handler and the opposite of a discard. Anchoring on
+# the end of the list is what tells the two apart (verify-facts.sh:184).
+SWALLOWED = re.compile(r"\|\|\s*(?:true|:)\s*(?:;|#|$)")
+
+# A pipeline — `|` that is not part of `||`. The list's exit status is the last
+# command's, and that command may be entitled to fail (an empty `grep`).
+SINGLE_PIPE = re.compile(r"(?<!\|)\|(?!\|)")
+
+# Output thrown away rather than stored. Not state, so not this rule's business.
+DISCARD = re.compile(r'>\s*"?/dev/null')
+
+# `<<WORD` / `<<-WORD` / `<<'WORD'`, but never the `<<<` here-string.
+HEREDOC_OPEN = re.compile(r"""(?<!<)<<(?!<)-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?""")
+
+
+def _heredoc_body_lines(path: Path) -> set[int]:
+    """1-based line numbers sitting inside a heredoc body.
+
+    Terminators are matched after stripping, which covers `<<-` as well as
+    plain `<<`. Deliberately shallow — a heredoc opened inside another
+    heredoc's body is not tracked, because the body is skipped wholesale
+    either way."""
+    inside: set[int] = set()
+    terminator = None
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        if terminator is not None:
+            if raw.strip() == terminator:
+                terminator = None
+            else:
+                inside.add(lineno)
+            continue
+        m = HEREDOC_OPEN.search(raw)
+        if m:
+            terminator = m.group(1)
+    return inside
+
+
+def _swallowed_state_writes(path: Path):
+    """Truncating writes, outside a pipeline and outside a heredoc, whose
+    failure is discarded by `|| true`."""
+    heredoc = _heredoc_body_lines(path)
+    out = []
+    for lineno, joined, _head, preamble in _logical_lines(path):
+        m = TRUNCATING_REDIRECT.search(joined)
+        if not m:
+            continue
+        redirect_on = joined[m.start():]
+        if not SWALLOWED.search(redirect_on):
+            continue
+        if EXEMPT_MARKER in joined or EXEMPT_MARKER in preamble:
+            continue          # named, at the line, with a reason
+        if SINGLE_PIPE.search(joined):
+            continue          # the status is the last command's, not the write's
+        if DISCARD.match(redirect_on):
+            continue          # output discarded, not stored
+        if lineno in heredoc:
+            continue          # emitted text, not code this script runs
+        out.append((lineno, joined))
+    return out
+
+
 def _shell_scripts():
     for d in SEARCH_DIRS:
         if d.is_dir():
@@ -151,6 +246,117 @@ def test_no_unchecked_temp_file_write():
         f"mark the line `# {EXEMPT_MARKER} <reason>`.\n\n  "
         + "\n  ".join(found)
     )
+
+
+def test_no_swallowed_state_write():
+    found = []
+    for f in _shell_scripts():
+        for lineno, text in _swallowed_state_writes(f):
+            rel = f.relative_to(REPO_ROOT)
+            found.append(f"{rel}:{lineno}\n      {text[:120]}")
+    assert not found, (
+        "a truncating write whose failure is discarded. Its failure shows up as "
+        "state that never changed, not as an error — check it with `if ! cmd > "
+        '"$F" 2>/dev/null; then …`, the shape socraticode-health.sh uses to '
+        "stamp its lock. If the swallow is deliberate, mark the line "
+        f"`# {EXEMPT_MARKER} <reason>`.\n\n  " + "\n  ".join(found)
+    )
+
+
+def test_the_second_rule_catches_the_defect_it_was_written_for(tmp_path: Path):
+    """#193's exact pre-fix text, so a later loosening is caught here."""
+    s = tmp_path / "lock.sh"
+    s.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'date -u +%Y%m%d > "$LOCK" || true\n'
+    )
+    assert [n for n, _ in _swallowed_state_writes(s)] == [3]
+
+
+def test_the_second_rule_accepts_the_checked_form(tmp_path: Path):
+    s = tmp_path / "fixed.sh"
+    s.write_text(
+        "#!/usr/bin/env bash\n"
+        'if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then\n'
+        '  _log "could not stamp $LOCK"\n'
+        "fi\n"
+    )
+    assert _swallowed_state_writes(s) == []
+
+
+def test_the_second_rule_takes_the_same_marker(tmp_path: Path):
+    s = tmp_path / "marked.sh"
+    s.write_text(
+        "# unchecked-write-ok: best-effort scratch file in a hook that must not block\n"
+        'date -u +%Y%m%d > "$LOCK" || true\n'
+    )
+    assert _swallowed_state_writes(s) == []
+
+
+def test_an_append_is_not_a_state_write(tmp_path: Path):
+    """`>>` adds an audit line; a lost one costs a breadcrumb, not state.
+    Reporting them is what made the naive widening unusable."""
+    s = tmp_path / "log.sh"
+    s.write_text('echo "[$(date -u)] $*" >>"$LOG" 2>/dev/null || true\n')
+    assert _swallowed_state_writes(s) == []
+
+
+def test_a_pipeline_is_not_a_state_write(tmp_path: Path):
+    """The status belongs to the last command, and an empty `grep` is normal."""
+    s = tmp_path / "pipe.sh"
+    s.write_text('grep -oE "#[0-9]+" "$f" | sort -u >"$TMP/issues" || true\n')
+    assert _swallowed_state_writes(s) == []
+
+
+def test_a_colon_with_a_redirect_is_a_real_handler(tmp_path: Path):
+    """verify-facts.sh:184. `|| :` alone discards the failure; `|| : >"$F"`
+    empties the file on failure, which is the handler, not the absence of one.
+    Only the bare form is the swallow."""
+    s = tmp_path / "colon.sh"
+    s.write_text('grep -E "$re" "$f" >"$TMP/code" 2>/dev/null || : >"$TMP/code"\n')
+    assert _swallowed_state_writes(s) == []
+    s.write_text('printf x >"$TMP/code" || :\n')
+    assert [n for n, _ in _swallowed_state_writes(s)] == [1]
+
+
+def test_a_discard_is_not_a_state_write(tmp_path: Path):
+    s = tmp_path / "quiet.sh"
+    s.write_text('command -v node >/dev/null || true\n')
+    assert _swallowed_state_writes(s) == []
+
+
+def test_a_heredoc_body_is_emitted_text_not_code(tmp_path: Path):
+    """install-cadence.sh's emitted workflow, reduced. The `|| true` there
+    belongs to a CI step whose tool exits 3 on a finding."""
+    s = tmp_path / "emit.sh"
+    s.write_text(
+        "cat <<YAML > .github/workflows/x.yml\n"
+        "        run: |\n"
+        "          bash check-seams.sh >/tmp/seams.txt 2>&1 || true\n"
+        '          date -u +%Y%m%d > "$LOCK" || true\n'
+        "YAML\n"
+    )
+    assert _swallowed_state_writes(s) == []
+    # …and the tracker closes again, so a later write is still judged.
+    s.write_text(
+        "cat <<YAML\n"
+        "hello\n"
+        "YAML\n"
+        'date -u +%Y%m%d > "$LOCK" || true\n'
+    )
+    assert [n for n, _ in _swallowed_state_writes(s)] == [4]
+
+
+def test_a_here_string_does_not_open_a_heredoc(tmp_path: Path):
+    """`<<<` shares a prefix with `<<`. Treating it as an opener would swallow
+    the rest of the file into a body that never terminates."""
+    s = tmp_path / "herestring.sh"
+    s.write_text(
+        'read -r x <<<"EOF"\n'
+        'date -u +%Y%m%d > "$LOCK" || true\n'
+    )
+    assert [n for n, _ in _swallowed_state_writes(s)] == [2]
 
 
 def test_the_rule_still_catches_the_defect_it_was_written_for(tmp_path: Path):
