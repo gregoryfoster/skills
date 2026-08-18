@@ -151,11 +151,12 @@ Three conventions here carry a full template and a rationale, and live in
 ## Resolution knobs
 
 Three skills resolve a path through the same three-step lookup — `<NAME>` env var,
-then a single-line `.skills/<name>` file, then a built-in default — so a project
-repoints them with a knob instead of forking the skill: `WORKTREE_ROOT` /
-`.skills/worktree_root`, `PLANS_DIR` / `.skills/plans_dir`, and `SKILLS_PIN_FILE`
-/ `.skills/skills-pin`. The per-skill defaults, resolver helpers and the override
-each one retires: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
+then a `.skills/<name>` file, then a built-in default — so a project configures
+them with a knob instead of forking the skill: `WORKTREE_ROOT` /
+`.skills/worktree_root` and `PLANS_DIR` / `.skills/plans_dir` (each a single-line
+path), and `SKILLS_PIN_FILE` / `.skills/skills-pin` (one `<submodule-path>
+<commit-ish>` per line). The per-skill defaults, resolver helpers and what each
+one retires: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## References convention
 

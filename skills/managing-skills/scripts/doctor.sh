@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-18-1"
+VERSION="2026-08-18-2"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -331,6 +331,12 @@ scan_broken() {
 # uninitialized, and it is the one that decides an exit code — see uninit_held.
 declare -a UNINIT=()
 declare -a UNHELD=()
+# HELD is UNINIT minus UNHELD, built where the classification already happens
+# rather than recovered later by matching one against the other. The obvious
+# `case " ${UNHELD[*]} " in *" $p "*` membership test is space-DELIMITED, which
+# silently defeats the space-PRESERVING prefix strip below: with UNHELD=("a b"),
+# the unrelated path "a" matches (#199 CR round 2, finding 10).
+declare -a HELD=()
 
 # uninit_held <path> -> 0 when .gitmodules pins this path with `update = none`.
 #
@@ -383,6 +389,7 @@ uninit_held() {
 scan_uninit() {
   UNINIT=()
   UNHELD=()
+  HELD=()
   # Absent skills-vendor/ means this consumer doesn't use the pattern; skip
   # the git call entirely rather than reason about its output.
   [ -d skills-vendor ] || return 0
@@ -402,7 +409,7 @@ scan_uninit() {
     # containing a space survives intact — `awk '{print $2}'` truncates it.
     local path="${line#-* }"
     UNINIT+=("$path")
-    uninit_held "$path" || UNHELD+=("$path")
+    if uninit_held "$path"; then HELD+=("$path"); else UNHELD+=("$path"); fi
   done <<UNINIT_EOF
 $status_out
 UNINIT_EOF
@@ -417,14 +424,10 @@ UNINIT_EOF
 report_uninit() {
   echo "doctor: skills-vendor/ submodules recorded but not initialized:" >&2
   printf '  %s\n' "${UNINIT[@]}" >&2
-  if [ "${#UNHELD[@]}" -lt "${#UNINIT[@]}" ]; then
+  if [ "${#HELD[@]}" -gt 0 ]; then
     echo "doctor: of those, .gitmodules holds these with 'update = none', which" >&2
     echo "doctor: is deliberate and stays uninitialized through any repair:" >&2
-    local p
-    for p in "${UNINIT[@]}"; do
-      case " ${UNHELD[*]-} " in *" $p "*) continue ;; esac
-      echo "  $p (held)" >&2
-    done
+    printf '  %s (held)\n' "${HELD[@]}" >&2
   fi
   echo "doctor: their vendored skills are unreachable, and a bare" >&2
   echo "doctor: 'git submodule update --remote --merge' will skip them and still" >&2

@@ -344,8 +344,17 @@ if [ "$MODE" = "check" ]; then
     echo "ours merge driver:  MISSING — \`ours\` is the one merge driver git"
     echo "                    does not define for you, so the two calibration"
     echo "                    attributes above are inert and conflict as if"
-    echo "                    absent. Config is not versioned: fix per clone,"
-    echo "                    here or by re-running install-cadence.sh."
+    echo "                    absent. Config is not versioned: fix per clone."
+    # Don't send a worktree run at the installer — ensure_driver refuses there
+    # by design, so "re-run install-cadence.sh" would be a loop (#199 CR round
+    # 2, finding 11). Name the checkout that can actually take the write.
+    if [ -f "$ROOT/.git" ]; then
+      echo "                    This is a linked worktree, whose --local writes"
+      echo "                    the main checkout's shared config — set it THERE,"
+      echo "                    not here, and not by re-running this installer:"
+    else
+      echo "                    Here, or by re-running install-cadence.sh:"
+    fi
     echo "                      $DRIVER_FIX"
     rc=3
   fi
@@ -470,11 +479,19 @@ ensure_attr() {
 # --local, and only when nothing already answers. A repo that resolves `ours`
 # through ~/.gitconfig is protected, and writing a local override of somebody's
 # deliberate global would be this script exceeding its brief.
+# DRIVER_STATE is what ensure_driver DID, and the closing NEXT block reads it
+# rather than assuming. Every early return below is a path on which nothing was
+# written, and a closing paragraph that says "the setting above" on those paths
+# is a tool claiming a change it did not make — the failure this whole backlog
+# exists to remove (#199 CR round 2, finding 8).
+DRIVER_STATE="unset"
+
 ensure_driver() {
   local current
   current="$(driver_value)"
   if [ -n "$current" ]; then
     echo "unchanged: $DRIVER_KEY is already set ($current)"
+    DRIVER_STATE="already"
     return 0
   fi
   # Scrubbing GIT_DIR made -C authoritative about WHICH repo. It says nothing
@@ -499,6 +516,7 @@ ensure_driver() {
     echo "      $DRIVER_KEY from here (#189). The attributes are installed;" >&2
     echo "      run this once in the main checkout:" >&2
     echo "        $DRIVER_FIX" >&2
+    DRIVER_STATE="worktree"
     return 0
   fi
   # Loud, not tolerant. A config write failing (unwritable .git/config, a repo
@@ -512,6 +530,7 @@ ensure_driver() {
     echo "        $DRIVER_FIX" >&2
     exit 4; }
   echo "set git config: $DRIVER_KEY=$DRIVER_VALUE (this clone only)"
+  DRIVER_STATE="set"
 }
 
 render() {
@@ -744,6 +763,27 @@ ensure_attr
 # an already-installed repo arrives needing it.
 ensure_driver
 
+# The closing text describes what happened, not what usually happens. Written
+# unconditionally it told a worktree run that the setting "above" was made and
+# is clone-local, on the one path where ensure_driver deliberately wrote
+# nothing (#199 CR round 2, finding 8).
+case "$DRIVER_STATE" in
+  set|already)
+    DRIVER_NOTE="The $DRIVER_KEY setting above CANNOT be committed — git config is not
+versioned. It is set in this clone only, so every other checkout of this repo
+needs it once, or its \`merge=ours\` entries are inert:
+  $DRIVER_FIX" ;;
+  worktree)
+    DRIVER_NOTE="$DRIVER_KEY was NOT set — this is a linked worktree, and its
+\`git config --local\` writes the main checkout's shared config. Until it is set
+there, the two \`merge=ours\` attributes this installer wrote are inert:
+  (in the main checkout)  $DRIVER_FIX" ;;
+  *)
+    DRIVER_NOTE="$DRIVER_KEY was NOT set, so the two \`merge=ours\` attributes
+this installer wrote are inert until it is:
+  $DRIVER_FIX" ;;
+esac
+
 cat <<NEXT
 
 The secret is REQUIRED — without it this job records nothing, silently:
@@ -755,10 +795,7 @@ run, or the race it prevents is already lost when it lands.
   git add $WF_PATH .gitattributes
   git commit -m "chore: schedule the weekly context measurement"
 
-The $DRIVER_KEY setting above CANNOT be committed — git config is not
-versioned. It is set in this clone only, so every other checkout of this repo
-needs it once, or its \`merge=ours\` entries are inert:
-  $DRIVER_FIX
+$DRIVER_NOTE
 
 Then run it once by hand before trusting the schedule:
   gh workflow run context-cadence.yml
