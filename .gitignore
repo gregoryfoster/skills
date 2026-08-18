@@ -1,7 +1,8 @@
-# No trailing slash: a linked worktree needs `ln -s <root>/.venv .venv` for the
-# pre-commit hook's `source .venv/bin/activate` to resolve, and `.venv/` matches
-# only a real directory — leaving that symlink untracked and one `git add -A`
-# away from committing an absolute machine-local path.
+# No trailing slash. A linked worktree inherits no virtualenv, so the pre-commit
+# hook symlinks the main checkout's in on its own (#156) — nobody types the
+# `ln -s` and nothing announces that .venv is now a symlink. `.venv/` matches
+# only a real directory, so it would leave that symlink untracked-but-visible
+# and one `git add -A` away from committing an absolute machine-local path.
 .venv
 __pycache__/
 *.py[co]
