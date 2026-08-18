@@ -308,30 +308,36 @@ dead (#139).
 **Adopt only if the treatment wins every informative pair.** Ties, mixed results,
 and "no measurable difference" are all rejections.
 
-A majority rule would be a rule for adopting noise at this sample size. With four
-informative pairs, three-of-four happens 31% of the time by chance alone. The
-sweep requirement is the only threshold that carries any evidential weight here,
-and even it lands at p=0.062.
+A majority rule would be a rule for adopting noise at this sample size: with four
+informative pairs, three-of-four happens 31% of the time by chance. The sweep is
+the only threshold with evidential weight here, and even it lands at p=0.062.
 
 `--min-pairs` (default 3, **minimum 1**) is the floor below which the verdict is
-INCONCLUSIVE rather than a rejection. Read it against the four-informative-pair
-ceiling above and it says something concrete about how much slack the roster
-has: **the experiment tolerates exactly one pair dropping out.** A second repo
-with no ledger, an untagged run, or a method change anywhere in pairs 1–4 takes
-the round below the floor and there is no verdict to be had. That is the number
-to weigh when deciding how tightly to sequence the adoption issues.
+INCONCLUSIVE rather than a rejection. Against the four-informative-pair ceiling
+above, **the experiment tolerates exactly one pair dropping out.** A second repo
+with no ledger, an untagged run, or a method change in pairs 1–4 takes the round
+below the floor.
 
-Zero is refused rather than clamped: a
-verdict computed over no pairs is not a weaker verdict but no verdict, and the
-sweep test reads `0 == 0` as a win — it adopted on no evidence whatever until
-the branch was guarded on `informative` being non-empty as well.
+Zero is refused rather than clamped: the sweep test reads `0 == 0` as a win.
 
-**A change to this skill is not adopted on judgement.** The cohort is a held-out
-validation split, and `score-cohort.sh` scores the arm running a proposal against
-the arm running the version before it. Adoption needs a win on every informative
-pair and a clean sweep of the safety gates; anything else, "no measurable
-difference" included, blocks adoption. The split, the metric, and what the gate
-cannot see: [references/validation-gate.md](validation-gate.md).
+### The metric is registered before the arms are read
+
+Prose cannot be violated, only disagreed with, so pre-registration is an
+artefact: `.skills/experiments/NN-<slug>.yml`, committed before the treatment arm
+adopts and read by `score-cohort.sh --experiment NN`. Its git log is the proof.
+**There is no `--metric` flag** — one lets a proposer re-run until the answer is
+agreeable, the identical failure to picking the before-state after seeing the
+after-values. Unregistered, the gate scores closure, registered above.
+
+It carries `primary_metric` and `direction`; `min_pairs`, which a flag may
+tighten and never loosen; and the arm predicate — `arm_predicate: skill_version`,
+the only legal value, `wave` being rollout order and refused by name — with the
+two versions the arms must carry, since rows that are not the registered
+comparison are INCONCLUSIVE rather than a verdict about another experiment.
+Registration is where two rules above stop being advisory: a `primary_metric`
+with a [rejected-changes.md](rejected-changes.md) entry is refused, and one null
+across the whole control arm is INCONCLUSIVE — *this proposal added its own
+instrument and cannot be judged by it*.
 
 ### A rejection has its own floor
 
@@ -340,102 +346,65 @@ informative pairs to be recorded as a REJECT, and `--min-pairs` cannot lower
 that; below it the verdict is INCONCLUSIVE, which still blocks adoption and
 still leaves `rejected-changes.md` alone.
 
-The two are not symmetric outputs. An adoption is a decision to ship that gets
-revisited the next time the skill changes. A rejection is written into
-`rejected-changes.md` permanently, by design, and shapes every later proposal —
-which is the whole value of that file and exactly why filling it with artefacts
-is expensive. Experiment 1 came within one flag of it: at `--min-pairs 2` the
-gate would have reached a 1–1 split and written REJECT against v1.3 on the
-strength of two repos, both of them the honest-shortfall cases and one of them
-the pair the roster itself flags as its weakest match at 29% apart
-([#117](https://github.com/gregoryfoster/skills/issues/117)).
+The two are not symmetric outputs. An adoption is a decision to ship, revisited
+the next time the skill changes. A rejection is written into
+`rejected-changes.md` permanently and shapes every later proposal — the whole
+value of that file, and why filling it with artefacts is expensive. Experiment 1
+came within one flag of it: at `--min-pairs 2` the gate would have written REJECT
+against v1.3 off two repos, both honest shortfalls and one the roster's own
+weakest match ([#117](https://github.com/gregoryfoster/skills/issues/117)).
 
 The **safety veto is exempt.** A single repo that dropped content rejects on its
 own, with no pairs at all — content lost under the proposed version is lost
-whether or not that repo had a partner, which is also why the arm listing is
+whether or not that repo had a partner, which is why the arm listing is
 deliberately wider than the pairing.
 
-INCONCLUSIVE is **not** a rejection and does not belong in
-`rejected-changes.md`: nothing has been decided, and the proposal is still
-pending evidence. Recording it as a rejection would poison the buffer with
-non-results and teach a later reader that the idea was tested and failed.
+INCONCLUSIVE is **not** a rejection: recording a non-result in
+`rejected-changes.md` teaches a later reader the idea was tested and failed.
 
 ## What this gate cannot do
 
 - **It cannot measure quality of judgement.** Closure sees where the tokens went,
   not whether the right sections were classified A versus B. A change that
-  demotes the wrong things but hits the number will pass. The gates catch loss,
+  demotes the wrong things but hits the number will pass: the gates catch loss,
   not misjudgement.
 - **It sees only what the row carries.** The first field report (#101) proved the
   point: ten review findings, all created by an otherwise clean run, all
   invisible to `tokens`, `links_dead`, `docs_orphaned` and `no_loss`. The
   `seams` field exists so that class is measurable — but wave A's rows predate
   it, so the first experiment had no symmetric comparison available: its control
-  datapoint is `observo` re-measured at v1.3 (41 seams on a surface v1.2 had
-  declared finished), not a wave-A row. A proposal aimed at a defect class the row
-  cannot see yet should add its measurement first, as v1.3 did — and note that
-  doing so buys measurability for *later* rounds, not for its own experiment.
+  datapoint is `observo` re-measured at v1.3, not a wave-A row (the record below
+  carries the number). A proposal aimed at a defect class the row cannot see yet
+  should add its measurement first, as v1.3 did — which buys measurability for
+  *later* rounds, and is the outcome registration names.
+- **It cannot rescue a saturated round.** Saturated pairs are counted and a
+  majority-saturated round printed as a finding: the budget has stopped binding
+  for most of the cohort. A fact about the budget, not a tie between the arms,
+  and **not** licence to retighten it — a budget changed after seeing where the
+  cohort landed is a retroactive parameter, the same failure as choosing the
+  metric late; the rejected 4,000-token budget is the precedent.
 - **It cannot run more than once per proposal.** Each repo has one first
   curation. After both waves have adopted, the split still works for steady-state
-  weekly runs, but the effect sizes are far smaller and the metric shifts from
-  "how much of the gap did it close" to "did it stay under budget without loss."
+  weekly runs on the metric registered above, but the effect sizes are far
+  smaller.
 - **It cannot gate itself.** The change that introduced this gate — v1.2 — is the
   last one that shipped unvalidated, because at the time it shipped no cohort
-  repo had adopted anything. That is a genuine hole and not a rhetorical one; the
-  honest mitigation is that that change added scripts and a reference rather than
-  altering the keep/cut rubric that decides what gets moved. **v1.3 was the first
-  proposal the gate judged** — see the record below.
+  repo had adopted anything. A genuine hole, not a rhetorical one; the honest
+  mitigation is that it added scripts and a reference rather than altering the
+  keep/cut rubric that decides what gets moved. **v1.3 was the first proposal
+  the gate judged** — see [the experiment log](experiment-log.md).
 
-## Experiment 1 — v1.3, run 2026-08-10: no verdict
+## Experiment 1 — v1.3: no verdict
 
-Both arms adopted as designed and the gate produced **no verdict**. Recorded here
-because the design's one-shot property (previous bullet) means this cannot be
-re-run: the cohort's first-curation capital is now spent.
+Both arms adopted as designed, every safety gate passed in both, and the gate
+produced **no verdict**: it scored nothing at all
+([#116](https://github.com/gregoryfoster/skills/issues/116)), and closure could
+not have judged that proposal anyway
+([#117](https://github.com/gregoryfoster/skills/issues/117)). INCONCLUSIVE, so
+per the rule above it does **not** enter `rejected-changes.md`. The run in full,
+including what the design's one-shot property cost:
+[experiment-log.md](experiment-log.md).
 
-What went right: the arms were clean. All six wave-B repos ran v1.3 (`c1e6273`),
-all six wave-A first curations stand at v1.2 (`3fc7b71`), and every safety gate
-passed in **both** arms — `no_loss=ok`, `links_dead=0`, `docs_orphaned=0` across
-all twelve.
-
-What went wrong, in two layers:
-
-- **The gate scored nothing at all.** Every repo came back `unscorable` for the
-  same reason: the before-state is defined as the previous ledger row, and a first
-  curation is the run that *creates* the ledger. The scored run is precisely the
-  run that can never be scored, and no phase of this skill ever records a
-  baseline row ([#116](https://github.com/gregoryfoster/skills/issues/116)).
-- **The metric could not have judged this proposal anyway.** Scored by hand
-  against the pre-registered 2026-08-05 baseline, ten of twelve repos landed under
-  budget, so `gap_after == 0` and closure pins at exactly 1.0 — four of six pairs
-  uninformative, and the two that discriminate are the only two repos that
-  *missed* budget, one falling to each arm. Closure measures shortfall, not
-  quality, and it is structurally blind to what v1.3 changed
-  ([#117](https://github.com/gregoryfoster/skills/issues/117)).
-
-Per the rule above, this is INCONCLUSIVE and does **not** enter
-`rejected-changes.md`. v1.3 stays shipped and unjudged, which is the accurate
-state.
-
-The evidence that does exist is qualitative and directional: all six v1.3 runs
-recorded `seams: 0`, and `observo` — re-run at v1.3 over the surface its own v1.2
-curation had declared finished — found **41** unacknowledged seams. One control
-datapoint, and the comparison is asymmetric (detection on an unswept surface
-versus resolution during a run), but it is the only measurement of that defect
-class in existence. Wave B's runs also produced #111 and #113 as findings against
-v1.3, so the held-out arm yielded qualitatively even where the gate did not.
-
-The lesson for experiment 2 is that the unit of comparison and the primary metric
-have to be settled — and pre-registered — *before* the treatment arm adopts.
-Choosing either after the rows land is choosing the verdict.
-
-**Fixed since, in v1.4:** Phase 1 records a `baseline` row, so a first curation
-carries the before-state it is scored against and the `docs_orphaned` gate has
-something to compare; a systematic unscorable is reported as a gate defect rather
-than as an empty experiment; and a REJECT now needs three informative pairs
-whatever `--min-pairs` says. None of that recovers experiment 1 — the cohort's
-first-curation capital is spent either way, which is
-[#118](https://github.com/gregoryfoster/skills/issues/118)'s subject. What it
-does is make the *next* run of the gate measure something.
 
 ## Not in scope
 

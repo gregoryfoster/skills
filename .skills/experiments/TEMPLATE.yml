@@ -1,0 +1,80 @@
+# Pre-registration template — copy to NN-<slug>.yml and COMMIT IT BEFORE THE
+# TREATMENT ARM ADOPTS. The git history of that file is the whole mechanism:
+# it is what lets someone who was not in the room check that the metric was
+# chosen before the rows were read. A file added in the same commit as the
+# results proves nothing, and reads exactly like one that does.
+#
+# `score-cohort.sh --experiment NN` resolves NN-*.yml here and scores against
+# it. There is no --metric flag, deliberately: a flag naming a metric lets the
+# same run be repeated until the answer is agreeable, which is the identical
+# failure to picking the before-state after seeing the after-values.
+#
+# The format is flat `key: value` on purpose. A pre-registration nobody can read
+# is not evidence of anything, and flat parses in twenty lines of the scorer
+# rather than needing PyYAML, which the cohort repos are not guaranteed to have.
+# Unknown keys are refused rather than ignored — a misspelled key reads as a
+# declaration that was never honoured.
+#
+# This file is NOT itself a registration: `--experiment` matches on a numeric
+# filename prefix, so TEMPLATE.yml can never be resolved and scored.
+
+# The number this is cited by, matching the filename prefix. Checked, so an
+# edited copy of another registration cannot keep claiming to be the original.
+experiment: 00
+
+# The issue the proposal lives in.
+proposal: https://github.com/gregoryfoster/skills/issues/000
+
+# The date registered, as CLAIMED. `git log --follow` on this file is what the
+# claim is checked against; the field is here so the two can disagree visibly.
+registered: 2026-01-01
+
+# The arm predicate, in two parts.
+#
+# The FIELD. `skill_version` is the only legal value, and the schema names it
+# rather than leaving it implied because naming it is the whole content of
+# #118/#168: the arm a run belongs to is the version stamped on its OWN ROW.
+# Observed, never assigned.
+#
+# `wave` is refused. A pin could hold a version in CI — a scheduled run resolves
+# the committed gitlink — but a pin cannot label a SCORED run: the weekly cadence
+# writes `baseline:scheduled`, and the scorer skips every baseline* row when it
+# looks for the run to score. The rows a pin versions deterministically are
+# exactly the rows the gate refuses to score. `.skills/cohort`'s wave:/pair:
+# annotations are rollout order — which half a change reaches first, and which
+# two repos were size-matched — and never evidence about which version a repo
+# runs.
+arm_predicate: skill_version
+
+# The two VALUES that split the arms. Checked against what the ledgers actually
+# carry, canonically (v1.4, 1.4 and 1.4.0 are one release): a registration for a
+# comparison that is not the one in front of the gate returns INCONCLUSIVE
+# rather than a verdict about a different experiment.
+treatment_version: 1.4
+control_version: 1.3
+
+# The ledger field the effect is expected to land in, or `closure` for
+# budget-gap closure. Checked against references/rejected-changes.md before it
+# is registered — `tokens_live` was proposed as a primary in #118 despite
+# already carrying a rejection entry there, which is the exact failure that file
+# exists to prevent.
+#
+# A proposal is never scored on a metric IT introduced. That is not a rule this
+# file can enforce on its own, and it does not have to: a metric null across the
+# whole control arm returns INCONCLUSIVE — "this proposal added its own
+# instrument and cannot be judged by it."
+primary_metric: seams
+
+# Which way is better: `higher` or `lower`. Required, because it is half of what
+# registering a metric means; leaving it implicit restores exactly the freedom
+# this file exists to remove.
+direction: lower
+
+# The fewest informative pairs that can produce a verdict. A pre-registered
+# parameter, so `--min-pairs` may tighten it and may not loosen it. The roster
+# yields four informative pairs at best, so 3 tolerates exactly one dropping
+# out. A REJECT has its own floor of 3 that nothing here can lower.
+min_pairs: 3
+
+# Optional free text: what the proposal changes, and why this metric can see it.
+notes: the one key that is not machine-checked

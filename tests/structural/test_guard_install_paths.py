@@ -576,3 +576,83 @@ class TestCheckRecognisesTheFormItJustWrote:
         }))
         r = _run_installer(repo, vendored, "--check")
         assert self.LEGACY_NOTE in r.stdout, r.stdout
+
+
+class TestGuardMergeFailsHonestly:
+    """#181 — a settings rewrite that fails must say so and leave no debris.
+
+    `jq … >"$SETTINGS.tmp" && mv -f "$SETTINGS.tmp" "$SETTINGS"` is the shape
+    that let install-refresh.sh report a registration it had not written: under
+    `set -e` the failure of the FIRST element of an `&&` list is exempt, so
+    neither the abort nor the skip happens and the success line runs anyway.
+
+    Here the list is the last command of `merge_settings`, and the function is
+    called as a plain command — so errexit DOES fire on the caller and the
+    false success line is not reached (verified, not assumed). What survives is
+    the rest of the damage the checked form prevents: an orphaned
+    `.claude/settings.json.tmp` for `git add -A` to collect, and a bare jq
+    parse error with nothing saying which of settings.json and the symlink was
+    actually touched.
+
+    The driver is a settings.json that is valid JSON — so the existing
+    `jq -e .` guard passes it — but whose `.hooks` is the wrong TYPE, which is
+    what a hand edit produces and what makes the merge filter error mid-run.
+    """
+
+    # Valid JSON, wrong shape: `.hooks.PostToolUse //= []` cannot index a
+    # string, so jq exits 5 having written nothing.
+    WRONG_SHAPE = '{"hooks": "was-a-string"}'
+
+    def _seed(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        vendored = _install_guard_at(repo)
+        (repo / ".claude").mkdir(exist_ok=True)
+        (repo / ".claude" / "settings.json").write_text(self.WRONG_SHAPE)
+        return repo, vendored
+
+    @requires_jq
+    def test_a_failed_merge_leaves_no_temp_file(self, tmp_path: Path):
+        """`git add -A` would otherwise pick up .claude/settings.json.tmp."""
+        repo, vendored = self._seed(tmp_path)
+        _run_installer(repo, vendored)
+        assert not (repo / ".claude" / "settings.json.tmp").exists(), sorted(
+            p.name for p in (repo / ".claude").iterdir()
+        )
+
+    @requires_jq
+    def test_a_failed_merge_does_not_claim_a_merge(self, tmp_path: Path):
+        repo, vendored = self._seed(tmp_path)
+        r = _run_installer(repo, vendored)
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "merged the PostToolUse entry" not in r.stdout, (
+            "claimed a merge it did not write:\n" + r.stdout
+        )
+        assert (repo / ".claude" / "settings.json").read_text() == self.WRONG_SHAPE
+
+    @requires_jq
+    def test_a_failed_merge_names_the_file_it_did_not_modify(self, tmp_path: Path):
+        """A bare `jq: error (at …)` and exit 5 is not a diagnosis. The symlink
+        line has already printed by then, so the reader needs to be told which
+        half landed — install-refresh.sh's CR finding 14, same shape."""
+        repo, vendored = self._seed(tmp_path)
+        r = _run_installer(repo, vendored)
+        assert "settings.json" in r.stderr, r.stderr
+        assert "not modified" in r.stderr.lower(), r.stderr
+
+    @requires_jq
+    def test_a_failed_uninstall_does_not_claim_an_uninstall(self, tmp_path: Path):
+        """The uninstall path removes the symlink AFTER the merge and then
+        announces both. A merge that fails must not reach either."""
+        repo, vendored = self._seed(tmp_path)
+        # Wire the symlink by hand: the installer cannot get that far here.
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        hook = hooks / "context-budget-guard.sh"
+        hook.symlink_to(vendored / "context-budget-guard.sh")
+        r = _run_installer(repo, vendored, "--uninstall")
+        assert r.returncode != 0, r.stdout + r.stderr
+        assert "uninstalled:" not in r.stdout, (
+            "claimed an uninstall it did not perform:\n" + r.stdout
+        )
+        assert hook.is_symlink(), "removed the hook after failing to unregister it"
+        assert not (repo / ".claude" / "settings.json.tmp").exists()

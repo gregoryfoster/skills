@@ -79,7 +79,9 @@ first**.
 Changes to the skill itself carry extra procedure: an abandoned change is
 recorded in [references/rejected-changes.md](references/rejected-changes.md) with
 what refuted it, and nothing is adopted on judgement — the cohort is a held-out
-validation split ([references/validation-gate.md](references/validation-gate.md)).
+validation split ([references/validation-gate.md](references/validation-gate.md),
+with what each run produced in
+[references/experiment-log.md](references/experiment-log.md)).
 
 ## Parameterized invocation
 

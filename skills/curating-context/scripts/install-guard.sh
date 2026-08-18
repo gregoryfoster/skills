@@ -40,7 +40,8 @@ Requires: jq (for the settings.json merge). Everything else is POSIX.
 
 Exit codes:
   0  installed, uninstalled, or already correct
-  1  usage error, or jq missing, or not in a git repo
+  1  usage error, jq missing, not in a git repo, or the settings.json
+     rewrite failed (settings.json is left exactly as it was)
   3  --check only: the hook is not installed
 USAGE
 }
@@ -92,6 +93,19 @@ COMMAND='bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/context-budget-guard.sh"'
 COMMAND_MARKER='.claude/hooks/context-budget-guard.sh'
 
 LIB="$SRC_DIR/_context-lib.sh"
+
+# A temp file that cannot outlive the run. merge_settings removes it on its own
+# failure path; this covers the signal case it cannot, so a killed run never
+# strands a temp file for `git add -A` to collect (#181, and the same CR finding
+# 11 that install-refresh.sh carries).
+#
+# PID-suffixed, because the trap is what makes a shared name dangerous: it fires
+# on EVERY exit, including `--check`, which writes nothing. With a fixed
+# `$SETTINGS.tmp` a concurrent `--check` would delete an in-flight write this
+# script was midway through — turning a two-writer race into "any invocation
+# clobbers any writer". install-doctor.sh already had the right shape (#181 CR).
+SETTINGS_TMP="$SETTINGS.tmp.$$"
+trap 'rm -f "$SETTINGS_TMP"' EXIT
 
 if [ "$MODE" = "check" ]; then
   ok=0
@@ -175,9 +189,31 @@ merge_settings() {
   jq -e . "$SETTINGS" >/dev/null 2>&1 || {
     echo "ERROR $SETTINGS is not valid JSON — fix it before installing the hook" >&2
     exit 1; }
-  jq --arg cmd "$COMMAND" --arg marker "$COMMAND_MARKER" \
-    "$expr" "$SETTINGS" >"$SETTINGS.tmp" \
-    && mv -f "$SETTINGS.tmp" "$SETTINGS"
+  # `jq … >tmp && mv` with the outcome left unchecked is the shape that let
+  # install-refresh.sh report a registration it had not written: under `set -e`
+  # the failure of the FIRST element of an && list is exempt, so neither the
+  # abort nor the skip happens. Here the list is the last command of a function
+  # invoked as a plain command, so errexit does fire on the caller and the
+  # `merged …` line is never reached — but the script still died on a bare
+  # `jq: error` with exit 5, after having already printed `linked …`, and left
+  # the temp file behind. Say which half landed, and clean up.
+  #
+  # `jq -e .` above rejects malformed JSON; it cannot reject a settings.json
+  # that parses but whose `.hooks` is the wrong TYPE, which is what a hand edit
+  # produces and what makes this filter error mid-run.
+  if jq --arg cmd "$COMMAND" --arg marker "$COMMAND_MARKER" \
+      "$expr" "$SETTINGS" >"$SETTINGS_TMP" \
+      && mv -f "$SETTINGS_TMP" "$SETTINGS"; then
+    return 0
+  fi
+  rm -f "$SETTINGS_TMP"
+  # Name the file, and claim nothing about the symlink: on the install path it
+  # has already been written and reported one line above, so a blanket "nothing
+  # was changed" would contradict the output the reader just saw (the CR finding
+  # 14 install-refresh.sh landed).
+  echo "ERROR could not rewrite $SETTINGS (see the jq error above)" >&2
+  echo "      — it was not modified. Check that .hooks is an object." >&2
+  exit 1
 }
 
 if [ "$MODE" = "uninstall" ]; then
