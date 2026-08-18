@@ -21,9 +21,18 @@ submodule section has been removed from `.git/config`, `git submodule update
 Exercised end-to-end against throwaway git repos — the property that matters
 is a runtime one (does the doctor actually reach its heal in this state).
 
+An uninitialized submodule is fatal UNLESS .gitmodules holds it with
+`update = none` (CR round 1 of #199). The blanket exemption this file
+originally asserted was justified by a fresh-clone behaviour but tested
+against the half-healed fixture, where the hold never fires at all — measured
+both ways in `test_a_held_submodule_is_exempt_in_both_modes`.
+
 Coverage:
 - half-healed checkout, symlinks all resolve  → doctor inits, exit 0
-- --check-only in that state                  → reports, changes nothing
+- --check-only in that state                  → reports, changes nothing,
+                                                 exit 1 (it cannot repair, so
+                                                 it must signal)
+- `update = none` on a fresh clone            → exempt in both modes
 - heal never refreshes (#100's pin filter)    → gitlink, not upstream head
 - uninit submodule outside skills-vendor/     → out of scope, silent no-op
 - healthy checkout                            → still the silent fast path
@@ -238,20 +247,83 @@ class TestDoctorHealsTheHalfHealedCheckout:
             "--check-only is contractually non-mutating and it initialized"
         )
 
-    def test_an_uninitialized_submodule_alone_is_not_an_exit_code(self, half_healed):
-        """Reported, never fatal — in either mode.
+    def test_an_unheld_uninitialized_submodule_fails_both_modes(self, half_healed):
+        """The half-healed checkout is a failure, and both modes say so.
 
-        Verified by execution: with `submodule.<name>.update = none`,
-        `git submodule update --init --recursive` registers the path, prints
-        "Skipping submodule", exits 0, and leaves `git submodule status`
-        showing '-' permanently. This repo's own refresh hook names
-        `update = none` as what operators reach for to hold a vendored skill
-        still, so failing on the residue would block every Phase 1 preflight
-        in such a consumer forever — over a checkout whose symlinks all
-        resolve and whose skills are all reachable.
+        This test previously asserted exit 0 in both modes, justified by
+        `update = none` — but this fixture sets no such hold, so the exemption
+        was being applied to the very state #185 exists to surface. CR round 1
+        of #199 caught the conflation: the argument is sound for a HELD path
+        and wrong for an unheld one, and the two are only distinguishable by
+        reading .gitmodules, which is what `uninit_held` now does.
+
+        The two modes differ, and the difference is the point. --check-only
+        changes nothing, so it never gets to observe what survives a repair —
+        it must classify from .gitmodules and FAIL, or the CI job branching on
+        its exit code learns nothing. Something exiting 0 is how
+        `CannObserv/cli` sat half-healed for days. The heal mode runs the
+        repair, the repair works, and exit 0 is then the honest answer.
         """
-        assert _doctor(half_healed, "--check-only").returncode == 0
-        assert _doctor(half_healed).returncode == 0
+        r = _doctor(half_healed, "--check-only")
+        assert r.returncode == 1, (
+            f"--check-only exited {r.returncode} on an unheld half-healed "
+            "checkout, reporting damage it did not signal:\n" + r.stdout + r.stderr
+        )
+        assert SUBMODULE_PATH in r.stderr, r.stdout + r.stderr
+        assert _uninitialized(half_healed) == [SUBMODULE_PATH], (
+            "--check-only is contractually non-mutating and it initialized"
+        )
+
+        r = _doctor(half_healed)
+        assert r.returncode == 0, (
+            "the heal repaired the checkout and should say so:\n" + r.stdout + r.stderr
+        )
+        assert _uninitialized(half_healed) == []
+
+    def test_a_held_submodule_is_exempt_in_both_modes(self, tmp_path: Path):
+        """`update = none` is a deliberate hold, and no repair dislodges it.
+
+        The fixture is a FRESH CLONE, not the half-healed state the rest of
+        this class uses, and the distinction is load-bearing. Measured both
+        ways while writing this:
+
+        - fresh clone, content absent: `--init --recursive` prints "Skipping
+          submodule", exits 0, and `git submodule status` still shows '-'.
+          The hold persists, so a blanket-fatal doctor would block every
+          Phase 1 preflight in such a consumer forever. This is the case
+          `uninit_held` exists for.
+        - half-healed, content already on disk: registration alone clears the
+          '-', hold or no hold. The exemption never fires there.
+
+        So the exemption is real but narrower than "an uninitialized
+        submodule is never fatal" — which is what this class asserted before
+        CR round 1 of #199, using a half-healed fixture whose docstring cited
+        a fresh-clone behaviour.
+
+        The hold works at all only because the doctor's heal carries no
+        `--merge`; the sibling refresh hook reaches for .skills/skills-pin
+        instead (#100), because `--merge` overrides `update = none`.
+        """
+        upstream = _upstream(tmp_path)
+        origin = _consumer(tmp_path, upstream)
+        _git(origin, "config", "-f", ".gitmodules",
+             f"submodule.{SUBMODULE_PATH}.update", "none")
+        _git(origin, "add", ".gitmodules")
+        _git(origin, "commit", "-qm", "hold the vendor submodule")
+
+        repo = tmp_path / "fresh"
+        _git(tmp_path, "clone", "-q", str(origin), str(repo))
+        assert _uninitialized(repo) == [SUBMODULE_PATH], "fixture: expected a '-'"
+
+        for args in (["--check-only"], []):
+            r = _doctor(repo, *args)
+            assert r.returncode == 0, (
+                f"a held submodule failed doctor {args or ['(heal)']}:\n"
+                + r.stdout + r.stderr
+            )
+        assert _uninitialized(repo) == [SUBMODULE_PATH], (
+            "the hold should survive the heal that just ran"
+        )
 
     def test_heal_initializes_but_never_refreshes(self, tmp_path: Path):
         """#100's pin filter. Initializing a pinned submodule is fine —

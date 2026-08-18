@@ -820,7 +820,10 @@ is_prose() {
 }
 
 slugs_of() {
-  # slugs_of <markdown file> -> one GitHub heading slug per line, document order.
+  # slugs_of <markdown file> <cache index> -> one GitHub heading slug per line,
+  # document order. The index names this call's stderr capture, so the caller
+  # quotes the cause for the file it actually asked about; see the foot of the
+  # function.
   #
   # GitHub's rules: lowercase, drop everything outside [a-z0-9 _-], each space
   # becomes a hyphen, and a repeat of an earlier slug in the SAME FILE gets -1,
@@ -872,7 +875,7 @@ slugs_of() {
       if (seen[line] > 1) print line "-" (seen[line] - 1)
       else print line
     }
-  ' "$1" 2>"$TMP/slugread.err"
+  ' "$1" 2>"$TMP/slugread.$2.err"
   # awk's stderr is captured rather than left to escape, matching extract_links'
   # `2>/dev/null` (#184). Left bare, an unreadable file produced awk's own two
   # lines — `awk: can't open file docs/D.md` and ` source line number 21` —
@@ -882,6 +885,14 @@ slugs_of() {
   # Captured, not discarded, because awk's sentence is the truest description of
   # the cause and anchor_missing quotes it. The exit status is still awk's, so
   # the caller's `||` branch fires as before.
+  #
+  # Named per index, matching the `slugs.$2` it sits beside, rather than one
+  # shared path reused down the scan. Nothing reaches the caller's `||` branch
+  # today without awk having run and truncated the file first — but that rests
+  # on this function being a single awk with nothing before it, and a stale
+  # capture would be quoted as THIS file's cause. #181's CR round 4 fixed the
+  # same class the same way (a shared `$SETTINGS.tmp` that any run could clobber
+  # → a `$$` suffix); an invariant that costs a suffix is not worth keeping.
 }
 
 anchor_missing() {
@@ -894,8 +905,8 @@ anchor_missing() {
   if [ -z "$idx" ]; then
     printf '%s\n' "$f" >>"$TMP/slugfiles"
     idx="$(LC_ALL=C wc -l <"$TMP/slugfiles" | tr -d ' ')"
-    slugs_of "$f" >"$TMP/slugs.$idx" \
-      || echo "WARN could not read headings from $f ($(tr -d '\n' <"$TMP/slugread.err"));" \
+    slugs_of "$f" "$idx" >"$TMP/slugs.$idx" \
+      || echo "WARN could not read headings from $f ($(tr -d '\n' <"$TMP/slugread.$idx.err"));" \
               "its anchors will read as missing" >&2
   fi
   # Compared lowercased. GitHub only ever mints lowercase ids, and an author who

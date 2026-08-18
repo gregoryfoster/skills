@@ -18,3 +18,10 @@
 # used to report "matched nothing" on a run against another. Scope it instead:
 # `PATH :: WARRANT :: CONTENT` is consulted only by runs whose --file contains
 # PATH, and the report says how many entries sat a run out (#139).
+
+# --- #199 CR round 1: the GIT_DIR convention pointer, and the resolution-knob
+# --- demotion it forced. All three lines below were REWRITTEN by this same
+# --- change, not dropped; each is spent once this lands.
+retarget :: Two conventions here carry a full template and a rationale, and live in
+retarget :: docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, and the gate-script rules
+retarget :: docs/CONVENTIONS.md) — authoring a project override, and the `references/` conditional-block delimiters

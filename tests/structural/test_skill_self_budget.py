@@ -84,7 +84,10 @@ Measuring all eighteen both ways settles it, and disproves the assumption #95
 wrote into this file. #95 recorded that the estimate "errs high, which is the
 safe direction for a gate". That was true of `curating-context` and is false of
 the library: **the estimator runs LOW on 12 of 18 `SKILL.md` files**, by as much
-as **-13.4%** on `init-project-fastapi` (14,773 estimated vs 17,057 exact), and
+as **-13.4%** on `init-project-fastapi` (14,773 estimated vs 17,057 exact) — all
+figures in this docstring measured 2026-08-17 and **partly superseded on
+2026-08-18**, when #190 trimmed that file to 14,652 exact / -12.04% and its
+unbudgeted-token gap to 1,764; see the note at `POLICY_ESTIMATE_BAND` — and
 by as much as -23.9% on a single reference doc
 (`init-project-fastapi/references/postgres-provisioning.md`, 1,211 vs 1,591).
 The cause is visible in the per-file `bytes_per_token`, which ranges 2.32
@@ -318,6 +321,16 @@ def _doc_over(doc: dict, doc_budget: int) -> bool:
 # +5.8% (`reviewing-architecture`). Kept at ±15%: the low edge now has only 1.6
 # points of headroom, which is the band doing its job rather than a reason to
 # move it. If `init-project-fastapi` crosses, the answer is the ratio, not this.
+#
+# SUPERSEDED IN PART, 2026-08-18 (#190). The spread above is a 2026-08-17
+# snapshot and the file it names as the extreme has since been trimmed: demoting
+# four phases took `init-project-fastapi` from 17,057 to 14,652 exact and its
+# drift from -13.4% to -12.04%, so the low edge has 2.96 points of headroom, not
+# 1.6. WHICH file is now the extreme is unmeasured — the -13.4% endpoint above
+# is stale, and re-running the full 87-file spread is what would replace it.
+# The band itself is unchanged and still correct; only the evidence quoted for
+# it is dated, and it is quoted in four places (this block, and the module
+# docstring's -13.4% / 2.32 bytes-per-token / 2,284-unbudgeted-tokens figures).
 POLICY_ESTIMATE_BAND = (-0.15, 0.15)
 
 # DOCS — the sixty-nine reference docs, and the population #159 found uncovered

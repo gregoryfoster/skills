@@ -251,14 +251,6 @@ has_attr() {
   ' "$ATTR_FILE"
 }
 
-# Whatever `ours` currently resolves to in this repo, empty if nothing does.
-#
-# `--get` searches system, global and local, and any of the three protects the
-# repo — a cohort that sets the driver in ~/.gitconfig is correct, and telling
-# it to re-run would be a false alarm to match the false assurance #192 is
-# about. Empty is treated as missing: `git config merge.ours.driver ""` exits 0
-# and defines a key with no command, which git then fails the merge on.
-#
 # `env -u GIT_DIR -u GIT_WORK_TREE` is load-bearing, and it is the only reason
 # this is a function rather than two inline `git config` calls.
 #
@@ -483,6 +475,30 @@ ensure_driver() {
   current="$(driver_value)"
   if [ -n "$current" ]; then
     echo "unchanged: $DRIVER_KEY is already set ($current)"
+    return 0
+  fi
+  # Scrubbing GIT_DIR made -C authoritative about WHICH repo. It says nothing
+  # about which checkout of that repo, and `--local` from a LINKED WORKTREE
+  # writes the shared .git/config of the main checkout — that is what `--local`
+  # means without extensions.worktreeConfig, which is unset here and in every
+  # consumer that has not deliberately turned it on.
+  #
+  # So the one remaining way for this write to surprise someone is an agent
+  # running the installer inside its own worktree and silently editing the
+  # orchestrator's config. That is #189's class exactly, and it cost a batch
+  # salvage in #199 — the same batch this guard was written in. Refuse rather
+  # than warn: the value is repo-wide, so the operator loses nothing by setting
+  # it from the checkout that owns the config, and a warning printed into an
+  # agent's scrollback is not read by anyone.
+  #
+  # A linked worktree has .git as a FILE pointing at the real git dir; the main
+  # checkout has it as a directory. Cheapest reliable discriminator there is.
+  if [ -f "$ROOT/.git" ]; then
+    echo "note: $ROOT is a linked worktree, whose \`git config --local\` writes" >&2
+    echo "      the SHARED config of the main checkout. Refusing to set" >&2
+    echo "      $DRIVER_KEY from here (#189). The attributes are installed;" >&2
+    echo "      run this once in the main checkout:" >&2
+    echo "        $DRIVER_FIX" >&2
     return 0
   fi
   # Loud, not tolerant. A config write failing (unwritable .git/config, a repo

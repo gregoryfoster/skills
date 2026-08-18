@@ -127,8 +127,13 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
   pairing, so a suppression stays a documented decision rather than a silencer
   ([#90](https://github.com/gregoryfoster/skills/issues/90)).
 
-Two conventions here carry a full template and a rationale, and live in
+Three conventions here carry a full template and a rationale, and live in
 [docs/STYLE.md](docs/STYLE.md):
+
+- **A repo-creating git command must scrub `GIT_DIR`.** An inherited `GIT_DIR`
+  overrides `git -C` and cwd, and git exports it to every hook — so a test
+  fixture's throwaway repo writes to the real one
+  ([#189](https://github.com/gregoryfoster/skills/issues/189)).
 
 - **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a SKILL.md —
   the agent's cwd is the *project* root, so a bare relative path resolves to a file
@@ -143,35 +148,14 @@ Two conventions here carry a full template and a rationale, and live in
   `test_pre_ship_env_override.py` keeps the block from drifting back to one
   variant ([#105](https://github.com/gregoryfoster/skills/issues/105)).
 
-## Worktree root convention
+## Resolution knobs
 
-Skills and project-local scripts that operate on `git worktree`s resolve the worktree root via a three-step lookup (see [`using-git-worktrees`](skills/using-git-worktrees/)):
-
-1. `WORKTREE_ROOT` env var (highest priority — one-off overrides)
-2. `.skills/worktree_root` file under the repo root (single-line path; the project's persistent default)
-3. `<repo-root>/.worktrees/` (fallback)
-
-The helper `bash skills/using-git-worktrees/scripts/resolve-worktree-root.sh` prints the resolved root. Project-local wrapper scripts (e.g., `dev.sh worktree create`) should invoke the upstream `worktree-*.sh` scripts rather than reimplement them, and may pre-populate env files, allocate ports, or run extra bootstrap — but must not bypass the Iron Law gates.
-
-## Plans directory convention
-
-Skills that read or write plan documents resolve the plans directory via the same three-step lookup pattern (see [`writing-plans`](skills/writing-plans/)):
-
-1. `PLANS_DIR` env var (highest priority — one-off overrides)
-2. `.skills/plans_dir` file under the repo root (single-line path; the project's persistent default)
-3. `<repo-root>/docs/plans/` (fallback)
-
-The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the resolved directory. Downstream projects that previously carried a `writing-plans` override solely to repoint the storage path can drop the override and configure `.skills/plans_dir` instead — the upstream skill's resolution order makes the path a knob rather than a fork.
-
-## Submodule pin convention
-
-The auto-refresh hook resolves per-submodule pins via the same three-step lookup (see [`managing-skills`](skills/managing-skills/)):
-
-1. `SKILLS_PIN_FILE` env var (highest priority — one-off overrides)
-2. `.skills/skills-pin` file under the repo root (one `<submodule-path> <commit-ish>` per line; `#` comments ignored)
-3. no pins — every `skills-vendor/` submodule refreshes (prior behaviour)
-
-A pinned submodule is excluded from both the update and the auto-commit, and each honoured pin is logged by name. Use it to hold one vendored repo at a known-good commit — an experiment control arm, say — while the rest keep refreshing; before this the only remedy was deleting the hook's `SessionStart` entry, which also stopped the sibling refreshes and the `.skills/doctor.sh` self-heal ([#100](https://github.com/gregoryfoster/skills/issues/100)).
+Three skills resolve a path through the same three-step lookup — `<NAME>` env var,
+then a single-line `.skills/<name>` file, then a built-in default — so a project
+repoints them with a knob instead of forking the skill: `WORKTREE_ROOT` /
+`.skills/worktree_root`, `PLANS_DIR` / `.skills/plans_dir`, and `SKILLS_PIN_FILE`
+/ `.skills/skills-pin`. The per-skill defaults, resolver helpers and the override
+each one retires: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## References convention
 
@@ -290,6 +274,6 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 
 ## Detail Docs
 
-- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, and the gate-script rules for `pre-ship.sh` / `doc-check.sh`
-- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, and the `references/` conditional-block delimiters
+- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, the gate-script rules for `pre-ship.sh` / `doc-check.sh`, and why a repo-creating git command must scrub `GIT_DIR`
+- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the three `.skills/` resolution knobs
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery
