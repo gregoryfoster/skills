@@ -195,11 +195,11 @@ SKILL_MD_RATCHETS = {
     # of the body is literal file content and command sequences, which is why it
     # tokenizes at 2.35 bytes/token — the densest SKILL.md in the repo, though
     # three of its own reference docs are denser still (2.04 to 2.12). See the
-    # outlier note below. Bound by its EXACT count; its estimate reads 1,788
+    # outlier note below. Bound by its EXACT count; its estimate reads 1,764
     # lower, the worst calibration gap of any SKILL.md. Came down from 17,100 by
     # demoting Phases 8, 10, 11 and 16's table into references/ (#190) — an
     # interim pass at #96's problem, not the redesign the outlier note describes.
-    "init-project-fastapi": 14_750,
+    "init-project-fastapi": 14_700,
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Grew during
     # Batch A of #144 (#107's yield-gate table, #115's two-variant Phase 3).
@@ -389,8 +389,39 @@ def exact_cmd(skill: str) -> str:
     )
 
 
-def estimate_caveat(skill: str) -> str:
-    return (
+def worst_case_exact(estimate: int) -> int:
+    """The highest `count_tokens` reading POLICY_ESTIMATE_BAND still permits.
+
+    The band bounds the estimator's error against the truth — the estimate is
+    `exact * (1 + err)` for some `err` in the band — so the worst case inverts
+    it: `estimate / (1 + low)`. Multiplying by `(1 + high)` instead answers how
+    high the ESTIMATE could read for a known exact, which is the other direction
+    and understates the answer at every input.
+
+    This is not a licence to spend up to the worst case. It is the number a run
+    needs to tell "comfortably under" from "green offline, over in fact", which
+    is the only distinction the always-on gate cannot make for itself.
+    """
+    return round(estimate / (1 + POLICY_ESTIMATE_BAND[0]))
+
+
+def estimate_caveat(skill: str, estimate: int | None = None) -> str:
+    """The offline caveat, with the band-derived worst case when one applies.
+
+    `estimate` is optional because only the SKILL.md ratchet failure has a
+    policy estimate to convert. The per-doc failure fails about reference docs,
+    a population `DOC_ESTIMATE_BAND` describes and this one does not, so it
+    passes nothing and gets the prose alone rather than a figure computed from
+    the wrong band.
+
+    #190: the issue asked for the exact margin here, on the assumption that an
+    exact figure is available offline. None is — `.skills/context-token-counts`
+    anchors `AGENTS.md` and three `docs/` files and no `skills/*/SKILL.md` — so
+    a run gets the worst case the band permits instead. `init-project-fastapi`
+    is why: it read 14,773 estimated against a 17,100 ratchet, which presents as
+    2,327 tokens of headroom and was 43.
+    """
+    caveat = (
         "This is the calibrated OFFLINE ESTIMATE at "
         f"{RATIO_KNOB.name} bytes/token, not an exact count — pre-commit has "
         "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 6% high "
@@ -398,6 +429,20 @@ def estimate_caveat(skill: str) -> str:
         "budget binds BOTH readings — so clearing this one is necessary, not "
         "sufficient. The other:\n  "
         + exact_cmd(skill)
+    )
+    if estimate is None:
+        return caveat
+    ratchet = ratchet_for(skill)
+    worst = worst_case_exact(estimate)
+    verdict = (
+        "this file may already be over"
+        if worst > ratchet
+        else "the whole band clears the ratchet"
+    )
+    return (
+        f"estimate {estimate:,} → worst case ~{worst:,} against a "
+        f"{ratchet:,} ratchet; {verdict}.\n\n"
+        + caveat
     )
 
 
@@ -753,7 +798,7 @@ class TestEverySkillsOwnSurface:
                 "this skill cannot meet the standard the other seventeen "
                 "do.\n\n"
             )
-            + estimate_caveat(skill)
+            + estimate_caveat(skill, policy["tokens"])
         )
 
     def test_skill_md_names_its_own_ratchet(self, skill: str):
