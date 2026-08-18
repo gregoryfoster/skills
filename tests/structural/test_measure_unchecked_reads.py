@@ -26,6 +26,13 @@ below record what was actually observed, not what the issue predicted.
    exactly the "broken measurement mistaken for a clean one" the header
    forbids.
 
+   Guarding it needed a second change. `exit 2` from `est_tokens` reaches only
+   its own subshell, because bash runs command substitutions with errexit
+   unset; `shopt -s inherit_errexit` is the opt-out and it postdates bash 3.2,
+   which is what this machine has. So `count_tokens` forwards the status
+   explicitly. Without that, the guard fired and the run continued with an
+   empty token count.
+
 3. `slugs_of`'s awk
    Observed, on stderr, immediately before the clean WARN its caller emits:
 
@@ -98,6 +105,22 @@ def _measure(repo: Path) -> subprocess.CompletedProcess:
         ["bash", str(MEASURE), "--no-write"],
         capture_output=True, text=True, cwd=str(repo),
         env=_clean_env(), timeout=60,
+    )
+
+
+def _fn_code(name: str) -> str:
+    """The CODE of one shell function, comments stripped.
+
+    Stripped because each fix documents the shape it replaced, quoting the bare
+    `wc -c <"$1"` verbatim — so a rule read over the whole function matches the
+    prose explaining the defect and reports the fix as the defect. Same trap the
+    #199 journal records for the escape greps: in a file whose job is to explain
+    a hazard, the hazard's own name is in the file.
+    """
+    src = MEASURE.read_text()
+    body = src.split(f"\n{name}() {{", 1)[1].split("\n}\n", 1)[0]
+    return "\n".join(
+        line for line in body.splitlines() if not line.lstrip().startswith("#")
     )
 
 
@@ -189,8 +212,7 @@ class TestEstTokensReadIsChecked:
     be provoked from outside."""
 
     def test_no_bare_redirect_remains_in_est_tokens(self):
-        src = MEASURE.read_text()
-        body = src.split("\nest_tokens() {", 1)[1].split("\n}\n", 1)[0]
+        body = _fn_code("est_tokens")
         assert 'wc -c <"$1"' not in body, (
             "est_tokens still reads its argument through an unchecked bare "
             "redirect; a failure here prices the file at 0 tokens and reports "
@@ -203,8 +225,7 @@ class TestEstTokensReadIsChecked:
         capture file; set up before, bash writes `Permission denied` to the
         terminal and the capture file is empty — verified experimentally, both
         orderings, before this assertion was written."""
-        src = MEASURE.read_text()
-        body = src.split("\nest_tokens() {", 1)[1].split("\n}\n", 1)[0]
+        body = _fn_code("est_tokens")
         reads = [m for m in re.finditer(r"wc [^\n]*<\"\$1\"", body)]
         assert reads, f"est_tokens no longer reads $1 at all:\n{body}"
         for m in reads:
@@ -217,8 +238,21 @@ class TestEstTokensReadIsChecked:
         errexit never sees it, the byte count arrives empty, and
         ctx_est_tokens_for coerces it to 0. The guard must exit 2 rather than
         hand a number downstream."""
-        src = MEASURE.read_text()
-        body = src.split("\nest_tokens() {", 1)[1].split("\n}\n", 1)[0]
+        body = _fn_code("est_tokens")
         assert "exit 2" in body, (
             f"est_tokens has no infrastructure-failure exit:\n{body}"
+        )
+
+    def test_count_tokens_forwards_the_refusal(self):
+        """The half of the fix that is easy to lose. `exit 2` inside a command
+        substitution reaches only that subshell: bash runs command substitutions
+        with errexit UNSET, and the opt-out (`shopt -s inherit_errexit`) does
+        not exist before bash 4.4 — this machine runs 3.2, so it is not
+        available at all. Measured without the forward: the guard fired, the run
+        continued with an empty token count, printed `[: : integer expression
+        expected`, and died several stages later on an unrelated awk."""
+        body = _fn_code("count_tokens")
+        assert re.search(r'est_out="\$\(est_tokens "\$f"\)"\s*\|\|\s*exit', body), (
+            "count_tokens swallows est_tokens' exit; the guard fires and the "
+            f"run carries on with no token count:\n{body}"
         )
