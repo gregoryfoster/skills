@@ -86,10 +86,15 @@ fi
 
 mkdir -p "$ROOT"
 
+# `git worktree add` splits its own chatter across both streams: "Preparing
+# worktree ..." goes to stderr, but the checkout notice "HEAD is now at <sha>
+# <subject>" goes to STDOUT, where it lands ahead of the path this script
+# promises. Redirect, do not silence: `-q` empties stdout too, but it also
+# drops the stderr line, leaving no record of what was checked out.
 if [[ $NEW_BRANCH -eq 1 ]]; then
-  git worktree add -b "$BRANCH" "$WORKTREE_PATH" || exit 2
+  git worktree add -b "$BRANCH" "$WORKTREE_PATH" >&2 || exit 2
 else
-  git worktree add "$WORKTREE_PATH" "$BRANCH" || exit 2
+  git worktree add "$WORKTREE_PATH" "$BRANCH" >&2 || exit 2
 fi
 
 # A worktree inherits no virtualenv, so the first `.venv/bin/python -m pytest`
