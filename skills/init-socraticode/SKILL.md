@@ -169,21 +169,24 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    what an agent needs on nearly every task; everything read once lives here.
    Create `docs/` if absent, and overwrite the file wholesale on a re-run (it
    has no marker pair because it *is* the block's overflow).
-3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → write **two** scripts and
-   **merge** their entries into `.claude/settings.json` (create if absent):
+3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → install **two** vendored
+   scripts and **merge** their entries into `.claude/settings.json` (create if
+   absent). Install **both** the same way — **symlink** into
+   `skills-vendor/*/…/scripts/`, as `managing-skills` installs its sibling hook
+   into the same directory, and **copy** only where there is no
+   `skills-vendor/` tree. A copy freezes at install day and `.skills/doctor.sh`
+   sees only *dangling* symlinks, so the drift reads as a healthy install;
+   retyping a hook from prose is worse still (#186).
    - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe by
      scanning existing command strings for `socraticode-prefetch` **or**
      `socraticode-reminder` (the latter matches legacy script-file installs);
      when a match isn't already the canonical command, upgrade that one command
      string in place (propagates the `${CLAUDE_PROJECT_DIR:-.}` fallback to
-     legacy installs).
-   - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check.
-     **Symlink** it into `skills-vendor/*/…/scripts/`, as `managing-skills`
-     installs its sibling hook into the same directory; **copy** only where
-     there is no `skills-vendor/` tree. A copy freezes at install day and
-     `.skills/doctor.sh` sees only *dangling* symlinks, so on a hook that is
-     silent when clean the drift reads as a healthy install. Dedupe on the
-     distinct marker `socraticode-health`. It reports; it never re-indexes.
+     legacy installs). `ln -sfn` replaces a legacy hand-typed copy in place.
+   - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check;
+     symlink or copy exactly as above. Dedupe on the distinct marker
+     `socraticode-health`. It is silent when clean, so a stale copy is
+     indistinguishable from a healthy one. It reports; it never re-indexes.
    Preserve existing `hooks`/`permissions`/other keys. Never clobber the file.
 4. **Linked projects** (only when `LINKED_PROJECTS` is set — it defaults to
    none, so most installs skip this) → follow
@@ -341,7 +344,7 @@ Present a completion table:
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |
-| SessionStart hooks | `<INSTALL_HOOK>` — `.claude/hooks/socraticode-reminder.sh` (prefetch) · `.claude/hooks/socraticode-health.sh` (once-per-day infra check, `<symlink/copy>`) |
+| SessionStart hooks | `<INSTALL_HOOK>` — `.claude/hooks/socraticode-reminder.sh` (prefetch, `<symlink/copy>`) · `.claude/hooks/socraticode-health.sh` (once-per-day infra check, `<symlink/copy>`) |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
 | Index exclusions | `.socraticodeignore` (vendored skill trees excluded) |
 | Index | index run completed (no FAILED last operation) · graph READY · **yield `<ok/low/unknown>`** · artifacts N/N |
