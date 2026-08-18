@@ -281,12 +281,23 @@ SKILL_MD_RATCHETS = {
 # own. Nothing is exempt, and the append-only artifact still grows without any
 # file growing.
 #
-# The index is nonetheless the doc to watch, and it has moved since #152: at
-# 2026-08-17 it reads 8,018 estimated / 8,050 exact against 10,000, up from the
-# ~6,600 recorded here, while the largest single entry reads 6,010 / 5,845. The
-# index is the one file in this tree that every journaling session appends to,
-# so it is the one whose growth is structural rather than incidental. When it
-# crosses, splitting it by year is the move — not an exception.
+# The index was nonetheless the doc to watch, and it crossed on 2026-08-18: two
+# rows for one replicator session (#183 planning, #197 execution) took
+# `process-log.md` from 9,812 estimated to 10,546, and #183's row breached the
+# 188 tokens of margin on its own. This block had pre-registered the answer —
+# splitting by year, not an exception — and that is what shipped. The rows now
+# live in `process-log/<year>/index.md`; `process-log.md` keeps the header, a
+# list of years, and the "Adding an entry" rules, at 865 estimated / 781 exact.
+#
+# The split bounded the file. It did NOT create headroom, and that is the part
+# worth carrying forward: one year of this log already nearly fills one doc.
+# `process-log/2026/index.md` reads 9,849 estimated / 9,760 exact — 151 and 240
+# of margin — for 37 sessions in under six months. At that rate the budget
+# affords a row of roughly 400 bytes, and rows in there run to 1,900. So the
+# next crossing is NOT a signal to split finer: it is the row-length rule in the
+# index's own footer ("keep the row to a headline") being ignored, and trimming
+# rows back to headlines is the move. Splitting by half-year would buy one more
+# year and add a hop for every reader.
 #
 # `None` would mean exempt; any other value is a hard ceiling. The mechanism is
 # kept, and proven by TestTheExemptionMechanism, because the next doc that needs

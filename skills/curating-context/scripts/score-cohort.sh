@@ -13,27 +13,38 @@ usage() {
 score-cohort.sh — paired validation gate for skill changes
 
 Usage:
-  score-cohort.sh [--cohort-file PATH] [--treatment WAVE] [--control WAVE]
+  score-cohort.sh [--cohort-file PATH] --treatment VERSION --control VERSION
 
 Options:
-  --cohort-file PATH  Roster carrying `wave:` and `pair:` annotations.
+  --cohort-file PATH  Roster carrying `pair:` annotations (and `wave:`, which
+                      is rollout order and scores nothing).
                       Default: .skills/cohort
-  --treatment WAVE    Wave running the PROPOSED version. Default: a
-  --control WAVE      Wave running the CURRENT version. Default: b
+  --treatment VERSION The PROPOSED version. Required.
+  --control VERSION   The CURRENT version. Required.
 
-                      Note the direction. In experiment 1 wave A adopted first
-                      and held the OLDER version, so that run inverts the
-                      defaults: --treatment b --control a. Get this backwards
-                      and a winning change reads as a losing one — so an arm
-                      carrying only older versions than the other is detected
-                      and returns INCONCLUSIVE rather than a rejection.
+                      These name VERSIONS, not waves (#194). The arm a repo is
+                      in is the skill_version stamped on its own scored row —
+                      observed, never assigned (#118/#168) — so a repo whose
+                      scored run carries neither of these two versions is in
+                      NO arm, and is reported rather than scored as though it
+                      carried the version its roster line implies. wave:/pair:
+                      are rollout order: which half a change reached first, and
+                      which two repos were size-matched. pair: still comes from
+                      the roster, because size-matching is a property of the
+                      repos rather than of any run.
 
-                      wave:/pair: no longer ASSIGN a version (#118/#168). They
-                      are rollout order; the arm a run belongs to is the
-                      skill_version on its own row. Which wave carries which
-                      version is therefore an observation about the ledgers, not
-                      a property of the roster — read it off the two header
-                      lines rather than assuming a direction.
+                      There is no default, deliberately. Naming the comparison
+                      is what makes it one, and inferring the two versions from
+                      the ledgers would be choosing the experiment after seeing
+                      the rows. --experiment NN supplies them from the
+                      registration's treatment_version/control_version, which
+                      is where they were pre-registered; a flag may still name
+                      them, and disagreeing with the registration is refused.
+
+                      Note the direction. Naming the OLDER version as the
+                      treatment turns a winning change into a losing one, so it
+                      is detected from the flags and returns INCONCLUSIVE
+                      rather than a rejection.
   --ledger PATH       Ledger path within each repo.
                       Default: .skills/context-metrics.jsonl
   --branch NAME       Branch to read for owner/repo entries.
@@ -149,16 +160,22 @@ Adoption rule
 
 Exit codes:
   0  ADOPT — treatment won every informative pair, no safety gate tripped
-  1  usage error, or the roster carries no wave assignment
+  1  usage error, the roster carries no pair assignment, or the two versions
+     named are one release
   2  infrastructure failure (python3 or gh missing, library missing)
   3  REJECT — a recorded safety gate tripped, or the treatment did not sweep
      over at least the rejection floor of informative pairs
   5  INCONCLUSIVE — nothing was decided: too few informative pairs, a failed
      sweep below the rejection floor, safety unverified, every repo in both arms
-     unscorable for one reason, both arms on one version, an arm split across
-     versions, the arms look inverted, the arms are not the ones the
-     registration named, the registered metric is on no row at all, or it is
-     null across the whole control arm (the proposal added its own instrument)
+     unscorable for one reason, an arm with no attributed run, the versions are
+     named in the wrong order, they are not the ones the registration named, the
+     registered metric is on no row at all, or it is null across the whole
+     control arm (the proposal added its own instrument)
+
+  An arm can no longer be "split across versions" and both arms can no longer
+  be "on one version": since #194 the arm IS the version, so both states are
+  ruled out by construction rather than diagnosed after the fact. A repo whose
+  row carries some third version falls out of both arms and is reported there.
 
 Every question of the form "is this even an experiment?" is answered BEFORE any
 verdict that would reject, because a REJECT tells the reader to write the change
@@ -170,8 +187,12 @@ USAGE
 }
 
 COHORT_FILE=".skills/cohort"
-TREATMENT="a"
-CONTROL="b"
+# No defaults. `a`/`b` were wave names, and there is no version that plays the
+# same role: the two versions being compared are the experiment, so a default
+# would be this script choosing one. Filled from the registration when
+# --experiment names one, otherwise required (#194).
+TREATMENT=""
+CONTROL=""
 LEDGER=".skills/context-metrics.jsonl"
 BRANCH=""
 MIN_PAIRS=3
@@ -185,8 +206,8 @@ MIN_PAIRS_SET=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cohort-file) COHORT_FILE="${2:?--cohort-file needs a path}"; shift 2 ;;
-    --treatment) TREATMENT="${2:?--treatment needs a wave}"; shift 2 ;;
-    --control) CONTROL="${2:?--control needs a wave}"; shift 2 ;;
+    --treatment) TREATMENT="${2:?--treatment needs a version}"; shift 2 ;;
+    --control) CONTROL="${2:?--control needs a version}"; shift 2 ;;
     --ledger) LEDGER="${2:?--ledger needs a path}"; shift 2 ;;
     --branch) BRANCH="${2:?--branch needs a name}"; shift 2 ;;
     --min-pairs) MIN_PAIRS="${2:?--min-pairs needs a number}"
@@ -213,8 +234,12 @@ esac
   echo "ERROR --min-pairs must be at least 1: a comparison over zero pairs" >&2
   echo "      would adopt on no evidence at all" >&2
   exit 1; }
-if [ "$TREATMENT" = "$CONTROL" ]; then
-  echo "ERROR --treatment and --control name the same wave ('$TREATMENT')" >&2
+# The literal half of the same-release check, here so the obvious typo costs
+# nothing. Spellings of ONE release — 1.2 against v1.2.0 — are caught in the
+# scorer, which is where version_canon() lives; a second copy of it in bash
+# would be a second opinion about what one release is.
+if [ -n "$TREATMENT" ] && [ "$TREATMENT" = "$CONTROL" ]; then
+  echo "ERROR --treatment and --control name the same version ('$TREATMENT')" >&2
   exit 1
 fi
 
@@ -261,14 +286,14 @@ trap 'rm -rf "$TMP"' EXIT
 : >"$TMP/experiment.json"
 if [ -n "$EXPERIMENT" ]; then
   python3 - "$EXPERIMENTS_DIR" "$EXPERIMENT" \
-      "$_libdir/../references/rejected-changes.md" \
+      "$_libdir/../references/rejected-changes.md" "$TMP/reg-arms" \
       >"$TMP/experiment.json" <<'PY' || exit 1
 import json
 import re
 import sys
 from pathlib import Path
 
-directory, number, rejected_path = sys.argv[1:4]
+directory, number, rejected_path, arms_path = sys.argv[1:5]
 
 
 def die(*lines):
@@ -420,9 +445,117 @@ if metric in rejected:
 fields["experiment"] = f"{stem:02d}"
 fields["min_pairs"] = int(fields["min_pairs"])
 fields["file"] = str(path)
+
+# The two versions the arms are made of, written out for the shell so that
+# --experiment alone is a complete invocation. This file is where the
+# registration and the flags meet: the registration NAMES the comparison, and
+# before #194 the flags named waves, so the two could not be checked against
+# each other at all. A flag still wins — and disagreeing with the registration
+# is caught downstream, which is the check worth having.
+Path(arms_path).write_text(
+    f"{fields['treatment_version']}\n{fields['control_version']}\n",
+    encoding="utf-8")
 print(json.dumps(fields, sort_keys=True))
 PY
 fi
+
+if [ -f "$TMP/reg-arms" ]; then
+  { IFS= read -r REG_TREATMENT || true
+    IFS= read -r REG_CONTROL || true
+  } <"$TMP/reg-arms"
+  [ -n "$TREATMENT" ] || TREATMENT="$REG_TREATMENT"
+  [ -n "$CONTROL" ] || CONTROL="$REG_CONTROL"
+fi
+
+if [ -z "$TREATMENT" ] || [ -z "$CONTROL" ]; then
+  cat >&2 <<'EOF'
+ERROR --treatment and --control name the two VERSIONS being compared, and both
+      are required. They stopped naming waves in #194: the arm a repo is in is
+      the skill_version on its own scored row, so the flags name the versions
+      that define the arms.
+
+      There is no default. Inferring the two versions from the ledgers would
+      choose the experiment after seeing the rows, which is the same move as
+      choosing the metric late.
+
+        score-cohort.sh --treatment 1.3 --control 1.2
+
+      Or cite the pre-registration, which already records both:
+
+        score-cohort.sh --experiment NN
+EOF
+  exit 1
+fi
+
+# One definition of what a version IS, written out for both passes below to
+# import. The literal `--treatment X --control X` check lives in the shell,
+# where it costs nothing; this is the SPELLINGS half — 1.2 against v1.2.0 — and
+# it used to sit in the scorer, which runs after twelve gh round-trips. Same
+# objection the registration parser above answers: a usage error that takes a
+# minute to arrive trains the caller to skip the check. Hoisting it needed
+# version_canon here, and a bash reimplementation would be a second opinion
+# about what one release is — so the function moves to a file both import
+# instead of being copied.
+cat >"$TMP/versionlib.py" <<'PY'
+def version_canon(v):
+    """One version, one spelling: 1.2, 1.2.0 and v1.2 are the same release.
+
+    Two cosmetic differences are normalised away and no others: a leading v, and
+    trailing zero components. Deliberately NOT the numeric key below, which is
+    lossy — it maps every non-numeric component to 0, so 2.0-alpha and 2.0-beta
+    would collapse into one version and two genuinely different prereleases
+    would be reported as no experiment at all.
+
+    The v guard checks that a digit follows, so a release actually named vNext
+    is left alone.
+    """
+    s = str(v).strip()
+    if s[:1] in ("v", "V") and s[1:2].isdigit():
+        s = s[1:]
+    parts = s.split(".")
+    while len(parts) > 1 and parts[-1] in ("0", ""):
+        parts.pop()
+    return ".".join(parts)
+
+
+def version_key(v):
+    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only to
+    decide whether the versions were named in the wrong order, never who wins: a
+    non-numeric component reads as 0, which is fine for refusing to score and
+    not fine for scoring.
+
+    Derived from the canonical form so the two cannot disagree. They did: v1.2
+    keyed to (0, 2) against 1.2's (1, 2), and the gate reported the arms as
+    inverted for one release spelled two ways — a confidently wrong diagnosis
+    pointing at the flags, which were not the problem. Deriving it also settles
+    1.2.0 vs 1.2, which keyed unequal and could trip the same test.
+    """
+    return tuple(int(p) if p.isdigit() else 0
+                 for p in version_canon(v).split("."))
+PY
+
+python3 - "$TMP" "$TREATMENT" "$CONTROL" <<'PY' || exit 1
+import sys
+
+tmp, treatment, control = sys.argv[1:4]
+sys.path.insert(0, tmp)
+from versionlib import version_canon        # noqa: E402
+
+canon = version_canon(treatment)
+if canon != version_canon(control):
+    sys.exit(0)
+# A usage error rather than a verdict, and that is the change #194 made: before
+# it, the arms were the roster's and the versions were whatever turned up, so
+# "both arms ran the same version" was an observation about the rows. Now the
+# versions ARE the arms, and no ledger can make one release into an experiment.
+print(f"ERROR --treatment {treatment} and --control {control} canonicalise to "
+      f"the same release ({canon}).", file=sys.stderr)
+print("      1.2, v1.2 and 1.2.0 are one version. A release compared against "
+      "itself is a", file=sys.stderr)
+print("      baseline, not an experiment — name the two versions the proposal "
+      "sits between.", file=sys.stderr)
+sys.exit(1)
+PY
 
 [ -f "$COHORT_FILE" ] || {
   echo "ERROR no cohort file at $COHORT_FILE" >&2; exit 1; }
@@ -432,19 +565,28 @@ ctx_read_roster "$COHORT_FILE" >"$TMP/roster"
 # An unannotated roster cannot answer the question this script asks. Say what is
 # missing and what it looks like, rather than reporting an empty comparison as
 # though the experiment had run and found nothing.
-# The flag, rather than `$3 != "" { exit 0 }`: awk's `exit` runs the END block on
+#
+# `pair:` is what is checked, not `wave:` (#194). The arms come off each row's
+# skill_version now, so a roster carrying every wave and no pair describes no
+# comparison at all, while one carrying every pair and no wave describes a
+# perfectly good one. Field 4, not field 3.
+#
+# The flag, rather than `$4 != "" { exit 0 }`: awk's `exit` runs the END block on
 # its way out, so an END that exits too has the last word and the early exit is
 # discarded. Written the obvious way this reported every annotated roster as
 # unannotated.
-if ! awk -F"$CTX_US" '$3 != "" { found = 1; exit } END { exit !found }' "$TMP/roster"; then
+if ! awk -F"$CTX_US" '$4 != "" { found = 1; exit } END { exit !found }' "$TMP/roster"; then
   cat >&2 <<EOF
-ERROR $COHORT_FILE carries no wave assignment, so there are no arms to compare.
+ERROR $COHORT_FILE carries no pair: assignment, so there is nothing to compare.
       Annotate each entry, e.g.:
 
         CannObserv/usa-wa                      wave:a pair:1
         CannObserv/cannabis.observer-wordpress wave:b pair:1
 
-      Pairs are matched on starting state; see references/validation-gate.md.
+      Pairs are matched on starting state and stay roster-driven: size-matching
+      is a property of the repos, not of any run. wave: is rollout order and is
+      optional — the arm a repo is in is the skill_version on its own scored
+      row. See references/validation-gate.md.
 EOF
   exit 1
 fi
@@ -457,17 +599,19 @@ fi
 
 : >"$TMP/all.jsonl"
 while IFS="$CTX_US" read -r kind entry wave pair; do
-  # An entry outside the two arms is REPORTED, not dropped. The roll-up already
-  # refuses to skip a repo silently on the principle that missing telemetry is
-  # itself the finding; a gate that quietly shrinks its own sample is worse,
-  # because a typo'd wave: value removes a repo from the experiment with no
-  # trace anywhere in the output.
-  case "$wave" in
-    "$TREATMENT"|"$CONTROL") ;;
-    *) printf '%s\t%s\t%s\t%s\n' "$entry" "$wave" "$pair" "OUT_OF_ARM" \
-         >>"$TMP/all.jsonl"
-       continue ;;
-  esac
+  # EVERY entry is fetched (#194). Which arm a repo is in is the skill_version
+  # on its own scored row, and that is not knowable until the ledger is read —
+  # so this layer can no longer divert anything, and the shell no longer decides
+  # arm membership at all. What falls out of both arms is decided in the scorer
+  # and reported there.
+  #
+  # Two things this fixes beyond the arms. The `arms_are_historical` notice
+  # claims to be roster-wide precisely so that a member outside the experiment
+  # still evidences that the cohort has moved on — and it was arm-wide in fact,
+  # because the entries it wanted to see were the ones diverted before their
+  # ledger was ever read. And an entry with a typo'd or missing wave: is no
+  # longer excluded from an experiment its rows may well belong to.
+  #
   # The FULL roster entry is the key, not its basename: OrgA/cli and OrgB/cli
   # would otherwise merge into one record. The reader shortens it for display
   # when it is unambiguous.
@@ -490,6 +634,7 @@ RC=0
 python3 - "$TMP/all.jsonl" "$TREATMENT" "$CONTROL" "$MIN_PAIRS" "$FORMAT" \
          "$TMP/experiment.json" "$MIN_PAIRS_SET" <<'PY' || RC=$?
 import json
+import os
 import sys
 
 src, treatment, control, min_pairs, fmt, exp_src, min_pairs_set = sys.argv[1:8]
@@ -512,17 +657,66 @@ if experiment:
     min_pairs = (max(min_pairs, experiment["min_pairs"]) if min_pairs_set
                  else experiment["min_pairs"])
 
+
+# The two arms, as the two versions that define them (#194). Canonical, so one
+# release spelled two ways is one arm.
+#
+# version_canon/version_key are IMPORTED, not defined here. They used to live in
+# this heredoc, which put the "is this one release spelled twice?" refusal after
+# twelve gh round-trips; hoisting it above the fetch needed the same function in
+# two places, and one definition in a file both import beats two copies that can
+# drift. That refusal has already fired above, so T_CANON != C_CANON here.
+sys.path.insert(0, os.path.dirname(src))
+from versionlib import version_canon, version_key    # noqa: E402
+
+T_CANON = version_canon(treatment)
+C_CANON = version_canon(control)
+
+
+def arm_of(rec):
+    """Which arm a scored repo is in: the canonical `skill_version` on its OWN
+    row, matched against the two versions named on the command line.
+
+    None is a real answer and the point of #194 — a repo whose scored run
+    carries neither version belongs to NO arm, rather than to the arm its
+    roster line names. Before this the roster decided, so the third state could
+    not be expressed: a repo six releases adrift was scored as though it
+    carried the version its `wave:` implied, and could veto a proposal it never
+    ran.
+
+    Reads the RECORD, not the ledger row, so there is one answer per repo and it
+    is the version of the run that was actually scored. A repo with no
+    attributed run has no version and therefore no arm.
+    """
+    v = rec["skill_version"]
+    if not v:
+        return None
+    canon = version_canon(v)
+    if canon == T_CANON:
+        return "treatment"
+    if canon == C_CANON:
+        return "control"
+    return None
+
+
+def why_no_arm(rec):
+    """Why a record is in neither arm, in the words that help.
+
+    The version when there is one — the repo ran something and which something
+    is the whole answer. Otherwise the repo's own unscorable reason, which names
+    the file and the fix; "no attributed run" alone reads as a repo nobody has
+    curated when the ledger may simply be missing.
+    """
+    return (rec["skill_version"] or rec["why"] or "no attributed run")
+
+
 repos = {}
 order = []
-out_of_arm = []
 for raw in open(src, encoding="utf-8"):
     raw = raw.rstrip("\n")
     if not raw or raw.count("\t") < 3:
         continue
     key, wave, pair, payload = raw.split("\t", 3)
-    if payload == "OUT_OF_ARM":
-        out_of_arm.append((key, wave))
-        continue
     if key not in repos:
         repos[key] = {"rows": [], "status": "ok", "wave": wave, "pair": pair}
         order.append(key)
@@ -633,6 +827,13 @@ def score_repo(key, info):
         if kind == "baseline":
             continue
         if kind == "untagged":
+            # The version is recorded even though the run is unscorable: this
+            # row HAS a skill_version — that is how the scan reached it — so the
+            # repo is in an arm, and since #194 the arm is read off exactly this
+            # field. Left null, an untagged run would fall out of both arms and
+            # the systematic-untagging defect could never be detected, which is
+            # the one diagnosis that tells the reader to re-run Phase 7.
+            rec["skill_version"] = r.get("skill_version")
             rec["status"] = "unscorable"
             rec["why"] = ("the first attributed run carries no action tags, so it "
                           "cannot be told from a baseline; tag it and re-score")
@@ -755,16 +956,34 @@ def score_repo(key, info):
 
 
 records = [score_repo(k, repos[k]) for k in order]
-by_arm = {treatment: {}, control: {}}
+# Stamped once, so every rule below reads one answer rather than re-deriving it,
+# and so the JSON says which arm each repo landed in. `wave` stays on the record
+# beside it: rollout order is still true, it is simply not what an arm is.
 for r in records:
-    if r["wave"] in by_arm and r["pair"]:
-        by_arm[r["wave"]].setdefault(r["pair"], []).append(r)
+    r["arm"] = arm_of(r)
+
+# The pairing needs BOTH groupings and they answer different questions. `pair:`
+# stays roster-driven — it encodes size-matching against the 2026-08-05 baseline,
+# which is a property of the repos and not of any run — while which side of the
+# pair a repo sits on is the version on its own row.
+by_arm = {"treatment": {}, "control": {}}
+by_pair = {}
+for r in records:
+    if not r["pair"]:
+        continue
+    by_pair.setdefault(r["pair"], []).append(r)
+    if r["arm"]:
+        by_arm[r["arm"]].setdefault(r["pair"], []).append(r)
 
 pairs = []
-for pid in sorted(set(by_arm[treatment]) | set(by_arm[control]),
-                  key=lambda p: (len(p), p)):
-    t = by_arm[treatment].get(pid, [])
-    c = by_arm[control].get(pid, [])
+# Iterated over every pair the ROSTER declares, not over the pairs that happened
+# to land members in an arm. A pair whose members both fell out of the arms would
+# otherwise vanish from the report entirely — the sample shrinking silently,
+# which is the failure out-of-arm reporting exists to prevent, reached through
+# the new rule instead of through a typo.
+for pid in sorted(by_pair, key=lambda p: (len(p), p)):
+    t = by_arm["treatment"].get(pid, [])
+    c = by_arm["control"].get(pid, [])
     entry = {"pair": pid, "treatment": t[0] if len(t) == 1 else None,
              "control": c[0] if len(c) == 1 else None,
              "informative": False, "winner": None, "margin": None,
@@ -772,6 +991,14 @@ for pid in sorted(set(by_arm[treatment]) | set(by_arm[control]),
     if len(t) != 1 or len(c) != 1:
         entry["why"] = (f"pair {pid} has {len(t)} treatment and {len(c)} control "
                         "repos; a pair needs exactly one of each")
+        # Named here because the roster looks correct in this case and the
+        # reason is on the other repo's row. "0 treatment and 1 control" sent
+        # the reader to the roster, which is where the answer used to be.
+        adrift = [r for r in by_pair[pid] if r["arm"] is None]
+        if adrift:
+            entry["why"] += "; " + ", ".join(
+                f"{r['repo']} is in neither arm — {why_no_arm(r)}"
+                for r in adrift)
         pairs.append(entry)
         continue
     tr, cr = t[0], c[0]
@@ -863,9 +1090,22 @@ SYSTEMIC_HINTS = {
         "estimates against exact rows.",
 }
 
-# Every record IS in an arm: the shell layer diverts entries whose wave is
-# neither into out_of_arm before they reach here, so there is nothing to filter.
-arm_records = records
+# The repos actually in an arm. Not every record is one any more (#194): a repo
+# whose scored run carries neither version is in neither arm, and a repo with no
+# attributed run has no version to place it by.
+#
+# That second case narrows this check, deliberately. "Every repo in both arms is
+# unscorable for one reason" can now only be inferred from repos that got far
+# enough to record a version: no_before_state, untagged_run, method_changed and
+# missing_counts. SYSTEMIC_HINTS covers the first three — #116's case included —
+# and NOT missing_counts, which is a gap rather than a boundary: a cohort
+# systematically missing token counts would be diagnosed with no hint attached.
+# `.get` degrades to no hint rather than raising, so add one when it is earned.
+# A cohort where nobody has curated at all no longer reaches here and does not
+# need to: the empty-arm branches below say so in plainer words than a GATE
+# DEFECT would.
+arm_records = [r for r in records if r["arm"]]
+no_arm = [r for r in records if r["arm"] is None]
 # "No repo in either arm can satisfy this rule" is an inference from BREADTH, and
 # at two repos it is not supported — the likelier reading is two non-compliant
 # repos, which is a finding about the cohort and needs a different fix.
@@ -875,8 +1115,8 @@ arm_records = records
 # evidence the floor exists to refuse — one arm carrying a single repo says
 # nothing about whether the rule is satisfiable.
 SYSTEMIC_MIN_PER_ARM = 2
-t_arm_n = sum(1 for r in records if r["wave"] == treatment)
-c_arm_n = sum(1 for r in records if r["wave"] == control)
+t_arm_n = sum(1 for r in records if r["arm"] == "treatment")
+c_arm_n = sum(1 for r in records if r["arm"] == "control")
 systemic = systemic_hint = None
 if min(t_arm_n, c_arm_n) >= SYSTEMIC_MIN_PER_ARM \
         and all(r["status"] == "unscorable" for r in arm_records):
@@ -891,7 +1131,7 @@ if min(t_arm_n, c_arm_n) >= SYSTEMIC_MIN_PER_ARM \
         systemic_hint = SYSTEMIC_HINTS.get(code_one)
 
 
-def arm(wave, status):
+def arm(which, status):
     """Every repo in the arm, INCLUDING ones in no pair — deliberately wider
     than the pairing.
 
@@ -900,78 +1140,45 @@ def arm(wave, status):
     can veto adoption on its own while contributing nothing to any closure. It
     stays visible: it is listed under "not in any pair" and again in the
     treatment-arm failures block. Do not narrow this to paired repos.
+
+    Wider than the pairing, and no wider (#194). A repo that ran neither version
+    is in neither arm, so it cannot veto a proposal it never ran — which is what
+    grouping by the roster made it do.
     """
-    return [r for r in records if r["wave"] == wave and r["status"] == status]
+    return [r for r in records if r["arm"] == which and r["status"] == status]
 
 
-t_failures = arm(treatment, "failed")
-t_unverified = arm(treatment, "unverified")
-c_failures = arm(control, "failed")
-c_unverified = arm(control, "unverified")
+t_failures = arm("treatment", "failed")
+t_unverified = arm("treatment", "unverified")
+c_failures = arm("control", "failed")
+c_unverified = arm("control", "unverified")
 
 
-def versions_in(wave):
+def versions_in(which):
+    """How each arm's version is actually SPELLED on the rows, and by whom.
+
+    The arm is one canonical version now, so this can no longer report two
+    releases in one arm. What it can still report is 1.2 and v1.2.0 sitting in
+    the same arm under two spellings, which is worth saying out loud, and which
+    repo is where.
+    """
     m = {}
     for r in records:
-        if r["wave"] == wave and r["skill_version"]:
+        if r["arm"] == which and r["skill_version"]:
             m.setdefault(r["skill_version"], []).append(r["repo"])
     return m
 
 
-t_by_version, c_by_version = versions_in(treatment), versions_in(control)
+t_by_version, c_by_version = versions_in("treatment"), versions_in("control")
 t_versions, c_versions = sorted(t_by_version), sorted(c_by_version)
 
 
-def version_canon(v):
-    """One version, one spelling: 1.2, 1.2.0 and v1.2 are the same release.
-
-    Two cosmetic differences are normalised away and no others: a leading v, and
-    trailing zero components. Deliberately NOT the numeric key below, which is
-    lossy — it maps every non-numeric component to 0, so 2.0-alpha and 2.0-beta
-    would collapse into one version and two genuinely different prereleases
-    would be reported as no experiment at all.
-
-    The v guard checks that a digit follows, so a release actually named vNext
-    is left alone.
-    """
-    s = str(v).strip()
-    if s[:1] in ("v", "V") and s[1:2].isdigit():
-        s = s[1:]
-    parts = s.split(".")
-    while len(parts) > 1 and parts[-1] in ("0", ""):
-        parts.pop()
-    return ".".join(parts)
-
-
-def version_key(v):
-    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only to
-    decide whether the arms look inverted, never who wins: a non-numeric
-    component reads as 0, which is fine for refusing to score and not fine for
-    scoring.
-
-    Derived from the canonical form so the two cannot disagree. They did: v1.2
-    keyed to (0, 2) against 1.2's (1, 2), and the gate reported the arms as
-    inverted for one release spelled two ways — a confidently wrong diagnosis
-    pointing at the flags, which were not the problem. Deriving it also settles
-    1.2.0 vs 1.2, which keyed unequal and could trip the same test.
-    """
-    return tuple(int(p) if p.isdigit() else 0
-                 for p in version_canon(v).split("."))
-
-
-# Every "is this even an experiment?" test compares CANONICAL versions. Comparing
-# the raw strings let 1.2 and 1.2.0 read as two different versions, and the gate
-# returned ADOPT for a comparison of a release against itself — finding 32's
-# mirror, a positive verdict out of a non-experiment.
-t_canon = {version_canon(v) for v in t_versions}
-c_canon = {version_canon(v) for v in c_versions}
-
 # The scored run is each repo's FIRST attributed curation, and that never moves.
-# Six releases on, this table still reports experiment 1's arms — `wave b: 1.3`
-# against `wave a: 1.2` — off rows written in August, with nothing saying those
-# versions are spent. That is the failure #168 raises against the roster's
-# wave:/pair: annotations, a reader taking an annotation as describing reality,
-# sitting in the script instead. wave:/pair: are rollout order now, not a version
+# Six releases on, this table still reports experiment 1's arms — 1.3 against
+# 1.2 — off rows written in August, with nothing saying those versions are
+# spent. That is the failure #168 raises against the roster's wave:/pair:
+# annotations, a reader taking an annotation as describing reality, sitting in
+# the script instead. wave:/pair: are rollout order now, not a version
 # assignment (#118/#168): nothing has ever held an arm at a version, because
 # .skills/skills-pin is installed in none of the twelve and a pin could not label
 # a scored run anyway — the cadence writes baseline:scheduled and classify_run()
@@ -983,9 +1190,11 @@ c_canon = {version_canon(v) for v in c_versions}
 # historical and the notice names both.
 #
 # Roster-wide, not arm-wide, and the notice says "these ledgers" to match: a repo
-# carrying no wave: annotation still evidences that the cohort has moved on, and
-# narrowing this to the arms would let an unwaved member run six versions ahead
-# with the table claiming to be current.
+# outside the two versions still evidences that the cohort has moved on, and
+# narrowing this to the arms would let such a member run six versions ahead with
+# the table claiming to be current. Roster-wide in FACT only since #194 — the
+# shell used to divert an out-of-arm entry before its ledger was ever fetched,
+# so the rows this wants to see were the ones it could not see.
 ledger_versions = {r.get("skill_version") for info in repos.values()
                    for r in info["rows"] if r.get("skill_version")}
 # sorted() first: max() returns the FIRST maximal element, and set iteration order
@@ -999,24 +1208,61 @@ arms_are_historical = bool(
     and version_key(newest_in_ledgers) > max(map(version_key, scored_versions)))
 
 
-# In experiment 1 wave A adopted first and held the OLDER version, so that run
-# needs `--treatment b --control a` — and running the script bare inverts it,
-# turning a winning change into a losing one. Which wave holds which version is
-# now an observation rather than an assignment (#118/#168), so the direction is
-# detected from the rows rather than assumed from the flags.
-inverted = bool(t_versions and c_versions
-                and max(map(version_key, t_versions))
-                < min(map(version_key, c_versions)))
+# Name the OLDER version as the treatment and a winning change reads as a losing
+# one. In experiment 1 wave A adopted first and held the older version, which is
+# how the bare invocation used to invert the comparison; there is no bare
+# invocation now, but a caller can still type the two versions in the wrong
+# order.
+#
+# Read straight off the flags since #194. It used to be inferred from the rows —
+# the only place the direction could be found while the flags named waves — and
+# the two agree, because the arms now carry exactly the versions the flags name.
+#
+# Asked only when both versions HAVE a numeric leading component. version_key is
+# lossy by design — every non-numeric component reads as 0 — so a release named
+# vNext keys to (0,) and compares older than every numbered release. That is a
+# false inversion whose message points at the flags, which are not the problem —
+# the same shape version_key's own docstring records being fixed for v1.2 vs
+# 1.2, arriving from the other side. No numeric lead means no opinion about
+# order; the ordering exists to refuse, and it cannot refuse on a comparison it
+# cannot make.
+def has_numeric_lead(v):
+    return version_canon(v).split(".")[0].isdigit()
 
 
-def attributed(wave):
+comparable = has_numeric_lead(treatment) and has_numeric_lead(control)
+inverted = comparable and version_key(treatment) < version_key(control)
+
+# `--treatment b --control a` is what every doc and six months of history told a
+# reader to type, and until #194 it was correct. It now names two versions that
+# no row carries, so the arms come out empty and the run reports INCONCLUSIVE —
+# which reads as "the experiment ran and found nothing" rather than as a
+# mistyped invocation. The roster is what disambiguates: if the value is a wave
+# name in this very cohort file, say so.
+roster_waves = {r["wave"] for r in records if r["wave"]}
+mistaken_waves = sorted({v for v in (treatment, control) if v in roster_waves})
+wave_name_hint = [
+    f"`{'` and `'.join(mistaken_waves)}` "
+    f"{'name waves' if len(mistaken_waves) > 1 else 'names a wave'} in this "
+    "roster, not versions. Since #194 --treatment/--control name the two "
+    "VERSIONS being compared — the arm a repo is in is the skill_version on "
+    "its own scored row. Re-run naming versions, or cite the registration "
+    "with --experiment NN"
+] if mistaken_waves else []
+
+
+def attributed(which):
     """Records with a scored run — the only rows that could carry the metric.
 
     A repo with no attributed curation has not failed to record the field; it
     has not been curated. Counting it as a null would let one un-run repo
     declare the whole arm blind.
+
+    Arm membership already implies a scored version, so the `skill_version`
+    test that used to sit beside the wave test is now redundant rather than
+    dropped: arm_of() returns None without one.
     """
-    return [r for r in records if r["wave"] == wave and r["skill_version"]]
+    return [r for r in records if r["arm"] == which]
 
 
 # Null across the WHOLE control arm, and present somewhere in the treatment arm.
@@ -1024,9 +1270,9 @@ def attributed(wave):
 # instrument, it is a metric this gate cannot read at all — the branch below.
 instrument_only = bool(
     experiment and metric != "closure"
-    and attributed(control)
-    and all(r["metric_raw"] is None for r in attributed(control))
-    and any(r["metric_raw"] is not None for r in attributed(treatment)))
+    and attributed("control")
+    and all(r["metric_raw"] is None for r in attributed("control"))
+    and any(r["metric_raw"] is not None for r in attributed("treatment")))
 
 # Recorded on NO scored row anywhere. The registered metric is not a field the
 # ledger carries — a derived rate (`truthfulness` is a share of scheduled rows,
@@ -1037,9 +1283,9 @@ instrument_only = bool(
 # this gate exists to stop producing.
 unreadable_metric = bool(
     experiment and metric != "closure" and not instrument_only
-    and (attributed(treatment) or attributed(control))
+    and (attributed("treatment") or attributed("control"))
     and all(r["metric_raw"] is None
-            for r in attributed(treatment) + attributed(control)))
+            for r in attributed("treatment") + attributed("control")))
 
 # Order matters, and it is the opposite of the obvious one. Every question of
 # the form "is this even an experiment?" is asked BEFORE any verdict that would
@@ -1049,81 +1295,65 @@ unreadable_metric = bool(
 # proposal at all, is the worst single output this script can produce. Treatment
 # safety failures are still printed in the body whatever the verdict, so nothing
 # is masked by the reordering.
+#
+# Two of these questions moved to the FRONT with #194, because they stopped
+# being questions about the rows. While the flags named waves, "are these the
+# arms the registration named?" and "are they the right way round?" could only
+# be answered by looking at what turned up in the arms — so an empty arm hid
+# both. Now they are answerable from the invocation alone, and asking them first
+# means a run mislabelled AND short of data reports the mislabelling, which is
+# the fault the reader can act on.
 verdict, code, reasons = None, 0, []
 inversion_is_the_verdict = False
-if not t_versions:
+if (experiment
+        and (T_CANON != version_canon(experiment["treatment_version"])
+             or C_CANON != version_canon(experiment["control_version"]))):
+    # A registration for 1.4-over-1.3 scored against 1.3-over-1.2 is not a weak
+    # verdict but a verdict about a different comparison — and the reason a
+    # registration is worth having is that this is checkable at all. It compares
+    # the FLAGS to the registration now; before #194 the flags were waves and
+    # there was nothing on this side of it to compare.
     verdict, code = "INCONCLUSIVE", 5
-    reasons.append(f"no attributed curation run in the treatment arm (wave "
-                   f"{treatment}) yet — nothing has been measured to compare")
-elif not c_versions:
-    # The symmetric case, and the EXPECTED intermediate state during the first
-    # experiment: wave B adopts the proposal before wave A has re-run. Without
-    # this branch it fell through to "no informative pairs", which is true and
-    # sends the reader to look at pair scoring instead of at adoption progress.
-    verdict, code = "INCONCLUSIVE", 5
-    reasons.append(f"no attributed curation run in the control arm (wave "
-                   f"{control}) yet — the treatment has nothing to be compared "
-                   "against. Expected while the arms are still catching up")
-elif len(t_canon) > 1 or len(c_canon) > 1:
-    # "Adopt only if strictly better" presumes ONE proposal. An arm split across
-    # versions names no coherent change, and a sweep could be carried by
-    # whichever version happened to draw the easier pairs.
-    #
-    # Ahead of the inverted-arms test on purpose: an arm that is not internally
-    # coherent cannot meaningfully be called older or newer than the other, and
-    # reporting inversion first walked the reader through two diagnoses — swap
-    # the flags, hit the split — to reach one problem.
-    verdict, code = "INCONCLUSIVE", 5
-    split = t_by_version if len(t_canon) > 1 else c_by_version
-    which = treatment if len(t_canon) > 1 else control
     reasons.append(
-        f"wave {which} is split across versions, so there is no single change to "
-        "adopt: "
-        + "; ".join(f"{v} ({', '.join(sorted(split[v]))})" for v in sorted(split))
-        + " — bring the arm onto one version and re-score")
-elif t_canon == c_canon:
-    verdict, code = "INCONCLUSIVE", 5
-    spelling = ""
-    if set(t_versions) != set(c_versions):
-        spelling = (f" — recorded as {', '.join(t_versions)} and "
-                    f"{', '.join(c_versions)}, which canonicalise to the same "
-                    "release; worth making the spelling uniform")
-    reasons.append(f"both arms ran the same version ({', '.join(sorted(t_canon))})"
-                   f"{spelling}; this is a baseline, not a comparison")
-    if t_failures:
-        # Real, and worth acting on, but it is a finding about the shipped
-        # version rather than grounds to reject a proposal that does not exist.
-        reasons.append("a safety gate did trip under that version — see the "
-                       "treatment-arm failures above; that is a finding about "
-                       "what is shipped, not a rejection of anything proposed")
+        f"registration {experiment['experiment']} "
+        f"({experiment['file']}) is for treatment "
+        f"{experiment['treatment_version']} over control "
+        f"{experiment['control_version']}, but this run was asked for "
+        f"{treatment} over {control} — that is not the experiment that was "
+        "registered, so nothing here bears on it")
 elif inverted:
     # Detection alone was not enough: the WARN printed at the top and the verdict
     # then rejected the winning change and told the reader to file it as refuted,
     # twenty lines below the warning saying not to trust the result.
     inversion_is_the_verdict = True
     verdict, code = "INCONCLUSIVE", 5
-    reasons.append(f"the arms look inverted — wave {treatment} carries only "
-                   f"older versions ({', '.join(t_versions)}) than wave "
-                   f"{control} ({', '.join(c_versions)}). Re-run with "
-                   f"--treatment {control} --control {treatment}; as scored "
-                   "here a winning change reads as a losing one")
-elif experiment and (t_canon != {version_canon(experiment["treatment_version"])}
-                     or c_canon != {version_canon(experiment["control_version"])}):
-    # The last "is this even an experiment?" test, and it belongs with them: a
-    # registration for 1.4-over-1.3 scored against 1.3-over-1.2 is not a weak
-    # verdict but a verdict about a different comparison — and the reason a
-    # registration is worth having is that this is now checkable at all.
-    # Ahead of the REJECT branch, because writing the wrong change into
-    # rejected-changes.md is the worst output this script can produce.
+    reasons.append(f"the versions are named in the wrong order — the treatment "
+                   f"{treatment} is OLDER than the control {control}. Re-run "
+                   f"with --treatment {control} --control {treatment}; as "
+                   "scored here a winning change reads as a losing one")
+elif not t_versions:
     verdict, code = "INCONCLUSIVE", 5
-    reasons.append(
-        f"registration {experiment['experiment']} "
-        f"({experiment['file']}) is for treatment "
-        f"{experiment['treatment_version']} over control "
-        f"{experiment['control_version']}, but these arms carry "
-        f"{', '.join(t_versions)} over {', '.join(c_versions)} — the rows in "
-        "front of this run are not the experiment that was registered, so "
-        "nothing here bears on it")
+    reasons.append(f"no scored run carries the treatment version {treatment} "
+                   "yet — nothing has been measured to compare")
+    reasons.extend(wave_name_hint)
+elif not c_versions:
+    # The symmetric case, and the EXPECTED intermediate state during the first
+    # experiment: half the cohort adopts the proposal before the other half has
+    # re-run. Without this branch it fell through to "no informative pairs",
+    # which is true and sends the reader to look at pair scoring instead of at
+    # adoption progress.
+    verdict, code = "INCONCLUSIVE", 5
+    reasons.append(f"no scored run carries the control version {control} yet — "
+                   "the treatment has nothing to be compared against. Expected "
+                   "while the cohort is still catching up")
+    reasons.extend(wave_name_hint)
+# Two branches used to sit here and are gone with #194, because the states they
+# diagnosed are now unreachable rather than undetected. "An arm is split across
+# versions" cannot happen when the arm IS a version — a repo on some third
+# version leaves the arm instead, and is reported under "not in either arm".
+# "Both arms ran the same version" cannot happen either: the two versions come
+# off the command line and canonicalising them equal is refused up front, as a
+# usage error rather than as a verdict about the rows.
 elif t_failures:
     verdict, code = "REJECT", 3
     # Named in the body rather than enumerated twice. The body block is what
@@ -1193,7 +1423,7 @@ elif instrument_only:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(
         f"the registered primary metric `{metric}` is null on every "
-        f"control-arm row (wave {control}) — this proposal added its own "
+        f"control-arm row (version {control}) — this proposal added its own "
         "instrument and cannot be judged by it")
     reasons.append(
         "a proposal aimed at a defect class the row cannot see yet should add "
@@ -1242,20 +1472,22 @@ else:
         verdict, code = "REJECT", 3
         reasons.append(shortfall)
 
-# Only when inversion is what actually stopped the run. A split arm also trips
-# the older-than test — an incoherent arm compares older than anything — and
-# printing both banners walks the reader through two diagnoses for one problem.
+# Only when inversion is what actually stopped the run — an empty arm is
+# diagnosed first, and printing both banners would walk the reader through two
+# diagnoses for one problem.
 inversion_warning = (
-    f"WARN wave {treatment} carries only older versions than wave {control} "
-    f"({', '.join(t_versions)} vs {', '.join(c_versions)}). The arms look "
-    f"inverted: the arm carrying the proposal is the treatment, so re-run with "
-    f"--treatment {control} --control {treatment}. As scored here, a winning "
-    f"change reads as a losing one."
+    f"WARN --treatment {treatment} is OLDER than --control {control}. The arm "
+    f"carrying the proposal is the treatment, so re-run with --treatment "
+    f"{control} --control {treatment}. As scored here, a winning change reads "
+    f"as a losing one."
 ) if inversion_is_the_verdict else None
 
 if fmt == "json":
     print(json.dumps({
-        "treatment_wave": treatment, "control_wave": control,
+        # The two versions that DEFINE the arms, as asked for. Distinct from the
+        # plural keys below, which are how those versions were actually spelled
+        # on the rows — one canonical release, possibly several spellings.
+        "treatment_version": treatment, "control_version": control,
         "treatment_versions": t_versions, "control_versions": c_versions,
         "repos": records, "pairs": pairs,
         "informative_pairs": len(informative), "treatment_wins": len(wins),
@@ -1280,7 +1512,12 @@ if fmt == "json":
         "control_arm_failures": [r["repo"] for r in c_failures],
         "control_arm_unverified": [r["repo"] for r in c_unverified],
         "arms_may_be_inverted": inverted,
-        "out_of_arm": [{"entry": k, "wave": w or None} for k, w in out_of_arm],
+        # Records now, not roster lines: what puts a repo here is the version on
+        # its own scored row matching neither arm — or its having no scored run
+        # at all — rather than a `wave:` value the flags did not name.
+        "out_of_arm": [{"entry": r["entry"], "repo": r["repo"],
+                        "wave": r["wave"] or None,
+                        "skill_version": r["skill_version"]} for r in no_arm],
     }, indent=2))
     sys.exit(code)
 
@@ -1314,9 +1551,27 @@ def metric_cell(r):
     return "-" if v is None else (f"{v:g}" if isinstance(v, float) else str(v))
 
 
+def arm_header(label, version, by_version):
+    """One arm: the version that defines it, and who is in it.
+
+    The membership is what changed and so it is what the header shows. Printing
+    the versions alone made sense while the arm was a wave and its version was
+    the observation; now the version is the arm, and `treatment 1.3: 1.3` would
+    say nothing at all. A spelling note rides along when a row records the same
+    release differently, which the arm absorbs but a reader diffing two runs
+    should still see.
+    """
+    if not by_version:
+        return f"{label} {version}: no attributed runs"
+    members = ", ".join(sorted(r for v in by_version for r in by_version[v]))
+    spellings = sorted(by_version)
+    note = "" if spellings == [version] else f" (recorded as {', '.join(spellings)})"
+    return f"{label} {version}{note}: {members}"
+
+
 w = max([len(r["repo"]) for r in records] + [4])
-print(f"treatment wave {treatment}: {', '.join(t_versions) or 'no attributed runs'}")
-print(f"control   wave {control}: {', '.join(c_versions) or 'no attributed runs'}")
+print(arm_header("treatment", treatment, t_by_version))
+print(arm_header("control  ", control, c_by_version))
 # Named before the table rather than after it. Which metric produced these
 # numbers is the first thing a reader needs, and a registration cited by path is
 # a registration whose history they can go and check.
@@ -1339,9 +1594,9 @@ if arms_are_historical:
           f"first attributed\n"
           f"     curation, which never moves, and these ledgers already carry "
           f"{newest_in_ledgers}. This is\n"
-          f"     the experiment that ran, not the cohort as it is now. "
-          f"wave:/pair: are rollout\n"
-          f"     order, not a version assignment in force (#168).")
+          f"     the experiment that ran, not the cohort as it is now. The arm "
+          f"is the version on\n"
+          f"     each scored row; wave:/pair: are rollout order (#168/#194).")
 if inversion_warning:
     print()
     print(inversion_warning)
@@ -1412,11 +1667,18 @@ if multi:
 unassigned = [r for r in records if not r["pair"]]
 if unassigned:
     print("not in any pair: "
-          + ", ".join(f"{r['repo']} (wave {r['wave']})" for r in unassigned))
-if out_of_arm:
-    print(f"not in either arm (wave is neither {treatment} nor {control}): "
-          + ", ".join(f"{k} (wave {w or 'unassigned'})" for k, w in out_of_arm))
-if unassigned or out_of_arm:
+          + ", ".join(f"{r['repo']} ({r['arm'] or 'in neither arm'})"
+                      for r in unassigned))
+if no_arm:
+    # Reported, never dropped. The roll-up refuses to skip a repo silently on the
+    # principle that missing telemetry is itself the finding, and a gate that
+    # quietly shrinks its own sample is worse. What lands here changed with #194
+    # — a run on some third version rather than a typo'd wave: — and the reason
+    # is printed per repo, because "neither arm" is now a fact about the ledger.
+    print(f"not in either arm (skill_version is neither {treatment} nor "
+          f"{control}): "
+          + ", ".join(f"{r['repo']} ({why_no_arm(r)})" for r in no_arm))
+if unassigned or no_arm:
     print()
 # Printed whatever the verdict, so that reordering the verdict checks — which
 # put "is this even an experiment?" ahead of any REJECT — cannot mask a real
