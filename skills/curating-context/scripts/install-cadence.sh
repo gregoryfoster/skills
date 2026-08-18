@@ -259,12 +259,33 @@ has_attr() {
 # about. Empty is treated as missing: `git config merge.ours.driver ""` exits 0
 # and defines a key with no command, which git then fails the merge on.
 #
-# -C "$ROOT" is not decoration. In a linked worktree a bare `git config` still
-# writes the shared config of the main checkout, and this script is routinely
-# run from a worktree; anchoring every git call to the root it already resolved
-# keeps the read and the later write talking about the same repo (#189).
+# `env -u GIT_DIR -u GIT_WORK_TREE` is load-bearing, and it is the only reason
+# this is a function rather than two inline `git config` calls.
+#
+# This is the first thing in this script that WRITES anything outside the
+# working tree, so it is the first that can escape the repo it was pointed at.
+# An inherited GIT_DIR beats -C: git resolves the config file from GIT_DIR and
+# ignores the directory entirely. Git exports GIT_DIR to every hook process, and
+# from a LINKED WORKTREE it is absolute — so a run under a pre-commit hook, or
+# any test harness that forgets to scrub the environment, reads and writes the
+# SHARED .git/config of the main checkout while `--check` reports on some other
+# directory's .gitattributes. Observed doing exactly that: the structural suite
+# set merge.ours.driver in this repo's real config from a temp-directory
+# fixture. Stripping both vars makes -C authoritative, and a directory that is
+# not a repo then fails loudly instead of writing somewhere else (#189, #192).
+git_config() {
+  env -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" config "$@"
+}
+
+# Whatever `ours` currently resolves to in this repo, empty if nothing does.
+#
+# `--get` searches system, global and local, and any of the three protects the
+# repo — a cohort that sets the driver in ~/.gitconfig is correct, and telling
+# it to re-run would be a false alarm to match the false assurance #192 is
+# about. Empty is treated as missing: `git config merge.ours.driver ""` exits 0
+# and defines a key with no command, which git then fails the merge on.
 driver_value() {
-  git -C "$ROOT" config --get "$DRIVER_KEY" 2>/dev/null || true
+  git_config --get "$DRIVER_KEY" 2>/dev/null || true
 }
 
 # Every path the rendered workflow stages, paired with the attribute that keeps
@@ -468,9 +489,10 @@ ensure_driver() {
   # opened read-only) leaves exactly the state this issue is about — attributes
   # present, driver absent, everything looking installed — and swallowing it
   # would rebuild the false assurance one layer down.
-  git -C "$ROOT" config --local "$DRIVER_KEY" "$DRIVER_VALUE" || {
-    echo "ERROR could not set $DRIVER_KEY — the calibration attributes this" >&2
-    echo "      installer just wrote are INERT until it is set:" >&2
+  git_config --local "$DRIVER_KEY" "$DRIVER_VALUE" || {
+    echo "ERROR could not set $DRIVER_KEY in $ROOT — the calibration" >&2
+    echo "      attributes this installer just wrote are INERT until it is" >&2
+    echo "      set:" >&2
     echo "        $DRIVER_FIX" >&2
     exit 4; }
   echo "set git config: $DRIVER_KEY=$DRIVER_VALUE (this clone only)"

@@ -238,6 +238,61 @@ class TestTheInstallerDefinesTheDriver:
         assert _driver(repo) == "true"
 
 
+class TestTheWriteCannotEscapeTheRepoItWasPointedAt:
+    """Setting the driver is the first thing this installer writes outside the
+    working tree, and it escaped on the first run.
+
+    An inherited GIT_DIR beats `-C` and beats `cwd`: git resolves the config
+    file from GIT_DIR and ignores the directory. Git exports GIT_DIR to every
+    hook process, and from a linked worktree it is absolute — so the structural
+    suite, run under pre-commit, set `merge.ours.driver` in this repo's own
+    `.git/config` from a test whose subject was a temp directory. The
+    `.gitattributes` half never had this failure mode because it is a plain file
+    path under `$ROOT`; config is addressed by environment, not by path.
+
+    Same class as #189, one write later.
+    """
+
+    def test_an_inherited_git_dir_does_not_redirect_the_config_write(
+        self, tmp_path: Path
+    ):
+        bystander = _repo(tmp_path, "bystander")
+        target = _repo(tmp_path, "target")
+
+        env = _env()
+        env["GIT_DIR"] = str(
+            _git(bystander, "rev-parse", "--absolute-git-dir").stdout.strip()
+        )
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE)],
+            cwd=str(target), capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _driver(bystander) == "", (
+            "the installer wrote merge.ours.driver into a repo it was never "
+            "pointed at — only GIT_DIR named it:\n" + r.stdout
+        )
+        assert _driver(target) == "true", r.stdout
+
+    def test_check_reports_the_repo_it_was_run_in(self, tmp_path: Path):
+        """The read has the same exposure as the write, and a --check that
+        answers about another repo's config is the false assurance this issue
+        is about, aimed one repo sideways."""
+        elsewhere = _repo(tmp_path, "elsewhere")
+        _git(elsewhere, "config", DRIVER, "true")
+        here = _repo(tmp_path, "here")
+
+        env = _env()
+        env["GIT_DIR"] = str(
+            _git(elsewhere, "rev-parse", "--absolute-git-dir").stdout.strip()
+        )
+        r = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--check"],
+            cwd=str(here), capture_output=True, text=True, env=env, timeout=30,
+        )
+        assert "ours merge driver:  MISSING" in r.stdout, r.stdout
+
+
 class TestCheckReportsTheDriverIndependently:
     """#173's rule, one level down: each guarantee is its own way to lose the
     file, so each gets its own line. Folding the driver into the calibration
