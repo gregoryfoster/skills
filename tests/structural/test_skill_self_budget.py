@@ -193,11 +193,13 @@ SKILL_MD_RATCHETS = {
     # A bootstrap runbook that emits a whole project: pyproject, FastAPI
     # skeleton, structured logging, TDD scaffold, deploy key, systemd unit. Most
     # of the body is literal file content and command sequences, which is why it
-    # tokenizes at 2.32 bytes/token — the densest SKILL.md in the repo, though
+    # tokenizes at 2.35 bytes/token — the densest SKILL.md in the repo, though
     # three of its own reference docs are denser still (2.04 to 2.12). See the
-    # outlier note below. Bound by its EXACT count; its estimate reads 2,284
-    # lower, the worst calibration gap of any SKILL.md.
-    "init-project-fastapi": 17_100,
+    # outlier note below. Bound by its EXACT count; its estimate reads 1,788
+    # lower, the worst calibration gap of any SKILL.md. Came down from 17,100 by
+    # demoting Phases 8, 10, 11 and 16's table into references/ (#190) — an
+    # interim pass at #96's problem, not the redesign the outlier note describes.
+    "init-project-fastapi": 14_750,
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Grew during
     # Batch A of #144 (#107's yield-gate table, #115's two-variant Phase 3).
@@ -995,3 +997,85 @@ class TestCuratingContextsExtraProcedure:
             f"SKILL.md no longer names the {repo_budget:,} it enforces on every "
             "repo's AGENTS.md, so the gap it is carrying has gone unrecorded"
         )
+
+
+class TestTheOfflineFailureQuotesANumber:
+    """#190: the offline gate must hand over a figure, not only a caveat.
+
+    `init-project-fastapi` sat 43 exact tokens under a 17,100 ratchet while the
+    offline reading showed 2,327 of headroom. The same blind spot had already put
+    `init-socraticode` 186 exact tokens over its ratchet on a green suite, a
+    passed pre-commit hook, and a completed code review — because none of those
+    gates measures the reading the ratchet binds, and the estimate is the only
+    number anyone is shown.
+
+    #190 proposed printing the exact margin in the offline failure. That cannot
+    be built as proposed: `.skills/context-token-counts` anchors four paths —
+    `AGENTS.md` and three under `docs/` — and no `skills/*/SKILL.md` among them,
+    so `ctx_est_tokens_for` has no per-file anchor to fall back on and there is
+    no exact figure available offline to print. That absence is also *why* the
+    estimator runs ~12-13% low on this file with no correction available.
+
+    `POLICY_ESTIMATE_BAND` is what does exist offline. An estimate plus the
+    band's permissive edge is a worst case, and a worst case measured against the
+    ratchet is the quotable number the proposal was after — at no API call.
+    """
+
+    SKILL = "init-project-fastapi"
+
+    def test_the_worst_case_inverts_the_band_rather_than_adding_it(self):
+        """The band bounds the estimator's error, so solve for the truth.
+
+        The estimate is `exact * (1 + err)` for some `err` in the band, so the
+        largest exact reading the band still permits is `estimate / (1 + low)`.
+        Multiplying by `(1 + high)` would answer a different question — how high
+        the ESTIMATE could read for a known exact — and understates the worst
+        case at every input, which is the one direction this number must not err.
+        """
+        low, high = POLICY_ESTIMATE_BAND
+        # The figure #190 was filed over: 14,773 estimated, 17,057 exact.
+        assert worst_case_exact(14_773) == round(14_773 / (1 + low)) == 17_380
+        assert worst_case_exact(14_773) > round(14_773 * (1 + high))
+
+    def test_the_failure_quotes_the_estimate_the_worst_case_and_the_ratchet(self):
+        """All three, because any two of them leave the reader doing arithmetic."""
+        estimate = 12_942
+        message = estimate_caveat(self.SKILL, estimate)
+        for figure in (
+            f"{estimate:,}",
+            f"{worst_case_exact(estimate):,}",
+            f"{ratchet_for(self.SKILL):,}",
+        ):
+            assert figure in message, (
+                f"the offline failure never quotes {figure}, so a reader still "
+                "has to run the credential-gated command to learn where they are"
+            )
+
+    def test_a_worst_case_over_the_ratchet_says_the_file_may_be_over(self):
+        """The whole point: an estimate that looks green while the file is red."""
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + 100
+        assert estimate < ratchet, "the estimate must still read green offline"
+        assert worst_case_exact(estimate) > ratchet
+        assert "may already be over" in estimate_caveat(self.SKILL, estimate)
+
+    def test_a_worst_case_under_the_ratchet_does_not_cry_wolf(self):
+        """A warning on every failure is a warning nobody reads."""
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) - 100
+        assert worst_case_exact(estimate) <= ratchet
+        assert "may already be over" not in estimate_caveat(self.SKILL, estimate)
+
+    def test_the_caveat_still_serves_a_caller_with_no_policy_estimate(self):
+        """The per-doc failure has no policy estimate, and must not borrow one.
+
+        `test_every_reference_doc_is_within_the_per_doc_budget` fails about doc
+        rows, which `DOC_ESTIMATE_BAND` describes and `POLICY_ESTIMATE_BAND` does
+        not. Quoting a SKILL.md worst case there would be a number about the
+        wrong population, so that call site passes no estimate and gets the prose
+        caveat alone.
+        """
+        message = estimate_caveat(self.SKILL)
+        assert "worst case" not in message
+        assert "OFFLINE ESTIMATE" in message
+        assert exact_cmd(self.SKILL) in message
