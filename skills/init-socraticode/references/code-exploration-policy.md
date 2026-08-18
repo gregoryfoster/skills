@@ -156,18 +156,44 @@ context.
 The org convention (archiver, power-map, usa-wa, observo) is a **script-file
 hook**: the echo lives in `.claude/hooks/socraticode-reminder.sh`, referenced
 from settings.json. This keeps the ~600-char `select:` string out of
-JSON-escaping and makes later edits a plain shell-file change. Standardize on
-this form.
+JSON-escaping and makes later edits a plain shell-file change upstream.
+Standardize on this form.
 
-**Step A — write the reminder script** at `.claude/hooks/socraticode-reminder.sh`
-(create if absent; overwrite in place if present — it carries no per-project
-state):
+**Step A — install the reminder script** at `.claude/hooks/socraticode-reminder.sh`.
+Do **not** retype it: **symlink** the vendored
+[`../scripts/socraticode-reminder.sh`](../scripts/socraticode-reminder.sh),
+relative and derived from the vendor directory actually found rather than a
+hand-substituted `<owner>-<repo>`:
 
 ```bash
-#!/usr/bin/env bash
-# socraticode-prefetch
-echo 'socraticode-prefetch: SocratiCode codebase_* tools are deferred. Before broad code exploration, run ToolSearch "select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search" to load their schemas. Prefer codebase_search over grep for semantic questions.'
+for d in skills-vendor/*/skills/init-socraticode/scripts; do
+  [ -f "$d/socraticode-reminder.sh" ] || continue
+  mkdir -p .claude/hooks
+  ln -sfn "../../$d/socraticode-reminder.sh" .claude/hooks/socraticode-reminder.sh
+  break
+done
 ```
+
+Step C below installs the health hook with the same loop and one constant
+changed, deliberately — both hooks land in the same `.claude/hooks/` of the same
+consumer and must not be installed by opposite mechanisms. `ln -sfn` replaces an
+existing regular file in place, so a re-run upgrades a legacy consumer from its
+hand-typed copy without a separate step.
+
+**Fallback — copy when there is nothing to link to.** A consumer with no
+`skills-vendor/` tree: copy the vendored script to that path and `chmod +x`
+instead (overwrite in place — it carries no per-project state). Say which of the
+two you did in Phase 6's completion table.
+
+Until [#186](https://github.com/gregoryfoster/skills/issues/186) this hook had no
+source file at all — it was rendered from prose in *this* document, so every
+consumer's copy was whatever the installing agent typed that day. That is worse
+than the copy [#179](https://github.com/gregoryfoster/skills/issues/179)
+rejected, which at least starts as a byte-for-byte snapshot of a known version,
+and it carries the identical justification: "it carries no per-project state" is
+the argument *for* the symlink. `.skills/doctor.sh` scans `.claude/hooks/*` for
+dangling symlinks ([#99](https://github.com/gregoryfoster/skills/issues/99)), so
+a symlinked hook self-heals on the next preflight and a copy never can.
 
 **Step B — merge the hook into `.claude/settings.json`** (create if absent).
 If a `hooks.SessionStart` array already exists, append this entry to it;
@@ -218,7 +244,7 @@ prior verbatim re-run), remove the extras and keep a single canonical entry.
 This is a targeted upgrade, not a clobber: it propagates the
 `${CLAUDE_PROJECT_DIR:-.}` fallback to existing sibling installs on re-run — and
 collapses any prior duplication — which a skip-only dedupe would leave stranded
-on the old, erroring command. (Step A has already written the script the
+on the old, erroring command. (Step A has already installed the script the
 canonical command points at.)
 
 **Step C — install the once-per-day health hook.** **Symlink**
@@ -237,9 +263,10 @@ for d in skills-vendor/*/skills/init-socraticode/scripts; do
 done
 ```
 
-`managing-skills` installs its sibling refresh hook exactly this way, and both
-hooks land in the same `.claude/hooks/` of the same consumer — they must not be
-installed by opposite mechanisms. A **copy** freezes at whatever version was
+`managing-skills` installs its sibling refresh hook exactly this way, and all
+three — that one, Step A's reminder, and this — land in the same
+`.claude/hooks/` of the same consumer, so they must not be installed by opposite
+mechanisms. A **copy** freezes at whatever version was
 current the day it was installed and drifts silently thereafter; `.skills/doctor.sh`
 scans that directory for *dangling symlinks*, so a copy is a perfectly valid
 regular file it can never see. This hook is the worst candidate for that: it is
