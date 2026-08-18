@@ -202,25 +202,36 @@ def _heredoc_body_lines(path: Path) -> set[int]:
 
 def _swallowed_state_writes(path: Path):
     """Truncating writes, outside a pipeline and outside a heredoc, whose
-    failure is discarded by `|| true`."""
+    failure is discarded by `|| true`.
+
+    EVERY redirect on the line is judged, not just the first. Deciding on the
+    first let an earlier discard speak for a later write:
+
+        cmd >/dev/null 2>&1 && printf x >"$STATE" || true
+
+    matched at `>/dev/null`, the discard rule fired, and the real state write
+    was never reached. One line's worth of `>` is not one verdict — a line is
+    clean only when none of its redirects is an unchecked state write.
+    """
     heredoc = _heredoc_body_lines(path)
     out = []
     for lineno, joined, _head, preamble in _logical_lines(path):
-        m = TRUNCATING_REDIRECT.search(joined)
-        if not m:
-            continue
-        redirect_on = joined[m.start():]
-        if not SWALLOWED.search(redirect_on):
+        if not TRUNCATING_REDIRECT.search(joined):
             continue
         if EXEMPT_MARKER in joined or EXEMPT_MARKER in preamble:
             continue          # named, at the line, with a reason
         if SINGLE_PIPE.search(joined):
             continue          # the status is the last command's, not the write's
-        if DISCARD.match(redirect_on):
-            continue          # output discarded, not stored
         if lineno in heredoc:
             continue          # emitted text, not code this script runs
-        out.append((lineno, joined))
+        for m in TRUNCATING_REDIRECT.finditer(joined):
+            redirect_on = joined[m.start():]
+            if DISCARD.match(redirect_on):
+                continue      # this one discards output; keep looking
+            if not SWALLOWED.search(redirect_on):
+                continue      # nothing swallows this one's failure
+            out.append((lineno, joined))
+            break
     return out
 
 
@@ -323,6 +334,19 @@ def test_a_colon_with_a_redirect_is_a_real_handler(tmp_path: Path):
 def test_a_discard_is_not_a_state_write(tmp_path: Path):
     s = tmp_path / "quiet.sh"
     s.write_text('command -v node >/dev/null || true\n')
+    assert _swallowed_state_writes(s) == []
+
+
+def test_a_discard_does_not_speak_for_a_later_write_on_the_same_line(
+        tmp_path: Path):
+    """The rule judged only the FIRST redirect, so `>/dev/null` earlier on the
+    line answered for a real state write later on it. `command -v x >/dev/null`
+    is common enough to sit next to one."""
+    s = tmp_path / "shadow.sh"
+    s.write_text('cmd >/dev/null 2>&1 && printf x >"$STATE" || true\n')
+    assert [n for n, _ in _swallowed_state_writes(s)] == [1]
+    # …and a line whose only redirect is the discard stays clean.
+    s.write_text('cmd >/dev/null 2>&1 || true\n')
     assert _swallowed_state_writes(s) == []
 
 

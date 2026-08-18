@@ -487,6 +487,76 @@ EOF
   exit 1
 fi
 
+# One definition of what a version IS, written out for both passes below to
+# import. The literal `--treatment X --control X` check lives in the shell,
+# where it costs nothing; this is the SPELLINGS half — 1.2 against v1.2.0 — and
+# it used to sit in the scorer, which runs after twelve gh round-trips. Same
+# objection the registration parser above answers: a usage error that takes a
+# minute to arrive trains the caller to skip the check. Hoisting it needed
+# version_canon here, and a bash reimplementation would be a second opinion
+# about what one release is — so the function moves to a file both import
+# instead of being copied.
+cat >"$TMP/versionlib.py" <<'PY'
+def version_canon(v):
+    """One version, one spelling: 1.2, 1.2.0 and v1.2 are the same release.
+
+    Two cosmetic differences are normalised away and no others: a leading v, and
+    trailing zero components. Deliberately NOT the numeric key below, which is
+    lossy — it maps every non-numeric component to 0, so 2.0-alpha and 2.0-beta
+    would collapse into one version and two genuinely different prereleases
+    would be reported as no experiment at all.
+
+    The v guard checks that a digit follows, so a release actually named vNext
+    is left alone.
+    """
+    s = str(v).strip()
+    if s[:1] in ("v", "V") and s[1:2].isdigit():
+        s = s[1:]
+    parts = s.split(".")
+    while len(parts) > 1 and parts[-1] in ("0", ""):
+        parts.pop()
+    return ".".join(parts)
+
+
+def version_key(v):
+    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only to
+    decide whether the versions were named in the wrong order, never who wins: a
+    non-numeric component reads as 0, which is fine for refusing to score and
+    not fine for scoring.
+
+    Derived from the canonical form so the two cannot disagree. They did: v1.2
+    keyed to (0, 2) against 1.2's (1, 2), and the gate reported the arms as
+    inverted for one release spelled two ways — a confidently wrong diagnosis
+    pointing at the flags, which were not the problem. Deriving it also settles
+    1.2.0 vs 1.2, which keyed unequal and could trip the same test.
+    """
+    return tuple(int(p) if p.isdigit() else 0
+                 for p in version_canon(v).split("."))
+PY
+
+python3 - "$TMP" "$TREATMENT" "$CONTROL" <<'PY' || exit 1
+import sys
+
+tmp, treatment, control = sys.argv[1:4]
+sys.path.insert(0, tmp)
+from versionlib import version_canon        # noqa: E402
+
+canon = version_canon(treatment)
+if canon != version_canon(control):
+    sys.exit(0)
+# A usage error rather than a verdict, and that is the change #194 made: before
+# it, the arms were the roster's and the versions were whatever turned up, so
+# "both arms ran the same version" was an observation about the rows. Now the
+# versions ARE the arms, and no ledger can make one release into an experiment.
+print(f"ERROR --treatment {treatment} and --control {control} canonicalise to "
+      f"the same release ({canon}).", file=sys.stderr)
+print("      1.2, v1.2 and 1.2.0 are one version. A release compared against "
+      "itself is a", file=sys.stderr)
+print("      baseline, not an experiment — name the two versions the proposal "
+      "sits between.", file=sys.stderr)
+sys.exit(1)
+PY
+
 [ -f "$COHORT_FILE" ] || {
   echo "ERROR no cohort file at $COHORT_FILE" >&2; exit 1; }
 
@@ -564,6 +634,7 @@ RC=0
 python3 - "$TMP/all.jsonl" "$TREATMENT" "$CONTROL" "$MIN_PAIRS" "$FORMAT" \
          "$TMP/experiment.json" "$MIN_PAIRS_SET" <<'PY' || RC=$?
 import json
+import os
 import sys
 
 src, treatment, control, min_pairs, fmt, exp_src, min_pairs_set = sys.argv[1:8]
@@ -587,65 +658,19 @@ if experiment:
                  else experiment["min_pairs"])
 
 
-def version_canon(v):
-    """One version, one spelling: 1.2, 1.2.0 and v1.2 are the same release.
-
-    Two cosmetic differences are normalised away and no others: a leading v, and
-    trailing zero components. Deliberately NOT the numeric key below, which is
-    lossy — it maps every non-numeric component to 0, so 2.0-alpha and 2.0-beta
-    would collapse into one version and two genuinely different prereleases
-    would be reported as no experiment at all.
-
-    The v guard checks that a digit follows, so a release actually named vNext
-    is left alone.
-    """
-    s = str(v).strip()
-    if s[:1] in ("v", "V") and s[1:2].isdigit():
-        s = s[1:]
-    parts = s.split(".")
-    while len(parts) > 1 and parts[-1] in ("0", ""):
-        parts.pop()
-    return ".".join(parts)
-
-
-def version_key(v):
-    """Numeric components as a tuple, so 1.10 sorts ABOVE 1.9. Used only to
-    decide whether the versions were named in the wrong order, never who wins: a
-    non-numeric component reads as 0, which is fine for refusing to score and
-    not fine for scoring.
-
-    Derived from the canonical form so the two cannot disagree. They did: v1.2
-    keyed to (0, 2) against 1.2's (1, 2), and the gate reported the arms as
-    inverted for one release spelled two ways — a confidently wrong diagnosis
-    pointing at the flags, which were not the problem. Deriving it also settles
-    1.2.0 vs 1.2, which keyed unequal and could trip the same test.
-    """
-    return tuple(int(p) if p.isdigit() else 0
-                 for p in version_canon(v).split("."))
-
-
 # The two arms, as the two versions that define them (#194). Canonical, so one
 # release spelled two ways is one arm.
+#
+# version_canon/version_key are IMPORTED, not defined here. They used to live in
+# this heredoc, which put the "is this one release spelled twice?" refusal after
+# twelve gh round-trips; hoisting it above the fetch needed the same function in
+# two places, and one definition in a file both import beats two copies that can
+# drift. That refusal has already fired above, so T_CANON != C_CANON here.
+sys.path.insert(0, os.path.dirname(src))
+from versionlib import version_canon, version_key    # noqa: E402
+
 T_CANON = version_canon(treatment)
 C_CANON = version_canon(control)
-
-# A usage error rather than a verdict, and that is the change: before #194 this
-# was an observation about the rows ("both arms ran the same version"), because
-# the arms were the roster's and the versions were whatever turned up. Now the
-# versions ARE the arms, so naming one release twice is a mistyped invocation
-# and no ledger can make it into an experiment.
-#
-# Here rather than in the shell because version_canon lives here, next to the
-# version_key that derives from it. The literal `--treatment X --control X` case
-# is caught up there, before any ledger is fetched; this catches the spellings.
-if T_CANON == C_CANON:
-    print(f"ERROR --treatment {treatment} and --control {control} canonicalise "
-          f"to the same release ({T_CANON}).", file=sys.stderr)
-    print("      1.2, v1.2 and 1.2.0 are one version. A release compared "
-          "against itself is a", file=sys.stderr)
-    print("      baseline, not an experiment — name the two versions the "
-          "proposal sits between.", file=sys.stderr)
-    sys.exit(1)
 
 
 def arm_of(rec):
@@ -1071,10 +1096,14 @@ SYSTEMIC_HINTS = {
 #
 # That second case narrows this check, deliberately. "Every repo in both arms is
 # unscorable for one reason" can now only be inferred from repos that got far
-# enough to record a version — no_before_state, untagged_run and method_changed,
-# which is exactly the set SYSTEMIC_HINTS covers, #116's case included. A cohort
-# where nobody has curated at all no longer reaches here and does not need to:
-# the empty-arm branches below say so in plainer words than a GATE DEFECT would.
+# enough to record a version: no_before_state, untagged_run, method_changed and
+# missing_counts. SYSTEMIC_HINTS covers the first three — #116's case included —
+# and NOT missing_counts, which is a gap rather than a boundary: a cohort
+# systematically missing token counts would be diagnosed with no hint attached.
+# `.get` degrades to no hint rather than raising, so add one when it is earned.
+# A cohort where nobody has curated at all no longer reaches here and does not
+# need to: the empty-arm branches below say so in plainer words than a GATE
+# DEFECT would.
 arm_records = [r for r in records if r["arm"]]
 no_arm = [r for r in records if r["arm"] is None]
 # "No repo in either arm can satisfy this rule" is an inference from BREADTH, and
@@ -1188,7 +1217,38 @@ arms_are_historical = bool(
 # Read straight off the flags since #194. It used to be inferred from the rows —
 # the only place the direction could be found while the flags named waves — and
 # the two agree, because the arms now carry exactly the versions the flags name.
-inverted = version_key(treatment) < version_key(control)
+#
+# Asked only when both versions HAVE a numeric leading component. version_key is
+# lossy by design — every non-numeric component reads as 0 — so a release named
+# vNext keys to (0,) and compares older than every numbered release. That is a
+# false inversion whose message points at the flags, which are not the problem —
+# the same shape version_key's own docstring records being fixed for v1.2 vs
+# 1.2, arriving from the other side. No numeric lead means no opinion about
+# order; the ordering exists to refuse, and it cannot refuse on a comparison it
+# cannot make.
+def has_numeric_lead(v):
+    return version_canon(v).split(".")[0].isdigit()
+
+
+comparable = has_numeric_lead(treatment) and has_numeric_lead(control)
+inverted = comparable and version_key(treatment) < version_key(control)
+
+# `--treatment b --control a` is what every doc and six months of history told a
+# reader to type, and until #194 it was correct. It now names two versions that
+# no row carries, so the arms come out empty and the run reports INCONCLUSIVE —
+# which reads as "the experiment ran and found nothing" rather than as a
+# mistyped invocation. The roster is what disambiguates: if the value is a wave
+# name in this very cohort file, say so.
+roster_waves = {r["wave"] for r in records if r["wave"]}
+mistaken_waves = sorted({v for v in (treatment, control) if v in roster_waves})
+wave_name_hint = [
+    f"`{'` and `'.join(mistaken_waves)}` "
+    f"{'name waves' if len(mistaken_waves) > 1 else 'names a wave'} in this "
+    "roster, not versions. Since #194 --treatment/--control name the two "
+    "VERSIONS being compared — the arm a repo is in is the skill_version on "
+    "its own scored row. Re-run naming versions, or cite the registration "
+    "with --experiment NN"
+] if mistaken_waves else []
 
 
 def attributed(which):
@@ -1275,6 +1335,7 @@ elif not t_versions:
     verdict, code = "INCONCLUSIVE", 5
     reasons.append(f"no scored run carries the treatment version {treatment} "
                    "yet — nothing has been measured to compare")
+    reasons.extend(wave_name_hint)
 elif not c_versions:
     # The symmetric case, and the EXPECTED intermediate state during the first
     # experiment: half the cohort adopts the proposal before the other half has
@@ -1285,6 +1346,7 @@ elif not c_versions:
     reasons.append(f"no scored run carries the control version {control} yet — "
                    "the treatment has nothing to be compared against. Expected "
                    "while the cohort is still catching up")
+    reasons.extend(wave_name_hint)
 # Two branches used to sit here and are gone with #194, because the states they
 # diagnosed are now unreachable rather than undetected. "An arm is split across
 # versions" cannot happen when the arm IS a version — a repo on some third

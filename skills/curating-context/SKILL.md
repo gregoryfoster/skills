@@ -325,7 +325,10 @@ attributed to a *skill* change and not just a repo one, plus `repo_commit` —
 which state of *this* tree the row describes, and where the next scheduled seam
 sweep starts. Bump the frontmatter `version` whenever a change would plausibly
 alter what a run does — an unbumped version makes the cohort look uniform when
-it isn't.
+it isn't. **What a run does, not what reads the rows afterwards**: changing
+`score-cohort.sh` or `cohort-report.sh` alters no curation, and since #194 the
+version *is* the arm, so bumping for a gate change would move every future row
+into a new arm to record a change no row experienced.
 
 Commit the ledger with the edits, on a branch, and open a PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated

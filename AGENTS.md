@@ -114,7 +114,12 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - Use `set -euo pipefail` in bash scripts
 - A write through a temp file must be checked — `set -e` exempts the first element
   of an `&&` list — and a success message must sit inside the branch that succeeded
-  ([#181](https://github.com/gregoryfoster/skills/issues/181))
+  ([#181](https://github.com/gregoryfoster/skills/issues/181)). Same family, second
+  spelling: `> "$F" || true` discards the failure of a write something later reads
+  back, so it shows up as state that never changed rather than as an error
+  ([#193](https://github.com/gregoryfoster/skills/issues/193)). Both are gated by
+  `test_checked_temp_writes.py`; a deliberate one is allowed but must say so, with
+  `# unchecked-write-ok: <reason>` on the line or just above it
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it

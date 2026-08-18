@@ -366,6 +366,40 @@ class TestTheFlagsNameVersions:
         assert "--treatment 1.3 --control 1.2" in r.stdout
         assert "verdict: REJECT" not in r.stdout
 
+    def test_a_wave_name_in_the_flags_is_named_as_one(self, tmp_path: Path):
+        """`--treatment b --control a` is what every doc said to type until
+        #194, and it still runs: `b` and `a` are simply versions no row
+        carries, so both arms come out empty and the verdict is INCONCLUSIVE —
+        which reads as an experiment that found nothing rather than as a
+        mistyped invocation. The roster is what disambiguates."""
+        spec = _three_pairs(tmp_path)
+        r = _score(_roster(tmp_path, spec), "--treatment", "b", "--control", "a")
+        assert r.returncode == 5, r.stdout
+        assert "names a wave in this roster" in r.stdout or \
+               "name waves in this roster" in r.stdout, r.stdout
+        assert "--experiment NN" in r.stdout
+
+    def test_two_real_versions_draw_no_wave_hint(self, tmp_path: Path):
+        """The hint keys on the roster's own `wave:` values, so it must stay
+        silent for a comparison that merely has nothing measured yet."""
+        spec = _three_pairs(tmp_path)
+        r = _score(_roster(tmp_path, spec), "--treatment", "9.9",
+                   "--control", "9.8")
+        assert "in this roster, not versions" not in r.stdout, r.stdout
+
+    def test_a_non_numeric_version_draws_no_inversion_claim(
+            self, tmp_path: Path):
+        """version_key maps every non-numeric component to 0, so `vNext` keys
+        to (0,) and compares older than every numbered release. Reported as an
+        inversion it is a confident diagnosis pointing at flags that are not
+        the problem — the same shape as the v1.2-vs-1.2 defect, from the other
+        side. No numeric lead, no opinion about order."""
+        spec = _three_pairs(tmp_path)
+        r = _score(_roster(tmp_path, spec), "--treatment", "vNext",
+                   "--control", "1.3")
+        assert "OLDER than" not in r.stdout, r.stdout
+        assert "verdict: REJECT" not in r.stdout
+
     def test_the_help_calls_them_versions(self):
         r = subprocess.run(["bash", str(SCORE), "--help"],
                            capture_output=True, text=True, timeout=30)

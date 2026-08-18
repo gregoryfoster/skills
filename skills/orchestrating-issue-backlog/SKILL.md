@@ -241,7 +241,7 @@ Report the issue number.
 
 After the plan is approved and committed, capture this session's adjustments: rubric weights the user changed (document the new formula), standard questions skipped or reordered (note why), surprises the conflict analysis surfaced (record the pattern), and rubric dimensions that proved inadequate for this project type (flag for skill revision).
 
-**Where to capture them.** Write a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in the index that is [`references/process-log.md`](references/process-log.md). The log is the default destination — it preserves chronology and session-specific context. Promote a pattern into the body of this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the body now carries the load.
+**Where to capture them.** Write a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in that year's own `index.md` beside it — the layout rules are in [`references/process-log.md`](references/process-log.md). The log is the default destination — it preserves chronology and session-specific context. Promote a pattern into the body of this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the body now carries the load.
 
 ---
 

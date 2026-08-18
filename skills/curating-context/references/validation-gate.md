@@ -18,8 +18,14 @@ all 52 cells.
 cannot manufacture, and it is the only reason this gate is buildable here.
 
 ```bash
-bash "<SKILL_SCRIPTS>/score-cohort.sh" --treatment b --control a
+bash "<SKILL_SCRIPTS>/score-cohort.sh" --experiment NN
 ```
+
+The flags name the two **versions** being compared, and `--experiment NN` supplies
+them from the registration that already records both. Spelling them out —
+`--treatment 1.3 --control 1.2` — does the same thing without citing a
+registration. There is no default: naming the comparison is what makes it one
+([#194](https://github.com/gregoryfoster/skills/issues/194)).
 
 Exit 0 adopt, 3 reject, 5 inconclusive. The script reports; it never writes and
 never adopts. [rejected-changes.md](rejected-changes.md) is where a rejection
@@ -76,8 +82,9 @@ Three details decide whether that run is scored at all:
 ## Staging, and which arm is which
 
 In experiment 1 wave A adopted first and wave B took the proposed version, so
-**wave A held the older one and that run inverts the script's defaults:
-`--treatment b --control a`.** Written in the past tense on purpose — see below.
+**wave A held the older one** — and while the flags named waves, the script's
+defaults scored that run backwards. Written in the past tense on purpose: the
+flags name versions now, and there are no defaults left to invert.
 
 > **Superseded after experiment 1.** This describes how the first experiment was
 > staged, and it worked — the arms came out version-clean. It does not describe
@@ -102,21 +109,29 @@ In experiment 1 wave A adopted first and wave B took the proposed version, so
 > not an experiment uses it.
 
 Getting the direction backwards turns a winning change into a losing one, so the
-gate detects it: when the treatment arm's versions are all *older* than the
-control's, it prints a `WARN` naming the inversion and the flags that fix it —
-**and returns INCONCLUSIVE rather than a rejection.** Detection alone was not
-enough: the first implementation warned at the top and rejected the winning
-change twenty lines below.
+gate detects it: when the version named as the treatment is *older* than the one
+named as the control, it prints a `WARN` naming the inversion and the flags that
+fix it — **and returns INCONCLUSIVE rather than a rejection.** Detection alone was
+not enough: the first implementation warned at the top and rejected the winning
+change twenty lines below. Read off the flags since #194, where it used to be
+inferred from the rows; the two agree, because the arms now carry exactly the
+versions the flags name.
 
 Comparison is by numeric component, not by string — `1.10` is newer than `1.9`
 and sorts below it lexically. That ordering decides only whether to *stop*, never
 who wins: a non-numeric component reads as zero, which is fine for refusing to
-score and not fine for scoring.
+score and not fine for scoring. And where neither version leads with a number,
+the question is not asked at all — a release named `vNext` keys to zero and would
+otherwise compare older than everything, producing a confident inversion warning
+about flags that are not the problem.
 
-The verdict also refuses when **either arm is split across versions**. "Adopt
-only if strictly better" presumes one proposal; an arm running two names no
-coherent change. That test runs *before* the inversion one, because an arm that
-is not internally coherent compares older than anything.
+An arm can no longer be **split across versions**, and both arms can no longer be
+**on one version**. "Adopt only if strictly better" presumes one proposal, and
+both states named one that did not exist — but since #194 they are ruled out by
+construction rather than diagnosed after the fact. The arm *is* the version, so a
+repo on some third version leaves the arm and is reported under "not in either
+arm"; and naming one release for both flags is refused up front as a usage error,
+before any ledger is read.
 
 Every "is this even an experiment?" test compares **canonical** versions, where
 `1.2` and `1.2.0` are one release. Comparing the raw strings made them two, and
