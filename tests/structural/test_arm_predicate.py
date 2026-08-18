@@ -96,9 +96,11 @@ def _two_pairs(root: Path, later: str | None = None) -> Path:
 
 
 def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
+    """The flags name VERSIONS (#194) — 1.3 over 1.2 here. The `wave:` values in
+    the roster are rollout order and no longer decide anything."""
     return subprocess.run(
         ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "b", "--control", "a", *args],
+         "--treatment", "1.3", "--control", "1.2", *args],
         capture_output=True, text=True, env=_clean_env(), timeout=60,
     )
 
