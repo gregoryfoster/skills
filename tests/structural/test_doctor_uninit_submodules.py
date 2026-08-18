@@ -238,6 +238,21 @@ class TestDoctorHealsTheHalfHealedCheckout:
             "--check-only is contractually non-mutating and it initialized"
         )
 
+    def test_an_uninitialized_submodule_alone_is_not_an_exit_code(self, half_healed):
+        """Reported, never fatal — in either mode.
+
+        Verified by execution: with `submodule.<name>.update = none`,
+        `git submodule update --init --recursive` registers the path, prints
+        "Skipping submodule", exits 0, and leaves `git submodule status`
+        showing '-' permanently. This repo's own refresh hook names
+        `update = none` as what operators reach for to hold a vendored skill
+        still, so failing on the residue would block every Phase 1 preflight
+        in such a consumer forever — over a checkout whose symlinks all
+        resolve and whose skills are all reachable.
+        """
+        assert _doctor(half_healed, "--check-only").returncode == 0
+        assert _doctor(half_healed).returncode == 0
+
     def test_heal_initializes_but_never_refreshes(self, tmp_path: Path):
         """#100's pin filter. Initializing a pinned submodule is fine —
         `--init` checks out the recorded gitlink, which is what a pin holds.
@@ -258,9 +273,10 @@ class TestDoctorHealsTheHalfHealedCheckout:
         assert content == "v1\n", (
             "the doctor advanced a pointer instead of only initializing it"
         )
-        assert _git(repo, "status", "--porcelain").stdout.strip() == "", (
-            "the doctor left the superproject dirty"
-        )
+        # Scoped to the submodule: the fixture's skills/demo symlink is
+        # deliberately uncommitted, so a whole-repo status is never clean.
+        dirty = _git(repo, "status", "--porcelain", "--", SUBMODULE_PATH).stdout
+        assert dirty.strip() == "", f"the doctor left a staged pointer move: {dirty}"
 
     def test_healthy_checkout_stays_on_the_silent_fast_path(self, tmp_path: Path):
         repo = _consumer(tmp_path, _upstream(tmp_path))
