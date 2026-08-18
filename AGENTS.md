@@ -138,7 +138,10 @@ Three conventions here carry a full template and a rationale, and live in
 - **A repo-creating git command must scrub `GIT_DIR`.** An inherited `GIT_DIR`
   overrides `git -C` and cwd, and git exports it to every hook — so a test
   fixture's throwaway repo writes to the real one
-  ([#189](https://github.com/gregoryfoster/skills/issues/189)).
+  ([#189](https://github.com/gregoryfoster/skills/issues/189)). Its sibling
+  proposal `extensions.worktreeConfig` was measured and **refused**: it does not
+  redirect a worktree's `--local`, and the variant that would have masks the
+  corruption instead of stopping it.
 
 - **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a SKILL.md —
   the agent's cwd is the *project* root, so a bare relative path resolves to a file
@@ -280,6 +283,6 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 
 ## Detail Docs
 
-- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, the gate-script rules for `pre-ship.sh` / `doc-check.sh`, and why a repo-creating git command must scrub `GIT_DIR`
+- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, the gate-script rules for `pre-ship.sh` / `doc-check.sh`, why a repo-creating git command must scrub `GIT_DIR`, and the measurements behind refusing `extensions.worktreeConfig`
 - [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the three `.skills/` resolution knobs
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery
