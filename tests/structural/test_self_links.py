@@ -13,18 +13,26 @@ cannot is one somebody switches off:
 
 - **A fragment makes it a within-document jump.** `[both](budget-and-metrics.md
   #measuring-tokens)` inside `budget-and-metrics.md` is a table of contents entry,
-  not a loop. Three of the eleven self-links in this tree are these.
+  not a loop.
 - **A verbatim quotation keeps its pointer.** The demotion convention preserves
   `SKILL.md`'s wording under a heading that says so — "in full", "as Phase 7 puts
   it" — and `test_demoted_blocks.py` pins those blocks character for character.
   Rewriting the link inside one would falsify the quotation and break that test.
-  Four of the eleven are these.
 
-That leaves four real ones, all in `curating-context`. Sites outside this agent's
-line windows are inventoried rather than fixed, because editing another agent's
-file to satisfy a gate is how two branches end up disagreeing. The inventory
-exempts a *site*, never a file: the docs holding known debris stay under the
-gate, so a self-link written into one tomorrow still fails.
+No count of either kind is written here. #196 inherited "eleven self-links, three
+fragments, four quotations, four real ones" from the survey that opened the work,
+and by the time the last two were assigned the tree held nine — the census had
+aged out from underneath the prose while every claim in it still read as current.
+A total in a docstring is the same defect this module exists to catch, one file
+up. Run the tests to count.
+
+Every real one found was in `curating-context`, and all four are now fixed
+(`telemetry.md`, `validation-gate.md`, then `cadence.md` and
+`write-guard-hook.md` under #196). Sites outside a batch agent's line windows
+were inventoried rather than fixed, because editing another agent's file to
+satisfy a gate is how two branches end up disagreeing. The inventory exempts a
+*site*, never a file: the docs holding known debris stayed under the gate, so a
+self-link written into one tomorrow still fails.
 """
 
 from __future__ import annotations
@@ -43,25 +51,25 @@ QUOTATION_MARKERS = ("in full", "as phase", "carried it", "puts it", "states the
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)#\s]+)(#[^)\s]*)?\)")
 
-# Known debris this agent does not own, each with the exact link text and who
-# owns it. An entry that is FIXED must be deleted from here — `test_no_stale_entries`
-# fails otherwise, so the inventory can only shrink. It is deliberately not a
-# permanent exemption: the defect is real at every one of these sites.
+# Known debris the agent running the gate does not own, each with the exact link
+# text and who owns it. An entry that is FIXED must be deleted from here —
+# `test_no_stale_entries` fails otherwise, so the inventory can only shrink. It
+# is deliberately not a permanent exemption: the defect is real at every site
+# listed, and listing it is a promise to come back.
+#
+# **It is empty, and that is the terminal state, not a disused mechanism.** The
+# last two entries — `cadence.md` and `write-guard-hook.md`, held for want of an
+# owner rather than for difficulty — left with their sites under #196. Keep the
+# machinery: the next batch that finds debris in a file it may not edit needs
+# somewhere to put it that a later batch is forced to clear.
 #
 # Keyed by link text rather than by file, and that is the whole point. A
-# file-level skip would exempt these three docs from the gate entirely, so the
-# NEXT self-link written into one of them would ship unseen — an inventory that
-# grows silent coverage gaps is worse than no inventory. Line numbers would be
-# the obvious key and are the wrong one: they move under every edit, and a
-# stale number reads as a fixed site.
-NOT_MINE_TO_FIX = {
-    "curating-context/references/cadence.md":
-        ("[references/cadence.md](cadence.md)",
-         "read-only this batch — changed in batch A/B (#128, #169)"),
-    "curating-context/references/write-guard-hook.md":
-        ("[references/write-guard-hook.md](write-guard-hook.md)",
-         "unassigned in this batch; no agent owns the file"),
-}
+# file-level skip would exempt a whole doc from the gate, so the NEXT self-link
+# written into it would ship unseen — an inventory that grows silent coverage
+# gaps is worse than no inventory. Line numbers would be the obvious key and are
+# the wrong one: they move under every edit, and a stale number reads as a fixed
+# site. #196 shipped with the line number 40 lines out for exactly that reason.
+NOT_MINE_TO_FIX: dict[str, tuple[str, str]] = {}
 
 
 def _self_links(md: Path) -> list[tuple[int, str]]:
