@@ -87,7 +87,7 @@ Every `shipping-work*/scripts/pre-ship.sh` carries this as a commented `# --- Pr
 
 **An inherited `GIT_DIR` overrides both `git -C <path>` and the process cwd.** Git resolves the config file and the repository from `GIT_DIR` and ignores the directory entirely — so `git -C "$tmpdir" config …` writes to whatever `GIT_DIR` names, not to `$tmpdir`.
 
-This is not hypothetical here. **Git exports `GIT_DIR` to every hook process**, and from a linked worktree it is absolute, pointing at the shared git dir. So under a pre-commit hook, a test's throwaway-repo fixture addresses the *main checkout*. During [#199](https://github.com/gregoryfoster/skills/issues/199)'s Batch A this put `merge.ours.driver` into the real repo's config from a temp-directory fixture, and it is the mechanism behind the `core.bare = true` corruption of [#189](https://github.com/gregoryfoster/skills/issues/189) — five occurrences, none attributed, because every reviewer was checking for a missing `-C`.
+This is not hypothetical here. **Git exports `GIT_DIR` to every hook process**, and from a linked worktree it is absolute, pointing at the shared git dir. So under a pre-commit hook, a test's throwaway-repo fixture addresses the *main checkout*. During [#199](https://github.com/gregoryfoster/skills/issues/199)'s Batch A this put `merge.ours.driver` into the real repo's config from a temp-directory fixture, and it is the mechanism behind the `core.bare = true` corruption of [#189](https://github.com/gregoryfoster/skills/issues/189) — twice in one four-agent batch, neither attributed, because every reviewer was checking for a missing `-C`.
 
 The rule, for any script or test that creates or configures a repository:
 
