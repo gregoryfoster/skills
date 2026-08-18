@@ -1276,9 +1276,13 @@ def _roster(root: Path, spec: list[tuple[str, str, str]]) -> Path:
 
 
 def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
+    """The flags name VERSIONS, not waves (#194) — the fixtures' 1.2 treatment
+    over their 1.1 control. Which arm a repo lands in is the skill_version on
+    its own scored row, so the `wave:` values `_roster` writes are rollout order
+    and score nothing."""
     return subprocess.run(
         ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "b", "--control", "a", *args],
+         "--treatment", "1.2", "--control", "1.1", *args],
         capture_output=True, text=True, env=_clean_env(), timeout=60,
     )
 
@@ -1409,7 +1413,13 @@ class TestValidationGate:
 
     def test_same_version_in_both_arms_is_inconclusive(self, tmp_path: Path):
         """A uniform cohort is a baseline, not a comparison — and must not read
-        as a rejection of the thing it never tested."""
+        as a rejection of the thing it never tested.
+
+        Since #194 the arm IS the version, so a cohort uniformly on 1.1 cannot
+        put anything in a 1.2 treatment arm: the state is reported as an empty
+        treatment arm rather than as two arms that happened to match. Naming ONE
+        release for both flags is the other half of the same guarantee and is a
+        usage error — see test_same_version_for_both_arms_is_a_usage_error."""
         pairs = [(52000, 12000, 49000, 20000), (28000, 8000, 26000, 12000),
                  (19000, 7000, 14000, 9000)]
         spec = []
@@ -1419,7 +1429,8 @@ class TestValidationGate:
             spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
         r = _score(_roster(tmp_path, spec))
         assert r.returncode == 5, r.stdout
-        assert "both arms ran the same version" in r.stdout
+        assert "no scored run carries the treatment version 1.2" in r.stdout
+        assert "verdict: REJECT" not in r.stdout
 
     def test_inconclusive_is_not_filed_as_a_rejection(self, tmp_path: Path):
         """Recording a non-result in rejected-changes.md would teach a later
@@ -1448,24 +1459,29 @@ class TestValidationGate:
 
     def test_unannotated_roster_refuses_rather_than_reporting_nothing(
             self, tmp_path: Path):
-        """An empty comparison must not read as an experiment that found nothing."""
+        """An empty comparison must not read as an experiment that found nothing.
+
+        What the roster has to carry is `pair:` (#194). The arms come off each
+        row's skill_version now, so `wave:` is rollout order and a roster
+        carrying nothing but waves describes no comparison at all."""
         path = tmp_path / "cohort"
         path.write_text("CannObserv/archiver\nCannObserv/notifier\n")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file", str(path)],
+            ["bash", str(SCORE), "--cohort-file", str(path),
+             "--treatment", "1.2", "--control", "1.1"],
             capture_output=True, text=True, env=_clean_env(), timeout=30,
         )
         assert r.returncode == 1
-        assert "no wave assignment" in r.stderr
+        assert "no pair: assignment" in r.stderr
         assert "wave:a pair:1" in r.stderr
 
-    def test_same_wave_for_both_arms_is_a_usage_error(self, tmp_path: Path):
+    def test_same_version_for_both_arms_is_a_usage_error(self, tmp_path: Path):
         r = subprocess.run(
-            ["bash", str(SCORE), "--treatment", "a", "--control", "a"],
+            ["bash", str(SCORE), "--treatment", "1.2", "--control", "1.2"],
             capture_output=True, text=True, env=_clean_env(), timeout=30,
         )
         assert r.returncode == 1
-        assert "same wave" in r.stderr
+        assert "same version" in r.stderr
 
     def test_json_format_carries_the_verdict_and_the_pairs(self, tmp_path: Path):
         r = _score(_three_good_pairs(tmp_path), "--format", "json")
@@ -1661,9 +1677,15 @@ class TestValidationGateRoundSix:
         assert "not a failure" in r.stdout
         assert "control-arm safety failures" not in r.stdout
 
-    def test_arm_split_across_versions_is_refused(self, tmp_path: Path):
-        """'Adopt only if strictly better' presumes ONE proposal. A sweep could
-        otherwise be carried by whichever version drew the easier pairs."""
+    def test_an_arm_can_no_longer_be_split_across_versions(self, tmp_path: Path):
+        """'Adopt only if strictly better' presumes ONE proposal, and a sweep
+        carried by whichever version drew the easier pairs would not be one.
+
+        Diagnosed after the fact while the arm was a wave; ruled out by
+        construction since #194, because the arm IS the version. The repo on the
+        third version leaves the arm instead of splitting it, and the pair it was
+        carrying stops being a comparison — which is the same refusal, reached
+        without needing to notice the split."""
         for i, (cb, ca, tb, ta) in enumerate(
                 [(50000, 20000, 49000, 12000), (30000, 14000, 29000, 9000)],
                 start=1):
@@ -1671,11 +1693,16 @@ class TestValidationGateRoundSix:
             _arm(tmp_path, f"trt{i}", tb, ta, "1.2" if i == 1 else "1.9")
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1"),
                                       ("ctl2", "a", "2"), ("trt2", "b", "2")]),
-                   "--min-pairs", "2")
+                   "--min-pairs", "2", "--format", "json")
+        payload = json.loads(r.stdout)
         assert r.returncode == 5, r.stdout
-        assert "split across versions" in r.stdout
-        assert "no single change to adopt" in r.stdout
-        assert "verdict: ADOPT" not in r.stdout
+        assert payload["treatment_versions"] == ["1.2"]
+        assert next(x for x in payload["repos"]
+                    if x["repo"] == "trt2")["arm"] is None
+        pair2 = next(p for p in payload["pairs"] if p["pair"] == "2")
+        assert "0 treatment and 1 control" in pair2["why"], pair2
+        assert "trt2 is in neither arm — 1.9" in pair2["why"], pair2
+        assert payload["verdict"] != "ADOPT"
 
     def test_basename_collision_keeps_repos_distinct(self, tmp_path: Path):
         """OrgA/cli and OrgB/cli merged into one record, concatenating two
@@ -1704,9 +1731,9 @@ class TestValidationGateRoundSix:
     def test_inverted_arms_are_detected_and_refuse_to_reject(self, tmp_path: Path):
         """In experiment 1 wave A adopted first and held the OLDER version, so
         running the script bare during that round inverted the comparison. Past
-        tense: a wave never held a version and the arms are read off each row's
-        skill_version now (#168), but an inverted pair of arms is still a state
-        the ledgers can present, and this is what the gate owes when they do.
+        tense twice over: a wave never held a version (#168), and since #194
+        there is no bare invocation — but a caller can still type the two
+        versions in the wrong order, and this is what the gate owes when they do.
 
         Detection alone was not enough: the WARN printed at the top and the
         verdict then rejected the winning change and told the reader to file it
@@ -1717,11 +1744,11 @@ class TestValidationGateRoundSix:
         roster = _three_good_pairs(tmp_path)
         r = subprocess.run(
             ["bash", str(SCORE), "--cohort-file", str(roster),
-             "--treatment", "a", "--control", "b"],
+             "--treatment", "1.1", "--control", "1.2"],
             capture_output=True, text=True, env=_clean_env(), timeout=60,
         )
-        assert "arms look" in r.stdout, r.stdout
-        assert "--treatment b --control a" in r.stdout
+        assert "OLDER than" in r.stdout, r.stdout
+        assert "--treatment 1.2 --control 1.1" in r.stdout
         assert r.returncode == 5
         assert "verdict: INCONCLUSIVE" in r.stdout
         assert "verdict: REJECT" not in r.stdout
@@ -1729,16 +1756,20 @@ class TestValidationGateRoundSix:
 
     def test_correctly_ordered_arms_are_not_warned_about(self, tmp_path: Path):
         r = _score(_three_good_pairs(tmp_path))
-        assert "arms look" not in r.stdout
+        assert "OLDER than" not in r.stdout
 
     def test_version_comparison_is_numeric_not_lexical(self, tmp_path: Path):
         """1.10 is newer than 1.9. A string compare says otherwise, which is
         why the verdict never uses this ordering and the warning does."""
         _arm(tmp_path, "ctl1", 50000, 20000, "1.9")
         _arm(tmp_path, "trt1", 49000, 12000, "1.10")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
-        assert "arms look" not in r.stdout, r.stdout
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file",
+             str(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])),
+             "--treatment", "1.10", "--control", "1.9", "--min-pairs", "1"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert "OLDER than" not in r.stdout, r.stdout
         assert "verdict: ADOPT" in r.stdout
 
     def test_untagged_attributed_run_is_unscorable(self, tmp_path: Path):
@@ -1883,20 +1914,28 @@ class TestValidationGateRoundSeven:
         assert "no attributed curation run for AGENTS.md" in r.stdout, r.stdout
         assert "1 other file(s) in this ledger were not scored" in r.stdout
 
-    def test_same_version_plus_failure_is_not_a_rejection(self, tmp_path: Path):
+    def test_a_failure_with_no_proposal_in_front_of_it_is_not_a_rejection(
+            self, tmp_path: Path):
         """There is no proposal to reject, so the entry would name no change.
         The failure is real and must stay visible — it is a finding about the
-        shipped version, the same distinction drawn for the control arm."""
+        shipped version.
+
+        Read off the versions since #194: both repos ran 1.1, so both are in the
+        CONTROL arm however the roster labels them, the treatment arm is empty,
+        and the failure is reported as what it is — the current version failing.
+        Grouped by wave the same failure was a treatment-arm failure, and only
+        the same-version branch kept it from rejecting a proposal that did not
+        exist."""
         _arm(tmp_path, "ctl1", 52000, 20000, "1.1")
         _arm(tmp_path, "trt1", 49000, 12000, "1.1", no_loss="failed")
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1")
         assert r.returncode == 5, r.stdout
-        assert "both arms ran the same version" in r.stdout
-        assert "not a rejection of anything proposed" in r.stdout
+        assert "no scored run carries the treatment version 1.2" in r.stdout
         assert "record this in references/rejected-changes.md" not in r.stdout
-        # Still visible, not masked by the reordering.
-        assert "treatment-arm safety failures:" in r.stdout
+        # Still visible, and on the side that ran it.
+        assert "control-arm safety failures" in r.stdout
+        assert "not a reason to reject the proposal" in r.stdout
         assert "no_loss=failed" in r.stdout
 
     def test_real_failure_still_rejects_when_there_is_a_proposal(
@@ -1908,25 +1947,28 @@ class TestValidationGateRoundSeven:
         assert "treatment-arm safety failures:" in r.stdout
 
     def test_out_of_arm_entries_are_reported(self, tmp_path: Path):
-        """A typo'd wave: value removed a repo from the experiment with no trace
-        anywhere in the output — a gate that quietly shrinks its own sample."""
+        """A repo that quietly leaves the experiment with no trace anywhere in
+        the output is a gate shrinking its own sample. What puts it out of the
+        arms changed with #194 — a scored run on some third version rather than
+        a typo'd wave: — and the report has to survive the move."""
         roster = _three_good_pairs(tmp_path)
-        _arm(tmp_path, "stray", 9000, 7000, "1.2")
+        _arm(tmp_path, "stray", 9000, 7000, "0.9")
         with roster.open("a") as fh:
-            fh.write(f"{tmp_path / 'stray'}  wave:x pair:9\n")
+            fh.write(f"{tmp_path / 'stray'}  wave:b pair:9\n")
         r = _score(roster)
         assert "not in either arm" in r.stdout, r.stdout
         assert "stray" in r.stdout
-        assert "wave x" in r.stdout
+        assert "0.9" in r.stdout
 
     def test_out_of_arm_appears_in_json(self, tmp_path: Path):
         roster = _three_good_pairs(tmp_path)
-        _arm(tmp_path, "stray", 9000, 7000, "1.2")
+        _arm(tmp_path, "stray", 9000, 7000, "0.9")
         with roster.open("a") as fh:
-            fh.write(f"{tmp_path / 'stray'}  wave:x pair:9\n")
+            fh.write(f"{tmp_path / 'stray'}  wave:b pair:9\n")
         payload = json.loads(_score(roster, "--format", "json").stdout)
         assert payload["out_of_arm"] == [
-            {"entry": str(tmp_path / "stray"), "wave": "x"}]
+            {"entry": str(tmp_path / "stray"), "repo": "stray", "wave": "b",
+             "skill_version": "0.9"}]
 
     def test_duplicate_rows_do_not_shift_the_before_state(self, tmp_path: Path):
         """list.index matches by dict equality, not identity, so a byte-identical
@@ -2009,14 +2051,22 @@ class TestValidationGateRoundEight:
             self, tmp_path: Path):
         """1.2 and 1.2.0 are one release. Comparing the raw strings made them
         two, and the gate returned ADOPT for a release scored against itself —
-        the mirror of adopting on zero evidence."""
+        the mirror of adopting on zero evidence.
+
+        Asked of the FLAGS since #194, and answered before any ledger is read:
+        the two versions define the arms, so naming one release twice is a
+        mistyped invocation rather than a finding about the rows. The
+        canonicalisation being tested is the same one."""
         _arm(tmp_path, "one", 50000, 20000, "1.2")
         _arm(tmp_path, "two", 49000, 12000, "1.2.0")
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
-        assert r.returncode == 5, r.stdout
-        assert "both arms ran the same version" in r.stdout
-        assert "canonicalise to the same release" in r.stdout
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file",
+             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+             "--treatment", "1.2.0", "--control", "1.2", "--min-pairs", "1"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "canonicalise to the same release" in r.stderr
         assert "verdict: ADOPT" not in r.stdout
 
     def test_prereleases_are_not_collapsed_into_one_version(self, tmp_path: Path):
@@ -2025,10 +2075,15 @@ class TestValidationGateRoundEight:
         same version and report two real changes as no experiment at all."""
         _arm(tmp_path, "one", 50000, 20000, "2.0-alpha")
         _arm(tmp_path, "two", 49000, 12000, "2.0-beta")
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
-        assert "both arms ran the same version" not in r.stdout, r.stdout
-        assert "verdict: ADOPT" in r.stdout
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file",
+             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+             "--treatment", "2.0-beta", "--control", "2.0-alpha",
+             "--min-pairs", "1"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert "same release" not in r.stderr, r.stderr
+        assert "verdict: ADOPT" in r.stdout, r.stdout
 
     def test_empty_control_arm_says_so(self, tmp_path: Path):
         """The expected intermediate state during the first experiment: wave B
@@ -2043,23 +2098,32 @@ class TestValidationGateRoundEight:
         r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
                    "--min-pairs", "1")
         assert r.returncode == 5, r.stdout
-        assert "no attributed curation run in the control arm (wave a)" in r.stdout
+        assert "no scored run carries the control version 1.1" in r.stdout
         assert "nothing to be compared against" in r.stdout
 
-    def test_split_arm_is_diagnosed_before_inversion(self, tmp_path: Path):
-        """An arm that is not internally coherent cannot meaningfully be called
-        older than the other. Reporting inversion first walked the reader
-        through two diagnoses — swap the flags, hit the split — for one
-        problem."""
+    def test_a_mixed_cohort_is_diagnosed_repo_by_repo_not_as_an_arm(
+            self, tmp_path: Path):
+        """The state the split-arm diagnosis existed for, under the new rule.
+
+        Four repos on three versions used to produce one arm-level verdict —
+        "wave b is split" — that named a wave and left the reader to work out
+        which repo. Now each repo is placed by its own row: the 1.2 one is the
+        treatment arm, the 1.1 one is the control arm however its wave reads,
+        and the two on 1.3 are in neither and are named as such."""
         _arm(tmp_path, "c1", 50000, 20000, "1.3")
         _arm(tmp_path, "t1", 49000, 12000, "1.1")
         _arm(tmp_path, "c2", 30000, 14000, "1.3")
         _arm(tmp_path, "t2", 29000, 9000, "1.2")
         r = _score(_roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1"),
                                       ("c2", "a", "2"), ("t2", "b", "2")]),
-                   "--min-pairs", "1")
-        assert "split across versions" in r.stdout, r.stdout
-        assert "arms look inverted" not in r.stdout
+                   "--min-pairs", "1", "--format", "json")
+        payload = json.loads(r.stdout)
+        arms = {x["repo"]: x["arm"] for x in payload["repos"]}
+        assert arms == {"c1": None, "c2": None, "t1": "control",
+                        "t2": "treatment"}, arms
+        assert {x["repo"] for x in payload["out_of_arm"]} == {"c1", "c2"}
+        assert "split across versions" not in r.stdout
+        assert "OLDER than" not in r.stdout
 
     def test_scored_file_is_named_when_a_ledger_holds_several(
             self, tmp_path: Path):
@@ -2148,14 +2212,19 @@ class TestValidationGateRoundNine:
             self, tmp_path: Path, a, b):
         """v1.2 keyed to (0, 2) against 1.2's (1, 2), so the gate reported the
         arms as inverted for one release spelled two ways — a confidently wrong
-        diagnosis pointing at the flags, which were not the problem."""
-        _arm(tmp_path, "one", 50000, 20000, a)
-        _arm(tmp_path, "two", 49000, 12000, b)
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
-        assert r.returncode == 5, r.stdout
-        assert "both arms ran the same version" in r.stdout
-        assert "arms look inverted" not in r.stdout
+        diagnosis pointing at the flags, which were not the problem.
+
+        Asked of the flags since #194, and a usage error rather than a verdict:
+        the flags ARE the arms now, so this never reaches the rows."""
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file",
+             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+             "--treatment", b, "--control", a, "--min-pairs", "1"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "same release" in r.stderr
+        assert "OLDER than" not in r.stdout
         assert "verdict: ADOPT" not in r.stdout
 
     def test_a_release_named_vnext_is_left_alone(self, tmp_path: Path):
@@ -2168,9 +2237,14 @@ class TestValidationGateRoundNine:
         assert out.returncode == 0
         _arm(tmp_path, "one", 50000, 20000, "vNext")
         _arm(tmp_path, "two", 49000, 12000, "1.2")
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
-        assert "both arms ran the same version" not in r.stdout, r.stdout
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file",
+             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+             "--treatment", "1.2", "--control", "vNext", "--min-pairs", "1"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        assert "same release" not in r.stderr, r.stderr
+        assert r.returncode != 1, r.stdout + r.stderr
 
     def test_version_ordering_still_works_after_canonicalisation(
             self, tmp_path: Path):
@@ -2178,10 +2252,14 @@ class TestValidationGateRoundNine:
         older/newer test it exists for: 1.10 is still newer than 1.9."""
         _arm(tmp_path, "one", 50000, 20000, "1.10")
         _arm(tmp_path, "two", 49000, 12000, "1.9")
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
-        # Treatment (wave b) is 1.9, control is 1.10 — genuinely inverted.
-        assert "arms look inverted" in r.stdout, r.stdout
+        r = subprocess.run(
+            ["bash", str(SCORE), "--cohort-file",
+             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+             "--treatment", "1.9", "--control", "1.10", "--min-pairs", "1"],
+            capture_output=True, text=True, env=_clean_env(), timeout=60,
+        )
+        # The treatment is 1.9 against a 1.10 control — genuinely backwards.
+        assert "OLDER than" in r.stdout, r.stdout
 
 
 SEAMS = SCRIPTS / "check-seams.sh"
@@ -2850,8 +2928,8 @@ class TestSystematicUnscorable:
     def test_one_shared_reason_is_reported_as_a_gate_defect(self, tmp_path: Path):
         spec = []
         for i in (1, 2, 3):
-            self._no_baseline(tmp_path, f"ctl{i}", "1.2")
-            self._no_baseline(tmp_path, f"trt{i}", "1.3")
+            self._no_baseline(tmp_path, f"ctl{i}", "1.1")
+            self._no_baseline(tmp_path, f"trt{i}", "1.2")
             spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
         r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
         assert r.returncode == 5, r.stdout
@@ -2873,11 +2951,11 @@ class TestSystematicUnscorable:
         this from reading as a defect is the mix of reasons."""
         spec = []
         for i in (1, 2):
-            self._no_baseline(tmp_path, f"ctl{i}", "1.2")
+            self._no_baseline(tmp_path, f"ctl{i}", "1.1")
             spec.append((f"ctl{i}", "a", str(i)))
         # No curation row at all — a different unscorable reason.
-        _arm(tmp_path, "trt1", 49000, None, "1.3")
-        self._no_baseline(tmp_path, "trt2", "1.3")
+        _arm(tmp_path, "trt1", 49000, None, "1.2")
+        self._no_baseline(tmp_path, "trt2", "1.2")
         spec += [("trt1", "b", "1"), ("trt2", "b", "2")]
         r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
         assert "GATE DEFECT" not in r.stdout, r.stdout
@@ -2886,8 +2964,8 @@ class TestSystematicUnscorable:
         """The claim is an inference from BREADTH. At one repo per arm the
         likelier reading is two non-compliant repos, which needs a different fix
         than 'the gate is broken' — so the diagnosis stays off."""
-        self._no_baseline(tmp_path, "ctl1", "1.2")
-        self._no_baseline(tmp_path, "trt1", "1.3")
+        self._no_baseline(tmp_path, "ctl1", "1.1")
+        self._no_baseline(tmp_path, "trt1", "1.2")
         r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
                    "--min-pairs", "1")
         assert r.returncode == 5, r.stdout
@@ -2901,9 +2979,9 @@ class TestSystematicUnscorable:
         evidence the floor exists to refuse."""
         spec = []
         for i in (1, 2, 3):
-            self._no_baseline(tmp_path, f"trt{i}", "1.3")
+            self._no_baseline(tmp_path, f"trt{i}", "1.2")
             spec.append((f"trt{i}", "b", str(i)))
-        self._no_baseline(tmp_path, "ctl1", "1.2")
+        self._no_baseline(tmp_path, "ctl1", "1.1")
         spec.append(("ctl1", "a", "1"))
         r = _score(_roster(tmp_path, spec), "--min-pairs", "1")
         assert "GATE DEFECT" not in r.stdout, r.stdout

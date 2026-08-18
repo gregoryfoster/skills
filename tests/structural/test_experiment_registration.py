@@ -152,9 +152,13 @@ def _register(root: Path, name: str = "02-a-proposal.yml", **over) -> Path:
 
 
 def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
+    """The flags name VERSIONS (#194) — `_cohort`'s 1.3 over its 1.2, which is
+    also what `_register` records. That the two now agree by construction is the
+    point: before #194 the flags named waves and could not be checked against a
+    registration at all."""
     return subprocess.run(
         ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "b", "--control", "a", *args],
+         "--treatment", "1.3", "--control", "1.2", *args],
         capture_output=True, text=True, env=_clean_env(), timeout=60,
     )
 
