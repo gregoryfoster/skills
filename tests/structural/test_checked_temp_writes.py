@@ -45,9 +45,10 @@ ever being re-read for this spelling. Two escapes is the evidence that the
 convention alone does not hold.
 
 The widening this docstring previously rejected was "any write with `|| true`".
-That rejection was correct and still is: re-measured on this tree it reports 16
-sites, 1 of them real. Three exclusions, each naming a mechanism rather than a
-symptom, take it to 16 → 1 with no false positive left:
+That rejection was correct and still is: re-measured on this tree with #193's
+defect still in place, it reports 16 sites, 1 of them real. Three exclusions,
+each naming a mechanism rather than a symptom, take it to 16 → 1 with no false
+positive left:
 
 - **`>>` is not a write, it is an append.** Every one of them here is an audit
   line to `$LOG`, where a lost line costs a breadcrumb and nothing else. Only a
@@ -160,8 +161,11 @@ def _offenders(path: Path):
 # a `->` arrow or `>=`. The target must start like a path or a variable.
 TRUNCATING_REDIRECT = re.compile(r'(?<![0-9&\->=])>(?!>)\s*"?\$?[A-Za-z_./{]')
 
-# The swallow. `:` is `true` spelled shorter and hides the same failure.
-SWALLOWED = re.compile(r"\|\|\s*(?:true|:)(?![\w./-])")
+# The swallow. `:` is `true` spelled shorter and hides the same failure, but
+# only as the WHOLE handler — `|| : >"$TMP/code"` truncates the file on
+# failure, which is a real handler and the opposite of a discard. Anchoring on
+# the end of the list is what tells the two apart (verify-facts.sh:184).
+SWALLOWED = re.compile(r"\|\|\s*(?:true|:)\s*(?:;|#|$)")
 
 # A pipeline — `|` that is not part of `||`. The list's exit status is the last
 # command's, and that command may be entitled to fail (an empty `grep`).
@@ -303,6 +307,17 @@ def test_a_pipeline_is_not_a_state_write(tmp_path: Path):
     s = tmp_path / "pipe.sh"
     s.write_text('grep -oE "#[0-9]+" "$f" | sort -u >"$TMP/issues" || true\n')
     assert _swallowed_state_writes(s) == []
+
+
+def test_a_colon_with_a_redirect_is_a_real_handler(tmp_path: Path):
+    """verify-facts.sh:184. `|| :` alone discards the failure; `|| : >"$F"`
+    empties the file on failure, which is the handler, not the absence of one.
+    Only the bare form is the swallow."""
+    s = tmp_path / "colon.sh"
+    s.write_text('grep -E "$re" "$f" >"$TMP/code" 2>/dev/null || : >"$TMP/code"\n')
+    assert _swallowed_state_writes(s) == []
+    s.write_text('printf x >"$TMP/code" || :\n')
+    assert [n for n, _ in _swallowed_state_writes(s)] == [1]
 
 
 def test_a_discard_is_not_a_state_write(tmp_path: Path):

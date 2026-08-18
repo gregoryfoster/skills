@@ -234,17 +234,39 @@ fi
 # blip) doesn't cause the hook to retry-and-relog on every same-day session.
 # A failure today defers recovery to tomorrow's UTC day; the trade-off
 # preserves the once-per-day invariant for both success and failure.
-date -u +%Y%m%d > "$LOCK" || true
+#
+# Checked, not `|| true` (#193). This one write IS the once-per-day contract:
+# the guard at the top reads nothing else. A read-only or root-owned .git, or
+# a full disk, and the stamp never lands, the guard falls through next session,
+# and the whole refresh runs again — every session, forever, with nothing said.
+# That is the same defect #187 fixed in socraticode-health.sh, the script this
+# file's own pin comment names as its twin; the shape below is copied from it.
+# Reported, never fatal: a SessionStart hook must not block, so a failed stamp
+# degrades to noisier reporting rather than to no session.
+if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
+  _log "could not stamp $LOCK — the once-per-day guard is off until this is fixed"
+  echo "skills update: cannot write $LOCK; this refresh will repeat every session (see $LOG)" >&2
+fi
 
 # Scope the update to the unpinned skills-vendor/ paths — never touch other
 # submodules, and never a pinned one.
 #
 # `--init` is what makes this hook work on a half-healed checkout: content
 # present under skills-vendor/, nothing registered in .git/config. Without it
-# git skips every such submodule, prints "not initialized", and exits **0** —
-# so the guard below passes, no pointer moves, and the lock (stamped above,
-# deliberately) is spent. A consumer sat in that state for days reporting
-# success (#176). `--init` is idempotent on an already-registered submodule,
+# git skips every such submodule and exits **0** — so the guard below passes,
+# no pointer moves, and the lock (stamped above, deliberately) is spent. A
+# consumer sat in that state for days reporting success (#176).
+#
+# How loudly git skips depends on the pathspec, which is worth knowing because
+# both halves show up in this tree's notes. Verified on git 2.39.3: named
+# explicitly — as they are here — each path draws "Submodule path '<p>' not
+# initialized / Maybe you want to use 'update --init'?" on **stderr**; with no
+# pathspec at all git is completely silent. Neither is any use to an operator
+# here, because the `2>&1` below folds that stderr into $LOG, a file nobody
+# reads until something has already gone wrong. Hence `--init` plus the
+# post-condition below, rather than trusting git's own report.
+#
+# `--init` is idempotent on an already-registered submodule,
 # and it stays behind the pin filter because a pinned path was already removed
 # from UPDATE_PATHS — a held submodule is neither initialized nor refreshed.
 #
