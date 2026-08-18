@@ -255,15 +255,17 @@ paths meet the new message.** A red there is an interaction, not one agent's def
 
 **`orchestrating-issue-backlog/SKILL.md` is read-only for all fourteen workers.** 149
 estimated tokens against its ratchet, and the ratchet binds the estimate for this file.
-Two things want it and both are orchestrator work after Batch D:
 
-- #183's deliberately-deferred correction. `SKILL.md:82` reads *"Nine sessions across
-  four projects"*; with the replicator session and this one it is **eleven across
-  five**, and the shared service was the ceiling in eight of eleven.
-- Whatever Step 10 promotes from this session.
+#183's deferred correction is **resolved before Batch A, and it freed margin rather
+than spending it.** `SKILL.md:82` maintained a running tally — *"Nine sessions across
+four projects have found the real ceiling in sub-question 2"* — duplicated in the
+Process Logs pointer. The count was wrong by two and would be wrong again next session;
+it was also never the load-bearing part. Both copies are gone, replaced by the rule
+alone plus one clause on the template false positive. A hand-maintained counter in a
+runbook is a maintenance liability disguised as evidence.
 
-Both need an offsetting trim, which is a deliberate edit and not a drive-by at the end
-of an orchestration. #183 was right to flag rather than do it.
+Anything Step 10 promotes later still needs its own offsetting trim, and remains
+orchestrator work after Batch D rather than a drive-by.
 
 **This session's own Step 10 entry must land after B2's split**, or it appends to a
 layout that no longer exists. B2 is also the sole appender to the index during the
