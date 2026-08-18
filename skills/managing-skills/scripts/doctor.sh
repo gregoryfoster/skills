@@ -15,6 +15,16 @@
 # attempts a `git submodule update --init --recursive` if any dangle, and
 # prints a clear actionable error if self-healing fails.
 #
+# A dangling symlink is not the only way the vendor chain breaks, and for a
+# long time it was the only one this script could see (issue #185). "Every
+# symlink resolves" was standing in for "the submodules are healthy", and the
+# two come apart in the state issue #176 was found in: vendored content still
+# on disk from an earlier checkout, .git/config carrying no submodule.*
+# entries. Every symlink resolves, so the doctor exited 0 before reaching its
+# own init and the checkout stayed half-healed indefinitely — one consumer sat
+# there for days. So the heal has a second trigger: any skills-vendor/
+# submodule `git submodule status` still prefixes with '-'.
+#
 # .claude/hooks/ is in scope because skill installers link hooks there too
 # (issue #99). A dangling skills/<name> surfaces only when that skill is
 # invoked; a dangling hook symlink surfaces on every Edit|Write|MultiEdit —
@@ -42,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-14-1"
+VERSION="2026-08-18-2"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -64,6 +74,14 @@ is present, runs 'git submodule update --init --recursive' and re-checks.
 Exits 0 silently when healthy. Exits non-zero with an actionable error
 when self-healing fails or is not possible (e.g. no .git directory).
 
+The same repair also runs when every symlink resolves but a skills-vendor/
+submodule is uninitialized — content on disk, nothing registered in
+.git/config. Resolving symlinks do not imply healthy submodules, and that
+half-healed checkout is the one nothing else detects. A submodule that
+.gitmodules holds with 'update = none' is exempt and stays uninitialized
+through any repair; one that is not held fails the doctor, in --check-only
+because no repair was attempted and after the heal because one was.
+
 .claude/hooks/ is scanned because skill installers link hooks there into
 the same vendor chain; a dangling one fails on every file edit rather than
 only when a skill is invoked.
@@ -83,10 +101,14 @@ the agent isn't reachable from this shell. A separate remediation block
 covers host-key-verification failures (ssh-keyscan-based fix).
 
 Options:
-  --check-only    Report broken symlinks but make no changes: no submodule
-                  init, no self-sync. (The archive-checkout path when .git
-                  is absent overrides the reporting, printing its own
-                  diagnosis — it makes no changes either.)
+  --check-only    Report broken symlinks and uninitialized skills-vendor/
+                  submodules but make no changes: no submodule init, no
+                  self-sync. Exits 1 for either, EXCEPT a submodule
+                  .gitmodules holds with 'update = none' — the exit code
+                  covers everything this mode reports as damage. (The
+                  archive-checkout path when .git is absent overrides the
+                  reporting, printing its own diagnosis — it makes no
+                  changes either.)
   --no-preflight  Skip the SSH pre-flight ping. Useful when the operator
                   knows the agent state and doesn't want the 3-second
                   ConnectTimeout on every invocation.
@@ -304,10 +326,122 @@ scan_broken() {
   done
 }
 
-scan_broken
+# UNINIT is scan_uninit's output channel, declared at top scope for the same
+# reason BROKEN is. UNHELD is the subset .gitmodules does NOT deliberately hold
+# uninitialized, and it is the one that decides an exit code — see uninit_held.
+declare -a UNINIT=()
+declare -a UNHELD=()
+# HELD is UNINIT minus UNHELD, built where the classification already happens
+# rather than recovered later by matching one against the other. The obvious
+# `case " ${UNHELD[*]} " in *" $p "*` membership test is space-DELIMITED, which
+# silently defeats the space-PRESERVING prefix strip below: with UNHELD=("a b"),
+# the unrelated path "a" matches (#199 CR round 2, finding 10).
+declare -a HELD=()
 
-if [ "${#BROKEN[@]}" -eq 0 ]; then
-  [ "$VERBOSE" = "1" ] && echo "doctor: all scanned symlinks resolve" >&2
+# uninit_held <path> -> 0 when .gitmodules pins this path with `update = none`.
+#
+# The reason the two arrays exist. An uninitialized submodule is either a
+# deliberate hold or a broken checkout, and `git submodule status` prefixes
+# both with '-'. Only .gitmodules can tell them apart, and only before an init
+# is attempted — which is exactly the position --check-only is in, since it
+# makes no changes and therefore never gets to observe what survives a repair.
+#
+# Verified rather than assumed: with `update = none`, `git submodule update
+# --init --recursive` registers the path, prints "Skipping submodule", exits 0,
+# and leaves the '-' in place permanently. The heal here carries no `--merge`,
+# so the hold is honoured — note that the sibling refresh hook reaches for
+# .skills/skills-pin instead precisely because `--merge` overrides this (#100).
+#
+# A pin is NOT a hold: a pinned submodule is initialized and sits at a recorded
+# commit, so it never appears here in the first place.
+uninit_held() {
+  local path="$1" name key value
+  [ -f .gitmodules ] || return 1
+  name=""
+  while read -r key value; do
+    [ "$value" = "$path" ] || continue
+    key="${key#submodule.}"
+    name="${key%.path}"
+    break
+  done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+  [ -n "$name" ] || return 1
+  [ "$(git config -f .gitmodules --get "submodule.$name.update" 2>/dev/null || true)" = "none" ]
+}
+
+# Populates UNINIT with skills-vendor/ submodules recorded in the index that
+# git has not initialized. `git submodule status` prefixes exactly those with
+# '-', and it says so whether or not their content happens to be on disk —
+# which is what makes it the right probe for the half-healed checkout that the
+# symlink scan above cannot see (#185, header note).
+#
+# Scoped to skills-vendor/, unlike the repo-wide heal it triggers. The doctor
+# exists for the vendored-skill chain; a project may carry an unrelated
+# submodule it deliberately leaves uninitialized, and a Phase 1 preflight that
+# cloned it before every review would be a worse defect than the one this
+# closes. When a skills-vendor/ submodule *does* need repair, the existing
+# repo-wide command runs — the same blast radius the dangling-symlink path has
+# always had.
+#
+# #100's pin filter needs nothing here. The heal is `--init --recursive` with
+# no `--remote`, so it can only check out the gitlink the superproject already
+# records — which is precisely what a pin holds. Initializing a pinned
+# submodule is fine; refreshing it is not, and this cannot refresh.
+scan_uninit() {
+  UNINIT=()
+  UNHELD=()
+  HELD=()
+  # Absent skills-vendor/ means this consumer doesn't use the pattern; skip
+  # the git call entirely rather than reason about its output.
+  [ -d skills-vendor ] || return 0
+
+  # stdout only, and never fatal. Outside a git checkout, or with a pathspec
+  # matching no submodule, git complains on stderr — neither is a doctor
+  # failure, and this probe must not perturb an exit code the Phase 1
+  # preflights gate on.
+  local status_out line
+  status_out="$(git submodule status -- skills-vendor/ 2>/dev/null || true)"
+  while IFS= read -r line; do
+    case "$line" in
+      -*) ;;
+      *) continue ;;
+    esac
+    # Shortest-match strip of the '-<sha> ' prefix, so a submodule path
+    # containing a space survives intact — `awk '{print $2}'` truncates it.
+    local path="${line#-* }"
+    UNINIT+=("$path")
+    if uninit_held "$path"; then HELD+=("$path"); else UNHELD+=("$path"); fi
+  done <<UNINIT_EOF
+$status_out
+UNINIT_EOF
+}
+
+# Reports UNINIT and what it means. Shared by --check-only and the post-heal
+# re-check, which must not disagree about the diagnosis.
+#
+# Held paths are named separately, and named as expected rather than as
+# damage. Reporting a deliberate `update = none` in the same breath as a broken
+# checkout is what would train a reader to skim past both.
+report_uninit() {
+  echo "doctor: skills-vendor/ submodules recorded but not initialized:" >&2
+  printf '  %s\n' "${UNINIT[@]}" >&2
+  if [ "${#HELD[@]}" -gt 0 ]; then
+    echo "doctor: of those, .gitmodules holds these with 'update = none', which" >&2
+    echo "doctor: is deliberate and stays uninitialized through any repair:" >&2
+    printf '  %s (held)\n' "${HELD[@]}" >&2
+  fi
+  echo "doctor: their vendored skills are unreachable, and a bare" >&2
+  echo "doctor: 'git submodule update --remote --merge' will skip them and still" >&2
+  echo "doctor: exit 0 — pass --init (#176)." >&2
+}
+
+scan_broken
+scan_uninit
+
+if [ "${#BROKEN[@]}" -eq 0 ] && [ "${#UNINIT[@]}" -eq 0 ]; then
+  # Names both checks, because the fast path now clears both. The old wording
+  # claimed only the symlink half, which is the substitution this fix removed.
+  [ "$VERBOSE" = "1" ] && \
+    echo "doctor: all scanned symlinks resolve; skills-vendor/ submodules initialized" >&2
   exit 0
 fi
 
@@ -315,7 +449,12 @@ fi
 # the normal git-submodule case before either self-healing or reporting,
 # so --check-only never suggests a `git submodule` command in a checkout
 # that doesn't have a .git dir.
-if [ ! -d .git ] && [ ! -f .git ]; then
+#
+# Guarded on BROKEN because this branch prints BROKEN and nothing else. It is
+# already unreachable with an empty one — UNINIT can only be populated where
+# `git submodule status` works, which requires the .git this branch tests for
+# — but the invariant is cheaper to state than to re-derive.
+if [ "${#BROKEN[@]}" -gt 0 ] && [ ! -d .git ] && [ ! -f .git ]; then
   echo "doctor: dangling symlinks detected and no .git directory present:" >&2
   printf '  %s\n' "${BROKEN[@]}" >&2
   echo "" >&2
@@ -327,10 +466,28 @@ if [ ! -d .git ] && [ ! -f .git ]; then
 fi
 
 if [ "$CHECK_ONLY" = "1" ]; then
-  echo "doctor: dangling symlinks detected:" >&2
-  printf '  %s\n' "${BROKEN[@]}" >&2
-  echo "Run 'git submodule update --init --recursive' to repair." >&2
-  exit 1
+  if [ "${#UNINIT[@]}" -gt 0 ]; then
+    report_uninit
+  fi
+  if [ "${#BROKEN[@]}" -gt 0 ]; then
+    echo "doctor: dangling symlinks detected:" >&2
+    printf '  %s\n' "${BROKEN[@]}" >&2
+    echo "Run 'git submodule update --init --recursive' to repair." >&2
+    exit 1
+  fi
+  # An UNHELD path fails this mode, and it is the whole reason uninit_held
+  # exists. --check-only changes nothing, so it never gets to see what survives
+  # a repair — which means the exemption has to be read out of .gitmodules
+  # here, or this mode reports the half-healed checkout and then signals "fine"
+  # to the CI job branching on its exit code. That silence is the shape of the
+  # defect #185 was filed for: something exited 0 and a consumer sat broken.
+  if [ "${#UNHELD[@]}" -gt 0 ]; then
+    echo "doctor: the paths above are not held by 'update = none' — this" >&2
+    echo "doctor: checkout is half-healed. Run 'git submodule update --init" >&2
+    echo "doctor: --recursive', or drop --check-only to self-heal." >&2
+    exit 1
+  fi
+  exit 0
 fi
 
 # Targeted remediation printed when an auth failure is detected — either by
@@ -478,7 +635,17 @@ if ! preflight_ssh_check; then
   exit 1
 fi
 
-echo "doctor: dangling symlinks detected — initializing submodules..." >&2
+# Both reasons are printed, not whichever one was checked first. An operator
+# watching a slow clone should see everything that provoked it — reporting one
+# of two causes is how the second one gets rediscovered later as a surprise.
+if [ "${#UNINIT[@]}" -gt 0 ]; then
+  report_uninit
+fi
+if [ "${#BROKEN[@]}" -gt 0 ]; then
+  echo "doctor: dangling symlinks detected — initializing submodules..." >&2
+else
+  echo "doctor: initializing submodules..." >&2
+fi
 
 # Capture stderr for post-hoc classification while also streaming it live
 # so the user sees git's output during slow clones. We use a named pipe
@@ -533,6 +700,33 @@ if [ "${#BROKEN[@]}" -gt 0 ]; then
   echo "" >&2
   echo "The .gitmodules entry for the vendor repo may be missing, or the" >&2
   echo "symlink target points to a path that does not exist upstream." >&2
+  exit 1
+fi
+
+# A submodule that survives its own successful init is HELD or it is broken,
+# and uninit_held is what tells them apart. Verified: with
+# `submodule.<name>.update = none` in .gitmodules, `git submodule update --init
+# --recursive` registers the path, prints "Skipping submodule", exits 0, and
+# leaves `git submodule status` still showing '-'. That is a legitimate
+# configuration, so failing on it would block every Phase 1 preflight in such a
+# consumer forever, over a state where all the symlinks resolve and every skill
+# is reachable.
+#
+# The exemption is for the held paths, not for the condition. A path that is
+# NOT held and still uninitialized after a repair that was supposed to
+# initialize it is an unrepaired failure, and this is the one place in the
+# script that can say so with evidence — the init ran and the residue survived
+# it. Blanket non-fatality here would have made the heal path quieter than
+# --check-only, which is backwards: the mode that attempted a fix knows more.
+scan_uninit
+if [ "${#UNINIT[@]}" -gt 0 ]; then
+  echo "doctor: still uninitialized after 'git submodule update --init --recursive':" >&2
+  printf '  %s\n' "${UNINIT[@]}" >&2
+fi
+if [ "${#UNHELD[@]}" -gt 0 ]; then
+  echo "doctor: and these are not held by 'update = none' in .gitmodules, so" >&2
+  echo "doctor: the repair did not take:" >&2
+  printf '  %s\n' "${UNHELD[@]}" >&2
   exit 1
 fi
 

@@ -133,10 +133,12 @@ git commit -m "chore: update <owner>-<repo> submodule"
 Or update all submodules at once:
 
 ```bash
-git submodule update --remote --merge
+git submodule update --init --remote --merge
 git add skills-vendor/
 git commit -m "chore: update skill submodules"
 ```
+
+`--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
 No follow-up step is needed to refresh `.skills/doctor.sh` — the doctor re-syncs itself from the vendored source on its next run, and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
 

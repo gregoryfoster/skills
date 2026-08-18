@@ -9,7 +9,10 @@
 # this renders with its annotations: references/cadence.md (#118).
 #
 # Idempotent: a re-run rewrites the workflow in place and reports whether
-# anything changed. It never commits.
+# anything changed. It never commits — but it does set ONE repo-local git config
+# value, `merge.ours.driver`, because that is the only place the value can live:
+# `ours` is the merge driver git does not define for you, config is not
+# versioned, and an attribute without it is inert (#192).
 set -euo pipefail
 
 usage() {
@@ -30,16 +33,19 @@ Options:
                    the workflow's `git add`, and its error message — because a
                    cadence that measures correctly and stages the wrong path
                    records nothing.
-  --check          Report what is installed; change nothing. Three guarantees
+  --check          Report what is installed; change nothing. Four guarantees
                    are reported independently — the workflow, the ledger's union
-                   merge, and the calibration files' regenerate-on-collision
-                   merge — because each is its own way to lose a row, and one
-                   combined "ok" would have read green through all of #173.
+                   merge, the calibration files' regenerate-on-collision merge,
+                   and the `ours` driver that merge needs to exist at all —
+                   because each is its own way to lose a row, and one combined
+                   "ok" would have read green through all of #173 and #192.
                    Exit 0 all present, 3 any missing.
   --uninstall      Remove the workflow file AND the union-merge attribute it
                    installed, leaving .gitattributes as it found it (the file
                    itself goes only if nothing else was in it). The recorded
-                   rows stay — they are the series.
+                   rows stay — they are the series, and so does
+                   `merge.ours.driver`: it is generic, and other merge=ours
+                   rules may depend on it.
   --print          Write the rendered workflow to stdout and exit; touch
                    nothing. Still needs to be inside a git repo: the default
                    schedule is derived from the repo identity.
@@ -52,6 +58,12 @@ What it does:
   push is rejected, the retry's rebase conflicts, and the week's row is lost.
   It must be committed BEFORE the first concurrent run — git resolves using the
   attributes in the tree being replayed onto.
+
+  Sets `merge.ours.driver true` in this clone's git config. The two calibration
+  files carry `merge=ours`, and `ours` is the one merge driver git does NOT
+  define for you, so the attribute alone is inert. Config is not versioned, so
+  this is per clone and does not travel with the commit — run this (or the
+  one-liner) once in every checkout, and use --check to confirm.
 
   Renders .github/workflows/context-cadence.yml, which weekly:
     1. checks out with submodules (the skill is reached through a symlink into
@@ -78,7 +90,8 @@ Exit codes:
   0  installed, uninstalled, unchanged, or printed
   1  usage error, or not in a git repo
   2  could not rewrite .gitattributes — nothing was changed
-  3  --check only: a workflow or merge attribute is missing
+  3  --check only: a workflow, merge attribute or merge driver is missing
+  4  could not set merge.ours.driver — the calibration attributes are inert
 USAGE
 }
 
@@ -166,6 +179,25 @@ COUNTS_PATH=".skills/context-token-counts"
 ATTR_RATIO="$RATIO_PATH merge=ours"
 ATTR_COUNTS="$COUNTS_PATH merge=ours"
 
+# The attribute above names a driver; this is the driver. `union` and `binary`
+# are built in, `ours` is NOT — a `merge=ours` entry with no `merge.ours.driver`
+# in config makes git fall back to the 3-way merge and conflict exactly as if
+# the attribute were absent, markers and all. #173 set this correctly but INSIDE
+# the workflow job, on a throwaway runner; git config is not versioned, so every
+# developer clone was unprotected while --check reported the guarantee as
+# satisfied off the .gitattributes grep alone (#192).
+#
+# Two independent things, so two independent reports and two independent
+# repairs: the attribute lives in the tree and travels with a clone, the driver
+# lives in config and never does.
+#
+# `true` is the whole driver. It succeeds without writing, which leaves the
+# copy already on the branch in place and drops the replayed one — exactly the
+# regenerate-on-collision semantics these files want.
+DRIVER_KEY="merge.ours.driver"
+DRIVER_VALUE="true"
+DRIVER_FIX="git config $DRIVER_KEY $DRIVER_VALUE"
+
 ATTR_NOTE_1="# Append-only telemetry: concurrent appends must union-merge, or a"
 ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost."
 ATTR_NOTE_3="# Calibration is regenerated, never reconciled: on a collision keep"
@@ -219,6 +251,35 @@ has_attr() {
   ' "$ATTR_FILE"
 }
 
+# `env -u GIT_DIR -u GIT_WORK_TREE` is load-bearing, and it is the only reason
+# this is a function rather than two inline `git config` calls.
+#
+# This is the first thing in this script that WRITES anything outside the
+# working tree, so it is the first that can escape the repo it was pointed at.
+# An inherited GIT_DIR beats -C: git resolves the config file from GIT_DIR and
+# ignores the directory entirely. Git exports GIT_DIR to every hook process, and
+# from a LINKED WORKTREE it is absolute — so a run under a pre-commit hook, or
+# any test harness that forgets to scrub the environment, reads and writes the
+# SHARED .git/config of the main checkout while `--check` reports on some other
+# directory's .gitattributes. Observed doing exactly that: the structural suite
+# set merge.ours.driver in this repo's real config from a temp-directory
+# fixture. Stripping both vars makes -C authoritative, and a directory that is
+# not a repo then fails loudly instead of writing somewhere else (#189, #192).
+git_config() {
+  env -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" config "$@"
+}
+
+# Whatever `ours` currently resolves to in this repo, empty if nothing does.
+#
+# `--get` searches system, global and local, and any of the three protects the
+# repo — a cohort that sets the driver in ~/.gitconfig is correct, and telling
+# it to re-run would be a false alarm to match the false assurance #192 is
+# about. Empty is treated as missing: `git config merge.ours.driver ""` exits 0
+# and defines a key with no command, which git then fails the merge on.
+driver_value() {
+  git_config --get "$DRIVER_KEY" 2>/dev/null || true
+}
+
 # Every path the rendered workflow stages, paired with the attribute that keeps
 # a concurrent commit from destroying it. Iterated rather than checked one by
 # one, so adding a staged path to the template and forgetting its attribute is
@@ -270,6 +331,33 @@ if [ "$MODE" = "check" ]; then
     echo "                    protected against. Re-run install-cadence.sh."
     rc=3
   fi
+  # The mechanism behind the attribute above, checked separately BECAUSE it is
+  # a separate thing to lose. The attribute is committed and travels with a
+  # clone; the driver is config and never does, so a fresh clone of a correctly
+  # installed repo has one and not the other — and reporting them together is
+  # what told the second cadence pilot the collision case was handled when it
+  # was not (#192).
+  driver="$(driver_value)"
+  if [ -n "$driver" ]; then
+    echo "ours merge driver:  yes ($DRIVER_KEY=$driver)"
+  else
+    echo "ours merge driver:  MISSING — \`ours\` is the one merge driver git"
+    echo "                    does not define for you, so the two calibration"
+    echo "                    attributes above are inert and conflict as if"
+    echo "                    absent. Config is not versioned: fix per clone."
+    # Don't send a worktree run at the installer — ensure_driver refuses there
+    # by design, so "re-run install-cadence.sh" would be a loop (#199 CR round
+    # 2, finding 11). Name the checkout that can actually take the write.
+    if [ -f "$ROOT/.git" ]; then
+      echo "                    This is a linked worktree, whose --local writes"
+      echo "                    the main checkout's shared config — set it THERE,"
+      echo "                    not here, and not by re-running this installer:"
+    else
+      echo "                    Here, or by re-running install-cadence.sh:"
+    fi
+    echo "                      $DRIVER_FIX"
+    rc=3
+  fi
   exit "$rc"
 fi
 
@@ -291,6 +379,16 @@ if [ "$MODE" = "uninstall" ]; then
   done <<EOF
 $ATTR_ALL
 EOF
+  # The attributes come out; the driver deliberately does not. It is repo-wide
+  # and generic — any other `merge=ours` rule in the repo depends on it, and
+  # unsetting it here would break attributes this script never wrote. With
+  # nothing pointing at it, a defined driver simply never runs. Said out loud
+  # rather than left silent: the installer changed config, so the uninstall has
+  # to account for it either way.
+  if [ -n "$(driver_value)" ]; then
+    echo "note: left $DRIVER_KEY set — it is generic, and other merge=ours"
+    echo "      rules in this repo may depend on it. Unset it by hand if not."
+  fi
   echo "note: the recorded rows were left in place — they are the series."
   exit 0
 fi
@@ -370,6 +468,69 @@ ensure_attr() {
       fi
     done
   fi
+}
+
+# The second half of the calibration guarantee, and the half that cannot be
+# committed. ensure_attr puts `merge=ours` in the tree; without this the entry
+# is a name for a driver that does not exist and git conflicts as if it were
+# absent. #173 set it inside the workflow job, which protected the runner and
+# nobody else (#192).
+#
+# --local, and only when nothing already answers. A repo that resolves `ours`
+# through ~/.gitconfig is protected, and writing a local override of somebody's
+# deliberate global would be this script exceeding its brief.
+# DRIVER_STATE is what ensure_driver DID, and the closing NEXT block reads it
+# rather than assuming. Every early return below is a path on which nothing was
+# written, and a closing paragraph that says "the setting above" on those paths
+# is a tool claiming a change it did not make — the failure this whole backlog
+# exists to remove (#199 CR round 2, finding 8).
+DRIVER_STATE="unset"
+
+ensure_driver() {
+  local current
+  current="$(driver_value)"
+  if [ -n "$current" ]; then
+    echo "unchanged: $DRIVER_KEY is already set ($current)"
+    DRIVER_STATE="already"
+    return 0
+  fi
+  # Scrubbing GIT_DIR made -C authoritative about WHICH repo. It says nothing
+  # about which checkout of that repo, and `--local` from a LINKED WORKTREE
+  # writes the shared .git/config of the main checkout — that is what `--local`
+  # means without extensions.worktreeConfig, which is unset here and in every
+  # consumer that has not deliberately turned it on.
+  #
+  # So the one remaining way for this write to surprise someone is an agent
+  # running the installer inside its own worktree and silently editing the
+  # orchestrator's config. That is #189's class exactly, and it cost a batch
+  # salvage in #199 — the same batch this guard was written in. Refuse rather
+  # than warn: the value is repo-wide, so the operator loses nothing by setting
+  # it from the checkout that owns the config, and a warning printed into an
+  # agent's scrollback is not read by anyone.
+  #
+  # A linked worktree has .git as a FILE pointing at the real git dir; the main
+  # checkout has it as a directory. Cheapest reliable discriminator there is.
+  if [ -f "$ROOT/.git" ]; then
+    echo "note: $ROOT is a linked worktree, whose \`git config --local\` writes" >&2
+    echo "      the SHARED config of the main checkout. Refusing to set" >&2
+    echo "      $DRIVER_KEY from here (#189). The attributes are installed;" >&2
+    echo "      run this once in the main checkout:" >&2
+    echo "        $DRIVER_FIX" >&2
+    DRIVER_STATE="worktree"
+    return 0
+  fi
+  # Loud, not tolerant. A config write failing (unwritable .git/config, a repo
+  # opened read-only) leaves exactly the state this issue is about — attributes
+  # present, driver absent, everything looking installed — and swallowing it
+  # would rebuild the false assurance one layer down.
+  git_config --local "$DRIVER_KEY" "$DRIVER_VALUE" || {
+    echo "ERROR could not set $DRIVER_KEY in $ROOT — the calibration" >&2
+    echo "      attributes this installer just wrote are INERT until it is" >&2
+    echo "      set:" >&2
+    echo "        $DRIVER_FIX" >&2
+    exit 4; }
+  echo "set git config: $DRIVER_KEY=$DRIVER_VALUE (this clone only)"
+  DRIVER_STATE="set"
 }
 
 render() {
@@ -597,6 +758,31 @@ fi
 # "unchanged", and stayed one race away from losing a row. That is exactly the
 # population --check tells to re-run.
 ensure_attr
+# Also NOT inside the else, for the same reason and one more: this is the only
+# artifact of the three that a `git pull` can never deliver, so every clone of
+# an already-installed repo arrives needing it.
+ensure_driver
+
+# The closing text describes what happened, not what usually happens. Written
+# unconditionally it told a worktree run that the setting "above" was made and
+# is clone-local, on the one path where ensure_driver deliberately wrote
+# nothing (#199 CR round 2, finding 8).
+case "$DRIVER_STATE" in
+  set|already)
+    DRIVER_NOTE="The $DRIVER_KEY setting above CANNOT be committed — git config is not
+versioned. It is set in this clone only, so every other checkout of this repo
+needs it once, or its \`merge=ours\` entries are inert:
+  $DRIVER_FIX" ;;
+  worktree)
+    DRIVER_NOTE="$DRIVER_KEY was NOT set — this is a linked worktree, and its
+\`git config --local\` writes the main checkout's shared config. Until it is set
+there, the two \`merge=ours\` attributes this installer wrote are inert:
+  (in the main checkout)  $DRIVER_FIX" ;;
+  *)
+    DRIVER_NOTE="$DRIVER_KEY was NOT set, so the two \`merge=ours\` attributes
+this installer wrote are inert until it is:
+  $DRIVER_FIX" ;;
+esac
 
 cat <<NEXT
 
@@ -608,6 +794,8 @@ Not committed — review and commit with your normal gate. BOTH files: the
 run, or the race it prevents is already lost when it lands.
   git add $WF_PATH .gitattributes
   git commit -m "chore: schedule the weekly context measurement"
+
+$DRIVER_NOTE
 
 Then run it once by hand before trusting the schedule:
   gh workflow run context-cadence.yml

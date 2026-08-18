@@ -82,3 +82,25 @@ Every `shipping-work*/scripts/pre-ship.sh` carries this as a commented `# --- Pr
 - **Quote the export**: `export "$key=$val"` is what makes spaces, globs and quoted values survive, so the recipe needs no `set -f` dance and no shellcheck suppressions. **Skip a key that is not a plain identifier** rather than aborting — a malformed line in a secrets file must not decide whether the gate runs.
 
 `shipping-work`'s own `pre-ship.sh` is the documented exception: it is a stub that exits 1, so there is nothing to delegate to and its block puts the env loading in the project's override instead. [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) holds the block across all four variants and classifies that exception explicitly, so a fifth variant cannot ship without one.
+
+## A repo-creating git command must scrub `GIT_DIR`
+
+**An inherited `GIT_DIR` overrides both `git -C <path>` and the process cwd.** Git resolves the config file and the repository from `GIT_DIR` and ignores the directory entirely — so `git -C "$tmpdir" config …` writes to whatever `GIT_DIR` names, not to `$tmpdir`.
+
+This is not hypothetical here. **Git exports `GIT_DIR` to every hook process**, and from a linked worktree it is absolute, pointing at the shared git dir. So under a pre-commit hook, a test's throwaway-repo fixture addresses the *main checkout*. During [#199](https://github.com/gregoryfoster/skills/issues/199)'s Batch A this put `merge.ours.driver` into the real repo's config from a temp-directory fixture, and it is the mechanism behind the `core.bare = true` corruption of [#189](https://github.com/gregoryfoster/skills/issues/189) — five occurrences, none attributed, because every reviewer was checking for a missing `-C`.
+
+The rule, for any script or test that creates or configures a repository:
+
+```sh
+env -u GIT_DIR -u GIT_WORK_TREE git -C "$tmpdir" init
+env -u GIT_DIR -u GIT_WORK_TREE git -C "$tmpdir" config user.email a@b
+```
+
+In Python fixtures, strip `GIT_*` from the environment you pass to `subprocess` rather than relying on `cwd=`. [tests/structural/test_doctor_uninit_submodules.py](../tests/structural/test_doctor_uninit_submodules.py)'s `_clean_env` is the reference shape, including the one variable it deliberately puts back (`protocol.file.allow`, which local-path submodules need since CVE-2022-39253 and which cannot travel via `git -c`).
+
+Two properties make this worth a rule rather than a habit:
+
+- **`-C` is not a fix.** It is authoritative about which *directory*, and `GIT_DIR` outranks it. Briefing agents to "always pass `-C`" was tried across four concurrent workers and the corruption still appeared.
+- **Files are addressed by path; config is addressed by environment.** A script that writes `.gitattributes` under `$ROOT` was never exposed; the same script's first `git config` call was. When auditing, look at what a command *writes through*, not where it appears to point.
+
+Separately, `git config --local` from a **linked worktree** writes the *shared* config of the main checkout unless `extensions.worktreeConfig` is set. Scrubbing the environment does not change that — it is what `--local` means. A script that sets repo-wide config should detect a linked worktree (`.git` is a file rather than a directory) and refuse, naming the command for the operator to run in the main checkout; [skills/curating-context/scripts/install-cadence.sh](../skills/curating-context/scripts/install-cadence.sh)'s `ensure_driver` is the reference.

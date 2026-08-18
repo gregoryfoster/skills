@@ -399,14 +399,57 @@ est_tokens() {
   # repo-wide ratio second. The same order the write guard and context-delta.sh
   # use, so an estimate-only run and the hook report the same number for the
   # same file rather than two numbers a reader has to reconcile (#145).
-  ctx_est_tokens_for "$ROOT" "$1" "$(LC_ALL=C wc -c <"$1" | tr -d ' ')"
+  #
+  # The read is checked, and the failure is fatal, because this one failed
+  # SILENTLY (#184). The bare `$(wc -c <"$1")` it replaces sat in argument
+  # position, which errexit does not check: an unreadable file did not abort
+  # anything, it handed ctx_est_tokens_for an empty byte count, which coerces a
+  # non-numeric count to 0. Measured against a doc with the two upstream guards
+  # removed, the run exited 0 and emitted a complete JSON object carrying
+  # `"tokens": 0` beside `"bytes": 777`, and `tokens_docs: 0` in the totals.
+  # A fabricated zero in the artifact that drives budget decisions and telemetry
+  # appends is the one outcome this script's exit-2 contract exists to prevent,
+  # and it is strictly worse than the loud death #157 fixed.
+  #
+  # Not reachable end to end today, and guarded anyway — the same call this
+  # file's `unchecked` append already makes. Every path in reads the same file
+  # moments earlier (the policy through the checked read below, a doc through
+  # #157's inventory guard), so any condition that fails here has already
+  # failed upstream. That is a fact about the order of three reads, not about
+  # this one, and a read whose correctness rests on another read's placement is
+  # one refactor away from being wrong quietly.
+  #
+  # `2>` before `<"$1"`: bash applies redirections left to right and the input
+  # redirect is the one that fails, so set up later its diagnosis would land on
+  # the terminal rather than in the file quoted below.
+  local rc=0 bytes
+  bytes=$(LC_ALL=C wc -c 2>"$TMP/estread.err" <"$1") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR could not read $1 while pricing it (wc exit $rc):" \
+      "$(tr -d '\n' <"$TMP/estread.err")" >&2
+    exit 2
+  fi
+  ctx_est_tokens_for "$ROOT" "$1" "$bytes"
 }
 
 count_tokens() {
   # count_tokens <file> -> token count on stdout. Falls back to the estimate on any
   # per-file failure, so one bad response degrades a number rather than the run.
   local f="$1" est_out est out rc=0
-  est_out="$(est_tokens "$f")"
+  # `|| exit $?` rather than a bare assignment, because errexit cannot carry
+  # est_tokens' refusal out of here (#184). Command substitution runs with
+  # errexit UNSET — bash only offers `shopt -s inherit_errexit` to change that,
+  # and it does not exist before bash 4.4, which this cohort cannot assume (the
+  # development platform ships 3.2). So est_tokens exiting 2 inside `$( )` sets
+  # this assignment's status and nothing else: without the explicit propagation
+  # the run continued with an EMPTY token count, reached `[ "$P_TOKENS" -le 0 ]`
+  # with nothing in it, and printed `[: : integer expression expected` before
+  # dying somewhere unrelated. Verified both ways before this line was written.
+  #
+  # This is not the API-failure path the note above describes, and must not be
+  # routed into it: the estimate IS the fallback, so a file that cannot be read
+  # has nothing left to fall back to.
+  est_out="$(est_tokens "$f")" || exit $?
   est="${est_out%%"$CTX_TAB"*}"
   # Which estimator produced the fallback, recorded for the caller the same way
   # and for the same reason as the exactness marker below.
@@ -472,8 +515,30 @@ jesc() {
 }
 
 # --- policy file ----------------------------------------------------------
-P_LINES=$(LC_ALL=C wc -l <"$POLICY" | tr -d ' ')
-P_BYTES=$(LC_ALL=C wc -c <"$POLICY" | tr -d ' ')
+# The same checked read the doc inventory does further down, for the same reason
+# and one stage earlier (#184). A policy file that exists but cannot be read —
+# permissions, a broken symlink, a file replaced between the resolution above
+# and this line — went through two bare redirects: `<script>: line NNN:
+# AGENTS.md: Permission denied` on stderr, empty stdout, and exit 1. This
+# script's header promises exit 2 on infrastructure failure precisely so a
+# caller cannot mistake a broken measurement for a clean one, so 1 broke the
+# promise as well as leaving the failure undiagnosed.
+#
+# One `wc -l -c` rather than two calls, so an unreadable file is one failure to
+# diagnose rather than two — and under `set -e` the second call never ran
+# anyway, which is why the old failure named line 475 and never 476.
+#
+# `2>` comes BEFORE `<"$POLICY"`, because bash applies redirections left to
+# right and the input redirect is the one that fails: set up later, its
+# diagnosis lands on the terminal instead of in the file this reads back.
+P_RC=0
+P_WC=$(LC_ALL=C wc -l -c 2>"$TMP/policyread.err" <"$POLICY") || P_RC=$?
+if [ "$P_RC" -ne 0 ]; then
+  echo "ERROR could not read $POLICY, the policy file being measured (wc exit $P_RC):" \
+    "$(tr -d '\n' <"$TMP/policyread.err")" >&2
+  exit 2
+fi
+read -r P_LINES P_BYTES <<<"$P_WC"
 P_TOKENS=$(count_tokens "$POLICY")
 P_SOURCE="$(last_token_source)"
 # An empty policy file yields zero tokens, which the bytes-per-token ratio below
@@ -755,7 +820,10 @@ is_prose() {
 }
 
 slugs_of() {
-  # slugs_of <markdown file> -> one GitHub heading slug per line, document order.
+  # slugs_of <markdown file> <cache index> -> one GitHub heading slug per line,
+  # document order. The index names this call's stderr capture, so the caller
+  # quotes the cause for the file it actually asked about; see the foot of the
+  # function.
   #
   # GitHub's rules: lowercase, drop everything outside [a-z0-9 _-], each space
   # becomes a hyphen, and a repeat of an earlier slug in the SAME FILE gets -1,
@@ -807,7 +875,24 @@ slugs_of() {
       if (seen[line] > 1) print line "-" (seen[line] - 1)
       else print line
     }
-  ' "$1"
+  ' "$1" 2>"$TMP/slugread.$2.err"
+  # awk's stderr is captured rather than left to escape, matching extract_links'
+  # `2>/dev/null` (#184). Left bare, an unreadable file produced awk's own two
+  # lines — `awk: can't open file docs/D.md` and ` source line number 21` —
+  # standing immediately in front of the clean WARN anchor_missing prints for
+  # exactly that condition, which is the noise #147 and #157 were both about.
+  #
+  # Captured, not discarded, because awk's sentence is the truest description of
+  # the cause and anchor_missing quotes it. The exit status is still awk's, so
+  # the caller's `||` branch fires as before.
+  #
+  # Named per index, matching the `slugs.$2` it sits beside, rather than one
+  # shared path reused down the scan. Nothing reaches the caller's `||` branch
+  # today without awk having run and truncated the file first — but that rests
+  # on this function being a single awk with nothing before it, and a stale
+  # capture would be quoted as THIS file's cause. #181's CR round 4 fixed the
+  # same class the same way (a shared `$SETTINGS.tmp` that any run could clobber
+  # → a `$$` suffix); an invariant that costs a suffix is not worth keeping.
 }
 
 anchor_missing() {
@@ -820,8 +905,9 @@ anchor_missing() {
   if [ -z "$idx" ]; then
     printf '%s\n' "$f" >>"$TMP/slugfiles"
     idx="$(LC_ALL=C wc -l <"$TMP/slugfiles" | tr -d ' ')"
-    slugs_of "$f" >"$TMP/slugs.$idx" \
-      || echo "WARN could not read headings from $f; its anchors will read as missing" >&2
+    slugs_of "$f" "$idx" >"$TMP/slugs.$idx" \
+      || echo "WARN could not read headings from $f ($(tr -d '\n' <"$TMP/slugread.$idx.err"));" \
+              "its anchors will read as missing" >&2
   fi
   # Compared lowercased. GitHub only ever mints lowercase ids, and an author who
   # typed #Some-Heading meant the heading that exists — reporting that as a miss

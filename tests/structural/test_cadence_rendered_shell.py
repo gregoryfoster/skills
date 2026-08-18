@@ -31,6 +31,7 @@ Coverage:
   duplicated ledger line
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -48,13 +49,28 @@ RATIO = ".skills/context-token-ratio"
 COUNTS = ".skills/context-token-counts"
 
 
+def _clean_env() -> dict:
+    """Env without inherited GIT_* vars — the precaution the rest of the suite
+    takes, and the one this file was missing.
+
+    Git exports GIT_DIR to every hook process, so under pre-commit these tests
+    ran with it set; from a linked worktree it is ABSOLUTE, and GIT_DIR beats
+    `cwd`. Every git call below therefore addressed the real repo instead of the
+    temp fixture: `git init` re-initialised it, and once the installer learned to
+    set `merge.ours.driver` (#192) that write landed in the SHARED .git/config of
+    the main checkout — from a test whose whole subject is a throwaway
+    directory. Observed, not theorised. The same class as #189.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _repo(tmp_path: Path) -> Path:
     # exist_ok because a test may also use the `rendered` fixture, which builds
     # its own repo under the same tmp_path to run --print. That is harmless —
     # --print writes nothing — and `git init` is idempotent.
     r = tmp_path / "r"
     r.mkdir(exist_ok=True)
-    subprocess.run(["git", "init", "-q"], cwd=r, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=r, check=True, env=_clean_env())
     return r
 
 
@@ -65,6 +81,7 @@ def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=30,
+        env=_clean_env(),
     )
 
 

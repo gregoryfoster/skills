@@ -98,7 +98,7 @@ echo "SKILL_SHA=$SKILL_SHA"
 echo "SKILL_TMP=$SKILL_TMP"
 ```
 
-**Scope of the variable names.** Inside the block above, `$SKILL_TMP` / `$SKILL_DIR` / `$SKILL_SHA` are real bash variables — the block runs as a single shell invocation and they're live within it. *Outside* this block, the angle-bracketed forms `<SKILL_DIR>` / `<SKILL_SHA>` / `<SKILL_TMP>` are **placeholders** (same convention as `<PROJECT_NAME>`) — substitute the literal absolute path/SHA printed by Phase 0, do not paste them verbatim. Each later Bash invocation runs in a fresh shell, so Phase 0's variables are not inherited.
+**Scope of the variable names.** `$SKILL_TMP` / `$SKILL_DIR` / `$SKILL_SHA` are live bash variables only *inside* the single invocation above. Everywhere else the angle-bracketed forms are placeholders — see the first Key invariant.
 
 Record the three printed values. `<SKILL_SHA>` lands in the Phase 15 GH issue body so the bootstrap is reproducible; `<SKILL_TMP>` is what Phase 16 cleans up.
 
@@ -275,34 +275,9 @@ When `PRIVATE_WHEELHOUSE=find-links` (CI-only — the one call site gated on *bo
 
 ### Phase 8 — `.claude/` settings and hooks
 
-The submodule-refresh hook ships as a **script file**, not an inline JSON one-liner — the script (from `managing-skills`) is lock-gated once per UTC day, log-bounded, auto-commits **only on `main`** (the old inline form happily committed submodule bumps onto feature branches), and opportunistically re-installs `.skills/doctor.sh` each session:
+Copy `managing-skills`' `skills-submodule-update.sh` into `.claude/hooks/`, then write `.claude/settings.json` with its `SessionStart` wiring — commands and literal JSON in [`references/claude-settings.md`](references/claude-settings.md).
 
-```bash
-mkdir -p .claude/hooks
-cp "<SKILL_DIR>/../managing-skills/scripts/skills-submodule-update.sh" .claude/hooks/
-chmod +x .claude/hooks/skills-submodule-update.sh
-```
-
-**`.claude/settings.json`**
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh\"" }
-        ]
-      }
-    ]
-  },
-  "permissions": {
-    "allow": [
-      "Read(/home/exedev/.claude/projects/**)"
-    ]
-  }
-}
-```
+The hook ships as a **script file**, not an inline JSON one-liner: the script is lock-gated once per UTC day, log-bounded, auto-commits **only on `main`** (the old inline form happily committed submodule bumps onto feature branches), and opportunistically re-installs `.skills/doctor.sh` each session.
 
 ### Phase 9 — Vendor submodules
 
@@ -313,70 +288,18 @@ git submodule add https://github.com/obra/superpowers.git skills-vendor/obra-sup
 
 ### Phase 10 — `skills/` directory
 
-**Vendor symlinks:** Symlink every skill from each submodule, except the cross-cutting review/ship workflows where only the `-python-fastapi` stack variant belongs in a FastAPI project. Create from within the repo root — paths must be relative from `skills/`:
+Symlink every vendor skill into `skills/`, install the symlink doctor, then create the local overrides — loops, override inventory, and the optional thin-override list in [`references/skill-symlinks.md`](references/skill-symlinks.md).
 
-```bash
-mkdir -p skills
-# ln -sfn: later vendor in loop overrides earlier (gregoryfoster overrides obra defaults).
-# Bare `ln -s` would recurse into an existing directory-symlink and deposit a dangling
-# link inside the obra submodule on name collisions (e.g. using-git-worktrees, writing-plans).
-for repo in skills-vendor/obra-superpowers skills-vendor/gregoryfoster-skills; do
-  for skill_dir in "$repo"/skills/*/; do
-    skill_name=$(basename "$skill_dir")
-    # Cross-cutting review/ship workflows ship as stack variants upstream.
-    # A FastAPI project wants ONLY the -python-fastapi variant of each; skip
-    # the stack-neutral name and any other stack variants. Pattern-based so
-    # future stack variants added upstream get filtered automatically.
-    case "$skill_name" in
-      reviewing-code|reviewing-code-*|shipping-work|shipping-work-*)
-        case "$skill_name" in
-          reviewing-code-python-fastapi|shipping-work-python-fastapi) ;;
-          *) continue ;;
-        esac
-        ;;
-    esac
-    ln -sfn "../$repo/skills/$skill_name" "skills/$skill_name"
-  done
-done
-```
+Rules that reference cannot re-derive:
 
-**Install the symlink doctor.** The `reviewing-*` / `shipping-*` skills preflight via `.skills/doctor.sh` (self-heals dangling vendor symlinks); without this step that preflight is a silent no-op ([#65](https://github.com/gregoryfoster/skills/issues/65) found it missing in all four consumer repos):
-
-```bash
-bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-doctor.sh
-```
-
-**Local overrides (1):** The cross-cutting review and ship workflows now ship as Python/FastAPI stack variants upstream (`reviewing-code-python-fastapi`, `shipping-work-python-fastapi`). Symlink those alongside the other vendor skills (Phase 10's vendor loop above selects only the `-python-fastapi` variants of these workflows) — no full-copy override needed for either workflow. The variant's `pre-ship.sh` auto-derives its per-SHA stamp prefix from the git toplevel basename, so no project-name substitution is required.
-
-The remaining local override is the project-narrative skill that genuinely varies per-project:
-
-| Override | Files |
-|---|---|
-| `skills/brainstorming/` | `SKILL.md` |
-
-Substitutions in local overrides:
-- Skill headers: `— power-map` → `— <PROJECT_NAME>`
-- All other content: verbatim
-
-> **Override frontmatter is required.** Every local override `SKILL.md` (both the row above and any thin overrides below) must declare `overrides: <vendor>/<upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block. The `<vendor>` token matches the submodule directory name under `skills-vendor/` (e.g. `gregoryfoster-skills`, `obra-superpowers`). See AGENTS.md § Required override frontmatter in the upstream `gregoryfoster/skills` repo for the canonical wording.
-
-**Optional thin overrides** (only when the project genuinely needs them):
-- `skills/writing-plans/` — fork only if the project ships project-specific narrative content (e.g., `plan-document-reviewer-prompt.md`). The plans directory itself is configurable via `.skills/plans_dir`; do not fork just to repoint it. The forked `SKILL.md` needs `overrides: gregoryfoster-skills/writing-plans` + `override-reason:`.
-- `skills/shipping-work-python-fastapi/scripts/pre-ship.sh` — fork only if the project requires `/etc/<project>/.env` loading before tests (e.g., archiver, notifier, watcher). Keep the auto-derived stamp prefix. The forked `SKILL.md` needs `overrides: gregoryfoster-skills/shipping-work-python-fastapi` + `override-reason:` (e.g., `"Adds /etc/<project>/.env loading before pytest"`).
-- Step 2.5 worktree-aware merge path — fork the relevant `shipping-work-python-fastapi/SKILL.md` step if the project deploys via a worktree layout that needs a specific `cd /home/.../<project>` step. Same frontmatter requirement.
+- Create every link **from the repo root** with **relative** paths, using `ln -sfn` — never bare `ln -s`, which recurses into an existing directory-symlink and deposits a dangling link inside the obra submodule on name collisions (`using-git-worktrees`, `writing-plans`). `-sfn` also makes the loop idempotent on re-runs, and lets the later vendor in the loop override the earlier one.
+- Of the cross-cutting review/ship workflows, a FastAPI project takes **only** the `-python-fastapi` variants. The loop filters by pattern, so stack variants added upstream later are excluded without an edit here.
+- `.skills/doctor.sh` must be installed in this phase. The `reviewing-*` / `shipping-*` skills preflight through it, and without the install that preflight is a silent no-op ([#65](https://github.com/gregoryfoster/skills/issues/65) found it missing in all four consumer repos).
+- Every local override `SKILL.md` declares `overrides: <vendor>/<upstream-skill-name>` and `override-reason: <one-line rationale>` in its frontmatter `metadata` block, where `<vendor>` is the submodule directory name under `skills-vendor/`.
 
 ### Phase 11 — `.claude/skills/` symlinks
 
-Mirror every entry in `skills/` into `.claude/skills/` so Claude Code discovers them. Create from repo root — paths must be relative from `.claude/skills/`:
-
-```bash
-mkdir -p .claude/skills
-# ln -sfn: same atomic-replace policy as Phase 10 — keeps the loop idempotent on re-runs.
-for skill_dir in skills/*/; do
-  skill_name=$(basename "$skill_dir")
-  ln -sfn "../../skills/$skill_name" ".claude/skills/$skill_name"
-done
-```
+Mirror every entry in `skills/` into `.claude/skills/` so Claude Code discovers them — loop in [`references/skill-symlinks.md`](references/skill-symlinks.md). Same rules as Phase 10: run from the repo root, paths relative from `.claude/skills/`, `ln -sfn`.
 
 ### Phase 12 — Verify
 
@@ -467,28 +390,7 @@ rm -rf "<SKILL_TMP>"
 
 If the bootstrap aborted mid-phase, `<SKILL_TMP>` (under `/tmp`) is left behind and the OS reclaims it on the standard tmp-cleanup cadence; no manual intervention required.
 
-Then present a completion table. Branch-point rows show the choice made (or "skipped" when the branch was disabled):
-
-| Component | Status |
-|---|---|
-| SSH deploy key | Configured |
-| Git remote | `git@github-<PROJECT_NAME>:<GITHUB_ORG>/<PROJECT_NAME>.git` |
-| Python tooling | uv, pytest (+timeout), ruff, ty (non-gating), uv_build |
-| FastAPI skeleton | `src/api/main.py` (lifespan + /health[+/ready][+/api/v1 authed]), `src/core/logging.py`, `src/core/log_config.json` |
-| Settings | `src/core/config.py` (`<SETTINGS_STYLE>`) |
-| Auth | `<AUTH_STYLE>` — when header-token: `require_api_key` + `tests/api/test_auth.py` |
-| Admin UI | `<ADMIN_UI>` — when htmx: `src/api/admin/`, `src/templates/`, `src/static/vendor/htmx.min.js` (vendored), `require_admin` + `tests/api/test_admin.py` |
-| Database | `<DB_BACKED>` — when yes: `src/core/database.py`, `src/core/db_safety.py`, `src/core/models[.py\|/]` (`<MODELS_LAYOUT>`, ULID PKs), `alembic/` |
-| Lint profile | `<LINT_PROFILE>` |
-| Layout | `<LAYOUT>` |
-| CI | `<GITHUB_CI>` — when yes: `.github/workflows/ci.yml` |
-| Tests scaffold | `tests/conftest.py`, `tests/test_health.py`, `tests/core/test_logging.py`, `tests/core/test_config.py`, `tests/api/` |
-| Deploy unit | `<DEPLOY_TARGET>` — when systemd: `deploy/<PROJECT_NAME>.service` (User=`<DEPLOY_USER>`, WorkingDirectory=`<DEPLOY_HOME>`) |
-| Private wheelhouse | `<PRIVATE_WHEELHOUSE>` — when find-links: `scripts/sync_wheelhouse.py`, `[tool.uv] find-links`, `.wheelhouse/.gitkeep`, ExecStartPre/WIF sync (per `DEPLOY_TARGET`/`GITHUB_CI`) |
-| Vendor submodules | `gregoryfoster/skills`, `obra/superpowers` |
-| Skills | Local overrides + vendor skills symlinked (review/ship workflows: `-python-fastapi` variants only) + `.claude/skills/` discovery symlinks + `.skills/doctor.sh` |
-| GH issue | #1 closed |
-| Phase 0 scratch | Cleaned up (`<SKILL_TMP>` removed) |
+Then present the completion table from [`references/completion-report.md`](references/completion-report.md). Branch-point rows show the choice made, or "skipped" when the branch was disabled.
 
 ## Key invariants
 
@@ -503,6 +405,8 @@ Then present a completion table. Branch-point rows show the choice made (or "ski
 - `uv.lock` must be committed alongside `pyproject.toml`.
 - When `PRIVATE_WHEELHOUSE=find-links`: the order is always `auth → sync_wheelhouse.py → uv sync --frozen`. `uv.lock` records find-links wheels by filename with **no hash**, so a wheel of that exact filename must be present in `./.wheelhouse` *before* `uv sync --frozen` runs (syncing after is a hard resolution error), and the publish policy must be **immutable — never re-publish a filename, bump the version** (the sync script's same-size skip depends on it). The SA key is referenced by path via `GOOGLE_APPLICATION_CREDENTIALS` and never committed; CI is keyless WIF. See [`references/private-wheelhouse.md`](references/private-wheelhouse.md).
 
-**Self-budget:** held to a **17,100-token ratchet (estimate and exact)** by
+**Self-budget:** held to a **14,700-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow.
+6,000-token standard, set at current size so this file cannot grow. The offline
+estimate reads ~1,800 tokens *below* the exact count here, so a green
+pre-commit run is necessary and not sufficient: measure exact before adding.
