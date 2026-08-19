@@ -499,7 +499,14 @@ def title_pat(orig):
     return re.compile(pat, re.IGNORECASE)
 
 
-moved = {k: v for k, v in base_titles.items() if k not in now_titles}
+# `if v` drops the EMPTY title. A heading written `## ` with nothing after it
+# yields orig == "", whose pattern — `re.escape("")` before, title_pat("") now —
+# matches every line in the surface. It lands in the generic tier, so it needs a
+# pointer on the line, and then flags every pointer line there is: a report
+# nobody can read, from a heading that names nothing and so can have no seam.
+# Pre-existing; the tightening in title_pat() is what made it worth saying out
+# loud, since that function now promises the pattern is bounded.
+moved = {k: v for k, v in base_titles.items() if k not in now_titles and v}
 sweepable = {k: v for k, v in moved.items()
              if len(k) >= 8 and len(WORDS.findall(k)) >= 2}
 generic = {k: v for k, v in moved.items() if k not in sweepable}

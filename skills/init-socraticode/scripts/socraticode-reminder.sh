@@ -61,8 +61,10 @@ Behaviour:
   - Exits 0 on every path, so a failure here never blocks a session.
 
 The prefetch query it prints must stay identical to the one in the skill's
-references/socraticode-doc.md, which is what `docs/SOCRATICODE.md` carries for
-an operator running it by hand. A structural test pins the two together.
+references/socraticode-doc.md — the template a consumer's `docs/SOCRATICODE.md`
+is generated from, for an operator running the query by hand. A structural test
+pins this script and that template together; nothing pins a consumer's generated
+copy, so a stale one is caught on the next install rather than by the suite.
 
 Options:
   --help    Show this help and exit.

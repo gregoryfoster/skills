@@ -294,7 +294,7 @@ bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
 ```
 
 Then **once per doc you split**: `--file <that doc>`, as in Phase 6 — without it
-a doc→doc split reports `seams: 0`. **Sum** the counts.
+a doc→doc split reports `seams: 0`. **Sum both** counts across the runs.
 
 `prove-no-loss.sh` proves moved content arrived; this proves the surface still
 **describes where it went**. Tracked **source** outside the docs tree is swept

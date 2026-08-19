@@ -372,16 +372,25 @@ class TestThisRepoHasNotAdoptedIt:
             "`git config --unset extensions.worktreeConfig` in the MAIN checkout"
         )
 
-    def test_core_bare_is_false_in_the_shared_config(self):
+    def test_core_bare_is_not_true_in_the_shared_config(self):
         """The #189 symptom itself, checked on the real repository.
 
         Cheap, and it fails loudly in the one state where `git status` would
         otherwise answer "clean" forever.
+
+        Asserts NOT-true rather than equal-to-false, because absent is healthy.
+        `git init` and `git clone` both write `bare = false`, but the key is not
+        required: with it unset, `rev-parse --is-inside-work-tree` still prints
+        `true` and `git status` still exits 0 — verified. Demanding the literal
+        string would fail on a sound repo while reporting that a worker had
+        corrupted the checkout, which is the confidently-wrong diagnosis this
+        whole file exists to avoid.
         """
         if not (REPO_ROOT / ".git").exists():
             pytest.skip("not a git checkout")
-        assert _get(REPO_ROOT, "core.bare", "--local") == "false", (
-            "the shared .git/config does not say `core.bare = false`. If it "
-            "says true, a worker corrupted the main checkout (#189); repair "
-            "with `git config --local core.bare false` in the MAIN checkout"
+        assert _get(REPO_ROOT, "core.bare", "--local") != "true", (
+            "the shared .git/config says `core.bare = true`. A worker corrupted "
+            "the main checkout (#189), and while it stands `git status` fails "
+            "with empty stdout — which reads as clean to Rule 6. Repair with "
+            "`git config --local core.bare false` in the MAIN checkout"
         )
