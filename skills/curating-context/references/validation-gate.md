@@ -173,13 +173,10 @@ and an absolute reduction would let `usa-wa` decide every verdict on its own.
 Closure is **capped at 1.0**: a run that cuts far past the budget scores exactly
 the same as one that lands on it. Over-cutting earns nothing, deliberately:
 rewarding depth of cut would reintroduce the pressure to delete rather than
-route that made `tokens_live` a [rejected metric](rejected-changes.md).
-
-The cap has a cost: when both arms reach budget, the metric has no room left to
-express a difference. Such a pair is reported as **uninformative — saturated**,
-not as a tie. Calling it a tie would make the adoption rule unsatisfiable for any
-pair that starts close to budget, and "the metric cannot separate them" is a
-different claim from "they are equal."
+route that made `tokens_live` a [rejected metric](rejected-changes.md). The cap
+is a bound, so a pair with both arms at budget is **uninformative — saturated**
+rather than tied, under
+[the bound rule](#a-registered-metric-may-name-its-bound).
 
 ### The steady-state metric
 
@@ -321,7 +318,9 @@ dead (#139).
 ## The adoption rule
 
 **Adopt only if the treatment wins every informative pair.** Ties, mixed results,
-and "no measurable difference" are all rejections.
+and "no measurable difference" are all rejections — except a tie at a
+[registered bound](#a-registered-metric-may-name-its-bound), which is
+uninformative.
 
 A majority rule would be a rule for adopting noise at this sample size: with four
 informative pairs, three-of-four happens 31% of the time by chance. The sweep is
@@ -353,6 +352,29 @@ Registration is where two rules above stop being advisory: a `primary_metric`
 with a [rejected-changes.md](rejected-changes.md) entry is refused, and one null
 across the whole control arm is INCONCLUSIVE — *this proposal added its own
 instrument and cannot be judged by it*.
+
+### A registered metric may name its bound
+
+`bound` is **optional**, and the option is the design (#195). Name one and a pair
+**tied at the bound** is *uninformative — saturated*: both arms hold the best
+attainable score, so no treatment result could have won it. Truthfulness raised
+it — two arms both at 1.0 are perfect, not merely equal.
+
+Name none — closure aside, whose cap is arithmetic — and a tie stays a loss.
+There is deliberately **no blanket "ties are uninformative" rule**: unbounded, a
+tie is evidence of no effect, and dropping those pairs would make adoption
+*easier* by deleting the ones that disagree — the failure
+[rejected-changes.md](rejected-changes.md) records.
+
+**One number, not two**, `direction` saying which end: a ceiling under `higher`,
+a floor under `lower`. A tie at the *worst* value is a pair the treatment could
+have won and did not, so the bad end is never wanted. Only ties are affected:
+one arm at the bound and one short of it is a real result.
+
+The rows check the claim. Past the bound **in an arm** refuses the run — a bound
+in the wrong place drops pairs the treatment did not win. Outside the arms it is
+a note: that repo ran neither version, so neither did the metric. A bound nothing
+reaches is inert, and printed so that is visible.
 
 ### A rejection has its own floor
 
@@ -393,11 +415,11 @@ INCONCLUSIVE is **not** a rejection: recording a non-result in
   should add its measurement first, as v1.3 did — which buys measurability for
   *later* rounds, and is the outcome registration names.
 - **It cannot rescue a saturated round.** Saturated pairs are counted and a
-  majority-saturated round printed as a finding: the budget has stopped binding
-  for most of the cohort. A fact about the budget, not a tie between the arms,
-  and **not** licence to retighten it — a budget changed after seeing where the
-  cohort landed is a retroactive parameter, the same failure as choosing the
-  metric late; the rejected 4,000-token budget is the precedent.
+  majority-saturated round printed as a finding: the budget, or the registered
+  bound, has stopped binding for most of the cohort. A fact about that
+  parameter, not a tie between the arms, and **not** licence to move it — one
+  changed after seeing where the cohort landed is retroactive, the same failure
+  as choosing the metric late; the rejected 4,000-token budget is the precedent.
 - **It cannot run more than once per proposal.** Each repo has one first
   curation. After both waves have adopted, the split still works for steady-state
   weekly runs on the metric registered above, but the effect sizes are far
