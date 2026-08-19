@@ -357,24 +357,24 @@ instrument and cannot be judged by it*.
 
 `bound` is **optional**, and the option is the design (#195). Name one and a pair
 **tied at the bound** is *uninformative — saturated*: both arms hold the best
-attainable score, so no treatment result could have won that pair and demanding
-one makes the sweep unsatisfiable. Truthfulness raised it — two arms both at 1.0
-are both perfect, not merely equal.
+attainable score, so no treatment result could have won it. Truthfulness raised
+it — two arms both at 1.0 are perfect, not merely equal.
 
 Name none — closure aside, whose cap is arithmetic — and a tie stays a loss.
-There is deliberately **no blanket "ties are
-uninformative" rule**: unbounded, a tie is real evidence of no effect, and
-dropping those pairs would make adoption *easier* by deleting the ones that
-disagree — the failure [rejected-changes.md](rejected-changes.md) records.
+There is deliberately **no blanket "ties are uninformative" rule**: unbounded, a
+tie is evidence of no effect, and dropping those pairs would make adoption
+*easier* by deleting the ones that disagree — the failure
+[rejected-changes.md](rejected-changes.md) records.
 
 **One number, not two**, `direction` saying which end: a ceiling under `higher`,
-a floor under `lower`. A tie at the *worst* attainable value is a pair the
-treatment could have won and did not, so the bad end is never wanted. Only ties
-are affected — one arm at the bound and one short of it is a real win or loss.
+a floor under `lower`. A tie at the *worst* value is a pair the treatment could
+have won and did not, so the bad end is never wanted. Only ties are affected:
+one arm at the bound and one short of it is a real result.
 
-The rows check the claim: a scored value **past** the bound refuses the run,
-since a bound in the wrong place drops pairs the treatment did not win. A bound
-nothing reaches is inert, and printed so that is visible.
+The rows check the claim. Past the bound **in an arm** refuses the run — a bound
+in the wrong place drops pairs the treatment did not win. Outside the arms it is
+a note: that repo ran neither version, so neither did the metric. A bound nothing
+reaches is inert, and printed so that is visible.
 
 ### A rejection has its own floor
 

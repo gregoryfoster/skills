@@ -87,10 +87,13 @@ direction: lower
 # satisfy by deleting the ones that disagree. Budget-gap closure needs no
 # declaration: its cap at 1.0 is arithmetic, and the gate applies it either way.
 #
-# Checked against the rows: a scored value past the bound is refused, because a
-# bound in the wrong place removes pairs the treatment did not win. A bound
-# nothing reaches changes nothing and is printed in the report so its inertness
-# is visible.
+# Checked against the rows IN THE ARMS: a scored value past the bound refuses
+# the run there, because a bound in the wrong place removes pairs the treatment
+# did not win. Outside the arms it is a note instead — a repo running neither
+# version ran neither version of the metric, so its value is not evidence about
+# what these two produce, and letting it refuse would be a repo adrift vetoing
+# a proposal it never ran (#194's shape). A bound nothing reaches changes
+# nothing and is printed in the report so its inertness is visible.
 bound: 0
 
 # The fewest informative pairs that can produce a verdict. A pre-registered

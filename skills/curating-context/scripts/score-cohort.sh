@@ -451,6 +451,11 @@ if "bound" in fields:
             "      `direction: higher`, a floor when `direction: lower`. Two "
             "arms tied there are",
             "      both at the best attainable score, not merely equal.")
+    # Both the number and the TEXT. Every rule reads the float; the one message
+    # that sends an operator to edit this file quotes the text, because `:g`
+    # renders a registered `bound: 1.0` as `1` and a grep for that value fails
+    # on the very path where they are already unsure which number is wrong.
+    fields["bound_text"] = fields["bound"]
     fields["bound"] = b
 
 # A proposed primary metric is checked against rejected-changes.md before it is
@@ -716,8 +721,10 @@ def at_bound(v):
     `>=`/`<=` rather than `==` so closure's cap keeps exactly the comparison it
     had before #195, and so float noise at the cap lands on the same side as the
     arithmetic that produced it. For a REGISTERED bound the two are the same
-    test anyway: a value strictly past the bound is refused below, so nothing
-    that reaches here can be beyond it.
+    test anyway: an ARM member strictly past the bound is refused below, and
+    only arm members reach the pairing, so nothing that reaches here can be
+    beyond it. An out-of-arm row may be — it draws a note rather than a
+    refusal — and it is never passed to this function.
     """
     if bound is None:
         return False
@@ -1032,24 +1039,53 @@ def score_repo(key, info):
 
 records = [score_repo(k, repos[k]) for k in order]
 
+# Stamped once, so every rule below reads one answer rather than re-deriving it,
+# and so the JSON says which arm each repo landed in. `wave` stays on the record
+# beside it: rollout order is still true, it is simply not what an arm is.
+for r in records:
+    r["arm"] = arm_of(r)
+
+
+def past_bound(r):
+    """Does this record carry the metric strictly beyond the declared bound?"""
+    v = r[METRIC_KEY]
+    if not isinstance(v, (int, float)):
+        return False
+    return v > reg_bound if direction == "higher" else v < reg_bound
+
+
 # A registered bound is a CLAIM about the metric's range, and a false one is not
 # inert. It moves the saturation point, and every tie it swallows leaves the
 # informative set — making the adoption rule easier to satisfy by deleting the
 # pairs that disagree, which is exactly what #195 refused to do wholesale and
 # must not do by accident here. So the claim is checked against what the rows
-# actually carry: a single value strictly PAST the declared bound proves the
-# metric is not bounded there.
+# actually carry: a value strictly PAST the declared bound proves the metric is
+# not bounded there.
 #
-# Refused rather than warned. The same argument the schema makes about an
-# unknown key applies with more force to a false one: a bound nobody honoured
-# still reads, in the report and in the JSON, as a bound that was.
+# Scoped to the ARMS, which is why this sits below arm_of() rather than beside
+# the records that feed it. A repo running neither version is running neither
+# version OF THE METRIC — six releases back a share may be computed from a
+# different denominator — so its value is not evidence about what the two named
+# versions can produce, and letting it refuse the run is the shape #194 removed
+# from the safety gates: a repo adrift vetoing a proposal it never ran. Both
+# remedies the error offers ("fix the registration or drop the key") are wrong
+# when the bound is right for the arms and the stray repo is simply old.
+#
+# Out of arm it is still SAID, as a note, because a bound is a claim about the
+# metric and a value past it anywhere is worth a look before the next round.
+# Reported, not fatal: the distinction is between evidence that the registration
+# is wrong and evidence that the cohort has moved on.
+#
+# Refused rather than warned in the arms. The same argument the schema makes
+# about an unknown key applies with more force to a false one: a bound nobody
+# honoured still reads, in the report and in the JSON, as a bound that was.
+bound_notes = []
 if reg_bound is not None:
+    reg_bound_text = experiment["bound_text"]
     beyond = [(r["repo"], r[METRIC_KEY]) for r in records
-              if isinstance(r[METRIC_KEY], (int, float))
-              and (r[METRIC_KEY] > reg_bound if direction == "higher"
-                   else r[METRIC_KEY] < reg_bound)]
+              if r["arm"] and past_bound(r)]
     if beyond:
-        print(f"ERROR {experiment['file']}: `bound: {reg_bound:g}` is not a "
+        print(f"ERROR {experiment['file']}: `bound: {reg_bound_text}` is not a "
               f"bound — `{metric}` is recorded past it:", file=sys.stderr)
         for repo, v in beyond:
             print(f"        {repo}: {v:g}", file=sys.stderr)
@@ -1063,12 +1099,16 @@ if reg_bound is not None:
               "registration or drop the key.",
               file=sys.stderr)
         sys.exit(1)
-
-# Stamped once, so every rule below reads one answer rather than re-deriving it,
-# and so the JSON says which arm each repo landed in. `wave` stays on the record
-# beside it: rollout order is still true, it is simply not what an arm is.
-for r in records:
-    r["arm"] = arm_of(r)
+    adrift = [(r["repo"], r[METRIC_KEY]) for r in records
+              if not r["arm"] and past_bound(r)]
+    if adrift:
+        bound_notes.append(
+            f"note: `{metric}` is recorded past the registered bound "
+            f"{reg_bound_text} OUTSIDE the arms: "
+            + ", ".join(f"{repo} ({v:g})" for repo, v in adrift)
+            + ".\n      Not a refusal — those repos ran neither version, so "
+              "neither did the metric.\n      Worth a look before the next "
+              "round: if the bound is wrong there it is wrong here.")
 
 # The pairing needs BOTH groupings and they answer different questions. `pair:`
 # stays roster-driven — it encodes size-matching against the 2026-08-05 baseline,
@@ -1641,6 +1681,14 @@ if fmt == "json":
         "out_of_arm": [{"entry": r["entry"], "repo": r["repo"],
                         "wave": r["wave"] or None,
                         "skill_version": r["skill_version"]} for r in no_arm],
+        # Repos outside the arms carrying the metric past the registered bound.
+        # Inside the arms this state is fatal and there is no payload to read;
+        # here it is reported, so a consumer sees what the text report prints
+        # rather than having to re-derive it from `out_of_arm`.
+        "bound_exceeded_out_of_arm": [
+            {"repo": r["repo"], "skill_version": r["skill_version"],
+             metric: r[METRIC_KEY]}
+            for r in no_arm if reg_bound is not None and past_bound(r)],
     }, indent=2))
     sys.exit(code)
 
@@ -1728,6 +1776,12 @@ if arms_are_historical:
 if inversion_warning:
     print()
     print(inversion_warning)
+# The out-of-arm half of the bound check. In the arms a value past the bound is
+# fatal; outside them it is this, because those repos ran neither version of the
+# skill and so neither version of the metric.
+for _note in bound_notes:
+    print()
+    print(_note)
 print()
 print(f"{'pair':>4}  {'arm':<3} {'repo':<{w}} {'before':>8} {'after':>8} "
       f"{'budget':>7} {metric[:8]:>8}  no_loss")

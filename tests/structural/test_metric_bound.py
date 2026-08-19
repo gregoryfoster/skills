@@ -295,6 +295,85 @@ class TestABoundIsACheckedClaim:
         flat = _flat(r.stderr).lower()
         assert "did not win" in flat, r.stderr
 
+    def test_the_refusal_quotes_the_registration_verbatim(self, tmp_path: Path):
+        """It tells the operator to go and edit the file, so it must name the
+        value as the file spells it. `:g` renders a registered `bound: 1.0` as
+        `1`, and a grep for that finds nothing on the one path where they are
+        already unsure which number is wrong."""
+        roster = _cohort(tmp_path, [(1.5, 1.5)])
+        d = _register(tmp_path, bound="1.0")
+        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
+        assert r.returncode == 1, r.stdout
+        assert "`bound: 1.0`" in r.stderr, r.stderr
+        assert "`bound: 1`" not in r.stderr, r.stderr
+
+
+class TestTheBoundCheckIsScopedToTheArms:
+    """A repo running neither version is running neither version of the METRIC.
+
+    Six releases back, a share may be computed from a different denominator, so
+    its value is not evidence about what the two named versions can produce.
+    Letting it refuse the run is the shape #194 removed from the safety gates —
+    a repo adrift vetoing a proposal it never ran — and the remedies the refusal
+    offers ("fix the registration or drop the key") are both wrong when the
+    bound is right for the arms and the stray repo is simply old.
+    """
+
+    @staticmethod
+    def _with_stray(root: Path, value: float) -> tuple:
+        roster = _cohort(root, [(1.0, 1.0), (1.0, 1.0)])
+        _member(root, "stray", 9000, 7000, "0.9", truth=value)
+        with roster.open("a") as fh:
+            fh.write(f"{root / 'stray'}  wave:b pair:9\n")
+        return roster, _register(root)
+
+    def test_an_out_of_arm_row_past_the_bound_does_not_refuse(
+            self, tmp_path: Path):
+        roster, d = self._with_stray(tmp_path, 1.4)
+        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
+        assert r.returncode != 1, (
+            "a repo in neither arm must not be able to refuse the run:\n"
+            + r.stderr
+        )
+        assert "is not a bound" not in r.stderr, r.stderr
+
+    def test_it_is_reported_as_a_note_rather_than_swallowed(
+            self, tmp_path: Path):
+        """Not fatal is not the same as not said. A bound is a claim about the
+        metric, and a value past it anywhere is worth a look."""
+        roster, d = self._with_stray(tmp_path, 1.4)
+        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
+        flat = _flat(r.stdout)
+        assert "OUTSIDE the arms" in flat, r.stdout
+        assert "stray (1.4)" in flat, r.stdout
+        assert "1.0" in flat, r.stdout
+
+    def test_the_json_carries_it_too(self, tmp_path: Path):
+        roster, d = self._with_stray(tmp_path, 1.4)
+        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02",
+                   "--format", "json")
+        payload = json.loads(r.stdout)
+        assert payload["bound_exceeded_out_of_arm"] == [
+            {"repo": "stray", "skill_version": "0.9", "truth": 1.4}
+        ], payload["bound_exceeded_out_of_arm"]
+
+    def test_an_in_arm_row_past_the_bound_still_refuses(self, tmp_path: Path):
+        """The scoping must not disarm the check it is scoping — an arm member
+        past the bound is still fatal."""
+        roster = _cohort(tmp_path, [(1.4, 1.0)])
+        d = _register(tmp_path, bound="1.0")
+        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
+        assert r.returncode == 1, r.stdout
+        assert "is not a bound" in r.stderr, r.stderr
+        assert "trt1" in r.stderr, r.stderr
+
+    def test_a_clean_run_says_nothing_about_bounds_out_of_arm(
+            self, tmp_path: Path):
+        """The note fires on the condition, not on the presence of a stray."""
+        roster, d = self._with_stray(tmp_path, 0.8)
+        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
+        assert "OUTSIDE the arms" not in _flat(r.stdout), r.stdout
+
     def test_a_floor_is_checked_from_below(self, tmp_path: Path):
         """The `direction: lower` half of the same check — past the bound means
         below it there, and a single-sided implementation would miss it."""
