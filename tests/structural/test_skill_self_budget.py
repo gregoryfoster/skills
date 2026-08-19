@@ -291,13 +291,19 @@ SKILL_MD_RATCHETS = {
 #
 # The split bounded the file. It did NOT create headroom, and that is the part
 # worth carrying forward: one year of this log already nearly fills one doc.
-# `process-log/2026/index.md` reads 9,849 estimated / 9,760 exact — 151 and 240
-# of margin — for 37 sessions in under six months. At that rate the budget
-# affords a row of roughly 400 bytes, and rows in there run to 1,900. So the
-# next crossing is NOT a signal to split finer: it is the row-length rule in the
-# index's own footer ("keep the row to a headline") being ignored, and trimming
-# rows back to headlines is the move. Splitting by half-year would buy one more
-# year and add a hop for every reader.
+# `process-log/2026/index.md` read 9,849 estimated / 9,760 exact — 151 and 240
+# of margin — for 37 sessions in under six months.
+#
+# The next crossing came on the 38th, one day later, and this block's prediction
+# held: it was a ROW-LENGTH problem, not a signal to split finer. The 2026-08-19
+# row put the index 77 tokens over; trimming the eight longest historical rows
+# back to the headline the index's own footer asks for recovered ~2,660 and left
+# it at 7,416 / 2,584 of margin — the longest row down from 1,649 bytes to 975.
+#
+# So the rule is now measured rather than predicted, and it is the one to apply
+# next time: trim rows, do not split the file. Splitting by half-year would buy
+# one more year and add a hop for every reader. The entry files are where the
+# detail belongs, which is what makes trimming a move rather than a loss.
 #
 # `None` would mean exempt; any other value is a hard ceiling. The mechanism is
 # kept, and proven by TestTheExemptionMechanism, because the next doc that needs
