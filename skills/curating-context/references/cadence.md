@@ -431,9 +431,6 @@ It never runs on `pull_request`.
 records *nothing*, silently, every week — `record-telemetry.sh` refuses an
 estimate against exact rows. Set the secret first, then run it once by hand.
 
-Design, the annotated template, and what it deliberately does not do:
-[references/cadence.md](cadence.md) ([#118](https://github.com/gregoryfoster/skills/issues/118)).
-
 ## Stagger the cron across the cohort
 
 Twelve repos all firing at `0 15 * * 1` produce twelve simultaneous

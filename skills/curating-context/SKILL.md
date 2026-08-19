@@ -293,11 +293,13 @@ Re-run Phase 1 and assert, before committing:
 bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
 ```
 
-`prove-no-loss.sh` proves moved content arrived; this proves the rest of the
-surface still **describes where it went**. Tracked **source** outside the docs
-tree is swept too once a section leaves the policy file. Never repoint one of
-those at a bare `docs/X.md` — no installed wheel resolves it, and it can hit a
-*different* repo's file in a sibling checkout. Qualify or inline it.
+Then **once per doc you split**: `--file <that doc>`, as in Phase 6 — without it
+a doc→doc split reports `seams: 0`. **Sum both** counts across the runs.
+
+`prove-no-loss.sh` proves moved content arrived; this proves the surface still
+**describes where it went**. Tracked **source** outside the docs tree is swept
+too once a section leaves the policy file. Never repoint one at a bare
+`docs/X.md`; no installed wheel resolves it. Qualify or inline it.
 
 The report is hits **to judge**, not defects to fix: a reference to the policy
 file is wrong only if what it points at moved. Fix what lies, acknowledge what is

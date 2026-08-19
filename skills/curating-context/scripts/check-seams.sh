@@ -43,7 +43,24 @@ Options:
                    base-dependent classes contribute nothing that run. A commit
                    that is not in this repo's history — a rewrite, a shallow
                    clone — falls back the same way with a WARN naming it.
-  --file PATH      Policy file. Default: AGENTS.md, else CLAUDE.md.
+  --file PATH      The file whose departed section titles are swept for, and
+                   whose name the back-reference classes look for. Default:
+                   AGENTS.md, else CLAUDE.md.
+
+                   Not only the policy file. Point it at a REFERENCE DOC and it
+                   is the right tool for a doc split, exactly as it is on
+                   prove-no-loss.sh: `--file docs/API.md` sweeps for the titles
+                   that left THAT doc, which is the check a split needs and the
+                   policy file cannot give — a doc-to-doc split moves nothing
+                   out of AGENTS.md, so the moved-title class is structurally
+                   empty in a policy-file run and the sweep reports 0 while six
+                   headings changed home (#191). Run it once per doc split, in
+                   ADDITION to the policy-file run, and sum the counts.
+                   It must exist at --base as a regular file, and need NOT
+                   still exist now: a split may delete its source, and with no
+                   file to read nothing is left inline, so every base title
+                   counts as moved. Autodetection still requires a live file —
+                   a repo with no policy file is a usage error.
   --docs-dir DIR   Reference-doc root. Default: CONTEXT_DOCS_DIR, then
                    .skills/context-docs-dir, then docs.
   --no-source      Skip the source classes below. For a repo whose tracked
@@ -320,16 +337,22 @@ PY
   printf '%s\n' "$BASE_NOTE"
 fi
 
+# Autodetection needs a LIVE file — a repo with no policy file is a usage error,
+# and guessing at a name that is not there would sweep for the titles of nothing.
+# A file named EXPLICITLY need not still exist: a doc split deletes its source by
+# construction, and that is the run this option is most needed on. Requiring it
+# live made `--file docs/RUNBOOKS.md` on the very split it was meant to sweep
+# exit 1 with "no policy file found" — so the documented way to catch a doc-to-doc
+# split could not be run on half the splits that produce one (#191). What must
+# exist is the file at --base, which the `git show` below is already the check
+# for, with an error naming the revision.
 if [ -z "$POLICY" ]; then
   for f in AGENTS.md CLAUDE.md; do
     [ -f "$f" ] && { POLICY="$f"; break; }
   done
+  [ -n "$POLICY" ] || {
+    echo "ERROR no policy file found (looked for AGENTS.md, CLAUDE.md)" >&2; exit 1; }
 fi
-# C-runs-when-A-is-true is the intent: a named-but-absent policy file and no
-# policy file at all are the same failure to this script.
-# shellcheck disable=SC2015
-[ -n "$POLICY" ] && [ -f "$POLICY" ] || {
-  echo "ERROR no policy file found (looked for AGENTS.md, CLAUDE.md)" >&2; exit 1; }
 
 DOCS_DIR="$(ctx_docs_dir "$ROOT" "$DOCS_DIR")"
 
@@ -344,6 +367,14 @@ REL="$(ctx_resolve_rel "$ROOT" "$POLICY")"
 if ! git show "$BASE:$REL" >"$TMP/base_policy" 2>"$TMP/git.err"; then
   echo "ERROR cannot read $REL at $BASE: $(tr -d '\n' <"$TMP/git.err")" >&2
   exit 2
+fi
+
+# Said out loud, the way prove-no-loss.sh says it. "every title moved" is the
+# truth about a split that deleted its source, and it is indistinguishable in
+# the report from a file that was emptied in place — the two want different
+# review, and only this line tells them apart.
+if [ ! -f "$REL" ]; then
+  echo "note: $REL no longer exists — every section title it had at $BASE counts as moved."
 fi
 
 # Live docs: every .md under the docs root, minus archival subtrees. The gate
@@ -392,9 +423,14 @@ import sys
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
-with open(policy_rel, encoding="utf-8", errors="replace") as fh:
-    now_text = fh.read()
-now_lines = now_text.splitlines()
+# May be gone: --file naming a doc that a split deleted is the case this class
+# is most needed on. Nothing stayed inline, so every base title counts as moved
+# — which is what the shell already said out loud above.
+try:
+    with open(policy_rel, encoding="utf-8", errors="replace") as fh:
+        now_lines = fh.read().splitlines()
+except OSError:
+    now_lines = []
 
 docs = [d for d in open(docs_list, encoding="utf-8").read().splitlines() if d]
 src = [s for s in open(src_list, encoding="utf-8").read().splitlines() if s]
@@ -435,8 +471,42 @@ now_titles = {norm_title(t) for _, t in headings(now_lines)}
 # positives carry none of those markers.
 WORDS = re.compile(r"[0-9a-z]+")
 POINTER = re.compile(r"§|\]\(|\.md\b", re.IGNORECASE)
+WORD_CHAR = re.compile(r"\w")
 
-moved = {k: v for k, v in base_titles.items() if k not in now_titles}
+
+def title_pat(orig):
+    """A title matched as a WHOLE word, not as a bare substring.
+
+    The pattern was `re.escape(orig)` under IGNORECASE and nothing else, so a
+    short generic title matched inside longer words: on the run that filed
+    #191, `Fix` claimed `prefix`, `suffix`, `Prefix` and `IMF-fixdate` — nine
+    of thirteen moved-title hits were that, against four real ones. The
+    generic tier's pointer requirement does not help, because the lines those
+    words sit on are exactly the lines that cite a doc.
+
+    Anchored per EDGE rather than with a blanket `\\b`, because `orig` is raw
+    heading text and may begin or end with punctuation — a backticked name, a
+    flag like `--base`. Against those, `\\b` asserts the OPPOSITE of what is
+    wanted (that the neighbour IS a word character) and the title stops
+    matching anything at all. A guard is added only where the title's own edge
+    is a word character, which is where `\\b` would have been correct.
+    """
+    pat = re.escape(orig)
+    if orig[:1] and WORD_CHAR.match(orig[0]):
+        pat = r"(?<!\w)" + pat
+    if orig[-1:] and WORD_CHAR.match(orig[-1]):
+        pat = pat + r"(?!\w)"
+    return re.compile(pat, re.IGNORECASE)
+
+
+# `if v` drops the EMPTY title. A heading written `## ` with nothing after it
+# yields orig == "", whose pattern — `re.escape("")` before, title_pat("") now —
+# matches every line in the surface. It lands in the generic tier, so it needs a
+# pointer on the line, and then flags every pointer line there is: a report
+# nobody can read, from a heading that names nothing and so can have no seam.
+# Pre-existing; the tightening in title_pat() is what made it worth saying out
+# loud, since that function now promises the pattern is bounded.
+moved = {k: v for k, v in base_titles.items() if k not in now_titles and v}
 sweepable = {k: v for k, v in moved.items()
              if len(k) >= 8 and len(WORDS.findall(k)) >= 2}
 generic = {k: v for k, v in moved.items() if k not in sweepable}
@@ -502,7 +572,7 @@ for d in docs:
 #    heading is not a seam, so heading lines matching the title exactly are
 #    skipped.
 for k, orig in moved.items():
-    pat = re.compile(re.escape(orig), re.IGNORECASE)
+    pat = title_pat(orig)
     bare = k in sweepable
     for path in [policy_rel] + docs:
         for i, line in enumerate(doc_lines(path), 1):
@@ -583,8 +653,11 @@ def source_lines(path):
 
 
 if src and moved:
-    title_pats = [(k, orig, re.compile(re.escape(orig), re.IGNORECASE))
-                  for k, orig in moved.items()]
+    # The SAME anchoring as the docs class above, via the same helper. These
+    # were two independent copies of `re.escape(orig)` under IGNORECASE, and
+    # anchoring only the docs one would have relocated the `Fix`-matches-`prefix`
+    # noise into source-moved-title rather than removed it (#191).
+    title_pats = [(k, orig, title_pat(orig)) for k, orig in moved.items()]
     for s in src:
         for i, line in enumerate(source_lines(s), 1):
             if names_policy_file(s, line):

@@ -249,11 +249,3 @@ See [cadence.md](cadence.md).
 If a genuine addition has to land and push the file over, that is fine — the
 advisory is not a veto. Land it, and let the next run classify it. What the guard
 buys is that the decision was seen rather than accreted.
-
-The guard and the weekly run are two halves of one ratchet: the guard stops
-regrowth cheaply, in the turn that caused it, on the common path; the run and the
-review-time delta recover ground and catch what the matcher never saw. A repo with
-the run but no guard sawtooths, and no curation fixes a file something else keeps
-appending to. Semantics, the speak-only-on-both-conditions rule, the uncovered
-write paths, and uninstall:
-[references/write-guard-hook.md](write-guard-hook.md).
