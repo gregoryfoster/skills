@@ -70,6 +70,29 @@ primary_metric: seams
 # this file exists to remove.
 direction: lower
 
+# OPTIONAL. The value the metric cannot move past at its GOOD end — a ceiling
+# under `direction: higher`, a floor under `lower`. Naming it is what makes a
+# pair tied THERE report as uninformative — saturated rather than as a tie:
+# both arms are at the best attainable score, so no treatment result could have
+# won that pair, and demanding one makes the sweep rule unsatisfiable. `seams`
+# bottoms out at 0, so two arms both carrying no seams are both perfect.
+#
+# One number, not two. `direction` already says which end this is, and the
+# bound at the BAD end is never wanted: a pair tied at the worst attainable
+# value is one the treatment could have won and did not, which is a real loss.
+#
+# Omit it and the metric keeps the default behaviour, where a tie is a loss.
+# That is the right answer for anything unbounded — a tie there is real evidence
+# of no effect, and dropping such pairs would make the adoption rule easier to
+# satisfy by deleting the ones that disagree. Budget-gap closure needs no
+# declaration: its cap at 1.0 is arithmetic, and the gate applies it either way.
+#
+# Checked against the rows: a scored value past the bound is refused, because a
+# bound in the wrong place removes pairs the treatment did not win. A bound
+# nothing reaches changes nothing and is printed in the report so its inertness
+# is visible.
+bound: 0
+
 # The fewest informative pairs that can produce a verdict. A pre-registered
 # parameter, so `--min-pairs` may tighten it and may not loosen it. The roster
 # yields four informative pairs at best, so 3 tolerates exactly one dropping

@@ -72,6 +72,14 @@ Options:
                       arms are expected to carry, and the pair floor. Without
                       it the gate scores budget-gap closure, the default
                       pre-registered in references/validation-gate.md.
+
+                      It may also name the metric's `bound` — the value the
+                      metric cannot move past at its GOOD end, a ceiling under
+                      `direction: higher` and a floor under `lower`. A pair
+                      tied THERE is reported uninformative — saturated, the
+                      treatment having had no way to win it. Optional, because
+                      a tie on an unbounded metric is real evidence of no
+                      effect and stays a loss.
   --experiments-dir DIR
                       Where registrations live. Default: .skills/experiments
 
@@ -336,7 +344,7 @@ path = found[0]
 REQUIRED = ("experiment", "proposal", "registered", "treatment_version",
             "control_version", "arm_predicate", "primary_metric", "direction",
             "min_pairs")
-OPTIONAL = ("notes",)
+OPTIONAL = ("bound", "notes")
 
 fields = {}
 for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -413,6 +421,37 @@ if fields["direction"] not in ("higher", "lower"):
 if not fields["min_pairs"].isdigit() or int(fields["min_pairs"]) < 1:
     die(f"ERROR {path.name}: `min_pairs: {fields['min_pairs']}` — must be a "
         "positive integer.")
+
+# The bound, and it is OPTIONAL on purpose (#195). A metric that names one gets
+# the saturated-not-tied treatment; one that does not keeps today's behaviour,
+# where a tie is a loss. There is deliberately no blanket "ties are
+# uninformative" rule: for an UNBOUNDED metric a tie is real evidence of no
+# effect, and discarding it would make the adoption rule easier to satisfy by
+# deleting the pairs that disagree — which is the failure rejected-changes.md
+# exists to record.
+#
+# ONE number, not a pair, and `direction` already says which end it is: a
+# ceiling under `higher`, a floor under `lower`. The bound at the metric's BAD
+# end is never needed, because a pair tied at the worst attainable value is a
+# pair the treatment COULD have won and did not. That is a real loss and stays
+# one. Only the good end can make winning impossible, and impossibility is the
+# whole content of the carve-out.
+if "bound" in fields:
+    try:
+        b = float(fields["bound"])
+    except ValueError:
+        b = float("nan")
+    # Rejects nan directly and inf via the second test, so `bound: inf` cannot
+    # register a bound nothing can reach as though it were a real one.
+    if b != b or b in (float("inf"), float("-inf")):
+        die(f"ERROR {path.name}: `bound: {fields['bound']}` — must be a finite "
+            "number.",
+            "      It is the value the metric cannot move past at its GOOD end: "
+            "a ceiling when",
+            "      `direction: higher`, a floor when `direction: lower`. Two "
+            "arms tied there are",
+            "      both at the best attainable score, not merely equal.")
+    fields["bound"] = b
 
 # A proposed primary metric is checked against rejected-changes.md before it is
 # registered. `tokens_live` was proposed as a candidate in #118 despite already
@@ -649,6 +688,42 @@ with open(exp_src, encoding="utf-8") as fh:
 experiment = json.loads(_raw) if _raw else None
 metric = experiment["primary_metric"] if experiment else "closure"
 direction = experiment["direction"] if experiment else "higher"
+
+# One accessor for both metric shapes, so every rule below — the bound check,
+# saturation, ties, the winner, the margin — is written once and cannot drift
+# between them.
+METRIC_KEY = "closure" if metric == "closure" else "metric_raw"
+
+# The registered bound, if the registration named one (#195). Kept apart from
+# `bound` below because only a REGISTERED bound is a claim anyone made, and only
+# a claim can be wrong: the check that refuses a false bound cites this file.
+reg_bound = experiment.get("bound") if experiment else None
+
+# Closure's cap IS a bound and always was — hardcoded at 1.0 in the pair loop
+# until #195. Read as the default here so there is ONE saturation rule rather
+# than a general one beside a closure-shaped special case that can drift from
+# it. A registration naming closure with some other bound does not override the
+# arithmetic; it gets caught by the wrong-side check below, since closure cannot
+# exceed 1.0.
+bound = reg_bound
+if metric == "closure" and bound is None:
+    bound = 1.0
+
+
+def at_bound(v):
+    """Is this value at the metric's good end — the point it cannot move past?
+
+    `>=`/`<=` rather than `==` so closure's cap keeps exactly the comparison it
+    had before #195, and so float noise at the cap lands on the same side as the
+    arithmetic that produced it. For a REGISTERED bound the two are the same
+    test anyway: a value strictly past the bound is refused below, so nothing
+    that reaches here can be beyond it.
+    """
+    if bound is None:
+        return False
+    return v >= bound if direction == "higher" else v <= bound
+
+
 if experiment:
     # A flag may TIGHTEN the registered floor and may not loosen it. Loosening
     # once the pair count is known is the same move as choosing the metric after
@@ -956,6 +1031,39 @@ def score_repo(key, info):
 
 
 records = [score_repo(k, repos[k]) for k in order]
+
+# A registered bound is a CLAIM about the metric's range, and a false one is not
+# inert. It moves the saturation point, and every tie it swallows leaves the
+# informative set — making the adoption rule easier to satisfy by deleting the
+# pairs that disagree, which is exactly what #195 refused to do wholesale and
+# must not do by accident here. So the claim is checked against what the rows
+# actually carry: a single value strictly PAST the declared bound proves the
+# metric is not bounded there.
+#
+# Refused rather than warned. The same argument the schema makes about an
+# unknown key applies with more force to a false one: a bound nobody honoured
+# still reads, in the report and in the JSON, as a bound that was.
+if reg_bound is not None:
+    beyond = [(r["repo"], r[METRIC_KEY]) for r in records
+              if isinstance(r[METRIC_KEY], (int, float))
+              and (r[METRIC_KEY] > reg_bound if direction == "higher"
+                   else r[METRIC_KEY] < reg_bound)]
+    if beyond:
+        print(f"ERROR {experiment['file']}: `bound: {reg_bound:g}` is not a "
+              f"bound — `{metric}` is recorded past it:", file=sys.stderr)
+        for repo, v in beyond:
+            print(f"        {repo}: {v:g}", file=sys.stderr)
+        print("      A bound is the value the metric cannot move past at its "
+              "good end, and it\n"
+              "      decides which ties stop counting as losses. Declared in "
+              "the wrong place it\n"
+              "      removes pairs the treatment did not win, which is how a "
+              "sweep gets easier to\n"
+              "      satisfy the more of the cohort saturates. Fix the "
+              "registration or drop the key.",
+              file=sys.stderr)
+        sys.exit(1)
+
 # Stamped once, so every rule below reads one answer rather than re-deriving it,
 # and so the JSON says which arm each repo landed in. `wave` stays on the record
 # beside it: rollout order is still true, it is simply not what an arm is.
@@ -1002,11 +1110,7 @@ for pid in sorted(by_pair, key=lambda p: (len(p), p)):
         pairs.append(entry)
         continue
     tr, cr = t[0], c[0]
-    # One accessor for both metric shapes, so every rule below — saturation,
-    # ties, the winner, the margin — is written once and cannot drift between
-    # them.
-    key = "closure" if metric == "closure" else "metric_raw"
-    tv, cv = tr[key], cr[key]
+    tv, cv = tr[METRIC_KEY], cr[METRIC_KEY]
     if tr["status"] != "scored" or cr["status"] != "scored":
         bad = tr if tr["status"] != "scored" else cr
         entry["why"] = f"{bad['repo']}: {bad['status']} — {bad['why']}"
@@ -1015,17 +1119,31 @@ for pid in sorted(by_pair, key=lambda p: (len(p), p)):
         entry["why"] = (f"{side['repo']} had no budget gap to close"
                         if metric == "closure"
                         else f"{side['repo']}: {side['why']}")
-    elif metric == "closure" and tv >= 1.0 and cv >= 1.0:
+    elif tv == cv and at_bound(tv):
         entry["saturated"] = True
-        # Closure is capped at 1.0 — a run that cuts far past the budget scores
-        # the same as one that lands on it, deliberately, so over-cutting earns
-        # nothing. The cost is that when both arms reach budget the metric has no
-        # room left to express a difference. Calling that a tie would make the
-        # sweep rule unsatisfiable for any pair that starts close to budget, so
-        # it is uninformative instead: the metric cannot separate them, which is
-        # not the same as their being equal.
+        # A TIE AT THE BOUND, which is the one tie that is not evidence about
+        # the arms. Closure is capped at 1.0 — a run that cuts far past the
+        # budget scores the same as one that lands on it, deliberately, so
+        # over-cutting earns nothing — and when both arms reach budget the
+        # metric has no room left to express a difference. Generalised in #195
+        # to any metric whose registration NAMES its bound, because the
+        # argument was never about closure: at the good end the control is
+        # already perfect, so no treatment result could have won that pair, and
+        # requiring one makes the sweep rule unsatisfiable. "The metric cannot
+        # separate them" is a different claim from "they are equal".
+        #
+        # Scoped to TIES, and both halves of that matter. A tie away from the
+        # bound is a real tie and stays a loss. A pair where one arm sits at the
+        # bound and the other does not is a real WIN or LOSS — the metric
+        # separated them perfectly well — so it never reaches here. And a tie at
+        # the metric's BAD end is a pair the treatment could have won and did
+        # not, which is why `bound` names one end rather than two.
         entry["why"] = ("both arms closed the gap completely — closure saturates "
-                        "and cannot separate them")
+                        "and cannot separate them"
+                        if metric == "closure" else
+                        f"both arms scored {bound:g}, the registered bound for "
+                        f"`{metric}` — the metric saturates and cannot separate "
+                        "them")
     else:
         entry["informative"] = True
         # Signed so a positive margin always means "the treatment did better",
@@ -1496,6 +1614,11 @@ if fmt == "json":
         # leaving a reader to infer it from the absence of a file.
         "experiment": experiment,
         "primary_metric": metric, "metric_direction": direction,
+        # The bound actually in force, which is closure's cap when nothing was
+        # registered and null for any other unregistered-bound metric. Null is
+        # the answer that means "a tie here is a loss", so it is worth reading
+        # off the payload rather than inferring from the registration.
+        "metric_bound": bound,
         "saturated_pairs": len(saturated),
         "added_its_own_instrument": instrument_only,
         "metric_unreadable": unreadable_metric,
@@ -1576,8 +1699,13 @@ print(arm_header("control  ", control, c_by_version))
 # numbers is the first thing a reader needs, and a registration cited by path is
 # a registration whose history they can go and check.
 if experiment:
+    # The bound is printed whenever one was registered, saturated pairs or not.
+    # A bound nothing reached is INERT — it changes no score — and printing it
+    # is what makes that visible rather than leaving a reader to wonder whether
+    # the declaration was honoured.
+    at = f", saturates at {reg_bound:g}" if reg_bound is not None else ""
     print(f"registration:    {experiment['file']} — primary metric "
-          f"`{metric}`, {direction} is better, min-pairs "
+          f"`{metric}`, {direction} is better{at}, min-pairs "
           f"{experiment['min_pairs']}")
 else:
     print(f"metric:          `{metric}` ({direction} is better), the default "
@@ -1625,7 +1753,35 @@ print()
 
 # Proposal 3 (#117): saturation counted rather than left to be inferred from a
 # column of 100.0% cells.
-if saturated:
+if saturated and metric != "closure":
+    # The registered-bound half (#195). Kept as its own block rather than
+    # squeezed into the closure wording below: "the budget is no longer the
+    # binding constraint" is a claim about budgets, and printing it for a metric
+    # that has nothing to do with the budget would be a finding about the wrong
+    # parameter.
+    print(f"saturated pairs: {len(saturated)} of {len(pairs)} — both arms "
+          f"reached {bound:g}, the registered")
+    print(f"                 bound for `{metric}`, so it had no room left to "
+          "express a difference.")
+    if len(saturated) * 2 > len(pairs):
+        print()
+        print(f"FINDING most pairs saturated. `{metric}` is at its bound for "
+              "most of the cohort,")
+        print("        which is a finding about the metric having run out of "
+              "range rather than")
+        print("        a tie between the arms.")
+        print("        It is NOT a licence to move the bound now. A bound is a "
+              "pre-registered")
+        print("        property of the metric, and one edited to rescue a round "
+              "is a retroactive")
+        print("        parameter — the same integrity failure as choosing the "
+              "metric late, which")
+        print("        references/rejected-changes.md already carries a "
+              "precedent for. The durable")
+        print("        answer is a metric with room left on the axis the "
+              "proposal changed (#118).")
+    print()
+elif saturated:
     print(f"saturated pairs: {len(saturated)} of {len(pairs)} — both arms "
           "closed the gap completely, so")
     print("                 closure had no room left to express a difference.")
