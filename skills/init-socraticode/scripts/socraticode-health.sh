@@ -59,7 +59,9 @@ Behaviour:
     git dir, so N worktrees of one repo produce one report a day, not N.
   - Silent when there is nothing to report, and on every infrastructure
     condition it cannot judge (no node, no driver, no manifest).
-  - Bounded: HEALTH_TIMEOUT_MS caps the driver run (default 60000).
+  - Bounded: HEALTH_TIMEOUT_MS caps the driver run. This hook exports 60000,
+    tightening mcp-driver.mjs's own 120000 default, because a session start
+    must not wait two minutes on a server that will never answer.
   - Logs to <common .git>/socraticode-health.log (~64 KiB / 200 lines).
   - Exits 0 on every condition.
 
@@ -77,7 +79,9 @@ Env:
   SOCRATICODE_PROBE_FILE  a file with known first-party imports; on a LOW yield
                           verdict the driver runs one codebase_graph_query
                           against it as a confirmatory probe
-  HEALTH_TIMEOUT_MS       driver ceiling in ms (default 60000)
+  HEALTH_TIMEOUT_MS       driver ceiling in ms. This hook exports 60000; the
+                          driver's own default, for a direct run, is 120000.
+                          Set it yourself for a slower, more patient check.
   SOCRATICODE_HEALTH_FORCE=1
                           ignore the once-per-day lock (for testing)
 
@@ -205,6 +209,11 @@ fi
 # Tighter than the driver's own 2-minute default: this runs at session start,
 # where a bounded wait is the whole contract. An operator who wants the slower,
 # more patient check sets the variable themselves.
+#
+# The disagreement is deliberate (#187) — 60s is a session hook's budget, 120s
+# is a direct health check's — so the number a reader sees must depend on which
+# entry point they read. Both usage blocks name both numbers, and
+# tests/structural/test_health_timeout_contract.py keeps them doing so.
 export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 
 # Findings land on the driver's stderr, one per line; the JSON verdict is on

@@ -1065,8 +1065,14 @@ Env:
   POLL_INTERVAL_MS    status poll cadence (default 15000)
   INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)
   HEALTH_TIMEOUT_MS   hard ceiling for health-check (default 120000 = 2min).
-                      It runs from a SessionStart hook, so it must not hang a
-                      session waiting on a server that will never answer.`;
+                      That default is for a DIRECT run — the install-time yield
+                      measurement, or hand triage of an install already
+                      suspected broken — where the wait can include a cold
+                      Docker start and an answer is worth two minutes.
+                      socraticode-health.sh exports 60000 instead, because a
+                      SessionStart hook must not hang a session on a server
+                      that will never answer. So through the hook the effective
+                      ceiling is 60000, and this default never applies.`;
 
 // Only dispatch when run as a script. Importing the module (to exercise the
 // PARSERS against captured status strings) must not spawn a server or exit.
@@ -1117,9 +1123,17 @@ if (RUN_AS_SCRIPT) {
     case 'status': await cmdStatus(projectPath); break;
     case 'verify': await cmdVerify(projectPath); break;
     case 'health-check': {
-      // Hard ceiling. This runs from a SessionStart hook: a server that never
-      // answers must cost a bounded wait, not the session. Implemented here in
-      // node rather than with timeout(1), which is not on a stock macOS.
+      // Hard ceiling: a server that never answers must cost a bounded wait.
+      // Implemented here in node rather than with timeout(1), which is not on
+      // a stock macOS.
+      //
+      // 120000 is the DIRECT-invocation budget (#177 made that a documented
+      // path: SKILL.md Phase 6 and references/socraticode-doc.md both tell a
+      // reader to run this by hand). The SessionStart hook does not use it —
+      // socraticode-health.sh exports 60000, because 60s is a hook's budget,
+      // not a health check's. The two numbers disagree on purpose; both usage
+      // blocks say so, and tests/structural/test_health_timeout_contract.py
+      // keeps them saying it.
       const ms = Number(process.env.HEALTH_TIMEOUT_MS || 120000);
       const bomb = setTimeout(() => {
         console.error(`[driver] health-check exceeded ${ms}ms — giving up`);
