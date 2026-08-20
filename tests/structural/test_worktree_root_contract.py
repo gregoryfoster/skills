@@ -19,7 +19,10 @@ checkout.
    `--git-common-dir` is the shared `.git` from either vantage point and its
    parent is the primary checkout. `TestWorktreeRootDoesNotNest` pins that,
    including the submodule case where the parent of the common dir is
-   `<super>/.git/modules` and is *not* a work tree.
+   `<super>/.git/modules` and is *not* a work tree. The one shape that guard
+   does not rescue — a linked worktree *of* a submodule — still nests, by a
+   decision recorded in #203; `TestSubmoduleWorktreeBoundary` pins it so a
+   later change to the guard is deliberate.
 
 3. `TestGitignoreVenvRule` pins the untrailing-slash `.venv` rule that keeps a
    worktree's venv symlink ignored, and keeps its comment from re-acquiring
@@ -94,6 +97,27 @@ def primary(tmp_path: Path) -> Path:
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-q", "-m", "initial")
     return repo
+
+
+def _add_submodule(primary: Path, tmp_path: Path, name: str = "vendor") -> Path:
+    """Add a fresh one-commit repo to `primary` as a submodule; return its work tree.
+
+    `protocol.file.allow=always` is required because git 2.38 disabled the
+    `file://` transport for submodules by default.
+    """
+    sub = (tmp_path / f"{name}-src").resolve()
+    sub.mkdir()
+    _git(tmp_path.resolve(), "init", "-q", "-b", "main", str(sub))
+    _git(sub, "config", "user.email", "test@example.com")
+    _git(sub, "config", "user.name", "test")
+    (sub / "s.txt").write_text("s\n")
+    _git(sub, "add", "s.txt")
+    _git(sub, "commit", "-q", "-m", "sub initial")
+    _git(
+        primary, "-c", "protocol.file.allow=always",
+        "submodule", "add", "-q", str(sub), name,
+    )
+    return primary / name
 
 
 @pytest.fixture
@@ -224,21 +248,10 @@ class TestWorktreeRootDoesNotNest:
         put worktrees inside `.git`. The submodule's own --show-toplevel is
         already correct, so the fix must fall back to it.
         """
-        sub = (tmp_path / "sub").resolve()
-        sub.mkdir()
-        _git(tmp_path.resolve(), "init", "-q", "-b", "main", str(sub))
-        _git(sub, "config", "user.email", "test@example.com")
-        _git(sub, "config", "user.name", "test")
-        (sub / "s.txt").write_text("s\n")
-        _git(sub, "add", "s.txt")
-        _git(sub, "commit", "-q", "-m", "sub initial")
-        _git(
-            primary, "-c", "protocol.file.allow=always",
-            "submodule", "add", "-q", str(sub), "vendor",
-        )
-        r = _run(RESOLVE, cwd=primary / "vendor")
+        vendor = _add_submodule(primary, tmp_path)
+        r = _run(RESOLVE, cwd=vendor)
         assert r.returncode == 0, f"resolve failed inside a submodule: {r.stderr}"
-        assert Path(r.stdout.strip()) == primary / "vendor" / ".worktrees", (
+        assert Path(r.stdout.strip()) == vendor / ".worktrees", (
             "inside a submodule the root must be the submodule's own work tree, "
             f"never anything under .git/modules. Got {r.stdout.strip()!r}"
         )
@@ -249,6 +262,62 @@ class TestWorktreeRootDoesNotNest:
         r = _run(RESOLVE, cwd=outside)
         assert r.returncode == 2, f"expected exit 2, got {r.returncode}"
         assert "not inside a git repository" in r.stderr
+
+
+class TestSubmoduleWorktreeBoundary:
+    """#203: the one shape the guard does not rescue, pinned on purpose.
+
+    In a linked worktree *of* a submodule, `--git-common-dir` is the same
+    `<super>/.git/modules/<name>` the guard exists to refuse, so resolution
+    falls back to `--show-toplevel` — which names the linked worktree. The
+    root nests, exactly as it did everywhere before #188.
+
+    Fixing it means walking `<super>/.git/modules/<name>/worktrees/<id>/gitdir`
+    back to the registering checkout: real parsing for a combination nobody in
+    the cohort runs. #213 decided against it and documented the boundary
+    instead. These tests hold the decision in place — the behavioural one so a
+    later change to the guard is noticed, the comment one so the next reader of
+    the script is not left assuming the guard covers this.
+    """
+
+    def test_linked_worktree_of_a_submodule_nests_by_design(
+        self, primary: Path, tmp_path: Path
+    ):
+        vendor = _add_submodule(primary, tmp_path)
+        subwt = (tmp_path / "subwt").resolve()
+        _git(vendor, "worktree", "add", "-q", "-b", "wt/one", str(subwt))
+
+        from_vendor = _run(RESOLVE, cwd=vendor)
+        from_subwt = _run(RESOLVE, cwd=subwt)
+        assert from_vendor.returncode == 0 and from_subwt.returncode == 0, (
+            f"resolve failed: {from_vendor.stderr!r} / {from_subwt.stderr!r}"
+        )
+        assert Path(from_vendor.stdout.strip()) == vendor / ".worktrees", (
+            "precondition: the submodule's own checkout still resolves correctly"
+        )
+        assert Path(from_subwt.stdout.strip()) == subwt / ".worktrees", (
+            "known and accepted (#203): from a linked worktree of a submodule "
+            "the root nests under the worktree instead of naming the "
+            "submodule's primary checkout. If this assertion fails the guard "
+            "was changed — confirm the change was intended, then update this "
+            f"test and the boundary note in the script. Got {from_subwt.stdout.strip()!r}"
+        )
+
+    def test_the_script_comment_names_this_boundary(self):
+        """The comment must not read as though the submodule case is fully handled."""
+        text = RESOLVE.read_text()
+        parts = text.split("Two traps, both load-bearing", 1)
+        assert len(parts) == 2, "resolve-worktree-root.sh lost its 'Two traps' comment"
+        block = parts[1].split("COMMON_DIR=", 1)[0]
+        assert "linked worktree of a submodule" in block.lower(), (
+            "the traps comment explains the submodule guard but says nothing "
+            "about the case the guard does not rescue, so it reads as complete; "
+            "name the linked-worktree-of-a-submodule case there"
+        )
+        assert "#203" in block, (
+            "cite #203 beside the boundary so the reader can find the decision "
+            "not to implement the gitdir walk, rather than re-deriving it"
+        )
 
 
 class TestGitignoreVenvRule:
