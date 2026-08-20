@@ -118,6 +118,16 @@ def _tool_table(doc_text: str) -> str:
     return doc_text[start:end if end != -1 else len(doc_text)]
 
 
+GRAPH_HEALTH_HEADING = "## Graph health"
+
+
+def _graph_health(doc_text: str) -> str:
+    """The `## Graph health` section, heading to the next `##`."""
+    start = doc_text.index(GRAPH_HEALTH_HEADING)
+    end = doc_text.find("\n## ", start + len(GRAPH_HEALTH_HEADING))
+    return doc_text[start:end if end != -1 else len(doc_text)]
+
+
 def _prefetched_tools(doc_text: str) -> set[str]:
     match = _PREFETCH_RE.search(doc_text)
     assert match, f"no `select:` prefetch query in references/{DOC_REF.name}"
@@ -317,6 +327,74 @@ class TestOverflowDocTemplate:
             "`InputValidationError` (#209). Add them to the prefetch string in "
             f"both pinned copies — this template and scripts/"
             "socraticode-reminder.sh — or drop the row."
+        )
+
+    def test_graph_health_explains_unresolved_pct(self, doc_text: str) -> None:
+        """#198: the daily hook names `unresolvedPct`; the doc never did.
+
+        `mcp-driver.mjs` emits `graph unresolved N% (> 50%) — corroborates a
+        resolver problem` *outside* the verdict branches, so it fires on `ok`
+        graphs too, and `socraticode-health.sh` runs it once per UTC day. A
+        consumer reading only their generated doc had nothing to interpret it
+        with, and the phrase parses as an accusation when it stands alone —
+        one cohort repo distrusted a provably exact import graph for weeks on
+        the strength of it.
+
+        Pinned as concepts, not as a sentence: the section has to say what the
+        statistic counts (call edges), what it is for (corroboration, not the
+        verdict), and that a re-index does not move it.
+        """
+        section = _graph_health(doc_text)
+        for concept, why in (
+            ("unresolved", "the statistic the daily finding names"),
+            ("call edge", "what it actually counts — not import edges"),
+            ("corrobo", "it is reported beside the verdict, never as it"),
+            ("re-index", "a framework-heavy repo's figure does not come down"),
+        ):
+            assert concept in section.lower(), (
+                f"references/{DOC_REF.name}'s **Graph health** section must "
+                f"cover {concept!r} — {why} (#198).\n---\n{section}"
+            )
+
+    def test_graph_health_names_the_metric_the_gate_uses(
+        self, doc_text: str
+    ) -> None:
+        """The distinguishing signal, without which the rest is just reassurance.
+
+        A high `unresolvedPct` looks identical on a healthy framework-heavy
+        repo and on the src-layout resolver defect (`troubleshooting.md` row
+        N). What separates them is edges/file, which is what the gate keys on.
+        Telling a reader "do not worry about `unresolvedPct`" without telling
+        them what to worry about instead trades one misreading for another.
+        """
+        section = _graph_health(doc_text)
+        assert "edges/file" in section, (
+            f"references/{DOC_REF.name}'s **Graph health** section must name "
+            "edges/file — the metric `graphYield()` actually gates on — as the "
+            "signal that separates a broken import graph from a framework-heavy "
+            f"one (#198).\n---\n{section}"
+        )
+
+    def test_graph_health_does_not_link_the_skills_own_references(
+        self, doc_text: str
+    ) -> None:
+        """This template is copied into a consumer repo's `docs/`.
+
+        `references/troubleshooting.md` exists next to this file and nowhere
+        near the generated doc, so a relative link to it resolves here and
+        404s there — and `test_relative_links` blanks fenced blocks, so it
+        would never catch the dead link either. Upstream issues get full URLs.
+        """
+        section = _graph_health(doc_text)
+        assert "](troubleshooting.md" not in section, (
+            "the **Graph health** section links `troubleshooting.md` relatively. "
+            "That path exists only inside this skill; the generated "
+            f"{OVERFLOW_DOC} would carry a dead link, and the fenced-block skip "
+            f"in test_relative_links means nothing else would notice.\n---\n{section}"
+        )
+        assert "](references/" not in section, (
+            "the **Graph health** section links into the skill's own "
+            f"references/ tree, which does not exist beside {OVERFLOW_DOC}"
         )
 
     def test_names_its_destination(self, doc_text: str) -> None:
