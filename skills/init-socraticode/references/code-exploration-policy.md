@@ -326,7 +326,9 @@ started a two-hour index — or rewrote `AGENTS.md` under an agent already at wo
       relative to the repo root; if the project keeps detail docs elsewhere,
       change both the destination and the link.
 - [ ] Repo-authored content found in an unmarked section was **rescued**, not
-      replaced (step 1a), and every moved block is named in the report.
+      replaced (step 1a), and every moved block is named in the report. Same
+      check for an unmarked `docs/SOCRATICODE.md` (step 2) — rescue below its
+      `<!-- END socraticode-doc -->` marker.
 - [ ] `AGENTS.md` vs `CLAUDE.md`: this org standardizes on `AGENTS.md` with a
       one-line `CLAUDE.md` that reads `@AGENTS.md`. If the project only has
       `CLAUDE.md`, put the block there instead.
