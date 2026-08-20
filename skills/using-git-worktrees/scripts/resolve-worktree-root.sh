@@ -56,6 +56,16 @@ fi
 #     parent is not a work tree at all — taking it would put worktrees inside
 #     .git. The submodule's own --show-toplevel is already right, so the
 #     candidate is accepted only if it is a checkout sharing this common dir.
+#
+# One shape that guard does NOT rescue, left unhandled deliberately (#203): in
+# a linked worktree of a submodule the common dir is that same
+# <super>/.git/modules/<name>, so the candidate is rejected and the fallback to
+# --show-toplevel names the LINKED worktree — the root nests, exactly as it did
+# before this fix. Recovering the submodule's primary work tree means walking
+# <super>/.git/modules/<name>/worktrees/<id>/gitdir back to the registering
+# checkout: real parsing for a combination nobody in the cohort runs. The
+# nesting is pinned by tests/structural/test_worktree_root_contract.py
+# (TestSubmoduleWorktreeBoundary), so changing the guard is a decision.
 COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
 if [[ -n "$COMMON_DIR" ]] && COMMON_DIR=$(cd "$COMMON_DIR" 2>/dev/null && pwd -P); then
   CANDIDATE=$(dirname "$COMMON_DIR")
