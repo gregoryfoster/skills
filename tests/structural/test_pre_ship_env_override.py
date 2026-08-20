@@ -171,7 +171,10 @@ class TestOverrideBlockCoverage:
             f"once; found {len(openers)}. This test pins the line AFTER the "
             "opener, so two openers make it pin the wrong one."
         )
-        assert lines[openers[0] + 1] == "local line key val", (
+        # Pin the statement, not the commentary: every other line of the recipe
+        # carries a trailing `# …` and this one earns one more than most.
+        declaration = lines[openers[0] + 1].partition("#")[0].strip()
+        assert declaration == "local line key val", (
             f"{variant}/scripts/pre-ship.sh load_env() must declare "
             "`local line key val` as its first statement. The recipe is "
             "documentation of a reusable helper and gets reused as one — the "
