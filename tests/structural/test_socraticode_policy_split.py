@@ -95,6 +95,37 @@ NEGATIVE_RULE_MARKER = "**Negative rule.**"
 OVERFLOW_DOC = "docs/SOCRATICODE.md"
 PREFETCH_PREFIX = "select:mcp__plugin_socraticode_socraticode__codebase_search"
 
+# The doc template's tool table, and the prefetch that has to cover it (#209).
+TOOL_TABLE_HEADING = "## When to use each tool"
+MCP_PREFIX = "mcp__plugin_socraticode_socraticode__"
+_PREFETCH_RE = re.compile(r"select:" + MCP_PREFIX + r"[\w,]+")
+_TOOL_RE = re.compile(r"`(codebase_\w+)`")
+
+
+def _tool_table(doc_text: str) -> str:
+    """The `## When to use each tool` section, heading to the next `##`.
+
+    Scoped to the table on purpose. Other sections name `codebase_*` tools the
+    prefetch deliberately omits — **Graph health** discusses
+    `codebase_graph_status` only to say `READY` is not a yield measure, and
+    routes the reader to `mcp-driver.mjs health-check` instead of calling it.
+    Those are prose references, not recommendations; the table is the part of
+    the doc an agent reads as "call this".
+    """
+    start = doc_text.index(TOOL_TABLE_HEADING)
+    end = doc_text.find("\n## ", start + len(TOOL_TABLE_HEADING))
+    return doc_text[start:end if end != -1 else len(doc_text)]
+
+
+def _prefetched_tools(doc_text: str) -> set[str]:
+    match = _PREFETCH_RE.search(doc_text)
+    assert match, f"no `select:` prefetch query in references/{DOC_REF.name}"
+    return {
+        entry[len(MCP_PREFIX):]
+        for entry in match.group(0)[len("select:"):].split(",")
+        if entry.startswith(MCP_PREFIX)
+    }
+
 
 @pytest.fixture(scope="module")
 def policy_text() -> str:
@@ -257,6 +288,35 @@ class TestOverflowDocTemplate:
                 f"references/{DOC_REF.name} is missing `{tool}`; the block's "
                 "seven-row table was relocated here, not deleted"
             )
+
+    def test_prefetch_covers_every_tool_the_table_recommends(
+        self, doc_text: str
+    ) -> None:
+        """#209: the table and the prefetch are one file, twenty lines apart.
+
+        The `codebase_*` schemas are **deferred** — calling one before the
+        prefetch loads it fails validation. So a tool the table recommends but
+        the prefetch omits is an `InputValidationError` for an agent following
+        the doc it was just handed, which is the exact failure the prefetch
+        exists to prevent. `codebase_graph_circular` sat in that gap in two
+        cohort repos before anyone filed it.
+
+        Asserted as a superset rather than tool-by-tool: the next row someone
+        adds to the table is covered without their having to know this test is
+        here. The prefetch may load *more* than the table lists — it already
+        carries `codebase_status`, which no row names.
+        """
+        prefetched = _prefetched_tools(doc_text)
+        recommended = sorted(set(_TOOL_RE.findall(_tool_table(doc_text))))
+        missing = [tool for tool in recommended if tool not in prefetched]
+        assert not missing, (
+            f"references/{DOC_REF.name} recommends {missing} in its tool table "
+            "but the `select:` prefetch does not load them. The schemas are "
+            "deferred, so an agent that follows the table gets "
+            "`InputValidationError` (#209). Add them to the prefetch string in "
+            f"both pinned copies — this template and scripts/"
+            "socraticode-reminder.sh — or drop the row."
+        )
 
     def test_names_its_destination(self, doc_text: str) -> None:
         assert OVERFLOW_DOC in doc_text, (
