@@ -19,7 +19,7 @@ neither is visible from inside the skill:
 
 So this file asserts the shape rather than the prose: the rendered block stays
 under a byte ratchet, keeps the negative rule and a link to the overflow doc,
-does **not** carry the ~500-byte prefetch string any more, and ships a degraded
+does **not** carry the ~680-byte prefetch string any more, and ships a degraded
 twin that names the failure mode. The overflow doc template has to carry what
 the block gave up, or the split lost content instead of relocating it.
 
@@ -544,10 +544,31 @@ class TestOverflowDocHasARepoSpecificRegion:
             "marker pair the rule is narrower and true: do not hand-edit "
             f"*above the {DOC_END} marker* (#210)"
         )
-        assert DOC_END in template.split("## When to use each tool")[0], (
+        assert "END marker" in template.split("## When to use each tool")[0], (
             "the header, before the first section, must name the END marker — "
             "it is the only place a reader learns where their own notes go"
         )
+
+    def test_each_marker_appears_exactly_once_in_the_template(
+        self, doc_text: str
+    ) -> None:
+        """The trap the sibling `_BLOCK_RE` comment already documents.
+
+        Phase 3 finds the region by searching for the markers. If the header
+        spells `<!-- END socraticode-doc -->` inline — the natural way to write
+        "do not hand-edit above the END marker" — the search terminates four
+        lines into the file and a re-run truncates the doc to its header. The
+        prose says "END marker" for exactly this reason; the literal appears
+        once, at the bottom, where it means something.
+        """
+        template = _template(doc_text)
+        for marker in (DOC_BEGIN, DOC_END):
+            assert template.count(marker) == 1, (
+                f"{marker} appears {template.count(marker)} times in the "
+                "generated file. Phase 3 locates the region by searching for "
+                "these strings, so a second occurrence — even inside a code "
+                "span in the header — bounds the wrong region."
+            )
 
     def test_it_no_longer_banishes_repo_notes_to_agents_md(
         self, doc_text: str
