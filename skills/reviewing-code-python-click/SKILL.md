@@ -89,12 +89,12 @@ Evaluate against these dimensions:
 - **Documentation** — do AGENTS.md, README.md, docstrings, and `--help` output reflect changes?
 - **Robustness** — error handling, idempotency, graceful degradation; user-facing error messages distinguishable from stack traces
 - **Click command correctness** — decorator order is meaningful (typical pattern: `@command` → `@pass_context` → custom `@click_option_*` decorators → `@click.option`); `ctx.invoke` used correctly for delegation; `ctx.obj` carries a typed binding (e.g., `ctx_obj: AppContext`) rather than an untyped dict
-- **ParamType testability** — custom ParamTypes should be tested via `ParamType.callback()` (the conversion function), not `ParamType.convert()` (which can pull in live dependencies). Tests that hit `convert()` against a network or DB are brittle.
+- **ParamType testability** — `convert()` is a ParamType's only conversion hook, so test a custom ParamType through it and mock what it reaches for (`ctx.obj` and its service accessors) rather than avoiding it; a pure ParamType needs no mocking at all. `callback` is not a ParamType attribute — it belongs to `Parameter`/`Option` (a post-conversion hook) and to `Command` (the decorated function), so it is *command* tests that skip conversion, by calling `command.callback(...)` with pre-built objects instead of going through option parsing.
 - **Command registration** — newly added Click commands are registered in the project's entrypoint module (e.g., `src/<project>.py`). An unregistered command compiles, imports, and passes type checks but is invisible to users.
 - **Pydantic v2 idioms** — `X | None` syntax over `Optional[X]`; mutable default footgun (use `Field(default_factory=list)` not `= []`); type hints on every signature; `model_config` not `Config` inner class
 - **Cross-package boundary** — if a change crosses into a shared library (e.g., `../cannobserv/` consumed from `cli`), flag it for separate review of the library's consumers. Public-API changes in a shared library ripple.
 - **Datetime convention** — ISO 8601, UTC only; no naive datetimes; `datetime.now(timezone.utc)` not `datetime.now()`
-- **Security** — no hardcoded credentials; secrets via env only; input validation at command boundaries (Click `type=` + custom ParamType `callback`)
+- **Security** — no hardcoded credentials; secrets via env only; input validation at command boundaries (Click `type=` + a custom ParamType's `convert()`)
 
 ### Phase 3 — Present findings
 
