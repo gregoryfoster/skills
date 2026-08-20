@@ -120,6 +120,27 @@ def _tool_table(doc_text: str) -> str:
 
 GRAPH_HEALTH_HEADING = "## Graph health"
 
+# The generated `docs/SOCRATICODE.md`'s own marker pair (#210). Distinct token
+# from the `AGENTS.md` policy pair above — the two files are edited by different
+# steps and a shared token would let one step's sweep find the other's block.
+DOC_BEGIN = "<!-- BEGIN socraticode-doc -->"
+DOC_END = "<!-- END socraticode-doc -->"
+DOC_RESCUE_HEADING = "## Repo-specific notes"
+
+# The ````markdown fence holding the generated file. Four backticks, because the
+# template itself contains a ``` bash block.
+_TEMPLATE_RE = re.compile(r"^````markdown$\n(.*?)^````$", re.DOTALL | re.MULTILINE)
+
+
+def _template(doc_text: str) -> str:
+    match = _TEMPLATE_RE.search(doc_text)
+    assert match, (
+        f"references/{DOC_REF.name} carries no ````markdown template fence — "
+        "the file is the template for a generated doc and the fence is what "
+        "marks which part gets written out"
+    )
+    return match.group(1)
+
 
 def _graph_health(doc_text: str) -> str:
     """The `## Graph health` section, heading to the next `##`."""
@@ -451,4 +472,157 @@ class TestUnmarkedSectionRescue:
             "SKILL.md Phase 3 must carry the rescue rule, not only the "
             "reference — Phase 3 is what an agent follows when it edits "
             "AGENTS.md"
+        )
+
+
+class TestOverflowDocHasARepoSpecificRegion:
+    """#210: the generated doc had no marker pair, so a re-run destroyed prose.
+
+    The template used to solve this by instruction — *"repo-specific
+    exploration notes belong in `AGENTS.md`"* — which sends read-once detail
+    into the one file the split exists to protect and the one section
+    `curating-context` will not trim. It also does not work: `wslcb-licensing-
+    tracker` accumulated three genuinely repo-specific blocks in its
+    `docs/SOCRATICODE.md` (a measured-yield caveat, its real artifact list, and
+    why its `.socraticodeignore` keeps `skills/`), and the next audit re-run
+    would have deleted all three silently. The `low`-verdict path is worse: it
+    tells the author to substitute real measured numbers into a file the
+    template then overwrites.
+
+    So the generated file gets the same shape the `AGENTS.md` block already
+    has — replace between the markers, preserve what follows `END` — and the
+    same rescue discipline for the unmarked files every consumer is carrying
+    today.
+    """
+
+    @pytest.fixture(scope="class")
+    def doc_text(self) -> str:
+        return DOC_REF.read_text()
+
+    @pytest.fixture(scope="class")
+    def skill_md(self) -> str:
+        return SKILL_MD.read_text()
+
+    @pytest.fixture(scope="class")
+    def rerun_ref(self) -> str:
+        path = SKILL_DIR / "references" / "audit-rerun.md"
+        assert path.exists(), f"{path} is missing"
+        return path.read_text()
+
+    def test_the_template_carries_both_markers(self, doc_text: str) -> None:
+        template = _template(doc_text)
+        for marker in (DOC_BEGIN, DOC_END):
+            assert marker in template, (
+                f"the generated file must carry {marker} so a re-run can "
+                f"replace only the region it owns (#210).\n---\n{template}"
+            )
+
+    def test_the_markers_bound_the_whole_template(self, doc_text: str) -> None:
+        """BEGIN first, END last — the template *is* the managed region.
+
+        A marker pair around only part of the template would leave the rest
+        outside anyone's ownership: neither replaced on a re-run nor safe from
+        being replaced.
+        """
+        lines = [line for line in _template(doc_text).splitlines() if line.strip()]
+        assert lines[0].strip() == DOC_BEGIN, (
+            f"{DOC_BEGIN} must be the first line of the generated file, above "
+            f"the H1; got {lines[0]!r}"
+        )
+        assert lines[-1].strip() == DOC_END, (
+            f"{DOC_END} must be the last line the template writes, so every "
+            f"line after it in a consumer's file is repo-authored; got "
+            f"{lines[-1]!r}"
+        )
+
+    def test_the_header_no_longer_forbids_hand_editing_outright(
+        self, doc_text: str
+    ) -> None:
+        template = _template(doc_text)
+        assert "do not hand-edit." not in template.lower(), (
+            "the generated file still forbids hand-editing outright. With a "
+            "marker pair the rule is narrower and true: do not hand-edit "
+            f"*above the {DOC_END} marker* (#210)"
+        )
+        assert DOC_END in template.split("## When to use each tool")[0], (
+            "the header, before the first section, must name the END marker — "
+            "it is the only place a reader learns where their own notes go"
+        )
+
+    def test_it_no_longer_banishes_repo_notes_to_agents_md(
+        self, doc_text: str
+    ) -> None:
+        """The instruction #210 calls actively wrong.
+
+        `AGENTS.md` is loaded on every invocation and `curating-context`
+        refuses to edit the policy section, so this sent read-once detail into
+        a permanent, uncurateable cost — the exact bill #115 split the file to
+        avoid.
+        """
+        template = _template(doc_text)
+        assert "## Code Exploration Notes (repo-specific)" not in template, (
+            "the generated file still routes repo-specific exploration notes "
+            "to `AGENTS.md`. That is the file the split exists to protect, and "
+            "the policy section is the one `curating-context` will not trim "
+            f"(#210, #115).\n---\n{template}"
+        )
+
+    def test_it_names_where_repo_notes_do_go(self, doc_text: str) -> None:
+        assert DOC_RESCUE_HEADING in doc_text, (
+            f"the template must name {DOC_RESCUE_HEADING!r} as the destination "
+            "for repo-authored content, or 'preserved after END' is a rule "
+            "with no address"
+        )
+
+    def test_skill_md_replaces_between_the_markers(self, skill_md: str) -> None:
+        """Phase 3 is what an agent actually follows."""
+        assert DOC_BEGIN in skill_md and DOC_END in skill_md, (
+            "SKILL.md Phase 3 must name the marker pair it writes into "
+            f"{OVERFLOW_DOC}; a marker only the reference knows about is not "
+            "part of the procedure (#210)"
+        )
+        idx = skill_md.index("**Detail doc**")
+        step = skill_md[idx:skill_md.index("\n3. ", idx)]
+        assert "wholesale" not in step, (
+            "SKILL.md Phase 3 still tells a re-run to overwrite "
+            f"{OVERFLOW_DOC} wholesale.\n---\n{step}"
+        )
+
+    def test_skill_md_rescues_an_unmarked_existing_file(
+        self, skill_md: str
+    ) -> None:
+        """Every consumer's current file has no markers.
+
+        The first re-run after this change is the one that would destroy the
+        content #210 was filed about, so the unmarked branch has to be written
+        down — the way Phase 3's `AGENTS.md` step already writes it down.
+        """
+        idx = skill_md.index("**Detail doc**")
+        step = skill_md[idx:skill_md.index("\n3. ", idx)]
+        assert "rescue" in step.lower() or "preserve" in step.lower(), (
+            "Phase 3's detail-doc step must say what happens to a consumer's "
+            "existing, unmarked `docs/SOCRATICODE.md` — every repo installed "
+            f"before #210 has one.\n---\n{step}"
+        )
+
+    def test_the_invariant_list_agrees(self, skill_md: str) -> None:
+        """SKILL.md's own idempotency invariant said 'overwritten wholesale'."""
+        idx = skill_md.index("**All file edits are idempotent.**")
+        invariant = skill_md[idx:skill_md.index("\n- **", idx)]
+        assert "wholesale" not in invariant, (
+            "SKILL.md's idempotency invariant still describes "
+            f"{OVERFLOW_DOC} as overwritten wholesale, which contradicts "
+            f"Phase 3.\n---\n{invariant}"
+        )
+
+    def test_audit_rerun_covers_the_second_file(self, rerun_ref: str) -> None:
+        """'The one thing a re-run must not do quietly' now has two shapes."""
+        assert "wholesale" not in rerun_ref, (
+            "audit-rerun.md's Phase 3 row still says `docs/SOCRATICODE.md` is "
+            "overwritten wholesale (#210)"
+        )
+        assert OVERFLOW_DOC in rerun_ref.split("## One thing a re-run must not")[1], (
+            "audit-rerun.md's 'must not do quietly' section covers only the "
+            f"`AGENTS.md` span. {OVERFLOW_DOC} has the same failure and a "
+            "larger blast radius — a whole file rather than one section (#210)"
         )
