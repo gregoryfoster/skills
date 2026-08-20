@@ -102,6 +102,29 @@ node skills/init-socraticode/scripts/mcp-driver.mjs health-check .
 `verdict: "low"` means dependency questions must go to `grep`, and the
 `AGENTS.md` block should be on its degraded variant.
 
+**`unresolvedPct` is corroboration, not a verdict.** The same check — and the
+daily `socraticode-health.sh` run — also prints `graph unresolved N% (> 50%)
+— corroborates a resolver problem`, and prints it whether the verdict is
+`low` or `ok`. It is a *call*-graph statistic: the share of **call edges**
+whose callee resolves to no first-party symbol. A repo that leans on
+frameworks and the stdlib runs high by construction, because those callees
+are not in the repo — no re-index brings them in and none lowers the figure.
+Judge the graph on `verdict` and on **edges/file**, which is what the gate
+keys on. A high `unresolvedPct` beside `verdict: "ok"` is normal; the
+src-layout resolver defect it can be mistaken for
+(<https://github.com/giancarloerra/SocratiCode/issues/107>) shows up instead
+as near-zero edges/file.
+
+**If you suspect the import graph, test the import graph.** Take a file you
+know has first-party importers, run `codebase_graph_query` on it, and compare
+the result against an `rg` sweep over every spelling that import could be
+written as. If the two sets match, the import graph is exact and
+`unresolvedPct` is telling you about call edges, not about imports. Prefer
+that differential to any figure written into this file, which is repo- and
+day-specific. Upstream is adding a server-stated import-resolution advisory
+(<https://github.com/giancarloerra/SocratiCode/issues/112>); once a release
+carries it, that becomes the signal to read — until then, measure.
+
 ## Index scope
 
 `.socraticodeignore` (repo root, gitignore syntax, layered on the built-in
