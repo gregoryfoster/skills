@@ -167,8 +167,23 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    tool table, the `ToolSearch` prefetch string, per-tool notes, graph-health
    and index-scope guidance. The `AGENTS.md` block links to it and carries only
    what an agent needs on nearly every task; everything read once lives here.
-   Create `docs/` if absent, and overwrite the file wholesale on a re-run (it
-   has no marker pair because it *is* the block's overflow).
+   Create `docs/` if absent. **Marker-delimited, like the policy block.** The
+   template is bounded by a pair kept unbroken on one line each:
+   `<!-- BEGIN socraticode-doc -->` and `<!-- END socraticode-doc -->`.
+   - marker pair already present → **replace between the markers** and leave
+     every line after `END` untouched;
+   - else the file exists but is unmarked (every install predating
+     [#210](https://github.com/gregoryfoster/skills/issues/210)) → **rescue
+     before replacing**, the same way step 1a does for an unmarked policy
+     section: anything the template does not itself carry is repo-authored —
+     the repo's measured graph yield, its real artifact list, why an
+     `.socraticodeignore` entry exists. Move it, unchanged, under a
+     `## Repo-specific notes` heading *after* the END marker, and name every
+     moved block in the report.
+   - else → write the marked template.
+   Repo-specific exploration notes belong here, below `END` — **not** in
+   `AGENTS.md`, which is loaded on every invocation and whose policy section
+   `curating-context` will not trim.
 3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → install **two** vendored
    scripts and **merge** their entries into `.claude/settings.json` (create if
    absent). Install **both** the same way — **symlink** into
@@ -383,11 +398,11 @@ unmarked policy section before Phase 3 replaces the span
   and must cost a bounded, silent-when-clean moment.
 - **Never mutate the host toolchain.** Preflight detects and instructs; it does
   not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
-- **All file edits are idempotent.** The AGENTS.md policy block is
-  marker-delimited; the settings.json hook is merged and deduped;
-  `docs/SOCRATICODE.md` is overwritten wholesale. Re-running the skill, or
-  running it on a project that already has these files, must not duplicate
-  blocks or stack hooks.
+- **All file edits are idempotent.** The AGENTS.md policy block and the
+  `docs/SOCRATICODE.md` template are both marker-delimited — a re-run replaces
+  between the markers and preserves what follows `END`; the settings.json hook
+  is merged and deduped. Re-running the skill, or running it on a project that
+  already has these files, must not duplicate blocks or stack hooks.
 - **The policy block pays rent on every invocation.** It is the one section
   `curating-context` will not edit, so whatever lands in `AGENTS.md` is a fixed
   cost the repo cannot curate away — 1,247 tokens and 15% of watcher's whole
