@@ -47,8 +47,9 @@ def _clean_env() -> dict:
 
     An inherited GIT_DIR beats both `-C` and cwd, and git exports it to every
     hook process — so a fixture that ran under pre-commit would otherwise
-    initialise and commit into the *real* repo (docs/STYLE.md, "Rule 6").
-    Dropping every GIT_* var is the only reliable scrub.
+    initialise and commit into the *real* repo. Dropping every GIT_* var is
+    the only reliable scrub; see docs/STYLE.md, "A repo-creating git command
+    must scrub `GIT_DIR`".
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["LC_ALL"] = "C"
