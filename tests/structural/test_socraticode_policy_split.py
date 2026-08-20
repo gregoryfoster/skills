@@ -70,9 +70,10 @@ _BLOCK_RE = re.compile(
 #   variant A (standard)       1,115 bytes   (~421 est tokens)   -41% bytes
 #
 # The token saving is larger than the byte saving because the one item that left
-# is the densest: the 499-byte single-line `select:` prefetch string is almost
-# all fully-qualified tool names, ~200 tokens of near-pure repetition, and it was
-# already being printed by the SessionStart hook this same skill installs.
+# is the densest: the single-line `select:` prefetch string — 499 bytes when the
+# split landed, 677 since #209 widened it — is almost all fully-qualified tool
+# names, ~200 tokens of near-pure repetition, and it was already being printed by
+# the SessionStart hook this same skill installs.
 # (Watcher's rendered section measured 1,247 exact tokens; that figure includes
 # 732 bytes of repo-authored prose that is not in this template — see the
 # corrections in #115. The template's own share was the ~711 above.)
@@ -179,7 +180,7 @@ class TestBlockStaysSmall:
         for i, block in enumerate(blocks):
             assert PREFETCH_PREFIX not in block, (
                 f"variant {i} still inlines the ToolSearch prefetch query. It is "
-                "~499 bytes of fully-qualified tool names on one line, it is "
+                "~680 bytes of fully-qualified tool names on one line, it is "
                 "already printed by the SessionStart hook this skill installs, "
                 f"and it belongs in {OVERFLOW_DOC} (#115)."
             )

@@ -7,7 +7,7 @@ The template for the detail doc the trimmed `AGENTS.md` policy block links to
 `curating-context` refuses to edit the policy section, so anything left in the
 block is a cost the repo can never curate away. The split puts the two or three
 rows an agent needs on nearly every task in `AGENTS.md`, and everything read
-once — the full tool table, the ~500-byte `select:` prefetch string, the
+once — the full tool table, the ~680-byte `select:` prefetch string, the
 per-tool notes — behind a link ([#115](https://github.com/gregoryfoster/skills/issues/115)).
 
 **Destination.** `docs/SOCRATICODE.md` at the repo root. This is the first file
@@ -69,7 +69,7 @@ fails validation. The SessionStart hook
 (`.claude/hooks/socraticode-reminder.sh`) prints this each session; run it
 verbatim if it did not fire.
 
-`select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search`
+`select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_graph_circular,mcp__plugin_socraticode_socraticode__codebase_graph_stats,mcp__plugin_socraticode_socraticode__codebase_graph_visualize,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search`
 
 ## Per-tool notes
 
