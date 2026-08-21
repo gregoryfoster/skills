@@ -64,20 +64,20 @@ Invoke `bash "<SKILL_SCRIPTS>/resolve-worktree-root.sh"` to print the resolved r
 
 ## Venv linking — `.skills/worktree_venv`
 
-A worktree inherits no virtualenv, so `worktree-create.sh` symlinks the main checkout's `.venv` into the new one when it has one. The knob turns that off:
+A worktree inherits no virtualenv, so `worktree-create.sh` symlinks the main checkout's `.venv` into it. The knob turns that off:
 
 ```bash
 echo none > .skills/worktree_venv    # `link` (default) | `none`
 ```
 
-Set it to `none` when **the main checkout is also a running service's `WorkingDirectory=`**. The symlink then hands every worktree one shared *mutable* environment while isolating it in every other respect, and the service's own tooling rewrites that environment under a worktree's test run. Two symptoms identify the case (uv 0.10.4; the shape generalizes to any tool whose "run" verb reinstalls the current project):
+Set it to `none` when **the main checkout is also a running service's `WorkingDirectory=`**. The symlink then hands every worktree one shared *mutable* environment while isolating it in every other respect, and the service's own tooling rewrites that environment under a worktree's test run. Two symptoms identify the case (uv 0.10.4; the shape generalizes to any tool whose *run* verb reinstalls the project):
 
 - **`uv run` reinstalls the project.** A readiness timer running `uv run …` in the main checkout restamps `importlib.metadata.version(...)` to *main's* version mid-run, so a worktree suite on a bumped version fails `assert '0.38.0' == '0.37.0'` in a full run and passes in isolation.
-- **`uv sync` prunes groups it was not asked for.** An `ExecStartPre=uv sync` deletes an opt-in dependency group whose test modules `pytest.importorskip` at module scope. Those become skips, not errors: a few hundred tests silently stop running against a suite that still reports green.
+- **`uv sync` prunes groups it was not asked for.** An `ExecStartPre=uv sync` deletes an opt-in dependency group whose test modules `pytest.importorskip` at module scope. Those become skips, not errors: hundreds of tests silently stop running against a suite that still reports green.
 
-The hazard runs the other way too: a worktree's own `uv sync` mutates what the live workers import from. With `none`, `worktree-create.sh` creates no `.venv` and says so on stderr; provision the worktree's own instead — sub-second against a warm cache.
+The hazard runs both ways: a worktree's own `uv sync` mutates what the live workers import from. With `none`, `worktree-create.sh` creates no `.venv` and says so on stderr; provision one — sub-second against a warm cache.
 
-**Tracking.** The knob is read from the **primary checkout**, like `.skills/worktree_root`, so leaving it untracked works: an untracked `.skills/` file does not exist in a linked worktree at all, and reading it from the current checkout would drop the opt-out exactly where it is needed. Commit it only if it holds for every clone — "the main checkout is a service's working directory" is a property of one machine, not of the repository.
+**Tracking.** Read from the **primary checkout**, like `.skills/worktree_root`, so untracked works: such a file does not exist in a linked worktree at all, and reading the current checkout would drop the opt-out exactly where it is needed. Commit it only if it holds for every clone — a service's working directory is a property of one machine, not of the repo.
 
 ## Procedure
 
@@ -120,7 +120,7 @@ The script:
   ln -s "$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd)")/.venv" .venv
   ```
 
-  Link, don't re-create. A symlink is by construction the same interpreter and the same installed packages; a freshly resolved environment is a *different* one that can silently collect fewer tests and still report a green suite — a failure with no error message to notice. **Unless `.skills/worktree_venv` is `none`** — check it first; if it is, provision the worktree's own environment instead of linking.
+  Link, don't re-create. A symlink is by construction the same interpreter and the same installed packages; a freshly resolved environment is a *different* one that can silently collect fewer tests and still report a green suite — a failure with no error message to notice. Unless `.skills/worktree_venv` is `none` — see above.
 - **Env separation** — if the project ships env files (`.env`, `/etc/<project>/.env`), copy or symlink them into the worktree. Consult the project's AGENTS.md.
 - **Port allocation** — if the branch runs a dev server, allocate a distinct port so it doesn't collide with the main checkout's. Project AGENTS.md is authoritative for the scheme; if none is documented, pick an unused port and record it in `<worktree>/.port` so destroy can free it.
 
