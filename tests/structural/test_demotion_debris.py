@@ -30,12 +30,24 @@ A fourth shape, a heading demoted **inside a fenced example**, was found and
 fixed under #148 and is asserted by
 `test_demoted_blocks.py::test_no_marker_is_buried_in_a_code_fence`.
 
-Both rules here are shape rules over rendered Markdown, so they need no registry
-and no per-block judgement: they hold for every paragraph in the tree, demoted
-or not. That is deliberate. A registry-scoped version would have missed
-`### Two more Phase 6 notes` entirely, because the block was never registered —
-its heading does not speak the demotion convention, so `test_demoted_blocks.py`
-could not discover it.
+The rules for those shapes are shape rules over rendered Markdown, so they need
+no registry and no per-block judgement: they hold for every paragraph in the
+tree, demoted or not. That is deliberate. A registry-scoped version would have
+missed `### Two more Phase 6 notes` entirely, because the block was never
+registered — its heading does not speak the demotion convention, so
+`test_demoted_blocks.py` could not discover it.
+
+Two later additions sit at the edge of that thesis, and say so where they are:
+
+  copied      `TestNoBlockWasCopiedInsteadOfMoved` (#204) is still a shape rule,
+              but over *pairs* of docs rather than single paragraphs — a block
+              copied instead of moved. It carries this file's only exemption
+              registry, and a second test that fails an exemption once its
+              duplicate is gone.
+  misplaced   `TestTheGuardsNonVetoClaimIsWhereTheReaderArrives` (#205) is a
+              placement pin on one paragraph, the one thing here that is not a
+              shape rule at all. It exists because that paragraph has no heading
+              of its own, so nothing else holds it where a reader will find it.
 
 Scoped to `curating-context/references/`, whose Phase 5 owns the demotion
 convention. Demotion damage in another skill's docs is not gated here.
@@ -296,8 +308,11 @@ DUPLICATION_EXEMPTIONS: dict[str, str] = {
 
 def _duplicate_runs() -> list[tuple[str, list[str]]]:
     """Maximal runs of identical non-blank lines shared by two reference docs."""
+    # Keyed on the path relative to the tree, not on `.name`: the tree is flat
+    # today, but two same-named docs in different subdirectories would otherwise
+    # collide into one entry and the rule would silently stop covering both.
     docs = {
-        path.name: path.read_text().splitlines()
+        str(path.relative_to(REFERENCES)): path.read_text().splitlines()
         for path in sorted(REFERENCES.rglob("*.md"))
     }
 
