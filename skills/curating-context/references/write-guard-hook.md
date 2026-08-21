@@ -96,6 +96,10 @@ The comparison point is `HEAD`, not the previous edit, so the reported delta
 covers all uncommitted changes to the file — the message says "since HEAD" rather
 than "this edit" for that reason.
 
+If a genuine addition has to land and push the file over, that is fine — the
+advisory is not a veto. Land it, and let the next run classify it. What the guard
+buys is that the decision was seen rather than accreted.
+
 ## What it watches
 
 | Path | Budget | Knob |
@@ -245,7 +249,3 @@ weekly run throughout and shipped no way to schedule one. `install-cadence.sh`
 now installs it — as a weekly *measurement* rather than a weekly curation, so
 what it recovers is the evidence that ground was lost, not the ground itself.
 See [cadence.md](cadence.md).
-
-If a genuine addition has to land and push the file over, that is fine — the
-advisory is not a veto. Land it, and let the next run classify it. What the guard
-buys is that the decision was seen rather than accreted.

@@ -421,15 +421,10 @@ jobs:
           fi
 ```
 
-What goes on the clock is a **measurement, not a curation** — regrowth, budget
-adherence and seam accrual all come from measuring, and judgement on a timer is
-what this skill avoids everywhere else. The weekly job records a `baseline` row
-and warns when the surface drifts; a human or an agent curates on that evidence.
-It never runs on `pull_request`.
-
-**It needs the `ANTHROPIC_API_KEY` repository secret.** Without it the job
-records *nothing*, silently, every week — `record-telemetry.sh` refuses an
-estimate against exact rows. Set the secret first, then run it once by hand.
+Its header comment restates § *What goes on the clock is a measurement, not a
+curation* and § *The prerequisite that makes or breaks it* on purpose: the job
+installs into repos where the `.yml` is the only thing anybody reads, with no
+path back to this doc. The pin above is what keeps that copy in step.
 
 ## Stagger the cron across the cohort
 
