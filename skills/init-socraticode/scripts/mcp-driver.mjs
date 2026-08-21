@@ -490,6 +490,29 @@ function graphYield(text) {
   return out;
 }
 
+// The unresolvedPct finding, worded from the verdict (#216).
+//
+// The line itself is unconditional — it is reported whenever the figure clears
+// the threshold, on healthy graphs too, because the statistic is worth having
+// either way and the alternative (moving it inside the verdict branches) hides
+// it from every repo that is fine. Only the gloss moves.
+//
+// Why it has to: beside `low` or `unknown` there is a yield finding already in
+// the list for this to corroborate. Beside `ok` there is nothing, and
+// "corroborates a resolver problem" standing alone parses as an accusation —
+// one cohort repo distrusted a provably exact import graph for weeks on the
+// strength of it, paying an `rg` round-trip on every dependency question.
+//
+// Exported, and rendered from one place, because the generated doc quotes it
+// verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
+// agree, so a reword cannot leave the doc behind.
+function unresolvedFinding(unresolvedPct, verdict) {
+  const gloss = verdict === 'ok'
+    ? 'share of call edges with no first-party callee; verdict is ok, so this is a statistic, not a defect'
+    : 'corroborates a resolver problem';
+  return `graph unresolved ${unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — ${gloss}`;
+}
+
 // codebase_graph_query on a file with no resolved edges: an ordinary sentence,
 // not an error. This is the confirmatory probe's failure shape — and the exact
 // string an agent misreads as "nothing depends on this file".
@@ -936,7 +959,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         findings.push(`graph yield UNKNOWN — ${y.reason}`);
       }
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
-        findings.push(`graph unresolved ${y.unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — corroborates a resolver problem`);
+        findings.push(unresolvedFinding(y.unresolvedPct, y.verdict));
       }
     }
   });
@@ -1158,6 +1181,7 @@ export {
   parseEmbedPercent, parseArtifacts, graphReady,
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
+  unresolvedFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
