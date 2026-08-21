@@ -13,6 +13,13 @@ usage() {
   echo "<branch> with '/' replaced by '-' (e.g., feature/foo -> feature-foo)."
   echo "The root is resolved via resolve-worktree-root.sh (env var → .skills/worktree_root → <repo>/.worktrees/)."
   echo ""
+  echo "The main checkout's .venv is symlinked into the new worktree when one"
+  echo "exists. Write 'none' into .skills/worktree_venv (read from the PRIMARY"
+  echo "checkout; 'link' is the default) to skip that — the right setting when"
+  echo "the main checkout is also a running service's WorkingDirectory=, where"
+  echo "the service's own 'uv run' / 'uv sync' rewrite the shared venv under a"
+  echo "worktree's test run."
+  echo ""
   echo "Options:"
   echo "  --new   Create the branch (passes -b to git worktree add). Default: branch must already exist."
   echo ""
@@ -97,6 +104,73 @@ else
   git worktree add "$WORKTREE_PATH" "$BRANCH" >&2 || exit 2
 fi
 
+# The link below is right by default and wrong for exactly one shape: a main
+# checkout that is ALSO a running service's `WorkingDirectory=`. There the link
+# hands every worktree one shared *mutable* environment while isolating it in
+# every other respect, and the service's own tooling rewrites that environment
+# underneath a worktree's test run (#201). Two mechanisms, both confirmed on uv
+# 0.10.4:
+#   * `uv run` reinstalls the current project, restamping
+#     `importlib.metadata.version(...)` to the MAIN checkout's version mid-run.
+#     A worktree suite on a bumped version then fails in a full run and passes
+#     in isolation — a flake whose direction depends on which checkout ran uv
+#     last.
+#   * `uv sync` prunes every dependency group it was not asked for. An opt-in
+#     group whose test modules `pytest.importorskip` at module scope does not
+#     error when it vanishes; it turns a few hundred passes into skips against
+#     a suite that still reports green.
+#
+# `.skills/worktree_venv` is the opt-out: `none`, or `link` (the default, so
+# nothing changes for existing users).
+#
+# Read from the PRIMARY checkout, not from `git rev-parse --show-toplevel`.
+# `.skills/` knobs are machine-local and untracked, and an untracked file does
+# not exist in a linked worktree at all — so a knob read from the current
+# checkout would be invisible whenever this script runs from inside a worktree,
+# silently restoring the link in the one deployment the knob exists to protect.
+# This is the derivation `resolve-worktree-root.sh` uses for the same reason,
+# including its submodule guard: the parent of `<super>/.git/modules/<name>` is
+# not a work tree, so the candidate is accepted only if it is a checkout
+# sharing this common dir. The #203 gap is inherited with it — in a linked
+# worktree OF a submodule the candidate is rejected and the knob is read from
+# the current checkout, where an untracked file is absent.
+worktree_venv_mode() {
+  local common_dir candidate candidate_common knob_root knob configured
+  knob_root="$PROJECT_ROOT"
+  common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+  if [[ -n "$common_dir" ]] && common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P); then
+    candidate=$(dirname "$common_dir")
+    # `git -C "$candidate"` answers relative to candidate, not to our $PWD.
+    candidate_common=$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)
+    if [[ -n "$candidate_common" ]] &&
+       candidate_common=$(cd "$candidate" && cd "$candidate_common" 2>/dev/null && pwd -P) &&
+       [[ "$candidate_common" == "$common_dir" ]]; then
+      knob_root="$candidate"
+    fi
+  fi
+
+  knob="$knob_root/.skills/worktree_venv"
+  [[ -f "$knob" ]] || { echo link; return 0; }
+
+  # First non-blank, non-comment line, trimmed — the same read
+  # `resolve-worktree-root.sh` gives `.skills/worktree_root`, so one knob
+  # syntax covers the directory. `|| true` keeps pipefail from aborting on a
+  # file that is empty or all comments: that must default, not crash.
+  configured=$(grep -v '^[[:space:]]*#' "$knob" | grep -v '^[[:space:]]*$' | head -n1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
+  case "$configured" in
+    none) echo none ;;
+    link | "") echo link ;;
+    # A malformed knob file degrades to the default AND says so. Silence is
+    # what lets a typo ('off', 'false', 'no') read as a working opt-out, and
+    # the symptom it would leave — a venv that keeps being rewritten — is the
+    # one this whole block exists to make legible.
+    *)
+      echo "WARN: $knob: unrecognised value '$configured' (expected 'link' or 'none') — linking as usual" >&2
+      echo link
+      ;;
+  esac
+}
+
 # A worktree inherits no virtualenv, so the first `.venv/bin/python -m pytest`
 # in it dies before any test runs (#156). Link the parent's when there is one:
 # a symlink is by construction the same interpreter and the same installed
@@ -120,15 +194,24 @@ fi
 # an `ln -s` that fails on the existing name. It lands in the WARN branch either
 # way, but the two linkers must read identically or a later edit fixes one.
 if [[ -e "$PROJECT_ROOT/.venv/bin/activate" && ! -e "$WORKTREE_PATH/.venv" && ! -L "$WORKTREE_PATH/.venv" ]]; then
-  # `pwd -P` resolves through a .venv that is itself a symlink (a worktree
-  # provisioning a worktree), so we never build a link to a link.
-  VENV_TARGET=$(cd "$PROJECT_ROOT/.venv" 2>/dev/null && pwd -P) || VENV_TARGET=""
-  if [[ -z "$VENV_TARGET" ]]; then
-    echo "WARN: could not resolve $PROJECT_ROOT/.venv — no venv linked into $WORKTREE_PATH" >&2
-  elif ln -s "$VENV_TARGET" "$WORKTREE_PATH/.venv" 2>/dev/null; then
-    echo "NOTE: linked .venv -> $VENV_TARGET" >&2
+  # Resolved here rather than up front so a repo with no venv pays none of it,
+  # and so a malformed knob warns only where it would have changed something.
+  if [[ "$(worktree_venv_mode)" == "none" ]]; then
+    # Announced, never silent. An absent .venv is also the signature of the
+    # #156 bug this linker fixes, so the operator standing in a fresh worktree
+    # has to be told which of the two they are looking at.
+    echo "NOTE: .skills/worktree_venv=none — no .venv linked into $WORKTREE_PATH; provision one there" >&2
   else
-    echo "WARN: could not link .venv into $WORKTREE_PATH — run 'ln -s $VENV_TARGET .venv' there" >&2
+    # `pwd -P` resolves through a .venv that is itself a symlink (a worktree
+    # provisioning a worktree), so we never build a link to a link.
+    VENV_TARGET=$(cd "$PROJECT_ROOT/.venv" 2>/dev/null && pwd -P) || VENV_TARGET=""
+    if [[ -z "$VENV_TARGET" ]]; then
+      echo "WARN: could not resolve $PROJECT_ROOT/.venv — no venv linked into $WORKTREE_PATH" >&2
+    elif ln -s "$VENV_TARGET" "$WORKTREE_PATH/.venv" 2>/dev/null; then
+      echo "NOTE: linked .venv -> $VENV_TARGET" >&2
+    else
+      echo "WARN: could not link .venv into $WORKTREE_PATH — run 'ln -s $VENV_TARGET .venv' there" >&2
+    fi
   fi
 fi
 
