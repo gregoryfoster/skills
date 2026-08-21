@@ -261,3 +261,46 @@ class TestNoProseRendersAsACodeBlock:
             "as it could not see the fenced heading #148 fixed. The demotion "
             "convention quotes snapshots at three spaces; use that, or none (#158)."
         )
+
+
+class TestTheGuardsNonVetoClaimIsWhereTheReaderArrives:
+    """A placement pin, not a shape rule — the one exception in this module.
+
+    "the advisory is not a veto" is what the write guard is *for*: it is the
+    answer to "it fired, now what?". It sat under `## Relationship to the weekly
+    run`, a section about how the guard and the cadence divide labour, which is
+    not where that reader looks (#205). Pinned rather than left to drift back,
+    because the paragraph has no heading of its own and nothing else holds it.
+    """
+
+    CLAIM = "the advisory is not a veto"
+    HOME = "When it speaks"
+
+    def _sections(self) -> dict[str, str]:
+        """Section title -> body, wrapped lines rejoined.
+
+        The claim is hard-wrapped mid-phrase ("that is fine — the\\nadvisory is
+        not a veto"), so a body searched line by line would never match it. The
+        pin is on the sentence, not on where the author's fill happened to break.
+        """
+        text = (REFERENCES / "write-guard-hook.md").read_text()
+        parts = re.split(r"^## (.+)$", text, flags=re.MULTILINE)
+        return {
+            title: " ".join(body.split())
+            for title, body in zip(parts[1::2], parts[2::2])
+        }
+
+    def test_the_claim_lives_under_when_it_speaks(self):
+        sections = self._sections()
+        assert self.HOME in sections, (
+            f"write-guard-hook.md no longer has a `## {self.HOME}` section; the "
+            "claim below has nowhere to be (#205)."
+        )
+        holders = [name for name, body in sections.items() if self.CLAIM in body]
+        assert holders == [self.HOME], (
+            f"{self.CLAIM!r} is under {holders or 'no'} section, not "
+            f"`## {self.HOME}`. That paragraph is the guard's central design "
+            "claim — a reader asking what happens when they have to go over "
+            f"budget arrives at `## {self.HOME}`, which is where the two "
+            "conditions and the never-nag rule already are (#205)."
+        )
