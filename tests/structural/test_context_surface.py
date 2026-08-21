@@ -589,6 +589,237 @@ class TestLedgerStaysSingleMethod:
         assert json.loads(result.stdout)["tokens_exact"] is False
 
 
+class TestRepoCommitBackfill:
+    """`repo_commit` named the parent of the tree the row describes (#206).
+
+    Phase 7 measures, records, and only then commits the ledger alongside the
+    edits — so the hash the append could see is the commit *before* the one that
+    ships the curation. Everything else on the row (`tokens`, `seams`,
+    `no_loss`) describes the shipped tree; `repo_commit` alone pointed a commit
+    behind. The field carries two documented meanings — which state of this tree
+    the row describes, and where the next scheduled seam sweep starts — and they
+    were being satisfied by two different commits, so a wired cadence re-swept
+    the run's own relocations and re-reported seams the run had already judged.
+
+    `--repo-commit REV` backfills the row after the commit. It rewrites, never
+    appends: a rewrite *within* a run is what `telemetry.md` sanctions, and a
+    third row for an intermediate state nobody can check out is what it forbids.
+    """
+
+    LEDGER = ".skills/context-metrics.jsonl"
+
+    def _rev(self, repo: Path, ref: str = "HEAD", *flags: str) -> str:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", *flags, ref],
+            check=True, capture_output=True, text=True, env=_clean_env(),
+        )
+        return out.stdout.strip()
+
+    def _measure(self, repo: Path) -> str:
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo),
+            env=_clean_env(), timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def _record(self, repo: Path, *extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(RECORD), *extra],
+            input=self._measure(repo), capture_output=True, text=True,
+            cwd=str(repo), env=_clean_env(), timeout=60,
+        )
+
+    def _backfill(self, repo: Path, *extra: str) -> subprocess.CompletedProcess:
+        """Run the backfill against a stdin that is open, silent and never closed.
+
+        The append path reads stdin to exhaustion. If the backfill did too it
+        would hang here rather than fail an assertion, so this is the shape that
+        actually catches it — `stdin=DEVNULL` would read EOF and pass.
+        """
+        r_fd, w_fd = os.pipe()
+        try:
+            return subprocess.run(
+                ["bash", str(RECORD), *extra], stdin=r_fd,
+                capture_output=True, text=True, cwd=str(repo),
+                env=_clean_env(), timeout=60,
+            )
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def _rows(self, repo: Path) -> list[dict]:
+        """The rows a reader can use, skipping a malformed line as every script
+        in this chain skips it. Parseability is asserted on its own below."""
+        rows = []
+        for line in (repo / self.LEDGER).read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows
+
+    def _through_phase_seven(self, tmp_path: Path) -> tuple[Path, str, str]:
+        """Phase 7's ordering: measure, record, then commit ledger and edits.
+
+        Returns the repo, the commit the append could see, and the commit that
+        actually ships the tree the row describes.
+        """
+        repo = _repo(tmp_path, policy_lines=50)
+        before = self._rev(repo, "HEAD", "--short")
+        result = self._record(repo, "--actions", "demote:Project Layout")
+        assert result.returncode == 0, result.stderr
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "the curation, ledger and all")
+        return repo, before, self._rev(repo, "HEAD", "--short")
+
+    def test_the_append_alone_names_the_parent_of_the_shipped_tree(
+        self, tmp_path: Path
+    ):
+        """The reproduction, pinned so the backfill has something to fix."""
+        repo, before, shipped = self._through_phase_seven(tmp_path)
+        assert before != shipped, "the fixture did not actually commit"
+        assert self._rows(repo)[-1]["repo_commit"] == before
+
+    def test_backfill_puts_the_shipping_commit_on_the_row(self, tmp_path: Path):
+        repo, before, shipped = self._through_phase_seven(tmp_path)
+        result = self._backfill(repo, "--repo-commit", "HEAD")
+        assert result.returncode == 0, result.stderr
+        row = self._rows(repo)[-1]
+        # Present, non-null, and the right commit — three assertions because a
+        # field that merely "changed" can change to null, and a field compared
+        # against a snapshot of itself passes while verifying nothing.
+        assert "repo_commit" in row, row
+        assert row["repo_commit"] is not None, row
+        assert row["repo_commit"] == shipped, row
+        assert row["repo_commit"] != before, row
+
+    def test_backfill_rewrites_and_never_appends(self, tmp_path: Path):
+        repo, _, _ = self._through_phase_seven(tmp_path)
+        before = len(self._rows(repo))
+        assert self._backfill(repo, "--repo-commit", "HEAD").returncode == 0
+        assert len(self._rows(repo)) == before, (
+            "the backfill appended a row for an intermediate state"
+        )
+
+    def test_backfill_is_idempotent(self, tmp_path: Path):
+        """A re-run must be a no-op, not a second row and not a second write."""
+        repo, _, shipped = self._through_phase_seven(tmp_path)
+        assert self._backfill(repo, "--repo-commit", "HEAD").returncode == 0
+        once = (repo / self.LEDGER).read_text()
+        again = self._backfill(repo, "--repo-commit", "HEAD")
+        assert again.returncode == 0, again.stderr
+        assert (repo / self.LEDGER).read_text() == once
+        assert self._rows(repo)[-1]["repo_commit"] == shipped
+
+    def test_a_run_that_died_before_the_backfill_leaves_a_parseable_row(
+        self, tmp_path: Path
+    ):
+        """Crash-safety: the interrupted state is the OLD behaviour, not a
+        broken ledger. Every line still parses and the field is still a commit,
+        one behind — recoverable by running the backfill later."""
+        repo, before, _ = self._through_phase_seven(tmp_path)
+        lines = [ln for ln in (repo / self.LEDGER).read_text().splitlines()
+                 if ln.strip()]
+        assert lines, "the record step wrote nothing"
+        for line in lines:
+            json.loads(line)  # a half-written row would raise here
+        assert self._rows(repo)[-1]["repo_commit"] == before
+
+    def test_backfill_refuses_a_commit_this_repo_does_not_have(
+        self, tmp_path: Path
+    ):
+        """Null already means 'cannot name an interval'. A fabricated revision
+        sends the next sweep to a tree nobody measured, which is worse."""
+        repo, _, shipped = self._through_phase_seven(tmp_path)
+        untouched = (repo / self.LEDGER).read_text()
+        result = self._backfill(repo, "--repo-commit", "deadbee")
+        assert result.returncode == 1, result.stderr
+        assert "deadbee" in result.stderr
+        assert (repo / self.LEDGER).read_text() == untouched
+        assert self._rows(repo)[-1]["repo_commit"] != "deadbee"
+        assert self._rows(repo)[-1]["repo_commit"] != shipped
+
+    def test_backfill_normalises_a_long_revision_to_the_short_form(
+        self, tmp_path: Path
+    ):
+        """The writer and `check-seams.sh --base-ledger` are joined by a field
+        name and a revision format. Recorded long and read short is the shape
+        that would join nothing."""
+        repo, _, shipped = self._through_phase_seven(tmp_path)
+        full = self._rev(repo)
+        assert len(full) == 40
+        assert self._backfill(repo, "--repo-commit", full).returncode == 0
+        assert self._rows(repo)[-1]["repo_commit"] == shipped
+
+    def test_backfill_preserves_a_malformed_line(self, tmp_path: Path):
+        """record-telemetry.sh skips a malformed line so one interrupted run
+        cannot poison the ledger. A rewrite that dropped it would do the
+        poisoning itself, on a line no reader can get back."""
+        repo, _, shipped = self._through_phase_seven(tmp_path)
+        ledger = repo / self.LEDGER
+        ledger.write_text('{"ts": "2026-08-01", "file": "AGE\n' + ledger.read_text())
+        result = self._backfill(repo, "--repo-commit", "HEAD")
+        assert result.returncode == 0, result.stderr
+        text = ledger.read_text()
+        assert '{"ts": "2026-08-01", "file": "AGE\n' in text, text
+        assert "malformed" in result.stderr.lower()
+        assert self._rows(repo)[-1]["repo_commit"] == shipped
+
+    def test_backfill_refuses_when_the_newest_row_is_a_baseline(
+        self, tmp_path: Path
+    ):
+        """The baseline row records a state that has already passed, so a late
+        commit cannot change what it describes. telemetry.md exempts it from the
+        rewrite rule in both directions."""
+        repo = _repo(tmp_path, policy_lines=50)
+        assert self._record(repo, "--baseline").returncode == 0
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "baseline only")
+        untouched = (repo / self.LEDGER).read_text()
+        result = self._backfill(repo, "--repo-commit", "HEAD")
+        assert result.returncode == 1, result.stderr
+        assert "unknown argument" not in result.stderr, (
+            "the flag is not parsed at all, so this refusal is the usage error "
+            "and not the rule under test"
+        )
+        assert "baseline" in result.stderr
+        assert (repo / self.LEDGER).read_text() == untouched
+
+    def test_backfill_refuses_an_empty_ledger(self, tmp_path: Path):
+        repo = _repo(tmp_path, policy_lines=50)
+        (repo / ".skills").mkdir()
+        (repo / self.LEDGER).write_text("")
+        result = self._backfill(repo, "--repo-commit", "HEAD")
+        assert result.returncode == 1, result.stderr
+        assert "unknown argument" not in result.stderr, result.stderr
+        assert self.LEDGER in result.stderr
+
+    def test_backfill_refuses_the_flags_that_only_make_sense_on_an_append(
+        self, tmp_path: Path
+    ):
+        """`--repo-commit` reads no measurement, so `--actions` on it would
+        silently discard the tags rather than record them."""
+        repo, _, _ = self._through_phase_seven(tmp_path)
+        result = self._backfill(
+            repo, "--repo-commit", "HEAD", "--actions", "demote:Layout")
+        assert result.returncode == 1, result.stderr
+        assert "unknown argument" not in result.stderr, result.stderr
+        assert "--actions" in result.stderr
+
+    def test_dry_run_backfill_previews_without_writing(self, tmp_path: Path):
+        repo, before, shipped = self._through_phase_seven(tmp_path)
+        untouched = (repo / self.LEDGER).read_text()
+        result = self._backfill(repo, "--repo-commit", "HEAD", "--dry-run")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["repo_commit"] == shipped
+        assert (repo / self.LEDGER).read_text() == untouched
+        assert self._rows(repo)[-1]["repo_commit"] == before
+
+
 def _bin_with_real_tools(bin_dir: Path) -> Path:
     """A PATH directory holding the real tools measure-context.sh needs, so a
     caller can then override exactly one of them."""
