@@ -253,7 +253,7 @@ def test_no_unchecked_temp_file_write():
     assert not found, (
         "a write whose failure errexit does not catch. Put the `&&` list in an "
         "`if`, so the success message lives in the branch that succeeded — see "
-        "install-refresh.sh's settings_rewrite(). If the swallow is deliberate, "
+        "install-hook.sh's settings_rewrite(). If the swallow is deliberate, "
         f"mark the line `# {EXEMPT_MARKER} <reason>`.\n\n  "
         + "\n  ".join(found)
     )

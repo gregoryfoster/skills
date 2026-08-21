@@ -163,14 +163,34 @@ def _step_a() -> str:
 
 
 class TestItIsInstalledLikeItsSibling:
-    """#179's shape, reused. Two hooks, one `.claude/hooks/`, one mechanism."""
+    """#179's shape, reused. Two hooks, one `.claude/hooks/`, one mechanism —
+    and since #200 that is literally one script: `managing-skills`'
+    `install-hook.sh`, which Step A and Step C invoke with different constants.
+    What the installer *does* is pinned behaviourally in
+    `test_hook_installer_generic.py`, against the very argument list parsed out
+    of these steps; what this class pins is that the document still asks for it.
+    """
 
-    def test_step_a_symlinks_the_vendored_script(self) -> None:
+    def test_step_a_runs_the_shared_installer(self) -> None:
+        step = _step_a()
+        assert "install-hook.sh" in step, (
+            "Step A must install through managing-skills' shared installer, not "
+            "a hand-rolled loop: a second implementation is the fourth "
+            f"near-copy #200 exists to prevent.\n---\n{step}"
+        )
+        assert "--hook socraticode-reminder.sh" in step, (
+            "Step A must name the hook it installs in the command it gives"
+        )
+
+    def test_step_a_still_states_the_symlink_rule(self) -> None:
+        """The rule survives the move into a script. An agent reading Step A has
+        to know a copy is the fallback and not the mechanism, or the first
+        environment where the installer copies looks like a normal install."""
         step = _step_a()
         assert "ln -s" in step, (
-            "Step A must symlink the vendored script into skills-vendor/, the "
-            "way Step C installs the health hook and managing-skills installs "
-            f"its refresh hook (#186, #179).\n---\n{step}"
+            "Step A must say it symlinks the vendored script into "
+            "skills-vendor/, the way Step C installs the health hook and "
+            f"managing-skills installs its refresh hook (#186, #179).\n---\n{step}"
         )
         assert "skills-vendor/" in step, (
             "the symlink target must be derived from the vendor directory "

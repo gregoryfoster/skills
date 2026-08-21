@@ -47,6 +47,8 @@ inherited rather than re-litigated.
 
 import json
 import os
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -57,21 +59,47 @@ MS_SCRIPTS = REPO_ROOT / "skills" / "managing-skills" / "scripts"
 INSTALL_HOOK = MS_SCRIPTS / "install-hook.sh"
 INSTALL_REFRESH = MS_SCRIPTS / "install-refresh.sh"
 SOC_SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
+POLICY_REF = (
+    REPO_ROOT / "skills" / "init-socraticode" / "references"
+    / "code-exploration-policy.md"
+)
 
 REMINDER = "socraticode-reminder.sh"
 HEALTH = "socraticode-health.sh"
 REFRESH = "skills-submodule-update.sh"
 
-REMINDER_ARGS = (
-    "--hook", REMINDER, "--skill", "init-socraticode",
-    "--marker", "socraticode-prefetch", "--marker", "socraticode-reminder",
-)
-HEALTH_ARGS = (
-    "--hook", HEALTH, "--skill", "init-socraticode",
-    "--marker", "socraticode-health",
-)
-
 SETTINGS_REL = ".claude/settings.json"
+
+
+def _documented_args(step_marker: str, end_marker: str) -> tuple[str, ...]:
+    """The flags `init-socraticode` documents for one hook, read out of the
+    reference rather than transcribed here.
+
+    `TestManagingSkillsHookCommand` runs `managing-skills`' documented jq
+    snippets verbatim for the same reason: a behavioural test that hardcodes
+    what the doc *should* say cannot catch the doc saying something else. These
+    two argument lists are the entire per-hook surface of #200's refactor, so
+    they are the thing most worth binding to the document an agent will run.
+    """
+    body = POLICY_REF.read_text()
+    step = body[body.index(step_marker):body.index(end_marker, body.index(step_marker))]
+    block = re.search(r"```bash\n(.*?)```", step, re.DOTALL)
+    assert block, f"{step_marker} carries no bash block to run"
+    parts = shlex.split(block.group(1).replace("\\\n", " "))
+    assert parts[0] == "bash", parts
+    assert parts[1].endswith("install-hook.sh"), (
+        f"{step_marker} must invoke the shared installer, not a hand-rolled "
+        f"loop (#200): {parts[1]}"
+    )
+    return tuple(parts[2:])
+
+
+REMINDER_ARGS = _documented_args("**Step A —", "**Step B —")
+HEALTH_ARGS = _documented_args("**Step C —", "**It reports;")
+
+
+def _without(args: tuple[str, ...], flag: str) -> tuple[str, ...]:
+    return tuple(a for a in args if a != flag)
 
 
 def _clean_env() -> dict:
@@ -276,8 +304,14 @@ class TestTheCopyFallback:
     a consumer that does not vendor via `managing-skills` has no tree to point
     a symlink at."""
 
+    def test_the_reference_asks_for_it(self):
+        """Both documented commands pass it. Without the flag the fallback would
+        have to come back as a second prose branch, which is what #200 removed."""
+        assert "--copy-fallback" in REMINDER_ARGS, REMINDER_ARGS
+        assert "--copy-fallback" in HEALTH_ARGS, HEALTH_ARGS
+
     def test_without_the_flag_it_refuses(self, bare: Path):
-        r = _run(bare, *REMINDER_ARGS)
+        r = _run(bare, *_without(REMINDER_ARGS, "--copy-fallback"))
         assert r.returncode == 1, r.stdout
         assert "no vendored" in r.stderr, r.stderr
         assert not (bare / ".claude").exists()
@@ -285,7 +319,7 @@ class TestTheCopyFallback:
     def test_with_the_flag_it_copies_from_the_installers_own_tree(
         self, bare: Path
     ):
-        r = _run(bare, *REMINDER_ARGS, "--copy-fallback")
+        r = _run(bare, *REMINDER_ARGS)
         assert r.returncode == 0, r.stdout + r.stderr
         hook = bare / ".claude" / "hooks" / REMINDER
         assert hook.is_file() and not hook.is_symlink()
@@ -296,9 +330,9 @@ class TestTheCopyFallback:
     def test_the_copy_says_it_is_frozen(self, bare: Path):
         """A copy freezes at install day and nothing detects it, so the one
         chance to say so is the run that creates it (#179)."""
-        r = _run(bare, *REMINDER_ARGS, "--copy-fallback")
+        r = _run(bare, *REMINDER_ARGS)
         assert "copied" in r.stdout.lower(), r.stdout
-        chk = _run(bare, *REMINDER_ARGS, "--check", "--copy-fallback")
+        chk = _run(bare, *REMINDER_ARGS, "--check")
         assert chk.returncode == 0, chk.stdout
         assert "COPY" in chk.stdout, chk.stdout
 
@@ -334,7 +368,7 @@ class TestTheCopyFallback:
         victim = tmp_path / "victim.sh"
         victim.write_text("# not the hook\n")
         (hooks / REMINDER).symlink_to(victim)
-        assert _run(bare, *REMINDER_ARGS, "--copy-fallback").returncode == 0
+        assert _run(bare, *REMINDER_ARGS).returncode == 0
         assert victim.read_text() == "# not the hook\n", "wrote through the link"
         assert not (hooks / REMINDER).is_symlink()
 
