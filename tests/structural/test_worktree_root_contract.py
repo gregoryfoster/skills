@@ -22,7 +22,12 @@ checkout.
    `<super>/.git/modules` and is *not* a work tree. The one shape that guard
    does not rescue — a linked worktree *of* a submodule — still nests, by a
    decision recorded in #203; `TestSubmoduleWorktreeBoundary` pins it so a
-   later change to the guard is deliberate.
+   later change to the guard is deliberate. The script's *other* documented
+   trap — that `--git-common-dir` is `$PWD`-relative outside a linked worktree
+   — went unasserted here until #215, though the block ported into
+   `resolve-plans-dir.sh` by #202 covered it from the start;
+   `test_resolve_from_a_subdirectory_is_absolute_and_names_the_repo_root`
+   closes that asymmetry.
 
 3. `TestGitignoreVenvRule` pins the untrailing-slash `.venv` rule that keeps a
    worktree's venv symlink ignored, and keeps its comment from re-acquiring
@@ -199,6 +204,37 @@ class TestWorktreeRootDoesNotNest:
             "with the linked worktree and nests one level per generation"
         )
         assert Path(from_linked.stdout.strip()) == primary / ".worktrees"
+
+    def test_resolve_from_a_subdirectory_is_absolute_and_names_the_repo_root(
+        self, primary: Path
+    ):
+        """Trap one: --git-common-dir is RELATIVE outside a linked worktree.
+
+        From the primary checkout's root it prints `.git`; from a subdirectory
+        it prints `../../.git`. Absolutizing before taking the parent is what
+        keeps the fallback root from being emitted as `../../.worktrees` — a
+        path that resolves differently for every caller that reads it.
+
+        No other vantage point produces the `../../` form. From a linked
+        worktree the common dir is already absolute, so the tests above are
+        blind to the trap by construction; from the primary checkout's own root
+        it is `.git`, whose parent is `.` — a one-token case that any naive
+        `[[ "$CANDIDATE" == "." ]] && CANDIDATE="$PWD"` patch handles while
+        leaving `../../.git` broken. Only a subdirectory separates the two.
+        """
+        deep = primary / "a" / "b"
+        deep.mkdir(parents=True)
+        r = _run(RESOLVE, cwd=deep)
+        assert r.returncode == 0, f"resolve failed in a subdirectory: {r.stderr}"
+        printed = r.stdout.strip()
+        assert Path(printed).is_absolute(), (
+            "the resolved root must be absolute wherever it is resolved from; "
+            f"an un-absolutized --git-common-dir leaks $PWD-relative. Got {printed!r}"
+        )
+        assert Path(printed) == primary / ".worktrees", (
+            "a relative --git-common-dir must be absolutized against $PWD "
+            f"before its parent is taken. Got {printed!r}"
+        )
 
     def test_second_generation_worktree_is_a_sibling(self, primary: Path, linked: Path):
         """Create a worktree from inside a worktree: it lands beside, not below."""
