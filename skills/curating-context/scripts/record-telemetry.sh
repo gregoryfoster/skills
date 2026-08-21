@@ -81,6 +81,39 @@ Options:
   --repo NAME      Override the row's repo identity. Needed only when neither
                    the origin remote nor the checkout directory names the
                    repository the cohort roster knows this repo as.
+  --repo-commit REV
+                   BACKFILL MODE. Set `repo_commit` on the row this run already
+                   recorded to REV, and do nothing else: no measurement is read
+                   from stdin and no row is appended. The row it targets is the
+                   NEWEST in the ledger — the one the append just wrote.
+
+                   Phase 7 measures, records, and only then commits the ledger
+                   alongside the edits — so the hash the append could see is the
+                   PARENT of the tree the row describes. The field carries two
+                   meanings, which state of this tree the row describes and
+                   where the next scheduled seam sweep starts, and a commit that
+                   does not exist yet can satisfy neither at append time (#206).
+                   After the commit that ships the curation:
+
+                       record-telemetry.sh --repo-commit HEAD
+
+                   Then commit the ledger again — that second commit touches
+                   only this line, so the row still describes the commit it
+                   names.
+
+                   A rewrite WITHIN a run is what references/telemetry.md
+                   sanctions; a second row for an intermediate state nobody can
+                   check out is what it forbids. So this rewrites in place and
+                   never appends, is a no-op when the row already names REV, and
+                   leaves any malformed line exactly where it found it.
+
+                   Refuses a revision this repo does not have: `null` already
+                   means "cannot name an interval", and a fabricated one would
+                   send the next sweep to a tree nobody measured. Refuses a
+                   `baseline` row, which records a state that has already passed
+                   and cannot be changed by a later commit. Refuses the flags
+                   that only make sense on an append, rather than discarding
+                   them silently.
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:
@@ -103,13 +136,16 @@ Row schema (one JSON object per line):
                     cohort A/B groups by. Null for rows predating the field.
   skill_commit      short commit of the skill repo, so an unbumped version is
                     still attributable after the fact
-  repo_commit       short commit of THIS repo at measurement time — the state of
-                    the tree the rest of the row describes. Distinct from
-                    skill_commit, which names the skill's repo and can never
-                    stand in for it. The scheduled seam sweep reads this back
-                    out of the previous row (`check-seams.sh --base-ledger`) to
-                    span the interval since the last measurement, so a row
-                    without it sends the next sweep back to an empty interval.
+  repo_commit       short commit of THIS repo holding the state of the tree the
+                    rest of the row describes. The append can only see the
+                    commit current when it ran, which on a Phase 7 run is the
+                    parent of the one that ships the curation; `--repo-commit`
+                    backfills it afterwards (#206). Distinct from skill_commit,
+                    which names the skill's repo and can never stand in for it.
+                    The scheduled seam sweep reads this back out of the previous
+                    row (`check-seams.sh --base-ledger`) to span the interval
+                    since the last measurement, so a row without it sends the
+                    next sweep back to an empty interval.
                     Null when the measurement was not taken inside a git repo
                     with a commit, and null on rows predating the field
   lines, bytes      policy-file size
@@ -145,10 +181,11 @@ Row schema (one JSON object per line):
   note              --note text
 
 Exit codes:
-  0  row appended (or printed, with --dry-run)
+  0  row appended or backfilled (or printed, with --dry-run)
   1  usage error (including --baseline with --actions, --no-loss or
-     --no-loss-warrants; or --no-loss-warrants without a verdict), or stdin
-     was not measure-context.sh JSON
+     --no-loss-warrants; --no-loss-warrants without a verdict; or --repo-commit
+     with an append-only flag, an unknown revision, an empty ledger or a
+     baseline row), or stdin was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
      (pass --allow-method-change to record it anyway)
@@ -169,6 +206,9 @@ ALLOW_METHOD_CHANGE=0
 BASELINE=0
 BASELINE_KIND=""
 ACTIONS_SET=0
+NOTE_SET=0
+BACKFILL=0
+BACKFILL_REV=""
 
 # --actions and --note accept an empty value deliberately, so they cannot use
 # ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
@@ -183,13 +223,15 @@ while [ $# -gt 0 ]; do
     --baseline) BASELINE=1; BASELINE_KIND="pre-curation"; shift ;;
     --baseline=*) BASELINE=1; BASELINE_KIND="${1#*=}"; shift ;;
     --actions) need_arg "$#" --actions; ACTIONS="$2"; ACTIONS_SET=1; shift 2 ;;
-    --note) need_arg "$#" --note; NOTE="$2"; shift 2 ;;
+    --note) need_arg "$#" --note; NOTE="$2"; NOTE_SET=1; shift 2 ;;
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
     --no-loss-warrants)
       NO_LOSS_WARRANTS="${2:?--no-loss-warrants needs a count}"; shift 2 ;;
     --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
     --seams-acked) SEAMS_ACKED="${2:?--seams-acked needs a count}"; shift 2 ;;
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
+    --repo-commit)
+      BACKFILL=1; BACKFILL_REV="${2:?--repo-commit needs a revision}"; shift 2 ;;
     --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
@@ -197,6 +239,30 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# Backfill mode reads no measurement and writes no new row, so every flag that
+# describes a run has nothing to land on. Refused rather than silently
+# discarded: `--repo-commit HEAD --actions demote:X` looks like it records the
+# tags and would record nothing, which is the failure mode #111 found in the
+# cohort's data with a different field.
+if [ "$BACKFILL" -eq 1 ]; then
+  APPEND_ONLY=""
+  [ "$ACTIONS_SET" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --actions"
+  [ "$NOTE_SET" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --note"
+  [ "$BASELINE" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --baseline"
+  [ -z "$NO_LOSS" ] || APPEND_ONLY="$APPEND_ONLY --no-loss"
+  [ -z "$NO_LOSS_WARRANTS" ] || APPEND_ONLY="$APPEND_ONLY --no-loss-warrants"
+  [ -z "$SEAMS" ] || APPEND_ONLY="$APPEND_ONLY --seams"
+  [ -z "$SEAMS_ACKED" ] || APPEND_ONLY="$APPEND_ONLY --seams-acked"
+  [ -z "$REPO_OVERRIDE" ] || APPEND_ONLY="$APPEND_ONLY --repo"
+  [ "$ALLOW_METHOD_CHANGE" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --allow-method-change"
+  [ "$TREND" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --print-trend"
+  [ -z "$APPEND_ONLY" ] || {
+    echo "ERROR --repo-commit backfills the row this run already recorded, so" >&2
+    echo "      it reads no measurement and cannot record:$APPEND_ONLY." >&2
+    echo "      Pass those on the Phase 7 append, before the commit." >&2
+    exit 1; }
+fi
 
 # A baseline row records the surface AS FOUND, so the flags that assert
 # something about a curation are refused rather than quietly ignored. --no-loss
@@ -275,8 +341,13 @@ cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
 TMP="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
 
-cat >"$TMP/in.json"
-[ -s "$TMP/in.json" ] || { echo "ERROR no measurement on stdin — pipe measure-context.sh into this script" >&2; exit 1; }
+# Backfill mode must NOT touch stdin. A caller running this by hand after the
+# commit has a terminal on fd 0, and reading it to exhaustion would hang the
+# script with no output at all rather than doing the one thing it was asked to.
+if [ "$BACKFILL" -eq 0 ]; then
+  cat >"$TMP/in.json"
+  [ -s "$TMP/in.json" ] || { echo "ERROR no measurement on stdin — pipe measure-context.sh into this script" >&2; exit 1; }
+fi
 
 # TZ is pinned to UTC so rows from different machines sort and diff consistently.
 TODAY="$(TZ=UTC date +%Y-%m-%d)"
@@ -315,24 +386,45 @@ fi
 # measured, and null already means "cannot name an interval" to the reader.
 REPO_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || REPO_COMMIT=""
 
-mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
-[ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
+MODE=append
+if [ "$BACKFILL" -eq 1 ]; then
+  MODE=backfill
+  # Resolve REV here rather than in python, so the row can only ever carry a
+  # revision this repo can check out — and normalise it to the short form the
+  # append writes and `check-seams.sh --base-ledger` reads back. Recorded long
+  # and read short is the way this pair would silently join nothing.
+  REPO_COMMIT="$(git rev-parse --short --verify "${BACKFILL_REV}^{commit}" 2>/dev/null)" || {
+    echo "ERROR --repo-commit '$BACKFILL_REV' is not a commit in this repo." >&2
+    echo "      \`null\` already means \"cannot name an interval\"; a revision" >&2
+    echo "      nobody can check out would send the next seam sweep to a tree" >&2
+    echo "      that was never measured. Run this from the curated repo, after" >&2
+    echo "      the commit that ships the curation." >&2
+    exit 1; }
+  # -s, so a missing ledger and an empty one give the same answer. Creating one
+  # here would be answering a request to rewrite a row by inventing a file with
+  # no rows in it.
+  [ -s "$LEDGER" ] || {
+    echo "ERROR $LEDGER has no rows, so there is nothing to backfill." >&2
+    echo "      --repo-commit rewrites the row this run already recorded;" >&2
+    echo "      record it first, then commit, then backfill." >&2
+    exit 1; }
+else
+  mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
+  [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
+fi
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" <<'PY' || RC=$?
 import datetime as dt
 import json
+import os
 import sys
+import tempfile
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
- no_loss, seams, seams_acked, no_loss_warrants, repo_commit) = sys.argv[1:15]
+ no_loss, seams, seams_acked, no_loss_warrants, repo_commit,
+ mode) = sys.argv[1:16]
 
-try:
-    m = json.load(open(src, encoding="utf-8"))
-    policy, totals, links = m["policy"], m["totals"], m["links"]
-except (ValueError, KeyError) as exc:
-    print(f"ERROR stdin is not measure-context.sh JSON: {exc}", file=sys.stderr)
-    sys.exit(1)
 
 def is_curation_row(r):
     """Whether a row records a RUN rather than a state.
@@ -342,6 +434,10 @@ def is_curation_row(r):
     over a single mixed ledger. An untagged row (actions: []) counts as a run —
     something happened that nobody tagged, which is a tagging gap rather than a
     measurement. Only an explicit `baseline*` row is a state.
+
+    Both modes below call THIS function rather than re-deciding: a backfill that
+    disagreed with the append about what a curation row is would rewrite a row
+    the append never wrote.
     """
     acts = r.get("actions") or []
     return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
@@ -349,6 +445,95 @@ def is_curation_row(r):
 
 def plural(n, word):
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def read_ledger(path):
+    """(every line verbatim, [(index, row)] for the ones that parse).
+
+    A malformed line is skipped rather than fatal: the ledger is append-only and
+    a half-written row from an interrupted run must not block every future
+    measurement. It is also KEPT — the backfill rewrites the file, and a rewrite
+    that dropped what an append merely stepped over would do the poisoning this
+    tolerance exists to prevent, on a line no reader can get back.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError as exc:
+        print(f"ERROR cannot read {path}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    parsed, malformed = [], 0
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            parsed.append((i, json.loads(line)))
+        except ValueError:
+            malformed += 1
+    if malformed:
+        print(f"WARN skipped {malformed} malformed ledger line(s)", file=sys.stderr)
+    return lines, parsed
+
+
+if mode == "backfill":
+    # Phase 7 records the row and only then commits it alongside the edits, so
+    # the append could not have named the commit that ships the tree it
+    # measured. Rewrite that row IN PLACE — telemetry.md sanctions a rewrite
+    # within a run and forbids a third row for an intermediate state.
+    lines, parsed = read_ledger(ledger)
+    if not parsed:
+        print(f"ERROR no parseable row in {ledger} to backfill", file=sys.stderr)
+        sys.exit(1)
+    idx, target = parsed[-1]
+    if not is_curation_row(target):
+        print(
+            "ERROR the newest row in "
+            f"{ledger} is a `{(target.get('actions') or ['baseline'])[0]}` row, "
+            "which records a state that has already passed — a later commit "
+            "cannot change what it describes, and telemetry.md exempts it from "
+            "the rewrite rule in both directions. Backfill the curation row.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    was = target.get("repo_commit")
+    if dry == "1":
+        target["repo_commit"] = repo_commit
+        print(json.dumps(target, sort_keys=True, ensure_ascii=False))
+        sys.exit(0)
+    if was == repo_commit:
+        # Idempotent by answering, not by writing. A re-run is the normal way an
+        # interrupted Phase 7 finishes, and it must not churn the file.
+        print(f"repo_commit already {repo_commit}; nothing to backfill",
+              file=sys.stderr)
+        sys.exit(0)
+    target["repo_commit"] = repo_commit
+    lines[idx] = json.dumps(target, sort_keys=True, ensure_ascii=False)
+    # Write-then-rename, so a crash mid-write leaves the ledger as it was rather
+    # than truncated. The temp file is created in the ledger's own directory
+    # because os.replace is only atomic within a filesystem.
+    d = os.path.dirname(os.path.abspath(ledger)) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".context-metrics-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, ledger)
+    except OSError as exc:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        print(f"ERROR cannot rewrite {ledger}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(f"backfilled repo_commit {was or 'null'} -> {repo_commit} on "
+          f"{target.get('file')} ({target.get('ts')})", file=sys.stderr)
+    sys.exit(0)
+
+try:
+    m = json.load(open(src, encoding="utf-8"))
+    policy, totals, links = m["policy"], m["totals"], m["links"]
+except (ValueError, KeyError) as exc:
+    print(f"ERROR stdin is not measure-context.sh JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
 
 
 # Which skill version produced this row. Absent from measurements taken before
@@ -369,7 +554,9 @@ row = {
     "skill_commit": skill.get("commit") or None,
     # The repo's own commit, not the skill's (#169). The next scheduled sweep
     # takes its `--base` from here, which is what makes `seams` span a week
-    # instead of an empty diff.
+    # instead of an empty diff. On a Phase 7 run this is the PARENT of the
+    # commit that ships the curation, and `--repo-commit` backfills it once
+    # that commit exists (#206).
     "repo_commit": repo_commit or None,
     "lines": policy["lines"],
     "bytes": policy["bytes"],
@@ -402,28 +589,10 @@ row = {
     "note": note or None,
 }
 
-# Prior rows for the same file, oldest first. A malformed line is skipped rather
-# than fatal: the ledger is append-only and a half-written row from an
-# interrupted run must not block every future measurement.
-history, malformed = [], 0
-try:
-    for line in open(ledger, encoding="utf-8"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            prev = json.loads(line)
-        except ValueError:
-            malformed += 1
-            continue
-        if prev.get("file") == row["file"]:
-            history.append(prev)
-except OSError as exc:
-    print(f"ERROR cannot read {ledger}: {exc}", file=sys.stderr)
-    sys.exit(2)
-
-if malformed:
-    print(f"WARN skipped {malformed} malformed ledger line(s)", file=sys.stderr)
+# Prior rows for the same file, oldest first — through the same reader the
+# backfill uses, so the two modes cannot disagree about which lines are rows.
+history = [prev for _, prev in read_ledger(ledger)[1]
+           if prev.get("file") == row["file"]]
 
 if history:
     last = history[-1]

@@ -35,7 +35,7 @@ and only a pair records a change.
 | `no_loss_warrants` | how many of that verdict's unaccounted lines carried a judged entry in `.skills/context-loss-ok` — [`prove-no-loss.sh`](../scripts/prove-no-loss.sh)'s `loss_warranted:` line. `null` when the run did not report it, which is never the same as `0`: `0` says the run read the report and warranted nothing, `null` says it did not say. Without it `ok` cannot distinguish "nothing was unaccounted for" from "eight lines were judged and waved through", and two cohort adoptions recorded that same state in opposite ways — one leaving the ledger untouched, one recording a bare `ok` ([#111](https://github.com/gregoryfoster/skills/issues/111)). Recorded, surfaced as `ok+Nw`, and deliberately **not** gated; [the validation gate](validation-gate.md#the-safety-gates) says why. Watch the **delta**, as with `seams_acked` |
 | `seams`, `seams_acked` | `check-seams.sh`'s counts after Phase 6.5's report was judged: **unacknowledged** hits, and hits judged legitimate and carried in `.skills/context-seams-ok`. Both `null` when the sweep was not run, which is never the same as `0`. Both recorded because `0 new / 0 acked` and `0 new / 50 acked` are different states — the second may be an acknowledged set quietly ballooning, which one number alone cannot show. Watch the **delta** on `seams`: a stable acknowledged set with `0` new hits is the healthy steady state, and a run that "improves" either number by deleting legitimate references has made the surface worse — the `tokens_live` mistake with a different metric. These fields are what make the cross-reference defect class visible to the gate at all; on the run that motivated the sweep, ten review findings were invisible to every other field on this row. |
 | `skill_version`, `skill_commit` | which version of this skill produced the row; `null` on rows predating the field |
-| `repo_commit` | short commit of **this** repo at measurement time — which state of the tree the rest of the row describes. Distinct from `skill_commit`, which names the *skill's* repo and can never stand in for it. The scheduled seam sweep reads it back off the previous row (`check-seams.sh --base-ledger`) to bound the interval `seams` covers, so a row without it sends the next sweep back to an empty interval. `null` outside a git repo with a commit, and on rows predating the field ([#169](https://github.com/gregoryfoster/skills/issues/169)). Two consecutive rows for one file bound an interval, and that is what the longitudinal covariates are **derived** from rather than recorded: `commits_since` — `git log <prev>..<this> -- <policy> <docs>`, which normalises regrowth by what causes it instead of by the calendar — and whether that run's seam sweep spanned anything at all, empty exactly when the previous row's `repo_commit` is `null`. A recorded field would be `null` on every row already written and could disagree with the commits; a derivation recomputes for history and cannot ([#118](https://github.com/gregoryfoster/skills/issues/118)) |
+| `repo_commit` | short commit of **this** repo holding the state of the tree the rest of the row describes — on a curation row, the commit that **ships** it. The append cannot name that commit, because it runs before the commit exists; `record-telemetry.sh --repo-commit HEAD` backfills the row afterwards ([backfilling it](#backfilling-repo_commit), [#206](https://github.com/gregoryfoster/skills/issues/206)). Distinct from `skill_commit`, which names the *skill's* repo and can never stand in for it. The scheduled seam sweep reads it back off the previous row (`check-seams.sh --base-ledger`) to bound the interval `seams` covers, so a row without it sends the next sweep back to an empty interval. `null` outside a git repo with a commit, and on rows predating the field ([#169](https://github.com/gregoryfoster/skills/issues/169)). Two consecutive rows for one file bound an interval, and that is what the longitudinal covariates are **derived** from rather than recorded: `commits_since` — `git log <prev>..<this> -- <policy> <docs>`, which normalises regrowth by what causes it instead of by the calendar — and whether that run's seam sweep spanned anything at all, empty exactly when the previous row's `repo_commit` is `null`. A recorded field would be `null` on every row already written and could disagree with the commits; a derivation recomputes for history and cannot ([#118](https://github.com/gregoryfoster/skills/issues/118)) |
 | `top_section`, `top_section_share` | largest section and its % of the file |
 | `delta_tokens`, `delta_days` | change since the previous row for this file; `null` on the first |
 | `actions` | action tags — see below |
@@ -128,6 +128,56 @@ third row for an intermediate state nobody can check out. The test is whether
 the row's commit has merged: unmerged, it is a draft of this run's record;
 merged, it is history. The baseline row is exempt in both directions — it
 records a state that has already passed, so a late fix cannot change it.
+
+The permission is about the row being a draft until it merges, not about the
+count in particular. `repo_commit` is the other value that changes inside a
+run, for a reason the count never has: it is unknowable until the commit exists.
+
+### Backfilling `repo_commit`
+
+Phase 7 measures, records, and only then commits the ledger alongside the edits.
+So the hash the append can see is the **parent** of the commit that ships the
+curation: everything else on the row describes the shipped tree, and
+`repo_commit` alone points a commit behind. Observed on `CannObserv/archiver`,
+where a row recording `bfff669` measured the tree that shipped as `5ce18a2`.
+
+That is not cosmetic, because the field carries two meanings — *which state of
+this tree the row describes*, and *where the next scheduled seam sweep starts* —
+and a lagging value satisfies them with two different commits. A wired cadence
+then bases its sweep before the curation, re-walks the run's own relocations,
+and re-reports seams the run already judged and acknowledged: noise in exactly
+the surface `.skills/context-seams-ok` exists to keep quiet.
+
+So the row is backfilled after the commit, which is the rewrite-within-a-run the
+section above sanctions:
+
+```bash
+bash "<SKILL_SCRIPTS>/record-telemetry.sh" --repo-commit HEAD
+git commit -m "backfill repo_commit" .skills/context-metrics.jsonl
+```
+
+**Two commits, and the second one is why this works.** `git commit --amend`
+would look tidier and has no fixed point: amending changes the hash the row was
+just given. The follow-up commit touches the ledger line and nothing else, so
+the tree the row describes is still the tree at the commit it names.
+
+`--repo-commit` rewrites in place and never appends, so a re-run is a no-op and
+an interrupted run leaves a row that still parses — one commit behind, and
+recoverable by running the backfill later. It refuses a revision the repo does
+not have (`null` already means "cannot name an interval"; a fabricated one sends
+the next sweep to a tree nobody measured), refuses a `baseline` row, and
+preserves any malformed line rather than dropping it in the rewrite.
+
+Two alternatives were rejected, and the reasons still bind:
+
+- **Record `git write-tree` instead**, which is knowable before the commit and
+  identifies content exactly. Rejected: the field would stop being a commit, and
+  `check-seams.sh --base-ledger` takes a *base revision* from it — the sweep-base
+  meaning would have to be reworked to keep the attribution one.
+- **Redefine the value as "the commit the run started from"** and define the
+  sweep base as `repo_commit..HEAD`. Rejected: it satisfies the sweep
+  requirement by weakening the attribution one, leaving no field that answers
+  which tree the row's numbers describe.
 
 Then get the branch a **fresh-eyes review pass** before it ships. Whoever just
 moved three hundred lines has exactly the implementation blindness that misses

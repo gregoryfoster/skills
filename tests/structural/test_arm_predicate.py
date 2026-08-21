@@ -265,19 +265,55 @@ class TestTheSteadyStateMetric:
 class TestTheRowSchemaSaysTheCovariateIsDerived:
     """The activity covariate and the seam interval are both read off the
     `repo_commit` pair. Recording either would be a second source of truth for
-    something two rows already answer."""
+    something two rows already answer.
+
+    #206 moved *which commit* the field carries — from the one HEAD happened to
+    be at when the append ran, to the one that ships the curation, backfilled
+    after the commit. So these assertions are re-anchored on the post-backfill
+    meaning, and each one locates the `repo_commit` schema row first: a split on
+    a heading that has been renamed returns the whole file, and every phrase
+    below would then pass against some other paragraph while pinning nothing.
+    """
 
     TELEMETRY = REFERENCES / "telemetry.md"
 
+    def _schema(self) -> str:
+        text = self.TELEMETRY.read_text()
+        assert "### Action tags" in text, (
+            "telemetry.md no longer has `### Action tags`, so the row-schema "
+            "section cannot be delimited and every assertion below would run "
+            "against the whole file"
+        )
+        return text.split("### Action tags")[0]
+
+    def _repo_commit_row(self) -> str:
+        rows = [ln for ln in self._schema().splitlines()
+                if ln.startswith("| `repo_commit` |")]
+        assert len(rows) == 1, (
+            f"expected exactly one `repo_commit` schema row, found {len(rows)}"
+        )
+        return rows[0]
+
     def test_repo_commit_names_what_is_derived_from_it(self):
-        schema = self.TELEMETRY.read_text().split("### Action tags")[0]
-        assert "commits_since" in schema, schema[-2000:]
+        assert "commits_since" in self._repo_commit_row(), self._repo_commit_row()
+
+    def test_repo_commit_names_the_commit_that_ships_the_curation(self):
+        """The two meanings the field carries — which state of this tree the row
+        describes, and where the next sweep starts — are only satisfied by one
+        commit if the row is backfilled after Phase 7 commits (#206). The schema
+        row has to say which commit that is, or a reader reconstructs the lag."""
+        row = self._repo_commit_row()
+        assert "--repo-commit" in row, row
+        assert "backfill" in row.lower(), row
+        assert "at measurement time" not in row, (
+            "the superseded meaning is still on the schema row: the value is no "
+            "longer whatever HEAD was when the append ran.\n" + row
+        )
 
     def test_no_commits_since_field_was_added_to_the_schema(self):
         """A field would have to be recorded going forward and would be null for
         every row already written. The derivation covers history."""
-        schema = self.TELEMETRY.read_text().split("### Action tags")[0]
-        rows = [ln for ln in schema.splitlines()
+        rows = [ln for ln in self._schema().splitlines()
                 if ln.startswith("| `commits_since`")]
         assert rows == [], rows
 

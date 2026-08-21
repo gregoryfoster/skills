@@ -151,6 +151,13 @@ relocated a section and left danglers behind contributed nothing to any weekly
 row, because by the next run the relocation was already in `HEAD`
 ([#169](https://github.com/gregoryfoster/skills/issues/169)).
 
+Do not read that as a promise that the next scheduled row now re-reports a
+curation's own relocations. Since [#206](https://github.com/gregoryfoster/skills/issues/206)
+a curation row's `repo_commit` is backfilled to the commit that ships it, so
+the next interval starts *after* that work — deliberately, because Phase 6.5
+already judged it. The class's live scope is relocations made outside a
+`curating-context` run.
+
 **Two classes, not one.** The source sweep is gated on the same set — `if src
 and moved:` — so an empty `moved` skipped every tracked file outside the docs
 tree and the report printed *"N tracked source file(s) not swept"*. The
@@ -421,15 +428,10 @@ jobs:
           fi
 ```
 
-What goes on the clock is a **measurement, not a curation** — regrowth, budget
-adherence and seam accrual all come from measuring, and judgement on a timer is
-what this skill avoids everywhere else. The weekly job records a `baseline` row
-and warns when the surface drifts; a human or an agent curates on that evidence.
-It never runs on `pull_request`.
-
-**It needs the `ANTHROPIC_API_KEY` repository secret.** Without it the job
-records *nothing*, silently, every week — `record-telemetry.sh` refuses an
-estimate against exact rows. Set the secret first, then run it once by hand.
+Its header comment restates § *What goes on the clock is a measurement, not a
+curation* and § *The prerequisite that makes or breaks it* on purpose: the job
+installs into repos where the `.yml` is the only thing anybody reads, with no
+path back to this doc. The pin above is what keeps that copy in step.
 
 ## Stagger the cron across the cohort
 

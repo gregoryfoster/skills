@@ -75,7 +75,7 @@ git add .gitmodules skills-vendor/gregoryfoster-skills skills/ .skills/doctor.sh
 git commit -m "feat: add gregoryfoster/skills submodule"
 ```
 
-The hook needs **both** the symlink and the `.claude/settings.json` entry — Claude Code runs what `settings.json` names, so a symlink alone looks installed and refreshes nothing. `install-refresh.sh --check` reports both (exit 0 present, 3 missing).
+The hook needs **both** the symlink and the `.claude/settings.json` entry — Claude Code runs what `settings.json` names, so a symlink alone looks installed and refreshes nothing. `install-refresh.sh --check` reports both (exit 0 present, 3 missing — or installed as a copy where a symlink is possible).
 
 Symlinked skills are auto-discovered by the agent framework. To override a global skill with project-specific behavior, replace the symlink with a committed directory of the same name.
 

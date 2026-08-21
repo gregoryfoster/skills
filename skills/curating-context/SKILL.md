@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.9"
+  version: "1.10"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -332,7 +332,9 @@ it isn't. **What a run does, not what reads the rows afterwards**: changing
 version *is* the arm, so bumping for a gate change would move every future row
 into a new arm to record a change no row experienced.
 
-Commit the ledger with the edits, on a branch, and open a PR whose body carries:
+Commit the ledger with the edits, on a branch, then `record-telemetry.sh
+--repo-commit HEAD` and commit that: the append could not know the hash. Open a
+PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated
 block with its destination**, and every deletion with its warrant. In autonomous
 mode this PR body is the entire audit trail — a reviewer must be able to
