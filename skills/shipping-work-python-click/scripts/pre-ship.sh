@@ -62,6 +62,7 @@ cd "$PROJECT_ROOT"
 #     exit 2
 #   }
 #   load_env() {                                  # parse, never source
+#     local line key val                          # safe to lift into a shell
 #     [ -r "$1" ] || return 0
 #     while IFS= read -r line || [ -n "$line" ]; do
 #       line=${line#"${line%%[![:space:]]*}"}       # drop leading blanks

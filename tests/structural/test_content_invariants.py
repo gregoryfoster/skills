@@ -1011,8 +1011,23 @@ class TestReviewingCodePythonClick:
         assert "ParamType testability" in body, (
             "ParamType testability dimension must be present in Phase 2"
         )
-        assert "ParamType.callback()" in body, (
-            "ParamType testability must reference callback() vs convert()"
+        # Click's ParamType has no `callback`: `convert()` is the only
+        # conversion hook (verified against click 8.3.2 — #208). Naming
+        # `ParamType.callback` at all, in any call or attribute form, is the
+        # regression this pins, because the dimension told reviewers to prefer
+        # it over `convert()` and so flagged conforming tests as wrong.
+        assert "ParamType.callback" not in body, (
+            "ParamType has no `callback` attribute — `convert()` is its only "
+            "conversion hook; `callback` belongs to Parameter/Option and to "
+            "Command"
+        )
+        assert "`convert()` is a ParamType's only conversion hook" in body, (
+            "ParamType testability must name convert() as the sole conversion "
+            "hook rather than steering reviewers away from it"
+        )
+        assert "command.callback(" in body, (
+            "ParamType testability must keep the separate, real advice: a "
+            "COMMAND's callback is what bypasses option parsing"
         )
 
     def test_command_registration_dimension_present(self):

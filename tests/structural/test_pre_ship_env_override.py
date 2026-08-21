@@ -153,6 +153,41 @@ class TestOverrideBlockCoverage:
         )
 
     @pytest.mark.parametrize("variant", ALL_VARIANTS)
+    def test_the_loader_declares_its_locals(self, variant):
+        """`line`, `key` and `val` must be `local` (#211).
+
+        Pinned as the FIRST statement of the body, not merely present
+        somewhere: `local` after the first assignment declares a variable that
+        has already been clobbered, and reads as if it did not.
+
+        The companion execution test proves the effect; this one names the
+        line, so a variant that loses it fails with the fix in the message
+        rather than with a diff of two shell transcripts.
+        """
+        lines = [ln.lstrip("#").strip() for ln in _block(variant).splitlines()]
+        openers = [i for i, ln in enumerate(lines) if ln.startswith("load_env() {")]
+        assert len(openers) == 1, (
+            f"{variant}/scripts/pre-ship.sh block must open load_env() exactly "
+            f"once; found {len(openers)}. This test pins the line AFTER the "
+            "opener, so two openers make it pin the wrong one."
+        )
+        # Pin the statement, not the commentary: every other line of the recipe
+        # carries a trailing `# …` and this one earns one more than most.
+        declaration = lines[openers[0] + 1].partition("#")[0].strip()
+        assert declaration == "local line key val", (
+            f"{variant}/scripts/pre-ship.sh load_env() must declare "
+            "`local line key val` as its first statement. The recipe is "
+            "documentation of a reusable helper and gets reused as one — the "
+            "documented lift is `eval \"$(sed -n '/^load_env() {/,/^}/p' "
+            "<wrapper>)\"`, which puts the function in the CALLER's shell, "
+            "where three undeclared globals eat three of the most common "
+            "loop-variable names in shell (#211, seen on "
+            "wslcb-licensing-tracker). Inside the wrapper it is invisible "
+            "because the wrapper `exec`s immediately, which is exactly why it "
+            "needs a test rather than a reader."
+        )
+
+    @pytest.mark.parametrize("variant", ALL_VARIANTS)
     def test_states_the_parse_dont_source_rule(self, variant):
         block = _block(variant)
         assert "never source" in block, (
@@ -366,6 +401,46 @@ class TestTheRecipeActuallyRuns:
             f"typo must not decide whether the gate runs. stderr: {r.stderr.strip()}"
         )
         assert "GOOD=[y]" in r.stdout
+
+    @pytest.mark.parametrize("variant", ALL_VARIANTS)
+    def test_lifting_the_loader_does_not_clobber_the_caller(self, variant):
+        """The recipe has to survive being reused, because it is written to be.
+
+        A project that needs `.env` for ad-hoc test runs as well as for the
+        ship gate lifts the parser rather than re-deriving it — which is the
+        behaviour the block's own "never source" rule encourages:
+
+            eval "$(sed -n '/^load_env() {/,/^}/p' scripts/pre-ship.sh)"
+            load_env "$PWD/.env"
+            uv run pytest tests/ -q
+
+        Undeclared `line`/`key`/`val` then overwrite the caller's, silently and
+        with exit 0. This runs the loader in a shell that holds all three, which
+        is the shape the text assertion above cannot see.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            envfile = Path(td) / ".env"
+            envfile.write_text("API_KEY=sk-abc\n")
+            script = (
+                "set -euo pipefail\n"
+                "line=caller-line key=caller-key val=caller-val\n"
+                + _extract_loader(variant)
+                + f"\nload_env {shlex.quote(str(envfile))}\n"
+                + 'echo "line=[$line] key=[$key] val=[$val] API_KEY=[$API_KEY]"\n'
+            )
+            r = subprocess.run(
+                ["bash", "-c", script], capture_output=True, text=True, cwd=td
+            )
+        assert r.returncode == 0, r.stderr
+        assert (
+            "line=[caller-line] key=[caller-key] val=[caller-val] "
+            "API_KEY=[sk-abc]" in r.stdout
+        ), (
+            f"{variant}: load_env() clobbered its caller's variables. "
+            f"stdout: {r.stdout.strip()}. Declare `local line key val` as the "
+            "function's first statement — `local` is bash-only and this "
+            "contract is already bash-only (#211)."
+        )
 
     @pytest.mark.parametrize("variant", ALL_VARIANTS)
     def test_the_second_file_wins(self, variant):

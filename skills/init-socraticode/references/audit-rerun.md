@@ -11,7 +11,7 @@ every file edit is idempotent:
 | Phase | What a re-run does |
 |---|---|
 | 1–2 | read-only when already satisfied |
-| 3 | policy block replaces between the markers; `docs/SOCRATICODE.md` is overwritten wholesale; both hook merges dedupe |
+| 3 | policy block and `docs/SOCRATICODE.md` each replace between their own markers, preserving what follows `END`; both hook merges dedupe |
 | 4 | migrates a legacy top-level-array manifest in place, and re-validates every artifact path |
 | 5 | re-indexes only if the index is missing or stale |
 | 6 | re-verifies the completion signals, and re-measures graph yield |
@@ -31,6 +31,9 @@ The common drift found across the cohort
 
 ## One thing a re-run must not do quietly
 
+**It must not delete repo-authored content.** Two files, same failure, same
+rescue.
+
 On the unmarked-section branch, Phase 3 replaces a whole `## Code Exploration
 Policy` span, and a repo that has been running for a while has usually grown its
 own prose in there. Rescue anything the template does not itself carry to a
@@ -38,3 +41,18 @@ own prose in there. Rescue anything the template does not itself carry to a
 name every moved block in the report. The first audit re-run is exactly when
 this bites and exactly when nobody is watching for it
 ([#115](https://github.com/gregoryfoster/skills/issues/115)).
+
+`docs/SOCRATICODE.md` has the same shape with a larger blast radius — a whole
+file rather than one section — and until
+[#210](https://github.com/gregoryfoster/skills/issues/210) it had no markers at
+all, so *every* repo installed before then is on the unmarked branch. On
+`wslcb-licensing-tracker` three blocks would have gone: the repo's measured
+graph yield with its "treat graph answers as a lower bound" caveat, its real
+context-artifact list, and why its `.socraticodeignore` deliberately keeps
+`skills/`. None of the three belongs in `AGENTS.md` — all are read-once detail,
+and the policy section is the one thing `curating-context` will not trim. Rescue
+them under a `## Repo-specific notes` heading below the
+`<!-- END socraticode-doc -->` marker, and name them in the report too. The
+`low`-verdict path is the sharpest case: variant B tells the author to
+substitute real measured numbers, which is repo-authored content the template
+itself asked for.
