@@ -4,14 +4,21 @@
 refuses to let a reference doc run over 10,000. A rule the author is exempt from
 is not a rule, and the moment a cohort maintainer measures the skills we are
 handing them, they find that out. #95 held that mirror up to one skill; #141
-holds it up to all eighteen.
+holds it up to every skill in the repo.
 
 Three things this gate deliberately is, and is not:
 
-- **A structural test, not a CI workflow.** This repo has no
-  `.github/workflows/`; the only gate is `.pre-commit-config.yaml` running
-  `pytest tests/structural/`, and `AGENTS.md` already ships gates as structural
-  tests (`TestNoBareScriptPaths`, `TestPreShipGateHardening`).
+- **A structural test first, and since #217 a scheduled job as well.** The gate
+  on every commit is `.pre-commit-config.yaml` running
+  `pytest tests/structural/`, and `AGENTS.md` ships its gates as structural
+  tests (`TestNoBareScriptPaths`, `TestPreShipGateHardening`). This bullet used
+  to say the repo had no `.github/workflows/` at all; that stopped being true
+  when #118 installed `context-cadence.yml`, and #217 added a second workflow —
+  `skill-budget-exact.yml`, which runs the exact pass weekly. It is in its own
+  file rather than as a job in the cadence workflow because that file is a
+  rendered artifact of `install-cadence.sh` and is overwritten whole on every
+  install run; `TestTheScheduledExactGate` records the full argument and pins
+  the render.
 - **Always-on offline, exact on request.** The always-on tests read the
   skill's calibrated offline estimate (`.skills/context-token-ratio`, 2.68
   bytes/token since #172 refit it over the whole surface). A gate that only
@@ -30,6 +37,15 @@ Three things this gate deliberately is, and is not:
   the second was the same absent-vs-unusable shape #140 removed from the
   shellcheck gate in the same batch. Ship time is where exact belongs. See
   "Which number is the contract" below.
+
+  What opt-in did NOT survive is being the only thing that ever measures the
+  exact reading. Three ratchets were breached past a green suite because the
+  estimate is the only number a run is shown (#217), so the always-on gate now
+  SAYS what it cannot see: `warn_about_the_blind_spot` reports, on every green
+  run, each skill whose worst permissible exact count exceeds its ratchet.
+  Seven of nineteen qualify today. It warns and does not fail — asserting the
+  worst case is option 2 of #217, which is correct in principle and costs
+  ~8,100 tokens of trimming today.
 - **The skill's own machinery.** The measurement shells out to
   `measure-context.sh` with the flags #95 named rather than reimplementing the
   estimator in Python, so the gate and the weekly run cannot disagree about a
@@ -52,7 +68,9 @@ already owns them and a second, weaker copy is worse than none:
 `SKILL_MD_STANDARD` is **6,000 tokens** — the same figure `curating-context`
 enforces on every repo's `AGENTS.md`, on the reasoning that an always-loaded
 policy file is an always-loaded policy file whether it is called `AGENTS.md` or
-`SKILL.md`. Thirteen of the eighteen skills meet it.
+`SKILL.md`. Fourteen of the nineteen skills meet it — this count moves whenever
+a skill is added, so it is `len(SKILLS) - len(SKILL_MD_RATCHETS)` and not a
+figure to trust from memory.
 
 The five that do not are named in `SKILL_MD_RATCHETS`, each with the reason it
 cannot, because #141 chose *shared standard plus named exceptions* over a
@@ -442,6 +460,93 @@ def worst_case_exact(estimate: int) -> int:
     return round(estimate / (1 + POLICY_ESTIMATE_BAND[0]))
 
 
+def worst_case_clears(skill: str, estimate: int) -> bool:
+    """Whether the WHOLE calibration band fits under this skill's ratchet.
+
+    One definition, two surfaces. `estimate_caveat` needs it to phrase a
+    failure and `blind_spot_rows` needs it to warn on a pass; a second copy of
+    the comparison is how the gate ends up saying one thing when it fails and
+    another when it succeeds.
+    """
+    return worst_case_exact(estimate) <= ratchet_for(skill)
+
+
+class BudgetBlindSpotWarning(Warning):
+    """The offline gate passed a skill whose exact count it cannot vouch for.
+
+    Deliberately NOT a `UserWarning` subclass. The scheduled exact job runs
+    pytest under `-W error::UserWarning`, which is what turns "could not reach
+    count_tokens" from a green skip into a red job (see
+    `skill-budget-exact.yml`). Escalating THIS warning by the same filter would
+    assert the worst case against the ratchet — #217's option 2, arrived at by
+    accident, in the one place nobody is watching.
+
+    Option 2 is not wrong; it is unaffordable today. Asserting it fails seven
+    of nineteen skills and needs ~8,100 tokens of trimming, 3,410 of it from
+    `orchestrating-issue-backlog`, whose ratchet comment refuses exactly that
+    trade. When those seven come down on their own merits, promoting this
+    category is the whole change.
+    """
+
+
+def blind_spot_rows(surfaces: dict) -> list[tuple[str, int, int, int]]:
+    """`(skill, estimate, worst case, ratchet)` for every skill the gate cannot
+    vouch for: green on the estimate, potentially over on `count_tokens`.
+
+    `estimate <= ratchet < worst` — both bounds matter. A skill already OVER on
+    the estimate is not a blind spot; it is a failure, and its own message
+    already carries the caveat and the worst case. Warning about it as well
+    would put the loudest signal on the one file the gate can see.
+    """
+    rows = []
+    for skill in sorted(surfaces):
+        estimate = surfaces[skill]["policy"]["tokens"]
+        ratchet = ratchet_for(skill)
+        if estimate <= ratchet and not worst_case_clears(skill, estimate):
+            rows.append((skill, estimate, worst_case_exact(estimate), ratchet))
+    return rows
+
+
+def warn_about_the_blind_spot(surfaces: dict) -> None:
+    """Say, on a GREEN run, what this run could not measure (#217).
+
+    Raised from the `surfaces` fixture rather than from a test, because it is a
+    report and not a gate: a test that can only ever pass is the vacuous
+    assertion this repo already has findings about. Emitting it here also puts
+    the count in pytest's terminal summary — `N passed, M skipped, 1 warning` —
+    which is the one line every worker agent is asked to report verbatim. An
+    agent cannot report its count honestly and leave the blind spot out.
+
+    Silent when nothing qualifies. A warning that fires unconditionally is the
+    always-on gate's existing failure wearing a new costume.
+    """
+    rows = blind_spot_rows(surfaces)
+    if not rows:
+        return
+    warnings.warn(
+        f"BUDGET BLIND SPOT: {len(rows)} of {len(surfaces)} skills PASS this "
+        "offline gate with an exact count it cannot vouch for. "
+        f"{POLICY_ESTIMATE_BAND[0]:+.0%} is the permissive edge of "
+        "POLICY_ESTIMATE_BAND, so each of these may already be over its "
+        "ratchet:\n"
+        + "\n".join(
+            f"  {skill}: estimate {est:,} → worst case ~{worst:,} against a "
+            f"{ratchet:,} ratchet ({worst - ratchet:,} over)"
+            for skill, est, worst, ratchet in rows
+        )
+        + "\n\nThis is a WARNING and nothing is red: the worst case is what the "
+        "band permits, not what the file measures. It is also not a licence to "
+        "spend up to it. Settle it with the reading the ratchet actually "
+        "binds:\n"
+        f"  {EXACT_ENV}=1 .venv/bin/python -m pytest "
+        "tests/structural/test_skill_self_budget.py\n"
+        ".github/workflows/skill-budget-exact.yml runs that weekly, and is the "
+        "gate that fails.",
+        BudgetBlindSpotWarning,
+        stacklevel=2,
+    )
+
+
 def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     """The offline caveat, with the band-derived worst case when one applies.
 
@@ -472,9 +577,9 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     ratchet = ratchet_for(skill)
     worst = worst_case_exact(estimate)
     verdict = (
-        "this file may already be over"
-        if worst > ratchet
-        else "the whole band clears the ratchet"
+        "the whole band clears the ratchet"
+        if worst_case_clears(skill, estimate)
+        else "this file may already be over"
     )
     return (
         f"estimate {estimate:,} → worst case ~{worst:,} against a "
@@ -520,8 +625,15 @@ def _measure(skill: str, *, exact: bool) -> dict:
 
 @pytest.fixture(scope="module")
 def surfaces() -> dict:
-    """Every skill's surface, measured offline. ~3s for all eighteen."""
-    return {name: _measure(name, exact=False) for name in SKILLS}
+    """Every skill's surface, measured offline. ~3s for all nineteen.
+
+    Warns, once, about every skill this reading cannot vouch for (#217). The
+    fixture is the right place: it runs on every commit, before any assertion,
+    and it is not a test — so the report does not masquerade as a gate.
+    """
+    measured = {name: _measure(name, exact=False) for name in SKILLS}
+    warn_about_the_blind_spot(measured)
+    return measured
 
 
 def _has_credential() -> bool:
@@ -832,8 +944,8 @@ class TestEverySkillsOwnSurface:
                 if named else
                 "Adding an entry to SKILL_MD_RATCHETS is a last resort, not "
                 "the first move: an exception has to argue in the diff why "
-                "this skill cannot meet the standard the other seventeen "
-                "do.\n\n"
+                "this skill cannot meet the standard the other "
+                f"{len(SKILLS) - 1} are held to.\n\n"
             )
             + estimate_caveat(skill, policy["tokens"])
         )
@@ -1017,8 +1129,8 @@ class TestCuratingContextsExtraProcedure:
     The +250-per-round edit budget is this skill's own self-curation rule — the
     textual learning rate that keeps a self-improving skill from walking up to
     its ceiling one plausible addition at a time. It is asserted here because
-    #95 put it here; it is NOT generalised to the other seventeen, which do not
-    rewrite themselves and would gain eighteen copies of a rule that governs
+    #95 put it here; it is NOT generalised to the other eighteen, which do not
+    rewrite themselves and would gain nineteen copies of a rule that governs
     one.
     """
 

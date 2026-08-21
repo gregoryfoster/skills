@@ -1,0 +1,110 @@
+name: skill-budget-exact
+
+# The exact half of the self-budget contract, on a clock (#217).
+#
+# `tests/structural/test_skill_self_budget.py` binds every SKILL.md ratchet to
+# BOTH readings — the offline estimate pre-commit sees, and count_tokens. Only
+# the estimate is always on, it runs up to 13% LOW on this library, and the
+# exact pass is gated behind SKILL_BUDGET_EXACT=1. "Opt-in" turned out to mean
+# "never runs unless someone remembers": three ratchets have now been breached
+# past a green suite, a passed pre-commit hook and a completed code review.
+#
+# So this job is the one that FAILS. ~19 count_tokens calls, once a week. Both
+# #213 breaches would have surfaced here within seven days of landing.
+#
+# NOT a second job in context-cadence.yml, which is where #217's body proposed
+# it. Three reasons, each checked against the tree rather than assumed:
+#
+#   1. context-cadence.yml is a RENDERED ARTIFACT. install-cadence.sh writes it
+#      whole on every install run (`render >"$WF"`), its own header says
+#      "Re-run it rather than editing by hand", and `--check` compares the
+#      file's EXISTENCE, not its content. A hand-added job would be deleted by
+#      the tool that installed it, silently, at some later date.
+#   2. install-cadence.sh ships inside `curating-context`, which twelve cohort
+#      repos vendor and pull. Putting the job in the template pushes a
+#      `skills/*/SKILL.md` gate into eleven repos that have no skills/ tree.
+#   3. context-cadence.yml documents the invariant that "red always means the
+#      mechanism broke, never that the surface grew". A gate whose entire
+#      purpose is to go red when the surface grew inverts that, in that file.
+#
+# `test_skill_self_budget.py::TestTheScheduledExactGate` asserts all of the
+# above, including that context-cadence.yml still matches its own renderer.
+#
+# REQUIRES the ANTHROPIC_API_KEY repository secret, wired exactly as the
+# cadence workflow wires it. Without it --exact silently degrades to the same
+# offline estimate this job exists to stop trusting, so it is preflighted
+# first — and, because a preflight can only prove a key STRING is reachable,
+# the pytest run escalates the could-not-reach-count_tokens warning to an
+# error. See the `-W` note on the measurement step.
+
+on:
+  schedule:
+    # Wednesday 06:27 UTC. A different weekday from the cadence run so the two
+    # ~20-call count_tokens bursts do not land on one key in one minute, and
+    # midweek so a red gate arrives while there is still a week to act on it.
+    # Asserted as "not the cadence day" rather than as a literal: that job
+    # derives its slot from the repo name and can move without warning.
+    - cron: '27 6 * * 3'
+  workflow_dispatch:
+
+# It measures and reports. Unlike the cadence job it commits nothing and
+# pushes nothing, so there is no reason for this schedule to hold a write
+# token.
+permissions:
+  contents: read
+
+concurrency:
+  group: skill-budget-exact
+  cancel-in-progress: false
+
+jobs:
+  exact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # submodules: recursive because skills/ reaches vendored content through
+      # symlinks, which dangle without it — and a dangling SKILL.md measures
+      # as zero tokens, which passes every ratchet in the file.
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the test dependencies
+        run: pip install -r requirements-test.txt
+
+      # FIRST, and for the same reason the cadence workflow preflights first:
+      # without a credential every later step does its work and the result is
+      # refused at the end. Here the refusal is quieter still — a skip.
+      - name: Preflight the credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: bash skills/curating-context/scripts/measure-context.sh --check-credential
+
+      # -W error::UserWarning is the difference between a gate and a report,
+      # and it is not optional here.
+      #
+      # `exact_surfaces` warns and then SKIPS when it cannot reach
+      # count_tokens. On the pre-commit path that is correct and deliberate:
+      # an expired key, a rate limit or a plane must never block a commit
+      # (#140's absent-vs-unusable lesson). In THIS job it would make the one
+      # run whose entire purpose is to measure exactly report green having
+      # measured nothing — the silent success #217 is filed about, rebuilt
+      # inside its own fix. The preflight above cannot cover it:
+      # --check-credential answers "is a key string reachable", not "does the
+      # API accept it".
+      #
+      # BudgetBlindSpotWarning is deliberately outside the UserWarning
+      # hierarchy so this filter does not also escalate the always-on WARN
+      # into an assertion — that would be #217's option 2, which fails seven
+      # of nineteen skills today.
+      - name: Measure every ratchet against count_tokens
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SKILL_BUDGET_EXACT: '1'
+        run: |
+          pytest tests/structural/test_skill_self_budget.py -v \
+            -W error::UserWarning
