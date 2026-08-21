@@ -97,7 +97,8 @@ LIB="$SRC_DIR/_context-lib.sh"
 # A temp file that cannot outlive the run. merge_settings removes it on its own
 # failure path; this covers the signal case it cannot, so a killed run never
 # strands a temp file for `git add -A` to collect (#181, and the same CR finding
-# 11 that install-refresh.sh carries).
+# 11 that install-hook.sh carries — it moved there from install-refresh.sh when
+# #200 generalized the installer).
 #
 # PID-suffixed, because the trap is what makes a shared name dangerous: it fires
 # on EVERY exit, including `--check`, which writes nothing. With a fixed

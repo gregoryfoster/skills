@@ -167,37 +167,33 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    tool table, the `ToolSearch` prefetch string, per-tool notes, graph-health
    and index-scope guidance. The `AGENTS.md` block links to it and carries only
    what an agent needs on nearly every task; everything read once lives here.
-   Create `docs/` if absent. **Marker-delimited, like the policy block.** The
-   template is bounded by a pair kept unbroken on one line each:
-   `<!-- BEGIN socraticode-doc -->` and `<!-- END socraticode-doc -->`.
+   Create `docs/` if absent. **Marker-delimited, like the policy block**, by a
+   pair kept unbroken on one line each: `<!-- BEGIN socraticode-doc -->` and
+   `<!-- END socraticode-doc -->`.
    - marker pair already present → **replace between the markers** and leave
      every line after `END` untouched;
    - else the file exists but is unmarked (every install predating
      [#210](https://github.com/gregoryfoster/skills/issues/210)) → **rescue
-     before replacing**, the same way step 1a does for an unmarked policy
-     section: anything the template does not itself carry is repo-authored —
-     the repo's measured graph yield, its real artifact list, why an
-     `.socraticodeignore` entry exists. Move it, unchanged, under a
-     `## Repo-specific notes` heading *after* the END marker, and name every
-     moved block in the report.
+     before replacing**, exactly as step 1a does for an unmarked policy
+     section: anything the template does not itself carry is repo-authored.
+     Move it, unchanged, under a `## Repo-specific notes` heading *after* the
+     END marker, and name every moved block in the report.
    - else → write the marked template.
-   Repo-specific exploration notes belong here, below `END` — **not** in
-   `AGENTS.md`, which is loaded on every invocation and whose policy section
-   `curating-context` will not trim.
+   Repo-specific notes live here, below `END`, never in `AGENTS.md` — see the
+   policy-block invariant below for why.
 3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → install **two** vendored
    scripts and register them in `.claude/settings.json`. One command each, and
    neither is yours to hand-execute: both run `managing-skills`'
    `scripts/install-hook.sh`, which **symlinks** into `skills-vendor/*/…/scripts/`
-   — as it does for its own sibling hook in the same directory — merges the
-   SessionStart entry without clobbering existing `hooks`/`permissions`/other
-   keys, and **copies** only where there is no `skills-vendor/` tree (#200).
+   merges the SessionStart entry without clobbering existing
+   `hooks`/`permissions`/other keys, and **copies** only where there is no
+   `skills-vendor/` tree (#200).
    Run [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
    Step A and Step C verbatim; the flags are the only difference between them.
    - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe
-     markers `socraticode-prefetch` (canonical, written into the command
-     string) and `socraticode-reminder` (legacy script-file installs, matched
-     but never written), so a re-run upgrades an older entry in place instead of
-     duplicating it.
+     markers `socraticode-prefetch` (canonical, written) and
+     `socraticode-reminder` (legacy, matched but never written), so a re-run
+     upgrades an older entry in place instead of duplicating it.
    - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check,
      symlinked exactly the same way. Its dedupe marker `socraticode-health` is
      deliberately distinct, so one hook's strip cannot evict the other's entry
