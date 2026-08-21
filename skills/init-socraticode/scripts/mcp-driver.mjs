@@ -390,6 +390,44 @@ function parseArtifacts(text) {
   return { done: 0, total: 0 };
 }
 
+// codebase_context lists one block per manifest entry, and its Status line is
+// the ONLY per-artifact index state there is — the status line's `M/N indexed`
+// gives a count and never a name:
+//
+//   ━━━ reference-docs ━━━
+//     Path: ./docs/
+//     Description: …
+//     Status: ○ not yet indexed
+//
+// Measured against a live 13-artifact reply (cannabis_observer/code/cli), one
+// of whose artifacts was sitting unindexed behind a green status at the time.
+//
+// → [{ name, status, indexed }]
+function parseContextArtifacts(text) {
+  const out = [];
+  for (const line of String(text).split('\n')) {
+    const head = line.match(/^\s*━+\s*(.+?)\s*━+\s*$/);
+    if (head) { out.push({ name: head[1], status: '', indexed: false }); continue; }
+    const status = line.match(/^\s*Status:\s*(.+?)\s*$/);
+    if (status && out.length) {
+      out[out.length - 1].status = status[1];
+      out[out.length - 1].indexed = artifactIndexed(status[1]);
+    }
+  }
+  return out;
+}
+
+// Asymmetric on purpose: only a positively-indexed status counts as indexed,
+// and anything unrecognised falls to NOT indexed. Reading an unknown rendering
+// as success would rebuild the silent-green hole this check exists to close —
+// and the error rendering is the one shape we have never seen from this tool,
+// only from codebase_context_index's report.
+function artifactIndexed(status) {
+  if (/✗|✘|✖|error|fail/i.test(status)) return false;
+  if (/not\s+yet|pending|queued|missing|stale/i.test(status)) return false;
+  return /✓|\bindexed\b/i.test(status);
+}
+
 function graphReady(text) {
   return /READY/i.test(text);
 }
@@ -488,6 +526,29 @@ function graphYield(text) {
   out.verdict = 'ok';
   out.reason = `${edges} edge(s) across ${nodes} files = ${edgesPerNode.toFixed(3)} edges/file`;
   return out;
+}
+
+// The unresolvedPct finding, worded from the verdict (#216).
+//
+// The line itself is unconditional — it is reported whenever the figure clears
+// the threshold, on healthy graphs too, because the statistic is worth having
+// either way and the alternative (moving it inside the verdict branches) hides
+// it from every repo that is fine. Only the gloss moves.
+//
+// Why it has to: beside `low` or `unknown` there is a yield finding already in
+// the list for this to corroborate. Beside `ok` there is nothing, and
+// "corroborates a resolver problem" standing alone parses as an accusation —
+// one cohort repo distrusted a provably exact import graph for weeks on the
+// strength of it, paying an `rg` round-trip on every dependency question.
+//
+// Exported, and rendered from one place, because the generated doc quotes it
+// verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
+// agree, so a reword cannot leave the doc behind.
+function unresolvedFinding(unresolvedPct, verdict) {
+  const gloss = verdict === 'ok'
+    ? 'share of call edges with no first-party callee; verdict is ok, so this is a statistic, not a defect'
+    : 'corroborates a resolver problem';
+  return `graph unresolved ${unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — ${gloss}`;
 }
 
 // codebase_graph_query on a file with no resolved edges: an ordinary sentence,
@@ -907,6 +968,68 @@ async function cmdHealthCheck(projectPath, probePath) {
       if (indexIncomplete(status.text)) findings.push('index is marked INCOMPLETE — a previous run was interrupted');
     }
 
+    // ── declared ≠ indexed (#214) ────────────────────────────────────────────
+    // The last silent-degradation path we know of, and #107's shape one level
+    // up. A COMPLETED operation can still leave an artifact unindexed: the
+    // field case (CannObserv/power-map#454) settled at "Context artifacts: 2/3
+    // indexed" with the operation completed, the index not INCOMPLETE and every
+    // container green, and stayed there — a 2.5M docs tree unreachable via
+    // codebase_context_search with nothing reporting it. Every check above this
+    // one reads that install as healthy.
+    //
+    // The manifest is the denominator, never the status line: parseArtifacts
+    // reports 0/0 both for "N configured, not yet indexed" and for a status
+    // that omits the line entirely, so the server's own count cannot tell
+    // "nothing declared" from "nothing indexed yet".
+    const manifest = validateManifest(projectPath);
+    if (manifest.present && manifest.errors.length) {
+      // NOT expectedArtifactCount(), which die()s — and die() is process.exit(),
+      // which this command must not call: its contract is JSON on stdout, and
+      // node's stdout is async on a pipe (see the exitCode note below). An
+      // invalid manifest is also exactly the #85 silent-green case — the server
+      // rejects it, codebase_status then omits the artifact line, and every
+      // reading reports a contented 0/0 — so it is a finding in its own right.
+      report.manifest = { path: manifest.path, errors: manifest.errors };
+      findings.push(
+        `${MANIFEST_NAME} is invalid, so the server ignores it and context search is absent entirely: ${manifest.errors[0]}`
+      );
+    } else if (manifest.present && manifest.count > 0) {
+      const declared = manifest.count;
+      const ctx = await call('codebase_context', { projectPath });
+      if (ctx.error) {
+        // Degrade, do not disable: the count alone beats silence. This is the
+        // one reading where the status line's numerator is trustworthy — it is
+        // only its TOTAL that cannot be believed.
+        if (!status.error) {
+          const done = parseArtifacts(status.text).done;
+          if (done < declared) {
+            report.artifacts = { declared, indexed: done, unindexed: null };
+            findings.push(
+              `context artifacts ${done}/${declared} indexed — codebase_context failed (${ctx.error}), so the missing artifact cannot be named`
+            );
+          }
+        }
+      } else {
+        const listed = parseContextArtifacts(ctx.text);
+        const unindexed = listed.filter((a) => !a.indexed);
+        const indexed = listed.length - unindexed.length;
+        report.artifacts = {
+          declared,
+          indexed,
+          unindexed: unindexed.map((a) => ({ name: a.name, status: a.status })),
+        };
+        if (indexed < declared) {
+          // Naming it is the whole value: 2/3 sends the reader back to
+          // codebase_status, whereas the name decides between re-indexing one
+          // path and debugging the manifest.
+          const named = unindexed.length
+            ? unindexed.map((a) => `${a.name}: ${a.status || 'not indexed'}`).join('; ')
+            : `codebase_context listed only ${listed.length} of them`;
+          findings.push(`context artifacts ${indexed}/${declared} indexed — ${named}`);
+        }
+      }
+    }
+
     const graph = await call('codebase_graph_status', { projectPath });
     if (graph.error) {
       findings.push(`codebase_graph_status failed: ${graph.error}`);
@@ -936,7 +1059,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         findings.push(`graph yield UNKNOWN — ${y.reason}`);
       }
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
-        findings.push(`graph unresolved ${y.unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — corroborates a resolver problem`);
+        findings.push(unresolvedFinding(y.unresolvedPct, y.verdict));
       }
     }
   });
@@ -1156,8 +1279,11 @@ if (RUN_AS_SCRIPT) {
 export {
   validateManifest, MANIFEST_NAME,
   parseEmbedPercent, parseArtifacts, graphReady,
+  // declared ≠ indexed (#214)
+  parseContextArtifacts, artifactIndexed,
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
+  unresolvedFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,

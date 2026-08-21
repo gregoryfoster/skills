@@ -353,17 +353,20 @@ class TestOverflowDocTemplate:
     def test_graph_health_explains_unresolved_pct(self, doc_text: str) -> None:
         """#198: the daily hook names `unresolvedPct`; the doc never did.
 
-        `mcp-driver.mjs` emits `graph unresolved N% (> 50%) — corroborates a
-        resolver problem` *outside* the verdict branches, so it fires on `ok`
-        graphs too, and `socraticode-health.sh` runs it once per UTC day. A
-        consumer reading only their generated doc had nothing to interpret it
-        with, and the phrase parses as an accusation when it stands alone —
+        `mcp-driver.mjs` emits `graph unresolved N% (> ...%) — ...` *outside*
+        the verdict branches, so it fires on `ok` graphs too, and
+        `socraticode-health.sh` runs it once per UTC day. A consumer reading
+        only their generated doc had nothing to interpret it with, and the
+        corroboration wording parses as an accusation when it stands alone —
         one cohort repo distrusted a provably exact import graph for weeks on
-        the strength of it.
+        the strength of it. #216 made the gloss verdict-aware in response;
+        `test_socraticode_graph_yield.py` holds the doc's verbatim quotations
+        to what the driver renders, which is the check this one cannot be.
 
         Pinned as concepts, not as a sentence: the section has to say what the
         statistic counts (call edges), what it is for (corroboration, not the
-        verdict), and that a re-index does not move it.
+        verdict), and that a re-index does not move it. A sentence-level pin
+        here would fight every legitimate rewording.
         """
         section = _graph_health(doc_text)
         for concept, why in (
