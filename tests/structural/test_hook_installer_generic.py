@@ -1,0 +1,411 @@
+"""#200 — one hook installer, parameterised, rather than a fourth near-copy.
+
+`install-refresh.sh` was 435 lines, and roughly 400 of them were the generic
+two-artifact contract: the jq settings merge, the reader/writer drift fixes,
+`--check`/`--uninstall`, and the four rounds of ordering hardening from #178.
+Three hooks now want that mechanism — `skills-submodule-update.sh`,
+`socraticode-reminder.sh` and `socraticode-health.sh` — and #179's implementing
+agent refused to write the second copy on exactly that ground:
+
+    An `install-health.sh` differs in two constants. Writing it means either
+    copy-pasting that history — guaranteeing the two drift, which is the failure
+    #179 is *about* — or generalizing.
+
+So the mechanism moved to `install-hook.sh`, which takes the constants as
+arguments, and `install-refresh.sh` became a wrapper that supplies refresh's.
+
+What this file pins, and why each one is a mechanism rather than a spelling:
+
+- **The generic installer honours the same two-artifact contract**, for a hook
+  that is not the refresh hook. If it only worked for the hook it was extracted
+  from, the extraction bought nothing.
+- **Two hooks coexist in one `.claude/hooks/` and one settings.json.** That is
+  the state every `init-socraticode` consumer lands in, and the dedupe-then-
+  append merge is the step that could silently evict the sibling — a shared
+  marker would make one hook's strip match the other's entry.
+- **A hook's markers, not its basename, decide what counts as its
+  registration.** The reminder hook's legacy installs name
+  `socraticode-reminder` with no marker comment; the canonical form carries
+  `# socraticode-prefetch`. Both must be recognised, and a re-run must upgrade
+  rather than duplicate — the #110 lesson, inherited rather than re-learned.
+- **The copy fallback is a flag, not a second code path in prose.** A consumer
+  with no `skills-vendor/` tree has nothing to symlink at; `init-socraticode`
+  documented that branch as prose for both its hooks.
+- **A copy where a symlink is possible is reported, not called MISSING.** That
+  is #179's silent drift, and `.skills/doctor.sh` is blind to it by
+  construction (a copy is a valid regular file, not a dangling symlink).
+- **`install-refresh.sh` still installs exactly what it installed before.**
+  It is named by path in README.md, docs/SKILLS.md, managing-skills/SKILL.md,
+  `doctor.sh`'s repair advice and in cohort repos' per-repo issues, so its
+  path, its exit codes and the command string it registers are a contract.
+
+`test_refresh_hook_install.py` keeps the end-to-end behaviour suite for the
+refresh hook and is unchanged by the refactor — that it still passes against a
+wrapper is the load-bearing evidence that the four hardening rounds were
+inherited rather than re-litigated.
+"""
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+MS_SCRIPTS = REPO_ROOT / "skills" / "managing-skills" / "scripts"
+INSTALL_HOOK = MS_SCRIPTS / "install-hook.sh"
+INSTALL_REFRESH = MS_SCRIPTS / "install-refresh.sh"
+SOC_SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
+
+REMINDER = "socraticode-reminder.sh"
+HEALTH = "socraticode-health.sh"
+REFRESH = "skills-submodule-update.sh"
+
+REMINDER_ARGS = (
+    "--hook", REMINDER, "--skill", "init-socraticode",
+    "--marker", "socraticode-prefetch", "--marker", "socraticode-reminder",
+)
+HEALTH_ARGS = (
+    "--hook", HEALTH, "--skill", "init-socraticode",
+    "--marker", "socraticode-health",
+)
+
+SETTINGS_REL = ".claude/settings.json"
+
+
+def _clean_env() -> dict:
+    """Env without inherited GIT_* vars — pre-commit sets GIT_INDEX_FILE etc.,
+    and a linked worktree shares .git/config with its main checkout, so a
+    repo-creating git command that inherits them writes the wrong repo (#189)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _run(repo: Path, *args: str, script: Path = INSTALL_HOOK):
+    return subprocess.run(
+        ["bash", str(script), *args],
+        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=30,
+    )
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """A consumer checkout vendoring both skills, no hooks wired."""
+    r = tmp_path / "consumer"
+    r.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=r, check=True, env=_clean_env())
+    for skill, names in (
+        ("managing-skills", [REFRESH]),
+        ("init-socraticode", [REMINDER, HEALTH]),
+    ):
+        vendor = r / "skills-vendor" / "acme-skills" / "skills" / skill / "scripts"
+        vendor.mkdir(parents=True, exist_ok=True)
+        src_dir = MS_SCRIPTS if skill == "managing-skills" else SOC_SCRIPTS
+        for name in names:
+            (vendor / name).write_text((src_dir / name).read_text())
+    return r
+
+
+@pytest.fixture
+def bare(tmp_path: Path) -> Path:
+    """A consumer that does not vendor via managing-skills: no skills-vendor/
+    tree, so there is nothing for a symlink to point at."""
+    r = tmp_path / "bare"
+    r.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=r, check=True, env=_clean_env())
+    return r
+
+
+def _settings(repo: Path) -> dict:
+    return json.loads((repo / SETTINGS_REL).read_text())
+
+
+def _commands(repo: Path) -> list[str]:
+    entries = _settings(repo).get("hooks", {}).get("SessionStart", [])
+    return [h.get("command", "") for e in entries for h in e.get("hooks", [])]
+
+
+def _seed(repo: Path, *commands: str) -> None:
+    (repo / ".claude").mkdir(parents=True, exist_ok=True)
+    (repo / SETTINGS_REL).write_text(json.dumps({
+        "hooks": {"SessionStart": [
+            {"matcher": ".*", "hooks": [{"type": "command", "command": c}]}
+            for c in commands
+        ]}
+    }))
+
+
+class TestItInstallsAHookItWasNotExtractedFrom:
+    """The point of the generalisation: a second hook, no second script."""
+
+    def test_both_artifacts_land(self, repo: Path):
+        r = _run(repo, *REMINDER_ARGS)
+        assert r.returncode == 0, r.stderr
+        link = repo / ".claude" / "hooks" / REMINDER
+        assert link.is_symlink(), r.stdout + r.stderr
+        assert link.resolve().is_file()
+        assert _commands(repo) == [
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh"'
+            " # socraticode-prefetch"
+        ]
+
+    def test_the_symlink_target_is_relative(self, repo: Path):
+        """An absolute target would break for every other checkout of the repo —
+        worktrees, CI clones, and anyone else's machine."""
+        _run(repo, *REMINDER_ARGS)
+        target = os.readlink(repo / ".claude" / "hooks" / REMINDER)
+        assert not os.path.isabs(target), target
+        assert target.startswith("../../skills-vendor/"), target
+
+    def test_a_rerun_is_idempotent(self, repo: Path):
+        _run(repo, *REMINDER_ARGS)
+        before = (repo / SETTINGS_REL).read_text()
+        r = _run(repo, *REMINDER_ARGS)
+        assert r.returncode == 0, r.stderr
+        assert "unchanged" in r.stdout
+        assert (repo / SETTINGS_REL).read_text() == before
+
+    def test_check_reports_both_halves(self, repo: Path):
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "hook symlink:       MISSING" in r.stdout
+        assert "SessionStart entry: MISSING" in r.stdout
+        _run(repo, *REMINDER_ARGS)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 0, r.stdout
+        assert "SessionStart entry: yes" in r.stdout
+
+
+class TestTwoHooksInOneDirectory:
+    """Every `init-socraticode` consumer ends up here, and `managing-skills`
+    consumers add a third. The merge is dedupe-then-append, so the strip is the
+    step that could evict a sibling — which is why the reference doc insists the
+    health hook's marker is distinct from the prefetch hook's."""
+
+    def test_the_second_install_does_not_evict_the_first(self, repo: Path):
+        assert _run(repo, *REMINDER_ARGS).returncode == 0
+        assert _run(repo, *HEALTH_ARGS).returncode == 0
+        cmds = _commands(repo)
+        assert len(cmds) == 2, cmds
+        assert any(REMINDER in c for c in cmds), cmds
+        assert any(HEALTH in c for c in cmds), cmds
+
+    def test_uninstalling_one_leaves_the_other(self, repo: Path):
+        _run(repo, *REMINDER_ARGS)
+        _run(repo, *HEALTH_ARGS)
+        r = _run(repo, *REMINDER_ARGS, "--uninstall")
+        assert r.returncode == 0, r.stderr
+        assert not (repo / ".claude" / "hooks" / REMINDER).is_symlink()
+        assert (repo / ".claude" / "hooks" / HEALTH).is_symlink()
+        assert [c for c in _commands(repo) if HEALTH in c], _commands(repo)
+        assert not [c for c in _commands(repo) if REMINDER in c]
+
+    def test_one_hooks_check_does_not_answer_for_the_other(self, repo: Path):
+        _run(repo, *REMINDER_ARGS)
+        r = _run(repo, *HEALTH_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "SessionStart entry: MISSING" in r.stdout
+
+    def test_the_refresh_hook_is_not_confused_for_a_socraticode_one(
+        self, repo: Path
+    ):
+        """All three land in the same array. The refresh hook dedupes on its
+        basename and the socraticode hooks on their own markers; a match across
+        that boundary would make one install remove another."""
+        _run(repo, *REMINDER_ARGS)
+        _run(repo, *HEALTH_ARGS)
+        assert _run(repo, script=INSTALL_REFRESH).returncode == 0
+        assert len(_commands(repo)) == 3, _commands(repo)
+
+
+class TestMarkersDecideWhatCountsAsARegistration:
+    def test_a_legacy_alias_is_upgraded_not_duplicated(self, repo: Path):
+        """The reminder hook's pre-#186 installs name the script file with no
+        marker comment. Recognised — it does run — and normalised on the next
+        install, which is #110's lesson inherited rather than re-learned."""
+        _seed(repo, 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/socraticode-reminder.sh"')
+        chk = _run(repo, *REMINDER_ARGS, "--check")
+        assert "SessionStart entry: yes" in chk.stdout, chk.stdout
+
+        r = _run(repo, *REMINDER_ARGS)
+        assert r.returncode == 0, r.stderr
+        assert "upgrading" in r.stdout, r.stdout
+        assert _commands(repo) == [
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh"'
+            " # socraticode-prefetch"
+        ]
+
+    def test_a_duplicate_pair_collapses_to_one(self, repo: Path):
+        """A prior verbatim re-run of the prose left two entries. The reference
+        doc asks for the extras to go; strip-then-append does it for free."""
+        canonical = (
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh"'
+            " # socraticode-prefetch"
+        )
+        _seed(repo, canonical, 'bash .claude/hooks/socraticode-reminder.sh')
+        _run(repo, *REMINDER_ARGS)
+        assert len(_commands(repo)) == 1, _commands(repo)
+
+    def test_a_permissions_mention_is_not_a_registration(self, repo: Path):
+        """The whole-file grep that made `--check` lie (#178 round 1) must stay
+        fixed for every hook, not just the one it was found on."""
+        (repo / ".claude").mkdir(parents=True, exist_ok=True)
+        (repo / SETTINGS_REL).write_text(json.dumps({
+            "permissions": {"allow": [
+                "Bash(bash .claude/hooks/socraticode-reminder.sh)"
+            ]}
+        }))
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "SessionStart entry: MISSING" in r.stdout, r.stdout
+
+    def test_a_marker_with_shell_or_json_metacharacters_is_refused(
+        self, repo: Path
+    ):
+        """The markers reach a jq program as a constructed JSON array. Refusing
+        anything outside the token charset is what keeps that construction from
+        needing to be trusted."""
+        r = _run(repo, "--hook", REMINDER, "--skill", "init-socraticode",
+                 "--marker", 'a","b')
+        assert r.returncode == 1, r.stdout
+        assert "marker" in r.stderr.lower(), r.stderr
+
+
+class TestTheCopyFallback:
+    """`init-socraticode` documented this branch in prose for both its hooks:
+    a consumer that does not vendor via `managing-skills` has no tree to point
+    a symlink at."""
+
+    def test_without_the_flag_it_refuses(self, bare: Path):
+        r = _run(bare, *REMINDER_ARGS)
+        assert r.returncode == 1, r.stdout
+        assert "no vendored" in r.stderr, r.stderr
+        assert not (bare / ".claude").exists()
+
+    def test_with_the_flag_it_copies_from_the_installers_own_tree(
+        self, bare: Path
+    ):
+        r = _run(bare, *REMINDER_ARGS, "--copy-fallback")
+        assert r.returncode == 0, r.stdout + r.stderr
+        hook = bare / ".claude" / "hooks" / REMINDER
+        assert hook.is_file() and not hook.is_symlink()
+        assert hook.read_text() == (SOC_SCRIPTS / REMINDER).read_text()
+        assert os.access(hook, os.X_OK), "the copy must be executable"
+        assert any(REMINDER in c for c in _commands(bare))
+
+    def test_the_copy_says_it_is_frozen(self, bare: Path):
+        """A copy freezes at install day and nothing detects it, so the one
+        chance to say so is the run that creates it (#179)."""
+        r = _run(bare, *REMINDER_ARGS, "--copy-fallback")
+        assert "copied" in r.stdout.lower(), r.stdout
+        chk = _run(bare, *REMINDER_ARGS, "--check", "--copy-fallback")
+        assert chk.returncode == 0, chk.stdout
+        assert "COPY" in chk.stdout, chk.stdout
+
+    def test_a_copy_where_a_symlink_is_possible_is_reported(self, repo: Path):
+        """#179's actual failure: a copy in a repo that vendors the source.
+        `.skills/doctor.sh` cannot see it — a copy is a valid regular file, not
+        a dangling symlink — so this check is the only thing that can."""
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / REMINDER).write_text((SOC_SCRIPTS / REMINDER).read_text())
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "COPY" in r.stdout, r.stdout
+        assert "MISSING" not in r.stdout.split("SessionStart")[0], r.stdout
+
+    def test_a_copy_is_replaced_by_the_symlink_on_a_re_run(self, repo: Path):
+        """`ln -sfn` over a regular file, which is what upgrades a legacy
+        hand-typed hook in place without a separate step."""
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / REMINDER).write_text("# stale\n")
+        assert _run(repo, *REMINDER_ARGS).returncode == 0
+        assert (hooks / REMINDER).is_symlink()
+
+    def test_the_copy_does_not_write_through_an_existing_symlink(
+        self, bare: Path, tmp_path: Path
+    ):
+        """`cp` follows a symlink and writes its target. With a dangling-or-not
+        link already in `.claude/hooks/`, that would edit the vendored source
+        instead of installing over the link."""
+        hooks = bare / ".claude" / "hooks"
+        hooks.mkdir(parents=True)
+        victim = tmp_path / "victim.sh"
+        victim.write_text("# not the hook\n")
+        (hooks / REMINDER).symlink_to(victim)
+        assert _run(bare, *REMINDER_ARGS, "--copy-fallback").returncode == 0
+        assert victim.read_text() == "# not the hook\n", "wrote through the link"
+        assert not (hooks / REMINDER).is_symlink()
+
+
+class TestArgumentHandling:
+    def test_help_exits_zero_without_a_hook(self):
+        r = subprocess.run(
+            ["bash", str(INSTALL_HOOK), "--help"],
+            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        )
+        assert r.returncode == 0, r.stderr
+        assert "--hook" in r.stdout
+
+    def test_a_missing_hook_name_is_a_usage_error(self, repo: Path):
+        r = _run(repo, "--skill", "init-socraticode")
+        assert r.returncode == 1
+        assert "--hook" in r.stderr, r.stderr
+
+    def test_a_flag_without_its_value_is_a_usage_error(self, repo: Path):
+        r = _run(repo, "--hook")
+        assert r.returncode == 1
+        assert "value" in r.stderr.lower(), r.stderr
+
+    def test_a_hook_name_with_a_path_is_refused(self, repo: Path):
+        """The name is joined into `.claude/hooks/` and into a vendor glob; a
+        path there would install somewhere nobody looks."""
+        r = _run(repo, "--hook", "../evil.sh", "--skill", "init-socraticode")
+        assert r.returncode == 1, r.stdout
+        assert not (repo / ".claude").exists()
+
+    def test_an_unknown_argument_is_refused(self, repo: Path):
+        """`doctor.sh` resolves the installer glob itself rather than printing
+        it, precisely because extra matches arrive as arguments."""
+        r = _run(repo, *REMINDER_ARGS, "--wat")
+        assert r.returncode == 1
+        assert "unknown argument" in r.stderr
+
+
+class TestInstallRefreshIsStillItself:
+    """Named by path in README.md, docs/SKILLS.md, managing-skills/SKILL.md,
+    doctor.sh's repair advice, and in every per-repo cohort issue filed for
+    #167. The wrapper keeps that path working; these pin what it must produce.
+
+    The full behavioural suite is `test_refresh_hook_install.py`, unchanged by
+    the refactor — that it still passes is the evidence the hardening rounds
+    were inherited rather than re-implemented."""
+
+    def test_it_registers_the_same_command_as_before(self, repo: Path):
+        r = _run(repo, script=INSTALL_REFRESH)
+        assert r.returncode == 0, r.stderr
+        assert _commands(repo) == [
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh"'
+        ], "the registered command is a contract with every installed consumer"
+
+    def test_it_still_speaks_in_its_own_name(self, repo: Path):
+        """Its messages are quoted in per-repo repair issues, and `doctor.sh`
+        tells operators to run `install-refresh.sh` by name."""
+        r = _run(repo, script=INSTALL_REFRESH)
+        assert "install-refresh:" in r.stdout, r.stdout
+
+    def test_it_delegates_rather_than_carrying_a_copy(self):
+        """The whole point of #200. A wrapper that grew its own jq merge back
+        would be the fourth near-copy this issue exists to prevent."""
+        body = INSTALL_REFRESH.read_text()
+        assert "install-hook.sh" in body
+        assert "jq " not in body, (
+            "install-refresh.sh is carrying settings-merge logic again; the "
+            "merge lives in install-hook.sh so one set of hardening rounds "
+            "serves every hook (#200, #178)"
+        )
+        assert len(body.splitlines()) < 80, (
+            "install-refresh.sh is meant to be a thin wrapper over "
+            f"install-hook.sh; it is {len(body.splitlines())} lines"
+        )
