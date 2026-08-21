@@ -160,10 +160,17 @@ import warnings
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 MEASURE = SKILLS_DIR / "curating-context" / "scripts" / "measure-context.sh"
+INSTALL_CADENCE = (
+    SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
+)
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+CADENCE_WORKFLOW = WORKFLOWS / "context-cadence.yml"
+EXACT_WORKFLOW = WORKFLOWS / "skill-budget-exact.yml"
 
 SKILLS = sorted(
     p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").is_file()
@@ -1154,3 +1161,363 @@ class TestTheOfflineFailureQuotesANumber:
         assert "worst case" not in message
         assert "OFFLINE ESTIMATE" in message
         assert exact_cmd(self.SKILL) in message
+
+
+class TestTheAlwaysOnGateNamesItsBlindSpot:
+    """#217 option 3: the same verdict, on every run rather than only on red.
+
+    `estimate_caveat` has computed "this file may already be over" since #190 —
+    but only inside a failure message, which a passing run never prints. So the
+    one distinction the always-on gate cannot make for itself was reachable
+    exclusively from the state where it was already too late to matter, and
+    `SKILL_BUDGET_EXACT` breached three ratchets past a green suite (#217).
+
+    The warning is the verdict surfaced where a green run can see it. It is
+    NOT the assertion: asserting `worst_case_exact` against the ratchet is
+    #217's option 2, which fails seven of nineteen skills today and needs
+    ~8,100 tokens of trimming — rejected on measured cost, not on merit, and
+    it becomes correct the moment those seven ratchets come down.
+    """
+
+    SKILL = "init-project-fastapi"
+
+    def _surfaces(self, **skills: int) -> dict:
+        return {
+            name: {"policy": {"tokens": est}} for name, est in skills.items()
+        }
+
+    def test_a_worst_case_over_the_ratchet_is_reported(self):
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + 100
+        assert estimate < ratchet, "the estimate must still read green offline"
+        rows = blind_spot_rows(self._surfaces(**{self.SKILL: estimate}))
+        assert [r[0] for r in rows] == [self.SKILL]
+        assert rows[0][1:] == (estimate, worst_case_exact(estimate), ratchet)
+
+    def test_a_worst_case_under_the_ratchet_does_not_cry_wolf(self):
+        """A warning on every skill is a warning nobody reads."""
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) - 100
+        assert blind_spot_rows(self._surfaces(**{self.SKILL: estimate})) == []
+
+    def test_a_skill_already_failing_the_offline_gate_is_not_also_warned(self):
+        """Over the ratchet on the ESTIMATE is a failure, not a blind spot.
+
+        That skill's own failure message already carries the caveat and the
+        worst case. Warning about it as well would put the loudest signal on
+        the one file the gate is not blind to.
+        """
+        ratchet = ratchet_for(self.SKILL)
+        assert blind_spot_rows(self._surfaces(**{self.SKILL: ratchet + 1})) == []
+
+    def test_the_report_quotes_the_estimate_the_worst_case_and_the_ratchet(self):
+        """All three, because any two of them leave the reader doing arithmetic."""
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + 100
+        with pytest.warns(BudgetBlindSpotWarning) as caught:
+            warn_about_the_blind_spot(self._surfaces(**{self.SKILL: estimate}))
+        message = str(caught[0].message)
+        for figure in (
+            f"{estimate:,}", f"{worst_case_exact(estimate):,}", f"{ratchet:,}"
+        ):
+            assert figure in message, (
+                f"the always-on warning never quotes {figure}"
+            )
+        assert self.SKILL in message
+        assert EXACT_ENV in message, (
+            "the warning names a blind spot without naming the run that "
+            "settles it, which leaves the reader exactly where #190 did"
+        )
+
+    def test_nothing_is_warned_when_every_band_clears(self):
+        """Silence is the correct output, and it has to be reachable.
+
+        A warning that fires unconditionally is the always-on gate's existing
+        failure in a new costume.
+        """
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) - 100
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warn_about_the_blind_spot(self._surfaces(**{self.SKILL: estimate}))
+
+    def test_the_warning_and_the_failure_message_cannot_disagree(self):
+        """One predicate, two surfaces. #190's verdict and #217's warning are
+        the same judgement, and a second copy of the comparison would let the
+        offline failure and the always-on warning drift apart silently.
+        """
+        ratchet = ratchet_for(self.SKILL)
+        for delta in (-400, -100, -1, 0, 1, 100, 400):
+            estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + delta
+            if estimate > ratchet:
+                continue
+            warned = bool(blind_spot_rows(self._surfaces(**{self.SKILL: estimate})))
+            said = "may already be over" in estimate_caveat(self.SKILL, estimate)
+            assert warned == said, (
+                f"at estimate {estimate:,} the always-on warning says "
+                f"{warned} and the offline failure says {said}"
+            )
+
+    def test_the_warning_is_not_a_user_warning(self):
+        """The scheduled exact job runs pytest under `-W error::UserWarning`.
+
+        That is what turns "could not reach count_tokens" from a green skip
+        into a red job. If this warning were a UserWarning it would be escalated
+        by the same filter, which would assert the worst case against the
+        ratchet — option 2, by accident, in the one place nobody is watching.
+        """
+        assert issubclass(BudgetBlindSpotWarning, Warning)
+        assert not issubclass(BudgetBlindSpotWarning, UserWarning)
+
+    def test_the_live_offline_run_reports_every_skill_it_cannot_vouch_for(
+        self, surfaces: dict
+    ):
+        """The predicate against the real library, not a synthetic surface."""
+        expected = sorted(
+            s for s in SKILLS
+            if surfaces[s]["policy"]["tokens"] <= ratchet_for(s)
+            < worst_case_exact(surfaces[s]["policy"]["tokens"])
+        )
+        assert [r[0] for r in blind_spot_rows(surfaces)] == expected
+
+
+class TestTheScheduledExactGate:
+    """#217 option 1: a gate that FAILS, on a clock nobody has to remember.
+
+    The always-on warning above makes the blind spot visible; it fails nothing,
+    by design. Something still has to measure the reading the ratchet binds, and
+    "opt-in" has meant "never runs unless someone remembers" — three breaches,
+    each past a green suite, a passed pre-commit hook and a completed review.
+
+    The job is NOT a second job in `context-cadence.yml`, which is where #217's
+    body proposed it, for three reasons that were all verified rather than
+    assumed:
+
+    - That file is a RENDERED ARTIFACT. `install-cadence.sh` overwrites it
+      whole on every install run and its own header says so, and `--check`
+      compares existence rather than content — so a hand-added job would be
+      deleted by the tool that installed it, silently, at some later date.
+    - `install-cadence.sh` ships inside `curating-context`, which twelve cohort
+      repos vendor. Adding the job to the template would push a `skills/*/`
+      budget gate into eleven repos that have no `skills/` directory.
+    - `context-cadence.yml` documents the invariant that "red always means the
+      mechanism broke, never that the surface grew." A gate whose whole purpose
+      is to go red when the surface grew inverts that in the same file.
+    """
+
+    @pytest.fixture(scope="class")
+    def workflow(self) -> dict:
+        assert EXACT_WORKFLOW.is_file(), (
+            f"{EXACT_WORKFLOW.relative_to(REPO_ROOT)} is missing, so nothing "
+            f"runs {EXACT_ENV} on a schedule and the exact contract is "
+            "verified only when someone remembers (#217)."
+        )
+        return yaml.safe_load(EXACT_WORKFLOW.read_text())
+
+    @staticmethod
+    def _triggers(workflow: dict) -> dict:
+        # YAML 1.1 reads a bare `on:` key as the boolean True, which is why
+        # every workflow parser in this repo has to ask for both.
+        return workflow.get("on", workflow.get(True, {}))
+
+    @staticmethod
+    def _steps(workflow: dict) -> list[dict]:
+        return [
+            step
+            for job in workflow["jobs"].values()
+            for step in job["steps"]
+        ]
+
+    def test_the_generated_cadence_workflow_was_not_hand_edited(self):
+        """The reason the job lives in its own file, pinned rather than argued.
+
+        If this ever fails, `context-cadence.yml` and the installer that
+        renders it have diverged: either someone edited the artifact, or the
+        template moved and this repo was not re-installed. Re-run
+        `install-cadence.sh` — do not reconcile by editing the workflow.
+        """
+        env = {
+            k: v for k, v in os.environ.items() if not k.startswith("GIT_")
+        }
+        rendered = subprocess.run(
+            ["bash", str(INSTALL_CADENCE), "--print"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
+            timeout=60,
+        )
+        assert rendered.returncode == 0, rendered.stderr
+        assert rendered.stdout == CADENCE_WORKFLOW.read_text(), (
+            "context-cadence.yml no longer matches what install-cadence.sh "
+            "renders, so it is a hand-edited generated file — the next "
+            "install run overwrites whatever was added. Re-run "
+            "skills/curating-context/scripts/install-cadence.sh."
+        )
+        assert EXACT_ENV not in CADENCE_WORKFLOW.read_text(), (
+            f"{EXACT_ENV} was added to the generated cadence workflow. It "
+            "belongs in skill-budget-exact.yml; see this class's docstring."
+        )
+
+    def test_it_runs_weekly_and_on_demand(self, workflow: dict):
+        """A schedule because nobody remembers; a manual trigger because the
+        one time you want this reading is before a ship, not next Wednesday.
+        """
+        triggers = self._triggers(workflow)
+        assert "workflow_dispatch" in triggers, (
+            "no manual trigger, so a run that wants the exact reading today "
+            "has to wait for the cron or run it by hand off a laptop key"
+        )
+        crons = [entry["cron"] for entry in triggers["schedule"]]
+        assert crons, "a gate with no schedule is the opt-in gate again"
+        for cron in crons:
+            assert len(cron.split()) == 5, f"not a five-field cron: {cron!r}"
+
+    def test_it_does_not_share_a_day_with_the_cadence_run(self, workflow: dict):
+        """Two ~20-call count_tokens bursts on one key, one clock, one repo.
+
+        Not a correctness bug — a rate limit is retryable — but the cadence job
+        derives its slot from the repo name and cannot be told to avoid this
+        one, so this side is where the separation has to be asserted.
+        """
+        cadence = yaml.safe_load(CADENCE_WORKFLOW.read_text())
+        cadence_days = {
+            e["cron"].split()[4] for e in self._triggers(cadence)["schedule"]
+        }
+        mine = {
+            e["cron"].split()[4]
+            for e in self._triggers(workflow)["schedule"]
+        }
+        assert not (cadence_days & mine), (
+            f"both weekly jobs fire on day-of-week {cadence_days & mine}. "
+            "install-cadence.sh derives the cadence slot from the repo name, "
+            "so move THIS workflow's cron, not that one's."
+        )
+
+    def test_it_asks_for_the_exact_pass(self, workflow: dict):
+        """The env var the test file actually reads, set to a value it accepts."""
+        values = [
+            str(step.get("env", {}).get(EXACT_ENV))
+            for step in self._steps(workflow)
+            if EXACT_ENV in step.get("env", {})
+        ]
+        assert values, (
+            f"no step sets {EXACT_ENV}, so this workflow runs the same offline "
+            "estimate pre-commit already runs and measures nothing new"
+        )
+        for value in values:
+            assert value not in ("", "0", "None"), (
+                f"{EXACT_ENV}={value!r} is a value _exact_requested() reads as "
+                "OFF, so the exact pass would skip and the job would go green"
+            )
+
+    def test_the_credential_is_wired_the_way_the_cadence_job_wires_it(
+        self, workflow: dict
+    ):
+        """Same secret, same expression, same step-level scope.
+
+        The cadence workflow is the worked example this repo already runs in
+        anger; a second spelling of the same wiring is a second thing to get
+        wrong.
+        """
+        expression = "${{ secrets.ANTHROPIC_API_KEY }}"
+        cadence = yaml.safe_load(CADENCE_WORKFLOW.read_text())
+        assert any(
+            step.get("env", {}).get("ANTHROPIC_API_KEY") == expression
+            for step in self._steps(cadence)
+        ), (
+            "context-cadence.yml no longer wires the secret this way, so this "
+            "test is now pinning a convention that moved"
+        )
+        wired = [
+            step for step in self._steps(workflow)
+            if step.get("env", {}).get("ANTHROPIC_API_KEY") == expression
+        ]
+        assert wired, (
+            "no step receives ANTHROPIC_API_KEY from the repository secret, "
+            "so --exact degrades to the offline estimate and the job verifies "
+            "the reading it was written to stop trusting"
+        )
+        assert any(EXACT_ENV in step.get("env", {}) for step in wired), (
+            f"the credential and {EXACT_ENV} are on different steps, so the "
+            "exact pass runs without a key"
+        )
+
+    def test_the_credential_is_preflighted_before_the_measurement(
+        self, workflow: dict
+    ):
+        """The cadence workflow's own lesson, in its first step's comment:
+        without a credential every later step does its work and the result is
+        refused at the end.
+        """
+        steps = self._steps(workflow)
+        preflight = [
+            i for i, s in enumerate(steps)
+            if "--check-credential" in str(s.get("run", ""))
+        ]
+        measure = [
+            i for i, s in enumerate(steps) if EXACT_ENV in s.get("env", {})
+        ]
+        assert preflight, (
+            "nothing runs measure-context.sh --check-credential, so a missing "
+            "secret surfaces as nineteen skipped tests rather than a red step"
+        )
+        assert min(preflight) < min(measure), (
+            "the credential is preflighted after the measurement it gates"
+        )
+
+    def test_a_run_that_cannot_reach_count_tokens_goes_red(self, workflow: dict):
+        """The hole this job would otherwise ship with.
+
+        `exact_surfaces` warns and SKIPS when it cannot reach count_tokens —
+        correct on the pre-commit path, where an expired key must never block a
+        commit. Here it would make the one job whose entire purpose is to
+        measure exactly report green having measured nothing: the silent
+        success #217 is filed about, rebuilt inside its own fix.
+        `--check-credential` cannot cover this; it answers "is a key string
+        reachable", not "does the API accept it".
+        """
+        commands = " ".join(
+            str(step.get("run", "")) for step in self._steps(workflow)
+        )
+        assert "-W error::UserWarning" in commands, (
+            "the exact pass runs without escalating the "
+            "could-not-reach-count_tokens UserWarning, so a rotated or "
+            "rate-limited key produces nineteen skips and a green job"
+        )
+
+    def test_it_runs_the_gate_the_test_file_documents(self, workflow: dict):
+        commands = " ".join(
+            str(step.get("run", "")) for step in self._steps(workflow)
+        )
+        assert "tests/structural/test_skill_self_budget.py" in commands, (
+            "the job sets the env var but never runs the file that reads it"
+        )
+        assert "requirements-test.txt" in commands, (
+            "nothing installs pytest, so the run fails on infrastructure "
+            "rather than on a budget"
+        )
+
+    def test_every_run_block_parses_as_shell(self, workflow: dict):
+        """#171's lesson: generated or hand-written, the shell that will
+        actually execute is the thing to check, not the YAML around it.
+        """
+        for step in self._steps(workflow):
+            script = step.get("run")
+            if not script:
+                continue
+            result = subprocess.run(
+                ["bash", "-n"], input=script, capture_output=True, text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, (
+                f"the `run:` block of step {step.get('name', '?')!r} is not "
+                f"valid bash:\n{result.stderr}\n---\n{script}"
+            )
+
+    def test_it_asks_for_no_more_permission_than_it_needs(self, workflow: dict):
+        """It measures and reports. Unlike the cadence job it commits nothing,
+        so `contents: write` here would be a token handed to a scheduled job
+        for no reason.
+        """
+        assert workflow.get("permissions") == {"contents": "read"}, (
+            "the exact gate records nothing and pushes nothing; it needs "
+            "read access and no more"
+        )
