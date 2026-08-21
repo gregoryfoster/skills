@@ -465,6 +465,56 @@ class TestUsingGitWorktrees:
             "harness-provisioned worktrees, which do not run worktree-create.sh"
         )
 
+    def test_venv_opt_out_knob_documented(self):
+        """#201: linking is right by default and wrong for one shape.
+
+        The remedy asserted above tells a reader to link. The knob is the
+        opt-out, so it has to be readable in the same file or the two halves
+        contradict each other: an operator who was told to `ln -s` has no way
+        to learn that this project told the script not to.
+        """
+        body = self.s.body
+        assert ".skills/worktree_venv" in body, (
+            "SKILL.md must document the `.skills/worktree_venv` knob (#201)"
+        )
+        assert "`none`" in body and "`link`" in body, (
+            "both accepted values must be named, and which one is the default"
+        )
+
+    def test_service_working_directory_hazard_documented(self):
+        """Name the mechanisms, not just the rule.
+
+        A reader who has only "do not link when the checkout is a service's
+        working directory" cannot tell whether their project is that case. The
+        two uv behaviours are the recognisable symptoms: a version assertion
+        that fails in a full run and passes in isolation, and a suite that
+        quietly reports skips where it used to report passes.
+        """
+        body = self.s.body
+        assert "WorkingDirectory" in body, (
+            "SKILL.md must name the shape — the main checkout is also a "
+            "running service's `WorkingDirectory=` (#201)"
+        )
+        for token in ("uv run", "uv sync"):
+            assert token in body, (
+                f"SKILL.md must name `{token}` as one of the two mechanisms "
+                "that rewrite the shared venv under a worktree's test run"
+            )
+
+    def test_knob_tracking_is_addressed(self):
+        """#202: an untracked `.skills/` file does not exist in a linked worktree.
+
+        `.skills/worktree_root` survives that because it is resolved against
+        the primary checkout, and this knob has to say it does the same — a
+        reader who assumes otherwise will commit the file to make it work, and
+        push a machine-local setting to every clone.
+        """
+        body = self.s.body
+        assert "primary checkout" in body, (
+            "SKILL.md must say the knob is read from the primary checkout, so "
+            "it works untracked from inside a worktree too (#201, #202)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # writing-plans
