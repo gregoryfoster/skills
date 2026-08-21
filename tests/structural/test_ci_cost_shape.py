@@ -32,7 +32,10 @@ Each assertion below pins a sentence whose deletion turns a measurement back
 into a guess. No API calls required.
 """
 
+import json
 import re
+import shutil
+import subprocess
 
 import pytest
 
@@ -40,6 +43,7 @@ from tests.utils.skill_loader import SKILLS_DIR, load_skill
 
 SKILL_NAME = "auditing-ci-cost"
 SKILL_DIR = SKILLS_DIR / SKILL_NAME
+CENSUS = SKILL_DIR / "scripts" / "measure-ci-cost.sh"
 
 
 @pytest.fixture(scope="module")
@@ -320,4 +324,234 @@ class TestProbeOverDocs:
             "job condition matching on `head_commit.message` silently "
             "disabled a release gate in cannobserv. Any commit-message-based "
             "condition needs the `github.ref` guard beside it."
+        )
+
+
+def _census(tmp_path, rows: list[dict], *args) -> subprocess.CompletedProcess:
+    """Run the census against a synthetic cache — no network, no gh.
+
+    `--cache` exists so a re-classification does not refetch; the same door is
+    what makes the billing arithmetic testable offline. A prose claim about how
+    a skipped job is handled is worth much less than a run that proves it.
+    """
+    cache = tmp_path / "census.ndjson"
+    meta = {"meta": {"repo": "o/r", "since": "2026-08-01", "days": 30}}
+    cache.write_text("\n".join(json.dumps(r) for r in [meta, *rows]) + "\n")
+    return subprocess.run(
+        ["bash", str(CENSUS), "--cache", str(cache), "--json", *args],
+        capture_output=True, text=True, timeout=60,
+    )
+
+
+def _job(started: str, completed: str, conclusion: str = "success", **kw) -> dict:
+    return {
+        "job": kw.get("job", "j"), "workflow": kw.get("workflow", "W"),
+        "attempt": 1, "conclusion": conclusion, "started": started,
+        "completed": completed, "branch": "main",
+        "event": kw.get("event", "push"), "run_id": kw.get("run_id", 1),
+    }
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+class TestTheBillingArithmetic:
+    """The formula, executed. Every case here is one the prose can only assert.
+
+    These run the shipped script against a synthetic cache, so they fail if the
+    script and the documented model ever disagree — which is the failure that
+    matters, since the run trusts the script and reads the prose.
+    """
+
+    def test_a_skipped_job_with_a_negative_duration_bills_nothing(self, tmp_path):
+        """The phantom minute — #212's formula applied literally produces it.
+
+        The timestamps are cli/cli's, where `started_at` is seven seconds AFTER
+        `completed_at`. `max(1, ceil(-7/60))` is 1, so a naive census bills a
+        full minute for a job that never occupied a runner.
+        """
+        result = _census(tmp_path, [
+            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+            _job("2026-08-02T10:00:34Z", "2026-08-02T10:00:27Z", "skipped", job="gate"),
+        ])
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["raw"]["billed_minutes"] == 1, (
+            "a skipped job billed a phantom minute: "
+            f"{report['raw']['billed_minutes']} for one real 30s job"
+        )
+        assert report["excluded"]["skipped_jobs"] == 1, (
+            "the skipped job must be reported, not merely dropped — a census "
+            "that hides its exclusions cannot be audited"
+        )
+
+    def test_a_skipped_job_with_a_POSITIVE_duration_also_bills_nothing(self, tmp_path):
+        """The half the duration guard cannot cover.
+
+        Zeroing non-positive durations catches the negative-timestamp shape, and
+        it is not sufficient: a skipped job can report a small positive span,
+        which the floor then rounds up to a full billed minute. Only the
+        `conclusion` test excludes that one, which is why both exist.
+        """
+        result = _census(tmp_path, [
+            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+            _job("2026-08-02T10:00:27Z", "2026-08-02T10:00:34Z", "skipped", job="gate"),
+        ])
+        report = json.loads(result.stdout)
+        assert report["raw"]["billed_minutes"] == 1, (
+            "a skipped job reporting +7s billed a minute: "
+            f"{report['raw']['billed_minutes']} for one real 30s job"
+        )
+
+    def test_a_non_positive_duration_never_bills_a_minute(self, tmp_path):
+        """`max(1, ceil(s/60))` taken literally bills 1 for s <= 0.
+
+        That is #212's formula applied to a job list that contains rows the
+        formula was never meant to see. The floor applies to work that happened;
+        zero seconds of work is not one minute of work.
+        """
+        report = json.loads(_census(tmp_path, [
+            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+            _job("2026-08-02T10:05:00Z", "2026-08-02T10:05:00Z", "cancelled", job="zero"),
+        ]).stdout)
+        assert report["raw"]["billed_minutes"] == 1, (
+            "a zero-duration job billed a minute: "
+            f"{report['raw']['billed_minutes']} for one real 30s job"
+        )
+        assert report["excluded"]["zero_or_negative_duration_jobs"] == 1, (
+            "a non-skipped job with a non-positive duration must be counted "
+            "and surfaced — it should be zero, and when it is not, that is "
+            "itself a finding rather than something to round away"
+        )
+
+    def test_the_one_minute_floor_is_applied(self, tmp_path):
+        """Three seconds of work bills a full minute. The whole premise."""
+        result = _census(tmp_path, [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:03Z")])
+        assert json.loads(result.stdout)["raw"]["billed_minutes"] == 1
+
+    def test_seconds_round_up_not_down(self, tmp_path):
+        """119s bills 2 minutes; 121s bills 3. This is the duration lever."""
+        for completed, expected in (("10:01:59Z", 2), ("10:02:01Z", 3)):
+            result = _census(tmp_path, [_job("2026-08-02T10:00:00Z", f"2026-08-02T{completed}")])
+            assert json.loads(result.stdout)["raw"]["billed_minutes"] == expected, (
+                f"a job ending at {completed} must bill {expected} minutes"
+            )
+
+    def test_a_repo_inside_the_floor_classifies_as_job_count(self, tmp_path):
+        rows = [
+            _job(f"2026-08-{d:02d}T10:0{n}:00Z", f"2026-08-{d:02d}T10:0{n}:30Z")
+            for d in range(2, 8) for n in range(3)
+        ]
+        report = json.loads(_census(tmp_path, rows).stdout)
+        assert report["cost_shape"] == "job-count", report["structural"]
+        assert report["structural"]["mean_billed_per_job"] == 1
+
+    def test_a_repo_above_the_floor_classifies_as_duration(self, tmp_path):
+        rows = [
+            _job(f"2026-08-{d:02d}T10:0{n}:00Z", f"2026-08-{d:02d}T10:0{n + 2}:10Z")
+            for d in range(2, 8) for n in range(3)
+        ]
+        report = json.loads(_census(tmp_path, rows).stdout)
+        assert report["cost_shape"] == "duration", report["structural"]
+        assert report["structural"]["under_the_floor"] == 0
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+class TestTheAnomalyGateExecuted:
+    """The gate, and the over-flagging failure it was built to avoid."""
+
+    @staticmethod
+    def _ordinary_days(first=2, last=8):
+        """Six days of three 30-second jobs — 3 billed min/day at 1.00/job."""
+        return [
+            _job(f"2026-08-{d:02d}T10:0{n}:00Z", f"2026-08-{d:02d}T10:0{n}:30Z")
+            for d in range(first, last) for n in range(3)
+        ]
+
+    def test_an_incident_day_is_flagged_and_excluded_from_the_baseline(self, tmp_path):
+        """Nine jobs hung ~900s on one day, the 2026-08-06 signature."""
+        incident = [
+            _job(f"2026-08-20T1{n}:00:00Z", f"2026-08-20T1{n}:15:02Z", "cancelled")
+            for n in range(9)
+        ]
+        report = json.loads(_census(tmp_path, self._ordinary_days() + incident).stdout)
+        assert [d["day"] for d in report["anomaly_days"]] == ["2026-08-20"]
+        assert report["structural"]["billed_minutes"] == 18, (
+            "the six ordinary days bill 18 minutes; the incident day must not "
+            "be in the structural baseline"
+        )
+        assert report["raw"]["billed_minutes"] > 100
+
+    def test_the_incident_p99_never_appears_under_the_structural_label(self, tmp_path):
+        """The second-order error: a raw p99 quoted as if it were the baseline.
+
+        902s next to the word "structural" reads as a duration problem in a repo
+        where every real job finishes in 30 seconds.
+        """
+        incident = [
+            _job(f"2026-08-20T1{n}:00:00Z", f"2026-08-20T1{n}:15:02Z", "cancelled")
+            for n in range(9)
+        ]
+        report = json.loads(_census(tmp_path, self._ordinary_days() + incident).stdout)
+        assert report["structural"]["p99_seconds"] == 30, (
+            "structural percentiles must come from the structural population, "
+            f"got p99={report['structural']['p99_seconds']}s"
+        )
+        assert report["raw"]["p99_seconds"] == 902, (
+            "the raw p99 must still be reported — it is the evidence that the "
+            "flagged day was an incident rather than a busy day"
+        )
+        assert report["cost_shape"] == "job-count"
+
+    def test_a_merely_busy_day_is_not_flagged(self, tmp_path):
+        """The over-flagging failure a total-only rule produces.
+
+        Measured for real: 2026-08-17 in CannObserv/cannobserv billed 3.1x the
+        median day at an entirely normal 1.05 min/job. Subtracting it would have
+        understated the spend by 46 minutes — the gate, inverted.
+        """
+        busy = [
+            _job(f"2026-08-20T{10 + n // 6:02d}:{n % 6:02d}:00Z",
+                 f"2026-08-20T{10 + n // 6:02d}:{n % 6:02d}:30Z")
+            for n in range(30)
+        ]
+        report = json.loads(_census(tmp_path, self._ordinary_days() + busy).stdout)
+        assert report["anomaly_days"] == [], (
+            "a day that is merely busy must not be excluded: it bills a normal "
+            "1.00 min/job and every one of those minutes is real spend"
+        )
+        assert report["structural"]["billed_minutes"] == 48
+
+    def test_raw_and_structural_are_always_both_reported(self, tmp_path):
+        """The gate is a separation, never a silent subtraction."""
+        report = json.loads(_census(tmp_path, self._ordinary_days()).stdout)
+        assert "billed_minutes" in report["raw"]
+        assert "billed_minutes" in report["structural"]
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+class TestTheCensusRefusesBadInput:
+    """A census that degrades quietly is worse than one that fails."""
+
+    def test_a_cache_without_a_meta_record_is_refused(self, tmp_path):
+        """Provenance or nothing — a baseline must know its own window."""
+        cache = tmp_path / "c.ndjson"
+        cache.write_text('{"job":"x"}\n')
+        result = subprocess.run(
+            ["bash", str(CENSUS), "--cache", str(cache)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 2, result.stdout
+        assert "meta record" in result.stderr
+
+    @pytest.mark.parametrize(
+        "args",
+        [["--days", "0"], ["--days", "abc"], ["--anomaly-factor", "x"],
+         ["--anomaly-factor", "-1"], ["--bogus"]],
+        ids=lambda a: " ".join(a),
+    )
+    def test_bad_arguments_exit_one(self, args):
+        result = subprocess.run(
+            ["bash", str(CENSUS), *args], capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 1, (
+            f"{' '.join(args)} should be a usage error, got {result.returncode}"
         )
