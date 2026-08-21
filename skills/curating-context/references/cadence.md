@@ -151,6 +151,13 @@ relocated a section and left danglers behind contributed nothing to any weekly
 row, because by the next run the relocation was already in `HEAD`
 ([#169](https://github.com/gregoryfoster/skills/issues/169)).
 
+Do not read that as a promise that the next scheduled row now re-reports a
+curation's own relocations. Since [#206](https://github.com/gregoryfoster/skills/issues/206)
+a curation row's `repo_commit` is backfilled to the commit that ships it, so
+the next interval starts *after* that work — deliberately, because Phase 6.5
+already judged it. The class's live scope is relocations made outside a
+`curating-context` run.
+
 **Two classes, not one.** The source sweep is gated on the same set — `if src
 and moved:` — so an empty `moved` skipped every tracked file outside the docs
 tree and the report printed *"N tracked source file(s) not swept"*. The
