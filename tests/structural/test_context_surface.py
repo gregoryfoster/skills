@@ -650,8 +650,17 @@ class TestRepoCommitBackfill:
             os.close(w_fd)
 
     def _rows(self, repo: Path) -> list[dict]:
-        text = (repo / self.LEDGER).read_text()
-        return [json.loads(ln) for ln in text.splitlines() if ln.strip()]
+        """The rows a reader can use, skipping a malformed line as every script
+        in this chain skips it. Parseability is asserted on its own below."""
+        rows = []
+        for line in (repo / self.LEDGER).read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows
 
     def _through_phase_seven(self, tmp_path: Path) -> tuple[Path, str, str]:
         """Phase 7's ordering: measure, record, then commit ledger and edits.
@@ -713,9 +722,12 @@ class TestRepoCommitBackfill:
         broken ledger. Every line still parses and the field is still a commit,
         one behind — recoverable by running the backfill later."""
         repo, before, _ = self._through_phase_seven(tmp_path)
-        rows = self._rows(repo)
-        assert rows, "the record step wrote nothing"
-        assert rows[-1]["repo_commit"] == before
+        lines = [ln for ln in (repo / self.LEDGER).read_text().splitlines()
+                 if ln.strip()]
+        assert lines, "the record step wrote nothing"
+        for line in lines:
+            json.loads(line)  # a half-written row would raise here
+        assert self._rows(repo)[-1]["repo_commit"] == before
 
     def test_backfill_refuses_a_commit_this_repo_does_not_have(
         self, tmp_path: Path
