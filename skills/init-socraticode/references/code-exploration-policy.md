@@ -146,12 +146,13 @@ Everything else — the marker discipline, the rescue step, the sweep — is
 identical for both variants. Re-run the yield gate after any upstream
 SocratiCode upgrade and switch the variant back when the graph recovers.
 
-## 2. SessionStart hook (script file + `.claude/settings.json`)
+## 2. SessionStart hooks (script file + `.claude/settings.json`)
 
-Re-emits the prefetch instruction each session so a fresh Claude Code session
-loads the deferred `codebase_*` schemas without the operator remembering to.
-The hook prints to stdout; Claude Code injects SessionStart stdout as session
-context.
+Two of them, installed the same way into the same `.claude/hooks/`: a
+**prefetch reminder** that re-emits the prefetch instruction each session so a
+fresh Claude Code session loads the deferred `codebase_*` schemas without the
+operator remembering to, and a **once-per-day health check**. Both print to
+stdout; Claude Code injects SessionStart stdout as session context.
 
 The org convention (archiver, power-map, usa-wa, observo) is a **script-file
 hook**: the echo lives in `.claude/hooks/socraticode-reminder.sh`, referenced
@@ -159,31 +160,46 @@ from settings.json. This keeps the ~600-char `select:` string out of
 JSON-escaping and makes later edits a plain shell-file change upstream.
 Standardize on this form.
 
-**Step A — install the reminder script** at `.claude/hooks/socraticode-reminder.sh`.
-Do **not** retype it: **symlink** the vendored
-[`../scripts/socraticode-reminder.sh`](../scripts/socraticode-reminder.sh),
-relative and derived from the vendor directory actually found rather than a
-hand-substituted `<owner>-<repo>`:
+**Both installs run one shared script.** `managing-skills` ships
+`scripts/install-hook.sh`, which takes the hook's constants as arguments and
+installs the same two artifacts for any of them
+([#200](https://github.com/gregoryfoster/skills/issues/200)). The refresh hook
+that lands in this same `.claude/hooks/` is installed by it too, so all three
+inherit one mechanism and one set of hardening rounds rather than three prose
+procedures that must be kept in agreement by attention
+([#167](https://github.com/gregoryfoster/skills/issues/167),
+[#178](https://github.com/gregoryfoster/skills/issues/178)).
+
+**Step A — install the reminder hook.** Do **not** retype it and do not wire it
+by hand:
 
 ```bash
-for d in skills-vendor/*/skills/init-socraticode/scripts; do
-  [ -f "$d/socraticode-reminder.sh" ] || continue
-  mkdir -p .claude/hooks
-  ln -sfn "../../$d/socraticode-reminder.sh" .claude/hooks/socraticode-reminder.sh
-  break
-done
+bash "<SKILL_DIR>/../managing-skills/scripts/install-hook.sh" \
+  --hook socraticode-reminder.sh --skill init-socraticode \
+  --marker socraticode-prefetch --marker socraticode-reminder --copy-fallback
 ```
 
-Step C below installs the health hook with the same loop and one constant
-changed, deliberately — both hooks land in the same `.claude/hooks/` of the same
-consumer and must not be installed by opposite mechanisms. `ln -sfn` replaces an
-existing regular file in place, so a re-run upgrades a legacy consumer from its
-hand-typed copy without a separate step.
+It writes **two** artifacts, and only the second makes the hook run:
 
-**Fallback — copy when there is nothing to link to.** A consumer with no
-`skills-vendor/` tree: copy the vendored script to that path and `chmod +x`
-instead (overwrite in place — it carries no per-project state). Say which of the
-two you did in Phase 6's completion table.
+1. `.claude/hooks/socraticode-reminder.sh` — `ln -sfn` at the vendored
+   [`../scripts/socraticode-reminder.sh`](../scripts/socraticode-reminder.sh).
+   The target is relative and derived from the `skills-vendor/` directory the
+   installer actually found, never a hand-substituted `<owner>-<repo>` — that
+   substitution is how a symlink ends up pointing at a plausible path which does
+   not exist. `ln -sfn` replaces an existing regular file in place, so a re-run
+   upgrades a legacy consumer from its hand-typed copy with no separate step.
+2. a `SessionStart` entry in `.claude/settings.json` (Step B) — created if
+   absent, merged if present, never clobbered.
+
+**`--copy-fallback` is the no-`skills-vendor/` branch**, and passing it is why
+this is one command rather than two. A consumer that does not vendor via
+`managing-skills` has nothing to point a symlink at, so the installer copies its
+own vendored file and `chmod +x`es it — and says so, loudly, because a **copy**
+freezes at install day and `.skills/doctor.sh` scans `.claude/hooks/*` for
+*dangling symlinks* ([#99](https://github.com/gregoryfoster/skills/issues/99)),
+so a copy is a perfectly valid regular file it can never see. A symlinked hook
+self-heals on the next preflight and a copy never can. Report which of the two
+the run said it did in Phase 6's completion table.
 
 Until [#186](https://github.com/gregoryfoster/skills/issues/186) this hook had no
 source file at all — it was rendered from prose in *this* document, so every
@@ -191,19 +207,17 @@ consumer's copy was whatever the installing agent typed that day. That is worse
 than the copy [#179](https://github.com/gregoryfoster/skills/issues/179)
 rejected, which at least starts as a byte-for-byte snapshot of a known version,
 and it carries the identical justification: "it carries no per-project state" is
-the argument *for* the symlink. `.skills/doctor.sh` scans `.claude/hooks/*` for
-dangling symlinks ([#99](https://github.com/gregoryfoster/skills/issues/99)), so
-a symlinked hook self-heals on the next preflight and a copy never can.
+the argument *for* the symlink.
 
-**Step B — merge the hook into `.claude/settings.json`** (create if absent).
-If a `hooks.SessionStart` array already exists, append this entry to it;
-preserve any existing `permissions`/other keys. **Never clobber the file.**
+**Step B — what lands in `.claude/settings.json`.** The installer merges this
+entry, preserving every other hook, event and top-level key:
 
 ```json
 {
   "hooks": {
     "SessionStart": [
       {
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
@@ -216,88 +230,52 @@ preserve any existing `permissions`/other keys. **Never clobber the file.**
 }
 ```
 
-Two deliberate details in that command string:
+Three deliberate details, all of them arguments to the command above rather than
+steps for you to perform:
 
 - **`${CLAUDE_PROJECT_DIR:-.}`** — a best-effort fallback (cwd is the launch
   directory, normally the project root) for any environment that fires the hook
   without `CLAUDE_PROJECT_DIR` set. Without it, an unset variable degrades to
   `bash "/.claude/hooks/..."` and errors on every session start; with it, the
   worst case resolves relative to the launch dir instead of erroring outright.
-- **trailing `# socraticode-prefetch`** — puts the dedupe marker in the
-  *command string itself*, not just inside the script file, so the merge check
-  below can recognize the entry by scanning settings.json alone.
+- **trailing `# socraticode-prefetch`** — the first `--marker`, written into the
+  *command string itself* rather than only inside the script file, so the merge
+  recognizes the entry by reading settings.json alone.
+- **the second `--marker socraticode-reminder`** — a legacy alias, recognized on
+  read and never written. It matches installs whose command references
+  `socraticode-reminder.sh` without the trailing marker comment. The installer
+  strips every entry matching either marker and appends one canonical entry, so
+  a re-run **upgrades** a fallback-less `bash "$CLAUDE_PROJECT_DIR/…"` or a
+  legacy inline echo, and **collapses** a duplicate pair left by a prior
+  verbatim re-run — where a skip-only dedupe would leave both stranded on the
+  old, erroring command.
 
-**Dedupe (idempotent re-runs).** Before appending, scan the existing
-`hooks.SessionStart` command strings and skip the append if any already contains
-`socraticode-prefetch` **or** `socraticode-reminder`. The second alias matches
-legacy installs whose command references `socraticode-reminder.sh` without the
-trailing marker comment; a verbatim single-echo inline install (older canonical
-form) is recognized by the `socraticode-prefetch` marker. Either way, do not add
-a second entry.
+Verify without changing anything by adding `--check` to the Step A command: it
+reports both artifacts independently and exits 3 if either is missing, or if the
+hook is a copy in a repo that has a vendored source to link at instead.
 
-**Upgrade the matched entry in place.** If the matched command string is not
-already the canonical command from Step B — e.g. a fallback-less
-`bash "$CLAUDE_PROJECT_DIR/…"`, or the legacy inline echo — replace **just that
-one command string** with the canonical form, leaving all other entries and keys
-untouched. If **more than one** matching entry exists (a duplicate left by a
-prior verbatim re-run), remove the extras and keep a single canonical entry.
-This is a targeted upgrade, not a clobber: it propagates the
-`${CLAUDE_PROJECT_DIR:-.}` fallback to existing sibling installs on re-run — and
-collapses any prior duplication — which a skip-only dedupe would leave stranded
-on the old, erroring command. (Step A has already installed the script the
-canonical command points at.)
-
-**Step C — install the once-per-day health hook.** **Symlink**
-[`../scripts/socraticode-health.sh`](../scripts/socraticode-health.sh) into
-`.claude/hooks/socraticode-health.sh`, relative and derived from the vendor
-directory actually found rather than a hand-substituted `<owner>-<repo>` —
-that substitution is how a symlink ends up pointing at a plausible path which
-does not exist:
+**Step C — install the once-per-day health hook.** The same installer with the
+hook's own constants — same `ln -sfn` into `skills-vendor/`, same merge, same
+copy fallback:
 
 ```bash
-for d in skills-vendor/*/skills/init-socraticode/scripts; do
-  [ -f "$d/socraticode-health.sh" ] || continue
-  mkdir -p .claude/hooks
-  ln -sfn "../../$d/socraticode-health.sh" .claude/hooks/socraticode-health.sh
-  break
-done
+bash "<SKILL_DIR>/../managing-skills/scripts/install-hook.sh" \
+  --hook socraticode-health.sh --skill init-socraticode \
+  --marker socraticode-health --copy-fallback
 ```
 
-`managing-skills` installs its sibling refresh hook exactly this way, and all
-three — that one, Step A's reminder, and this — land in the same
-`.claude/hooks/` of the same consumer, so they must not be installed by opposite
-mechanisms. A **copy** freezes at whatever version was
-current the day it was installed and drifts silently thereafter; `.skills/doctor.sh`
-scans that directory for *dangling symlinks*, so a copy is a perfectly valid
-regular file it can never see. This hook is the worst candidate for that: it is
-silent when clean by design, so a stale copy that has stopped detecting
-something is indistinguishable from a healthy install
-([#179](https://github.com/gregoryfoster/skills/issues/179)). "It carries no
-per-project state" is the argument *for* the symlink — a file with no
-per-project state is exactly the one that should track upstream automatically.
+Its marker is deliberately distinct from `socraticode-prefetch` /
+`socraticode-reminder`: markers are per-hook precisely so that one hook's
+dedupe-strip cannot evict the other's entry from the array they share. This hook
+is also the worst possible candidate for a silent copy — it is silent when clean
+by design, so a stale copy that has stopped detecting something is
+indistinguishable from a healthy install
+([#179](https://github.com/gregoryfoster/skills/issues/179)).
 
-**Fallback — copy when there is nothing to link to.** A consumer that does not
-vendor via `managing-skills` has no `skills-vendor/` tree, so the loop above
-finds nothing: copy the script to the same path and `chmod +x` instead
-(overwrite in place). That is the same branch this hook's own driver resolution
-already makes. Say which of the two you did in Phase 6's completion table — a
-copy means upstream fixes arrive only on a re-run of this skill.
-
-Then append a second SessionStart entry either way:
-
-```json
-{
-  "type": "command",
-  "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-health.sh\" # socraticode-health"
-}
-```
-
-Dedupe on `socraticode-health`, which is deliberately distinct from
-`socraticode-prefetch` / `socraticode-reminder` — a shared marker would make one
-hook's scan match the other's entry and skip an install. The hook is silent
-unless it finds something, runs at most once per UTC day, and exits 0 on every
-path; it re-checks the Phase 6 yield gate, `codebase_health`, and a failed last
-operation, so an install that was green in January is not assumed green in June
+The hook is silent unless it finds something, runs at most once per UTC day, and
+exits 0 on every path; it re-checks the Phase 6 yield gate, `codebase_health`,
+and a failed last operation, so an install that was green in January is not
+assumed green in June
 ([#107](https://github.com/gregoryfoster/skills/issues/107)). Set
 `SOCRATICODE_PROBE_FILE` in `.claude/settings.local.json`'s `env` block to a
 file with several first-party imports if you want the confirmatory graph probe.

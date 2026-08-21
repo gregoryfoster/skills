@@ -185,24 +185,27 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    `AGENTS.md`, which is loaded on every invocation and whose policy section
    `curating-context` will not trim.
 3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → install **two** vendored
-   scripts and **merge** their entries into `.claude/settings.json` (create if
-   absent). Install **both** the same way — **symlink** into
-   `skills-vendor/*/…/scripts/`, as `managing-skills` installs its sibling hook
-   into the same directory, and **copy** only where there is no
-   `skills-vendor/` tree. A copy freezes at install day and `.skills/doctor.sh`
-   sees only *dangling* symlinks, so the drift reads as a healthy install;
-   retyping a hook from prose is worse still (#186).
-   - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe by
-     scanning existing command strings for `socraticode-prefetch` **or**
-     `socraticode-reminder` (the latter matches legacy script-file installs);
-     when a match isn't already the canonical command, upgrade that one command
-     string in place (propagates the `${CLAUDE_PROJECT_DIR:-.}` fallback to
-     legacy installs). `ln -sfn` replaces a legacy hand-typed copy in place.
-   - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check;
-     symlink or copy exactly as above. Dedupe on the distinct marker
-     `socraticode-health`. It is silent when clean, so a stale copy is
+   scripts and register them in `.claude/settings.json`. One command each, and
+   neither is yours to hand-execute: both run `managing-skills`'
+   `scripts/install-hook.sh`, which **symlinks** into `skills-vendor/*/…/scripts/`
+   — as it does for its own sibling hook in the same directory — merges the
+   SessionStart entry without clobbering existing `hooks`/`permissions`/other
+   keys, and **copies** only where there is no `skills-vendor/` tree (#200).
+   Run [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
+   Step A and Step C verbatim; the flags are the only difference between them.
+   - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe
+     markers `socraticode-prefetch` (canonical, written into the command
+     string) and `socraticode-reminder` (legacy script-file installs, matched
+     but never written), so a re-run upgrades an older entry in place instead of
+     duplicating it.
+   - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check,
+     symlinked exactly the same way. Its dedupe marker `socraticode-health` is
+     deliberately distinct, so one hook's strip cannot evict the other's entry
+     from the array they share. It is silent when clean, so a stale copy is
      indistinguishable from a healthy one. It reports; it never re-indexes.
-   Preserve existing `hooks`/`permissions`/other keys. Never clobber the file.
+   A copy freezes at install day and `.skills/doctor.sh` sees only *dangling*
+   symlinks, so the drift reads as a healthy install; retyping a hook from prose
+   is worse still (#186).
 4. **Linked projects** (only when `LINKED_PROJECTS` is set — it defaults to
    none, so most installs skip this) → follow
    [`references/linked-projects.md`](references/linked-projects.md): write
