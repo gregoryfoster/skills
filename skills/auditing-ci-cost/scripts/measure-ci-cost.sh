@@ -15,6 +15,10 @@ DAYS=30
 ANOMALY_FACTOR=3
 FORMAT=text
 CACHE=""
+# Tracked so a cached census can say which explicitly-passed flag it is
+# overriding. A default that happens to match is not an override.
+REPO_SET=0
+DAYS_SET=0
 
 usage() {
   cat <<'EOF'
@@ -57,6 +61,10 @@ Billing model:
   `filter=latest`, which hides every earlier attempt's jobs even though each
   attempt was billed in full.
 
+  Jobs of a run still in flight are EXCLUDED and counted. Their completed_at
+  is null, so no duration exists to bill yet; they are reported as "still
+  running" rather than guessed at.
+
 Exit codes:
   0  census produced
   1  usage error
@@ -66,8 +74,8 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) REPO="${2:?--repo needs a value}"; shift 2 ;;
-    --days) DAYS="${2:?--days needs a value}"; shift 2 ;;
+    --repo) REPO="${2:?--repo needs a value}"; REPO_SET=1; shift 2 ;;
+    --days) DAYS="${2:?--days needs a value}"; DAYS_SET=1; shift 2 ;;
     --anomaly-factor) ANOMALY_FACTOR="${2:?--anomaly-factor needs a value}"; shift 2 ;;
     --cache) CACHE="${2:?--cache needs a value}"; shift 2 ;;
     --json) FORMAT=json; shift ;;
@@ -100,9 +108,25 @@ if [ -n "$CACHE" ] && [ -s "$CACHE" ]; then
     echo "ERROR: $CACHE has no meta record — it was not written by this script" >&2
     exit 2
   fi
-  REPO=$(printf '%s' "$META" | cut -f1)
-  SINCE=$(printf '%s' "$META" | cut -f2)
-  DAYS=$(printf '%s' "$META" | cut -f3)
+  CACHED_REPO=$(printf '%s' "$META" | cut -f1)
+  CACHED_SINCE=$(printf '%s' "$META" | cut -f2)
+  CACHED_DAYS=$(printf '%s' "$META" | cut -f3)
+  # A cache answers for the repo and window it was fetched against, so an
+  # explicit --repo/--days cannot be honoured here. Say so rather than
+  # silently answering a different question than the one asked — a census
+  # labelled with the wrong repo is the exact failure this skill exists to
+  # find, and it would be reporting it from inside its own tool.
+  if [ "$REPO_SET" = 1 ] && [ "$REPO" != "$CACHED_REPO" ]; then
+    echo "WARN: --repo $REPO ignored; $CACHE holds $CACHED_REPO. Delete the" \
+         "cache or drop --cache to measure $REPO." >&2
+  fi
+  if [ "$DAYS_SET" = 1 ] && [ "$DAYS" != "$CACHED_DAYS" ]; then
+    echo "WARN: --days $DAYS ignored; $CACHE covers ${CACHED_DAYS}d since" \
+         "$CACHED_SINCE. Re-fetch to change the window." >&2
+  fi
+  REPO="$CACHED_REPO"
+  SINCE="$CACHED_SINCE"
+  DAYS="$CACHED_DAYS"
 else
   command -v gh >/dev/null 2>&1 || {
     echo "ERROR: gh is required to fetch a census but is not on PATH" >&2
@@ -199,8 +223,19 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
   def pct($p): if length == 0 then 0 else sort | .[((length - 1) * $p / 100) | floor] end;
   def median: if length == 0 then 0 else sort | .[(length / 2) | floor] end;
 
-  [ .[] | select(has("meta") | not)
-        | . + {secs: ((.completed | fromdateiso8601) - (.started | fromdateiso8601))} ]
+  # A job belonging to a run still in flight has completed_at: null, and the
+  # runs listing carries no status filter, so every census of an active repo
+  # contains some. fromdateiso8601 on null aborts the whole report with
+  # "strptime/1 requires string inputs" — a repo busy enough to audit is the
+  # likeliest to hit it. Partition them out and count them; they are billing
+  # right now and their final duration is not knowable yet, so the honest
+  # move is to exclude and surface, never to guess.
+  [ .[] | select(has("meta") | not) ] as $rows
+  | ($rows | map(select((.started | type) == "string"
+                        and (.completed | type) == "string"))) as $timed
+  | (($rows | length) - ($timed | length)) as $unfinished
+  | ($timed | map(. + {secs: ((.completed | fromdateiso8601)
+                             - (.started | fromdateiso8601))}))
   | map(. + {billed: (if .conclusion == "skipped" then 0 else (.secs | ceil_min) end),
              day: .started[0:10]})
   | . as $all
@@ -238,7 +273,8 @@ REPORT=$(jq -s --argjson factor "$ANOMALY_FACTOR" --arg repo "$REPO" \
     repo: $repo, since: $since, days: $days,
     raw: {jobs: ($billable | length), billed_minutes: ($billable | map(.billed) | add // 0),
           p99_seconds: ($billable | map(.secs) | pct(99))},
-    excluded: {skipped_jobs: $skipped, zero_or_negative_duration_jobs: $zero},
+    excluded: {skipped_jobs: $skipped, zero_or_negative_duration_jobs: $zero,
+               unfinished_jobs: $unfinished},
     anomaly_days: ($anomalies | sort_by(-.billed)),
     median_day_billed: $median_day,
     median_day_mean_billed: $median_day_mean,
@@ -300,7 +336,8 @@ printf '%s' "$REPORT" | jq -r '
   "STRUCTURAL       \(.structural.billed_minutes) billed min over \(.structural.jobs) jobs" +
     " (\(.structural.actual_minutes) min actually ran)",
   "EXCLUDED         \(.excluded.skipped_jobs) skipped, " +
-    "\(.excluded.zero_or_negative_duration_jobs) zero/negative-duration",
+    "\(.excluded.zero_or_negative_duration_jobs) zero/negative-duration, " +
+    "\(.excluded.unfinished_jobs) still running",
   "",
   "BUSIEST DAYS     \(.busiest_days | map(.day + " " + (.billed|tostring) + "m/"
                        + (.mean_billed|tostring) + "pj") | join("  "))",

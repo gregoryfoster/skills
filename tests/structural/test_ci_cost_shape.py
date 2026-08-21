@@ -422,6 +422,57 @@ class TestTheBillingArithmetic:
             "itself a finding rather than something to round away"
         )
 
+    def test_a_job_still_in_flight_does_not_abort_the_census(self, tmp_path):
+        """A run in progress has `completed_at: null`, and the runs listing
+        has no status filter — so every census of an active repo contains one.
+
+        `fromdateiso8601` on null raises `strptime/1 requires string inputs`
+        and takes the whole report with it, meaning the busier a repo is, the
+        likelier the audit produces nothing at all. Verified against a live
+        repo: home-assistant/core run 32488132218 carried a job with
+        `status: in_progress` and a null `completed_at`.
+
+        Excluded rather than estimated: the job is billing right now and its
+        final duration is not knowable, so guessing one would invent spend.
+        """
+        result = _census(tmp_path, [
+            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+            {"job": "live", "workflow": "w", "attempt": 1, "conclusion": None,
+             "started": "2026-08-02T10:05:00Z", "completed": None,
+             "branch": "main", "event": "push", "run_id": 2},
+        ])
+        assert result.returncode == 0, (
+            "a null completed_at aborted the census instead of being excluded: "
+            f"{result.stderr.strip()}"
+        )
+        report = json.loads(result.stdout)
+        assert report["excluded"]["unfinished_jobs"] == 1, (
+            "an in-flight job must be counted and surfaced, not dropped "
+            "silently — its minutes land in the next census, not this one"
+        )
+        assert report["raw"]["billed_minutes"] == 1, (
+            "the one finished 30s job must still bill exactly one minute"
+        )
+
+    def test_a_cached_census_warns_when_it_overrides_an_explicit_flag(self, tmp_path):
+        """A cache answers for the repo and window it was fetched against.
+
+        Silently honouring the cache over an explicit `--repo` hands back a
+        plausible number for a repository the user did not ask about — the
+        exact failure this skill exists to find, from inside its own tool.
+        """
+        result = _census(tmp_path, [
+            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+        ], "--repo", "someone/else", "--days", "7")
+        assert result.returncode == 0
+        assert "--repo someone/else ignored" in result.stderr, (
+            "an ignored --repo must say so; the cache holds o/r. "
+            f"stderr: {result.stderr.strip()}"
+        )
+        assert "--days 7 ignored" in result.stderr, (
+            f"an ignored --days must say so. stderr: {result.stderr.strip()}"
+        )
+
     def test_the_one_minute_floor_is_applied(self, tmp_path):
         """Three seconds of work bills a full minute. The whole premise."""
         result = _census(tmp_path, [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:03Z")])

@@ -47,6 +47,12 @@ Per **job**, rounded **up**, with a **one-minute floor**. The floor is the
 whole game: it makes a 3-second job and a 55-second job cost the same, and it
 makes an extra job strictly more expensive than a slower one.
 
+**Do not implement that line as written.** Taken literally it bills a phantom
+minute for three classes of row the formula was never meant to see — skipped
+jobs, non-positive durations, and jobs still in flight. That is the form
+[#212](https://github.com/gregoryfoster/skills/issues/212) carried, and it
+survived two completed audits before anyone checked. Phase 1 names all three.
+
 ## Rationalization prevention
 
 | Thought | Reality |
