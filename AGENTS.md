@@ -193,18 +193,24 @@ Conditional-block delimiters and the `assets/` equivalents:
 Every `SKILL.md` is held to a **6,000-token ratchet** — the figure
 `curating-context` enforces on a consuming repo's `AGENTS.md` — by
 [tests/structural/test_skill_self_budget.py](tests/structural/test_skill_self_budget.py),
-which also holds every `references/*.md` to the 10,000-token per-doc budget —
-with one named exemption, the append-only orchestration process log, whose
-contract is to accumulate ([#152](https://github.com/gregoryfoster/skills/issues/152)).
-Thirteen of eighteen skills meet it; the rest carry a named exception with its
-reason beside it, and every file names its own figure in prose so the gate and
-the run read the same number. A ratchet only ever comes down.
+which also holds every `references/*.md` to the 10,000-token per-doc budget,
+with nothing exempt — [#152](https://github.com/gregoryfoster/skills/issues/152)
+retired the one exemption by splitting the append-only log rather than excusing
+it. Fourteen of nineteen skills meet it; the rest carry a named exception with
+its reason beside it, and every file names its own figure in prose so the gate
+and the run read the same number. A ratchet only ever comes down.
 
 It binds **both** readings — the offline estimate pre-commit sees, and
 `count_tokens` under `SKILL_BUDGET_EXACT=1`. They disagree by up to 12% here, so
-neither alone is the contract. The exact pass is opt-in, not opportunistic: it
-costs ~20s and one API call per surface, and an unusable key must never be able
-to block a commit.
+neither alone is the contract — and only the estimate is always on, which let
+three ratchets be breached past a green suite. Two things close that
+([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
+run now **warns** about each skill whose worst permissible exact count exceeds
+its ratchet (seven today — a warning, not a failure), and
+[.github/workflows/skill-budget-exact.yml](.github/workflows/skill-budget-exact.yml)
+runs the exact pass weekly as the gate that does fail. On the commit path the
+exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
+surface, and an unusable key must never be able to block a commit.
 
 ## Commit conventions
 
