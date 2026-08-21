@@ -44,6 +44,9 @@ SKILL_MD = REPO_ROOT / "skills" / "init-socraticode" / "SKILL.md"
 POLICY_REF = (
     REPO_ROOT / "skills" / "init-socraticode" / "references" / "code-exploration-policy.md"
 )
+DOC_REF = (
+    REPO_ROOT / "skills" / "init-socraticode" / "references" / "socraticode-doc.md"
+)
 
 requires_node = pytest.mark.skipif(
     shutil.which("node") is None,
@@ -225,6 +228,122 @@ class TestYieldVerdicts:
         to judge, is the same class of error the gate exists to catch.
         """
         assert self._yield(graph_status)["verdict"] == "unknown"
+
+
+def _graph_health(doc_text: str) -> str:
+    """The generated doc's `## Graph health` section, heading to the next `##`.
+
+    Deliberately a local six-liner rather than an import from
+    `test_socraticode_policy_split.py`: AGENTS.md keeps structural rules in
+    separate files so parallel worktrees merge clean, and a cross-module import
+    would put that back.
+    """
+    start = doc_text.index("## Graph health")
+    end = doc_text.find("\n## ", start + len("## Graph health"))
+    return doc_text[start:end if end != -1 else len(doc_text)]
+
+
+def _flowed(text: str) -> str:
+    """Collapse whitespace, so a quotation may be re-wrapped freely.
+
+    The doc wraps at ~76 columns and the finding is longer than that, so it
+    necessarily spans lines there. Comparing flowed text asserts the words,
+    not the wrap column — a reflow must not be able to fail this.
+    """
+    return " ".join(text.split())
+
+
+class TestUnresolvedFindingIsVerdictAware:
+    """#216: the corroboration wording, standing alone, reads as an accusation.
+
+    The finding fires whenever the figure exceeds the threshold, *outside* the
+    verdict branches — correct, because the statistic is worth reporting either
+    way. But `corroborates a resolver problem` beside `verdict: "ok"` has no
+    verdict to corroborate, and one cohort repo read it as a standing accusation
+    against a provably exact import graph, paying an `rg` round-trip on every
+    dependency question for weeks.
+
+    So the text is selected from the verdict while the line itself stays
+    unconditional: data is never suppressed, only worded for what it is.
+    """
+
+    @staticmethod
+    def _finding(unresolved_pct: str, verdict: str) -> str:
+        script = (
+            f"import {{ unresolvedFinding }} from {json.dumps(str(DRIVER))};"
+            f"process.stdout.write(unresolvedFinding("
+            f"{json.dumps(unresolved_pct)}, {json.dumps(verdict)}));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    @requires_node
+    @pytest.mark.parametrize("verdict", ["low", "unknown"])
+    def test_an_unhealthy_verdict_still_corroborates(self, verdict: str) -> None:
+        """`low`/`unknown` push a yield finding of their own for this to back."""
+        assert "corrobo" in self._finding("61.7", verdict), (
+            f"beside verdict {verdict!r} the unresolvedPct line is corroborating "
+            "evidence for a finding that was already pushed; it must still say so"
+        )
+
+    @requires_node
+    def test_an_ok_verdict_does_not_accuse(self) -> None:
+        assert "corrobo" not in self._finding("61.7", "ok"), (
+            "beside `verdict: \"ok\"` there is no finding for the statistic to "
+            "corroborate, and the corroboration wording is then read as the "
+            "accusation #216 was filed about"
+        )
+
+    @requires_node
+    def test_the_statistic_is_reported_on_every_verdict(self) -> None:
+        """Wording changes; the number does not disappear.
+
+        The rejected alternative was to move the line inside the verdict
+        branches, which would have hidden a genuinely useful figure from every
+        healthy repo. Both readings must still carry the measurement and the
+        threshold it was compared against.
+        """
+        for verdict in ("low", "unknown", "ok"):
+            finding = self._finding("61.7", verdict)
+            assert "61.7%" in finding and "50%" in finding, (
+                f"the {verdict!r} wording dropped the statistic or the "
+                f"threshold: {finding!r}"
+            )
+
+    @requires_node
+    @pytest.mark.parametrize("verdict", ["low", "unknown", "ok"])
+    def test_the_doc_quotes_what_the_driver_emits(self, verdict: str) -> None:
+        """The pin `test_graph_health_explains_unresolved_pct` cannot be (#216).
+
+        That test pins the **Graph health** section as *concepts* — deliberately,
+        because a sentence-level pin fights every legitimate rewording. The cost
+        is that rewording the driver's string leaves it green while the doc's
+        verbatim quotation of that string goes stale, and a reader who diffs the
+        doc against the finding they were just shown has no way to tell which of
+        the two is lying.
+
+        Asserted as *agreement*, not as a sentence: the driver renders the
+        finding and the doc must contain what it rendered. Reword the driver
+        however you like — this stays green as long as the doc moves with it,
+        which is the whole property that was missing.
+
+        Rendered with a literal `N` for the percentage, because that is the
+        shape the doc quotes: a real figure there would be repo- and
+        day-specific, which the section says in as many words.
+        """
+        finding = self._finding("N", verdict)
+        section = _flowed(_graph_health(DOC_REF.read_text()))
+        assert _flowed(finding) in section, (
+            f"references/{DOC_REF.name}'s **Graph health** section does not "
+            f"quote what `mcp-driver.mjs` emits on verdict {verdict!r}:\n"
+            f"  driver: {_flowed(finding)}\n"
+            "The doc is the only place a consumer can look the finding up; a "
+            "quotation that no longer matches is worse than none (#216)."
+        )
 
 
 class TestSkillGatesOnYield:
