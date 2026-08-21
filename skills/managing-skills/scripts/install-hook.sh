@@ -539,6 +539,10 @@ if [ -z "$SRC" ] && [ "$COPY_FALLBACK" = "1" ]; then
 fi
 [ -n "$SRC" ] || {
   err "no vendored $HOOK_NAME found under skills-vendor/*/skills/$SKILL/scripts/"
+  # Both places that were looked in, when both were. A message naming only the
+  # vendor glob would send someone to fix a submodule on a machine where the
+  # copy source is what is actually absent.
+  [ "$COPY_FALLBACK" = "0" ] || err "and none beside this installer at $SELF_DIR/../../$SKILL/scripts/"
   err "add the skills repo as a submodule first — see managing-skills/SKILL.md"
   exit 1; }
 
@@ -633,10 +637,14 @@ else
 fi
 
 if [ "$QUIET" != "1" ]; then
+  # BOTH paths named, because staging one of the two artifacts is how a repo
+  # ends up committing a hook nothing registers — the #167 state, reached from
+  # a correct install.
   cat <<NEXT
 
 Not committed — review and commit with your normal gate. BOTH artifacts:
   git add $HOOK_REL $SETTINGS_REL
+  git commit -m "chore: install the ${HOOK_NAME%.sh} hook"
 NEXT
-  [ -z "$NOTE" ] || printf '%s\n' "$NOTE"
+  [ -z "$NOTE" ] || printf '\n%s\n' "$NOTE"
 fi
