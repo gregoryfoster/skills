@@ -263,6 +263,120 @@ class TestNoProseRendersAsACodeBlock:
         )
 
 
+# -- The copy that was never a move (#204) ------------------------------------
+#
+# `prove-no-loss.sh` is satisfied by *presence*, so a block copied instead of
+# moved is invisible to it: the lines arrived, the check passed. Phase 6 names
+# the shape — "No block was copied instead of moved. Presence anywhere satisfies
+# the check, so a bullet left inline and in a destination is invisible to it" —
+# and has no instrument. This is the instrument, and like the rules above it is
+# a shape rule over the whole tree rather than a registry.
+#
+# Cross-file only. A doc restating its own `##` section inside a generated
+# artefact it quotes is not this defect: `cadence.md`'s workflow header comment
+# repeats two of its own sections *on purpose*, because the reader of the
+# installed `.yml` has no access to the doc.
+DUPLICATE_RUN = 3  # consecutive non-blank lines
+DUPLICATE_MIN_CHARS = 120  # skip incidental repeats — table rules, short fences
+
+# Keyed on the first line of the maximal run. Every entry needs a reason and a
+# reference; "it was there already" is not one.
+DUPLICATION_EXEMPTIONS: dict[str, str] = {
+    # Found by #204's sweep of this tree, in a file pair whose ownership
+    # question #204 does not settle: `write-guard-hook.md`'s § Deliberate limits
+    # closes with a paragraph byte-identical to `continuous-surfaces.md`'s
+    # § Review-time delta, which also restates the bullet immediately above it.
+    # Deciding which doc owns it is a curation call, not a delete — left standing
+    # and pinned here so it cannot go quiet again.
+    "It sees what the write guard cannot, twice over: the guard evaluates one edit at a":
+        "#204 sweep — unadjudicated; which doc owns this paragraph is a "
+        "curation judgement, not a mechanical delete",
+}
+
+
+def _duplicate_runs() -> list[tuple[str, list[str]]]:
+    """Maximal runs of identical non-blank lines shared by two reference docs."""
+    docs = {
+        path.name: path.read_text().splitlines()
+        for path in sorted(REFERENCES.rglob("*.md"))
+    }
+
+    windows: dict[str, list[tuple[str, int]]] = {}
+    for name, lines in docs.items():
+        for i in range(len(lines) - DUPLICATE_RUN + 1):
+            window = lines[i:i + DUPLICATE_RUN]
+            if any(not line.strip() for line in window):
+                continue
+            key = "\n".join(line.rstrip() for line in window)
+            if len(key) < DUPLICATE_MIN_CHARS:
+                continue
+            windows.setdefault(key, []).append((name, i + 1))
+
+    shared = {
+        key: locs for key, locs in windows.items()
+        if len({name for name, _ in locs}) > 1
+    }
+    starts = {tuple(sorted(locs)) for locs in shared.values()}
+
+    runs = []
+    for key, locs in shared.items():
+        # A window whose one-line-earlier twin is also shared is a continuation
+        # of that run, not a run of its own. Report only the maximal one.
+        if tuple(sorted((name, n - 1) for name, n in locs)) in starts:
+            continue
+        length = DUPLICATE_RUN
+        while True:
+            grown = {
+                "\n".join(x.rstrip() for x in docs[name][n - 1:n + length])
+                for name, n in locs
+            }
+            if len(grown) != 1 or any(
+                n - 1 + length >= len(docs[name]) for name, n in locs
+            ):
+                break
+            length += 1
+        runs.append((
+            key.splitlines()[0],
+            [f"{name}:{n}-{n + length - 1}" for name, n in sorted(locs)],
+        ))
+    return runs
+
+
+class TestNoBlockWasCopiedInsteadOfMoved:
+    """Phase 6's own check, which `prove-no-loss.sh` cannot make (#204).
+
+    `cadence.md:424-432` was byte-identical to `continuous-surfaces.md:20-28`,
+    and both claims in it were already made twice more inside `cadence.md`
+    itself — once as a `##` section and once in the generated workflow's header
+    comment. It survived every gate because presence satisfies them all.
+    """
+
+    def test_no_reference_doc_carries_another_doc_verbatim(self):
+        offenders = [
+            f"{first[:78]!r}\n      " + " == ".join(locs)
+            for first, locs in _duplicate_runs()
+            if first not in DUPLICATION_EXEMPTIONS
+        ]
+        assert not offenders, (
+            f"Runs of {DUPLICATE_RUN}+ identical lines shared by two reference "
+            "docs:\n    " + "\n    ".join(offenders) + "\n"
+            "A demotion moves a block; it does not copy one. `prove-no-loss.sh` "
+            "sees only that the lines are present somewhere, so a copy passes it "
+            "forever. Delete the copy from the doc that does not own the claim, "
+            "or replace it with a pointer to the section that does (#204)."
+        )
+
+    def test_every_exemption_still_describes_a_live_duplicate(self):
+        """An exemption outliving its duplicate silently narrows the rule."""
+        live = {first for first, _ in _duplicate_runs()}
+        stale = sorted(DUPLICATION_EXEMPTIONS.keys() - live)
+        assert not stale, (
+            "Exemptions with nothing left to exempt:\n  " + "\n  ".join(stale)
+            + "\nThe duplicate was resolved. Drop the entry so the rule covers "
+            "the whole tree again (#204)."
+        )
+
+
 class TestTheGuardsNonVetoClaimIsWhereTheReaderArrives:
     """A placement pin, not a shape rule — the one exception in this module.
 
