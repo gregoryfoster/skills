@@ -53,6 +53,6 @@ context-artifact list, and why its `.socraticodeignore` deliberately keeps
 and the policy section is the one thing `curating-context` will not trim. Rescue
 them under a `## Repo-specific notes` heading below the
 `<!-- END socraticode-doc -->` marker, and name them in the report too. The
-`low`-verdict path is the sharpest
-case: variant B tells the author to substitute real measured numbers, which is
-repo-authored content the template itself asked for.
+`low`-verdict path is the sharpest case: variant B tells the author to
+substitute real measured numbers, which is repo-authored content the template
+itself asked for.

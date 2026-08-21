@@ -61,13 +61,15 @@ fi
 #     common dir. This repo vendors skills as submodules; the case is live.
 #
 # One shape that guard does NOT rescue, left unhandled deliberately (#203): in
-# a linked worktree of a submodule the common dir is that same
-# <super>/.git/modules/<name>, so the candidate is rejected and the fallback to
-# --show-toplevel names the LINKED worktree. Recovering the submodule's primary
-# work tree means walking <super>/.git/modules/<name>/worktrees/<id>/gitdir
-# back to the registering checkout: real parsing for a combination nobody in
-# the cohort runs. Pinned by tests/structural/test_plans_dir_contract.py
-# (TestSubmoduleWorktreeBoundary), so changing the guard is a decision.
+# a linked worktree of a submodule the candidate is rejected and the fallback
+# to --show-toplevel names the LINKED worktree, so the root nests.
+#
+# The argument for leaving it — what the fix would cost, and why nobody in the
+# cohort hits it — is written once, beside the identical guard in
+# skills/using-git-worktrees/scripts/resolve-worktree-root.sh. Deliberately not
+# restated here: two copies of one decision drift into two accounts of it, and
+# only the copy someone happens to edit gets corrected. Pinned by
+# tests/structural/test_plans_dir_contract.py (TestSubmoduleWorktreeBoundary).
 COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
 if [[ -n "$COMMON_DIR" ]] && COMMON_DIR=$(cd "$COMMON_DIR" 2>/dev/null && pwd -P); then
   CANDIDATE=$(dirname "$COMMON_DIR")

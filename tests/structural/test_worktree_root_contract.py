@@ -274,7 +274,7 @@ class TestSubmoduleWorktreeBoundary:
 
     Fixing it means walking `<super>/.git/modules/<name>/worktrees/<id>/gitdir`
     back to the registering checkout: real parsing for a combination nobody in
-    the cohort runs. #213 decided against it and documented the boundary
+    the cohort runs. #203 decided against it and documented the boundary
     instead. These tests hold the decision in place — the behavioural one so a
     later change to the guard is noticed, the comment one so the next reader of
     the script is not left assuming the guard covers this.
