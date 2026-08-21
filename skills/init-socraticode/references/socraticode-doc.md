@@ -102,8 +102,14 @@ verbatim if it did not fire.
 - **`codebase_flow`** traces from an entry point; give it a real file path, not
   a symbol name.
 - **`codebase_context_search`** only sees files listed in
-  `.socraticodecontextartifacts.json`. A path that does not resolve is skipped
-  silently, so a missing answer is often a manifest problem.
+  `.socraticodecontextartifacts.json` — and of those, only the ones actually
+  indexed. A path that does not resolve is skipped silently, so a missing
+  answer is often a manifest problem. But the same silence has a second cause
+  a correct manifest cannot rule out: the path resolved, the run *completed*,
+  and the artifact still is not indexed. Ask `codebase_context`, which is the
+  only per-artifact index status there is — `codebase_status` gives a count
+  and never a name — then re-run `codebase_context_index`. The once-per-day
+  health check reports this gap too, and names the artifact.
 - **The file watcher is ephemeral.** It lives only while an MCP server process
   is running. After a long gap, or after a reboot, re-run `codebase_index`
   rather than trusting the index to be current.

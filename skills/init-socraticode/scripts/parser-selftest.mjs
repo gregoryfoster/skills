@@ -38,6 +38,7 @@ import {
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
+  parseContextArtifacts,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -314,6 +315,37 @@ eq('an all-green health report has no problems',
 console.log('— artifact shapes (gotcha H) —');
 eq('partial 2/7', parseArtifacts(PARTIAL_ARTIFACTS), { done: 2, total: 7 });
 eq('no line → 0/0', parseArtifacts('Project: /repo\nStatus: green'), { done: 0, total: 0 });
+// Both of these parse to 0/0, which is why the MANIFEST is the denominator for
+// the declared≠indexed check (#214) and this line never is.
+eq('"N configured, not yet indexed" → 0/0 as well',
+  parseArtifacts('Context artifacts: 7 configured, not yet indexed'), { done: 0, total: 0 });
+
+// codebase_context, verbatim from a live 13-artifact reply (trimmed to two).
+// This is the only per-artifact index status the server offers — the status
+// line above counts, it never names.
+const CONTEXT_LISTING = `Context Artifacts for: /repo
+Config: .socraticodecontextartifacts.json (2 artifacts)
+
+━━━ database-schema ━━━
+  Path: ./docs/schema.sql
+  Description: PostgreSQL schema.
+  Status: ✓ indexed (42 chunks, 2026-08-09T04:46:34.264Z)
+
+━━━ reference-docs ━━━
+  Path: ./docs/
+  Description: The docs tree.
+  Status: ○ not yet indexed
+
+Use codebase_context_search to search across artifacts.`;
+eq('per-artifact status is parsed, and the name comes with it',
+  parseContextArtifacts(CONTEXT_LISTING).map((a) => [a.name, a.indexed]),
+  [['database-schema', true], ['reference-docs', false]]);
+// Asymmetric on purpose: an unrecognised status must fall to NOT indexed, or
+// the silent-green hole this check closes reopens on the next server reword.
+eq('an unknown status is not indexed',
+  parseContextArtifacts('━━━ x ━━━\n  Status: ✗ fetch failed')[0].indexed, false);
+eq('no artifacts configured → nothing to compare',
+  parseContextArtifacts('No context artifacts configured for: /repo'), []);
 
 console.log('— manifest validation —');
 const tmp = mkdtempSync(join(tmpdir(), 'socraticode-selftest-'));
