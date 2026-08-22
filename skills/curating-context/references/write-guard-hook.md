@@ -215,11 +215,6 @@ reports "the guard never fires".
   failure mode the `ok:` log lines exist to expose.
 - **Needs `python3` or `jq`** to parse the hook payload. With neither it logs a
   skip line and exits 0 rather than parsing JSON with a regex.
-- **One edit at a time — net is invisible.** The hook sees the file it was just
-  handed, so a 400-token addition that replaced 600 elsewhere reads the same as
-  a straight 400-token gain. No `PostToolUse` payload carries the rest of the
-  branch. That is `context-delta.sh`'s job at review time
-  ([continuous-surfaces.md § Review-time delta](continuous-surfaces.md#review-time-delta)).
 - **Structured edits only — not every write.** The matcher is
   `Edit|Write|MultiEdit`, so two write paths are invisible to it: a **shell
   redirect** (`cat >> AGENTS.md <<'EOF'`, `tee -a`, `sed -i`), which arrives as a
@@ -231,8 +226,14 @@ reports "the guard never fires".
   the matcher is **not** the fix: it would run the guard on every shell command
   in the session, the overwhelming majority of which touch nothing, to catch a
   small fraction of writes — inverting the cheapness that makes the guard
-  tolerable. The gap is covered at review time instead, by `context-delta.sh`,
-  which measures the branch's whole effect regardless of how the bytes arrived.
+  tolerable.
+- **One edit at a time — net is invisible.** The hook sees the file it was just
+  handed, so a 400-token addition that replaced 600 elsewhere reads the same as
+  a straight 400-token gain. No `PostToolUse` payload carries the rest of the
+  branch. Neither this limit nor the matcher gap above is left uncovered: both
+  are caught at review time, by `context-delta.sh`, which measures the branch's
+  whole effect regardless of how the bytes arrived
+  ([continuous-surfaces.md § Review-time delta](continuous-surfaces.md#review-time-delta)).
 
 ## Relationship to the weekly run
 

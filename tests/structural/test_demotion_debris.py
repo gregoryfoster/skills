@@ -292,12 +292,11 @@ DUPLICATE_RUN = 3  # consecutive non-blank lines
 DUPLICATE_MIN_CHARS = 120  # skip incidental repeats — table rules, short fences
 
 # Keyed on the first line of the maximal run. Every entry needs a reason and a
-# reference; "it was there already" is not one.
-# Empty on purpose, and kept rather than removed: the registry is the seam where
-# an unadjudicated duplicate waits for its curation call, and an empty one is the
-# honest state of this tree. Its only entry — the paragraph `write-guard-hook.md`
+# reference; "it was there already" is not one. Empty today, and kept rather
+# than removed: the registry is the seam where an unadjudicated duplicate waits
+# for its curation call. Its one entry — the paragraph `write-guard-hook.md`
 # shared with `continuous-surfaces.md` — was adjudicated in #218 and deleted, so
-# the rule now covers the whole tree with nothing carved out of it.
+# the rule covers the whole tree with nothing carved out of it.
 DUPLICATION_EXEMPTIONS: dict[str, str] = {}
 
 
