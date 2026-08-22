@@ -218,9 +218,23 @@ class TestWorktreeRootDoesNotNest:
         No other vantage point produces the `../../` form. From a linked
         worktree the common dir is already absolute, so the tests above are
         blind to the trap by construction; from the primary checkout's own root
-        it is `.git`, whose parent is `.` — a one-token case that any naive
-        `[[ "$CANDIDATE" == "." ]] && CANDIDATE="$PWD"` patch handles while
-        leaving `../../.git` broken. Only a subdirectory separates the two.
+        it is `.git`, whose parent is `.`.
+
+        What this test discriminates, verified by mutation (#221): taking
+        `dirname` of the *un-absolutized* common dir while comparing absolutized
+        values — the realistic "forgot to absolutize before taking the parent"
+        slip. That accepts `../..` as the candidate and emits
+        `../../.worktrees`, which `is_absolute()` names as a relative leak
+        rather than reporting a bare path mismatch.
+
+        What it does NOT discriminate, contrary to what this docstring claimed
+        before #221: the naive `[[ "$CANDIDATE" == "." ]] && CANDIDATE="$PWD"`
+        repair. Applied to today's script that patch passes this whole file.
+        The candidate-validation guard below rejects the still-relative
+        candidate, and resolution falls back to --show-toplevel, which from a
+        subdirectory of the *primary* checkout is already the right answer. The
+        naive repair was only load-bearing before that guard existed; do not
+        read this test as the thing standing between the two.
         """
         deep = primary / "a" / "b"
         deep.mkdir(parents=True)

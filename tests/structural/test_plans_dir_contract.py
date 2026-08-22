@@ -23,11 +23,17 @@ from a linked worktree, and inside a submodule the common dir is
 would resolve the plans directory inside `.git`. This repo vendors skills as
 submodules, so that one is live.
 
-These tests are the port of `test_worktree_root_contract.py`'s
+These tests began as the port of `test_worktree_root_contract.py`'s
 `TestWorktreeRootDoesNotNest` and `TestSubmoduleWorktreeBoundary` onto the
-plans-dir script; they duplicate that file's fixtures rather than share them
-because `tests/structural/` has no conftest and each module here builds its
-own throwaway repos.
+plans-dir script (#202); they duplicate that file's fixtures rather than share
+them because `tests/structural/` has no conftest and each module here builds
+its own throwaway repos.
+
+The flow has since gone both ways — #215 back-ported the subdirectory trap into
+that file, and #221 back-ported this file's absoluteness assertion after it,
+so the two are peers rather than an original and a copy. The scripts they pin
+are line-for-line the same resolution block; an edit to either half should be
+checked against the other.
 
 No API calls. Self-contained: each test builds a throwaway repo under tmp_path.
 """
@@ -140,12 +146,21 @@ class TestPlansDirDoesNotNest:
         )
         assert Path(from_linked.stdout.strip()) == primary / "docs" / "plans"
 
-    def test_resolve_from_a_subdirectory_uses_the_repo_root(self, primary: Path):
+    def test_resolve_from_a_subdirectory_is_absolute_and_names_the_repo_root(
+        self, primary: Path
+    ):
         """Trap one: --git-common-dir is RELATIVE outside a linked worktree.
 
         From the primary checkout's root it prints `.git`; from a subdirectory
         it prints `../../.git`. Absolutizing before taking the parent is what
         keeps this from resolving to a sibling of the subdirectory.
+
+        Which mutants this discriminates — and the one it does not, despite a
+        docstring that long claimed otherwise — is written once beside the twin
+        of this test in test_worktree_root_contract.py. Deliberately not
+        restated here, by the same rule the two scripts follow: two copies of
+        one account drift into two accounts, and only the copy someone happens
+        to edit gets corrected.
         """
         deep = primary / "a" / "b"
         deep.mkdir(parents=True)
