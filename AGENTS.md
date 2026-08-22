@@ -201,8 +201,11 @@ its reason beside it, and every file names its own figure in prose so the gate
 and the run read the same number. A ratchet only ever comes down.
 
 It binds **both** readings — the offline estimate pre-commit sees, and
-`count_tokens` under `SKILL_BUDGET_EXACT=1`. They disagree by up to 12% here, so
-neither alone is the contract — and only the estimate is always on, which let
+`count_tokens` under `SKILL_BUDGET_EXACT=1`. On SKILL.md files the estimate is
+observed running 13% low to 6% high, and `POLICY_ESTIMATE_BAND` permits 15%
+either way — that band edge, not the observed figure, is what the warning below
+computes a worst case from. So neither reading alone is the contract — and only
+the estimate is always on, which let
 three ratchets be breached past a green suite. Two things close that
 ([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
 run now **warns** about each skill whose worst permissible exact count exceeds

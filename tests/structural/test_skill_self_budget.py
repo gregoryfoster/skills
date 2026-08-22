@@ -584,6 +584,11 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     return (
         f"estimate {estimate:,} → worst case ~{worst:,} against a "
         f"{ratchet:,} ratchet; {verdict}.\n\n"
+        "The worst case comes from POLICY_ESTIMATE_BAND's permissive edge "
+        "(15%), not from the 13% observed below: the band is what bounds the "
+        "estimator's error, and the observed range is only what it has cost so "
+        "far. Deriving headroom from the smaller figure is how a ratchet gets "
+        "breached past a green suite.\n\n"
         + caveat
     )
 
@@ -1589,10 +1594,16 @@ class TestTheScheduledExactGate:
         commands = " ".join(
             str(step.get("run", "")) for step in self._steps(workflow)
         )
-        assert "-W error::UserWarning" in commands, (
+        assert "-W 'error:" in commands and "could not reach count_tokens" in commands, (
             "the exact pass runs without escalating the "
             "could-not-reach-count_tokens UserWarning, so a rotated or "
             "rate-limited key produces nineteen skips and a green job"
+        )
+        assert "-W error::UserWarning" not in commands, (
+            "the filter escalates UserWarning wholesale, so any unrelated "
+            "warning — one added to this file later, or one a dependency "
+            "raises during collection — reddens the weekly gate and reads as "
+            "a budget breach. Scope it to the message."
         )
 
     def test_it_runs_the_gate_the_test_file_documents(self, workflow: dict):
@@ -1601,6 +1612,11 @@ class TestTheScheduledExactGate:
         )
         assert "tests/structural/test_skill_self_budget.py" in commands, (
             "the job sets the env var but never runs the file that reads it"
+        )
+        assert "tests/structural/test_policy_surface_budget.py" in commands, (
+            "the job covers the skills surface but not AGENTS.md and docs/, "
+            "which bind through the same SKILL_BUDGET_EXACT switch — so that "
+            "surface keeps the exact defect this job was built to remove"
         )
         assert "requirements-test.txt" in commands, (
             "nothing installs pytest, so the run fails on infrastructure "

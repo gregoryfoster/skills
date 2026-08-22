@@ -44,6 +44,14 @@ on:
     # midweek so a red gate arrives while there is still a week to act on it.
     # Asserted as "not the cadence day" rather than as a literal: that job
     # derives its slot from the repo name and can move without warning.
+    #
+    # KNOWN SILENT-STOP MODE, stated because it is this job's own failure
+    # shape one level up: GitHub disables scheduled workflows in a PUBLIC
+    # repository after 60 days with no repository activity, and says so only
+    # in the Actions tab. A gate that exists because "opt-in meant never runs"
+    # can therefore stop running without anything going red. Low risk while
+    # this repo is worked weekly; if it ever goes quiet, re-enable it by hand
+    # or re-run it with `gh workflow run skill-budget-exact.yml`.
     - cron: '27 6 * * 3'
   workflow_dispatch:
 
@@ -84,8 +92,15 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: bash skills/curating-context/scripts/measure-context.sh --check-credential
 
-      # -W error::UserWarning is the difference between a gate and a report,
-      # and it is not optional here.
+      # Escalating the could-not-reach-count_tokens warning is the difference
+      # between a gate and a report, and it is not optional here.
+      #
+      # The filter is scoped to that warning's MESSAGE rather than to
+      # `UserWarning` wholesale. A bare `-W error::UserWarning` would also
+      # redden this job for any unrelated UserWarning — one added to the test
+      # file later, or one a dependency raises during collection — and that
+      # failure would read as a budget breach, which is the wrong diagnosis
+      # for an operator who gets it once a week.
       #
       # `exact_surfaces` warns and then SKIPS when it cannot reach
       # count_tokens. On the pre-commit path that is correct and deliberate:
@@ -101,10 +116,15 @@ jobs:
       # hierarchy so this filter does not also escalate the always-on WARN
       # into an assertion — that would be #217's option 2, which fails seven
       # of nineteen skills today.
+      # Both budget surfaces, not just the skills one. test_policy_surface_budget.py
+      # binds AGENTS.md and the docs/ tree through the same SKILL_BUDGET_EXACT
+      # switch, so before this job it had the identical defect: nothing ever
+      # measured it exactly. ~4 more count_tokens calls.
       - name: Measure every ratchet against count_tokens
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SKILL_BUDGET_EXACT: '1'
         run: |
-          pytest tests/structural/test_skill_self_budget.py -v \
-            -W error::UserWarning
+          pytest tests/structural/test_skill_self_budget.py \
+                 tests/structural/test_policy_surface_budget.py -v \
+            -W 'error:SKILL_BUDGET_EXACT was set but the run could not reach count_tokens:UserWarning'

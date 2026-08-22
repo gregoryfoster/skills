@@ -995,19 +995,43 @@ async function cmdHealthCheck(projectPath, probePath) {
       );
     } else if (manifest.present && manifest.count > 0) {
       const declared = manifest.count;
-      const ctx = await call('codebase_context', { projectPath });
-      if (ctx.error) {
-        // Degrade, do not disable: the count alone beats silence. This is the
-        // one reading where the status line's numerator is trustworthy — it is
-        // only its TOTAL that cannot be believed.
-        if (!status.error) {
-          const done = parseArtifacts(status.text).done;
-          if (done < declared) {
-            report.artifacts = { declared, indexed: done, unindexed: null };
-            findings.push(
-              `context artifacts ${done}/${declared} indexed — codebase_context failed (${ctx.error}), so the missing artifact cannot be named`
-            );
-          }
+      // Short-circuit on a matching numerator. The status line's TOTAL cannot
+      // be believed (0/0 means both "none declared" and "none indexed yet"),
+      // but its numerator can, and only a shortfall needs a NAME — which is
+      // the sole reason to spend a second MCP round-trip here, on twelve
+      // cohort repos, once a day.
+      //
+      // Verified rather than assumed, because trusting the numerator is
+      // exactly the move that would rebuild this gap if the server ever
+      // rounded up: on cannabis_observer/code/cli, sitting at 12 of 13 with
+      // `Status: green`, codebase_status reports `Context artifacts: 12/13
+      // indexed` — the count is honest, it just cannot say which one.
+      //
+      // NOT an early `return`: this block runs inside the withClient callback,
+      // so returning here would skip every graph check below it.
+      const fromStatus = status.error ? null : parseArtifacts(status.text).done;
+      const ctx = fromStatus === declared
+        ? null
+        : await call('codebase_context', { projectPath });
+      if (ctx === null) {
+        report.artifacts = { declared, indexed: declared, unindexed: [] };
+      } else if (ctx.error) {
+        // Degrade, do not disable: the count alone beats silence. Record the
+        // failure either way — a codebase_context that keeps failing is a
+        // leading indicator of the very gap this check exists to catch, and
+        // leaving no trace of it in the JSON would be this change's own
+        // silent degradation.
+        const done = status.error ? null : parseArtifacts(status.text).done;
+        report.artifacts = {
+          declared,
+          indexed: done,
+          unindexed: null,
+          error: ctx.error,
+        };
+        if (done != null && done < declared) {
+          findings.push(
+            `context artifacts ${done}/${declared} indexed — codebase_context failed (${ctx.error}), so the missing artifact cannot be named`
+          );
         }
       } else {
         const listed = parseContextArtifacts(ctx.text);
