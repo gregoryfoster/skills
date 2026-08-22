@@ -293,17 +293,12 @@ DUPLICATE_MIN_CHARS = 120  # skip incidental repeats — table rules, short fenc
 
 # Keyed on the first line of the maximal run. Every entry needs a reason and a
 # reference; "it was there already" is not one.
-DUPLICATION_EXEMPTIONS: dict[str, str] = {
-    # Found by #204's sweep of this tree, in a file pair whose ownership
-    # question #204 does not settle: `write-guard-hook.md`'s § Deliberate limits
-    # closes with a paragraph byte-identical to `continuous-surfaces.md`'s
-    # § Review-time delta, which also restates the bullet immediately above it.
-    # Deciding which doc owns it is a curation call, not a delete — left standing
-    # and pinned here so it cannot go quiet again.
-    "It sees what the write guard cannot, twice over: the guard evaluates one edit at a":
-        "#204 sweep — unadjudicated; which doc owns this paragraph is a "
-        "curation judgement, not a mechanical delete",
-}
+# Empty on purpose, and kept rather than removed: the registry is the seam where
+# an unadjudicated duplicate waits for its curation call, and an empty one is the
+# honest state of this tree. Its only entry — the paragraph `write-guard-hook.md`
+# shared with `continuous-surfaces.md` — was adjudicated in #218 and deleted, so
+# the rule now covers the whole tree with nothing carved out of it.
+DUPLICATION_EXEMPTIONS: dict[str, str] = {}
 
 
 def _duplicate_runs() -> list[tuple[str, list[str]]]:
