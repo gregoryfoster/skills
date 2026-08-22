@@ -102,8 +102,14 @@ verbatim if it did not fire.
 - **`codebase_flow`** traces from an entry point; give it a real file path, not
   a symbol name.
 - **`codebase_context_search`** only sees files listed in
-  `.socraticodecontextartifacts.json`. A path that does not resolve is skipped
-  silently, so a missing answer is often a manifest problem.
+  `.socraticodecontextartifacts.json` — and of those, only the ones actually
+  indexed. A path that does not resolve is skipped silently, so a missing
+  answer is often a manifest problem. But the same silence has a second cause
+  a correct manifest cannot rule out: the path resolved, the run *completed*,
+  and the artifact still is not indexed. Ask `codebase_context`, which is the
+  only per-artifact index status there is — `codebase_status` gives a count
+  and never a name — then re-run `codebase_context_index`. The once-per-day
+  health check reports this gap too, and names the artifact.
 - **The file watcher is ephemeral.** It lives only while an MCP server process
   is running. After a long gap, or after a reboot, re-run `codebase_index`
   rather than trusting the index to be current.
@@ -122,12 +128,16 @@ node skills/init-socraticode/scripts/mcp-driver.mjs health-check .
 `AGENTS.md` block should be on its degraded variant.
 
 **`unresolvedPct` is corroboration, not a verdict.** The same check — and the
-daily `socraticode-health.sh` run — also prints `graph unresolved N% (> 50%)
-— corroborates a resolver problem`, and prints it whether the verdict is
-`low` or `ok`. It is a *call*-graph statistic: the share of **call edges**
-whose callee resolves to no first-party symbol. A repo that leans on
-frameworks and the stdlib runs high by construction, because those callees
-are not in the repo — no re-index brings them in and none lowers the figure.
+daily `socraticode-health.sh` run — report the figure whenever it clears the
+threshold, on a healthy graph too, and word it from the verdict. Beside `low`
+or `unknown`, where a yield finding is already on the list for it to back:
+`graph unresolved N% (> 50%) — corroborates a resolver problem`. Beside `ok`,
+where there is nothing for it to corroborate: `graph unresolved N% (> 50%) —
+share of call edges with no first-party callee; verdict is ok, so this is a
+statistic, not a defect`. It is a *call*-graph statistic: the share of **call
+edges** whose callee resolves to no first-party symbol. A repo that leans on
+frameworks and the stdlib runs high by construction, because those callees are
+not in the repo — no re-index brings them in and none lowers the figure.
 Judge the graph on `verdict` and on **edges/file**, which is what the gate
 keys on. A high `unresolvedPct` beside `verdict: "ok"` is normal; the
 src-layout resolver defect it can be mistaken for

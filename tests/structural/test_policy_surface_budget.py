@@ -32,6 +32,7 @@ No API calls unless the exact pass is asked for.
 import json
 import os
 import subprocess
+import warnings
 from pathlib import Path
 
 import pytest
@@ -117,11 +118,25 @@ def exact_surface() -> dict:
     # than only skipped, so a *docs* row degrading to an estimate cannot pass
     # as an exact verdict either.
     if not measured["policy"]["tokens_exact"]:
+        # Warn BEFORE skipping, and with the message the scheduled job's `-W`
+        # filter matches, so this surface degrades the same way its sibling
+        # does. Skipping silently is only correct on the pre-commit path; in
+        # `.github/workflows/skill-budget-exact.yml` — which runs this file —
+        # it would report green having measured nothing, which is #217's own
+        # failure on the one surface the fix newly covers. The wording is
+        # load-bearing: the filter keys on this prefix.
+        warnings.warn(
+            f"{EXACT_ENV} was set but the run could not reach count_tokens, so "
+            "the exact contract WAS NOT VERIFIED for AGENTS.md and the docs/ "
+            "tree — only the offline estimate ran. A green run here is not "
+            "evidence; check the skip count. Verify the credential with "
+            "`measure-context.sh --check-credential`.",
+            UserWarning,
+            stacklevel=2,
+        )
         pytest.skip(
             f"{EXACT_ENV} was set but count_tokens was unreachable, so the "
-            "exact contract WAS NOT VERIFIED — only the offline estimate ran. "
-            "A green run here is not evidence; check the skip count. Verify "
-            "the credential with `measure-context.sh --check-credential`."
+            "exact contract WAS NOT VERIFIED — see the warning above."
         )
     stale = [d["path"] for d in measured["docs"] if not d["tokens_exact"]]
     assert not stale, (
