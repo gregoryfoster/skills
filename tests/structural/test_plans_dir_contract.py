@@ -151,9 +151,15 @@ class TestPlansDirDoesNotNest:
         deep.mkdir(parents=True)
         r = _run(RESOLVE, cwd=deep)
         assert r.returncode == 0, f"resolve failed in a subdirectory: {r.stderr}"
-        assert Path(r.stdout.strip()) == primary / "docs" / "plans", (
+        printed = r.stdout.strip()
+        assert Path(printed).is_absolute(), (
+            "the resolved plans directory must be absolute wherever it is "
+            "resolved from; an un-absolutized --git-common-dir leaks "
+            f"$PWD-relative. Got {printed!r}"
+        )
+        assert Path(printed) == primary / "docs" / "plans", (
             "a relative --git-common-dir must be absolutized against $PWD "
-            f"before its parent is taken. Got {r.stdout.strip()!r}"
+            f"before its parent is taken. Got {printed!r}"
         )
 
     def test_config_file_is_read_from_the_primary_checkout(self, primary: Path, linked: Path):
