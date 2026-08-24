@@ -134,7 +134,10 @@ or `unknown`, where a yield finding is already on the list for it to back:
 `graph unresolved N% (> 50%) — corroborates a resolver problem`. Beside `ok`,
 where there is nothing for it to corroborate: `graph unresolved N% (> 50%) —
 share of call edges with no first-party callee; verdict is ok, so this is a
-statistic, not a defect`. It is a *call*-graph statistic: the share of **call
+statistic, not a defect`. Either way it is filed as a **note** — it appears as
+`note: graph unresolved N% …` and does not set the exit code, so a repo whose
+only finding is this one stays silent through the daily hook. It is a
+*call*-graph statistic: the share of **call
 edges** whose callee resolves to no first-party symbol. A repo that leans on
 frameworks and the stdlib runs high by construction, because those callees are
 not in the repo — no re-index brings them in and none lowers the figure.

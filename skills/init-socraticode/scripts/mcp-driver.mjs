@@ -541,14 +541,56 @@ function graphYield(text) {
 // one cohort repo distrusted a provably exact import graph for weeks on the
 // strength of it, paying an `rg` round-trip on every dependency question.
 //
+// It is pushed at SEVERITY.note on EVERY verdict, not only on `ok` (#220). The
+// figure is never independently actionable — no re-index lowers it, because the
+// unresolved callees are framework and stdlib symbols that are not in the repo.
+// Beside `low` or `unknown` the yield finding it corroborates is already a
+// defect and already sets the exit code, so the severity here changes nothing
+// there; beside `ok` it is the difference between a silent healthy repo and a
+// daily accusation.
+//
 // Exported, and rendered from one place, because the generated doc quotes it
 // verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
-// agree, so a reword cannot leave the doc behind.
+// agree, so a reword cannot leave the doc behind. The returned string carries
+// no severity prefix — renderFinding() adds it — so the doc quotes the message
+// and not the envelope.
 function unresolvedFinding(unresolvedPct, verdict) {
   const gloss = verdict === 'ok'
     ? 'share of call edges with no first-party callee; verdict is ok, so this is a statistic, not a defect'
     : 'corroborates a resolver problem';
   return `graph unresolved ${unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — ${gloss}`;
+}
+
+// ── finding severity (#220) ─────────────────────────────────────────────────
+// health-check keeps ONE `findings` array and gates its exit code on a
+// per-finding severity rather than on emptiness.
+//
+//   defect — a state a named action repairs. Sets `healthy: false` and
+//            `exitCode: 1`, which is what socraticode-health.sh keys its whole
+//            session injection on.
+//   note   — a measurement no action changes. Reported, in the JSON and on
+//            stderr, and free.
+//
+// Why the severity rides in the finding STRING rather than in a new key or a
+// new element type: `findings` stays `string[]`, so `jq -r '.findings[]'` and
+// every substring match a consumer already wrote keep working. Two shapes were
+// weighed and rejected at #230's scoring gate, and are recorded here rather
+// than deleted because #207 revisits this seam when
+// giancarloerra/SocratiCode#112 ships an upstream resolution advisory:
+//
+//   - A second `observations` array. Cleaner in the abstract, but a JSON
+//     contract change every consumer of the driver's output has to learn.
+//   - Suppressing the neutral line on an `ok` verdict (#216's original part 2).
+//     Discards a figure an operator may want, and leaves a staleness finding
+//     (#225) with nowhere to sit that does not fail the check.
+//
+// A severity field admits an "acknowledged" level later without a second
+// contract change, which is the shape #207 needs.
+const SEVERITY = { defect: 'defect', note: 'note' };
+const NOTE_PREFIX = 'note: ';
+
+function renderFinding(f) {
+  return f.severity === SEVERITY.note ? `${NOTE_PREFIX}${f.message}` : f.message;
 }
 
 // codebase_graph_query on a file with no resolved edges: an ordinary sentence,
@@ -922,13 +964,18 @@ async function cmdIndex(projectPath) {
 // prose on stderr — the AGENTS.md script convention — so a shell hook can act
 // on it without parsing English.
 //
-// Exit 0 when there is nothing to report, 1 when there is. NOT 1 for a low-yield
-// graph alone... it is: a low-yield graph IS the finding, and the hook's whole
-// job is to surface it. What a `low` verdict must never do is fail the *install*
-// (Phase 6 keeps going and switches the policy to variant B), which is why this
-// is a separate command from `verify`.
+// Exit 0 when there is no DEFECT to report, 1 when there is (#220 — see the
+// SEVERITY block above; a note is reported and costs nothing). NOT 1 for a
+// low-yield graph alone... it is: a low-yield graph IS the finding, and the
+// hook's whole job is to surface it. What a `low` verdict must never do is fail
+// the *install* (Phase 6 keeps going and switches the policy to variant B),
+// which is why this is a separate command from `verify`.
 async function cmdHealthCheck(projectPath, probePath) {
   const findings = [];
+  // Every push names its severity at the call site, so the decision is made
+  // where the evidence is rather than by a rule applied afterwards.
+  const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
+  const note = (message) => findings.push({ severity: SEVERITY.note, message });
   const report = { projectPath, healthy: true, findings: [] };
 
   await withClient(async (client) => {
@@ -942,16 +989,16 @@ async function cmdHealthCheck(projectPath, probePath) {
 
     const health = await call('codebase_health', {});
     if (health.error) {
-      findings.push(`codebase_health failed: ${health.error}`);
+      defect(`codebase_health failed: ${health.error}`);
     } else {
       const problems = healthProblems(health.text);
       report.health = { problems };
-      for (const p of problems) findings.push(`infrastructure: ${p}`);
+      for (const p of problems) defect(`infrastructure: ${p}`);
     }
 
     const status = await call('codebase_status', { projectPath });
     if (status.error) {
-      findings.push(`codebase_status failed: ${status.error}`);
+      defect(`codebase_status failed: ${status.error}`);
     } else {
       // The signal #107 found reported nowhere: an "Incremental update — FAILED
       // (fetch failed)" recorded ~21h earlier, while every green light was lit.
@@ -963,9 +1010,9 @@ async function cmdHealthCheck(projectPath, probePath) {
         error: failed ? parseLastOpError(status.text) : null,
       };
       if (failed) {
-        findings.push(`last operation FAILED: ${report.lastOperation.error || 'see codebase_status'}`);
+        defect(`last operation FAILED: ${report.lastOperation.error || 'see codebase_status'}`);
       }
-      if (indexIncomplete(status.text)) findings.push('index is marked INCOMPLETE — a previous run was interrupted');
+      if (indexIncomplete(status.text)) defect('index is marked INCOMPLETE — a previous run was interrupted');
     }
 
     // ── declared ≠ indexed (#214) ────────────────────────────────────────────
@@ -990,7 +1037,7 @@ async function cmdHealthCheck(projectPath, probePath) {
       // rejects it, codebase_status then omits the artifact line, and every
       // reading reports a contented 0/0 — so it is a finding in its own right.
       report.manifest = { path: manifest.path, errors: manifest.errors };
-      findings.push(
+      defect(
         `${MANIFEST_NAME} is invalid, so the server ignores it and context search is absent entirely: ${manifest.errors[0]}`
       );
     } else if (manifest.present && manifest.count > 0) {
@@ -1029,7 +1076,7 @@ async function cmdHealthCheck(projectPath, probePath) {
           error: ctx.error,
         };
         if (done != null && done < declared) {
-          findings.push(
+          defect(
             `context artifacts ${done}/${declared} indexed — codebase_context failed (${ctx.error}), so the missing artifact cannot be named`
           );
         }
@@ -1049,20 +1096,20 @@ async function cmdHealthCheck(projectPath, probePath) {
           const named = unindexed.length
             ? unindexed.map((a) => `${a.name}: ${a.status || 'not indexed'}`).join('; ')
             : `codebase_context listed only ${listed.length} of them`;
-          findings.push(`context artifacts ${indexed}/${declared} indexed — ${named}`);
+          defect(`context artifacts ${indexed}/${declared} indexed — ${named}`);
         }
       }
     }
 
     const graph = await call('codebase_graph_status', { projectPath });
     if (graph.error) {
-      findings.push(`codebase_graph_status failed: ${graph.error}`);
+      defect(`codebase_graph_status failed: ${graph.error}`);
     } else {
       const y = graphYield(graph.text);
       report.graph = { ready: graphReady(graph.text), ...y };
-      if (!report.graph.ready) findings.push('graph is not READY');
+      if (!report.graph.ready) defect('graph is not READY');
       if (y.verdict === 'low') {
-        findings.push(`graph yield LOW — ${y.reason}; install the degraded Code Exploration Policy (variant B)`);
+        defect(`graph yield LOW — ${y.reason}; install the degraded Code Exploration Policy (variant B)`);
         // Confirmatory probe, as #107 asks: one graph query against a file the
         // caller knows has first-party imports. Its value is the *shape* of the
         // failure — an ordinary sentence, no error — which is what makes the
@@ -1076,24 +1123,45 @@ async function cmdHealthCheck(projectPath, probePath) {
             reply: probe.error ? null : probe.text.slice(0, 400),
           };
           if (report.probe.empty) {
-            findings.push(`probe confirms: codebase_graph_query on ${probePath} returned "No dependency information found" — empty, not an error`);
+            defect(`probe confirms: codebase_graph_query on ${probePath} returned "No dependency information found" — empty, not an error`);
           }
         }
       } else if (y.verdict === 'unknown') {
-        findings.push(`graph yield UNKNOWN — ${y.reason}`);
+        defect(`graph yield UNKNOWN — ${y.reason}`);
       }
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
-        findings.push(unresolvedFinding(y.unresolvedPct, y.verdict));
+        note(unresolvedFinding(y.unresolvedPct, y.verdict));
       }
     }
   });
 
-  report.findings = findings;
-  report.healthy = findings.length === 0;
+  // One array, both severities, in encounter order — the shape the JSON has
+  // always had. `renderFinding` is what makes the severity legible: a note
+  // carries its marker into the string, so nothing has to be cross-referenced
+  // against a second array or a parallel key (#220).
+  const defects = findings.filter((f) => f.severity === SEVERITY.defect);
+  const notes = findings.filter((f) => f.severity === SEVERITY.note);
+  report.findings = findings.map(renderFinding);
+  report.healthy = defects.length === 0;
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-  if (findings.length) {
+
+  if (defects.length) {
     console.error('[driver] SocratiCode health findings:');
-    for (const f of findings) console.error(`  - ${f}`);
+    for (const f of defects) console.error(`  - ${f.message}`);
+  } else {
+    console.error('[driver] SocratiCode health: nothing to report');
+  }
+  // Notes print on both paths, and always with their marker. socraticode-
+  // health.sh greps stderr for `  - ` lines and injects them into the session
+  // under a heading that says "findings", so an unmarked statistic there is
+  // #220 rebuilt one layer down. When notes are all there is, the exit code is
+  // 0, the hook prints nothing at all, and the figure survives only in the log
+  // and in the JSON — which is where an operator who wants it can find it.
+  if (notes.length) {
+    console.error('[driver] notes — reported, not defects; these do not set the exit code:');
+    for (const f of notes) console.error(`  - ${renderFinding(f)}`);
+  }
+  if (defects.length) {
     // exitCode, not exit(): node's stdout is ASYNC on a pipe, and process.exit()
     // abandons whatever has not drained — measured at 64 KiB through a pipe
     // against 200 KiB written. The hook redirects to a file (synchronous, so it
@@ -1102,9 +1170,7 @@ async function cmdHealthCheck(projectPath, probePath) {
     // in the findings case — the one that matters. Setting the code lets the
     // process leave normally once the write has flushed.
     process.exitCode = 1;
-    return;
   }
-  console.error('[driver] SocratiCode health: nothing to report');
 }
 
 async function cmdVerify(projectPath) {
@@ -1189,8 +1255,12 @@ Commands:
   health-check
            infra triage on a cadence: codebase_health + codebase_status +
            codebase_graph_status, with the graph measured by EDGE YIELD rather
-           than by READY. JSON verdict on stdout, findings on stderr; exit 0
-           when there is nothing to report, 1 when there is.
+           than by READY. JSON verdict on stdout, findings on stderr.
+           Each finding carries a SEVERITY: a defect is a state a named action
+           repairs and sets exit 1; a note is a measurement no action changes,
+           is prefixed "note: " in both the JSON and on stderr, and costs
+           nothing. Exit 0 when there is no defect — so a repo whose only
+           finding is a note stays silent through socraticode-health.sh.
   resolve  print the resolved server launch command as JSON and exit — does not
            start the server (no Docker, no network); use it to debug resolution
   validate-manifest
@@ -1308,6 +1378,8 @@ export {
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   unresolvedFinding,
+  // finding severity (#220)
+  SEVERITY, NOTE_PREFIX, renderFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
