@@ -72,7 +72,7 @@ policy file is an always-loaded policy file whether it is called `AGENTS.md` or
 a skill is added, so it is `len(SKILLS) - len(SKILL_MD_RATCHETS)` and not a
 figure to trust from memory.
 
-The five that do not are named in `SKILL_MD_RATCHETS`, each with the reason it
+The four that do not are named in `SKILL_MD_RATCHETS`, each with the reason it
 cannot, because #141 chose *shared standard plus named exceptions* over a
 per-skill table. A table of eighteen numbers seeded at current size stops growth
 without ever creating pressure toward the standard, and buries the outliers; a
@@ -206,7 +206,7 @@ RATIO_KNOB = REPO_ROOT / ".skills" / "context-token-ratio"
 # ratcheting one silently ratchets the other.
 SKILL_MD_STANDARD = 6_000
 
-# The five skills that cannot meet the standard, each with the reason. Set at
+# The four skills that cannot meet the standard, each with the reason. Set at
 # max(estimate, exact) rounded up to the next 50 (see module docstring).
 # Lower one when a later run finds it smaller; never raise one.
 SKILL_MD_RATCHETS = {
@@ -232,11 +232,17 @@ SKILL_MD_RATCHETS = {
     # two hook wirings, and a blocking index verified by edge yield. Grew during
     # Batch A of #144 (#107's yield-gate table, #115's two-variant Phase 3).
     "init-socraticode": 10_050,
-    # The submodule + symlink pattern in full, including the two-level chain,
-    # the doctor's self-heal, and the pin file. Carries no references/ at all,
-    # so every word of it is always-loaded by construction — the one skill where
-    # demotion is the whole remaining move.
-    "managing-skills": 8_750,
+    # managing-skills was here at 8,750, justified by "carries no references/ at
+    # all, so every word of it is always-loaded by construction — the one skill
+    # where demotion is the whole remaining move." That described the directory
+    # listing, not the content: the move was always available, it just needed a
+    # references/ to exist first. Two passes created one and demoted five units
+    # — the installer internals, the manual uninstall, the pin file, the auth
+    # ladders, and the doctor's design rationale — taking it 8,685 -> 5,627
+    # exact / 5,588 estimate, a 35% cut, both readings now UNDER
+    # SKILL_MD_STANDARD. prove-no-loss.sh reported lost: 0 and duplicated: 0 on
+    # both passes. The entry is deleted rather than lowered: the file is held to
+    # the same 6,000 every other skill is, and needs no exception at all.
     # A ten-step orchestration procedure with scoring rubrics, conflict-zone
     # analysis, and batch-plan templates. The largest file in the repo. See the
     # outlier note below. Bound by its ESTIMATE, which reads 1,252 higher than

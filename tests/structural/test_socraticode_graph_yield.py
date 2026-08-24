@@ -346,6 +346,233 @@ class TestUnresolvedFindingIsVerdictAware:
         )
 
 
+# ── the severity harness (#220) ──────────────────────────────────────────────
+# A stub MCP server, scripted per tool. Deliberately a local copy rather than an
+# import from `test_context_artifact_parity.py`: AGENTS.md keeps structural
+# rules in separate files so parallel worktrees merge clean, which is the same
+# reason `_graph_health` above is a local six-liner. The two copies pin two
+# different properties and are free to drift.
+
+STUB_SERVER = """
+import { readFileSync } from 'node:fs';
+const replies = JSON.parse(readFileSync(process.env.STUB_REPLIES, 'utf8'));
+let buf = '';
+const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+  let nl;
+  while ((nl = buf.indexOf('\\n')) >= 0) {
+    const line = buf.slice(0, nl).trim();
+    buf = buf.slice(nl + 1);
+    if (!line) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.id == null) continue;
+    if (msg.method !== 'tools/call') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); continue; }
+    const text = replies[msg.params.name];
+    if (text == null) {
+      send({ jsonrpc: '2.0', id: msg.id, error: { message: `stub: no reply for ${msg.params.name}` } });
+      continue;
+    }
+    send({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text }] } });
+  }
+});
+"""
+
+HEALTH_OK = "Docker: ✓ running\nQdrant: ✓ healthy\nOllama: ✓ nomic-embed-text present"
+HEALTH_DOWN = "Docker: ✓ running\nQdrant: ✗ container not running\nOllama: ✓ present"
+
+STATUS_CLEAN = """Project: /repo
+Status: green
+Indexed chunks: 1252
+
+Last operation: Full index — completed
+"""
+
+# `ok` on yield — 1512 edges across 374 files — and 61.7% unresolved beside it.
+# That pairing is #220's whole case: a framework-heavy repo with a provably
+# exact import graph, told once a day that it has "health findings".
+GRAPH_OK_HIGH_UNRESOLVED = """Code Graph Status
+
+Status: READY
+Files (nodes): 374
+Dependencies (edges): 1512
+Symbols: 3767
+Call edges: 23237
+Unresolved: 61.7%
+"""
+
+
+def _health_check(tmp_path: Path, project: Path, replies: dict) -> tuple:
+    """Run `mcp-driver.mjs health-check` against a scripted stub server."""
+    stub = tmp_path / "stub-server.mjs"
+    stub.write_text(STUB_SERVER)
+    reply_file = tmp_path / "replies.json"
+    reply_file.write_text(json.dumps(replies))
+    result = subprocess.run(
+        ["node", str(DRIVER), "health-check", str(project)],
+        capture_output=True, text=True, timeout=60,
+        env=_clean_env(
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(reply_file),
+            HEALTH_TIMEOUT_MS="30000",
+        ),
+    )
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        report = None
+    return result, report
+
+
+class TestANeutralFindingDoesNotFailTheCheck:
+    """#220: #216 fixed the wording, not the envelope.
+
+    The `unresolvedPct` line reads neutrally beside `verdict: "ok"` now — but it
+    still landed in `findings`, and any non-empty `findings` set
+    `report.healthy = false` and `process.exitCode = 1`. So a healthy repo was
+    still handed `[driver] SocratiCode health findings:` once per UTC day by
+    `socraticode-health.sh`, which keys its whole session injection on that exit
+    code. The text no longer accused; the envelope still did.
+
+    The fix keeps ONE `findings` array — a second `observations` array would be
+    a JSON contract change every consumer would have to learn — and gates the
+    exit code on a per-finding **severity** instead of on emptiness. A `note`
+    is a measurement no action changes; a defect is a state a named action
+    repairs. Suppressing the line on `ok` was rejected too: it discards a figure
+    an operator may want, and #225's staleness finding needs somewhere to live.
+
+    Severity is carried in the finding string itself (`note: …`) rather than in
+    a new key or a new element type, so `findings` stays `string[]` and a
+    consumer doing `jq -r '.findings[]'` keeps working.
+    """
+
+    @requires_node
+    def test_a_neutral_statistic_alone_exits_zero(self, tmp_path: Path) -> None:
+        project = tmp_path / "repo"
+        project.mkdir()
+        result, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_OK,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        assert report is not None, result.stdout + result.stderr
+        assert result.returncode == 0, (
+            "a verdict-`ok` graph with a high unresolvedPct still exited 1, so "
+            "socraticode-health.sh still injects `SocratiCode health findings:` "
+            f"into every session of a healthy repo (#220)\n{result.stderr}"
+        )
+        assert report["healthy"] is True, report
+
+    @requires_node
+    def test_the_statistic_is_not_discarded(self, tmp_path: Path) -> None:
+        """The rejected option 3 was to drop the line on an `ok` verdict."""
+        project = tmp_path / "repo"
+        project.mkdir()
+        _, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_OK,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        assert any("61.7%" in f for f in report["findings"]), (
+            "the unresolvedPct figure vanished from the report. It is worth "
+            f"having on a healthy graph too; only its cost changes: {report}"
+        )
+
+    @requires_node
+    def test_the_note_says_it_is_one(self, tmp_path: Path) -> None:
+        """`healthy: true` beside a populated `findings` needs an explanation.
+
+        Without a per-entry marker a consumer reading the JSON is back where
+        #220 started — a list called `findings` on a repo with nothing wrong.
+        """
+        project = tmp_path / "repo"
+        project.mkdir()
+        _, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_OK,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        line = next(f for f in report["findings"] if "61.7%" in f)
+        assert line.startswith("note: "), (
+            "the unresolvedPct entry carries no severity marker, so nothing in "
+            f"the JSON distinguishes it from a defect: {line!r}"
+        )
+
+    @requires_node
+    def test_a_real_defect_beside_it_still_exits_one(self, tmp_path: Path) -> None:
+        """Severity gates the exit code; it must not soften a real finding."""
+        project = tmp_path / "repo"
+        project.mkdir()
+        result, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_DOWN,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert report["healthy"] is False, report
+        assert any("Qdrant" in f for f in report["findings"]), report
+
+    @requires_node
+    def test_the_note_keeps_its_marker_beside_a_defect(self, tmp_path: Path) -> None:
+        """Severity is a property of the finding, not of the run."""
+        project = tmp_path / "repo"
+        project.mkdir()
+        _, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_DOWN,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        note = next(f for f in report["findings"] if "61.7%" in f)
+        defect = next(f for f in report["findings"] if "Qdrant" in f)
+        assert note.startswith("note: "), note
+        assert not defect.startswith("note: "), (
+            f"an infrastructure failure was demoted to a note: {defect!r}"
+        )
+
+    @requires_node
+    def test_the_hooks_defect_lines_exclude_the_note(self, tmp_path: Path) -> None:
+        """`socraticode-health.sh` greps stderr for `  - ` and prints those.
+
+        A note has to be legible there as a note, or the session injection
+        reports a statistic under a heading that says findings — which is the
+        sentence #220 was filed about, one layer down.
+        """
+        project = tmp_path / "repo"
+        project.mkdir()
+        result, _ = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_DOWN,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        bullets = [
+            ln for ln in result.stderr.splitlines() if re.match(r"^\s+- ", ln)
+        ]
+        assert any("Qdrant" in ln for ln in bullets), result.stderr
+        stat = next(ln for ln in bullets if "61.7%" in ln)
+        assert "note:" in stat, (
+            "the hook would print this line under `findings from today's "
+            f"once-per-day check` with nothing marking it a statistic: {stat!r}"
+        )
+
+    def test_the_doc_states_what_a_note_costs(self) -> None:
+        """A reader who sees the line must be able to look up its price.
+
+        Pinned as concepts rather than as a sentence, like every other pin on
+        this section: the point is that the doc says the neutral reading is a
+        note and that a note does not set the exit code, not that it says it in
+        any particular words.
+        """
+        section = _flowed(_graph_health(DOC_REF.read_text())).lower()
+        assert "note" in section and "exit code" in section, (
+            f"references/{DOC_REF.name}'s **Graph health** section quotes the "
+            "neutral `unresolvedPct` finding without saying it is a note and "
+            "costs nothing — so a reader still cannot tell whether the daily "
+            "hook will report it (#220)"
+        )
+
+
 class TestSkillGatesOnYield:
     """Phase 6 must stop declaring victory on a status token."""
 
@@ -587,7 +814,38 @@ class TestHookMeasuresTheIndexedProject:
     main checkout are told to do feature work in worktrees, so the false report
     is the COMMON case. A once-per-day reporter that cries wolf on most
     sessions gets tuned out, and then the one true finding scrolls past too.
+
+    **Three halves of one property, pinned together on purpose (#226).** #180
+    fixed the hook. It left `references/socraticode-doc.md` handing a reader
+    `health-check .` two sections above the hook it describes — the literal
+    #180 removed — and left every consumer who had already copied that line
+    into their own `docs/` broken. Fixing only the doc leaves the copies; fixing
+    only the driver leaves the doc teaching a spelling that happens to work for
+    reasons the reader cannot see. So the driver resolves a relative argument
+    the way the hook does, the doc shows the explicit spelling, and both are
+    asserted here against the same worktree fixtures rather than against a
+    second set that could drift from these.
+
+    The failure is worse under a hand-run than under the hook: the hook is
+    unattended and silent when clean, whereas a human runs the documented
+    command precisely when they already suspect the graph — and is handed
+    confirmation of a problem that does not exist.
     """
+
+    @staticmethod
+    def _validated(cwd: Path, *args: str) -> tuple:
+        """`validate-manifest` names the path it resolved, with no server.
+
+        The cheapest observation of the driver's own resolution: it prints the
+        manifest path it is about to stat, needs no Docker, no network and no
+        MCP server, and shares its argv handling with every other command.
+        """
+        result = subprocess.run(
+            ["node", str(DRIVER), "validate-manifest", *args],
+            cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            env=_clean_env(),
+        )
+        return result, json.loads(result.stdout)
 
     @staticmethod
     def _measured(cwd: Path, stub: Path, out: Path, **env: str) -> str:
@@ -658,6 +916,140 @@ class TestHookMeasuresTheIndexedProject:
         assert second.stdout == "", (
             "a worktree session re-reported a finding the main checkout had "
             f"already reported today; got {second.stdout!r}"
+        )
+
+    # ── the driver half (#226) ───────────────────────────────────────────────
+
+    @requires_node
+    def test_a_relative_argument_resolves_to_the_main_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        """`health-check .` from a worktree must not name the worktree.
+
+        This is the line consumers copied out of the doc before #180, and it is
+        still live in their `docs/`. The hook can only fix its own invocation;
+        the driver fixes theirs.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        _, report = self._validated(wt, ".")
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            "a relative path argument was resolved against the worktree, which "
+            "SocratiCode never indexed — the confident wrong answer #180 "
+            f"removed from the hook (#226). Got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_no_argument_resolves_the_same_way(self, tmp_path: Path) -> None:
+        """`projectPath defaults to the current working directory` is `.`."""
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        _, report = self._validated(wt)
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            "an omitted argument defaults to cwd and must take the same route "
+            f"as an explicit `.`; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_an_absolute_argument_is_taken_verbatim(self, tmp_path: Path) -> None:
+        """The escape hatch, and the hook's own contract.
+
+        `socraticode-health.sh` resolves the main checkout itself and passes it
+        absolute. If the driver remapped absolute paths too the hook would
+        still be right by luck — and an operator deliberately asking about a
+        worktree would have no way to say so.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        _, report = self._validated(repo, str(wt))
+        assert Path(report["manifest"]).parent.resolve() == wt.resolve(), (
+            "an absolute argument was rewritten. It is the only spelling that "
+            f"can name a worktree on purpose; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_the_main_checkout_still_resolves_to_itself(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path, commit=True)
+        _, report = self._validated(repo, ".")
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            f"the main checkout must resolve to itself; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_a_directory_outside_a_repo_is_left_alone(self, tmp_path: Path) -> None:
+        """No git, no remap. The driver is not only ever run inside a repo."""
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        _, report = self._validated(plain, ".")
+        assert Path(report["manifest"]).parent.resolve() == plain.resolve(), (
+            f"a non-repo directory was rewritten; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_a_subdirectory_resolves_to_the_checkout_root(
+        self, tmp_path: Path
+    ) -> None:
+        """`.` inside `src/` is the same class of wrong answer as `.` in a worktree.
+
+        SocratiCode indexes the project root; a subdirectory is a path it never
+        saw, and `resolve()` alone would hand it over intact.
+        """
+        repo = _repo(tmp_path, commit=True)
+        (repo / "src").mkdir()
+        _, report = self._validated(repo / "src", ".")
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            f"a subdirectory was measured as its own project; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_the_substitution_is_announced(self, tmp_path: Path) -> None:
+        """A silent path rewrite is the same disease in the other direction.
+
+        The driver would then be answering about a path the caller did not
+        name, with nothing in the output saying so.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        result, _ = self._validated(wt, ".")
+        assert str(repo.resolve()) in result.stderr, (
+            "the driver silently measured a different path than the one it was "
+            f"given; stderr said: {result.stderr!r}"
+        )
+
+    @requires_node
+    def test_no_announcement_when_nothing_moved(self, tmp_path: Path) -> None:
+        """A line printed on every run is a line nobody reads."""
+        repo = _repo(tmp_path, commit=True)
+        result, _ = self._validated(repo, ".")
+        assert "worktree" not in result.stderr.lower(), (
+            f"the no-op resolution announced itself; stderr: {result.stderr!r}"
+        )
+
+    # ── the doc half (#226) ──────────────────────────────────────────────────
+
+    def test_the_doc_does_not_hand_a_reader_the_literal_dot(self) -> None:
+        section = _graph_health(DOC_REF.read_text())
+        assert not re.search(r"health-check\s+\.\s*$", section, re.M), (
+            f"references/{DOC_REF.name}'s **Graph health** section still "
+            "documents `health-check .` — the exact argument #180 removed from "
+            "socraticode-health.sh two sections below it. From a worktree that "
+            "asks about a project SocratiCode never indexed and reports a "
+            "healthy index as broken (#226)."
+        )
+
+    def test_the_doc_shows_the_resolution_the_hook_uses(self) -> None:
+        """`--show-toplevel` is the near miss, and it is wrong in a worktree.
+
+        It yields the worktree root, not the main checkout, so a doc that
+        reached for the obvious spelling would still name an unindexed path.
+        """
+        section = _graph_health(DOC_REF.read_text())
+        assert "--git-common-dir" in section, (
+            f"references/{DOC_REF.name}'s **Graph health** section must show "
+            "the same resolution `socraticode-health.sh` uses — dirname of "
+            "`git rev-parse --path-format=absolute --git-common-dir`. "
+            "`--show-toplevel` is the plausible-looking wrong answer: in a "
+            "worktree it names the worktree (#226)."
         )
 
 

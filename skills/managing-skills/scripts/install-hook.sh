@@ -35,8 +35,10 @@
 # file contains no per-hook branch: every hook-specific value arrives on the
 # command line, and a caller that needs a new one adds a flag rather than a
 # case arm. install-refresh.sh is a wrapper that supplies refresh's constants,
-# because its path is named in README.md, docs/SKILLS.md, doctor.sh's repair
-# advice and in cohort repos.
+# because its path is named in README.md, docs/SKILLS.md and in cohort repos.
+# Not in doctor.sh's repair advice — that named it until #224, which taught the
+# doctor to read each hook's arguments from a <hook>.install manifest and print
+# THIS script instead.
 #
 # Idempotent: a re-run repairs whichever half is missing and reports the other
 # unchanged. It never commits.
@@ -78,8 +80,21 @@ Options:
   --note <text>        Extra text printed after a successful install.
   --check      Report what is installed; change nothing. The contract is TWO
                artifacts, so both are reported independently and the exit code
-               reflects either being absent.
-               Exit 0 both present, 3 either missing or not repaired.
+               reflects either being absent. The registration half reports HOW
+               MANY entries it found, because two run the hook twice a session.
+               Exit 0 both present, 3 either missing, duplicated or not repaired.
+  --allow-unresolved
+               --check only. Accept a hook symlink whose SHAPE is right — a
+               relative link into skills-vendor/ — but which does not resolve
+               because the vendor content is not checked out. That is the
+               routine state in CI and in a fresh worktree, and without this
+               --check calls a correct install DANGLING there and cannot gate
+               anything (#227). It relaxes resolution and nothing else: an
+               absolute target, a target outside skills-vendor/, a link that
+               misses a source which IS present, a missing registration and a
+               COPY all still exit 3. The copy especially — where vendor
+               content may be absent, a copy is the one form that resolves, so
+               no resolution check can see it.
   --uninstall  Remove the hook file AND the settings.json registration.
   --quiet, -q  Suppress progress messages (errors and --check still print).
   -h, --help   Show this help and exit 0.
@@ -93,7 +108,9 @@ What it does:
   command, so an entry written in an older form (pre-#110 cwd-relative, or a
   legacy install naming the script file) is recognised and replaced instead of
   duplicated. Markers are per-hook precisely so one hook's strip cannot evict a
-  sibling's entry from the same array.
+  sibling's entry from the same array — and the strip removes matching HOOKS,
+  not whole matcher groups, so that holds for a group holding several hooks and
+  not only for the one-hook groups this installer writes (#222).
 
   Neither step clobbers unrelated content: other SessionStart hooks, other hook
   events, and every other key in settings.json are preserved.
@@ -106,8 +123,8 @@ Exit codes:
   0  installed, repaired, unchanged, or uninstalled
   1  usage error, not in a consumer repo, no vendored hook script, no jq, or
      settings.json could not be read or rewritten
-  3  --check only: an artifact is missing, or installed in a form this would
-     repair
+  3  --check only: an artifact is missing, registered more than once, or
+     installed in a form this would repair
 USAGE
 }
 
@@ -117,6 +134,7 @@ HOOK_NAME=""
 SKILL=""
 MARKERS=()
 COPY_FALLBACK=0
+ALLOW_UNRESOLVED=0
 LABEL=""
 NOTE=""
 
@@ -147,6 +165,7 @@ while [ $# -gt 0 ]; do
     --label) need_value "$1" $#; LABEL="$2"; shift 2 ;;
     --note) need_value "$1" $#; NOTE="$2"; shift 2 ;;
     --copy-fallback) COPY_FALLBACK=1; shift ;;
+    --allow-unresolved) ALLOW_UNRESOLVED=1; shift ;;
     --check) MODE="check"; shift ;;
     --uninstall) MODE="uninstall"; shift ;;
     --quiet|-q) QUIET=1; shift ;;
@@ -162,6 +181,12 @@ done
   usage >&2; exit 1; }
 reject_unless_token "--hook" "$HOOK_NAME"
 reject_unless_token "--skill" "$SKILL"
+
+# It changes what --check tolerates and nothing about an install. Accepting it
+# silently on an install run would imply otherwise, and the caller most likely to
+# pass it is a CI job whose whole point is that its assertions mean what they say.
+[ "$ALLOW_UNRESOLVED" = "0" ] || [ "$MODE" = "check" ] || {
+  echo "install-hook: --allow-unresolved requires --check" >&2; exit 1; }
 
 # The default is the basename, which is what install-refresh.sh matched on
 # before this file existed — so a caller that passes no marker gets exactly the
@@ -219,6 +244,50 @@ markers_json() {
   printf '[%s]' "${out#,}"
 }
 MARKERS_JSON="$(markers_json)"
+
+# The dedupe strip, defined ONCE and used by both write paths.
+#
+# It reads at HOOK granularity, matching matching_commands below. The two used
+# to disagree: the reader scanned every command in every group, and both writers
+# dropped whole matcher GROUPS keyed on `(.hooks // [])[0].command` — index 0
+# only. A settings.json where a matcher group holds more than one hook then got
+# the wrong answer in both directions (#222):
+#
+#   A. The marker matched at index 0, so `map(select(...))` over
+#      .hooks.SessionStart deleted the entire group and every sibling hook
+#      registered beside it. Silent: the install reported success, the evicted
+#      hook's symlink stayed a valid file, and .skills/doctor.sh cannot see a
+#      missing registration. CannObserv/watcher lost its daily submodule refresh
+#      to an init-socraticode install exactly this way.
+#   B. The marker matched at index >= 1, so the [0] probe never saw it, the
+#      group survived, and the append wrote a SECOND registration — while
+#      is_registered (which does scan every index) made the run announce it was
+#      "upgrading the registration". The stranded duplicate the dedupe-then-
+#      append design exists to prevent, produced by the dedupe.
+#
+# So this strips the matching hooks out of each group and then drops any group
+# THIS strip emptied. The `$n == 0` clause is what keeps that from over-reaching:
+# a group that arrived already empty was not ours to delete, and neither is one
+# whose .hooks is absent or not an array — the contract is that unrelated
+# content survives, and a malformed entry is still someone's content.
+#
+# `.command?` rather than `.command`: an element that is not an object would
+# otherwise abort the whole rewrite, and a filter that cannot survive junk in
+# the file it is repairing is the wrong shape for a repair tool.
+#
+# $m is a jq variable bound by --argjson, not a shell one.
+# shellcheck disable=SC2016
+STRIP_MATCHING='
+  def strip_matching($m):
+    map(
+      if (.hooks | type) == "array"
+      then (.hooks | length) as $n
+         | (.hooks |= map(select(((.command? // "") | tostring) as $c
+             | ($m | any(. as $t | $c | contains($t))) | not)))
+         | select($n == 0 or (.hooks | length) > 0)
+      else . end
+    );
+'
 
 # First matching vendor wins, matching sync_self() in doctor.sh and the `break`
 # in skills-submodule-update.sh. When skills-vendor/ is absent the glob stays
@@ -323,13 +392,38 @@ fi
 # The command is returned rather than a boolean so the caller can ask which FORM
 # it is in: an install predating the $CLAUDE_PROJECT_DIR form (#110) is
 # cwd-relative and still a real registration.
-matching_commands() {
+#
+# The selector is a constant and the projection is the argument, because two
+# callers want the same selection and different things from it: the commands
+# themselves, and how MANY there are. Spelling the selector twice is the same
+# reader/writer drift one level in — and it is a strip filter written twice that
+# #222 is about.
+# shellcheck disable=SC2016
+MATCHING_SELECT='[.hooks.SessionStart[]?.hooks[]?.command // ""]
+      | map(select(. as $c | $m | any(. as $t | $c | contains($t))))'
+
+matching() {
   [ -f "$SETTINGS" ] || return 0
   have_jq || return 0
-  jq -r --argjson m "$MARKERS_JSON" \
-     '[.hooks.SessionStart[]?.hooks[]?.command // ""]
-      | map(select(. as $c | $m | any(. as $t | $c | contains($t)))) | .[]' \
+  jq -r --argjson m "$MARKERS_JSON" "$MATCHING_SELECT $1" \
       "$SETTINGS" 2>/dev/null || return 2
+}
+
+matching_commands() { matching '| .[]'; }
+
+# How many, not merely whether. --check said `yes` for one entry and for two, so
+# a repo left holding a stranded duplicate — the state #222's group-scoped strip
+# produced — read as healthy, while the hook ran once per entry every session.
+# The reader already scanned every index; only the report threw the number away.
+#
+# Prints 0 rather than nothing when there is no settings.json or no jq, so the
+# caller's arithmetic never sees an empty string; --check's have_jq branch runs
+# before this value is used, so 0 is never mistaken for an answer.
+matching_count() {
+  local out rc=0
+  out="$(matching '| length')" || rc=$?
+  [ "$rc" -eq 0 ] || return 2
+  printf '%s' "${out:-0}"
 }
 
 # The first match, for the callers that ask "is it registered at all" and
@@ -396,9 +490,49 @@ if [ "$MODE" = "check" ]; then
   if is_linked; then
     echo "hook symlink:       $HOOK_REL -> $(readlink "$HOOK")"
   elif [ -L "$HOOK" ]; then
-    echo "hook symlink:       DANGLING ($HOOK_REL) — run .skills/doctor.sh, or"
-    echo "                    git submodule update --init --recursive"
-    rc=3
+    # SHAPE and RESOLUTION are different questions, and in a submodule-less
+    # checkout they have different answers (#227). `actions/checkout` omits
+    # skills-vendor/ deliberately (init-project-fastapi's github-ci.md says so)
+    # and `git worktree add` never populates it, so every vendor symlink dangles
+    # there — and a check that requires resolution calls a correct install
+    # broken in exactly the place a consumer most wants to gate on it.
+    #
+    # Shape is checkable everywhere and is what carries the copy-vs-symlink
+    # guarantee; resolution is only checkable where the content exists. So both
+    # are reported, and --allow-unresolved accepts the second being unanswerable
+    # WITHOUT relaxing the first.
+    link_target="$(readlink "$HOOK")"
+    echo "hook symlink:       DANGLING ($HOOK_REL) -> $link_target"
+    case "$link_target" in
+      /*) shape_ok=0 ;;
+      *skills-vendor/*) shape_ok=1 ;;
+      *) shape_ok=0 ;;
+    esac
+    if [ -n "$(vendored_src)" ]; then
+      # The vendor IS checked out and the link still misses it, so "the content
+      # is not here" is not the explanation and --allow-unresolved must not
+      # pretend it is — that would make the flag mean "never mind the symlink".
+      echo "                    A vendored $HOOK_NAME is present, so the link is"
+      echo "                    pointing somewhere else. Re-run $RERUN."
+      rc=3
+    elif [ "$shape_ok" = "0" ]; then
+      echo "                    The target is not a relative path into"
+      echo "                    skills-vendor/, so no submodule checkout will"
+      echo "                    resolve it. Re-run $RERUN."
+      rc=3
+    elif [ "$ALLOW_UNRESOLVED" = "1" ]; then
+      echo "                    Shape is correct — a relative symlink into"
+      echo "                    skills-vendor/ — and only the vendor content is"
+      echo "                    absent. Accepted: --allow-unresolved."
+    else
+      echo "                    Shape is correct — a relative symlink into"
+      echo "                    skills-vendor/ — and only the vendor content is"
+      echo "                    absent. Routine in CI and in a fresh worktree:"
+      echo "                    pass --allow-unresolved to accept it. Otherwise"
+      echo "                    run .skills/doctor.sh, or"
+      echo "                    git submodule update --init --recursive"
+      rc=3
+    fi
   elif [ -f "$HOOK" ]; then
     # A copy. .skills/doctor.sh cannot see this state at all — it scans for
     # DANGLING symlinks, and a copy is a perfectly valid regular file — so this
@@ -412,6 +546,21 @@ if [ "$MODE" = "check" ]; then
       echo "                    exists, so re-run $RERUN to"
       echo "                    replace it with a symlink."
       rc=3
+    elif [ "$ALLOW_UNRESOLVED" = "1" ]; then
+      # The inversion --allow-unresolved exists to catch (#227). Where vendor
+      # content may be absent, a copy is the one variant that RESOLVES — so
+      # every resolution-based check passes on exactly the install #179 argues
+      # against, and fails on the symlink this installer prescribes. The flag is
+      # the caller saying absence is expected, which is precisely why absence
+      # can no longer be read as "this repo vendors nothing to link at".
+      echo "                    upstream fixes never arrive. --allow-unresolved"
+      echo "                    says vendor content may be absent here, so a"
+      echo "                    missing source is no longer evidence that this"
+      echo "                    repo vendors none — and a copy is the one form"
+      echo "                    that resolves in that state, so no resolution"
+      echo "                    check can tell you this. Re-run $RERUN"
+      echo "                    where the vendor tree is checked out."
+      rc=3
     else
       echo "                    upstream fixes arrive only on a re-run of the"
       echo "                    installer. Expected: this repo vendors no"
@@ -423,8 +572,8 @@ if [ "$MODE" = "check" ]; then
   fi
   # Read once, and keep the status: "not registered" and "could not tell" are
   # different answers and a probe people are told to trust must not merge them.
-  hc_rc=0
-  registered_cmd="$(hook_command)" || hc_rc=$?
+  mc_rc=0
+  registered_n="$(matching_count)" || mc_rc=$?
   if ! have_jq; then
     # UNKNOWN, not "MISSING" and not "yes". Reading the hook list needs jq, and
     # the whole-file grep that used to stand in for it is what made this report
@@ -435,7 +584,7 @@ if [ "$MODE" = "check" ]; then
     echo "                    re-run; a guess here is what this check exists to"
     echo "                    replace."
     rc=3
-  elif [ "$hc_rc" -ne 0 ]; then
+  elif [ "$mc_rc" -ne 0 ]; then
     echo "SessionStart entry: UNREADABLE — $SETTINGS_REL is not valid JSON, so"
     echo "                    the hook list cannot be read. Reporting MISSING"
     echo "                    here would send you to re-run this installer,"
@@ -446,8 +595,17 @@ if [ "$MODE" = "check" ]; then
     # code instead of its own documented 3.
     jq . "$SETTINGS" 2>&1 >/dev/null | sed 's/^/                    /' || true
     rc=3
-  elif [ -n "$registered_cmd" ]; then
-    echo "SessionStart entry: yes (in $SETTINGS_REL)"
+  elif [ "$registered_n" -gt 1 ]; then
+    # Reported, not merely counted. Two registrations run the hook twice every
+    # session, and #222's group-scoped strip is how a repo arrived here without
+    # anyone doing anything wrong.
+    echo "SessionStart entry: $registered_n entries in $SETTINGS_REL — the hook is"
+    echo "                    registered more than once, so it runs $registered_n times"
+    echo "                    every session. Re-run $RERUN"
+    echo "                    to collapse them to one."
+    rc=3
+  elif [ "$registered_n" -eq 1 ]; then
+    echo "SessionStart entry: yes (1 entry in $SETTINGS_REL)"
   elif [ -L "$HOOK" ] || [ -f "$HOOK" ]; then
     # The half-installed state this script exists for. Say what it costs, not
     # just what is absent — "MISSING" alone reads as cosmetic next to a hook
@@ -513,9 +671,8 @@ if [ "$MODE" = "uninstall" ]; then
     # shellcheck disable=SC2016
     settings_rewrite "removed the SessionStart entry from $SETTINGS_REL" \
       --argjson m "$MARKERS_JSON" \
-      'if .hooks.SessionStart then
-         .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
-           | tostring | . as $c | ($m | any(. as $t | $c | contains($t))) | not))
+      "$STRIP_MATCHING"'if .hooks.SessionStart then
+         .hooks.SessionStart |= strip_matching($m)
        else . end'
   fi
   log "not committed — review and commit with your normal gate."
@@ -623,10 +780,9 @@ else
   # shellcheck disable=SC2016
   settings_rewrite "registered the SessionStart entry in $SETTINGS_REL" \
     --argjson m "$MARKERS_JSON" --arg cmd "$HOOK_COMMAND" \
-    '(.hooks //= {}) |
+    "$STRIP_MATCHING"'(.hooks //= {}) |
      (.hooks.SessionStart //= []) |
-     .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
-       | tostring | . as $c | ($m | any(. as $t | $c | contains($t))) | not)) |
+     .hooks.SessionStart |= strip_matching($m) |
      .hooks.SessionStart += [{
        "matcher": ".*",
        "hooks": [{

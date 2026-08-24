@@ -110,6 +110,16 @@ verbatim if it did not fire.
   only per-artifact index status there is — `codebase_status` gives a count
   and never a name — then re-run `codebase_context_index`. The once-per-day
   health check reports this gap too, and names the artifact.
+  A third diagnosis has no empty result to warn you at all: the artifact is
+  indexed, the answer arrives, and it is **stale**. Nothing guarantees a
+  re-index when the source changes, so an edited file — or a new file under a
+  directory artifact like `docs/plans/` — leaves the count at N/N while search
+  answers from the old chunks. Measured: three of one repo's fourteen artifacts
+  were behind their sources at a moment this check reported `14/14`.
+  `codebase_context` prints each artifact's index time beside its status;
+  compare it against the source, and for a directory against its **newest
+  file**, not the directory's own timestamp. The daily check does exactly that
+  and names the stale artifacts.
 - **The file watcher is ephemeral.** It lives only while an MCP server process
   is running. After a long gap, or after a reboot, re-run `codebase_index`
   rather than trusting the index to be current.
@@ -121,8 +131,18 @@ anything — `READY` is reachable with a handful of edges across hundreds of
 files. Check yield, not status:
 
 ```bash
-node skills/init-socraticode/scripts/mcp-driver.mjs health-check .
+node skills/init-socraticode/scripts/mcp-driver.mjs health-check \
+  "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 ```
+
+**Name the checkout, not the cwd.** SocratiCode indexes by absolute project
+path, so a literal `.` run from a git worktree asks about a project the server
+never saw and reports a healthy index as broken. The spelling above is the one
+`socraticode-health.sh` uses; `--show-toplevel` is the near miss, because in a
+worktree it yields the worktree. Current drivers resolve a relative argument
+this way themselves, so `.` also works — the explicit form is here because it
+works against an older vendored driver too, and because it says out loud which
+path is being measured.
 
 `verdict: "low"` means dependency questions must go to `grep`, and the
 `AGENTS.md` block should be on its degraded variant.
@@ -134,7 +154,10 @@ or `unknown`, where a yield finding is already on the list for it to back:
 `graph unresolved N% (> 50%) — corroborates a resolver problem`. Beside `ok`,
 where there is nothing for it to corroborate: `graph unresolved N% (> 50%) —
 share of call edges with no first-party callee; verdict is ok, so this is a
-statistic, not a defect`. It is a *call*-graph statistic: the share of **call
+statistic, not a defect`. Either way it is filed as a **note** — it appears as
+`note: graph unresolved N% …` and does not set the exit code, so a repo whose
+only finding is this one stays silent through the daily hook. It is a
+*call*-graph statistic: the share of **call
 edges** whose callee resolves to no first-party symbol. A repo that leans on
 frameworks and the stdlib runs high by construction, because those callees are
 not in the repo — no re-index brings them in and none lowers the figure.

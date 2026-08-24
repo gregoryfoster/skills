@@ -7,11 +7,15 @@
 # successful install.
 #
 # WHY THIS PATH STILL EXISTS. It is named, by path, in README.md's consumer
-# quickstart, docs/SKILLS.md, managing-skills/SKILL.md, `.skills/doctor.sh`'s
-# repair advice, and in the per-repo issues filed against cohort repos for
-# #167 — the ones telling operators to run this command and trust its exit
-# code. Renaming it would break every one of those at once, for no gain, so it
-# stays as a wrapper.
+# quickstart, docs/SKILLS.md, managing-skills/SKILL.md, and in the per-repo
+# issues filed against cohort repos for #167 — the ones telling operators to
+# run this command and trust its exit code. Renaming it would break every one
+# of those at once, for no gain, so it stays as a wrapper.
+#
+# `.skills/doctor.sh`'s repair advice used to be on that list and no longer is:
+# since #224 the doctor names install-hook.sh plus the arguments it reads from
+# a <hook>.install manifest, so it derives the repair rather than hardcoding
+# this path. One fewer caller to break, not one fewer reason to keep the file.
 #
 # It takes no arguments of its own: --check, --uninstall, --quiet and --help
 # all pass straight through to install-hook.sh, which documents them.

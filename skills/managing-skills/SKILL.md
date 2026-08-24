@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.7"
+  version: "1.9"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -75,8 +75,6 @@ The `../../` prefix resolves from `.claude/skills/` back to the project root, th
 
 Skills referenced via the symlink chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/.../skills/<name>`) are unreachable when the submodule isn't initialized — fresh `git worktree add`, shallow CI clones without `--recurse-submodules`, etc. The doctor is a tiny script copied into the consumer's `.skills/` directory that walks `skills/*` **and `.claude/hooks/*`** symlinks, auto-runs `git submodule update --init --recursive` when any dangle, and prints an actionable error otherwise. Phase 1 of every `reviewing-*` / `shipping-*` skill invokes it as a preflight.
 
-`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored.
-
 Run the installer from the vendor copy:
 
 ```bash
@@ -85,13 +83,14 @@ bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.
 
 This is idempotent — re-running is a no-op when the destination already matches. The installer refuses to clobber a file at `.skills/doctor.sh` that doesn't look like a doctor, so a user-authored file at that path is never silently overwritten.
 
-**The doctor is a copy, not a symlink** — deliberately. A symlink into `skills-vendor/` would itself dangle in exactly the uninitialized-submodule state the doctor exists to repair. The copy stays reachable there; the price is that upstream fixes don't arrive by submodule bump alone. Three things close that gap, in order of how much they ask of the consumer:
+**The doctor is a copy, not a symlink** — deliberately, because a symlink into `skills-vendor/` would dangle in exactly the state the doctor exists to repair. It keeps itself current instead: it re-syncs from the vendored source on every mutating run, and the auto-refresh hook re-installs it every session.
 
-- **The doctor re-syncs itself.** On every mutating run it compares `.skills/doctor.sh` against the vendored `doctor.sh` and re-installs when they differ ([#84](https://github.com/gregoryfoster/skills/issues/84)). Since Phase 1 of every `reviewing-*` / `shipping-*` skill invokes the doctor, this reaches consumers that declined the auto-refresh hook. Content decides, not mtime — git stamps checkout times, so an mtime comparison would misread both a fresh init and a deliberate rollback. The re-sync is best-effort and never changes the doctor's exit code; failures surface only under `--verbose`.
-- **The auto-refresh hook re-installs it** on every session, outside the once-per-day lock.
-- **A manual `install-doctor.sh`** run, for consumers with neither.
+**If your skill installs a hook, ship a `<hook>.install` manifest beside it** — one line of `install-hook.sh` arguments, which the doctor prints as the repair when it finds that hook registered nowhere ([#224](https://github.com/gregoryfoster/skills/issues/224)). A skill adding a hook adds a manifest, never an edit to `doctor.sh`.
 
-Three consequences worth knowing. A refresh applies from the *next* run — the running instance keeps reading the copy it started from. `--check-only` skips the re-sync entirely, so that mode stays safe for a CI health probe that asserts a clean working tree. And a consumer running a doctor predating this behaviour doesn't self-heal into it: getting the self-syncing doctor takes one pass through the hook or one manual install, after which it is permanent.
+**Expect the first session in a fresh clone or new worktree to fail.** Every vendor-symlinked hook — this skill's refresh hook and `init-socraticode`'s two — exits 127 there until `.skills/doctor.sh` has initialized the submodule once, and no arrangement of `.claude/settings.json` avoids it: Claude Code runs an event's matching hooks in [parallel](https://code.claude.com/docs/en/hooks-guide), so the repair always lands the session after ([#228](https://github.com/gregoryfoster/skills/issues/228)).
+
+Why `.claude/hooks/` is healed at all, why the copy beats a symlink and what it costs, and the manifest's exact format and lookup rules:
+[references/the-doctor.md](references/the-doctor.md).
 
 #### Step 3 — Update the project's AGENTS.md
 
@@ -168,7 +167,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-refresh.sh
 ```
 
-It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 either missing); remove both with `--uninstall`.
+It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 otherwise); add `--allow-unresolved` where the vendor content is not checked out, so CI can gate on shape alone ([#227](https://github.com/gregoryfoster/skills/issues/227)). Remove both with `--uninstall`.
 
 **The contract is TWO artifacts, and only the second one makes the hook run:**
 
@@ -177,101 +176,26 @@ It is idempotent, repairs a partial install, and never commits. Check state with
 
 A repo carrying artifact 1 without artifact 2 looks installed to anyone who lists `.claude/hooks/` and refreshes nothing. Four of twelve audited consumers were in exactly that state — symlink present and tracked, registration absent — pinned at one commit for over a week while the rest of the cohort moved through four skill versions ([#167](https://github.com/gregoryfoster/skills/issues/167)). This procedure was prose and `install-doctor.sh` was a script, which is the only difference between them that predicts the failure population. `.skills/doctor.sh` now warns when it sees that half-installed state.
 
-<details>
-<summary>What the installer does — read this when debugging it, not to execute it</summary>
-
-1. **Symlinks** rather than copies, so upstream fixes propagate through the normal submodule refresh. The target is relative and derived from the vendor directory actually found, not from a hand-substituted `<owner>-<repo>` — that substitution is how a symlink ends up pointing at a plausible path that does not exist.
-2. **Merges** `.claude/settings.json` with jq, dedupe-then-append: it creates `.hooks`/`.hooks.SessionStart` when absent, preserves every other hook and key, and strips any pre-existing entry for this hook first so a re-run cannot duplicate it.
-
-The mechanism itself is `scripts/install-hook.sh`, which takes the hook's constants as arguments so all three hooks a consumer ends up with — this one and `init-socraticode`'s two — inherit one implementation and one set of hardening rounds ([#200](https://github.com/gregoryfoster/skills/issues/200)). `install-refresh.sh` is the wrapper that supplies this hook's; run it, not the generic one.
-
-Two details in that merge are load-bearing, and `install-hook.sh` carries the full reasoning inline:
-
-- **The command is anchored on `$CLAUDE_PROJECT_DIR`**, not the hook process's cwd ([#110](https://github.com/gregoryfoster/skills/issues/110)). The `${CLAUDE_PROJECT_DIR:-.}` fallback matters: unset, a bare `"$CLAUDE_PROJECT_DIR/…"` becomes `bash "/.claude/hooks/…"` and errors on every session start, where `.` degrades to exactly the old behaviour.
-- **The strip matches the script path, not the whole command.** An equality test would skip an entry written in the older cwd-relative form — duplicating the hook, and leaving the original unremovable by the uninstall filter.
-
-</details>
-
+What the installer does with `.claude/settings.json`, the two load-bearing
+details of that merge, and the manual uninstall equivalent:
+[references/auto-refresh-hook.md](references/auto-refresh-hook.md).
 
 ### Uninstalling the auto-refresh hook
 
-`install-refresh.sh --uninstall` does both halves. The manual equivalent:
-
-Remove the symlink:
-
-```bash
-git rm .claude/hooks/skills-submodule-update.sh
-```
-
-Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable:
-
-```bash
-jq 'if .hooks.SessionStart then
-      .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not))
-    else . end' \
-   .claude/settings.json > .claude/settings.json.tmp \
-  && mv .claude/settings.json.tmp .claude/settings.json
-```
-
-Stage and commit:
-
-```bash
-git add .claude/settings.json
-git commit -m "chore: disable skills auto-refresh hook"
-```
-
-You may also want to delete the hook's files in `.git/` if you don't plan to reinstall. `skills-status.err` is a transient stderr scratch file the hook removes itself — it only survives a run that died mid-flight:
-
-```bash
-rm -f .git/skills-update.lock .git/skills-update.log .git/skills-status.err
-```
+`install-refresh.sh --uninstall` does both halves — the symlink and the
+registration. Do it by hand only when debugging the installer:
+[references/auto-refresh-hook.md](references/auto-refresh-hook.md).
 
 ### Holding one submodule at a commit
 
-Use this when a repo must stay on a specific vendored version — an experiment's
-control arm, a known-good release pending a breaking change — while its sibling
-submodules keep refreshing. Uninstalling the auto-refresh hook also works, but
-it is blunt: it stops every other submodule's refresh and the `.skills/doctor.sh`
-self-heal too.
-
-Write `.skills/skills-pin`, one `<submodule-path> <commit-ish>` per line. Blank
-lines and `#` comments are ignored:
-
-```
-# held for the curating-context cohort experiment (wave A control arm)
-skills-vendor/gregoryfoster-skills 3fc7b71
-```
-
-Commit it. The file is deliberately committed rather than an env var or a
-settings key: a hold has to survive across sessions and machines, and be
-greppable and reviewable by whoever inherits it.
-
-What the hook does with it:
-
-- Pinned paths are excluded from the submodule update **and** from the
-  auto-commit. Excluding only the update is not enough — staging
-  `skills-vendor/` wholesale would commit a pinned submodule whose checkout had
-  already drifted, ending the hold the update step just honoured.
-- Every honoured pin is logged by name in `.git/skills-update.log`, so a hold
-  that outlived its reason is visible rather than silent.
-- A pin naming a submodule git has no record of, or a line that is not
-  `<path> <commit-ish>`, **refuses the whole refresh for that run** and reports
-  to stderr. A typo'd path leaves the intended submodule unpinned, which is the
-  exact silent bump the pin was written to stop; moving nothing is the only
-  safe response.
-- If the recorded gitlink is not the pinned commit — the pin was written after
-  the pointer had already moved — the hook reports **drift** and still holds the
-  pointer still. It will not rewrite the pointer back; reset it by hand and
-  commit.
-
-For a one-off hold without committing a file, point `SKILLS_PIN_FILE` at another
-path. Resolution is the usual three steps: `$SKILLS_PIN_FILE`, then
-`.skills/skills-pin`, then no pins.
-
-`.skills/doctor.sh` needs no pin awareness, but it does not substitute for one:
-its `--init --recursive` restores the *recorded* pointer, so it can never move a
-submodule past a pin — and equally can never restore a pointer that was already
-committed past one.
+Pin a repo to a specific vendored version — an experiment's control arm, a
+known-good release pending a breaking change — while its sibling submodules keep
+refreshing. Write `.skills/skills-pin`, one `<submodule-path> <commit-ish>` per
+line, and commit it. Uninstalling the auto-refresh hook also works but is blunt:
+it stops every other submodule's refresh and the `.skills/doctor.sh` self-heal
+too. Pin-file grammar, the four behaviours the hook applies to it, and the
+`SKILLS_PIN_FILE` escape hatch:
+[references/pinning-submodules.md](references/pinning-submodules.md).
 
 ### Creating a local override
 
@@ -322,30 +246,11 @@ git clone --recurse-submodules <project-url>
 
 When the doctor runs `git submodule update --init --recursive` and the underlying clone can't authenticate, it prints a targeted remediation block instead of the generic "submodule update failed" line. A second path — the SSH pre-flight ping — surfaces the same block before submodule init when `.gitmodules` references SSH remotes (`git@<host>:…` or `ssh://git@<host>/…`) and the agent isn't reachable from the shell that invoked the doctor.
 
-The doctor distinguishes two failure modes; the remediation differs by mode.
-
-#### For auth failures (`Permission denied (…)` / `Authentication failed for 'https://…'`)
-
-Walk the rungs top-down — most reports trace to one of the first three:
-
-1. **Agent not reachable.** `ssh-add -l` returns "Error connecting to authentication agent" → start the agent and re-add keys. On macOS this usually happens after a reboot or a fresh shell session.
-2. **Agent reachable but empty.** `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` once, then add a `Host github.com` block to `~/.ssh/config` with `AddKeysToAgent yes` and `UseKeychain yes` so the key auto-loads on every shell.
-3. **Agent works interactively but not from a wrapper script.** A `dev.sh` (or similar) in the call chain is scrubbing `SSH_AUTH_SOCK`. Test from the same shell with `ssh -T git@github.com`: if it works there but the wrapper's subshell fails, the fix lives in the wrapper.
-4. **Public submodule, no credentials needed.** The global HTTPS rewrite (`git config --global url."https://github.com/".insteadOf "git@github.com:"`) lets git clone without auth — note it affects every repo on that machine. **In CI, ephemeral containers, or any non-interactive runner**, prefer the runner's native credential mechanism (deploy key, `GITHUB_TOKEN`, app token) over the global rewrite — those are scoped to the run and don't bleed across repos.
-
-#### For host-key failures (`Host key verification failed`)
-
-The pre-flight runs `ssh -T` with `StrictHostKeyChecking=yes` so unknown hosts are rejected loudly instead of silently appended to your `known_hosts`. The doctor prints a separate, smaller block pointing at `ssh-keyscan`:
-
-```bash
-ssh-keyscan github.com >> ~/.ssh/known_hosts
-```
-
-Verify the forge's [published fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints) against the `ssh-keyscan` output **before** appending — `ssh-keyscan` will happily echo whatever a man-in-the-middle answers.
-
-#### Skipping the pre-flight
-
-Pass `--no-preflight` to skip the SSH ping if the operator already knows the agent state and wants to skip the 3-second `ConnectTimeout` per invocation. The submodule-init classification still runs after a failure either way.
+The doctor distinguishes two failure modes and prints a different remediation
+block for each — a rung-by-rung ladder for auth failures, a smaller
+`ssh-keyscan` block for host-key failures. Both ladders, and the
+`--no-preflight` escape:
+[references/auth-troubleshooting.md](references/auth-troubleshooting.md).
 
 ## Notes
 
@@ -355,6 +260,9 @@ Pass `--no-preflight` to skip the SSH ping if the operator already knows the age
 - The `skills-vendor/` directory should be treated as read-only — make changes upstream
 - The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed
 
-**Self-budget:** held to an **8,750-token ratchet (estimate and exact)** by
-`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow.
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — the repo's ordinary standard, not
+an exception to it. This file carried a named 8,750 exception until two curation
+passes created `references/` and demoted five units into it, ending 35% smaller
+and under the standard, so the exception was deleted rather than lowered.
+Growing this file means demoting again.

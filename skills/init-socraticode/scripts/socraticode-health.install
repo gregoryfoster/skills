@@ -1,0 +1,19 @@
+# socraticode-health.install — this hook's install-hook.sh arguments.
+#
+# Read by .skills/doctor.sh (#224) as the repair line for a health hook that is
+# on disk with no SessionStart registration. This is the hook #224 was filed
+# for: it is silent when clean by design, so "installed, unregistered, never
+# runs" and "installed, registered, nothing to report" produce byte-identical
+# observable behaviour. The repo that most needs the check is the one that
+# cannot tell it stopped.
+#
+# Format: the first line that is neither blank nor a comment is the argument
+# list, appended to a resolved `bash <vendor>/…/install-hook.sh`.
+#
+# It transcribes Step C of ../references/code-exploration-policy.md, and
+# tests/structural/test_doctor_hook_registration.py compares the two.
+#
+# The marker is deliberately distinct from the reminder hook's: markers are
+# per-hook precisely so that one hook's dedupe-strip cannot evict the other's
+# entry from the SessionStart array they share.
+--hook socraticode-health.sh --skill init-socraticode --marker socraticode-health --copy-fallback

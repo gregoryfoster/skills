@@ -18,3 +18,15 @@
 # used to report "matched nothing" on a run against another. Scope it instead:
 # `PATH :: WARRANT :: CONTENT` is consulted only by runs whose --file contains
 # PATH, and the report says how many entries sat a run out (#139).
+
+# --- 2026-08-24, #230 curation round 2 -----------------------------------
+# managing-skills/SKILL.md's self-budget note named a 6,250 ratchet and called
+# itself a named exception. This run DELETED that ratchet entry — the file now
+# clears the repo's ordinary 6,000 standard on both readings — so every line of
+# the old note is a claim this same change invalidated and rewrote in place.
+# Single-transition: prune these once #230 merges.
+skills/managing-skills/SKILL.md :: retarget :: held to a **6,250-token ratchet (estimate and exact)** by
+skills/managing-skills/SKILL.md :: retarget :: a named exception to the repo's
+skills/managing-skills/SKILL.md :: retarget :: set at current size so this file cannot grow. Came down
+skills/managing-skills/SKILL.md :: retarget :: from 8,750 by demoting four units into
+skills/managing-skills/SKILL.md :: retarget :: demoting again, not raising it.

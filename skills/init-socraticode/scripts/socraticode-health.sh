@@ -131,6 +131,13 @@ LOG="$gitdir/socraticode-health.log"
 
 PROJECT="$(dirname "$commondir")"
 
+# mcp-driver.mjs resolves a RELATIVE argument the same way now (#226), so this
+# hook could in principle hand it a `.`. It must not, and this block does not
+# shrink: $PROJECT is load-bearing for three things the driver knows nothing
+# about — the manifest guard below, the driver search path, and (via $gitdir)
+# the shared lock and log. Passing the resolved path also keeps the hook's
+# report independent of the driver's resolution, so the two can be tested apart.
+
 # Nothing to check if this repo was never indexed. The manifest is the cheapest
 # reliable marker that init-socraticode ran here, and it costs no process.
 #

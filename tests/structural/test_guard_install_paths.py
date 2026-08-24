@@ -318,12 +318,23 @@ class TestManagingSkillsHookCommand:
         return re.findall(r"```(?:bash|json)\n(.*?)```", text, re.DOTALL)
 
     def _jq_block(self, needle: str) -> str:
+        # SKILL.md plus references/, not SKILL.md alone: the uninstall block
+        # moved into references/auto-refresh-hook.md when SKILL.md was curated
+        # under its ratchet. What this asserts is that the block the skill
+        # PUBLISHES behaves; which of its files carries it is incidental, and
+        # pinning one path turned a demotion into a fake behavioural failure.
+        texts = [MS_SKILL.read_text()]
+        texts += [
+            p.read_text()
+            for p in sorted((MS_SKILL.parent / "references").rglob("*.md"))
+        ]
         blocks = [
-            b for b in self._fenced_blocks(MS_SKILL.read_text())
+            b for text in texts for b in self._fenced_blocks(text)
             if "jq " in b and needle in b
         ]
         assert len(blocks) == 1, (
-            f"expected exactly one documented jq block containing {needle!r}, "
+            f"expected exactly one documented jq block containing {needle!r} "
+            f"across {MS_SKILL.parent.name}'s SKILL.md and references/, "
             f"found {len(blocks)}"
         )
         return blocks[0]
