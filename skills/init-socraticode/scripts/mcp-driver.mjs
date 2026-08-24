@@ -45,7 +45,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve as resolvePath, join as joinPath } from 'node:path';
+import { resolve as resolvePath, join as joinPath, isAbsolute as isAbsolutePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15000);
@@ -726,6 +726,76 @@ function expectedArtifactCount(projectPath) {
   return m.count;
 }
 
+// ── projectPath resolution (#226, generalizing #180) ────────────────────────
+// SocratiCode indexes by ABSOLUTE project path. A relative argument — `.` most
+// of all — therefore names whatever directory the caller happens to be standing
+// in, and from a git worktree or a subdirectory that is a project the server
+// never saw. The failure is not an error: every check answers confidently about
+// the wrong path and reports a healthy index as broken.
+//
+// socraticode-health.sh already resolves this for its own invocation (#180).
+// The doc beside it went on handing readers `health-check .`, and consumers
+// copied that line into their own docs/ — so the resolution moves into the
+// driver, where it fixes the copies that already exist, and the doc shows the
+// explicit spelling, which stops the next one.
+//
+// An ABSOLUTE argument is taken verbatim. It is an explicit statement of which
+// project to measure, it is what the hook passes, and it is the only spelling
+// that can name a worktree on purpose.
+
+function gitIn(dir, args) {
+  const out = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  return out.status === 0 && out.stdout ? out.stdout.trim() : null;
+}
+
+const realOrSelf = (p) => { try { return realpathSync(p); } catch { return p; } };
+
+// The checkout SocratiCode indexes, for any directory inside a repo — or null
+// when there is no repo, no git, or no checkout to be sure of.
+//
+// The COMMON git dir, not this checkout's private one: `--git-dir` in a
+// worktree yields .git/worktrees/<name>, while `--git-common-dir` yields the
+// shared .git for a worktree and a primary checkout alike, and its parent is
+// the directory that was indexed.
+//
+// Then RESOLVE, THEN VERIFY — the hook's discipline, for the same reason. The
+// parent of the common dir is the checkout for an ordinary repo and for every
+// worktree of it, and is NOT for a bare repo's worktree or a --separate-git-dir
+// clone. Confirming that git calls the candidate a working-tree root keeps a
+// layout we guessed wrong about from being measured; the caller's own path is
+// the safer answer there.
+function mainCheckoutOf(dir) {
+  // --path-format=absolute needs git >= 2.31; without it --git-common-dir is
+  // relative to the queried directory in a primary checkout (plain `.git`) and
+  // absolute in a worktree, so the fallback resolves it against that directory.
+  let commonDir = gitIn(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (commonDir === null) {
+    const relative = gitIn(dir, ['rev-parse', '--git-common-dir']);
+    if (relative === null) return null;
+    commonDir = resolvePath(dir, relative);
+  }
+  const candidate = resolvePath(commonDir, '..');
+  const top = gitIn(candidate, ['rev-parse', '--show-toplevel']);
+  if (top === null) return null;
+  return realOrSelf(top) === realOrSelf(candidate) ? realOrSelf(top) : null;
+}
+
+function resolveProjectPath(arg) {
+  if (arg && isAbsolutePath(arg)) return resolvePath(arg);
+  const literal = arg ? resolvePath(arg) : process.cwd();
+  const main = mainCheckoutOf(literal);
+  if (main === null || main === realOrSelf(literal)) return literal;
+  // Announced, never silent: a driver that answers about a path the caller did
+  // not name, with nothing in the output saying so, is the same disease facing
+  // the other way.
+  console.error(
+    `[driver] measuring ${main}, not ${literal} — SocratiCode indexes by absolute project path, `
+    + 'and a relative argument from a git worktree or a subdirectory names a project that was '
+    + 'never indexed (#180). Pass an absolute path to measure a different one.'
+  );
+  return main;
+}
+
 // ── high-level flows ─────────────────────────────────────────────────────────
 function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 
@@ -1269,6 +1339,16 @@ Commands:
 
 projectPath defaults to the current working directory.
 
+  A RELATIVE projectPath (including the default) is resolved to the checkout
+  SocratiCode indexes — the parent of git's --git-common-dir — so a literal "."
+  from a worktree or a subdirectory does not ask about a project that was never
+  indexed and get told a healthy index is broken (#180/#226). The substitution
+  is printed on stderr whenever it changes the path.
+
+  An ABSOLUTE projectPath is used verbatim. That is the escape hatch: it is the
+  only spelling that can name a worktree on purpose, and it is what
+  socraticode-health.sh passes after resolving the checkout itself.
+
 Flags:
   --probe <relpath>   health-check only: on a LOW yield verdict, run one
                       codebase_graph_query against this file as a confirmatory
@@ -1333,7 +1413,7 @@ if (RUN_AS_SCRIPT) {
     argv.splice(probeIdx, 2);
   }
   const [cmd, projectPathArg] = argv;
-  const projectPath = projectPathArg ? resolvePath(projectPathArg) : process.cwd();
+  const projectPath = resolveProjectPath(projectPathArg);
 
   switch (cmd) {
     case 'index': await cmdIndex(projectPath); break;

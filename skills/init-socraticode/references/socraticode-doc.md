@@ -121,8 +121,18 @@ anything — `READY` is reachable with a handful of edges across hundreds of
 files. Check yield, not status:
 
 ```bash
-node skills/init-socraticode/scripts/mcp-driver.mjs health-check .
+node skills/init-socraticode/scripts/mcp-driver.mjs health-check \
+  "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 ```
+
+**Name the checkout, not the cwd.** SocratiCode indexes by absolute project
+path, so a literal `.` run from a git worktree asks about a project the server
+never saw and reports a healthy index as broken. The spelling above is the one
+`socraticode-health.sh` uses; `--show-toplevel` is the near miss, because in a
+worktree it yields the worktree. Current drivers resolve a relative argument
+this way themselves, so `.` also works — the explicit form is here because it
+works against an older vendored driver too, and because it says out loud which
+path is being measured.
 
 `verdict: "low"` means dependency questions must go to `grep`, and the
 `AGENTS.md` block should be on its degraded variant.
