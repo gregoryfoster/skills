@@ -402,19 +402,86 @@ function parseArtifacts(text) {
 // Measured against a live 13-artifact reply (cannabis_observer/code/cli), one
 // of whose artifacts was sitting unindexed behind a green status at the time.
 //
-// → [{ name, status, indexed }]
+// The `Path:` line and the timestamp inside `Status:` are read for the same
+// reason (#225): they are the only per-artifact FRESHNESS data the server
+// offers, and `indexed` alone is a presence check. `Context artifacts: 14/14`
+// says nothing about whether any of the fourteen still matches its source.
+//
+// → [{ name, path, status, indexed, lastIndexed }]
 function parseContextArtifacts(text) {
   const out = [];
   for (const line of String(text).split('\n')) {
     const head = line.match(/^\s*━+\s*(.+?)\s*━+\s*$/);
-    if (head) { out.push({ name: head[1], status: '', indexed: false }); continue; }
+    if (head) {
+      out.push({ name: head[1], path: null, status: '', indexed: false, lastIndexed: null });
+      continue;
+    }
+    if (!out.length) continue;
+    const current = out[out.length - 1];
+    const path = line.match(/^\s*Path:\s*(.+?)\s*$/);
+    if (path) { current.path = path[1]; continue; }
     const status = line.match(/^\s*Status:\s*(.+?)\s*$/);
-    if (status && out.length) {
-      out[out.length - 1].status = status[1];
-      out[out.length - 1].indexed = artifactIndexed(status[1]);
+    if (status) {
+      current.status = status[1];
+      current.indexed = artifactIndexed(status[1]);
+      current.lastIndexed = parseIndexedAt(status[1]);
     }
   }
   return out;
+}
+
+// "✓ indexed (42 chunks, 2026-08-09T04:46:34.264Z)" → "2026-08-09T04:46:34.264Z"
+//
+// Loose like every parser here, and NULL rather than a guess when the shape
+// drifts: a build that stops printing the timestamp must leave freshness
+// unjudged. Calling every artifact stale would train the cohort to ignore the
+// line; calling every one fresh would rebuild the silence the check exists to
+// break. The caller reports which ones it could not judge instead.
+function parseIndexedAt(status) {
+  const m = String(status).match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/);
+  return m && !Number.isNaN(Date.parse(m[1])) ? m[1] : null;
+}
+
+// ── artifact freshness (#225) ───────────────────────────────────────────────
+// The newest mtime at or under `target`, in epoch ms — or null when it cannot
+// be read.
+//
+// For a directory artifact this is the only honest comparison, and the reason
+// is not obvious: a directory's OWN mtime moves when an entry is added or
+// removed directly inside it, and never when a file two levels down is edited.
+// `design-specs`, `implementation-plans` and `alembic-migrations` all point at
+// directories, so a plan written today under docs/plans/2026/ leaves the count
+// unchanged, the artifact "indexed", and the directory's mtime untouched — the
+// CannObserv/power-map#454 shape one level down.
+const FRESHNESS_WALK_BUDGET = 20000;
+function newestMtimeMs(target) {
+  let newest = null;
+  let budget = FRESHNESS_WALK_BUDGET;
+  const visit = (p, isDirectory) => {
+    let st;
+    try { st = statSync(p); } catch { return; }
+    if (newest === null || st.mtimeMs > newest) newest = st.mtimeMs;
+    if (!isDirectory) return;
+    let entries;
+    try { entries = readdirSync(p, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      // Budget exhausted: stop and answer with the newest seen so far. That
+      // UNDER-reports staleness, degrading toward the presence-only check this
+      // replaces, which is the safe direction — a walk that gave up must not
+      // manufacture a finding.
+      if (budget-- <= 0) return;
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      // Dirent flags come from lstat, so a symlink to a directory is a symlink
+      // here and is never descended: no cycles, and no wandering out of the
+      // artifact through a link into a tree nobody declared.
+      if (e.isDirectory()) visit(joinPath(p, e.name), true);
+      else if (e.isFile()) visit(joinPath(p, e.name), false);
+    }
+  };
+  let root;
+  try { root = statSync(target); } catch { return null; }
+  visit(target, root.isDirectory());
+  return newest;
 }
 
 // Asymmetric on purpose: only a positively-indexed status counts as indexed,
@@ -1112,32 +1179,39 @@ async function cmdHealthCheck(projectPath, probePath) {
       );
     } else if (manifest.present && manifest.count > 0) {
       const declared = manifest.count;
-      // Short-circuit on a matching numerator. The status line's TOTAL cannot
-      // be believed (0/0 means both "none declared" and "none indexed yet"),
-      // but its numerator can, and only a shortfall needs a NAME — which is
-      // the sole reason to spend a second MCP round-trip here, on twelve
-      // cohort repos, once a day.
+      // UNCONDITIONAL, and it did not used to be. #214 short-circuited this
+      // call whenever the status line's numerator already matched the declared
+      // count: only a shortfall needs a NAME, so a matching count meant there
+      // was nothing left to ask. Sound for a presence check — and presence was
+      // never the whole question. `14/14 indexed` says nothing about whether
+      // any of the fourteen still matches its source, and the per-artifact
+      // `lastIndexed` that answers that exists ONLY in this reply. Three of
+      // observo's fourteen were stale at the moment the check reported 14/14.
       //
-      // Verified rather than assumed, because trusting the numerator is
-      // exactly the move that would rebuild this gap if the server ever
-      // rounded up: on cannabis_observer/code/cli, sitting at 12 of 13 with
-      // `Status: green`, codebase_status reports `Context artifacts: 12/13
-      // indexed` — the count is honest, it just cannot say which one.
+      // The cost is what the short-circuit was saving: one MCP round-trip, per
+      // repo, per day. That is the whole price of the difference between "the
+      // docs are indexed" and "the docs are current".
       //
       // NOT an early `return`: this block runs inside the withClient callback,
       // so returning here would skip every graph check below it.
-      const fromStatus = status.error ? null : parseArtifacts(status.text).done;
-      const ctx = fromStatus === declared
-        ? null
-        : await call('codebase_context', { projectPath });
-      if (ctx === null) {
-        report.artifacts = { declared, indexed: declared, unindexed: [] };
-      } else if (ctx.error) {
+      const ctx = await call('codebase_context', { projectPath });
+      if (ctx.error) {
         // Degrade, do not disable: the count alone beats silence. Record the
         // failure either way — a codebase_context that keeps failing is a
         // leading indicator of the very gap this check exists to catch, and
         // leaving no trace of it in the JSON would be this change's own
         // silent degradation.
+        //
+        // The status line's TOTAL cannot be believed (0/0 means both "none
+        // declared" and "none indexed yet"), but its numerator can, and this
+        // is the one place that matters. Verified rather than assumed: on
+        // cannabis_observer/code/cli, sitting at 12 of 13 with `Status:
+        // green`, codebase_status reported `Context artifacts: 12/13 indexed`
+        // — the count is honest, it just cannot say which one, and with
+        // codebase_context down there is nothing that can.
+        //
+        // Freshness is simply unavailable here. No reply, no per-artifact
+        // index times, and no claim in either direction (#225).
         const done = status.error ? null : parseArtifacts(status.text).done;
         report.artifacts = {
           declared,
@@ -1154,10 +1228,38 @@ async function cmdHealthCheck(projectPath, probePath) {
         const listed = parseContextArtifacts(ctx.text);
         const unindexed = listed.filter((a) => !a.indexed);
         const indexed = listed.length - unindexed.length;
+
+        // ── indexed ≠ fresh (#225) ────────────────────────────────────────
+        // Only the artifacts that ARE indexed: an unindexed one has no index
+        // time to compare against, and the parity finding below already names
+        // it. Double-counting would make the stale count useless as a number.
+        const stale = [];
+        const unjudged = [];
+        for (const a of listed) {
+          if (!a.indexed) continue;
+          const indexedAt = a.lastIndexed ? Date.parse(a.lastIndexed) : NaN;
+          if (!a.path || Number.isNaN(indexedAt)) { unjudged.push(a.name); continue; }
+          const newest = newestMtimeMs(resolvePath(projectPath, a.path));
+          if (newest === null) { unjudged.push(a.name); continue; }
+          if (newest > indexedAt) {
+            stale.push({
+              name: a.name,
+              path: a.path,
+              sourceMtime: new Date(newest).toISOString(),
+              lastIndexed: a.lastIndexed,
+            });
+          }
+        }
+
         report.artifacts = {
           declared,
           indexed,
           unindexed: unindexed.map((a) => ({ name: a.name, status: a.status })),
+          stale,
+          // Named, not swallowed. A server build that stops printing the
+          // timestamp would otherwise silently switch freshness off, which is
+          // this check's own version of the failure it exists to report.
+          unjudged,
         };
         if (indexed < declared) {
           // Naming it is the whole value: 2/3 sends the reader back to
@@ -1167,6 +1269,23 @@ async function cmdHealthCheck(projectPath, probePath) {
             ? unindexed.map((a) => `${a.name}: ${a.status || 'not indexed'}`).join('; ')
             : `codebase_context listed only ${listed.length} of them`;
           defect(`context artifacts ${indexed}/${declared} indexed — ${named}`);
+        }
+        if (stale.length) {
+          // A DEFECT, not a note, and the severity is the interesting call
+          // (#220 made it one). An unindexed artifact is ABSENT from search:
+          // the caller gets nothing back and knows to look elsewhere. A stale
+          // one is worse in kind — codebase_context_search answers
+          // confidently from superseded chunks, and there is no signal at all.
+          // It is also repaired by one named call, which is the line between
+          // the two severities: a note is a measurement no action changes.
+          //
+          // Its own finding rather than a qualifier on the parity line,
+          // because the parity line only exists on a shortfall and staleness
+          // has to be reportable at 14/14 — which is the whole case.
+          defect(
+            `context artifacts ${indexed}/${declared} indexed, ${stale.length} stale — `
+            + `${stale.map((s) => s.name).join(', ')}; re-run codebase_context_index`
+          );
         }
       }
     }
@@ -1453,8 +1572,8 @@ if (RUN_AS_SCRIPT) {
 export {
   validateManifest, MANIFEST_NAME,
   parseEmbedPercent, parseArtifacts, graphReady,
-  // declared ≠ indexed (#214)
-  parseContextArtifacts, artifactIndexed,
+  // declared ≠ indexed (#214), indexed ≠ fresh (#225)
+  parseContextArtifacts, artifactIndexed, parseIndexedAt, newestMtimeMs,
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   unresolvedFinding,
