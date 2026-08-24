@@ -346,6 +346,233 @@ class TestUnresolvedFindingIsVerdictAware:
         )
 
 
+# ── the severity harness (#220) ──────────────────────────────────────────────
+# A stub MCP server, scripted per tool. Deliberately a local copy rather than an
+# import from `test_context_artifact_parity.py`: AGENTS.md keeps structural
+# rules in separate files so parallel worktrees merge clean, which is the same
+# reason `_graph_health` above is a local six-liner. The two copies pin two
+# different properties and are free to drift.
+
+STUB_SERVER = """
+import { readFileSync } from 'node:fs';
+const replies = JSON.parse(readFileSync(process.env.STUB_REPLIES, 'utf8'));
+let buf = '';
+const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+  let nl;
+  while ((nl = buf.indexOf('\\n')) >= 0) {
+    const line = buf.slice(0, nl).trim();
+    buf = buf.slice(nl + 1);
+    if (!line) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    if (msg.id == null) continue;
+    if (msg.method !== 'tools/call') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); continue; }
+    const text = replies[msg.params.name];
+    if (text == null) {
+      send({ jsonrpc: '2.0', id: msg.id, error: { message: `stub: no reply for ${msg.params.name}` } });
+      continue;
+    }
+    send({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text }] } });
+  }
+});
+"""
+
+HEALTH_OK = "Docker: ✓ running\nQdrant: ✓ healthy\nOllama: ✓ nomic-embed-text present"
+HEALTH_DOWN = "Docker: ✓ running\nQdrant: ✗ container not running\nOllama: ✓ present"
+
+STATUS_CLEAN = """Project: /repo
+Status: green
+Indexed chunks: 1252
+
+Last operation: Full index — completed
+"""
+
+# `ok` on yield — 1512 edges across 374 files — and 61.7% unresolved beside it.
+# That pairing is #220's whole case: a framework-heavy repo with a provably
+# exact import graph, told once a day that it has "health findings".
+GRAPH_OK_HIGH_UNRESOLVED = """Code Graph Status
+
+Status: READY
+Files (nodes): 374
+Dependencies (edges): 1512
+Symbols: 3767
+Call edges: 23237
+Unresolved: 61.7%
+"""
+
+
+def _health_check(tmp_path: Path, project: Path, replies: dict) -> tuple:
+    """Run `mcp-driver.mjs health-check` against a scripted stub server."""
+    stub = tmp_path / "stub-server.mjs"
+    stub.write_text(STUB_SERVER)
+    reply_file = tmp_path / "replies.json"
+    reply_file.write_text(json.dumps(replies))
+    result = subprocess.run(
+        ["node", str(DRIVER), "health-check", str(project)],
+        capture_output=True, text=True, timeout=60,
+        env=_clean_env(
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(reply_file),
+            HEALTH_TIMEOUT_MS="30000",
+        ),
+    )
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        report = None
+    return result, report
+
+
+class TestANeutralFindingDoesNotFailTheCheck:
+    """#220: #216 fixed the wording, not the envelope.
+
+    The `unresolvedPct` line reads neutrally beside `verdict: "ok"` now — but it
+    still landed in `findings`, and any non-empty `findings` set
+    `report.healthy = false` and `process.exitCode = 1`. So a healthy repo was
+    still handed `[driver] SocratiCode health findings:` once per UTC day by
+    `socraticode-health.sh`, which keys its whole session injection on that exit
+    code. The text no longer accused; the envelope still did.
+
+    The fix keeps ONE `findings` array — a second `observations` array would be
+    a JSON contract change every consumer would have to learn — and gates the
+    exit code on a per-finding **severity** instead of on emptiness. A `note`
+    is a measurement no action changes; a defect is a state a named action
+    repairs. Suppressing the line on `ok` was rejected too: it discards a figure
+    an operator may want, and #225's staleness finding needs somewhere to live.
+
+    Severity is carried in the finding string itself (`note: …`) rather than in
+    a new key or a new element type, so `findings` stays `string[]` and a
+    consumer doing `jq -r '.findings[]'` keeps working.
+    """
+
+    @requires_node
+    def test_a_neutral_statistic_alone_exits_zero(self, tmp_path: Path) -> None:
+        project = tmp_path / "repo"
+        project.mkdir()
+        result, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_OK,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        assert report is not None, result.stdout + result.stderr
+        assert result.returncode == 0, (
+            "a verdict-`ok` graph with a high unresolvedPct still exited 1, so "
+            "socraticode-health.sh still injects `SocratiCode health findings:` "
+            f"into every session of a healthy repo (#220)\n{result.stderr}"
+        )
+        assert report["healthy"] is True, report
+
+    @requires_node
+    def test_the_statistic_is_not_discarded(self, tmp_path: Path) -> None:
+        """The rejected option 3 was to drop the line on an `ok` verdict."""
+        project = tmp_path / "repo"
+        project.mkdir()
+        _, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_OK,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        assert any("61.7%" in f for f in report["findings"]), (
+            "the unresolvedPct figure vanished from the report. It is worth "
+            f"having on a healthy graph too; only its cost changes: {report}"
+        )
+
+    @requires_node
+    def test_the_note_says_it_is_one(self, tmp_path: Path) -> None:
+        """`healthy: true` beside a populated `findings` needs an explanation.
+
+        Without a per-entry marker a consumer reading the JSON is back where
+        #220 started — a list called `findings` on a repo with nothing wrong.
+        """
+        project = tmp_path / "repo"
+        project.mkdir()
+        _, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_OK,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        line = next(f for f in report["findings"] if "61.7%" in f)
+        assert line.startswith("note: "), (
+            "the unresolvedPct entry carries no severity marker, so nothing in "
+            f"the JSON distinguishes it from a defect: {line!r}"
+        )
+
+    @requires_node
+    def test_a_real_defect_beside_it_still_exits_one(self, tmp_path: Path) -> None:
+        """Severity gates the exit code; it must not soften a real finding."""
+        project = tmp_path / "repo"
+        project.mkdir()
+        result, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_DOWN,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert report["healthy"] is False, report
+        assert any("Qdrant" in f for f in report["findings"]), report
+
+    @requires_node
+    def test_the_note_keeps_its_marker_beside_a_defect(self, tmp_path: Path) -> None:
+        """Severity is a property of the finding, not of the run."""
+        project = tmp_path / "repo"
+        project.mkdir()
+        _, report = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_DOWN,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        note = next(f for f in report["findings"] if "61.7%" in f)
+        defect = next(f for f in report["findings"] if "Qdrant" in f)
+        assert note.startswith("note: "), note
+        assert not defect.startswith("note: "), (
+            f"an infrastructure failure was demoted to a note: {defect!r}"
+        )
+
+    @requires_node
+    def test_the_hooks_defect_lines_exclude_the_note(self, tmp_path: Path) -> None:
+        """`socraticode-health.sh` greps stderr for `  - ` and prints those.
+
+        A note has to be legible there as a note, or the session injection
+        reports a statistic under a heading that says findings — which is the
+        sentence #220 was filed about, one layer down.
+        """
+        project = tmp_path / "repo"
+        project.mkdir()
+        result, _ = _health_check(tmp_path, project, {
+            "codebase_health": HEALTH_DOWN,
+            "codebase_status": STATUS_CLEAN,
+            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+        })
+        bullets = [
+            ln for ln in result.stderr.splitlines() if re.match(r"^\s+- ", ln)
+        ]
+        assert any("Qdrant" in ln for ln in bullets), result.stderr
+        stat = next(ln for ln in bullets if "61.7%" in ln)
+        assert "note:" in stat, (
+            "the hook would print this line under `findings from today's "
+            f"once-per-day check` with nothing marking it a statistic: {stat!r}"
+        )
+
+    def test_the_doc_states_what_a_note_costs(self) -> None:
+        """A reader who sees the line must be able to look up its price.
+
+        Pinned as concepts rather than as a sentence, like every other pin on
+        this section: the point is that the doc says the neutral reading is a
+        note and that a note does not set the exit code, not that it says it in
+        any particular words.
+        """
+        section = _flowed(_graph_health(DOC_REF.read_text())).lower()
+        assert "note" in section and "exit code" in section, (
+            f"references/{DOC_REF.name}'s **Graph health** section quotes the "
+            "neutral `unresolvedPct` finding without saying it is a note and "
+            "costs nothing — so a reader still cannot tell whether the daily "
+            "hook will report it (#220)"
+        )
+
+
 class TestSkillGatesOnYield:
     """Phase 6 must stop declaring victory on a status token."""
 
