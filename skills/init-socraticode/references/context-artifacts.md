@@ -220,3 +220,43 @@ done
 
 Any `MISS` → drop that category from the manifest rather than shipping a path
 that skips at index time and leaves `artifacts N/N` short.
+
+## Index exclusions — `.socraticodeignore`
+
+Phase 4 writes this alongside the manifest.
+
+**Also write `.socraticodeignore` (repo root).** It's layered on the built-in
+defaults + `.gitignore` (gitignore syntax) and is essentially mandatory for any
+repo that vendors skills via `managing-skills` — the submodule trees dominate the
+index otherwise (on replicator: 301 files/1038 chunks → 28 files/42 chunks, ~70
+min → 84 s once excluded). Every repo bootstrapped by `init-project-fastapi`
+(Phase 9 adds those submodules) needs this. Mirror the `extend-exclude` that
+`ruff`/`ty` already carry:
+
+```gitignore
+# .socraticodeignore — semantic-index exclusions (layered on defaults + .gitignore)
+skills-vendor/
+skills/
+.claude/skills/
+```
+
+Here `skills/` and `.claude/skills/` are the `managing-skills` symlink dirs (all
+vendored content). **If the project authors first-party skills under `skills/`,
+exclude `skills-vendor/` (and `.claude/skills/`) only** — don't drop the project's
+own skills from the index. Otherwise adapt to the project's own vendored trees;
+add any large generated/data dirs that aren't already in `.gitignore`.
+
+Note this governs the **code index only**. A directory context artifact honours
+none of it — see the Field notes above.
+
+## Migrating a legacy top-level array
+
+**Migrate a legacy top-level array first (idempotent audit).** The server
+requires a top-level **object**; a bare array is rejected outright. If the repo
+already carries a manifest whose first non-whitespace character is `[`, rewrite
+it as `{"artifacts": [ …the existing array… ]}` before going further, preserving
+the entries as-is. This is the same normalize-in-place discipline Phase 3 applies
+to the policy block, and it matters more than it looks: when the server rejects a
+manifest, `codebase_status` silently omits the artifact line, so the repo indexes
+"successfully" and reports `artifacts 0/0` while having **no context search at
+all** (gotcha K).

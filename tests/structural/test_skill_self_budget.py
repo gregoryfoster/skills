@@ -229,9 +229,24 @@ SKILL_MD_RATCHETS = {
     # interim pass at #96's problem, not the redesign the outlier note describes.
     "init-project-fastapi": 14_700,
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
-    # two hook wirings, and a blocking index verified by edge yield. Grew during
-    # Batch A of #144 (#107's yield-gate table, #115's two-variant Phase 3).
-    "init-socraticode": 10_050,
+    # two hook wirings, and a blocking index verified by edge yield. Came down
+    # from 10,050 in #230's CR round 2 by demoting Phase 0, Phase 4's
+    # index-scope and legacy-array guidance, and the four phase-enforced entries
+    # from Key invariants — all into references/, all verbatim.
+    #
+    # 8,000 was the target and is NOT honestly reachable. Phase 3 looked like
+    # the way there: it says "follow references/code-exploration-policy.md" and
+    # then restates that reference's marker algorithm, rescue rules and hook
+    # flags inline, which reads as duplication. Collapsing it to the delegation
+    # DID reach 7,932 — and turned three tests red, including
+    # test_socraticode_policy_split.py::test_skill_md_replaces_between_the_markers,
+    # whose docstring is the answer: "Phase 3 is what an agent actually follows;
+    # a marker only the reference knows about is not part of the procedure
+    # (#210)." The restatement is the deliverable, not redundancy. Reverted.
+    #
+    # So this file is at its honest floor without deleting procedure, which is
+    # the case Phase 4 of curating-context says to report rather than force.
+    "init-socraticode": 9_400,
     # managing-skills was here at 8,750, justified by "carries no references/ at
     # all, so every word of it is always-loaded by construction — the one skill
     # where demotion is the whole remaining move." That described the directory

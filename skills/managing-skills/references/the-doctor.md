@@ -6,7 +6,13 @@ changing the doctor or wondering why it did something.
 
 ## Why `.claude/hooks/` is in the heal scope
 
-`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored. The same 127 hits a vendor-symlinked `SessionStart` hook for a whole session after a fresh clone or worktree, and no ordering avoids it: Claude Code runs an event's matching hooks in [parallel](https://code.claude.com/docs/en/hooks-guide), so the repair lands next session ([#228](https://github.com/gregoryfoster/skills/issues/228)).
+`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored.
+
+The same 127 also hits `SessionStart` hooks for a whole first session, which is
+why `SKILL.md` states that cost inline rather than here — a consumer who
+installed one hook should not have to reach a reference doc to learn its first
+run fails ([#228](https://github.com/gregoryfoster/skills/issues/228)). Stated
+once, there; this section is about the heal scope only.
 
 ## Why the doctor is a copy, not a symlink
 

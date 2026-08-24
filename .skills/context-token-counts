@@ -7,6 +7,15 @@
 8121 2863 docs/CONVENTIONS.md
 3963 1481 docs/SKILLS.md
 15137 5702 docs/STYLE.md
+24118 9257 skills/init-socraticode/SKILL.md
+2931 1049 skills/init-socraticode/references/audit-rerun.md
+19430 7316 skills/init-socraticode/references/code-exploration-policy.md
+14070 5369 skills/init-socraticode/references/context-artifacts.md
+1464 672 skills/init-socraticode/references/detached-source.md
+2257 924 skills/init-socraticode/references/embedding-backends.md
+1633 620 skills/init-socraticode/references/linked-projects.md
+10955 4008 skills/init-socraticode/references/socraticode-doc.md
+11863 4428 skills/init-socraticode/references/troubleshooting.md
 15629 5843 skills/managing-skills/SKILL.md
 2409 942 skills/managing-skills/references/auth-troubleshooting.md
 3750 1403 skills/managing-skills/references/auto-refresh-hook.md

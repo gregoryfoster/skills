@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18 <26, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.4"
+  version: "1.5"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -55,27 +55,17 @@ Confirm all parameters before Phase 1.
 
 ### Phase 0 — Acquire skill source (only if running detached from the repo)
 
-This skill's scripts (`preflight.sh`, `mcp-driver.mjs`) live in *this* skill
-directory. If you're running inside a project that already vendors
-`gregoryfoster/skills` (submodule + symlink), reference them at
-`skills-vendor/<owner>-<repo>/skills/init-socraticode/scripts/…` — the real
-path that `skills/…` symlinks to, and the one the health hook resolves first
-([#177](https://github.com/gregoryfoster/skills/issues/177)) — and skip this
-phase. Otherwise clone once to a scratch dir and reference scripts through the
-captured path:
+**Skip this phase if the project already vendors `gregoryfoster/skills`** — most
+do. Reference the scripts at
+`skills-vendor/<owner>-<repo>/skills/init-socraticode/scripts/…`, the real path
+`skills/…` symlinks to and the one the health hook resolves first
+([#177](https://github.com/gregoryfoster/skills/issues/177)).
 
-```bash
-set -euo pipefail
-SKILL_TMP=$(mktemp -d "${TMPDIR:-/tmp}/init-socraticode.XXXXXX")
-git clone --depth 1 https://github.com/gregoryfoster/skills.git "$SKILL_TMP/gregoryfoster-skills"
-SKILL_DIR="$SKILL_TMP/gregoryfoster-skills/skills/init-socraticode"
-test -f "$SKILL_DIR/scripts/preflight.sh" || { echo "Phase 0 clone failed"; exit 1; }
-echo "SKILL_DIR=$SKILL_DIR"; echo "SKILL_TMP=$SKILL_TMP"
-```
-
-`<SKILL_DIR>` / `<SKILL_TMP>` below are **placeholders** for the literal paths
-printed here (each Bash call runs in a fresh shell — they are not inherited).
-Clean up `<SKILL_TMP>` in Phase 6.
+Otherwise clone once to a scratch dir and capture `SKILL_DIR`/`SKILL_TMP`:
+[`references/detached-source.md`](references/detached-source.md). `<SKILL_DIR>`
+and `<SKILL_TMP>` below are **placeholders** for the literal paths it prints —
+each Bash call runs in a fresh shell, so they are not inherited. Clean up
+`<SKILL_TMP>` in Phase 6.
 
 ### Phase 1 — Preflight the host (blocking; never mutates the toolchain)
 
@@ -221,15 +211,12 @@ template verbatim.** Each artifact is `{name, path, description}` with `path` a
 single **literal file or directory** (globs do **not** work — the server `stat()`s
 the value; a directory indexes recursively). Drop categories the project lacks.
 
-**Migrate a legacy top-level array first (idempotent audit).** The server
-requires a top-level **object**; a bare array is rejected outright. If the repo
-already carries a manifest whose first non-whitespace character is `[`, rewrite
-it as `{"artifacts": [ …the existing array… ]}` before going further, preserving
-the entries as-is. This is the same normalize-in-place discipline Phase 3 applies
-to the policy block, and it matters more than it looks: when the server rejects a
-manifest, `codebase_status` silently omits the artifact line, so the repo indexes
-"successfully" and reports `artifacts 0/0` while having **no context search at
-all** (gotcha K).
+**Migrate a legacy top-level array first (idempotent audit).** A manifest whose
+first non-whitespace character is `[` is rejected outright, and a rejected
+manifest is silent — `codebase_status` omits the artifact line, so the repo
+indexes "successfully" at `artifacts 0/0` with **no context search at all**
+(gotcha K). Rewrite it as `{"artifacts": [ …the existing array… ]}` first;
+mechanics in [`references/context-artifacts.md`](references/context-artifacts.md).
 
 **Then gate on the validator** — cheap, and it runs before the expensive index:
 
@@ -245,26 +232,12 @@ is not cosmetic: the server skips it silently, so `artifacts N/N` never reaches
 parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every reported line, or
 drop the category, before indexing.
 
-**Also write `.socraticodeignore` (repo root).** It's layered on the built-in
-defaults + `.gitignore` (gitignore syntax) and is essentially mandatory for any
-repo that vendors skills via `managing-skills` — the submodule trees dominate the
-index otherwise (on replicator: 301 files/1038 chunks → 28 files/42 chunks, ~70
-min → 84 s once excluded). Every repo bootstrapped by `init-project-fastapi`
-(Phase 9 adds those submodules) needs this. Mirror the `extend-exclude` that
-`ruff`/`ty` already carry:
-
-```gitignore
-# .socraticodeignore — semantic-index exclusions (layered on defaults + .gitignore)
-skills-vendor/
-skills/
-.claude/skills/
-```
-
-Here `skills/` and `.claude/skills/` are the `managing-skills` symlink dirs (all
-vendored content). **If the project authors first-party skills under `skills/`,
-exclude `skills-vendor/` (and `.claude/skills/`) only** — don't drop the project's
-own skills from the index. Otherwise adapt to the project's own vendored trees;
-add any large generated/data dirs that aren't already in `.gitignore`.
+**Also write `.socraticodeignore` (repo root)** — essentially mandatory for any
+repo vendoring skills via `managing-skills`, where the submodule trees otherwise
+dominate the index (on replicator: 301 files/1038 chunks → 28/42, ~70 min → 84 s).
+Every `init-project-fastapi` repo qualifies. The template, and the carve-out for
+projects authoring first-party skills under `skills/`:
+[`references/context-artifacts.md`](references/context-artifacts.md).
 
 ### Phase 5 — Run the index and block until *fully* done
 
@@ -378,30 +351,21 @@ unmarked policy section before Phase 3 replaces the span
 
 ## Key invariants
 
-- **Completion is three signals, not one.** Never declare done at "100%
-  embedded" — require the index run reported complete AND graph READY AND
-  artifacts N/N (troubleshooting gotcha C). None of the three is a percentage:
-  the progress line disappears when the run finishes, so waiting to observe
-  "100%" is waiting for something that will never arrive (gotcha J).
-- **Gate the graph on yield, not on status.** `READY` says a build finished, not
-  that it resolved anything: usa-wa reported READY over 3 edges across 374 files
-  (gotcha N). Measure edges per file, and on a `low` verdict write the degraded
-  policy rather than failing the install — a policy that points at broken
-  tooling is worse than no policy, because empty output reads as "no dependents"
-  rather than "tool failed" ([#107](https://github.com/gregoryfoster/skills/issues/107)).
-- **A failed last operation is a finding, not a footnote.** `codebase_status`
-  records it and nothing used to read it outside an in-flight index run. Phase 6
-  fails on it; the once-per-day health hook reports it if it appears later.
-- **The health hook reports; it never repairs.** No re-index, no Docker start,
-  no file edit from a SessionStart hook — it runs before an agent has context
-  and must cost a bounded, silent-when-clean moment.
-- **Never mutate the host toolchain.** Preflight detects and instructs; it does
-  not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
+Three more — completion is three signals, the graph is gated on yield not
+`READY`, and a FAILED last operation fails verification — are enforced by
+Phases 5–6 and recorded under *Invariants a phase already enforces* in
+[`references/troubleshooting.md`](references/troubleshooting.md).
+
 - **All file edits are idempotent.** The AGENTS.md policy block and the
   `docs/SOCRATICODE.md` template are both marker-delimited — a re-run replaces
   between the markers and preserves what follows `END`; the settings.json hook
   is merged and deduped. Re-running the skill, or running it on a project that
   already has these files, must not duplicate blocks or stack hooks.
+- **The health hook reports; it never repairs.** No re-index, no Docker start,
+  no file edit from a SessionStart hook — it runs before an agent has context
+  and must cost a bounded, silent-when-clean moment.
+- **Never mutate the host toolchain.** Preflight detects and instructs; it does
+  not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
 - **The policy block pays rent on every invocation.** It is the one section
   `curating-context` will not edit, so whatever lands in `AGENTS.md` is a fixed
   cost the repo cannot curate away — 1,247 tokens and 15% of watcher's whole
@@ -432,6 +396,8 @@ unmarked policy section before Phase 3 replaces the span
 See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
 gotcha matrix (A–N) and the native-vs-fallback decision tree.
 
-**Self-budget:** held to a **10,050-token ratchet (estimate and exact)** by
+**Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow.
+6,000-token standard, set at current size so this file cannot grow. Came down
+from 10,050 by demoting Phase 0, Phase 4's index-scope guidance and four
+phase-enforced invariants into `references/`.

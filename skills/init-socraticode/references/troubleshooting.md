@@ -37,3 +37,24 @@ codebase_* tools callable in this session?
          ├─ tools appear → native path.
          └─ still absent → fallback: node scripts/mcp-driver.mjs index <projectPath>
 ```
+
+## Invariants a phase already enforces
+
+`SKILL.md`'s **Key invariants** carries only constraints stated nowhere else.
+These three are enforced by a phase and are recorded here as the standard that
+phase is meeting — read the phase for what to do, this for why it is the bar.
+
+- **Completion is three signals, not one.** Never declare done at "100%
+  embedded" — require the index run reported complete AND graph READY AND
+  artifacts N/N (troubleshooting gotcha C). None of the three is a percentage:
+  the progress line disappears when the run finishes, so waiting to observe
+  "100%" is waiting for something that will never arrive (gotcha J).
+- **Gate the graph on yield, not on status.** `READY` says a build finished, not
+  that it resolved anything: usa-wa reported READY over 3 edges across 374 files
+  (gotcha N). Measure edges per file, and on a `low` verdict write the degraded
+  policy rather than failing the install — a policy that points at broken
+  tooling is worse than no policy, because empty output reads as "no dependents"
+  rather than "tool failed" ([#107](https://github.com/gregoryfoster/skills/issues/107)).
+- **A failed last operation is a finding, not a footnote.** `codebase_status`
+  records it and nothing used to read it outside an in-flight index run. Phase 6
+  fails on it; the once-per-day health hook reports it if it appears later.

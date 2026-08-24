@@ -19,14 +19,19 @@
 # `PATH :: WARRANT :: CONTENT` is consulted only by runs whose --file contains
 # PATH, and the report says how many entries sat a run out (#139).
 
-# --- 2026-08-24, #230 curation round 2 -----------------------------------
-# managing-skills/SKILL.md's self-budget note named a 6,250 ratchet and called
-# itself a named exception. This run DELETED that ratchet entry — the file now
-# clears the repo's ordinary 6,000 standard on both readings — so every line of
-# the old note is a claim this same change invalidated and rewrote in place.
-# Single-transition: prune these once #230 merges.
-skills/managing-skills/SKILL.md :: retarget :: held to a **6,250-token ratchet (estimate and exact)** by
-skills/managing-skills/SKILL.md :: retarget :: a named exception to the repo's
-skills/managing-skills/SKILL.md :: retarget :: set at current size so this file cannot grow. Came down
-skills/managing-skills/SKILL.md :: retarget :: from 8,750 by demoting four units into
-skills/managing-skills/SKILL.md :: retarget :: demoting again, not raising it.
+
+# --- 2026-08-24, #230 CR round 2 item 13 ---------------------------------
+# Phase 0 moved to references/detached-source.md. These five lines are its
+# connective tissue, retargeted by the same change that moved what they point
+# at: the "otherwise clone" lead-in now names the reference, and the placeholder
+# note now says the reference prints the paths. Single-transition — prune once
+# this merges.
+skills/init-socraticode/SKILL.md :: retarget :: phase. Otherwise clone once to a scratch dir and reference scripts through the
+skills/init-socraticode/SKILL.md :: retarget :: captured path:
+skills/init-socraticode/SKILL.md :: retarget :: `<SKILL_DIR>` / `<SKILL_TMP>` below are **placeholders** for the literal paths
+skills/init-socraticode/SKILL.md :: retarget :: printed here (each Bash call runs in a fresh shell — they are not inherited).
+skills/init-socraticode/SKILL.md :: retarget :: Clean up `<SKILL_TMP>` in Phase 6.
+# The self-budget note this same change invalidated: the ratchet moved
+# 10,050 -> 9,400, so both lines were rewritten in place. Prune on merge.
+skills/init-socraticode/SKILL.md :: retarget :: held to a **10,050-token ratchet (estimate and exact)** by
+skills/init-socraticode/SKILL.md :: retarget :: 6,000-token standard, set at current size so this file cannot grow.

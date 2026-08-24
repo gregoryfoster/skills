@@ -693,6 +693,28 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         end = text.find("\n## ", start + len("## Field notes"))
         return text[start:end if end != -1 else len(text)]
 
+    @staticmethod
+    def _bullet(opening: str) -> str:
+        """One `- ` bullet of **Field notes**, from `opening` to the next bullet.
+
+        Section scope is too coarse for a claim whose own bullet header already
+        contains the keyword. `test_the_freshness_interaction_is_covered` pinned
+        `"stale"` against the whole section and was VACUOUS on arrival: the
+        bullet opens *"…makes the health-check say `stale`"*, so the header
+        alone satisfied it and the ordering advice underneath — the one thing in
+        this doc neither source issue knew — could be deleted with the suite
+        green. Proved by mutation in #230's CR round 2, not by reading.
+
+        This is the granularity `TestGeneratedDocExplainsTheSymptom` arrived at
+        one class down, for the same reason and in its own words: "a section-wide
+        pin would have been green before the prose it is meant to require was
+        written."
+        """
+        notes = TestArtifactsRefExplainsTheBytecodeHazard._field_notes()
+        start = notes.index(opening)
+        end = notes.find("\n- ", start + len(opening))
+        return notes[start:end if end != -1 else len(notes)]
+
     def test_the_ignore_exception_is_still_stated(self) -> None:
         """The bullet the two new ones are written as continuations of.
 
@@ -741,13 +763,19 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         and the finding's named remedy, `codebase_context_index`, re-embeds the
         bytecode. The two features point opposite ways unless the doc says which
         comes first.
+
+        So THE ORDERING is what this pins, not the word "stale". Asserting the
+        keyword against the whole section was vacuous — see `_bullet`.
         """
-        notes = self._field_notes().lower()
-        assert "stale" in notes, (
-            f"references/{ARTIFACTS_REF.name}'s **Field notes** does not tell a "
-            "reader that a build-output directory under an artifact path makes "
-            "health-check report it stale (#225) — and that re-indexing on that "
-            "finding re-embeds the bytecode rather than clearing it (#229)."
+        bullet = self._bullet("- **A build-output directory also makes").lower()
+        assert "clear the build output" in bullet and "then re-index" in bullet, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** names the "
+            "freshness interaction without saying which repair comes FIRST. "
+            "That ordering is the whole finding: #225 reports the artifact "
+            "stale, and its named remedy — re-run `codebase_context_index` — "
+            "re-embeds the bytecode #229 is about. A reader who re-indexes "
+            "before clearing the build output makes the artifact worse while "
+            "clearing the finding that told them to."
         )
 
 
