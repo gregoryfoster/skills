@@ -285,6 +285,40 @@ edit. A SessionStart hook runs before the agent has any context, and a hook that
 started a two-hour index — or rewrote `AGENTS.md` under an agent already at work
 — would be a worse failure than the one it detected.
 
+**Where the vendor content is absent — CI, a fresh clone, a new worktree.**
+`actions/checkout` does not fetch submodules unless asked
+([`init-project-fastapi`'s `github-ci.md`](../../init-project-fastapi/references/github-ci.md)
+omits `skills-vendor/` deliberately: "nothing in lint/test needs them") and
+`git worktree add` never populates them at all. Both hooks above are symlinks
+*into* `skills-vendor/`, so in that state both dangle. Each decision is right on
+its own; together they produce a trap worth writing down once
+([#227](https://github.com/gregoryfoster/skills/issues/227)).
+
+**The copy/symlink signal inverts there.** A dangling symlink is the *healthy*
+state and a **copy** — a valid regular file — is the only variant that resolves.
+So any check that verifies the install by *resolving* it passes on the copy this
+document argues against and fails on the symlink it prescribes, and
+`.skills/doctor.sh`'s dangling scan carries no signal either, because everything
+dangles.
+
+Assert the symlink's **shape** — that it is a symlink at all, that its target is
+relative, that it points into `skills-vendor/` — and skip its *resolution* where
+the content is absent. Do **not** add `submodules: recursive` to a CI checkout
+just to make a hook check pass: that buys a green light by undoing the decision
+that made skipping them worth anything. `--allow-unresolved` is that split, so a
+job can gate on the installer instead of reimplementing it:
+
+```bash
+bash "<SKILL_DIR>/../managing-skills/scripts/install-hook.sh" \
+  --hook socraticode-health.sh --skill init-socraticode \
+  --marker socraticode-health --check --allow-unresolved
+```
+
+It relaxes resolution and nothing else. An absolute target, a target outside
+`skills-vendor/`, a link that misses a source which *is* checked out, a missing
+or duplicated `SessionStart` entry, and a copy all still exit 3 — the copy
+especially, since it is the one form no resolution check can catch here.
+
 > **Duplicate-config trap.** If a session shows BOTH
 > `mcp__plugin_socraticode_socraticode__*` and a standalone
 > `mcp__socraticode__*`, the user has a duplicate MCP registration. Remove the

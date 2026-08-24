@@ -168,7 +168,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-refresh.sh
 ```
 
-It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 either missing); remove both with `--uninstall`.
+It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 either missing or registered twice); add `--allow-unresolved` where the vendor content is not checked out, so CI and fresh worktrees can gate on shape alone ([#227](https://github.com/gregoryfoster/skills/issues/227)). Remove both with `--uninstall`.
 
 **The contract is TWO artifacts, and only the second one makes the hook run:**
 
