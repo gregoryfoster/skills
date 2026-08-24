@@ -309,10 +309,25 @@ class TestDoctorCoversTheSymlinkedHook:
     that a *hook* symlink reaches the reporting path.
     """
 
-    def test_a_healthy_hook_symlink_is_silent(self, consumer: Path) -> None:
+    def test_a_resolving_hook_symlink_is_not_a_symlink_defect(
+        self, consumer: Path
+    ) -> None:
+        """Re-baselined by #224. This fixture resolves and carries no
+        SessionStart registration, which is precisely the half-install the
+        doctor now warns about — so "silent" was never the right expectation
+        for it, only "not reported as a broken symlink".
+
+        The exit code is what separates the two: a dangling symlink fails the
+        preflight, a wiring gap is advisory and must not.
+        """
         result = _doctor(consumer, "--check-only")
         assert result.returncode == 0, (
             f"the doctor flagged a resolving hook symlink:\n{result.stderr}"
+        )
+        assert "dangling" not in result.stderr.lower(), result.stderr
+        assert "does not register it" in result.stderr, (
+            "the reminder hook resolves but nothing registers it, and #224 is "
+            f"the check that says so:\n{result.stderr}"
         )
 
     def test_a_dangling_hook_symlink_is_reported(self, consumer: Path) -> None:

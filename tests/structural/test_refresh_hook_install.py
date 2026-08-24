@@ -39,7 +39,8 @@ Coverage — install-refresh.sh:
 - the symlink target is relative and resolves
 
 Coverage — doctor.sh:
-- half-installed hook   → warns, names install-refresh.sh, still exits 0
+- half-installed hook   → warns, names install-hook.sh plus this hook's own
+                          .install manifest (#224), still exits 0
 - fully installed hook  → silent about the hook
 - no symlink at all     → silent (never nag a consumer that declined the hook)
 
@@ -470,6 +471,17 @@ class TestDoctorReportsAHalfInstall:
     hook does not — via a reviewing-*/shipping-* preflight, or a SessionStart
     entry of its own, which is exactly what the four #167 repos had."""
 
+    # The one-line argument manifest this hook ships beside itself, which the
+    # doctor prints as the repair (#224). Read from the shipped file rather
+    # than transcribed, so the two cannot drift.
+    MANIFEST = SCRIPTS / "skills-submodule-update.install"
+
+    def _manifest_args(self) -> str:
+        for line in self.MANIFEST.read_text().splitlines():
+            if line.strip() and not line.strip().startswith("#"):
+                return line.strip()
+        raise AssertionError(f"{self.MANIFEST} carries no argument line")
+
     def _doctor(self, repo: Path) -> subprocess.CompletedProcess:
         installed = repo / ".skills" / "doctor.sh"
         installed.parent.mkdir(parents=True, exist_ok=True)
@@ -477,14 +489,33 @@ class TestDoctorReportsAHalfInstall:
         installed.chmod(0o755)
         return _run(repo, installed)
 
+    def _vendor_the_rest_of_the_scripts_dir(self, repo: Path) -> None:
+        """The module fixture vendors the hook script alone; a real submodule
+        checkout carries the whole scripts/ directory, including the manifest
+        the doctor reads its repair line out of and the installer that line
+        names (#224)."""
+        vendor = repo / VENDOR_REL
+        for name in ("install-hook.sh", self.MANIFEST.name):
+            (vendor / name).write_text((SCRIPTS / name).read_text())
+
     def test_it_warns_without_changing_its_exit_code(self, repo: Path):
         """Phase 1 preflights invoke the doctor with `|| exit 1`, so a wiring
-        gap must not block a review."""
+        gap must not block a review.
+
+        The repair line is install-hook.sh plus this hook's manifest, not
+        install-refresh.sh (#224). The doctor now covers every installed hook,
+        and install-refresh.sh is a wrapper that exists for exactly one of
+        them — naming it is only possible while the check is hardcoded to that
+        one, which was the defect. install-refresh.sh keeps its own path for
+        the docs and cohort issues that name it; it is no longer the string
+        the doctor derives from a hook it has just discovered.
+        """
         _half_install(repo)
+        self._vendor_the_rest_of_the_scripts_dir(repo)
         r = self._doctor(repo)
         assert r.returncode == 0, r.stderr
         assert "does not register it" in r.stderr
-        assert "install-refresh.sh" in r.stderr
+        assert f"install-hook.sh {self._manifest_args()}" in r.stderr, r.stderr
 
     def test_it_is_silent_when_the_hook_is_fully_installed(self, repo: Path):
         _run(repo, INSTALL_REFRESH)
