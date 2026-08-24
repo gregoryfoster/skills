@@ -232,11 +232,22 @@ SKILL_MD_RATCHETS = {
     # two hook wirings, and a blocking index verified by edge yield. Grew during
     # Batch A of #144 (#107's yield-gate table, #115's two-variant Phase 3).
     "init-socraticode": 10_050,
-    # The submodule + symlink pattern in full, including the two-level chain,
-    # the doctor's self-heal, and the pin file. Carries no references/ at all,
-    # so every word of it is always-loaded by construction — the one skill where
-    # demotion is the whole remaining move.
-    "managing-skills": 8_750,
+    # The submodule + symlink pattern in full, including the two-level chain and
+    # the doctor's self-heal. This entry used to read 8,750 and justify itself
+    # with "carries no references/ at all, so every word of it is always-loaded
+    # by construction — the one skill where demotion is the whole remaining
+    # move." That was a description of the directory listing, not of the
+    # content: the move was always available, it just needed a references/
+    # directory to exist first. Creating one and demoting four units — the
+    # installer internals, the manual uninstall, the pin file, and the two auth
+    # ladders — took it to 6,202 estimate / 6,197 exact, a 29% cut with
+    # prove-no-loss.sh reporting lost: 0 and duplicated: 0.
+    #
+    # Now ~200 tokens above SKILL_MD_STANDARD rather than 2,750, so the
+    # exception is nearly retirable; Step 2c's copy-not-symlink rationale is the
+    # next honest class-B unit if someone wants to close that gap and delete
+    # this entry. Set at current size, so growing the file means demoting again.
+    "managing-skills": 6_250,
     # A ten-step orchestration procedure with scoring rubrics, conflict-zone
     # analysis, and batch-plan templates. The largest file in the repo. See the
     # outlier note below. Bound by its ESTIMATE, which reads 1,252 higher than

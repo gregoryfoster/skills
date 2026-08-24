@@ -47,6 +47,19 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MS_SCRIPTS = REPO_ROOT / "skills" / "managing-skills" / "scripts"
 MS_SKILL = REPO_ROOT / "skills" / "managing-skills" / "SKILL.md"
+MS_REFERENCES = REPO_ROOT / "skills" / "managing-skills" / "references"
+
+
+def _documented_surface() -> list[str]:
+    """Every file this skill publishes prose in: SKILL.md plus references/.
+
+    A snippet under test may live in either, and moves between them when the
+    ratchet forces a demotion. Callers searching for a documented block search
+    all of it, so relocating one does not read as a behavioural change.
+    """
+    texts = [MS_SKILL.read_text()]
+    texts += [p.read_text() for p in sorted(MS_REFERENCES.rglob("*.md"))]
+    return texts
 INSTALL_HOOK = MS_SCRIPTS / "install-hook.sh"
 INSTALL_REFRESH = MS_SCRIPTS / "install-refresh.sh"
 SOC_SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
@@ -271,22 +284,32 @@ class TestUninstallHasTheIdenticalDefect:
 
 
 class TestTheDocumentedUninstallFilterIsFixedToo:
-    """`managing-skills/SKILL.md` publishes the manual equivalent of
-    `--uninstall` as a jq block, and it carried the same `[0]`. Run verbatim,
-    for the reason `TestManagingSkillsHookCommand` runs the rest of that
-    document's snippets: a behavioural test that hardcodes what the doc *should*
-    say cannot catch the doc saying something else."""
+    """`managing-skills` publishes the manual equivalent of `--uninstall` as a
+    jq block, and it carried the same `[0]`. Run verbatim, for the reason
+    `TestManagingSkillsHookCommand` runs the rest of that skill's snippets: a
+    behavioural test that hardcodes what the doc *should* say cannot catch the
+    doc saying something else.
+
+    Searched across the skill's whole documented surface — SKILL.md plus its
+    references/ — rather than SKILL.md alone. The claim under test is "the
+    filter this skill publishes works", and *which file* publishes it is
+    incidental: the block began in SKILL.md and moved to
+    `references/auto-refresh-hook.md` when that file was curated under its
+    ratchet. Binding the test to one path made a demotion look like a
+    behavioural regression, which is the wrong signal from a suite that exists
+    to catch the doc drifting from the script.
+    """
 
     def _documented_block(self) -> str:
         blocks = [
-            b for b in re.findall(
-                r"```bash\n(.*?)```", MS_SKILL.read_text(), re.DOTALL
-            )
+            b for text in _documented_surface()
+            for b in re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
             if "jq " in b and REFRESH in b
         ]
         assert len(blocks) == 1, (
             "expected exactly one documented jq block naming "
-            f"{REFRESH!r}, found {len(blocks)}"
+            f"{REFRESH!r} across managing-skills' SKILL.md and references/, "
+            f"found {len(blocks)}"
         )
         return blocks[0]
 
