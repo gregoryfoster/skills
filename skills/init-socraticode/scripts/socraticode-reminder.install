@@ -1,0 +1,20 @@
+# socraticode-reminder.install — this hook's install-hook.sh arguments.
+#
+# Read by .skills/doctor.sh (#224) as the repair line for a reminder hook that
+# is on disk with no SessionStart registration. Before this file existed the
+# doctor could see that state for exactly one hook — managing-skills' refresh
+# hook — and this one was undetectable.
+#
+# Format: the first line that is neither blank nor a comment is the argument
+# list, appended to a resolved `bash <vendor>/…/install-hook.sh`.
+#
+# It transcribes Step A of ../references/code-exploration-policy.md, and
+# tests/structural/test_doctor_hook_registration.py compares the two: nothing
+# else in the tree would notice them drifting, because a flag renamed in
+# install-hook.sh conflicts with no file here.
+#
+# Both markers, in the documented order. The FIRST is canonical — install-hook.sh
+# writes it as the trailing `# <token>` comment on the registered command — and
+# socraticode-reminder is the legacy alias, recognised on read so an older
+# install is upgraded rather than duplicated.
+--hook socraticode-reminder.sh --skill init-socraticode --marker socraticode-prefetch --marker socraticode-reminder --copy-fallback

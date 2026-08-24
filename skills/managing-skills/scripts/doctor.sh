@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-18-2"
+VERSION="2026-08-23-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -85,6 +85,14 @@ because no repair was attempted and after the heal because one was.
 .claude/hooks/ is scanned because skill installers link hooks there into
 the same vendor chain; a dangling one fails on every file edit rather than
 only when a skill is invoked.
+
+Every hook symlink that resolves is also checked for its SessionStart
+registration in .claude/settings.json, which is the half that makes it
+run at all. The repair printed comes from a one-line <hook>.install
+manifest the vendoring skill ships beside the script, so a skill adding a
+hook needs no edit here. Advisory: it warns and leaves the exit code
+alone, because a wiring gap is not a dangling symlink and Phase 1
+preflights gate on that code.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -214,70 +222,163 @@ sync_self() {
 # logic would almost never run.
 sync_self
 
-# The auto-refresh hook's contract is TWO artifacts — the symlink and the
+# An installed hook's contract is TWO artifacts — the symlink and the
 # SessionStart registration in .claude/settings.json — and only the second one
 # makes it run. A repo carrying the symlink without the registration looks
-# installed to anyone who lists .claude/hooks/ and refreshes nothing, so its
-# vendored skills freeze at whatever commit they were on.
+# installed to anyone who lists .claude/hooks/ and runs nothing.
 #
-# Four of twelve audited consumers were in exactly that state, pinned at one
-# commit for over a week while the rest of the cohort moved through four skill
-# versions (#167). Nothing detected it, because a half-installed hook is silent
-# by construction: the missing half is the half that would have run.
+# Four of twelve audited consumers were in exactly that state for the refresh
+# hook, pinned at one commit for over a week while the rest of the cohort moved
+# through four skill versions (#167). Nothing detected it, because a
+# half-installed hook is silent by construction: the missing half is the half
+# that would have run.
+#
+# EVERY hook, not the one this check was written for (#224). It was hardcoded
+# to skills-submodule-update.sh, so a consumer with three installed hooks and
+# zero registrations had one of the three reported and the two init-socraticode
+# hooks were undetectable. socraticode-health.sh is the worst one to lose that
+# way — it is silent when clean by design, so "installed, unregistered, never
+# runs" and "installed, registered, nothing to report" produce byte-identical
+# observable behaviour. The repo that most needs the check is the one that
+# cannot tell it stopped. Paired with #222, which deletes a registration
+# silently, the two were a complete silent-failure loop.
 #
 # Reported HERE, for the same reason sync_self lives here — the doctor is the
-# one code path that still runs in a repo whose refresh hook does not, whether
-# through a reviewing-*/shipping-* preflight or a SessionStart entry of its
-# own. Warn only; a wiring gap is not a dangling symlink and must not change
-# this script's exit code, which Phase 1 preflights gate on with `|| exit 1`.
+# one code path that still runs in a repo whose hooks do not, whether through a
+# reviewing-*/shipping-* preflight or a SessionStart entry of its own. Warn
+# only; a wiring gap is not a dangling symlink and must not change this
+# script's exit code, which Phase 1 preflights gate on with `|| exit 1`.
+
+# The per-hook manifest a skill ships beside the script it installs: one line of
+# install-hook.sh arguments, printed as the repair (#224).
 #
-# Only when the symlink is present: that is what distinguishes "somebody
-# installed this and it half-landed" from "this consumer never wanted the
-# hook", and nagging the second group trains everyone to ignore the first.
-check_refresh_registration() {
-  local hook=".claude/hooks/skills-submodule-update.sh"
+# A hook->installer table inside this file was the smaller change and was
+# rejected: it needs an edit here every time any skill adds a hook, and the
+# constants would sit in a different skill from the hook they configure — the
+# opposite of where #200 moved them. A manifest costs a file per hook and no
+# edits ever.
+#
+# Found from the symlink's own target, so a manifest is located by the same
+# chain the hook is: whichever vendor tree this particular link points into is
+# the one whose constants apply. Prints nothing when the skill ships no
+# manifest, which the caller reports differently rather than falling silent.
+hook_manifest_args() {
+  local hook="$1" target manifest args
+  target="$(readlink "$hook")"
+  case "$target" in
+    # Relative targets are relative to the link's own directory, not to the
+    # repo root this script cd'd to — `.claude/hooks/../../skills-vendor/…`
+    # resolves for the -f test below exactly as the kernel resolves the link.
+    /*) manifest="${target%.*}.install" ;;
+    *)  manifest="${hook%/*}/${target%.*}.install" ;;
+  esac
+  [ -f "$manifest" ] || return 0
+  # The first line that is neither blank nor a comment, so a manifest can
+  # explain itself to the next reader. `|| true` because grep exits 1 on a
+  # manifest that is nothing but comments, and nothing here may be fatal.
+  args="$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$manifest" \
+          | head -n 1 || true)"
+  # Bounded charset, checked here rather than trusted. This string is printed
+  # into a command an operator is invited to paste under pressure, and the
+  # repair line is the last place anyone re-reads. Every flag and value the
+  # installer accepts is already within [A-Za-z0-9._-] (it enforces that on its
+  # own arguments), so a manifest outside it is malformed, not exotic.
+  case "$args" in
+    "" | *[!A-Za-z0-9._\ -]*) return 0 ;;
+  esac
+  printf '%s' "$args"
+}
+
+check_hook_registrations() {
   local settings=".claude/settings.json"
-  [ -L "$hook" ] || return 0
-  # NOT `[ -f "$settings" ] || return 0`. No settings.json at all is the
-  # strongest form of unregistered, so it must fall through to the warning
-  # rather than out of the function — an early return there made the doctor
-  # silent on the plainest half-install there is.
-  #
-  # Scoped to .hooks.SessionStart[].hooks[].command, not a grep over the file.
-  # The basename appears in settings.json for reasons that are not
-  # registrations — a `permissions.allow` entry naming the hook is the common
-  # one — and a whole-file grep counted those, so this warning stayed silent on
-  # exactly the half-installed repos it was added for (CR finding 1).
-  #
+  [ -d ".claude/hooks" ] || return 0
   # No jq, no warning. The doctor is advisory and runs on every session start,
   # so a wrong warning is worse than none: it would fire in every consumer
   # without jq, including correctly-installed ones, and train the reader to
-  # ignore the message. install-refresh.sh --check reports UNKNOWN in that case,
+  # ignore the message. install-hook.sh --check reports UNKNOWN in that case,
   # which is the right place for a demand that jq be installed.
   command -v jq >/dev/null 2>&1 || return 0
-  if [ -f "$settings" ] && jq -e '[.hooks.SessionStart[]?.hooks[]?.command // ""]
-            | any(contains("skills-submodule-update.sh"))' \
-       "$settings" >/dev/null 2>&1; then
-    return 0
-  fi
-  echo "doctor: $hook is installed but $settings does not register it," >&2
-  echo "doctor: so the auto-refresh hook never runs and this repo's vendored" >&2
-  echo "doctor: skills stay frozen at their current commit. Repair with:" >&2
-  # Resolved here rather than printed as a glob. `bash skills-vendor/*/…` passes
-  # every extra match as an argument to the first, and install-refresh.sh
-  # rejects unknown arguments — so the paste-under-pressure path would fail on
-  # any repo vendoring a second skills repo.
-  local installer
-  for installer in skills-vendor/*/skills/managing-skills/scripts/install-refresh.sh; do
-    [ -f "$installer" ] || continue
-    echo "doctor:   bash $installer" >&2
-    return 0
+
+  local hook base args scope installer found
+  for hook in .claude/hooks/*; do
+    # A symlink, and one that resolves.
+    #
+    # Present-and-resolving is what distinguishes "an installer put this here
+    # and it half-landed" from the two states that are not this function's
+    # business: a regular file is a hook the project wrote itself (or a
+    # --copy-fallback install, which install-hook.sh --check owns because
+    # nothing here can see it), and a dangling symlink belongs to the scan
+    # below, which names it with the repair that actually applies. Two
+    # diagnoses for one file is worse than one, and nagging the group that is
+    # fine trains everyone to skim past the group that is not.
+    #
+    # Written as a negated `if` rather than `A && B || continue`: that form is
+    # not if-then-else (SC2015) and would `continue` whenever the -e test
+    # failed for any reason, which is the same thing here only by accident.
+    if [ ! -L "$hook" ] || [ ! -e "$hook" ]; then
+      continue
+    fi
+    base="${hook##*/}"
+    args="$(hook_manifest_args "$hook")"
+
+    if [ -n "$args" ]; then
+      # A manifest means install-hook.sh installed this, and install-hook.sh
+      # writes SessionStart and nothing else — so an entry under another event
+      # is not the registration this hook needs.
+      scope='[.hooks.SessionStart[]?.hooks[]?.command // ""]'
+    else
+      # Without one, nothing declares which event the hook wants, and
+      # .claude/hooks/ holds hooks for every event — this file's own header
+      # describes one firing on Edit|Write|MultiEdit. Only "registered under no
+      # event at all" is defensible about a hook we know nothing else about.
+      scope='[.hooks[]?[]?.hooks[]?.command // ""]'
+    fi
+    # NOT `[ -f "$settings" ] || continue`. No settings.json at all is the
+    # strongest form of unregistered, so it must fall through to the warning
+    # rather than out of the loop — an early return there made the doctor
+    # silent on the plainest half-install there is.
+    #
+    # Scoped through jq to the command strings, not a grep over the file. The
+    # basename appears in settings.json for reasons that are not registrations
+    # — a `permissions.allow` entry naming the hook is the common one — and a
+    # whole-file grep counted those, so this warning stayed silent on exactly
+    # the half-installed repos it was added for (CR finding 1).
+    if [ -f "$settings" ] && jq -e --arg b "$base" "$scope
+           | any(contains(\$b))" "$settings" >/dev/null 2>&1; then
+      continue
+    fi
+
+    echo "doctor: $hook is installed but $settings does not register it," >&2
+    echo "doctor: so Claude Code never runs it and whatever it maintains is" >&2
+    echo "doctor: frozen at whatever state it was in when the hook was" >&2
+    echo "doctor: installed. Repair with:" >&2
+    if [ -z "$args" ]; then
+      # The honest degradation: the defect is still named, only the exact
+      # command is not, because the skill that vendors this hook ships no
+      # manifest to read it from.
+      echo "doctor:   re-run the installer for the skill that vendors" >&2
+      echo "doctor:   $(readlink "$hook") — it ships no ${base%.*}.install" >&2
+      echo "doctor:   manifest, so the arguments cannot be named here." >&2
+      continue
+    fi
+    # Resolved here rather than printed as a glob. `bash skills-vendor/*/…`
+    # passes every extra match as an argument to the first, and install-hook.sh
+    # rejects unknown arguments — so the paste-under-pressure path would fail
+    # on any repo vendoring a second skills repo.
+    found=0
+    for installer in skills-vendor/*/skills/managing-skills/scripts/install-hook.sh; do
+      [ -f "$installer" ] || continue
+      echo "doctor:   bash $installer $args" >&2
+      found=1
+      break
+    done
+    [ "$found" = "1" ] || \
+      echo "doctor:   bash <vendor>/skills/managing-skills/scripts/install-hook.sh $args" >&2
   done
-  echo "doctor:   bash <vendor>/skills/managing-skills/scripts/install-refresh.sh" >&2
   return 0
 }
 
-check_refresh_registration
+check_hook_registrations
 
 # Directories whose direct children are scanned for dangling symlinks.
 # skills/ is the vendored-skill chain; .claude/hooks/ holds the hook symlinks

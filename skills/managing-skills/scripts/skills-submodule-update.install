@@ -1,0 +1,21 @@
+# skills-submodule-update.install — this hook's install-hook.sh arguments.
+#
+# Read by .skills/doctor.sh (#224). When the doctor finds a hook symlink with no
+# SessionStart registration, this is the line it prints as the repair. It lives
+# beside the hook rather than in a table inside doctor.sh so that a skill adding
+# a hook adds a manifest, not an edit to a script in another skill — the
+# constants belong next to the hook they configure, which is where #200 put
+# them.
+#
+# Format: the first line that is neither blank nor a comment is the argument
+# list, appended to a resolved `bash <vendor>/…/install-hook.sh`. One line, and
+# bounded to [A-Za-z0-9._-] and spaces, because it is printed into a command an
+# operator is invited to paste.
+#
+# --label and --note are deliberately absent. They are install-refresh.sh's:
+# --label renames the voice the installer speaks in, and this line is pasted at
+# install-hook.sh, which is the name it would then be speaking under. Neither
+# changes which artifacts land. install-refresh.sh remains the path README.md,
+# docs/SKILLS.md and the #167 per-repo issues name; it is simply no longer a
+# string the doctor derives from a hook it has just discovered.
+--hook skills-submodule-update.sh --skill managing-skills
