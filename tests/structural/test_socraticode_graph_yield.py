@@ -814,7 +814,38 @@ class TestHookMeasuresTheIndexedProject:
     main checkout are told to do feature work in worktrees, so the false report
     is the COMMON case. A once-per-day reporter that cries wolf on most
     sessions gets tuned out, and then the one true finding scrolls past too.
+
+    **Three halves of one property, pinned together on purpose (#226).** #180
+    fixed the hook. It left `references/socraticode-doc.md` handing a reader
+    `health-check .` two sections above the hook it describes — the literal
+    #180 removed — and left every consumer who had already copied that line
+    into their own `docs/` broken. Fixing only the doc leaves the copies; fixing
+    only the driver leaves the doc teaching a spelling that happens to work for
+    reasons the reader cannot see. So the driver resolves a relative argument
+    the way the hook does, the doc shows the explicit spelling, and both are
+    asserted here against the same worktree fixtures rather than against a
+    second set that could drift from these.
+
+    The failure is worse under a hand-run than under the hook: the hook is
+    unattended and silent when clean, whereas a human runs the documented
+    command precisely when they already suspect the graph — and is handed
+    confirmation of a problem that does not exist.
     """
+
+    @staticmethod
+    def _validated(cwd: Path, *args: str) -> tuple:
+        """`validate-manifest` names the path it resolved, with no server.
+
+        The cheapest observation of the driver's own resolution: it prints the
+        manifest path it is about to stat, needs no Docker, no network and no
+        MCP server, and shares its argv handling with every other command.
+        """
+        result = subprocess.run(
+            ["node", str(DRIVER), "validate-manifest", *args],
+            cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            env=_clean_env(),
+        )
+        return result, json.loads(result.stdout)
 
     @staticmethod
     def _measured(cwd: Path, stub: Path, out: Path, **env: str) -> str:
@@ -885,6 +916,140 @@ class TestHookMeasuresTheIndexedProject:
         assert second.stdout == "", (
             "a worktree session re-reported a finding the main checkout had "
             f"already reported today; got {second.stdout!r}"
+        )
+
+    # ── the driver half (#226) ───────────────────────────────────────────────
+
+    @requires_node
+    def test_a_relative_argument_resolves_to_the_main_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        """`health-check .` from a worktree must not name the worktree.
+
+        This is the line consumers copied out of the doc before #180, and it is
+        still live in their `docs/`. The hook can only fix its own invocation;
+        the driver fixes theirs.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        _, report = self._validated(wt, ".")
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            "a relative path argument was resolved against the worktree, which "
+            "SocratiCode never indexed — the confident wrong answer #180 "
+            f"removed from the hook (#226). Got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_no_argument_resolves_the_same_way(self, tmp_path: Path) -> None:
+        """`projectPath defaults to the current working directory` is `.`."""
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        _, report = self._validated(wt)
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            "an omitted argument defaults to cwd and must take the same route "
+            f"as an explicit `.`; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_an_absolute_argument_is_taken_verbatim(self, tmp_path: Path) -> None:
+        """The escape hatch, and the hook's own contract.
+
+        `socraticode-health.sh` resolves the main checkout itself and passes it
+        absolute. If the driver remapped absolute paths too the hook would
+        still be right by luck — and an operator deliberately asking about a
+        worktree would have no way to say so.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        _, report = self._validated(repo, str(wt))
+        assert Path(report["manifest"]).parent.resolve() == wt.resolve(), (
+            "an absolute argument was rewritten. It is the only spelling that "
+            f"can name a worktree on purpose; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_the_main_checkout_still_resolves_to_itself(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path, commit=True)
+        _, report = self._validated(repo, ".")
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            f"the main checkout must resolve to itself; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_a_directory_outside_a_repo_is_left_alone(self, tmp_path: Path) -> None:
+        """No git, no remap. The driver is not only ever run inside a repo."""
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        _, report = self._validated(plain, ".")
+        assert Path(report["manifest"]).parent.resolve() == plain.resolve(), (
+            f"a non-repo directory was rewritten; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_a_subdirectory_resolves_to_the_checkout_root(
+        self, tmp_path: Path
+    ) -> None:
+        """`.` inside `src/` is the same class of wrong answer as `.` in a worktree.
+
+        SocratiCode indexes the project root; a subdirectory is a path it never
+        saw, and `resolve()` alone would hand it over intact.
+        """
+        repo = _repo(tmp_path, commit=True)
+        (repo / "src").mkdir()
+        _, report = self._validated(repo / "src", ".")
+        assert Path(report["manifest"]).parent.resolve() == repo.resolve(), (
+            f"a subdirectory was measured as its own project; got {report['manifest']!r}"
+        )
+
+    @requires_node
+    def test_the_substitution_is_announced(self, tmp_path: Path) -> None:
+        """A silent path rewrite is the same disease in the other direction.
+
+        The driver would then be answering about a path the caller did not
+        name, with nothing in the output saying so.
+        """
+        repo = _repo(tmp_path, commit=True)
+        wt = _worktree(repo, tmp_path)
+        result, _ = self._validated(wt, ".")
+        assert str(repo.resolve()) in result.stderr, (
+            "the driver silently measured a different path than the one it was "
+            f"given; stderr said: {result.stderr!r}"
+        )
+
+    @requires_node
+    def test_no_announcement_when_nothing_moved(self, tmp_path: Path) -> None:
+        """A line printed on every run is a line nobody reads."""
+        repo = _repo(tmp_path, commit=True)
+        result, _ = self._validated(repo, ".")
+        assert "worktree" not in result.stderr.lower(), (
+            f"the no-op resolution announced itself; stderr: {result.stderr!r}"
+        )
+
+    # ── the doc half (#226) ──────────────────────────────────────────────────
+
+    def test_the_doc_does_not_hand_a_reader_the_literal_dot(self) -> None:
+        section = _graph_health(DOC_REF.read_text())
+        assert not re.search(r"health-check\s+\.\s*$", section, re.M), (
+            f"references/{DOC_REF.name}'s **Graph health** section still "
+            "documents `health-check .` — the exact argument #180 removed from "
+            "socraticode-health.sh two sections below it. From a worktree that "
+            "asks about a project SocratiCode never indexed and reports a "
+            "healthy index as broken (#226)."
+        )
+
+    def test_the_doc_shows_the_resolution_the_hook_uses(self) -> None:
+        """`--show-toplevel` is the near miss, and it is wrong in a worktree.
+
+        It yields the worktree root, not the main checkout, so a doc that
+        reached for the obvious spelling would still name an unindexed path.
+        """
+        section = _graph_health(DOC_REF.read_text())
+        assert "--git-common-dir" in section, (
+            f"references/{DOC_REF.name}'s **Graph health** section must show "
+            "the same resolution `socraticode-health.sh` uses — dirname of "
+            "`git rev-parse --path-format=absolute --git-common-dir`. "
+            "`--show-toplevel` is the plausible-looking wrong answer: in a "
+            "worktree it names the worktree (#226)."
         )
 
 
