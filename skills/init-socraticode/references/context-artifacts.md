@@ -128,6 +128,38 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
   or `.gitignore` (those govern the *code* index, not artifacts). So the
   `.socraticodeignore` you add in Phase 4 won't shrink an over-broad artifact
   dir; keep each artifact path scoped to the subtree you actually want embedded.
+- **…and the walk's binary guard is present but cannot fire, so build output is
+  embedded as mojibake.** The server reads each file with
+  `fsp.readFile(filePath, "utf-8")` inside a `try/catch` commented *"skip
+  unreadable files (binary, permissions, etc.)"*. That call does **not** throw
+  on binary input — it returns a string of U+FFFD replacement characters — so
+  every compiled file takes the *success* branch (`socraticode@1.12.0`,
+  `dist/services/context-artifacts.js`; filed upstream as
+  `giancarloerra/SocratiCode#116` — check it before assuming this still holds).
+  On CannObserv/observo, an artifact pointed at `./alembic/versions/` picked up
+  the `__pycache__/` that every test run and every `alembic` invocation drops
+  there: **70 `.pyc` files, 32 of the artifact's 86 chunks compiled bytecode**,
+  and a `codebase_context_search` for the current migration head returned
+  decompiled bytecode as its top hit.
+  Deleting `__pycache__/` and re-indexing took the artifact to 54 chunks and the
+  top-hit score from 0.5417 to 0.6111; adding `__pycache__/` and `*.pyc` to
+  `.socraticodeignore` changed nothing, per the bullet above. It fails
+  **upward** — nothing errors, nothing is logged (the `catch` never runs), and
+  both the chunk count and `codebase_status`'s artifact count *rise*. Every
+  signal reads healthier as the artifact gets worse. Two local fixes, in order:
+  (1) keep the build output out of the tree in the first place — for Python, set
+  `PYTHONPYCACHEPREFIX` so bytecode lands in one out-of-tree cache instead of
+  beside every source file; (2) point each artifact at the **narrowest subtree
+  containing only what you want embedded**, because nothing downstream filters
+  it — not `.gitignore`, not `.socraticodeignore`, not the guard above.
+- **A build-output directory also makes the health-check say `stale`, and
+  re-indexing is the wrong fix.** `mcp-driver.mjs health-check` judges a
+  directory artifact by its **newest descendant** mtime (#225), skipping only
+  `node_modules`/`.git` — the same blind spot as the walk. So a toolchain
+  rewriting `__pycache__/` under an artifact path reports that artifact stale
+  after every test run, and the finding's named remedy — *re-run
+  `codebase_context_index`* — re-embeds the bytecode. Clear the build output
+  first, then re-index.
 - **Each `name` must be unique** (case-insensitive) — the server rejects
   duplicates at parse time, aborting the whole run. When you split one category
   into multiple entries, give each a distinct name (as the template's
