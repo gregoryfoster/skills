@@ -1,4 +1,5 @@
-"""Every rendered relative link inside `skills/**/*.md` must resolve.
+"""Every rendered relative link inside `skills/**/*.md` must resolve — file and
+`#fragment` both.
 
 Surfaced by #143. Two dead relative links sat in
 `orchestrating-issue-backlog/references/process-log.md` across several sessions:
@@ -45,18 +46,54 @@ Links in prose — the only place the observed failures occurred — are checked
 no exemption at all, and a new illustrative link in prose needs a reviewable
 `EXEMPT_LINKS` entry to pass.
 
+## The anchor half (#223)
+
+This file used to end its scope section by handing `#anchor` resolution to
+`curating-context` — `measure-context.sh`, `links.dead_anchors`. **That handoff
+never landed.** `measure-context.sh` runs against a *consuming* repo's context
+surface, `AGENTS.md` plus its `docs/` tree, and is never pointed at `skills/`;
+`test_context_anchors.py` exercises the feature against synthetic tmp repos,
+which verifies the detector, not this tree. So the job was disclaimed by one
+test and picked up by no other, and 33 anchored links went unchecked.
+
+It is the same defect class #120 built `links.dead_anchors` for: a link whose
+file exists and whose heading does not, invisible to a file-resolution check.
+Splitting an over-budget doc — the operation `curating-context` most
+encourages — moves headings out of a file while leaving the file in place, so
+the gate was blind exactly where the advice points.
+
+`dead_anchors_in` reads from `_rendered_links`, the same extractor
+`dead_links_in` uses, so "a link that counts here" and "a link whose anchor must
+resolve" cannot drift apart — the argument `test_references.py` already makes
+for sharing the extractor with reachability. It also settles the one link a
+naive sweep of this tree calls broken: `` `[l](docs/FOO.md#some-heading)` `` in
+`budget-and-metrics.md` is a code span, so the shared extractor never yields it
+and it needs no `EXEMPT_LINKS` entry. Both halves ship with an empty registry.
+
+`slugify` **re-states** GitHub's rules rather than sharing `measure-context.sh`'s
+`slugs_of`, because that is a bash function running against another repo's tree
+and cannot be imported — the same wall `test_context_link_grammar.py` hit for
+`extract_links`, settled the same way, and `TestSlugifierAgreesWithMeasureContext`
+pins the two against a shared table so a drift fails a test.
+
 ## Scope
 
 - `skills/**/*.md` only. `AGENTS.md` and `docs/` have their own coverage.
-- File resolution only, not `#anchor` resolution — anchors are
-  `curating-context`'s job (`measure-context.sh`, `links.dead_anchors`).
+- Both halves: the file must exist, and a `#fragment` on an existing `.md`
+  target must name one of its ATX headings. A bare `[jump](#setup)` is checked
+  against its own file — `measure-context.sh` checks those and
+  `budget-and-metrics.md` documents that it does. A fragment on a non-`.md`
+  target is not checked: `script.sh#L10` is GitHub's line anchor, not a heading.
 - Inline links `[label](target)` and images `![alt](target)`. No reference-style
   definitions (`[ref]: target`) — none exist in `skills/` outside code fences.
 - Indented (four-space) code blocks are not masked. Distinguishing one from a
   continuation paragraph inside a list is unreliable, no carve-out needs it, and
   `EXEMPT_LINKS` is the escape hatch if one ever does.
 
-No API calls required.
+No API calls required. The two pin tests shell out to `measure-context.sh` with
+`--no-write` and `ANTHROPIC_API_KEY` stripped from the environment, so it uses
+its offline estimator — the same harness shape `test_context_link_grammar.py`
+and `test_context_anchors.py` use.
 """
 
 import json
@@ -70,6 +107,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = REPO_ROOT / "skills"
+MEASURE_CONTEXT = SKILLS_DIR / "curating-context" / "scripts" / "measure-context.sh"
 
 # Inline link / image destination. The label may not contain `]`, which keeps
 # the match from running past its own closing bracket; the destination stops at
@@ -96,6 +134,20 @@ _CODE_SPAN_RE = re.compile(
     r"(?<!`)(`+)(?!`)((?:(?!\n[ \t]*\n).)+?)(?<!`)\1(?!`)", re.DOTALL
 )
 
+# An ATX heading: up to three spaces of indent, one to six hashes, then a space.
+# The space is required — `#!/bin/sh` and `#nohash` are not headings.
+_ATX_RE = re.compile(r"^ {0,3}#{1,6} +(?P<text>.*)$")
+
+# A closed ATX heading's trailing run: `## Heading ##`.
+_CLOSED_ATX_RE = re.compile(r" +#+ *$")
+
+# A link inside a heading. GitHub slugs the heading on the link's *text*, so the
+# destination goes and the label's brackets are dropped as punctuation below.
+_HEADING_LINK_RE = re.compile(r"\]\([^)]*\)")
+
+# Everything GitHub drops when minting a heading id.
+_NOT_IN_SLUG_RE = re.compile(r"[^a-z0-9 _-]")
+
 
 # Links that must stay dead. Key is `(path relative to repo root, exact target)`;
 # value is the reason, which a reviewer reads in the diff.
@@ -106,17 +158,14 @@ _CODE_SPAN_RE = re.compile(
 EXEMPT_LINKS: dict[tuple[str, str], str] = {}
 
 
-def _mask_code(text: str) -> str:
-    """Blank out fenced blocks and inline code spans, preserving line offsets.
+def _blank_fenced_lines(lines: list[str]) -> None:
+    """Blank every line of every fenced block, in place, keeping line offsets.
 
-    Every masked character becomes `x` and every newline is kept, so a line
-    number computed against the masked text still points at the right source
-    line. Masking the *contents* of a span rather than dropping it also keeps a
-    link whose label merely contains a code span intact:
-    ``[`docs/X.md`](docs/X.md)`` becomes ``[xxxxxxxxxxx](docs/X.md)`` and is
-    still checked.
+    Shared by the two readers with opposite needs for code *spans*: a link's
+    target must be read with spans masked, a heading's text must be read with
+    them intact. Both need the same answer to "is this line inside a fence",
+    and one nested-fence rule for the whole module is the point of sharing it.
     """
-    lines = text.split("\n")
     open_fence: str | None = None
     for index, line in enumerate(lines):
         match = _FENCE_RE.match(line)
@@ -137,6 +186,20 @@ def _mask_code(text: str) -> str:
             )
             if closes:
                 open_fence = None
+
+
+def _mask_code(text: str) -> str:
+    """Blank out fenced blocks and inline code spans, preserving line offsets.
+
+    Every masked character becomes `x` and every newline is kept, so a line
+    number computed against the masked text still points at the right source
+    line. Masking the *contents* of a span rather than dropping it also keeps a
+    link whose label merely contains a code span intact:
+    ``[`docs/X.md`](docs/X.md)`` becomes ``[xxxxxxxxxxx](docs/X.md)`` and is
+    still checked.
+    """
+    lines = text.split("\n")
+    _blank_fenced_lines(lines)
     masked = "\n".join(lines)
     return _CODE_SPAN_RE.sub(
         lambda m: m.group(1)
@@ -159,29 +222,133 @@ def stale_exemptions(
     return [(key, reason) for key, reason in EXEMPT_LINKS.items() if key not in live]
 
 
-def dead_links_in(markdown: Path, base: Path) -> list[tuple[str, int, str]]:
-    """Return `(path-relative-to-base, line number, target)` for one file's dead links.
+def slugify(heading_text: str) -> str:
+    """GitHub's id for one heading's text, before same-file duplicate suffixing.
 
-    A target is checked when it is relative and names a path: absolute URIs,
-    protocol-relative URLs and bare `#fragment` anchors are out of scope, and a
-    `#fragment`/`?query` suffix is stripped before resolving, so `foo.md#heading`
-    is a check that `foo.md` exists and nothing more.
+    Lowercase, drop everything outside `[a-z0-9 _-]`, then one hyphen per
+    remaining space. The last clause is the whole trap and it is why this is
+    spelled as a substitution rather than a `\\s+` collapse: dropping a character
+    leaves its spaces behind, so `Phase 5d — Provision PostgreSQL` becomes
+    `phase-5d--provision-postgresql`, double hyphen and all. Collapsing runs
+    validates against ids GitHub never mints, and this repo's headings are dense
+    with em dashes — see `REAL_HEADINGS`.
     """
-    text = _mask_code(markdown.read_text())
-    relative = markdown.relative_to(base).as_posix()
-    findings: list[tuple[str, int, str]] = []
+    text = _HEADING_LINK_RE.sub("]", heading_text).lower()
+    return _NOT_IN_SLUG_RE.sub("", text).replace(" ", "-")
+
+
+def heading_slugs(markdown: Path) -> list[str]:
+    """Every ATX heading id in one file, in document order.
+
+    A repeat of an earlier id in the SAME FILE gets `-1`, `-2`, … Per file, not
+    per pre-split document: a split that moves the third `### PHP layers` into a
+    file of its own makes it `php-layers` again (#120).
+
+    Headings inside fenced blocks do not count — a `# comment` in a bash fence
+    would otherwise manufacture an id that makes a genuinely dead anchor
+    resolve, and this cohort's docs are dense with bash fences. Code *spans* are
+    left intact, unlike in `_mask_code`: `` ### Backfilling `repo_commit` ``
+    slugs on the word inside the backticks.
+
+    Not modelled, matching `measure-context.sh`: explicit `<a id="…">` anchors
+    and setext headings (`Title` over `=====`). Either produces a reported miss
+    to judge rather than a silent pass, which is the safe direction. Neither
+    exists in `skills/` today.
+    """
+    lines = markdown.read_text().split("\n")
+    _blank_fenced_lines(lines)
+    seen: dict[str, int] = {}
+    slugs: list[str] = []
+    for line in lines:
+        match = _ATX_RE.match(line.replace("\t", "    "))
+        if match is None:
+            continue
+        slug = slugify(_CLOSED_ATX_RE.sub("", match["text"].rstrip()))
+        if not slug:
+            continue
+        seen[slug] = seen.get(slug, 0) + 1
+        slugs.append(slug if seen[slug] == 1 else f"{slug}-{seen[slug] - 1}")
+    return slugs
+
+
+def _rendered_links(text: str) -> list[tuple[int, str]]:
+    """`(line number, target)` for every relative link a renderer actually makes.
+
+    The one extractor both halves of this gate read from, so "a link that counts
+    here" and "a link whose anchor must resolve" cannot drift apart — the
+    argument `test_references.py` already makes for sharing it with reachability.
+    Absolute URIs and protocol-relative URLs are dropped as out of scope for both;
+    everything else is left for the caller to filter, because a bare `#fragment`
+    is nothing to the path half and the whole subject of the anchor half.
+    """
+    links: list[tuple[int, str]] = []
     for match in _LINK_RE.finditer(text):
         target = match["target"]
         if target.startswith("<") and target.endswith(">"):
             target = target[1:-1]
-        if not target or target.startswith("#") or _ABSOLUTE_RE.match(target):
+        if not target or _ABSOLUTE_RE.match(target):
+            continue
+        links.append((text.count("\n", 0, match.start()) + 1, target))
+    return links
+
+
+def dead_links_in(markdown: Path, base: Path) -> list[tuple[str, int, str]]:
+    """Return `(path-relative-to-base, line number, target)` for one file's dead links.
+
+    A target is checked when it is relative and names a path: absolute URIs,
+    protocol-relative URLs and bare `#fragment` anchors are out of scope here,
+    and a `#fragment`/`?query` suffix is stripped before resolving — so this is a
+    check that `foo.md` exists and nothing more. `dead_anchors_in` checks the
+    fragment, off the same extractor.
+    """
+    text = _mask_code(markdown.read_text())
+    relative = markdown.relative_to(base).as_posix()
+    findings: list[tuple[str, int, str]] = []
+    for line, target in _rendered_links(text):
+        if target.startswith("#"):
             continue
         path = unquote(target.split("#", 1)[0].split("?", 1)[0])
         if not path:
             continue
         if (markdown.parent / path).exists():
             continue
-        findings.append((relative, text.count("\n", 0, match.start()) + 1, target))
+        findings.append((relative, line, target))
+    return findings
+
+
+def dead_anchors_in(markdown: Path, base: Path) -> list[tuple[str, int, str]]:
+    """Return `(path-relative-to-base, line, target)` for fragments naming no heading.
+
+    Checked only when the target is an existing `.md` file — a missing file is
+    one defect, not two, and `dead_links_in` already holds it; `script.sh#L10` is
+    GitHub's line anchor, not a heading id. An empty path means the file itself,
+    so `[jump](#setup)` is checked against its own headings: a rename inside one
+    long file breaks it exactly as a cross-file rename does.
+
+    The fragment is compared lowercased and otherwise verbatim, matching
+    `measure-context.sh`. GitHub only ever mints lowercase ids, so an author who
+    typed `#Some-Heading` meant the heading that exists, and reporting that as a
+    miss is the noise this class exists to avoid.
+    """
+    text = _mask_code(markdown.read_text())
+    relative = markdown.relative_to(base).as_posix()
+    findings: list[tuple[str, int, str]] = []
+    for line, target in _rendered_links(text):
+        path_part, _, fragment = target.partition("#")
+        if not fragment:
+            continue
+        if path_part:
+            path = unquote(path_part.split("?", 1)[0])
+            if not path:
+                continue
+            resolved = markdown.parent / path
+        else:
+            resolved = markdown
+        if resolved.suffix != ".md" or not resolved.is_file():
+            continue
+        if fragment.lower() in heading_slugs(resolved):
+            continue
+        findings.append((relative, line, target))
     return findings
 
 
@@ -192,6 +359,16 @@ def dead_links(root: Path, base: Path | None = None) -> list[tuple[str, int, str
         finding
         for markdown in sorted(root.rglob("*.md"))
         for finding in dead_links_in(markdown, base)
+    ]
+
+
+def dead_anchors(root: Path, base: Path | None = None) -> list[tuple[str, int, str]]:
+    """`dead_anchors_in` over every `*.md` under `root`, in path order."""
+    base = root if base is None else base
+    return [
+        finding
+        for markdown in sorted(root.rglob("*.md"))
+        for finding in dead_anchors_in(markdown, base)
     ]
 
 
@@ -499,13 +676,17 @@ class TestSlugRules:
         `— ` is not one separator; it is space, dash, space. Dropping the dash
         leaves two spaces, and one hyphen each is what GitHub emits.
         """
-        assert slugify("Phase 5d — Provision PostgreSQL") == "phase-5d--provision-postgresql"
+        assert (
+            slugify("Phase 5d — Provision PostgreSQL") == "phase-5d--provision-postgresql"
+        )
 
     def test_a_run_of_spaces_is_not_collapsed(self) -> None:
         assert slugify("a   b") == "a---b"
 
     def test_case_is_folded_and_punctuation_dropped(self) -> None:
-        assert slugify("The `count_tokens` fallback: why?") == "the-count_tokens-fallback-why"
+        assert (
+            slugify("The `count_tokens` fallback: why?") == "the-count_tokens-fallback-why"
+        )
 
     def test_underscores_and_hyphens_survive(self) -> None:
         assert slugify("`--exact` and repo_commit") == "--exact-and-repo_commit"
