@@ -75,7 +75,7 @@ The `../../` prefix resolves from `.claude/skills/` back to the project root, th
 
 Skills referenced via the symlink chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/.../skills/<name>`) are unreachable when the submodule isn't initialized — fresh `git worktree add`, shallow CI clones without `--recurse-submodules`, etc. The doctor is a tiny script copied into the consumer's `.skills/` directory that walks `skills/*` **and `.claude/hooks/*`** symlinks, auto-runs `git submodule update --init --recursive` when any dangle, and prints an actionable error otherwise. Phase 1 of every `reviewing-*` / `shipping-*` skill invokes it as a preflight.
 
-`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored.
+`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored. The same 127 hits a vendor-symlinked `SessionStart` hook for a whole session after a fresh clone or worktree, and no ordering avoids it: Claude Code runs an event's matching hooks in [parallel](https://code.claude.com/docs/en/hooks-guide), so the repair lands next session ([#228](https://github.com/gregoryfoster/skills/issues/228)).
 
 Run the installer from the vendor copy:
 
@@ -168,7 +168,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-refresh.sh
 ```
 
-It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 either missing); remove both with `--uninstall`.
+It is idempotent, repairs a partial install, and never commits. Check state without changing anything with `--check` (exit 0 both artifacts present, 3 otherwise); add `--allow-unresolved` where the vendor content is not checked out, so CI can gate on shape alone ([#227](https://github.com/gregoryfoster/skills/issues/227)). Remove both with `--uninstall`.
 
 **The contract is TWO artifacts, and only the second one makes the hook run:**
 
@@ -203,11 +203,17 @@ Remove the symlink:
 git rm .claude/hooks/skills-submodule-update.sh
 ```
 
-Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable:
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable. It strips matching **hooks** and drops only a group it emptied, never a whole matcher group — a group can hold several hooks, and dropping it silently deletes its group-mates' registrations ([#222](https://github.com/gregoryfoster/skills/issues/222)).
 
 ```bash
 jq 'if .hooks.SessionStart then
-      .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not))
+      .hooks.SessionStart |= map(
+        if (.hooks | type) == "array"
+        then (.hooks | length) as $n
+           | (.hooks |= map(select((.command? // "") | tostring
+               | contains("skills-submodule-update.sh") | not)))
+           | select($n == 0 or (.hooks | length) > 0)
+        else . end)
     else . end' \
    .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
