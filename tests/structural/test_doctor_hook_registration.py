@@ -126,12 +126,22 @@ def _invocation_tokens(text: str, hook: str) -> list[str]:
     multi-word value is install-refresh.sh's --note, whose quoted body runs
     past a real newline and would leave shlex with an unbalanced quote. The
     caller truncates at --note anyway.
+
+    Modes other than install are skipped, not merely ordered around. A manifest
+    transcribes the argument list that INSTALLS a hook, and the same document
+    also shows `--check` invocations of the same hook (#227 added one) — which
+    carry a different flag set for a different job. Matching the first
+    occurrence would make this comparison depend on the order two unrelated
+    sections happen to appear in.
     """
     for line in text.replace("\\\n", " ").splitlines():
-        if "install-hook.sh" in line and f"--hook {hook}" in line:
-            tokens = line.split()
-            return tokens[tokens.index("--hook") :]
-    raise AssertionError(f"no install-hook.sh invocation for {hook} found")
+        if "install-hook.sh" not in line or f"--hook {hook}" not in line:
+            continue
+        tokens = line.split()
+        if {"--check", "--uninstall"} & set(tokens):
+            continue
+        return tokens[tokens.index("--hook") :]
+    raise AssertionError(f"no install-hook.sh install invocation for {hook} found")
 
 
 def _functional_pairs(tokens: list[str]) -> set[str]:
