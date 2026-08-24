@@ -58,6 +58,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MS_SCRIPTS = REPO_ROOT / "skills" / "managing-skills" / "scripts"
 INSTALL_HOOK = MS_SCRIPTS / "install-hook.sh"
 INSTALL_REFRESH = MS_SCRIPTS / "install-refresh.sh"
+MS_SKILL = REPO_ROOT / "skills" / "managing-skills" / "SKILL.md"
 SOC_SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
 POLICY_REF = (
     REPO_ROOT / "skills" / "init-socraticode" / "references"
@@ -648,6 +649,72 @@ class TestTheReferenceDocumentsTheCiRecipe:
         passing check by undoing the checkout decision that made the skip
         worth having."""
         assert "submodules: recursive" in _ci_gate_window()
+
+
+class TestTheFirstSessionCostIsWrittenDown:
+    """#228 — a vendor-symlinked hook does not merely fail a check in a
+    submodule-less checkout, it fails to RUN, with rc=127.
+
+    Prose only, deliberately. The alternative on the table was a self-guarding
+    registered command (`[ -f "$0" ] || exit 0`), which converts the error into
+    silence — and for `socraticode-health.sh`, a hook designed to be silent when
+    clean, silence is exactly the state #179 identifies as dangerous. A hook
+    that is silent when healthy cannot afford a second way of being silent.
+
+    So what is owed is the sentence, in both skills that prescribe the layout:
+    the first session in a fresh clone or worktree errors, `.skills/doctor.sh`
+    repairs it, and the repair lands for the NEXT session — because Claude Code
+    runs an event's matching hooks **in parallel**, so no position in the
+    `SessionStart` array puts the doctor ahead of what it heals.
+
+    That last clause is the load-bearing one and it is a fact about Claude Code,
+    not about this repo: "When an event fires, Claude Code runs all matching
+    hooks in parallel" — https://code.claude.com/docs/en/hooks-guide, which also
+    says the completion order is non-deterministic. Neither of these two skills
+    currently claims ordering helps; these tests keep it that way, since the
+    tempting repair for an operator who reads only the rc=127 half is to shuffle
+    the array.
+    """
+
+    ORDERING_MYTHS = (
+        "first in the SessionStart array",
+        "first in the array",
+        "place the doctor first",
+        "order the doctor",
+        "run the doctor first",
+        "sequentially in array order",
+    )
+
+    def test_the_reference_states_the_first_session_failure(self):
+        window = _ci_gate_window()
+        assert "127" in window, window
+        assert ".skills/doctor.sh" in window, window
+
+    def test_the_reference_states_that_hooks_run_in_parallel(self):
+        window = _ci_gate_window().lower()
+        assert "parallel" in window, window
+
+    def test_managing_skills_states_it_too(self):
+        """Its refresh hook is the third vendor symlink in the same
+        `.claude/hooks/`, and it fails identically. A note in one skill's
+        reference does not reach the consumer who installed the other."""
+        body = MS_SKILL.read_text()
+        assert "127" in body, "managing-skills/SKILL.md does not mention rc=127"
+        assert "parallel" in body.lower(), (
+            "managing-skills/SKILL.md does not say hooks run in parallel, so a "
+            "reader is still free to think reordering the array would help"
+        )
+
+    @pytest.mark.parametrize(
+        "doc", [POLICY_REF, MS_SKILL], ids=lambda p: p.name
+    )
+    def test_neither_skill_implies_that_ordering_helps(self, doc: Path):
+        body = doc.read_text().lower()
+        found = [m for m in self.ORDERING_MYTHS if m.lower() in body]
+        assert not found, (
+            f"{doc.name} implies the SessionStart array's order affects when a "
+            f"hook runs; Claude Code runs matching hooks in parallel: {found}"
+        )
 
 
 class TestInstallRefreshIsStillItself:
