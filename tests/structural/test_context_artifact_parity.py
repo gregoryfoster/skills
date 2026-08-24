@@ -47,6 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILL_DIR = REPO_ROOT / "skills" / "init-socraticode"
 DRIVER = SKILL_DIR / "scripts" / "mcp-driver.mjs"
 DOC_REF = SKILL_DIR / "references" / "socraticode-doc.md"
+ARTIFACTS_REF = SKILL_DIR / "references" / "context-artifacts.md"
 MANIFEST_NAME = ".socraticodecontextartifacts.json"
 
 requires_node = pytest.mark.skipif(
@@ -655,6 +656,99 @@ class TestParsesTheIndexTimestamp:
         assert [a["path"] for a in parsed] == [
             "./docs/schema.sql", "./docs/", "./AGENTS.md"
         ], parsed
+
+
+class TestArtifactsRefExplainsTheBytecodeHazard:
+    """#229: the walk's binary guard is present and CANNOT FIRE.
+
+    `references/context-artifacts.md` already said a directory artifact honours
+    no ignore file. What it did not say is what that costs when the directory is
+    one a toolchain writes into. On CannObserv/observo an `./alembic/versions/`
+    artifact absorbed the `__pycache__/` every test run drops there — 32 of 86
+    chunks compiled bytecode, and `codebase_context_search` for the migration
+    head answering with decompiled bytecode as its top hit.
+
+    The mechanism is the durable half, and it is why "skip files that are not
+    text" is the wrong advice to leave a reader with. The server already
+    believes it has that filter:
+
+        try { const content = await fsp.readFile(filePath, "utf-8"); … }
+        catch { // skip unreadable files (binary, permissions, etc.) }
+
+    `readFile(…, "utf-8")` does not throw on binary — it returns U+FFFD
+    replacement characters — so every `.pyc` takes the *success* branch, nothing
+    is logged, and the chunk count goes **up**. Verified against
+    `socraticode@1.12.0`. A reader who is told only "it honours no ignore file"
+    goes looking for a filter to configure; there isn't one.
+
+    Scoped to **Field notes** rather than to the whole document, for the reason
+    `test_the_note_covers_the_third_diagnosis` learned one file over: a doc-wide
+    keyword sweep can be green before the prose it requires is written.
+    """
+
+    @staticmethod
+    def _field_notes() -> str:
+        text = ARTIFACTS_REF.read_text()
+        start = text.index("## Field notes")
+        end = text.find("\n## ", start + len("## Field notes"))
+        return text[start:end if end != -1 else len(text)]
+
+    def test_the_ignore_exception_is_still_stated(self) -> None:
+        """The bullet the two new ones are written as continuations of.
+
+        Green before #229 and pinned anyway: the hazard bullet opens with "…and"
+        and refers back to "the bullet above", so deleting this one leaves the
+        replacement dangling rather than merely shorter.
+        """
+        notes = self._field_notes()
+        assert ".socraticodeignore" in notes and "node_modules" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** no longer says a "
+            "directory artifact is pruned only of node_modules/.git and honours "
+            "neither ignore file — the premise the bytecode bullet builds on"
+        )
+
+    def test_the_guard_that_cannot_fire_is_named(self) -> None:
+        notes = self._field_notes().lower()
+        assert "u+fffd" in notes and "readfile" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** describes the "
+            "missing ignore chain but not the mechanism underneath it: the "
+            "binary guard is already written and cannot fire, because "
+            "`fsp.readFile(path, \"utf-8\")` returns U+FFFD replacement "
+            "characters rather than throwing. Without that, a reader hunts for "
+            "a text filter the server already believes it has (#229)."
+        )
+
+    def test_a_local_mitigation_is_named(self) -> None:
+        """Naming the hazard without a fix leaves the reader where they started.
+
+        Nothing downstream filters an artifact, so the only lever is the tree
+        itself: divert the bytecode, or narrow the artifact path.
+        """
+        notes = self._field_notes().lower()
+        assert "pythonpycacheprefix" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** names the "
+            "bytecode hazard without the durable local fix — "
+            "`PYTHONPYCACHEPREFIX` puts compiled output in one out-of-tree "
+            "cache instead of beside every source file (#229)."
+        )
+
+    def test_the_freshness_interaction_is_covered(self) -> None:
+        """#225 now nags on exactly the directory #229 is about.
+
+        health-check judges a directory artifact by its newest descendant and
+        skips only `node_modules`/`.git` — the walk's blind spot exactly. So a
+        `__pycache__/` rewritten by every test run reports the artifact stale,
+        and the finding's named remedy, `codebase_context_index`, re-embeds the
+        bytecode. The two features point opposite ways unless the doc says which
+        comes first.
+        """
+        notes = self._field_notes().lower()
+        assert "stale" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** does not tell a "
+            "reader that a build-output directory under an artifact path makes "
+            "health-check report it stale (#225) — and that re-indexing on that "
+            "finding re-embeds the bytecode rather than clearing it (#229)."
+        )
 
 
 class TestGeneratedDocExplainsTheSymptom:
