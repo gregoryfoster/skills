@@ -51,7 +51,8 @@ no other.
 - **Merge strategy**: regular merge commit, `batch/a` → `main`. Intra-batch
   worker → batch fixed at FF/regular merge so
   `worktree-destroy.sh --base batch/a` can verify ancestry.
-- **Suite baseline on `main` (`76263fd`)**: **3041 passed, 159 skipped**, 155s,
+- **Suite baseline on `main`**: **3041 passed, 159 skipped**, ~150s,
+  measured twice and stable — at `76263fd` and again at `d206830` (HEAD),
   via `.venv/bin/python -m pytest tests/structural/`. Every worker brief carries
   this number with "stop and report if it does not match."
   - Measured **after** committing this plan and the Step 10 journal entry, not
