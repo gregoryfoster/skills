@@ -59,7 +59,10 @@ no exemption at all, and a new illustrative link in prose needs a reviewable
 No API calls required.
 """
 
+import json
+import os
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -219,11 +222,37 @@ class TestRelativeLinks:
         Without this the registry only ever grows, and a target-string entry
         keeps silencing a link long after the path was fixed or deleted.
         """
-        stale = stale_exemptions(dead_links(SKILLS_DIR, base=REPO_ROOT))
+        stale = stale_exemptions(
+            dead_links(SKILLS_DIR, base=REPO_ROOT)
+            + dead_anchors(SKILLS_DIR, base=REPO_ROOT)
+        )
         assert stale == [], (
             "EXEMPT_LINKS entries no longer name a dead link — the link resolves, "
             f"moved, or was deleted. Remove them: {stale}"
         )
+
+
+class TestSkillAnchors:
+    """A `#fragment` in skills/**/*.md names a heading that exists.
+
+    The half `test_links_resolve` never covered: the file resolves, the heading
+    does not, and the reader lands at the top of a document that no longer holds
+    what they were sent for.
+    """
+
+    def test_anchors_resolve(self, markdown: Path) -> None:
+        for relative, line, target in unexempted(dead_anchors_in(markdown, base=REPO_ROOT)):
+            path_part, _, fragment = target.partition("#")
+            resolved = (markdown if not path_part else markdown.parent / path_part)
+            pytest.fail(
+                f"{relative}:{line} links to `{target}`, whose file resolves but "
+                f"whose `#{fragment}` names no heading in "
+                f"{Path(resolved).resolve().relative_to(REPO_ROOT).as_posix()}. "
+                f"Fix the fragment, or — if the link is illustrative and must "
+                f"stay dead — add it to EXEMPT_LINKS in "
+                f"tests/structural/test_relative_links.py with a reason. "
+                f"Headings there slug to: {heading_slugs(Path(resolved))}"
+            )
 
 
 class TestGateBehaviour:
@@ -401,3 +430,325 @@ class TestExemptionRegistry:
         TestGateBehaviour._skills_tree(tmp_path, self._DEAD)
         monkeypatch.setitem(EXEMPT_LINKS, (self._LOG, self._DEAD), "fixture")
         assert stale_exemptions(dead_links(tmp_path)) == []
+
+    def test_an_anchor_entry_silences_its_own_anchor(self, tmp_path, monkeypatch) -> None:
+        """One registry serves both halves, so a dead anchor is exemptible too."""
+        (tmp_path / "b.md").write_text("# B\n")
+        (tmp_path / "a.md").write_text("[b](b.md#gone) [c](b.md#also-gone)\n")
+        monkeypatch.setitem(EXEMPT_LINKS, ("a.md", "b.md#gone"), "fixture")
+        assert [t for _, _, t in unexempted(dead_anchors(tmp_path))] == ["b.md#also-gone"]
+
+    def test_a_fixed_anchor_makes_its_exemption_stale(self, tmp_path, monkeypatch) -> None:
+        (tmp_path / "b.md").write_text("# B\n\n## Gone\n")
+        (tmp_path / "a.md").write_text("[b](b.md#gone)\n")
+        monkeypatch.setitem(EXEMPT_LINKS, ("a.md", "b.md#gone"), "fixture")
+        assert stale_exemptions(dead_anchors(tmp_path)) == [
+            (("a.md", "b.md#gone"), "fixture")
+        ]
+
+
+# Headings copied verbatim out of this repo's own tree, each with the id GitHub
+# mints for it. The table is the instrument's calibration, not a sample of
+# Markdown in general: four entries carry an em dash, and every one of those
+# slugs to a DOUBLE hyphen, because the dash is dropped as punctuation and both
+# of the spaces that flanked it still become hyphens.
+#
+# That case is the whole trap. A slugifier that collapses `\s+` to one hyphen
+# passes every other row here and fails all four of those — and it fails them by
+# declaring a live anchor dead, so the operator reads a repair list rather than a
+# broken instrument. The first survey of this tree did exactly that and reported
+# three anchors broken; none of them were.
+REAL_HEADINGS: tuple[tuple[str, str], ...] = (
+    # using-git-worktrees/SKILL.md
+    ("## Venv linking — `.skills/worktree_venv`", "venv-linking--skillsworktree_venv"),
+    (
+        "### Phase 1 — Decide whether a worktree is appropriate",
+        "phase-1--decide-whether-a-worktree-is-appropriate",
+    ),
+    ("### Phase 3.5 — Verify worktree health", "phase-35--verify-worktree-health"),
+    # vendoring-openapi-client/references/carve-outs.md
+    (
+        "## pre-commit (when the repo uses it — `.pre-commit-config.yaml`)",
+        "pre-commit-when-the-repo-uses-it--pre-commit-configyaml",
+    ),
+    # curating-context/references/telemetry.md — both are live anchor targets.
+    ("### The pair, not the row", "the-pair-not-the-row"),
+    ("### Backfilling `repo_commit`", "backfilling-repo_commit"),
+    # curating-context/references/validation-gate.md — live anchor targets.
+    (
+        "### A registered metric may name its bound",
+        "a-registered-metric-may-name-its-bound",
+    ),
+    (
+        "### Warranted losses are not the same claim as no loss",
+        "warranted-losses-are-not-the-same-claim-as-no-loss",
+    ),
+)
+
+
+class TestSlugRules:
+    """`slugify` mints the id GitHub mints, pinned against real headings."""
+
+    @pytest.mark.parametrize("heading,slug", REAL_HEADINGS, ids=lambda v: v[:40])
+    def test_a_real_heading_slugs_to_its_real_id(self, heading: str, slug: str) -> None:
+        assert slugify(re.sub(r"^#+ +", "", heading)) == slug
+
+    def test_a_dropped_character_leaves_both_of_its_spaces(self) -> None:
+        """The trap, stated on its own so a failure names the cause.
+
+        `— ` is not one separator; it is space, dash, space. Dropping the dash
+        leaves two spaces, and one hyphen each is what GitHub emits.
+        """
+        assert slugify("Phase 5d — Provision PostgreSQL") == "phase-5d--provision-postgresql"
+
+    def test_a_run_of_spaces_is_not_collapsed(self) -> None:
+        assert slugify("a   b") == "a---b"
+
+    def test_case_is_folded_and_punctuation_dropped(self) -> None:
+        assert slugify("The `count_tokens` fallback: why?") == "the-count_tokens-fallback-why"
+
+    def test_underscores_and_hyphens_survive(self) -> None:
+        assert slugify("`--exact` and repo_commit") == "--exact-and-repo_commit"
+
+    def test_non_ascii_is_dropped(self) -> None:
+        assert slugify("Café ☕ break") == "caf--break"
+
+    def test_a_link_in_a_heading_slugs_on_its_text(self) -> None:
+        assert slugify("See [the rubric](keep-cut-rubric.md)") == "see-the-rubric"
+
+
+class TestHeadingSlugs:
+    """Which lines of a file are headings, and what a repeat is called."""
+
+    @staticmethod
+    def _doc(tmp_path: Path, body: str) -> Path:
+        path = tmp_path / "d.md"
+        path.write_text(body)
+        return path
+
+    def test_headings_are_returned_in_document_order(self, tmp_path: Path) -> None:
+        doc = self._doc(tmp_path, "# One\n\ntext\n\n### Two words\n")
+        assert heading_slugs(doc) == ["one", "two-words"]
+
+    def test_a_repeat_gets_a_numeric_suffix(self, tmp_path: Path) -> None:
+        """Per file, not per pre-split document — #120's finding."""
+        doc = self._doc(tmp_path, "## PHP layers\n\n## PHP layers\n\n## PHP layers\n")
+        assert heading_slugs(doc) == ["php-layers", "php-layers-1", "php-layers-2"]
+
+    def test_a_closed_atx_heading_drops_its_trailing_hashes(self, tmp_path: Path) -> None:
+        assert heading_slugs(self._doc(tmp_path, "## Heading ##\n")) == ["heading"]
+
+    def test_a_heading_inside_a_fence_is_not_a_heading(self, tmp_path: Path) -> None:
+        """A `# comment` in a bash fence otherwise manufactures an anchor.
+
+        The manufactured id is worse than a missing one: it makes a genuinely
+        dead anchor resolve, so the gate reports green on the defect it exists
+        for. This cohort's docs are dense with bash fences.
+        """
+        doc = self._doc(tmp_path, "# Real\n\n```bash\n# install the hook\n```\n")
+        assert heading_slugs(doc) == ["real"]
+
+    def test_a_code_span_in_a_heading_is_not_masked(self, tmp_path: Path) -> None:
+        """`_mask_code` would blank the span's *contents* and mis-slug the id.
+
+        A link's target must be read with code masked; a heading's text must be
+        read with code intact. `` ### Backfilling `repo_commit` `` is a live
+        anchor target in this repo and slugs on the word inside the backticks.
+        """
+        doc = self._doc(tmp_path, "### Backfilling `repo_commit`\n")
+        assert heading_slugs(doc) == ["backfilling-repo_commit"]
+
+    def test_three_spaces_of_indent_is_still_a_heading(self, tmp_path: Path) -> None:
+        assert heading_slugs(self._doc(tmp_path, "   ## Indented\n")) == ["indented"]
+
+    def test_four_spaces_of_indent_is_a_code_block(self, tmp_path: Path) -> None:
+        assert heading_slugs(self._doc(tmp_path, "    ## Indented\n")) == []
+
+    def test_a_hash_without_a_space_is_not_a_heading(self, tmp_path: Path) -> None:
+        assert heading_slugs(self._doc(tmp_path, "#nohash\n#!/bin/sh\n")) == []
+
+    def test_a_setext_heading_is_not_modelled(self, tmp_path: Path) -> None:
+        """Deliberate: an anchor into one reads as a miss to judge, not a pass.
+
+        Same call `measure-context.sh` documents. `skills/` has no setext
+        heading; if one arrives, a false miss is the safe direction.
+        """
+        assert heading_slugs(self._doc(tmp_path, "Title\n=====\n")) == []
+
+    def test_a_nested_fence_does_not_reopen_the_block(self, tmp_path: Path) -> None:
+        """Same rule the link masker already proves, applied to headings.
+
+        `measure-context.sh`'s `slugs_of` toggles on the fence *character*, so a
+        ```bash block inside a ````markdown block closes the outer one and it
+        starts harvesting template headings. This restatement uses the fence
+        tracker this module already ships instead of inheriting that.
+        """
+        doc = self._doc(
+            tmp_path,
+            "````markdown\n```bash\necho hi\n```\n## Template heading\n````\n## Real\n",
+        )
+        assert heading_slugs(doc) == ["real"]
+
+
+class TestAnchorGateBehaviour:
+    """The anchor half, proven against fixtures rather than a passing tree."""
+
+    def test_a_missing_heading_is_caught(self, tmp_path: Path) -> None:
+        (tmp_path / "b.md").write_text("# B\n\n## Adding a stage\n")
+        (tmp_path / "a.md").write_text("See [b](b.md#adding-a-new-stage).\n")
+        assert dead_anchors(tmp_path) == [("a.md", 1, "b.md#adding-a-new-stage")]
+
+    def test_a_present_heading_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "b.md").write_text("# B\n\n## Adding a new stage\n")
+        (tmp_path / "a.md").write_text("See [b](b.md#adding-a-new-stage).\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_an_em_dash_heading_resolves(self, tmp_path: Path) -> None:
+        """The end-to-end form of the trap: real heading, real link, must pass."""
+        (tmp_path / "b.md").write_text("### Phase 5d — Provision PostgreSQL\n")
+        (tmp_path / "a.md").write_text("[b](b.md#phase-5d--provision-postgresql)\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_a_same_file_anchor_is_checked(self, tmp_path: Path) -> None:
+        """A heading rename inside one long file breaks `[jump](#setup)` too.
+
+        `measure-context.sh` checks these and `budget-and-metrics.md` documents
+        that it does; `skills/` holds seven of them today.
+        """
+        (tmp_path / "a.md").write_text("# A\n\n## Setup\n\nJump to [it](#steup).\n")
+        assert dead_anchors(tmp_path) == [("a.md", 5, "#steup")]
+
+    def test_a_resolving_same_file_anchor_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("# A\n\n## Setup\n\nJump to [it](#setup).\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_a_fragment_is_matched_case_insensitively(self, tmp_path: Path) -> None:
+        """GitHub only mints lowercase ids; `#Some-Heading` meant the one that exists."""
+        (tmp_path / "b.md").write_text("## Some Heading\n")
+        (tmp_path / "a.md").write_text("[b](b.md#Some-Heading)\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_a_dead_file_is_one_defect_not_two(self, tmp_path: Path) -> None:
+        """A missing file is already on the dead-link list; do not report it twice."""
+        (tmp_path / "a.md").write_text("[b](gone.md#anything)\n")
+        assert dead_anchors(tmp_path) == []
+        assert [t for _, _, t in dead_links(tmp_path)] == ["gone.md#anything"]
+
+    def test_a_non_markdown_target_is_not_anchor_checked(self, tmp_path: Path) -> None:
+        """`script.sh#L10` is GitHub's line anchor, not a heading id."""
+        (tmp_path / "script.sh").write_text("echo hi\n")
+        (tmp_path / "a.md").write_text("[s](script.sh#L10)\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_a_link_with_no_fragment_is_not_anchor_checked(self, tmp_path: Path) -> None:
+        (tmp_path / "b.md").write_text("# B\n")
+        (tmp_path / "a.md").write_text("[b](b.md) [c](b.md#)\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_an_external_url_fragment_is_out_of_scope(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("[i](https://example.com/x.md#nope)\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_the_query_suffix_stays_with_the_path(self, tmp_path: Path) -> None:
+        (tmp_path / "b.md").write_text("## H\n")
+        (tmp_path / "a.md").write_text("[b](b.md?plain=1#h)\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_an_anchor_inside_a_code_span_is_skipped(self, tmp_path: Path) -> None:
+        """The one non-resolver a naive sweep of this tree finds.
+
+        `budget-and-metrics.md` quotes `` `[l](docs/FOO.md#some-heading)` `` while
+        describing the #124 bug. A grep for `](*.md#` counts it; a renderer never
+        makes it a link. Sharing this module's extractor is what makes that an
+        exemption on principle rather than a named entry in `EXEMPT_LINKS` — the
+        registry ships empty for the anchor half exactly as it does for links.
+        """
+        (tmp_path / "a.md").write_text(
+            "The extractor stripped the fragment, so `[l](docs/FOO.md#some-heading)` "
+            "only checked the file.\n"
+        )
+        assert dead_anchors(tmp_path) == []
+
+    def test_an_anchor_inside_a_fence_is_skipped(self, tmp_path: Path) -> None:
+        (tmp_path / "b.md").write_text("# B\n")
+        (tmp_path / "a.md").write_text("```markdown\n[b](b.md#not-a-heading)\n```\n")
+        assert dead_anchors(tmp_path) == []
+
+    def test_the_reported_line_is_the_source_line(self, tmp_path: Path) -> None:
+        """Masking preserves offsets, so a fenced block above a link cannot shift it."""
+        (tmp_path / "b.md").write_text("# B\n")
+        (tmp_path / "a.md").write_text("```bash\necho hi\n```\n\n[b](b.md#gone)\n")
+        assert dead_anchors(tmp_path) == [("a.md", 5, "b.md#gone")]
+
+    def test_findings_are_relative_to_base(self, tmp_path: Path) -> None:
+        nested = tmp_path / "skills" / "s" / "references"
+        nested.mkdir(parents=True)
+        (nested / "b.md").write_text("# B\n")
+        (nested / "a.md").write_text("[b](b.md#gone)\n")
+        assert dead_anchors(nested, base=tmp_path) == [
+            ("skills/s/references/a.md", 1, "b.md#gone")
+        ]
+
+
+class TestSlugifierAgreesWithMeasureContext:
+    """The restated slugifier is pinned to the shell one it deliberately re-states.
+
+    `measure-context.sh` runs against a *consuming* repo's tree from bash, so its
+    `slugs_of` cannot be imported — the same wall `test_context_link_grammar.py`
+    hit for `extract_links` and settled the same way: re-state the rule here, and
+    pin the two against a shared table so a drift fails a test instead of
+    splitting the cohort's answer from this repo's.
+
+    The pin is on the slug *transformation*, which is where the em-dash trap
+    lives. Fence tracking is deliberately not pinned: `slugs_of` toggles on the
+    fence character and this module's tracker does not, so a nested fence is a
+    known, documented divergence rather than a shared rule.
+    """
+
+    @staticmethod
+    def _dead_anchors(tmp_path: Path, doc: str, links: str) -> list[str]:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        for key in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR",
+                    "ANTHROPIC_API_KEY"):
+            env.pop(key, None)
+        for args in (
+            ("init", "-q"), ("config", "user.email", "t@t"), ("config", "user.name", "t"),
+        ):
+            subprocess.run(["git", "-C", str(repo), *args], check=True,
+                           capture_output=True, env=env)
+        (repo / "docs").mkdir()
+        (repo / "docs" / "GUIDE.md").write_text(doc)
+        (repo / "AGENTS.md").write_text(links)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
+                       capture_output=True, env=env)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True,
+                       capture_output=True, env=env)
+        result = subprocess.run(
+            ["bash", str(MEASURE_CONTEXT), "--no-write"],
+            capture_output=True, text=True, cwd=str(repo), env=env, timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)["links"]["dead_anchors"]
+
+    def test_the_shell_resolves_every_slug_this_module_mints(self, tmp_path: Path) -> None:
+        """One doc carrying the whole real-heading table, linked by our own ids."""
+        doc = "# Guide\n\n" + "\n\n".join(h for h, _ in REAL_HEADINGS) + "\n"
+        links = "# P\n\n" + "\n\n".join(
+            f"[l{i}](docs/GUIDE.md#{slugify(re.sub(r'^#+ +', '', heading))})"
+            for i, (heading, _) in enumerate(REAL_HEADINGS)
+        ) + "\n"
+        assert self._dead_anchors(tmp_path, doc, links) == []
+
+    def test_the_shell_rejects_the_collapsed_whitespace_slug(self, tmp_path: Path) -> None:
+        """The pin has teeth in the direction the trap runs.
+
+        Were the shell tolerant of a single hyphen here, a restatement that
+        collapsed `\\s+` would agree with it and both would be wrong together.
+        """
+        doc = "# Guide\n\n### Phase 5d — Provision PostgreSQL\n"
+        links = "# P\n\n[l](docs/GUIDE.md#phase-5d-provision-postgresql)\n"
+        assert self._dead_anchors(tmp_path, doc, links) == [
+            "AGENTS.md -> docs/GUIDE.md#phase-5d-provision-postgresql"
+        ]
