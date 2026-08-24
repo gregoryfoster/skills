@@ -570,8 +570,8 @@ if [ "$MODE" = "check" ]; then
   fi
   # Read once, and keep the status: "not registered" and "could not tell" are
   # different answers and a probe people are told to trust must not merge them.
-  hc_rc=0
-  registered_n="$(matching_count)" || hc_rc=$?
+  mc_rc=0
+  registered_n="$(matching_count)" || mc_rc=$?
   if ! have_jq; then
     # UNKNOWN, not "MISSING" and not "yes". Reading the hook list needs jq, and
     # the whole-file grep that used to stand in for it is what made this report
@@ -582,7 +582,7 @@ if [ "$MODE" = "check" ]; then
     echo "                    re-run; a guess here is what this check exists to"
     echo "                    replace."
     rc=3
-  elif [ "$hc_rc" -ne 0 ]; then
+  elif [ "$mc_rc" -ne 0 ]; then
     echo "SessionStart entry: UNREADABLE — $SETTINGS_REL is not valid JSON, so"
     echo "                    the hook list cannot be read. Reporting MISSING"
     echo "                    here would send you to re-run this installer,"

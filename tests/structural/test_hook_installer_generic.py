@@ -34,10 +34,29 @@ What this file pins, and why each one is a mechanism rather than a spelling:
 - **A copy where a symlink is possible is reported, not called MISSING.** That
   is #179's silent drift, and `.skills/doctor.sh` is blind to it by
   construction (a copy is a valid regular file, not a dangling symlink).
+- **`--check` separates the symlink's SHAPE from its RESOLUTION.** In the
+  submodule-less checkout this org's own bootstrapper ships, a *correct* symlink
+  install does not resolve — and a copy is the only variant that does, so a
+  resolution-based check passes on exactly the install #179 argues against.
+  `--allow-unresolved` relaxes resolution and nothing else (#227).
+- **`--check` reports how many registrations it found, not just that it found
+  one.** `yes` read the same for one entry and for two, so a repo left holding a
+  stranded duplicate looked healthy while the hook ran twice a session (#222).
+- **The reference documents the CI recipe, and the documented command is run.**
+  A doc that prescribes a gate has to prescribe one that passes, and the failure
+  being documented is a check calling a correct install broken (#227).
+- **Both skills say the first session in a fresh checkout fails, and that
+  reordering cannot fix it** — Claude Code runs an event's matching hooks in
+  parallel, so `.skills/doctor.sh` cannot heal the tree before its siblings run
+  (#228). A negative test keeps the ordering myth from arriving later.
 - **`install-refresh.sh` still installs exactly what it installed before.**
   It is named by path in README.md, docs/SKILLS.md, managing-skills/SKILL.md,
   `doctor.sh`'s repair advice and in cohort repos' per-repo issues, so its
   path, its exit codes and the command string it registers are a contract.
+
+The multi-hook matcher group — the fixture shape that made both of #222's
+failure directions invisible — lives in `test_hook_group_scoping.py`, because
+every fixture here builds one-hook groups.
 
 `test_refresh_hook_install.py` keeps the end-to-end behaviour suite for the
 refresh hook and is unchanged by the refactor — that it still passes against a
