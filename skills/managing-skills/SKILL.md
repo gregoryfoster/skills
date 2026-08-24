@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.8"
+  version: "1.9"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -75,8 +75,6 @@ The `../../` prefix resolves from `.claude/skills/` back to the project root, th
 
 Skills referenced via the symlink chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/.../skills/<name>`) are unreachable when the submodule isn't initialized — fresh `git worktree add`, shallow CI clones without `--recurse-submodules`, etc. The doctor is a tiny script copied into the consumer's `.skills/` directory that walks `skills/*` **and `.claude/hooks/*`** symlinks, auto-runs `git submodule update --init --recursive` when any dangle, and prints an actionable error otherwise. Phase 1 of every `reviewing-*` / `shipping-*` skill invokes it as a preflight.
 
-`.claude/hooks/` is in the heal scope because skill installers link hooks there into the same vendor chain ([#99](https://github.com/gregoryfoster/skills/issues/99)). A dangling `skills/<name>` surfaces only when that skill is invoked; a dangling hook symlink surfaces on **every** `Edit|Write|MultiEdit` as exit 127 naming a path `ls` plainly shows exists. One heal path covers both, and any future hook a skill installs. Regular files there — a project's own hook scripts — are not symlinks and are ignored. The same 127 hits a vendor-symlinked `SessionStart` hook for a whole session after a fresh clone or worktree, and no ordering avoids it: Claude Code runs an event's matching hooks in [parallel](https://code.claude.com/docs/en/hooks-guide), so the repair lands next session ([#228](https://github.com/gregoryfoster/skills/issues/228)).
-
 Run the installer from the vendor copy:
 
 ```bash
@@ -85,13 +83,14 @@ bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.
 
 This is idempotent — re-running is a no-op when the destination already matches. The installer refuses to clobber a file at `.skills/doctor.sh` that doesn't look like a doctor, so a user-authored file at that path is never silently overwritten.
 
-**The doctor is a copy, not a symlink** — deliberately. A symlink into `skills-vendor/` would itself dangle in exactly the uninitialized-submodule state the doctor exists to repair. The copy stays reachable there; the price is that upstream fixes don't arrive by submodule bump alone. Three things close that gap, in order of how much they ask of the consumer:
+**The doctor is a copy, not a symlink** — deliberately, because a symlink into `skills-vendor/` would dangle in exactly the state the doctor exists to repair. It keeps itself current instead: it re-syncs from the vendored source on every mutating run, and the auto-refresh hook re-installs it every session.
 
-- **The doctor re-syncs itself.** On every mutating run it compares `.skills/doctor.sh` against the vendored `doctor.sh` and re-installs when they differ ([#84](https://github.com/gregoryfoster/skills/issues/84)). Since Phase 1 of every `reviewing-*` / `shipping-*` skill invokes the doctor, this reaches consumers that declined the auto-refresh hook. Content decides, not mtime — git stamps checkout times, so an mtime comparison would misread both a fresh init and a deliberate rollback. The re-sync is best-effort and never changes the doctor's exit code; failures surface only under `--verbose`.
-- **The auto-refresh hook re-installs it** on every session, outside the once-per-day lock.
-- **A manual `install-doctor.sh`** run, for consumers with neither.
+**If your skill installs a hook, ship a `<hook>.install` manifest beside it** — one line of `install-hook.sh` arguments, which the doctor prints as the repair when it finds that hook registered nowhere ([#224](https://github.com/gregoryfoster/skills/issues/224)). A skill adding a hook adds a manifest, never an edit to `doctor.sh`.
 
-Three consequences worth knowing. A refresh applies from the *next* run — the running instance keeps reading the copy it started from. `--check-only` skips the re-sync entirely, so that mode stays safe for a CI health probe that asserts a clean working tree. And a consumer running a doctor predating this behaviour doesn't self-heal into it: getting the self-syncing doctor takes one pass through the hook or one manual install, after which it is permanent.
+**Expect the first session in a fresh clone or new worktree to fail.** Every vendor-symlinked hook — this skill's refresh hook and `init-socraticode`'s two — exits 127 there until `.skills/doctor.sh` has initialized the submodule once, and no arrangement of `.claude/settings.json` avoids it: Claude Code runs an event's matching hooks in [parallel](https://code.claude.com/docs/en/hooks-guide), so the repair always lands the session after ([#228](https://github.com/gregoryfoster/skills/issues/228)).
+
+Why `.claude/hooks/` is healed at all, why the copy beats a symlink and what it costs, and the manifest's exact format and lookup rules:
+[references/the-doctor.md](references/the-doctor.md).
 
 #### Step 3 — Update the project's AGENTS.md
 
@@ -261,8 +260,9 @@ block for each — a rung-by-rung ladder for auth failures, a smaller
 - The `skills-vendor/` directory should be treated as read-only — make changes upstream
 - The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed
 
-**Self-budget:** held to a **6,250-token ratchet (estimate and exact)** by
-`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow. Came down
-from 8,750 by demoting four units into `references/`. Growing this file means
-demoting again, not raising it.
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py` — the repo's ordinary standard, not
+an exception to it. This file carried a named 8,750 exception until two curation
+passes created `references/` and demoted five units into it, ending 35% smaller
+and under the standard, so the exception was deleted rather than lowered.
+Growing this file means demoting again.

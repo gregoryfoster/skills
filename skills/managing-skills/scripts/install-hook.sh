@@ -35,8 +35,10 @@
 # file contains no per-hook branch: every hook-specific value arrives on the
 # command line, and a caller that needs a new one adds a flag rather than a
 # case arm. install-refresh.sh is a wrapper that supplies refresh's constants,
-# because its path is named in README.md, docs/SKILLS.md, doctor.sh's repair
-# advice and in cohort repos.
+# because its path is named in README.md, docs/SKILLS.md and in cohort repos.
+# Not in doctor.sh's repair advice — that named it until #224, which taught the
+# doctor to read each hook's arguments from a <hook>.install manifest and print
+# THIS script instead.
 #
 # Idempotent: a re-run repairs whichever half is missing and reports the other
 # unchanged. It never commits.

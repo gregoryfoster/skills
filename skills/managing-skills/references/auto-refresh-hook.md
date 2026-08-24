@@ -3,8 +3,6 @@
 Read this when debugging the hook or removing it by hand. Installing it needs
 only `install-refresh.sh`, which `SKILL.md` covers.
 
-## What the installer does
-
 <details>
 <summary>What the installer does — read this when debugging it, not to execute it</summary>
 
