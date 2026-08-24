@@ -263,15 +263,27 @@ sync_self
 # the one whose constants apply. Prints nothing when the skill ships no
 # manifest, which the caller reports differently rather than falling silent.
 hook_manifest_args() {
-  local hook="$1" target manifest args
+  local hook="$1" target dir name manifest args
   target="$(readlink "$hook")"
   case "$target" in
-    # Relative targets are relative to the link's own directory, not to the
-    # repo root this script cd'd to — `.claude/hooks/../../skills-vendor/…`
-    # resolves for the -f test below exactly as the kernel resolves the link.
-    /*) manifest="${target%.*}.install" ;;
-    *)  manifest="${hook%/*}/${target%.*}.install" ;;
+    # A target with no directory component at all: a sibling of the link.
+    */*) dir="${target%/*}" ;;
+    *)   dir="." ;;
   esac
+  # A relative target is relative to the LINK's directory, not to the repo root
+  # this script cd'd to. `.claude/hooks/../../skills-vendor/…` then resolves for
+  # the -f test below exactly as the kernel resolves the link itself.
+  case "$target" in
+    /*) ;;
+    *) dir="${hook%/*}/$dir" ;;
+  esac
+  # The extension is stripped from the BASENAME. `${target%.*}` would strip
+  # from the last dot anywhere in the path, so a vendor directory carrying a
+  # dot in its name (skills-vendor/<owner>-<repo>) would silently produce a
+  # manifest path that never matches, and the hook would quietly drop to the
+  # generic repair line with nothing to say why.
+  name="${target##*/}"
+  manifest="$dir/${name%.*}.install"
   [ -f "$manifest" ] || return 0
   # The first line that is neither blank nor a comment, so a manifest can
   # explain itself to the next reader. `|| true` because grep exits 1 on a

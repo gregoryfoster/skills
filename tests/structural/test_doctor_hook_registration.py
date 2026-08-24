@@ -319,6 +319,35 @@ class TestTheRepairLineComesFromTheManifest:
         result = _doctor(consumer)
         assert _warned_hooks(result.stderr) == set(), result.stderr
 
+    def test_the_manifest_is_found_beside_an_extensionless_hook(
+        self, consumer: Path
+    ):
+        """The manifest path strips the hook's extension, and the obvious
+        `${target%.*}` strips from the last dot ANYWHERE in the path. That is
+        indistinguishable from correct while every hook ends in `.sh` — the
+        last dot is the extension's — and wrong the moment one does not, since
+        `skills-vendor/<owner>-<repo>` is a name the repo owner chooses and may
+        carry a dot of its own. It fails silently: a manifest that is not found
+        is a supported state, so the hook drops to the generic repair line with
+        nothing to say why."""
+        vendor = consumer / "skills-vendor"
+        (vendor / "acme-skills").rename(vendor / "acme.skills")
+        scripts = (vendor / "acme.skills" / "skills" / "managing-skills"
+                   / "scripts")
+        (scripts / "sessionprep").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (scripts / "sessionprep.install").write_text(
+            "--hook sessionprep --skill managing-skills\n"
+        )
+        (consumer / ".claude" / "hooks" / "sessionprep").symlink_to(
+            "../../skills-vendor/acme.skills/skills/managing-skills/scripts"
+            "/sessionprep"
+        )
+        result = _doctor(consumer)
+        assert any(
+            line.endswith("--hook sessionprep --skill managing-skills")
+            for line in self._repair_lines(result.stderr)
+        ), result.stderr
+
     def test_a_vendored_hook_with_no_manifest_still_gets_reported(
         self, consumer: Path
     ):
