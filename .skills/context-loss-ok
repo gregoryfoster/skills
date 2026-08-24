@@ -11,6 +11,13 @@
 # it behind means every future run reports it as "matched nothing", which is the
 # same signal a genuinely stale entry gives, and the file stops being readable.
 #
+# "Lands" means: the commit that rewrote the line is an ancestor of every --base
+# a future run can pick, i.e. it is on main. NOT "the tracking issue closed" —
+# the round-2 block below was pruned by a commit on main while #230 was still
+# open, and the entries it pruned were spent, correctly, because their rewrite
+# was already an ancestor of the new base. An issue number is not the trigger;
+# reachability from main is (#230 CR round 3, finding 24).
+#
 # (The 14 entries that justified the #95 trim were removed on merge for exactly
 # that reason — CR round 2, finding 9. The trim itself is in git history.)
 #
@@ -25,13 +32,29 @@
 # connective tissue, retargeted by the same change that moved what they point
 # at: the "otherwise clone" lead-in now names the reference, and the placeholder
 # note now says the reference prints the paths. Single-transition — prune once
-# this merges.
+# c0dc7da is an ancestor of every future --base, i.e. once it is on main.
 skills/init-socraticode/SKILL.md :: retarget :: phase. Otherwise clone once to a scratch dir and reference scripts through the
 skills/init-socraticode/SKILL.md :: retarget :: captured path:
 skills/init-socraticode/SKILL.md :: retarget :: `<SKILL_DIR>` / `<SKILL_TMP>` below are **placeholders** for the literal paths
 skills/init-socraticode/SKILL.md :: retarget :: printed here (each Bash call runs in a fresh shell — they are not inherited).
 skills/init-socraticode/SKILL.md :: retarget :: Clean up `<SKILL_TMP>` in Phase 6.
 # The self-budget note this same change invalidated: the ratchet moved
-# 10,050 -> 9,400, so both lines were rewritten in place. Prune on merge.
+# 10,050 -> 9,400, so both lines were rewritten in place. Same trigger.
 skills/init-socraticode/SKILL.md :: retarget :: held to a **10,050-token ratchet (estimate and exact)** by
 skills/init-socraticode/SKILL.md :: retarget :: 6,000-token standard, set at current size so this file cannot grow.
+
+# --- 2026-08-24, #230 CR round 3 item 21 ---------------------------------
+# Two demoted sections opened by restating the `##` heading directly above
+# them, with an "Also" and a "first" that had no antecedent once the block was
+# no longer a step in a sequence. `duplicate` is the honest warrant and it is
+# worth being precise about why: each base line SPLIT rather than vanished. Its
+# bold lead is verbatim in SKILL.md — "**Also write `.socraticodeignore` (repo
+# root)**" at Phase 4, "**Migrate a legacy top-level array first (idempotent
+# audit).**" above it — and its tail is verbatim in the reference. Every word
+# is still in the surface; no single destination LINE carries both halves, which
+# is the whole-line matching working as designed rather than a drop.
+#
+# Scoped to SKILL.md because PATH matches the run's --file, and the run that
+# reports these is the SKILL.md curation, not one against the reference.
+skills/init-socraticode/SKILL.md :: duplicate :: **Also write `.socraticodeignore` (repo root).** It's layered on the built-in
+skills/init-socraticode/SKILL.md :: duplicate :: **Migrate a legacy top-level array first (idempotent audit).** The server

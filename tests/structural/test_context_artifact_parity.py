@@ -709,8 +709,20 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         one class down, for the same reason and in its own words: "a section-wide
         pin would have been green before the prose it is meant to require was
         written."
+
+        The missing-opening case is asserted rather than left to `str.index`,
+        because a reworded bullet header is the likeliest way this ever fails
+        and `ValueError: substring not found` would raise from here — throwing
+        away the caller's message, which is the part that explains what the
+        bullet has to say (#230 CR round 3).
         """
         notes = TestArtifactsRefExplainsTheBytecodeHazard._field_notes()
+        assert opening in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** has no bullet "
+            f"opening {opening!r}. If the bullet was reworded, re-aim this "
+            "call; if it was deleted, the caller's assertion is what tells you "
+            "what it was for."
+        )
         start = notes.index(opening)
         end = notes.find("\n- ", start + len(opening))
         return notes[start:end if end != -1 else len(notes)]

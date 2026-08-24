@@ -199,6 +199,32 @@ SKILLS = sorted(
 BUDGET_KNOB = REPO_ROOT / ".skills" / "context-budget"
 DOC_BUDGET_KNOB = REPO_ROOT / ".skills" / "context-doc-budget"
 RATIO_KNOB = REPO_ROOT / ".skills" / "context-token-ratio"
+COUNTS_KNOB = REPO_ROOT / ".skills" / "context-token-counts"
+
+
+def anchored_paths() -> set[str]:
+    """Repo-relative paths with their own row in `.skills/context-token-counts`.
+
+    `ctx_est_tokens_for` prefers a file's own last exact measurement to the
+    repo-wide ratio, so an anchored file's "offline estimate" is a rescale of
+    its own `count_tokens` reading rather than an independent second opinion.
+    Which files are anchored therefore changes what this gate means, and until
+    #230's CR round 3 nothing read the file to find out — two docstrings said
+    it anchored `AGENTS.md` and three `docs/` paths and no `skills/*/SKILL.md`
+    long after #230's curation runs had added fifteen `skills/` rows, and the
+    suite stayed green through the whole drift.
+    """
+    return {
+        line.split()[2]
+        for line in COUNTS_KNOB.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+        and len(line.split()) >= 3
+    }
+
+
+def skill_md_is_anchored(skill: str) -> bool:
+    """Is this skill's SKILL.md priced from its own exact count offline?"""
+    return f"skills/{skill}/SKILL.md" in anchored_paths()
 
 # The standard every SKILL.md is held to, under BOTH readings. Deliberately a
 # separate constant from `.skills/context-budget` even though both read 6,000:
@@ -231,8 +257,8 @@ SKILL_MD_RATCHETS = {
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Came down
     # from 10,050 in #230's CR round 2 by demoting Phase 0, Phase 4's
-    # index-scope and legacy-array guidance, and the four phase-enforced entries
-    # from Key invariants — all into references/, all verbatim.
+    # index-scope and legacy-array guidance, and the three phase-enforced
+    # entries from Key invariants — all into references/, all verbatim.
     #
     # 8,000 was the target and is NOT honestly reachable. Phase 3 looked like
     # the way there: it says "follow references/code-exploration-policy.md" and
@@ -253,10 +279,16 @@ SKILL_MD_RATCHETS = {
     # listing, not the content: the move was always available, it just needed a
     # references/ to exist first. Two passes created one and demoted five units
     # — the installer internals, the manual uninstall, the pin file, the auth
-    # ladders, and the doctor's design rationale — taking it 8,685 -> 5,627
-    # exact / 5,588 estimate, a 35% cut, both readings now UNDER
-    # SKILL_MD_STANDARD. prove-no-loss.sh reported lost: 0 and duplicated: 0 on
-    # both passes. The entry is deleted rather than lowered: the file is held to
+    # ladders, and the doctor's design rationale — taking it 8,685 -> 5,843
+    # exact, a 33% cut, both readings now UNDER SKILL_MD_STANDARD with 157
+    # tokens of headroom. (This comment read "5,627 exact / 5,588 estimate, a
+    # 35% cut" until #230's CR round 3: the same commit that wrote it recorded
+    # 5,843 in the telemetry row and in .skills/context-token-counts, and
+    # 15,629 bytes / 5,588 is 2.80 bytes/token, outside the plausible band.
+    # A pre-final measurement, quoted as the shipped one.)
+    # prove-no-loss.sh reported lost: 0 and duplicated: 0 on pass 1, and
+    # lost: 0 with 5 warranted rewrites on pass 2. The entry is deleted rather
+    # than lowered: the file is held to
     # the same 6,000 every other skill is, and needs no exception at all.
     # A ten-step orchestration procedure with scoring rubrics, conflict-zone
     # analysis, and batch-plan templates. The largest file in the repo. See the
@@ -553,7 +585,19 @@ def warn_about_the_blind_spot(surfaces: dict) -> None:
         + "\n".join(
             f"  {skill}: estimate {est:,} → worst case ~{worst:,} against a "
             f"{ratchet:,} ratchet ({worst - ratchet:,} over)"
+            + (" [ANCHORED — see below]" if skill_md_is_anchored(skill) else "")
             for skill, est, worst, ratchet in rows
+        )
+        + (
+            "\n\nANCHORED means the skill has its own row in "
+            f"{COUNTS_KNOB.name}, so its estimate is a rescale of its own last "
+            "exact count and the band overstates the error — the worst case "
+            "shown is conservative, not a live suspicion. It is still shown, "
+            "because the anchor lapses silently once the file drifts far "
+            "enough from the recorded size and nothing here can see whether "
+            "that happened (#230 CR round 3)."
+            if any(skill_md_is_anchored(s) for s, *_ in rows)
+            else ""
         )
         + "\n\nThis is a WARNING and nothing is red: the worst case is what the "
         "band permits, not what the file measures. It is also not a licence to "
@@ -577,13 +621,22 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     passes nothing and gets the prose alone rather than a figure computed from
     the wrong band.
 
-    #190: the issue asked for the exact margin here, on the assumption that an
-    exact figure is available offline. None is — `.skills/context-token-counts`
-    anchors `AGENTS.md` and three `docs/` files and no `skills/*/SKILL.md` — so
-    a run gets the worst case the band permits instead. `init-project-fastapi`
-    is why: it read 14,773 estimated against a 17,100 ratchet, which presents as
-    2,327 tokens of headroom and was 43.
+    #190 asked for the exact margin here, on the assumption that an exact
+    figure is available offline. For most skills none is, and a run gets the
+    worst case the band permits instead. `init-project-fastapi` is why: it read
+    14,773 estimated against a 17,100 ratchet, which presents as 2,327 tokens
+    of headroom and was 43.
+
+    For an ANCHORED skill it is available, and the caveat must not claim
+    otherwise. `.skills/context-token-counts` gained rows for
+    `init-socraticode` and `managing-skills` during #230, so those two are
+    priced from their own last `count_tokens` reading and the band — which
+    describes the repo-ratio estimator — overstates their error. The worst case
+    stays band-derived, because the anchor lapses once the file drifts far from
+    the recorded size and this function cannot see whether that happened; it is
+    conservative rather than wrong, and now says so.
     """
+    anchored = skill_md_is_anchored(skill)
     caveat = (
         "This is the calibrated OFFLINE ESTIMATE at "
         f"{RATIO_KNOB.name} bytes/token, not an exact count — pre-commit has "
@@ -593,6 +646,15 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
         "sufficient. The other:\n  "
         + exact_cmd(skill)
     )
+    if anchored:
+        caveat = (
+            f"NOTE: skills/{skill}/SKILL.md has its own row in "
+            f"{COUNTS_KNOB.name}, so this reading is a rescale of its last "
+            "exact count, not the repo ratio — unless the file has drifted far "
+            "enough from the recorded size for the anchor to lapse. The band "
+            "below describes the repo-ratio estimator and overstates the error "
+            "here; treat any worst case as conservative.\n\n"
+        ) + caveat
     if estimate is None:
         return caveat
     ratchet = ratchet_for(skill)
@@ -1219,6 +1281,72 @@ class TestCuratingContextsExtraProcedure:
         )
 
 
+class TestWhatTheCountsFileAnchors:
+    """Which path classes `.skills/context-token-counts` prices from an anchor.
+
+    Not an assertion about the numbers — those are regenerated by every
+    `measure-context.sh --exact` run and pinning them would fail on every
+    curation. This pins the *shape*: which kinds of path are anchored, because
+    that is what changes the meaning of the always-on gate and what two
+    docstrings got wrong by not being pinned.
+
+    An anchored SKILL.md is priced offline from its own last exact count. That
+    is strictly more accurate — it is the correction #217's blind spot asked
+    for — but it also means "the budget binds BOTH readings" describes one
+    measurement counted twice for that file rather than two independent ones.
+    Worth having, worth knowing, and worth failing loudly when the set changes.
+    """
+
+    def test_the_repo_policy_surface_is_anchored(self) -> None:
+        """AGENTS.md and the docs/ it indexes — the original #145 population."""
+        anchored = anchored_paths()
+        assert "AGENTS.md" in anchored
+        assert {p for p in anchored if p.startswith("docs/")}, (
+            f"{COUNTS_KNOB} anchors no docs/ path. #145 added them because the "
+            "repo ratio prices this repo's policy surface worst."
+        )
+
+    def test_every_anchored_path_exists(self) -> None:
+        """A row for a deleted or renamed file silently degrades to the ratio.
+
+        `ctx_est_tokens_for` skips a row it cannot match, so a stale path costs
+        accuracy with no warning — the same fail-upward shape as the artifact
+        walk's binary guard (#229).
+        """
+        missing = sorted(p for p in anchored_paths() if not (REPO_ROOT / p).is_file())
+        assert not missing, (
+            f"{COUNTS_KNOB} anchors paths that no longer exist:\n  "
+            + "\n  ".join(missing)
+            + "\n\nDrop the rows, or re-run measure-context.sh --exact WITHOUT "
+            "--no-write over the surface that owns them. (The command in "
+            "exact_cmd() passes --no-write, so it will not rewrite this file.) "
+            "A stale row is not an error anywhere else."
+        )
+
+    def test_which_skills_are_anchored_is_declared(self) -> None:
+        """The set that two docstrings described, and nothing checked.
+
+        `estimate_caveat` and `TestTheOfflineFailureQuotesANumber` both reasoned
+        from "no `skills/*/SKILL.md` is anchored" — true when written, false
+        from #230's first curation onward, and green throughout. Adding a skill
+        to the counts file is a real change to what the offline gate measures;
+        it should cost one deliberate edit here, not zero.
+        """
+        expected = {"init-socraticode", "managing-skills"}
+        actual = {s for s in SKILLS if skill_md_is_anchored(s)}
+        assert actual == expected, (
+            "The set of skills whose SKILL.md is priced from its own exact "
+            f"count changed.\n  expected: {sorted(expected)}\n  actual:   "
+            f"{sorted(actual)}\n\n"
+            "This is not a failure to route around. An anchored SKILL.md reads "
+            "its offline estimate off its own count_tokens result, so for that "
+            "file the always-on gate and the SKILL_BUDGET_EXACT gate are no "
+            "longer independent readings. Update this set AND the reasoning in "
+            "`estimate_caveat` and `TestTheOfflineFailureQuotesANumber`, which "
+            "both describe it in prose."
+        )
+
+
 class TestTheOfflineFailureQuotesANumber:
     """#190: the offline gate must hand over a figure, not only a caveat.
 
@@ -1229,16 +1357,26 @@ class TestTheOfflineFailureQuotesANumber:
     gates measures the reading the ratchet binds, and the estimate is the only
     number anyone is shown.
 
-    #190 proposed printing the exact margin in the offline failure. That cannot
-    be built as proposed: `.skills/context-token-counts` anchors four paths —
-    `AGENTS.md` and three under `docs/` — and no `skills/*/SKILL.md` among them,
-    so `ctx_est_tokens_for` has no per-file anchor to fall back on and there is
-    no exact figure available offline to print. That absence is also *why* the
-    estimator runs ~12-13% low on this file with no correction available.
+    #190 proposed printing the exact margin in the offline failure. It could
+    not be built as proposed FOR THIS SKILL: `init-project-fastapi` has no row
+    in `.skills/context-token-counts`, so `ctx_est_tokens_for` has no per-file
+    anchor to fall back on and there is no exact figure offline to print. That
+    absence is also *why* the estimator runs ~12-13% low on this file with no
+    correction available.
 
     `POLICY_ESTIMATE_BAND` is what does exist offline. An estimate plus the
     band's permissive edge is a worst case, and a worst case measured against the
     ratchet is the quotable number the proposal was after — at no API call.
+
+    The premise is no longer universal, and the docstring that generalised it
+    to "no `skills/*/SKILL.md`" was false for eight months of commits before
+    #230's CR round 3 read the file. `init-socraticode` and `managing-skills`
+    ARE anchored now, which means #190's original proposal is buildable for
+    them — print `anchor_tokens` rescaled to current bytes and call it what it
+    is. Deliberately NOT built here: this class pins the band-derived path that
+    every unanchored skill still needs, and a second path would need its own
+    tests. `TestWhatTheCountsFileAnchors` is what makes the choice reviewable
+    instead of silent.
     """
 
     SKILL = "init-project-fastapi"

@@ -216,7 +216,8 @@ first non-whitespace character is `[` is rejected outright, and a rejected
 manifest is silent — `codebase_status` omits the artifact line, so the repo
 indexes "successfully" at `artifacts 0/0` with **no context search at all**
 (gotcha K). Rewrite it as `{"artifacts": [ …the existing array… ]}` first;
-mechanics in [`references/context-artifacts.md`](references/context-artifacts.md).
+mechanics in
+[`references/context-artifacts.md`](references/context-artifacts.md#migrating-a-legacy-top-level-array).
 
 **Then gate on the validator** — cheap, and it runs before the expensive index:
 
@@ -237,7 +238,7 @@ repo vendoring skills via `managing-skills`, where the submodule trees otherwise
 dominate the index (on replicator: 301 files/1038 chunks → 28/42, ~70 min → 84 s).
 Every `init-project-fastapi` repo qualifies. The template, and the carve-out for
 projects authoring first-party skills under `skills/`:
-[`references/context-artifacts.md`](references/context-artifacts.md).
+[`references/context-artifacts.md`](references/context-artifacts.md#index-exclusions--socraticodeignore).
 
 ### Phase 5 — Run the index and block until *fully* done
 
@@ -351,9 +352,9 @@ unmarked policy section before Phase 3 replaces the span
 
 ## Key invariants
 
-Three more — completion is three signals, the graph is gated on yield not
-`READY`, and a FAILED last operation fails verification — are enforced by
-Phases 5–6 and recorded under *Invariants a phase already enforces* in
+Three further invariants — completion is three signals, the graph is gated on
+yield not `READY`, and a FAILED last operation fails verification — are enforced
+by Phases 5–6 and recorded under *Invariants a phase already enforces* in
 [`references/troubleshooting.md`](references/troubleshooting.md).
 
 - **All file edits are idempotent.** The AGENTS.md policy block and the
@@ -399,5 +400,5 @@ gotcha matrix (A–N) and the native-vs-fallback decision tree.
 **Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
 6,000-token standard, set at current size so this file cannot grow. Came down
-from 10,050 by demoting Phase 0, Phase 4's index-scope guidance and four
-phase-enforced invariants into `references/`.
+from 10,050 by demoting Phase 0, Phase 4's index-scope and legacy-array
+guidance, and three phase-enforced invariants into `references/`.

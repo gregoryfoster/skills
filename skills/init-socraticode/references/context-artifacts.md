@@ -223,9 +223,9 @@ that skips at index time and leaves `artifacts N/N` short.
 
 ## Index exclusions — `.socraticodeignore`
 
-Phase 4 writes this alongside the manifest.
+Phase 4 writes this at the repo root, alongside the manifest.
 
-**Also write `.socraticodeignore` (repo root).** It's layered on the built-in
+It's layered on the built-in
 defaults + `.gitignore` (gitignore syntax) and is essentially mandatory for any
 repo that vendors skills via `managing-skills` — the submodule trees dominate the
 index otherwise (on replicator: 301 files/1038 chunks → 28 files/42 chunks, ~70
@@ -251,7 +251,7 @@ none of it — see the Field notes above.
 
 ## Migrating a legacy top-level array
 
-**Migrate a legacy top-level array first (idempotent audit).** The server
+Phase 4 does this first, as an idempotent audit. The server
 requires a top-level **object**; a bare array is rejected outright. If the repo
 already carries a manifest whose first non-whitespace character is `[`, rewrite
 it as `{"artifacts": [ …the existing array… ]}` before going further, preserving
