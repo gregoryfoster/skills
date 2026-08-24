@@ -38,7 +38,7 @@ import {
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
-  parseContextArtifacts,
+  parseContextArtifacts, parseIndexedAt,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -346,6 +346,22 @@ eq('an unknown status is not indexed',
   parseContextArtifacts('━━━ x ━━━\n  Status: ✗ fetch failed')[0].indexed, false);
 eq('no artifacts configured → nothing to compare',
   parseContextArtifacts('No context artifacts configured for: /repo'), []);
+// The freshness half of the same reply (#225). `indexed` is a PRESENCE check;
+// the index time beside it, and the source path above it, are what say whether
+// an indexed artifact still matches the file it was built from.
+eq('the index time is read off the status line',
+  parseContextArtifacts(CONTEXT_LISTING).map((a) => a.lastIndexed),
+  ['2026-08-09T04:46:34.264Z', null]);
+eq('…and the source path comes with it',
+  parseContextArtifacts(CONTEXT_LISTING).map((a) => a.path),
+  ['./docs/schema.sql', './docs/']);
+// A build that stops printing the timestamp must leave freshness UNJUDGED.
+// Reading a missing time as "indexed just now" would rebuild the silent green;
+// reading it as stale would make the line noise the cohort learns to skip.
+eq('a status with no timestamp yields no index time',
+  parseIndexedAt('✓ indexed'), null);
+eq('a bare date is not an index time',
+  parseIndexedAt('✓ indexed (42 chunks, 2026-08-09)'), null);
 
 console.log('— manifest validation —');
 const tmp = mkdtempSync(join(tmpdir(), 'socraticode-selftest-'));

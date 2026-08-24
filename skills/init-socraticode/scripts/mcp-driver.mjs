@@ -45,7 +45,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve as resolvePath, join as joinPath } from 'node:path';
+import { resolve as resolvePath, join as joinPath, isAbsolute as isAbsolutePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15000);
@@ -402,19 +402,86 @@ function parseArtifacts(text) {
 // Measured against a live 13-artifact reply (cannabis_observer/code/cli), one
 // of whose artifacts was sitting unindexed behind a green status at the time.
 //
-// → [{ name, status, indexed }]
+// The `Path:` line and the timestamp inside `Status:` are read for the same
+// reason (#225): they are the only per-artifact FRESHNESS data the server
+// offers, and `indexed` alone is a presence check. `Context artifacts: 14/14`
+// says nothing about whether any of the fourteen still matches its source.
+//
+// → [{ name, path, status, indexed, lastIndexed }]
 function parseContextArtifacts(text) {
   const out = [];
   for (const line of String(text).split('\n')) {
     const head = line.match(/^\s*━+\s*(.+?)\s*━+\s*$/);
-    if (head) { out.push({ name: head[1], status: '', indexed: false }); continue; }
+    if (head) {
+      out.push({ name: head[1], path: null, status: '', indexed: false, lastIndexed: null });
+      continue;
+    }
+    if (!out.length) continue;
+    const current = out[out.length - 1];
+    const path = line.match(/^\s*Path:\s*(.+?)\s*$/);
+    if (path) { current.path = path[1]; continue; }
     const status = line.match(/^\s*Status:\s*(.+?)\s*$/);
-    if (status && out.length) {
-      out[out.length - 1].status = status[1];
-      out[out.length - 1].indexed = artifactIndexed(status[1]);
+    if (status) {
+      current.status = status[1];
+      current.indexed = artifactIndexed(status[1]);
+      current.lastIndexed = parseIndexedAt(status[1]);
     }
   }
   return out;
+}
+
+// "✓ indexed (42 chunks, 2026-08-09T04:46:34.264Z)" → "2026-08-09T04:46:34.264Z"
+//
+// Loose like every parser here, and NULL rather than a guess when the shape
+// drifts: a build that stops printing the timestamp must leave freshness
+// unjudged. Calling every artifact stale would train the cohort to ignore the
+// line; calling every one fresh would rebuild the silence the check exists to
+// break. The caller reports which ones it could not judge instead.
+function parseIndexedAt(status) {
+  const m = String(status).match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/);
+  return m && !Number.isNaN(Date.parse(m[1])) ? m[1] : null;
+}
+
+// ── artifact freshness (#225) ───────────────────────────────────────────────
+// The newest mtime at or under `target`, in epoch ms — or null when it cannot
+// be read.
+//
+// For a directory artifact this is the only honest comparison, and the reason
+// is not obvious: a directory's OWN mtime moves when an entry is added or
+// removed directly inside it, and never when a file two levels down is edited.
+// `design-specs`, `implementation-plans` and `alembic-migrations` all point at
+// directories, so a plan written today under docs/plans/2026/ leaves the count
+// unchanged, the artifact "indexed", and the directory's mtime untouched — the
+// CannObserv/power-map#454 shape one level down.
+const FRESHNESS_WALK_BUDGET = 20000;
+function newestMtimeMs(target) {
+  let newest = null;
+  let budget = FRESHNESS_WALK_BUDGET;
+  const visit = (p, isDirectory) => {
+    let st;
+    try { st = statSync(p); } catch { return; }
+    if (newest === null || st.mtimeMs > newest) newest = st.mtimeMs;
+    if (!isDirectory) return;
+    let entries;
+    try { entries = readdirSync(p, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      // Budget exhausted: stop and answer with the newest seen so far. That
+      // UNDER-reports staleness, degrading toward the presence-only check this
+      // replaces, which is the safe direction — a walk that gave up must not
+      // manufacture a finding.
+      if (budget-- <= 0) return;
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      // Dirent flags come from lstat, so a symlink to a directory is a symlink
+      // here and is never descended: no cycles, and no wandering out of the
+      // artifact through a link into a tree nobody declared.
+      if (e.isDirectory()) visit(joinPath(p, e.name), true);
+      else if (e.isFile()) visit(joinPath(p, e.name), false);
+    }
+  };
+  let root;
+  try { root = statSync(target); } catch { return null; }
+  visit(target, root.isDirectory());
+  return newest;
 }
 
 // Asymmetric on purpose: only a positively-indexed status counts as indexed,
@@ -541,14 +608,56 @@ function graphYield(text) {
 // one cohort repo distrusted a provably exact import graph for weeks on the
 // strength of it, paying an `rg` round-trip on every dependency question.
 //
+// It is pushed at SEVERITY.note on EVERY verdict, not only on `ok` (#220). The
+// figure is never independently actionable — no re-index lowers it, because the
+// unresolved callees are framework and stdlib symbols that are not in the repo.
+// Beside `low` or `unknown` the yield finding it corroborates is already a
+// defect and already sets the exit code, so the severity here changes nothing
+// there; beside `ok` it is the difference between a silent healthy repo and a
+// daily accusation.
+//
 // Exported, and rendered from one place, because the generated doc quotes it
 // verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
-// agree, so a reword cannot leave the doc behind.
+// agree, so a reword cannot leave the doc behind. The returned string carries
+// no severity prefix — renderFinding() adds it — so the doc quotes the message
+// and not the envelope.
 function unresolvedFinding(unresolvedPct, verdict) {
   const gloss = verdict === 'ok'
     ? 'share of call edges with no first-party callee; verdict is ok, so this is a statistic, not a defect'
     : 'corroborates a resolver problem';
   return `graph unresolved ${unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — ${gloss}`;
+}
+
+// ── finding severity (#220) ─────────────────────────────────────────────────
+// health-check keeps ONE `findings` array and gates its exit code on a
+// per-finding severity rather than on emptiness.
+//
+//   defect — a state a named action repairs. Sets `healthy: false` and
+//            `exitCode: 1`, which is what socraticode-health.sh keys its whole
+//            session injection on.
+//   note   — a measurement no action changes. Reported, in the JSON and on
+//            stderr, and free.
+//
+// Why the severity rides in the finding STRING rather than in a new key or a
+// new element type: `findings` stays `string[]`, so `jq -r '.findings[]'` and
+// every substring match a consumer already wrote keep working. Two shapes were
+// weighed and rejected at #230's scoring gate, and are recorded here rather
+// than deleted because #207 revisits this seam when
+// giancarloerra/SocratiCode#112 ships an upstream resolution advisory:
+//
+//   - A second `observations` array. Cleaner in the abstract, but a JSON
+//     contract change every consumer of the driver's output has to learn.
+//   - Suppressing the neutral line on an `ok` verdict (#216's original part 2).
+//     Discards a figure an operator may want, and leaves a staleness finding
+//     (#225) with nowhere to sit that does not fail the check.
+//
+// A severity field admits an "acknowledged" level later without a second
+// contract change, which is the shape #207 needs.
+const SEVERITY = { defect: 'defect', note: 'note' };
+const NOTE_PREFIX = 'note: ';
+
+function renderFinding(f) {
+  return f.severity === SEVERITY.note ? `${NOTE_PREFIX}${f.message}` : f.message;
 }
 
 // codebase_graph_query on a file with no resolved edges: an ordinary sentence,
@@ -682,6 +791,76 @@ function expectedArtifactCount(projectPath) {
     );
   }
   return m.count;
+}
+
+// ── projectPath resolution (#226, generalizing #180) ────────────────────────
+// SocratiCode indexes by ABSOLUTE project path. A relative argument — `.` most
+// of all — therefore names whatever directory the caller happens to be standing
+// in, and from a git worktree or a subdirectory that is a project the server
+// never saw. The failure is not an error: every check answers confidently about
+// the wrong path and reports a healthy index as broken.
+//
+// socraticode-health.sh already resolves this for its own invocation (#180).
+// The doc beside it went on handing readers `health-check .`, and consumers
+// copied that line into their own docs/ — so the resolution moves into the
+// driver, where it fixes the copies that already exist, and the doc shows the
+// explicit spelling, which stops the next one.
+//
+// An ABSOLUTE argument is taken verbatim. It is an explicit statement of which
+// project to measure, it is what the hook passes, and it is the only spelling
+// that can name a worktree on purpose.
+
+function gitIn(dir, args) {
+  const out = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  return out.status === 0 && out.stdout ? out.stdout.trim() : null;
+}
+
+const realOrSelf = (p) => { try { return realpathSync(p); } catch { return p; } };
+
+// The checkout SocratiCode indexes, for any directory inside a repo — or null
+// when there is no repo, no git, or no checkout to be sure of.
+//
+// The COMMON git dir, not this checkout's private one: `--git-dir` in a
+// worktree yields .git/worktrees/<name>, while `--git-common-dir` yields the
+// shared .git for a worktree and a primary checkout alike, and its parent is
+// the directory that was indexed.
+//
+// Then RESOLVE, THEN VERIFY — the hook's discipline, for the same reason. The
+// parent of the common dir is the checkout for an ordinary repo and for every
+// worktree of it, and is NOT for a bare repo's worktree or a --separate-git-dir
+// clone. Confirming that git calls the candidate a working-tree root keeps a
+// layout we guessed wrong about from being measured; the caller's own path is
+// the safer answer there.
+function mainCheckoutOf(dir) {
+  // --path-format=absolute needs git >= 2.31; without it --git-common-dir is
+  // relative to the queried directory in a primary checkout (plain `.git`) and
+  // absolute in a worktree, so the fallback resolves it against that directory.
+  let commonDir = gitIn(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (commonDir === null) {
+    const relative = gitIn(dir, ['rev-parse', '--git-common-dir']);
+    if (relative === null) return null;
+    commonDir = resolvePath(dir, relative);
+  }
+  const candidate = resolvePath(commonDir, '..');
+  const top = gitIn(candidate, ['rev-parse', '--show-toplevel']);
+  if (top === null) return null;
+  return realOrSelf(top) === realOrSelf(candidate) ? realOrSelf(top) : null;
+}
+
+function resolveProjectPath(arg) {
+  if (arg && isAbsolutePath(arg)) return resolvePath(arg);
+  const literal = arg ? resolvePath(arg) : process.cwd();
+  const main = mainCheckoutOf(literal);
+  if (main === null || main === realOrSelf(literal)) return literal;
+  // Announced, never silent: a driver that answers about a path the caller did
+  // not name, with nothing in the output saying so, is the same disease facing
+  // the other way.
+  console.error(
+    `[driver] measuring ${main}, not ${literal} — SocratiCode indexes by absolute project path, `
+    + 'and a relative argument from a git worktree or a subdirectory names a project that was '
+    + 'never indexed (#180). Pass an absolute path to measure a different one.'
+  );
+  return main;
 }
 
 // ── high-level flows ─────────────────────────────────────────────────────────
@@ -922,13 +1101,18 @@ async function cmdIndex(projectPath) {
 // prose on stderr — the AGENTS.md script convention — so a shell hook can act
 // on it without parsing English.
 //
-// Exit 0 when there is nothing to report, 1 when there is. NOT 1 for a low-yield
-// graph alone... it is: a low-yield graph IS the finding, and the hook's whole
-// job is to surface it. What a `low` verdict must never do is fail the *install*
-// (Phase 6 keeps going and switches the policy to variant B), which is why this
-// is a separate command from `verify`.
+// Exit 0 when there is no DEFECT to report, 1 when there is (#220 — see the
+// SEVERITY block above; a note is reported and costs nothing). NOT 1 for a
+// low-yield graph alone... it is: a low-yield graph IS the finding, and the
+// hook's whole job is to surface it. What a `low` verdict must never do is fail
+// the *install* (Phase 6 keeps going and switches the policy to variant B),
+// which is why this is a separate command from `verify`.
 async function cmdHealthCheck(projectPath, probePath) {
   const findings = [];
+  // Every push names its severity at the call site, so the decision is made
+  // where the evidence is rather than by a rule applied afterwards.
+  const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
+  const note = (message) => findings.push({ severity: SEVERITY.note, message });
   const report = { projectPath, healthy: true, findings: [] };
 
   await withClient(async (client) => {
@@ -942,16 +1126,16 @@ async function cmdHealthCheck(projectPath, probePath) {
 
     const health = await call('codebase_health', {});
     if (health.error) {
-      findings.push(`codebase_health failed: ${health.error}`);
+      defect(`codebase_health failed: ${health.error}`);
     } else {
       const problems = healthProblems(health.text);
       report.health = { problems };
-      for (const p of problems) findings.push(`infrastructure: ${p}`);
+      for (const p of problems) defect(`infrastructure: ${p}`);
     }
 
     const status = await call('codebase_status', { projectPath });
     if (status.error) {
-      findings.push(`codebase_status failed: ${status.error}`);
+      defect(`codebase_status failed: ${status.error}`);
     } else {
       // The signal #107 found reported nowhere: an "Incremental update — FAILED
       // (fetch failed)" recorded ~21h earlier, while every green light was lit.
@@ -963,9 +1147,9 @@ async function cmdHealthCheck(projectPath, probePath) {
         error: failed ? parseLastOpError(status.text) : null,
       };
       if (failed) {
-        findings.push(`last operation FAILED: ${report.lastOperation.error || 'see codebase_status'}`);
+        defect(`last operation FAILED: ${report.lastOperation.error || 'see codebase_status'}`);
       }
-      if (indexIncomplete(status.text)) findings.push('index is marked INCOMPLETE — a previous run was interrupted');
+      if (indexIncomplete(status.text)) defect('index is marked INCOMPLETE — a previous run was interrupted');
     }
 
     // ── declared ≠ indexed (#214) ────────────────────────────────────────────
@@ -990,37 +1174,44 @@ async function cmdHealthCheck(projectPath, probePath) {
       // rejects it, codebase_status then omits the artifact line, and every
       // reading reports a contented 0/0 — so it is a finding in its own right.
       report.manifest = { path: manifest.path, errors: manifest.errors };
-      findings.push(
+      defect(
         `${MANIFEST_NAME} is invalid, so the server ignores it and context search is absent entirely: ${manifest.errors[0]}`
       );
     } else if (manifest.present && manifest.count > 0) {
       const declared = manifest.count;
-      // Short-circuit on a matching numerator. The status line's TOTAL cannot
-      // be believed (0/0 means both "none declared" and "none indexed yet"),
-      // but its numerator can, and only a shortfall needs a NAME — which is
-      // the sole reason to spend a second MCP round-trip here, on twelve
-      // cohort repos, once a day.
+      // UNCONDITIONAL, and it did not used to be. #214 short-circuited this
+      // call whenever the status line's numerator already matched the declared
+      // count: only a shortfall needs a NAME, so a matching count meant there
+      // was nothing left to ask. Sound for a presence check — and presence was
+      // never the whole question. `14/14 indexed` says nothing about whether
+      // any of the fourteen still matches its source, and the per-artifact
+      // `lastIndexed` that answers that exists ONLY in this reply. Three of
+      // observo's fourteen were stale at the moment the check reported 14/14.
       //
-      // Verified rather than assumed, because trusting the numerator is
-      // exactly the move that would rebuild this gap if the server ever
-      // rounded up: on cannabis_observer/code/cli, sitting at 12 of 13 with
-      // `Status: green`, codebase_status reports `Context artifacts: 12/13
-      // indexed` — the count is honest, it just cannot say which one.
+      // The cost is what the short-circuit was saving: one MCP round-trip, per
+      // repo, per day. That is the whole price of the difference between "the
+      // docs are indexed" and "the docs are current".
       //
       // NOT an early `return`: this block runs inside the withClient callback,
       // so returning here would skip every graph check below it.
-      const fromStatus = status.error ? null : parseArtifacts(status.text).done;
-      const ctx = fromStatus === declared
-        ? null
-        : await call('codebase_context', { projectPath });
-      if (ctx === null) {
-        report.artifacts = { declared, indexed: declared, unindexed: [] };
-      } else if (ctx.error) {
+      const ctx = await call('codebase_context', { projectPath });
+      if (ctx.error) {
         // Degrade, do not disable: the count alone beats silence. Record the
         // failure either way — a codebase_context that keeps failing is a
         // leading indicator of the very gap this check exists to catch, and
         // leaving no trace of it in the JSON would be this change's own
         // silent degradation.
+        //
+        // The status line's TOTAL cannot be believed (0/0 means both "none
+        // declared" and "none indexed yet"), but its numerator can, and this
+        // is the one place that matters. Verified rather than assumed: on
+        // cannabis_observer/code/cli, sitting at 12 of 13 with `Status:
+        // green`, codebase_status reported `Context artifacts: 12/13 indexed`
+        // — the count is honest, it just cannot say which one, and with
+        // codebase_context down there is nothing that can.
+        //
+        // Freshness is simply unavailable here. No reply, no per-artifact
+        // index times, and no claim in either direction (#225).
         const done = status.error ? null : parseArtifacts(status.text).done;
         report.artifacts = {
           declared,
@@ -1029,7 +1220,7 @@ async function cmdHealthCheck(projectPath, probePath) {
           error: ctx.error,
         };
         if (done != null && done < declared) {
-          findings.push(
+          defect(
             `context artifacts ${done}/${declared} indexed — codebase_context failed (${ctx.error}), so the missing artifact cannot be named`
           );
         }
@@ -1037,10 +1228,38 @@ async function cmdHealthCheck(projectPath, probePath) {
         const listed = parseContextArtifacts(ctx.text);
         const unindexed = listed.filter((a) => !a.indexed);
         const indexed = listed.length - unindexed.length;
+
+        // ── indexed ≠ fresh (#225) ────────────────────────────────────────
+        // Only the artifacts that ARE indexed: an unindexed one has no index
+        // time to compare against, and the parity finding below already names
+        // it. Double-counting would make the stale count useless as a number.
+        const stale = [];
+        const unjudged = [];
+        for (const a of listed) {
+          if (!a.indexed) continue;
+          const indexedAt = a.lastIndexed ? Date.parse(a.lastIndexed) : NaN;
+          if (!a.path || Number.isNaN(indexedAt)) { unjudged.push(a.name); continue; }
+          const newest = newestMtimeMs(resolvePath(projectPath, a.path));
+          if (newest === null) { unjudged.push(a.name); continue; }
+          if (newest > indexedAt) {
+            stale.push({
+              name: a.name,
+              path: a.path,
+              sourceMtime: new Date(newest).toISOString(),
+              lastIndexed: a.lastIndexed,
+            });
+          }
+        }
+
         report.artifacts = {
           declared,
           indexed,
           unindexed: unindexed.map((a) => ({ name: a.name, status: a.status })),
+          stale,
+          // Named, not swallowed. A server build that stops printing the
+          // timestamp would otherwise silently switch freshness off, which is
+          // this check's own version of the failure it exists to report.
+          unjudged,
         };
         if (indexed < declared) {
           // Naming it is the whole value: 2/3 sends the reader back to
@@ -1049,20 +1268,37 @@ async function cmdHealthCheck(projectPath, probePath) {
           const named = unindexed.length
             ? unindexed.map((a) => `${a.name}: ${a.status || 'not indexed'}`).join('; ')
             : `codebase_context listed only ${listed.length} of them`;
-          findings.push(`context artifacts ${indexed}/${declared} indexed — ${named}`);
+          defect(`context artifacts ${indexed}/${declared} indexed — ${named}`);
+        }
+        if (stale.length) {
+          // A DEFECT, not a note, and the severity is the interesting call
+          // (#220 made it one). An unindexed artifact is ABSENT from search:
+          // the caller gets nothing back and knows to look elsewhere. A stale
+          // one is worse in kind — codebase_context_search answers
+          // confidently from superseded chunks, and there is no signal at all.
+          // It is also repaired by one named call, which is the line between
+          // the two severities: a note is a measurement no action changes.
+          //
+          // Its own finding rather than a qualifier on the parity line,
+          // because the parity line only exists on a shortfall and staleness
+          // has to be reportable at 14/14 — which is the whole case.
+          defect(
+            `context artifacts ${indexed}/${declared} indexed, ${stale.length} stale — `
+            + `${stale.map((s) => s.name).join(', ')}; re-run codebase_context_index`
+          );
         }
       }
     }
 
     const graph = await call('codebase_graph_status', { projectPath });
     if (graph.error) {
-      findings.push(`codebase_graph_status failed: ${graph.error}`);
+      defect(`codebase_graph_status failed: ${graph.error}`);
     } else {
       const y = graphYield(graph.text);
       report.graph = { ready: graphReady(graph.text), ...y };
-      if (!report.graph.ready) findings.push('graph is not READY');
+      if (!report.graph.ready) defect('graph is not READY');
       if (y.verdict === 'low') {
-        findings.push(`graph yield LOW — ${y.reason}; install the degraded Code Exploration Policy (variant B)`);
+        defect(`graph yield LOW — ${y.reason}; install the degraded Code Exploration Policy (variant B)`);
         // Confirmatory probe, as #107 asks: one graph query against a file the
         // caller knows has first-party imports. Its value is the *shape* of the
         // failure — an ordinary sentence, no error — which is what makes the
@@ -1076,24 +1312,45 @@ async function cmdHealthCheck(projectPath, probePath) {
             reply: probe.error ? null : probe.text.slice(0, 400),
           };
           if (report.probe.empty) {
-            findings.push(`probe confirms: codebase_graph_query on ${probePath} returned "No dependency information found" — empty, not an error`);
+            defect(`probe confirms: codebase_graph_query on ${probePath} returned "No dependency information found" — empty, not an error`);
           }
         }
       } else if (y.verdict === 'unknown') {
-        findings.push(`graph yield UNKNOWN — ${y.reason}`);
+        defect(`graph yield UNKNOWN — ${y.reason}`);
       }
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
-        findings.push(unresolvedFinding(y.unresolvedPct, y.verdict));
+        note(unresolvedFinding(y.unresolvedPct, y.verdict));
       }
     }
   });
 
-  report.findings = findings;
-  report.healthy = findings.length === 0;
+  // One array, both severities, in encounter order — the shape the JSON has
+  // always had. `renderFinding` is what makes the severity legible: a note
+  // carries its marker into the string, so nothing has to be cross-referenced
+  // against a second array or a parallel key (#220).
+  const defects = findings.filter((f) => f.severity === SEVERITY.defect);
+  const notes = findings.filter((f) => f.severity === SEVERITY.note);
+  report.findings = findings.map(renderFinding);
+  report.healthy = defects.length === 0;
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-  if (findings.length) {
+
+  if (defects.length) {
     console.error('[driver] SocratiCode health findings:');
-    for (const f of findings) console.error(`  - ${f}`);
+    for (const f of defects) console.error(`  - ${f.message}`);
+  } else {
+    console.error('[driver] SocratiCode health: nothing to report');
+  }
+  // Notes print on both paths, and always with their marker. socraticode-
+  // health.sh greps stderr for `  - ` lines and injects them into the session
+  // under a heading that says "findings", so an unmarked statistic there is
+  // #220 rebuilt one layer down. When notes are all there is, the exit code is
+  // 0, the hook prints nothing at all, and the figure survives only in the log
+  // and in the JSON — which is where an operator who wants it can find it.
+  if (notes.length) {
+    console.error('[driver] notes — reported, not defects; these do not set the exit code:');
+    for (const f of notes) console.error(`  - ${renderFinding(f)}`);
+  }
+  if (defects.length) {
     // exitCode, not exit(): node's stdout is ASYNC on a pipe, and process.exit()
     // abandons whatever has not drained — measured at 64 KiB through a pipe
     // against 200 KiB written. The hook redirects to a file (synchronous, so it
@@ -1102,9 +1359,7 @@ async function cmdHealthCheck(projectPath, probePath) {
     // in the findings case — the one that matters. Setting the code lets the
     // process leave normally once the write has flushed.
     process.exitCode = 1;
-    return;
   }
-  console.error('[driver] SocratiCode health: nothing to report');
 }
 
 async function cmdVerify(projectPath) {
@@ -1189,8 +1444,12 @@ Commands:
   health-check
            infra triage on a cadence: codebase_health + codebase_status +
            codebase_graph_status, with the graph measured by EDGE YIELD rather
-           than by READY. JSON verdict on stdout, findings on stderr; exit 0
-           when there is nothing to report, 1 when there is.
+           than by READY. JSON verdict on stdout, findings on stderr.
+           Each finding carries a SEVERITY: a defect is a state a named action
+           repairs and sets exit 1; a note is a measurement no action changes,
+           is prefixed "note: " in both the JSON and on stderr, and costs
+           nothing. Exit 0 when there is no defect — so a repo whose only
+           finding is a note stays silent through socraticode-health.sh.
   resolve  print the resolved server launch command as JSON and exit — does not
            start the server (no Docker, no network); use it to debug resolution
   validate-manifest
@@ -1198,6 +1457,16 @@ Commands:
            path resolves) and exit 0/1; no server, no network. Run before index.
 
 projectPath defaults to the current working directory.
+
+  A RELATIVE projectPath (including the default) is resolved to the checkout
+  SocratiCode indexes — the parent of git's --git-common-dir — so a literal "."
+  from a worktree or a subdirectory does not ask about a project that was never
+  indexed and get told a healthy index is broken (#180/#226). The substitution
+  is printed on stderr whenever it changes the path.
+
+  An ABSOLUTE projectPath is used verbatim. That is the escape hatch: it is the
+  only spelling that can name a worktree on purpose, and it is what
+  socraticode-health.sh passes after resolving the checkout itself.
 
 Flags:
   --probe <relpath>   health-check only: on a LOW yield verdict, run one
@@ -1263,7 +1532,7 @@ if (RUN_AS_SCRIPT) {
     argv.splice(probeIdx, 2);
   }
   const [cmd, projectPathArg] = argv;
-  const projectPath = projectPathArg ? resolvePath(projectPathArg) : process.cwd();
+  const projectPath = resolveProjectPath(projectPathArg);
 
   switch (cmd) {
     case 'index': await cmdIndex(projectPath); break;
@@ -1303,11 +1572,13 @@ if (RUN_AS_SCRIPT) {
 export {
   validateManifest, MANIFEST_NAME,
   parseEmbedPercent, parseArtifacts, graphReady,
-  // declared ≠ indexed (#214)
-  parseContextArtifacts, artifactIndexed,
+  // declared ≠ indexed (#214), indexed ≠ fresh (#225)
+  parseContextArtifacts, artifactIndexed, parseIndexedAt, newestMtimeMs,
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   unresolvedFinding,
+  // finding severity (#220)
+  SEVERITY, NOTE_PREFIX, renderFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
