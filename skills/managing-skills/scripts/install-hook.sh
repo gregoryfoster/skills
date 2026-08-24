@@ -93,7 +93,9 @@ What it does:
   command, so an entry written in an older form (pre-#110 cwd-relative, or a
   legacy install naming the script file) is recognised and replaced instead of
   duplicated. Markers are per-hook precisely so one hook's strip cannot evict a
-  sibling's entry from the same array.
+  sibling's entry from the same array — and the strip removes matching HOOKS,
+  not whole matcher groups, so that holds for a group holding several hooks and
+  not only for the one-hook groups this installer writes (#222).
 
   Neither step clobbers unrelated content: other SessionStart hooks, other hook
   events, and every other key in settings.json are preserved.
@@ -219,6 +221,50 @@ markers_json() {
   printf '[%s]' "${out#,}"
 }
 MARKERS_JSON="$(markers_json)"
+
+# The dedupe strip, defined ONCE and used by both write paths.
+#
+# It reads at HOOK granularity, matching matching_commands below. The two used
+# to disagree: the reader scanned every command in every group, and both writers
+# dropped whole matcher GROUPS keyed on `(.hooks // [])[0].command` — index 0
+# only. A settings.json where a matcher group holds more than one hook then got
+# the wrong answer in both directions (#222):
+#
+#   A. The marker matched at index 0, so `map(select(...))` over
+#      .hooks.SessionStart deleted the entire group and every sibling hook
+#      registered beside it. Silent: the install reported success, the evicted
+#      hook's symlink stayed a valid file, and .skills/doctor.sh cannot see a
+#      missing registration. CannObserv/watcher lost its daily submodule refresh
+#      to an init-socraticode install exactly this way.
+#   B. The marker matched at index >= 1, so the [0] probe never saw it, the
+#      group survived, and the append wrote a SECOND registration — while
+#      is_registered (which does scan every index) made the run announce it was
+#      "upgrading the registration". The stranded duplicate the dedupe-then-
+#      append design exists to prevent, produced by the dedupe.
+#
+# So this strips the matching hooks out of each group and then drops any group
+# THIS strip emptied. The `$n == 0` clause is what keeps that from over-reaching:
+# a group that arrived already empty was not ours to delete, and neither is one
+# whose .hooks is absent or not an array — the contract is that unrelated
+# content survives, and a malformed entry is still someone's content.
+#
+# `.command?` rather than `.command`: an element that is not an object would
+# otherwise abort the whole rewrite, and a filter that cannot survive junk in
+# the file it is repairing is the wrong shape for a repair tool.
+#
+# $m is a jq variable bound by --argjson, not a shell one.
+# shellcheck disable=SC2016
+STRIP_MATCHING='
+  def strip_matching($m):
+    map(
+      if (.hooks | type) == "array"
+      then (.hooks | length) as $n
+         | (.hooks |= map(select(((.command? // "") | tostring) as $c
+             | ($m | any(. as $t | $c | contains($t))) | not)))
+         | select($n == 0 or (.hooks | length) > 0)
+      else . end
+    );
+'
 
 # First matching vendor wins, matching sync_self() in doctor.sh and the `break`
 # in skills-submodule-update.sh. When skills-vendor/ is absent the glob stays
@@ -513,9 +559,8 @@ if [ "$MODE" = "uninstall" ]; then
     # shellcheck disable=SC2016
     settings_rewrite "removed the SessionStart entry from $SETTINGS_REL" \
       --argjson m "$MARKERS_JSON" \
-      'if .hooks.SessionStart then
-         .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
-           | tostring | . as $c | ($m | any(. as $t | $c | contains($t))) | not))
+      "$STRIP_MATCHING"'if .hooks.SessionStart then
+         .hooks.SessionStart |= strip_matching($m)
        else . end'
   fi
   log "not committed — review and commit with your normal gate."
@@ -623,10 +668,9 @@ else
   # shellcheck disable=SC2016
   settings_rewrite "registered the SessionStart entry in $SETTINGS_REL" \
     --argjson m "$MARKERS_JSON" --arg cmd "$HOOK_COMMAND" \
-    '(.hooks //= {}) |
+    "$STRIP_MATCHING"'(.hooks //= {}) |
      (.hooks.SessionStart //= []) |
-     .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "")
-       | tostring | . as $c | ($m | any(. as $t | $c | contains($t))) | not)) |
+     .hooks.SessionStart |= strip_matching($m) |
      .hooks.SessionStart += [{
        "matcher": ".*",
        "hooks": [{

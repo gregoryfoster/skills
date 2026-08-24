@@ -203,11 +203,17 @@ Remove the symlink:
 git rm .claude/hooks/skills-submodule-update.sh
 ```
 
-Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable:
+Strip the matching entry from `.claude/settings.json`, preserving any other `SessionStart` entries. The `if .hooks.SessionStart then ... else . end` guard makes this safe to run against an already-uninstalled file or one that never had a `hooks` block, and the `contains` test — rather than string equality — removes an entry written in either command form, so an install predating [#110](https://github.com/gregoryfoster/skills/issues/110) is still removable. It strips matching **hooks** and drops only a group it emptied, never a whole matcher group — a group can hold several hooks, and dropping it silently deletes its group-mates' registrations ([#222](https://github.com/gregoryfoster/skills/issues/222)).
 
 ```bash
 jq 'if .hooks.SessionStart then
-      .hooks.SessionStart |= map(select(((.hooks // [])[0].command // "") | tostring | contains("skills-submodule-update.sh") | not))
+      .hooks.SessionStart |= map(
+        if (.hooks | type) == "array"
+        then (.hooks | length) as $n
+           | (.hooks |= map(select((.command? // "") | tostring
+               | contains("skills-submodule-update.sh") | not)))
+           | select($n == 0 or (.hooks | length) > 0)
+        else . end)
     else . end' \
    .claude/settings.json > .claude/settings.json.tmp \
   && mv .claude/settings.json.tmp .claude/settings.json
