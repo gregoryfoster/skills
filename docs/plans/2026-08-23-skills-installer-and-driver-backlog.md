@@ -51,9 +51,17 @@ no other.
 - **Merge strategy**: regular merge commit, `batch/a` → `main`. Intra-batch
   worker → batch fixed at FF/regular merge so
   `worktree-destroy.sh --base batch/a` can verify ancestry.
-- **Suite baseline on `main` (`8ee142a`)**: **3038 passed, 159 skipped**, 145s,
+- **Suite baseline on `main` (`76263fd`)**: **3041 passed, 159 skipped**, 155s,
   via `.venv/bin/python -m pytest tests/structural/`. Every worker brief carries
   this number with "stop and report if it does not match."
+  - Measured **after** committing this plan and the Step 10 journal entry, not
+    before. At `8ee142a` the suite read `3038 passed`; the journal entry added
+    three parametrized tests, because the process log lives under `skills/` and
+    is therefore inside the collection scope of this repo's own structural
+    suite. Briefing the pre-commit number would have had every worker stop and
+    report a phantom mismatch on a tree that was correct. The 2026-08-21 session
+    shipped this exact defect and logged the rule; this is the rule paying for
+    itself.
 
 ## Prioritization rubrics
 
