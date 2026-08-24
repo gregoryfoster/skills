@@ -391,7 +391,14 @@ class TestWhoIsNotWarnedAbout:
         """Hooks in .claude/hooks/ fire on other events — this script's own
         header describes one running on every Edit|Write|MultiEdit. Without a
         manifest nothing declares which event a hook wants, so only 'registered
-        under no event at all' is a defensible complaint."""
+        under no event at all' is a defensible complaint.
+
+        Not hypothetical: THIS repo's only hook symlink is
+        `.claude/hooks/context-budget-guard.sh`, registered under PostToolUse
+        and shipping no manifest. A SessionStart-scoped check over every hook —
+        which is what #224's body proposed — would have warned about it on
+        every doctor run, which is every Phase 1 preflight of every review here.
+        """
         (consumer / VENDOR_REL / "init-socraticode" / "scripts"
          / "socraticode-health.install").unlink()
         (consumer / ".claude" / "settings.json").write_text(json.dumps({
