@@ -294,6 +294,17 @@ omits `skills-vendor/` deliberately: "nothing in lint/test needs them") and
 its own; together they produce a trap worth writing down once
 ([#227](https://github.com/gregoryfoster/skills/issues/227)).
 
+**The first session in that state is expected to fail, and reordering will not
+fix it.** `bash` cannot run a symlink whose target is absent, so each hook exits
+`127` until `.skills/doctor.sh` — a real file, for exactly this reason — has run
+once and initialized the submodules. Session two is clean. The doctor cannot
+arrive in time for session one even if a consumer registers it first, because
+**Claude Code runs an event's matching hooks in parallel**, in a
+[non-deterministic order](https://code.claude.com/docs/en/hooks-guide). Report
+the rc=127 first-session noise as expected, not as a broken install — and do not
+spend a session shuffling the `SessionStart` array
+([#228](https://github.com/gregoryfoster/skills/issues/228)).
+
 **The copy/symlink signal inverts there.** A dangling symlink is the *healthy*
 state and a **copy** — a valid regular file — is the only variant that resolves.
 So any check that verifies the install by *resolving* it passes on the copy this
