@@ -407,6 +407,249 @@ class TestArgumentHandling:
         assert "unknown argument" in r.stderr
 
 
+CI_GATE_START = "**Where the vendor content is absent"
+CI_GATE_END = "> **Duplicate-config trap.**"
+
+
+def _ci_gate_window() -> str:
+    """The section of the reference that documents checking an install where
+    the vendor content is not checked out (#227, #228).
+
+    Resolved per call rather than at import, so a document missing the section
+    fails the tests that are about it instead of collapsing the whole module's
+    collection."""
+    body = POLICY_REF.read_text()
+    assert CI_GATE_START in body, (
+        f"the reference carries no {CI_GATE_START!r} section — the CI recipe "
+        "#227 asks for has nowhere to live"
+    )
+    window = body[body.index(CI_GATE_START):]
+    assert CI_GATE_END in window, (
+        f"{CI_GATE_START!r} is not followed by {CI_GATE_END!r}; the section "
+        "moved and these tests are reading the wrong span"
+    )
+    return window[:window.index(CI_GATE_END)]
+
+
+def _ci_gate_args() -> tuple[str, ...]:
+    return _documented_args(CI_GATE_START, CI_GATE_END)
+
+
+def _uncheckout_the_vendor(repo: Path) -> None:
+    """The submodule-less state `actions/checkout` and `git worktree add` both
+    produce: the vendor directory is there and empty, the symlinks into it are
+    not."""
+    tree = repo / "skills-vendor" / "acme-skills"
+    for path in sorted(tree.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() or path.is_symlink() else path.rmdir()
+    tree.rmdir()
+
+
+class TestCheckSeparatesShapeFromResolution:
+    """#227 — `--check` could not gate CI, because a *correct* symlink install
+    reports DANGLING in the checkout `init-project-fastapi` ships.
+
+    Two decisions in this repo are individually sound and jointly produce it:
+    `github-ci.md` omits `skills-vendor/` submodules from CI checkout on purpose
+    ("nothing in lint/test needs them"), and `init-socraticode` installs its
+    hooks as symlinks *into* `skills-vendor/` on purpose (#179, #186). So in CI
+    every vendor symlink dangles and `is_linked` — which requires resolution,
+    not merely shape — calls a correct install broken.
+
+    The inversion is the part worth more than the exit code. Where the vendor
+    content is absent, a **dangling symlink is the healthy state** and a **copy
+    is the only variant that resolves**. Any check that verifies the install by
+    resolving it passes on the copy this library argues against and fails on the
+    symlink it prescribes. `--allow-unresolved` is that split made explicit:
+    shape is checkable everywhere and carries the copy-vs-symlink guarantee;
+    resolution is only checkable where the content exists.
+    """
+
+    def _installed_then_uncheckedout(self, repo: Path) -> None:
+        assert _run(repo, *REMINDER_ARGS).returncode == 0
+        _uncheckout_the_vendor(repo)
+
+    def test_without_the_flag_a_correct_install_still_reports_dangling(
+        self, repo: Path
+    ):
+        """Unchanged by default. On a workstation the vendor content SHOULD be
+        there, and a link that does not resolve is a repair signal."""
+        self._installed_then_uncheckedout(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "DANGLING" in r.stdout, r.stdout
+
+    def test_the_report_says_the_shape_is_correct(self, repo: Path):
+        """The two verdicts are printed separately even without the flag —
+        an operator who cannot tell which half failed cannot act on either."""
+        self._installed_then_uncheckedout(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert "Shape is correct" in r.stdout, r.stdout
+        assert "--allow-unresolved" in r.stdout, r.stdout
+
+    def test_the_flag_accepts_an_unresolved_vendor_symlink(self, repo: Path):
+        """The CI gate. Both halves of the contract are still asserted; only
+        the half that cannot be answered here is skipped."""
+        self._installed_then_uncheckedout(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_the_flag_does_not_accept_an_absolute_target(self, repo: Path):
+        """An absolute symlink resolves on the machine that made it and nowhere
+        else. No submodule checkout fixes that, so the flag must not cover it."""
+        _run(repo, *REMINDER_ARGS)
+        link = repo / ".claude" / "hooks" / REMINDER
+        link.unlink()
+        link.symlink_to("/nowhere/acme/socraticode-reminder.sh")
+        _uncheckout_the_vendor(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+        assert "skills-vendor" in r.stdout, r.stdout
+
+    def test_the_flag_does_not_accept_a_target_outside_the_vendor(
+        self, repo: Path
+    ):
+        _run(repo, *REMINDER_ARGS)
+        link = repo / ".claude" / "hooks" / REMINDER
+        link.unlink()
+        link.symlink_to(f"../../vendor-elsewhere/{REMINDER}")
+        _uncheckout_the_vendor(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+
+    def test_the_flag_does_not_excuse_a_link_that_misses_a_present_source(
+        self, repo: Path
+    ):
+        """The vendor IS checked out and the link still does not resolve, so
+        "the content is not here" is not the explanation. Excusing this would
+        make the flag mean "never mind the symlink", which is not the split."""
+        _run(repo, *REMINDER_ARGS)
+        link = repo / ".claude" / "hooks" / REMINDER
+        link.unlink()
+        link.symlink_to(
+            f"../../skills-vendor/other-skills/skills/init-socraticode/"
+            f"scripts/{REMINDER}"
+        )
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+
+    def test_the_flag_reports_a_copy_rather_than_accepting_it(self, repo: Path):
+        """The inversion, caught. With the vendor uncheckedout a copy is the
+        one variant that RESOLVES, so every resolution-based check passes on
+        exactly the install #179 argues against. The flag says vendor content
+        may be absent, which is precisely why absence can no longer be read as
+        "this repo vendors nothing to link at"."""
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        (hooks / REMINDER).write_text((SOC_SCRIPTS / REMINDER).read_text())
+        _uncheckout_the_vendor(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+        assert "COPY" in r.stdout, r.stdout
+
+    def test_the_flag_still_gates_the_registration(self, repo: Path):
+        """It relaxes resolution and nothing else. A hook file with no
+        SessionStart entry never runs, in CI as anywhere."""
+        _run(repo, *REMINDER_ARGS)
+        (repo / SETTINGS_REL).write_text("{}")
+        _uncheckout_the_vendor(repo)
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+        assert "SessionStart entry: MISSING" in r.stdout, r.stdout
+
+    def test_the_flag_still_gates_a_missing_hook_file(self, repo: Path):
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+        assert "hook symlink:       MISSING" in r.stdout, r.stdout
+
+    def test_the_flag_is_refused_outside_check(self, repo: Path):
+        """It changes what `--check` tolerates and nothing about an install.
+        Accepting it silently on an install run would imply it did."""
+        r = _run(repo, *REMINDER_ARGS, "--allow-unresolved")
+        assert r.returncode == 1, r.stdout
+        assert "--allow-unresolved requires --check" in r.stderr, r.stderr
+        assert not (repo / ".claude" / "hooks" / REMINDER).exists()
+
+
+class TestCheckReportsHowManyRegistrations:
+    """#222's third suggestion, and the state its strip could leave behind.
+
+    `--check` reported `yes` for one entry and for two, so a repo carrying a
+    stranded duplicate read as healthy — and a hook registered twice runs twice
+    per session. The reader already scans every index, so the count costs
+    nothing; only the report was throwing it away."""
+
+    def test_one_entry_is_reported_as_one(self, repo: Path):
+        _run(repo, *REMINDER_ARGS)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 0, r.stdout
+        assert "SessionStart entry: yes (1 entry" in r.stdout, r.stdout
+
+    def test_two_entries_are_not_reported_as_yes(self, repo: Path):
+        canonical = (
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/'
+            'socraticode-reminder.sh" # socraticode-prefetch'
+        )
+        _seed(repo, canonical, canonical)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "SessionStart entry: 2 entries" in r.stdout, r.stdout
+        assert "SessionStart entry: yes" not in r.stdout, r.stdout
+
+    def test_the_duplicate_report_names_the_repair(self, repo: Path):
+        canonical = (
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/'
+            'socraticode-reminder.sh" # socraticode-prefetch'
+        )
+        _seed(repo, canonical, canonical)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert "install-hook.sh --hook socraticode-reminder.sh" in r.stdout, (
+            r.stdout
+        )
+
+
+class TestTheReferenceDocumentsTheCiRecipe:
+    """#227's second half. archiver rediscovered the shape-vs-resolution split
+    by hand and paid for it once; the point of writing it down is that the next
+    consumer does not.
+
+    Run verbatim, like Step A and Step C, because a doc that prescribes a CI
+    gate has to be a gate that passes — and the whole failure being documented
+    is a check reporting a correct install as broken."""
+
+    def test_the_documented_gate_asks_for_both_flags(self):
+        args = _ci_gate_args()
+        assert "--check" in args, args
+        assert "--allow-unresolved" in args, args
+
+    def test_the_documented_gate_passes_on_a_submodule_less_checkout(
+        self, repo: Path
+    ):
+        """The exact state `actions/checkout` produces, against an install this
+        installer made minutes earlier."""
+        args = _ci_gate_args()
+        install = _without(_without(args, "--check"), "--allow-unresolved")
+        assert _run(repo, *install).returncode == 0
+        _uncheckout_the_vendor(repo)
+        r = _run(repo, *args)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_it_states_the_inversion_rather_than_only_the_flag(self):
+        """A flag an operator can copy is not the same as knowing why their own
+        `hook.resolve().is_file()` assertion passes on the install this library
+        argues against."""
+        window = _ci_gate_window().lower()
+        assert "copy" in window, window
+        assert "shape" in window, window
+        assert "resolv" in window, window
+
+    def test_it_warns_off_the_wrong_repair(self):
+        """The tempting fix is `submodules: recursive` in CI, which buys a
+        passing check by undoing the checkout decision that made the skip
+        worth having."""
+        assert "submodules: recursive" in _ci_gate_window()
+
+
 class TestInstallRefreshIsStillItself:
     """Named by path in README.md, docs/SKILLS.md, managing-skills/SKILL.md,
     doctor.sh's repair advice, and in every per-repo cohort issue filed for
