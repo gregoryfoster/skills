@@ -215,6 +215,8 @@ runs the exact pass weekly as the gate that does fail. On the commit path the
 exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
 surface, and an unusable key must never be able to block a commit.
 
+`AGENTS.md` itself is gated: the `context-budget-gate` pre-commit hook fails any commit that puts it over `.skills/context-budget` (#88).
+
 ## Commit conventions
 
 Conventional Commits style:

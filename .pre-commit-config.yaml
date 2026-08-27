@@ -1,6 +1,22 @@
 repos:
   - repo: local
     hooks:
+      # The context-budget fitness function (#88): AGENTS.md stays at or under
+      # the budget in .skills/context-budget (6,000). The offline estimate
+      # reading — no credential on the commit path — with the JSON discarded
+      # because the GATE lines on stderr are the signal pre-commit shows.
+      # First, so a budget breach fails in ~2s instead of after the ~3 min
+      # suite. test_policy_surface_budget.py enforces the same ceiling inside
+      # that suite; this hook is the named, surface-level spelling of it that
+      # enforcing-architecture wires for cohort repos too.
+      - id: context-budget-gate
+        name: Context Budget Gate
+        entry: bash -c 'bash skills/curating-context/scripts/measure-context.sh --gate >/dev/null'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: structural-tests
         name: Structural Tests
         # Not an inline `source .venv/bin/activate` (#156): a linked worktree

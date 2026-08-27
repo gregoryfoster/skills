@@ -34,6 +34,14 @@ Options:
                      everything. Plans and audits are dated snapshots — a stale
                      path inside one is a correct historical record, so counting
                      them as orphans or dead links buries the live signal.
+  --gate             Exit 4 when the policy file is over budget, after the full
+                     measurement has printed — a red gate that discards its
+                     numbers leaves the committer diagnosing blind. This is the
+                     fitness-function reading (#88): the budget resolves through
+                     the same chain as everything else, and the default offline
+                     estimate needs no credential, so it can sit on a pre-commit
+                     hook. Without this flag the script stays a measurement and
+                     exits 0 whatever the verdict.
   --exact            Count tokens via the Anthropic count_tokens endpoint
                      instead of the calibrated offline estimate. The endpoint is FREE — it
                      is rate-limited per usage tier but consumes no tokens and
@@ -112,6 +120,7 @@ Exit codes:
   1  usage error, or no policy file found
   2  infrastructure failure (unreadable file, awk/find failure)
   3  --check-credential only: no credential that count_tokens will accept
+  4  --gate only: the policy file is over budget
 USAGE
 }
 
@@ -123,6 +132,7 @@ DOCS_DIR=""
 BUDGET_OVERRIDE=""
 DOC_BUDGET_OVERRIDE=""
 ARCHIVAL="plans specs research audits archive"
+GATE=0
 EXACT=0
 CHECK_CRED=0
 NO_WRITE=0
@@ -145,6 +155,7 @@ while [ $# -gt 0 ]; do
     --doc-budget) DOC_BUDGET_OVERRIDE="${2:?--doc-budget needs a number}"; shift 2 ;;
     --archival) need_arg "$#" --archival 'pass "" to measure everything'
                 ARCHIVAL="$2"; shift 2 ;;
+    --gate) GATE=1; shift ;;
     --exact) EXACT=1; shift ;;
     --check-credential) CHECK_CRED=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
@@ -1357,3 +1368,19 @@ done <"$TMP/docs.tsv"
 printf '  "totals": {"tokens_policy": %s, "tokens_docs": %s, "tokens_live": %s, "files_docs": %s, "archival_skipped": %s}\n' \
   "$P_TOKENS" "$docs_tokens" "$live_tokens" "$(LC_ALL=C wc -l <"$TMP/docs.tsv" | tr -d ' ')" "$ARCHIVAL_SKIPPED"
 printf '}\n'
+
+# --- gate (#88) ------------------------------------------------------------
+# LAST, after the complete JSON: the gate is the same measurement with a
+# verdict, so a red run still hands the committer the section census it needs
+# to act. One rule only — the POLICY file's budget — because a fitness function
+# encodes one named rule; the per-doc budgets stay advisory here (this repo
+# gates them in test_policy_surface_budget.py, and a cohort repo adopting the
+# gate should not inherit a second rule it never asked for). The verdict names
+# its reading (#145): an estimate within ~2% of the ceiling deserves an --exact
+# run before anyone edits the file down to fit.
+if [ "$GATE" -eq 1 ] && [ "$over_policy" = true ]; then
+  echo "GATE $POLICY is over budget: $P_TOKENS tokens ($P_SOURCE reading) against $BUDGET." >&2
+  echo "     The fix is a demotion, not a rewrite — move a section to a reference doc" >&2
+  echo "     and leave one pointer (curating-context Phase 3 class B)." >&2
+  exit 4
+fi

@@ -13,6 +13,7 @@ Pick the tool by stack:
 | JS/TS (`package.json`) | [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | eslint `max-lines` |
 | PHP (`composer.json`) | [deptrac](https://github.com/qossmic/deptrac) | portable gate |
 | Contract (OpenAPI spec present) | **delegate** → `vendoring-openapi-client` drift guard | — |
+| Context budget (vendored `curating-context`) | `measure-context.sh --gate` | — |
 
 ---
 
@@ -142,6 +143,33 @@ Invoke [`vendoring-openapi-client`](../../vendoring-openapi-client/SKILL.md) and
 guard (`DRIFT_GUARD=none|ci|ci+live`): the committed spec snapshot is the contract-of-record and the
 hermetic CI regen-diff gate fails the build on drift. Route the finding there with the boundary's spec
 location and the desired tier; that skill owns the wiring.
+
+---
+
+## Context budget — `measure-context.sh --gate`
+
+Rule shape: "the agent-policy file (`AGENTS.md`) stays at or under its token budget" — the contract
+`curating-context` measures weekly, graduated into a gate (#88).
+
+Check (no config file — the rule's number lives in the knob):
+
+```bash
+bash skills/curating-context/scripts/measure-context.sh --gate >/dev/null
+```
+
+Exit 4 on breach, with the verdict on stderr; the full measurement JSON still prints on stdout for a
+caller that wants the section census. The budget resolves `--budget N` → `CONTEXT_BUDGET` →
+`.skills/context-budget` → 6000 — the same chain as the write guard and the review delta, so the gate
+enforces what the repo configured, never a hardcoded ceiling. The default reading is the calibrated
+**offline** estimate: a pre-commit hook has no API key, and the gate must not need one.
+
+Dev dependency: none — the script ships in `curating-context`, which cohort repos already vendor.
+
+Wiring: a pre-commit `repo: local` hook (entry above), or the same command as a step in whichever CI
+job runs on merge. **Sequencing:** wire it only after the repo's first successful curation has the
+file under budget — a permanently-red gate is one everybody learns to `--no-verify` past; until then
+the weekly cadence warning is the signal. Near the ceiling, confirm headroom with `--exact --no-write`
+first: the estimate runs ~1-2% off the exact count on policy files.
 
 ---
 
