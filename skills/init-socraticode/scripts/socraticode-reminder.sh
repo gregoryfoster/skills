@@ -36,7 +36,7 @@ set -E
 # still reach its `exit 0`.
 _hook_panic() {
   local rc=$?
-  echo "socraticode-reminder: could not print the prefetch reminder (rc=$rc); run the ToolSearch query in docs/SOCRATICODE.md by hand" >&2 || true
+  echo "socraticode-reminder: could not print the prefetch reminder (rc=$rc); re-run this hook by hand for the ToolSearch query (docs/SOCRATICODE.md, Prefetch)" >&2 || true
   exit 0
 }
 trap _hook_panic ERR
@@ -60,11 +60,12 @@ Behaviour:
   - Prints to stdout, which Claude Code injects as session context.
   - Exits 0 on every path, so a failure here never blocks a session.
 
-The prefetch query it prints must stay identical to the one in the skill's
-references/socraticode-doc.md — the template a consumer's `docs/SOCRATICODE.md`
-is generated from, for an operator running the query by hand. A structural test
-pins this script and that template together; nothing pins a consumer's generated
-copy, so a stale one is caught on the next install rather than by the suite.
+This script's output is the only copy of the prefetch query (#234). The
+skill's references/socraticode-doc.md template — and so every consumer's
+generated `docs/SOCRATICODE.md` — points here instead of transcribing it,
+because a transcription of a symlinked hook's output goes stale silently
+(#209). A structural test pins that the template stays a pointer and carries
+no copy of the query.
 
 Options:
   --help    Show this help and exit.

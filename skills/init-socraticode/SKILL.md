@@ -154,8 +154,12 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    otherwise, silently ([#115](https://github.com/gregoryfoster/skills/issues/115)).
 2. **Detail doc** → write `docs/SOCRATICODE.md` from
    [`references/socraticode-doc.md`](references/socraticode-doc.md): the full
-   tool table, the `ToolSearch` prefetch string, per-tool notes, graph-health
-   and index-scope guidance. The `AGENTS.md` block links to it and carries only
+   tool table, per-tool notes, graph-health and index-scope guidance, and a
+   **pointer** to the prefetch hook — never a transcription of its `select:`
+   query: the hook is a vendored symlink, so a copy drifts silently while the
+   hook's output cannot (#209, #234). A consumer that already transcribed
+   converges on the next re-run's marker-pair replace. The `AGENTS.md` block
+   links to it and carries only
    what an agent needs on nearly every task; everything read once lives here.
    Create `docs/` if absent. **Marker-delimited, like the policy block**, by a
    pair kept unbroken on one line each: `<!-- BEGIN socraticode-doc -->` and

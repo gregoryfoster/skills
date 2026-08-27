@@ -96,6 +96,12 @@ NEGATIVE_RULE_MARKER = "**Negative rule.**"
 OVERFLOW_DOC = "docs/SOCRATICODE.md"
 PREFETCH_PREFIX = "select:mcp__plugin_socraticode_socraticode__codebase_search"
 
+# Since #234 the `select:` query has exactly one copy — the vendored reminder
+# hook — and the doc template hands a reader this command instead of a
+# transcription that goes stale silently once the hook is a symlink (#209).
+HOOK_POINTER = "bash .claude/hooks/socraticode-reminder.sh"
+REMINDER_SCRIPT = SKILL_DIR / "scripts" / "socraticode-reminder.sh"
+
 # The doc template's tool table, and the prefetch that has to cover it (#209).
 TOOL_TABLE_HEADING = "## When to use each tool"
 MCP_PREFIX = "mcp__plugin_socraticode_socraticode__"
@@ -149,9 +155,9 @@ def _graph_health(doc_text: str) -> str:
     return doc_text[start:end if end != -1 else len(doc_text)]
 
 
-def _prefetched_tools(doc_text: str) -> set[str]:
-    match = _PREFETCH_RE.search(doc_text)
-    assert match, f"no `select:` prefetch query in references/{DOC_REF.name}"
+def _prefetched_tools(hook_text: str) -> set[str]:
+    match = _PREFETCH_RE.search(hook_text)
+    assert match, f"no `select:` prefetch query in scripts/{REMINDER_SCRIPT.name}"
     return {
         entry[len(MCP_PREFIX):]
         for entry in match.group(0)[len("select:"):].split(",")
@@ -303,10 +309,24 @@ class TestOverflowDocTemplate:
         )
         return DOC_REF.read_text()
 
-    def test_carries_the_prefetch_query(self, doc_text: str) -> None:
-        assert PREFETCH_PREFIX in doc_text, (
-            f"references/{DOC_REF.name} must carry the full ToolSearch prefetch "
-            "query — it is what the policy block stopped inlining"
+    def test_points_at_the_hook_instead_of_transcribing(self, doc_text: str) -> None:
+        """#234: the doc used to transcribe the hook's `select:` query, and a
+        consumer's copy went stale silently once the hook became a symlink
+        (#186) — #209 was that exact drift, and the transcription is the copy
+        an operator actually reads, so it wins any argument with the hook.
+        The pointer cannot drift from the thing it points at: it IS the thing
+        that runs."""
+        assert HOOK_POINTER in doc_text, (
+            f"references/{DOC_REF.name} must hand the reader "
+            f"`{HOOK_POINTER}` — without the pointer an operator whose "
+            "SessionStart hook did not fire has no path to the prefetch "
+            "query at all (#234)"
+        )
+        assert PREFETCH_PREFIX not in doc_text, (
+            f"references/{DOC_REF.name} transcribes the `select:` query "
+            "again. Every consumer's generated copy of it goes stale "
+            f"silently when the vendored hook changes (#209, #234); point at "
+            f"`{HOOK_POINTER}` instead."
         )
 
     def test_carries_the_full_tool_table(self, doc_text: str) -> None:
@@ -324,21 +344,24 @@ class TestOverflowDocTemplate:
     def test_prefetch_covers_every_tool_the_table_recommends(
         self, doc_text: str
     ) -> None:
-        """#209: the table and the prefetch are one file, twenty lines apart.
+        """#209: a tool the table recommends but the prefetch omits fails.
 
         The `codebase_*` schemas are **deferred** — calling one before the
         prefetch loads it fails validation. So a tool the table recommends but
         the prefetch omits is an `InputValidationError` for an agent following
         the doc it was just handed, which is the exact failure the prefetch
         exists to prevent. `codebase_graph_circular` sat in that gap in two
-        cohort repos before anyone filed it.
+        cohort repos before anyone filed it. When #209 landed, the table and
+        the prefetch were one file, twenty lines apart; since #234 the query's
+        only copy is the vendored hook, so the pair this asserts now spans the
+        doc's table and that script.
 
         Asserted as a superset rather than tool-by-tool: the next row someone
         adds to the table is covered without their having to know this test is
         here. The prefetch may load *more* than the table lists — it already
         carries `codebase_status`, which no row names.
         """
-        prefetched = _prefetched_tools(doc_text)
+        prefetched = _prefetched_tools(REMINDER_SCRIPT.read_text())
         recommended = sorted(set(_TOOL_RE.findall(_tool_table(doc_text))))
         missing = [tool for tool in recommended if tool not in prefetched]
         assert not missing, (
@@ -346,8 +369,8 @@ class TestOverflowDocTemplate:
             "but the `select:` prefetch does not load them. The schemas are "
             "deferred, so an agent that follows the table gets "
             "`InputValidationError` (#209). Add them to the prefetch string in "
-            f"both pinned copies — this template and scripts/"
-            "socraticode-reminder.sh — or drop the row."
+            f"scripts/{REMINDER_SCRIPT.name} — the query's only copy since "
+            "#234 — or drop the row."
         )
 
     def test_graph_health_explains_unresolved_pct(self, doc_text: str) -> None:
