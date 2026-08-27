@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-23-1"
+VERSION="2026-08-27-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -90,9 +90,12 @@ Every hook symlink that resolves is also checked for its SessionStart
 registration in .claude/settings.json, which is the half that makes it
 run at all. The repair printed comes from a one-line <hook>.install
 manifest the vendoring skill ships beside the script, so a skill adding a
-hook needs no edit here. Advisory: it warns and leaves the exit code
-alone, because a wiring gap is not a dangling symlink and Phase 1
-preflights gate on that code.
+hook needs no edit here. Advisory by default: it warns and leaves the
+exit code alone, because a wiring gap is not a dangling symlink and
+Phase 1 preflights gate on that code. Under --check-only the same state
+exits 1 — that mode is a deliberate probe, not a review preflight, so a
+CI job can finally gate on the wiring (#231). For per-hook gating, loop
+install-hook.sh --check instead: it exits 3 per half-installed hook.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -109,11 +112,13 @@ the agent isn't reachable from this shell. A separate remediation block
 covers host-key-verification failures (ssh-keyscan-based fix).
 
 Options:
-  --check-only    Report broken symlinks and uninitialized skills-vendor/
-                  submodules but make no changes: no submodule init, no
-                  self-sync. Exits 1 for either, EXCEPT a submodule
-                  .gitmodules holds with 'update = none' — the exit code
-                  covers everything this mode reports as damage. (The
+  --check-only    Report broken symlinks, uninitialized skills-vendor/
+                  submodules and unregistered hooks but make no changes:
+                  no submodule init, no self-sync. Exits 1 for any of the
+                  three, EXCEPT a submodule .gitmodules holds with
+                  'update = none' — the exit code covers everything this
+                  mode reports as damage, including the wiring gap the
+                  default invocation only warns about (#231). (The
                   archive-checkout path when .git is absent overrides the
                   reporting, printing its own diagnosis — it makes no
                   changes either.)
@@ -127,7 +132,8 @@ Options:
 Exit codes:
   0  All scanned symlinks resolve (or neither directory exists).
   1  One or more symlinks remain broken after self-heal attempt, or
-     pre-flight SSH check failed.
+     pre-flight SSH check failed. Under --check-only, also: an installed
+     hook that .claude/settings.json does not register (#231).
   2  Invalid invocation (e.g. unknown flag).
 EOF
       exit 0
@@ -301,6 +307,12 @@ hook_manifest_args() {
   printf '%s' "$args"
 }
 
+# Set by check_hook_registrations when any warning above printed. The default
+# mode never reads it — the warning IS the whole default-mode behaviour — but
+# --check-only exits 1 on it (#231): that mode is a deliberate CI probe, not a
+# review preflight, so it is the one audience the detected state may gate.
+REG_GAPS=0
+
 check_hook_registrations() {
   local settings=".claude/settings.json"
   [ -d ".claude/hooks" ] || return 0
@@ -360,6 +372,7 @@ check_hook_registrations() {
       continue
     fi
 
+    REG_GAPS=1
     echo "doctor: $hook is installed but $settings does not register it," >&2
     echo "doctor: so Claude Code never runs it and whatever it maintains is" >&2
     echo "doctor: frozen at whatever state it was in when the hook was" >&2
@@ -391,6 +404,27 @@ check_hook_registrations() {
 }
 
 check_hook_registrations
+
+# #231 — the audience split, enforced. The unregistered-hook state was detected
+# (#224) and still ungated: every review preflight runs the default invocation,
+# whose exit code cannot change without hard-blocking nine skills' reviews in
+# every affected consumer over a defect that is not in the diff under review —
+# the same absent-vs-unusable failure #140 removed from the shellcheck gate. So
+# the severity stays and the audience splits: --check-only is a deliberate
+# probe, and a probe that reports damage and then signals "fine" to the CI job
+# branching on it is the #185 shape all over again. Called at every point
+# --check-only would otherwise exit 0; the default mode always falls through.
+# Finer-grained alternative for consumers gating per hook:
+# `install-hook.sh --check` exits 3 for exactly one hook's wiring.
+check_only_registration_gate() {
+  if [ "$CHECK_ONLY" = "1" ] && [ "$REG_GAPS" = "1" ]; then
+    echo "doctor: --check-only: the unregistered hook(s) above fail this" >&2
+    echo "doctor: probe (#231). The default invocation still warns and" >&2
+    echo "doctor: exits 0, so review preflights are unaffected." >&2
+    exit 1
+  fi
+  return 0
+}
 
 # Directories whose direct children are scanned for dangling symlinks.
 # skills/ is the vendored-skill chain; .claude/hooks/ holds the hook symlinks
@@ -551,6 +585,7 @@ scan_broken
 scan_uninit
 
 if [ "${#BROKEN[@]}" -eq 0 ] && [ "${#UNINIT[@]}" -eq 0 ]; then
+  check_only_registration_gate
   # Names both checks, because the fast path now clears both. The old wording
   # claimed only the symlink half, which is the substitution this fix removed.
   [ "$VERBOSE" = "1" ] && \
@@ -600,6 +635,7 @@ if [ "$CHECK_ONLY" = "1" ]; then
     echo "doctor: --recursive', or drop --check-only to self-heal." >&2
     exit 1
   fi
+  check_only_registration_gate
   exit 0
 fi
 

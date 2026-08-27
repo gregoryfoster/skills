@@ -34,3 +34,49 @@ scope follows from the manifest too: a hook *with* one was installed by
 `install-hook.sh`, which writes `SessionStart` and nothing else, so that is the
 only event checked; a hook *without* one is checked against every event, because
 nothing declares which event it wants.
+
+## Gating on the wiring: `--check-only` vs a per-hook `--check` loop
+
+An unregistered hook is a defect in the repo's **tooling wiring**, not in the
+diff under review, so the default invocation warns and exits 0 — flipping that
+exit code would hard-block every review in every consumer running the Phase 1
+preflight, the same absent-vs-unusable failure
+[#140](https://github.com/gregoryfoster/skills/issues/140) removed from the
+shellcheck gate. The audience splits rather than the severity
+([#231](https://github.com/gregoryfoster/skills/issues/231)):
+
+- `bash .skills/doctor.sh` — warns, exits 0. Review preflights stay advisory.
+- `bash .skills/doctor.sh --check-only` — exits 1 for the unregistered-hook
+  state, alongside the damage it already gated on (dangling symlinks, unheld
+  uninitialized submodules). Already the non-mutating mode — no submodule init,
+  no self-re-sync — so it stays safe against a CI job's clean-working-tree
+  assertion, which is what makes it the natural home for a probe that is
+  *supposed* to fail. Caveat: without `jq` the registration check is skipped
+  entirely (a wrong warning in every jq-less consumer would train readers to
+  ignore it), so a jq-less runner cannot see wiring gaps.
+
+The finer-grained alternative is `install-hook.sh --check`, which probes ONE
+hook's two artifacts and exits 3 when either is missing, duplicated, or in a
+repairable form — and reports UNKNOWN rather than guessing when `jq` is absent.
+A consumer that wants per-hook gating loops it over its manifests, feeding each
+hook the same argument line the doctor would print as its repair:
+
+```bash
+rc=0
+for m in skills-vendor/*/skills/*/scripts/*.install; do
+  [ -f "$m" ] || continue
+  args=$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$m" | head -n 1)
+  # shellcheck disable=SC2086 — the line is a documented argument list
+  bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-hook.sh \
+    --check --allow-unresolved $args || rc=$?
+done
+exit "$rc"
+```
+
+`--allow-unresolved` is what keeps the loop honest in CI and fresh worktrees,
+where a correct install's symlink does not resolve because the vendor content
+is not checked out
+([#227](https://github.com/gregoryfoster/skills/issues/227)); it relaxes
+resolution and nothing else. Use the loop when different hooks warrant
+different responses; use `--check-only` when "any wiring gap fails the probe"
+is the right granularity.
