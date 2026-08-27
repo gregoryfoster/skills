@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.9"
+  version: "1.10"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -203,10 +203,17 @@ To override a symlinked skill with project-specific behavior:
 
 1. Remove the symlink: `rm skills/<skill-name>` (this removes only the symlink, not the target)
 2. Copy the global skill as a starting point: `cp -r skills-vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>`
-3. Edit `skills/<skill-name>/SKILL.md` — add `overrides` and `override-reason` to metadata
-4. Commit the new directory
+3. Edit `skills/<skill-name>/SKILL.md` — add `overrides` and `override-reason` to metadata; keep `version` as the vendor's (in an override it records the vendor version last synced from)
+4. Keep real files only for what actually differs — re-symlink each unchanged script into the submodule so it tracks upstream ([references/local-overrides.md](references/local-overrides.md))
+5. Commit the new directory
 
-The local directory is a **complete replacement**, not a partial override.
+### Updating a local override
+
+`.skills/doctor.sh` warns when an override's recorded version falls behind its
+`overrides:` target. Re-sync by **reapplying the local deltas onto the newer
+upstream text** — never upstream changes onto the old fork — then bump
+`version`. Procedure and the `synced-from:` fallback for unversioned vendors:
+[references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill
 
@@ -258,7 +265,6 @@ block for each — a rung-by-rung ladder for auth failures, a smaller
 - If a symlink is broken (target missing), run `bash .skills/doctor.sh` — it auto-runs `git submodule update --init --recursive` and reports an actionable error if self-healing fails
 - `bash .skills/doctor.sh --version` prints the installed copy's stamp — worth including in a bug report, since the installed doctor and the vendored one can differ for one run after a submodule bump
 - The `skills-vendor/` directory should be treated as read-only — make changes upstream
-- The two-level chain (`.claude/skills/<name>` → `../../skills/<name>` → `../skills-vendor/…`) means any local override created in `skills/` automatically shadows the vendor version in Claude Code too — no changes to `.claude/skills/` needed
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — the repo's ordinary standard, not

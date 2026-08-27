@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-27-1"
+VERSION="2026-08-27-2"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -96,6 +96,19 @@ Phase 1 preflights gate on that code. Under --check-only the same state
 exits 1 — that mode is a deliberate probe, not a review preflight, so a
 CI job can finally gate on the wiring (#231). For per-hook gating, loop
 install-hook.sh --check instead: it exits 3 per half-installed hook.
+
+Local overrides are regular directories, not part of the symlink chain,
+but two things about them are checked anyway (#238). Their per-script
+symlinks (skills/<override>/scripts/*) join the dangling scan: they are
+how an override tracks the scripts it does not change, and an upstream
+rename or deletion strands them while every top-level symlink still
+resolves. And each override's SKILL.md frontmatter is compared against
+its overrides: target — warning when the recorded version (the vendor
+version LAST SYNCED FROM, bumped on every re-sync; or the synced-from:
+commit for vendors that ship no version) has fallen behind the vendor
+copy. Drift is advisory in every mode including --check-only, and
+nothing is ever auto-merged: the point of an override is that upstream
+text cannot be applied blindly.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -405,6 +418,157 @@ check_hook_registrations() {
 
 check_hook_registrations
 
+# frontmatter_value <file> <key> — the value of the first `<key>:` line inside
+# the file's YAML frontmatter, surrounding double quotes stripped; empty when
+# absent. Not a YAML parser, deliberately: the doctor's dependency set is bash,
+# git and (optionally) jq, and the override recipe writes flat `key: value`
+# lines under `metadata:`, which a line scan reads exactly. Anything more
+# exotic reads as absent — and an absent field is REPORTED as un-assessable
+# below, never mis-assessed. Matching is prefix-exact on the key, so
+# `overrides:` cannot match `override-reason:`.
+frontmatter_value() {
+  local file="$1" key="$2" val
+  val="$(awk -v k="$key" '
+    NR == 1 { if ($0 !~ /^---[[:space:]]*$/) exit; next }
+    /^---[[:space:]]*$/ { exit }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      if (index(line, k ":") == 1) {
+        line = substr(line, length(k) + 2)
+        sub(/^[[:space:]]+/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "$file")"
+  val="${val%\"}"
+  val="${val#\"}"
+  printf '%s' "$val"
+}
+
+# The two voices of the drift check (#238), shared so every case below agrees
+# about the diagnosis. Drift names both sides and the re-sync DIRECTION —
+# reapplying upstream changes onto the old fork instead of local deltas onto
+# the new upstream text is the easy inversion, and it quietly discards every
+# release between the two. Un-assessable is its own warning rather than a
+# silent skip: an override nothing can compare is the same failure as not
+# detecting drift at all.
+report_override_drift() {
+  local dir="$1" target="$2" have="$3" now="$4"
+  echo "doctor: $dir overrides $target and has fallen behind: last synced" >&2
+  echo "doctor: at $have, vendor now at $now. Re-sync by reapplying the" >&2
+  echo "doctor: local deltas onto the newer upstream text — never upstream" >&2
+  echo "doctor: changes onto the old fork — then bump the override's" >&2
+  echo "doctor: version:/synced-from: to what was just synced. Advisory:" >&2
+  echo "doctor: nothing is auto-merged." >&2
+}
+
+report_override_unassessed() {
+  local dir="$1" target="$2" why="$3"
+  echo "doctor: $dir overrides $target but its drift cannot be assessed:" >&2
+  echo "doctor: $why. An override nothing can compare is the same failure" >&2
+  echo "doctor: as not detecting drift at all (#238)." >&2
+}
+
+# #238 — a local override is the one file the drift mitigations cannot reach.
+# The auto-refresh hook moves the submodule pointer, which never touches a
+# forked file; per-script symlinks track upstream for free; and the symlink
+# scans skip regular directories by construction. So an override fell further
+# behind on every release and the only detector was a consumer hitting a
+# broken instruction: one sat at v1.2 against vendor's v1.4 and reintroduced
+# #63's exact failure sixteen months after it was closed, because the file
+# carrying the fix was the fork.
+#
+# The frontmatter already carries the machine-readable link, from the override
+# recipe: `overrides:` names the vendor path and `version:` sits beside it.
+# `version:` in an override records THE VENDOR VERSION LAST SYNCED FROM — not
+# a version of the local file — bumped on every re-sync even when the local
+# deltas are unchanged; the two readings diverge as soon as someone edits an
+# override after syncing, which is an override's whole job. For a vendor that
+# ships no version: at all, the `synced-from:` sibling key pins the vendor
+# commit last synced from ("<repo> <tag> (<commit>)"), and the comparison is a
+# diff between that commit and HEAD scoped to the skill's path — so a
+# submodule bump that touches OTHER skills stays silent rather than training
+# the reader to skim.
+#
+# Warn only, in every mode. Never an exit code — not even under --check-only,
+# whose gate covers damage and wiring gaps (#231); drift is doc-sync debt the
+# operator pays down on their schedule, and a probe that failed on it would
+# push consumers toward deleting overrides rather than re-syncing them. Never
+# an auto-merge — upstream text cannot be applied to a fork blindly.
+check_override_drift() {
+  [ -d skills ] || return 0
+  local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
+  for dir in skills/*; do
+    # A regular directory carrying a SKILL.md whose frontmatter names an
+    # overrides: target. Symlinked skills track upstream by construction, and
+    # a local directory without the key is project-authored — a fork of
+    # nothing, with nothing to fall behind.
+    if [ -L "$dir" ] || [ ! -d "$dir" ] || [ ! -f "$dir/SKILL.md" ]; then
+      continue
+    fi
+    md="$dir/SKILL.md"
+    target="$(frontmatter_value "$md" overrides)"
+    [ -n "$target" ] || continue
+
+    repo_dir="skills-vendor/${target%%/*}"
+    skill_rel="skills/${target#*/}"
+    vendor_md="$repo_dir/$skill_rel/SKILL.md"
+    if [ ! -f "$vendor_md" ]; then
+      report_override_unassessed "$dir" "$target" \
+        "no vendor copy at $vendor_md (uninitialized submodule, or the skill moved upstream)"
+      continue
+    fi
+
+    v_ver="$(frontmatter_value "$vendor_md" version)"
+    o_ver="$(frontmatter_value "$md" version)"
+    if [ -n "$v_ver" ]; then
+      if [ -z "$o_ver" ]; then
+        report_override_unassessed "$dir" "$target" \
+          "the vendor is at version $v_ver and the override records no version: (the vendor version last synced from)"
+      elif [ "$o_ver" != "$v_ver" ]; then
+        report_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+      fi
+      continue
+    fi
+
+    # Unversioned upstream: the synced-from fallback.
+    synced="$(frontmatter_value "$md" synced-from)"
+    if [ -z "$synced" ]; then
+      report_override_unassessed "$dir" "$target" \
+        "the vendor ships no version: and the override records no synced-from: (\"<repo> <tag> (<commit>)\")"
+      continue
+    fi
+    rec="${synced##*(}"
+    rec="${rec%%)*}"
+    if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
+      report_override_unassessed "$dir" "$target" \
+        "synced-from: \"$synced\" carries no (commit) to compare against"
+      continue
+    fi
+    if ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
+      report_override_unassessed "$dir" "$target" \
+        "the recorded commit $rec is not in the vendor's history (shallow clone?)"
+      continue
+    fi
+    # diff --quiet: 0 unchanged, 1 changed, anything else is an error — which
+    # must land in "cannot be assessed" rather than in either verdict.
+    rc=0
+    git -C "$repo_dir" diff --quiet "$rec" HEAD -- "$skill_rel" 2>/dev/null || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      report_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
+    elif [ "$rc" -ne 0 ]; then
+      report_override_unassessed "$dir" "$target" \
+        "'git diff $rec HEAD -- $skill_rel' failed in $repo_dir"
+    fi
+  done
+  return 0
+}
+
+check_override_drift
+
 # #231 — the audience split, enforced. The unregistered-hook state was detected
 # (#224) and still ungated: every review preflight runs the default invocation,
 # whose exit code cannot change without hard-blocking nine skills' reviews in
@@ -459,9 +623,22 @@ declare -a BROKEN=()
 # A symlink is "broken" when it exists but its target does not resolve. Local
 # overrides (regular directories) and project-authored hook scripts (regular
 # files) are skipped — they're not symlinks.
+#
+# One nested level too: <dir>/*/scripts/* (#238). An override that follows the
+# per-script pattern is a regular directory whose scripts/ symlinks into the
+# submodule everything it does not change, and those links sit one level below
+# the walk this function used to do. The blind spot is narrow but real: with an
+# INITIALIZED submodule whose upstream renamed or deleted a script, every
+# top-level symlink resolves and scan_uninit reports nothing, so the dangling
+# nested link surfaced as `No such file or directory` mid-run — the failure
+# mode this script exists to turn into an actionable message. That is the new
+# risk the per-script pattern introduces, which is why this scan is a
+# prerequisite of the skill recommending it. The nested pass skips top-level
+# symlinks: a symlinked skill IS the healthy vendor chain, and its target's
+# internals belong to the vendor tree, not to this consumer's damage report.
 scan_broken() {
   BROKEN=()
-  local dir entry
+  local dir sub entry
   for dir in "${SCAN_DIRS[@]}"; do
     [ -d "$dir" ] || continue
     for entry in "$dir"/*; do
@@ -469,6 +646,17 @@ scan_broken() {
       if [ ! -e "$entry" ]; then
         BROKEN+=("$entry")
       fi
+    done
+    for sub in "$dir"/*; do
+      if [ -L "$sub" ] || [ ! -d "$sub" ]; then
+        continue
+      fi
+      for entry in "$sub"/scripts/*; do
+        [ -L "$entry" ] || continue
+        if [ ! -e "$entry" ]; then
+          BROKEN+=("$entry")
+        fi
+      done
     done
   done
 }
