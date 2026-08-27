@@ -318,22 +318,29 @@ class TestDoctorCoversTheSymlinkedHook:
     def test_a_resolving_hook_symlink_is_not_a_symlink_defect(
         self, consumer: Path
     ) -> None:
-        """Re-baselined by #224. This fixture resolves and carries no
-        SessionStart registration, which is precisely the half-install the
-        doctor now warns about — so "silent" was never the right expectation
-        for it, only "not reported as a broken symlink".
+        """Re-baselined by #224, and again by #231. This fixture resolves and
+        carries no SessionStart registration — precisely the half-install the
+        doctor warns about — so "silent" was never the right expectation for
+        it, only "not reported as a broken symlink": the dangling scan owns
+        that diagnosis, and its repair does not apply here.
 
-        The exit code is what separates the two: a dangling symlink fails the
-        preflight, a wiring gap is advisory and must not.
+        The exit code moved with #231: `--check-only` is the deliberate CI
+        probe and now fails on the wiring gap too. Only the DEFAULT invocation
+        stays advisory, which the default-mode assertion below pins.
         """
         result = _doctor(consumer, "--check-only")
-        assert result.returncode == 0, (
-            f"the doctor flagged a resolving hook symlink:\n{result.stderr}"
-        )
         assert "dangling" not in result.stderr.lower(), result.stderr
         assert "does not register it" in result.stderr, (
             "the reminder hook resolves but nothing registers it, and #224 is "
             f"the check that says so:\n{result.stderr}"
+        )
+        assert result.returncode != 0, (
+            "--check-only exited 0 on an unregistered hook — the #231 gate "
+            f"is the reason a CI probe can branch on it:\n{result.stderr}"
+        )
+        assert _doctor(consumer).returncode == 0, (
+            "the DEFAULT invocation must stay warn-and-exit-0 — nine "
+            "reviewing-*/shipping-* preflights gate on it with `|| exit 1`"
         )
 
     def test_a_dangling_hook_symlink_is_reported(self, consumer: Path) -> None:
