@@ -855,10 +855,15 @@ slugs_of() {
       if (length(indented) - length(line) > 3) next
       if (line ~ /^(```|~~~)/) {
         ch = substr(line, 1, 1)
-        # The closing fence must repeat the opening character, so a ``` example
-        # inside a ~~~ block does not end the block.
-        if (!fence) { fence = 1; fchar = ch }
-        else if (ch == fchar) { fence = 0 }
+        run = 3
+        while (substr(line, run + 1, 1) == ch) run++
+        # The closing fence must repeat the opening character at a run at least
+        # as long (CommonMark), so a ``` example inside a ~~~ block does not
+        # end the block — and a ```bash example nested inside a ````markdown
+        # block does not either (#232). Same rule as the extract_links tracker
+        # above (ffchar/frun), which #223 followed instead of this one.
+        if (!fence) { fence = 1; fchar = ch; frun = run }
+        else if (ch == fchar && run >= frun) { fence = 0 }
         next
       }
       if (fence) next

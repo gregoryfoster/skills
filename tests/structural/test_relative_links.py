@@ -759,10 +759,11 @@ class TestHeadingSlugs:
     def test_a_nested_fence_does_not_reopen_the_block(self, tmp_path: Path) -> None:
         """Same rule the link masker already proves, applied to headings.
 
-        `measure-context.sh`'s `slugs_of` toggles on the fence *character*, so a
-        ```bash block inside a ````markdown block closes the outer one and it
-        starts harvesting template headings. This restatement uses the fence
-        tracker this module already ships instead of inheriting that.
+        `measure-context.sh`'s `slugs_of` used to toggle on the fence
+        *character*, so a ```bash block inside a ````markdown block closed the
+        outer one and it started harvesting template headings. This restatement
+        never inherited that; since #232 the awk side matches too (its fixture
+        lives in test_context_anchors.py).
         """
         doc = self._doc(
             tmp_path,
