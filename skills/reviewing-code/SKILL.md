@@ -1,6 +1,6 @@
 ---
 name: reviewing-code
-description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes.
+description: Performs a structured code and documentation review using a severity-tiered findings format. Use when the user says "CR", "code review", or "perform a review". Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes. This is the fallback of last resort — use it for any stack with no dedicated reviewing-code-* variant (Go, Rust, TypeScript, Java, and anything else unlisted).
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
