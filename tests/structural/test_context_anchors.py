@@ -193,6 +193,38 @@ class TestSlugRules:
             "AGENTS.md -> docs/GUIDE.md#cleanup"
         ]
 
+    def test_a_nested_shorter_fence_does_not_close_the_block(self, tmp_path: Path):
+        """A ```bash example inside a ````markdown block is content, not a closer.
+
+        A tracker keyed on the fence character alone inverts fence state for
+        the whole nested span: the inner opener "closes" the outer block, a
+        `# comment` in the gap mints an anchor that masks a real miss, and the
+        inner closer "re-opens" it, swallowing nothing that follows. CommonMark
+        closes only on a run of the same character at least as long as the
+        opener (#232). Fixture files, deliberately: the repo's one 4-backtick
+        document must not be pinned here.
+        """
+        repo = _repo(
+            tmp_path,
+            "# P\n\n[a](docs/GUIDE.md#leaked)\n"
+            "[b](docs/GUIDE.md#swallowed)\n"
+            "[c](docs/GUIDE.md#real)\n",
+        )
+        (repo / "docs" / "GUIDE.md").write_text(
+            "# G\n\n"
+            "````markdown\n"
+            "```bash\n"
+            "# leaked\n"
+            "```\n"
+            "## swallowed\n"
+            "````\n\n"
+            "## Real\n"
+        )
+        assert _measure(repo)["links"]["dead_anchors"] == [
+            "AGENTS.md -> docs/GUIDE.md#leaked",
+            "AGENTS.md -> docs/GUIDE.md#swallowed",
+        ]
+
     def test_a_heading_after_a_fence_still_counts(self, tmp_path: Path):
         repo = _repo(tmp_path, "# P\n\n[l](docs/GUIDE.md#real)\n")
         (repo / "docs" / "GUIDE.md").write_text(
