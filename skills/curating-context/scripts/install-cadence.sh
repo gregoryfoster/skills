@@ -247,15 +247,6 @@ ATTR_NOTE_6="# path keeps the row whose bytes match the file in the tree."
 # `git add -A` to collect (CR finding 16).
 trap 'rm -f "$ATTR_FILE.tmp"' EXIT
 
-# Every comment line this installer has ever written, newline-joined so the
-# strip below matches all generations of the block in one pass.
-ATTR_NOTES_ALL="$ATTR_NOTE_1
-$ATTR_NOTE_2
-$ATTR_NOTE_3
-$ATTR_NOTE_4
-$ATTR_NOTE_5
-$ATTR_NOTE_6"
-
 # Remove only the attribute LINE for a given prefix, comments untouched. The
 # migration path needs exactly this: swapping the counts attribute must not
 # take the heading that still introduces the ratio line beside it (#237).
@@ -278,18 +269,31 @@ strip_line() {
   mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
 }
 
-# Remove OUR block for a given attribute: the line itself plus every comment
-# line this installer writes. Factored rather than inlined twice — a
-# superseded ledger and an uninstall want the same operation, and hand-rolling
-# this awk a second time is the duplication the last three rounds kept finding.
+# The heading pair a given attribute line sits under, empty for lines that do
+# not own one — the pre-#237 counts line shares the ratio's heading, which must
+# survive as long as the ratio line does (CR 2026-08-27 finding 3).
+notes_for() {
+  case "$1" in
+    *" merge=union")  printf '%s\n%s' "$ATTR_NOTE_1" "$ATTR_NOTE_2" ;;
+    "$ATTR_RATIO")    printf '%s\n%s' "$ATTR_NOTE_3" "$ATTR_NOTE_4" ;;
+    "$ATTR_COUNTS")   printf '%s\n%s' "$ATTR_NOTE_5" "$ATTR_NOTE_6" ;;
+  esac
+}
+
+# Remove OUR block for a given attribute: the line itself plus the heading pair
+# that introduces IT — not every comment this installer writes, which orphaned
+# the surviving attributes' headings on the superseded-ledger path. Factored
+# rather than inlined twice — a superseded ledger and an uninstall want the
+# same operation, and hand-rolling this awk a second time is the duplication
+# the last three rounds kept finding.
 strip_attr() {
   [ -f "$ATTR_FILE" ] || return 0
   # Through the environment, not -v: BSD awk rejects a -v value containing a
-  # literal newline ("newline in string"), and the note list is one per line.
-  ATTR_NOTES_ALL="$ATTR_NOTES_ALL" awk '
+  # literal newline ("newline in string"), and the note pair is one per line.
+  STRIP_NOTES="$(notes_for "$1")" awk '
     BEGIN {
-      n = split(ENVIRON["ATTR_NOTES_ALL"], N, "\n")
-      for (i = 1; i <= n; i++) drop[N[i]] = 1
+      n = split(ENVIRON["STRIP_NOTES"], N, "\n")
+      for (i = 1; i <= n; i++) if (N[i] != "") drop[N[i]] = 1
     }
     { line = $0; sub(/^[ \t]+/, "", line) }
     line in drop { next }

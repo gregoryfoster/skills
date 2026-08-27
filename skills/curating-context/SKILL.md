@@ -64,16 +64,16 @@ behind. A member reporting "no ledger" is the expected pre-adoption state
 
 `tests/structural/test_skill_self_budget.py` holds each `references/*.md` to the
 10,000-token per-doc budget and `SKILL.md` to a **7,600-token ratchet (estimate
-and exact)** — not the 6,000 it enforces on `AGENTS.md`, because this file was
-10,902 and the last 1,600 cannot go without deleting procedure. That is Phase 4's
-escape clause, not a licence: the ratchet only ever comes down. Both readings
-must clear it, so no choice of measurement can loosen it.
+and exact)** — not the 6,000 it enforces on `AGENTS.md`: this file was 10,902,
+and the last 1,600 cannot go without deleting procedure (Phase 4's escape
+clause, not a licence — the ratchet only ever comes down). Both readings must
+clear it, so no measurement choice can loosen it.
 
 **Learnings carry an edit budget: +250 net tokens per round, or the headroom left
 under the ratchet — whichever is smaller.** The ratchet is the ceiling, the budget
 a rate limit, and the ceiling usually binds first, so measure before writing.
-Uncapped, a skill walks to its ceiling one plausible addition at a time — how
-this file reached 82% over. When either binds, **demote or tighten first**.
+Uncapped, a skill walks to its ceiling one plausible addition at a time. When
+either binds, **demote or tighten first**.
 
 Changes to the skill itself carry extra procedure: an abandoned change goes to
 [references/rejected-changes.md](references/rejected-changes.md) with what
@@ -87,8 +87,8 @@ never delete ([references/self-curation.md](references/self-curation.md)).
 
 Trigger phrases may carry scope inline — `curate context docs/`, `context budget
 6000`, `hone AGENTS.md --autonomous`. A path scopes the surface to that subtree; a
-bare number overrides the policy-file budget; `--autonomous` selects the
-unattended mode described in Phase 7. Otherwise defaults apply.
+bare number overrides the policy-file budget; `--autonomous` selects Phase 7's
+unattended mode. Otherwise defaults apply.
 
 ## Script path resolution
 
@@ -105,8 +105,8 @@ echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or 
 ```
 
 A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a
-**placeholder** for the literal path printed here, not an inherited shell
-variable — each Bash invocation runs in a fresh shell.
+**placeholder** for the printed path, not a shell variable — each Bash
+invocation is a fresh shell.
 
 Every script reads the ratio, the archival matcher, the docs-dir knob and **both
 budgets** from `_context-lib.sh`, so vendor the whole `scripts/` directory, never
@@ -186,8 +186,7 @@ Assign each section from the Phase 1 census exactly one class, using
 
 - **A — keep inline.** Only the author knows it and nearly every task needs it:
   build/test commands with their non-obvious flags, hard constraints and their
-  reasons, project-specific gotchas, the reference-doc index. Stays, possibly
-  tightened.
+  reasons, project-specific gotchas, the reference-doc index.
 - **B — demote.** Correct and valuable, needed on *some* tasks. Moves to
   `docs/<TOPIC>.md` and gets an index entry.
 - **C — tighten.** Class A content wrapped in prose an agent does not need,
@@ -195,8 +194,8 @@ Assign each section from the Phase 1 census exactly one class, using
 - **D — delete.** Restates a trained default, duplicates another part of the
   surface, or was disproven in Phase 2. Delete with the warrant named.
 
-Classification is where the value is. Compressing a class-B section is wasted
-work; deleting a class-A section is damage. Classify before writing a single edit.
+Classification is where the value is: compressing class B is wasted work;
+deleting class A is damage. Classify before writing a single edit.
 
 **Most large sections split A+B rather than taking one class.** Classify at `##`
 level first, then check `subsections[]` for any child over ~5% of the file; a
@@ -206,13 +205,13 @@ parent's class does not descend to its children
 ## Phase 4 — Plan to the budget
 
 Sum the projected tokens. If the plan does not reach `policy.budget`, keep
-demoting class-B sections in descending size order — do not reach the budget by
-reclassifying class A as class D. If it still cannot be reached without touching
+demoting class-B sections in descending size order — never by reclassifying
+class A as class D. If it still cannot be reached without touching
 class A, **stop and report that**: an irreducible file is a real finding, and a
 budget that cannot be met honestly is the wrong budget.
 
-Check the destination side too. A demotion that pushes `docs/API.md` past its
-per-doc budget has moved the problem; split the destination or pick another.
+Check the destination too: a demotion that pushes `docs/API.md` past its
+per-doc budget has moved the problem — split it or pick another.
 
 ## Phase 5 — Apply
 
@@ -229,8 +228,8 @@ clean file:
 2. **Relink orphans.** Every live doc gets a link from the policy file's index
    section, or an explicit decision to delete the doc.
 3. **Normalize the index.** A `## Detail Docs` section listing every live
-   reference doc with a one-line purpose. The shape the cohort converged on, the
-   canonical section order and the `docs/` filenames to align with:
+   reference doc with a one-line purpose. The cohort's converged shape,
+   canonical section order and `docs/` filenames to align with:
    [references/cohort-patterns.md](references/cohort-patterns.md).
 4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text; do
    not paraphrase it in transit — a paraphrase during a move is an unreviewable
@@ -316,10 +315,11 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
 ```
 
 `<N>` and `<M>` are Phase 6.5's two counts; `<W>` is Phase 6's `loss_warranted:`.
-Tag `--actions` honestly and specifically — the tags are the only thing that lets
-a later run, or the cohort roll-up, attribute a token delta to what caused it.
-`"cleanup"` teaches nothing; `"demote:Project Layout"` does. Row schema and tag
-vocabulary: [references/telemetry.md](references/telemetry.md).
+Tag `--actions` honestly and specifically — the tags are what lets a later run
+or the cohort roll-up attribute a token delta to its cause. `"cleanup"` teaches
+nothing;
+`"demote:Project Layout"` does. Row schema and tag vocabulary:
+[references/telemetry.md](references/telemetry.md).
 
 Rows also carry `skill_version` and `skill_commit`, so an outcome can be
 attributed to a *skill* change and not just a repo one, plus `repo_commit` —
@@ -328,8 +328,8 @@ sweep starts. Bump the frontmatter `version` whenever a change would plausibly
 alter what a run does — an unbumped version makes the cohort look uniform when
 it isn't. **What a run does, not what reads the rows afterwards**: changing
 `score-cohort.sh` or `cohort-report.sh` alters no curation, and since #194 the
-version *is* the arm, so bumping for a gate change would move every future row
-into a new arm to record a change no row experienced.
+version *is* the arm — bumping for a gate change moves every future row into a
+new arm for a change no row experienced.
 
 Commit the ledger with the edits, on a branch, then `record-telemetry.sh
 --repo-commit HEAD` and commit that: the append could not know the hash. Open a
@@ -337,7 +337,7 @@ PR whose body carries:
 the before/after token count, the per-section disposition table, **every relocated
 block with its destination**, and every deletion with its warrant. In autonomous
 mode this PR body is the entire audit trail — a reviewer must be able to
-reconstruct and revert any single decision from it without re-deriving the run.
+reconstruct and revert any single decision from it.
 
 Then get the branch a **fresh-eyes review pass**. If a late fix changes the count,
 **rewrite this run's row to match what ships; across runs, only ever append**
@@ -359,7 +359,7 @@ the first successful curation:
   ([references/cadence.md](references/cadence.md)).
 - **Review-time delta** — `context-delta.sh`, already wired into the four
   `reviewing-code*` variants. It sees what the guard's `Edit|Write|MultiEdit`
-  matcher cannot: a shell redirect, or a `NotebookEdit`.
+  matcher cannot: a shell redirect or `NotebookEdit`.
 - **Write guard** — `install-guard.sh --budget 6000 --doc-budget 10000`, a
   `PostToolUse` hook that never blocks
   ([references/write-guard-hook.md](references/write-guard-hook.md)).

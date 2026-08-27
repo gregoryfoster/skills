@@ -6,8 +6,9 @@ the documented failure mode of accumulating skill knowledge:
 [Library Drift](https://arxiv.org/html/2605.19576v1) calls it "the frozen-weight
 counterpart to catastrophic forgetting", and
 [SkillOps](https://arxiv.org/html/2605.13716v1) frames the answer as
-library-time maintenance. Per-run learnings are additive by nature; SkillOpt's
-slow/meta update is the counterweight — "an epoch-wise slow/meta update
+library-time maintenance. Per-run learnings are additive by nature;
+[SkillOpt](https://arxiv.org/abs/2605.23904) — a third system, not a typo for
+SkillOps — supplies the counterweight: "an epoch-wise slow/meta update
 consolidates longer-horizon lessons that single batches cannot reveal." This
 document is that slower clock for this skill
 ([#96](https://github.com/gregoryfoster/skills/issues/96)).
@@ -23,7 +24,11 @@ recorded as open is satisfied in fact:
 
 ```bash
 # Phase 1 — measure. The budget is the 7,600 ratchet, not the repo's 6,000 knob.
-bash "<SKILL_SCRIPTS>/measure-context.sh" --exact --budget 7600 \
+# --no-write is load-bearing: without it an --exact run refits
+# .skills/context-token-ratio to the surface it measured — here this skill's
+# files, not the repo's policy surface — re-baselining every skill's estimate
+# (the #230 incident). Calibration writes belong to the weekly cadence alone.
+bash "<SKILL_SCRIPTS>/measure-context.sh" --exact --no-write --budget 7600 \
   --file skills/curating-context/SKILL.md \
   --docs-dir skills/curating-context/references \
   | tee /tmp/self-baseline.json \
