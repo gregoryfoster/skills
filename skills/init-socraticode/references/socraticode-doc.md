@@ -191,9 +191,11 @@ carries it, that becomes the signal to read — until then, measure.
 ## Index scope
 
 `.socraticodeignore` (repo root, gitignore syntax, layered on the built-in
-defaults and `.gitignore`) controls what gets embedded. Editing it affects
-**subsequent** scans only — re-index to apply it. Vendored trees dominate the
-index if left in, and vendored prose outranks first-party code in
+defaults and `.gitignore`) controls what gets embedded **by the code index.
+Directory context artifacts are walked separately and honour none of it —
+scope each artifact path to the subtree you actually want embedded.** Editing
+it affects **subsequent** scans only — re-index to apply it. Vendored trees
+dominate the index if left in, and vendored prose outranks first-party code in
 `codebase_search` results.
 <!-- END socraticode-doc -->
 ````
