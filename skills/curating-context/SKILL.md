@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.10"
+  version: "1.11"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -72,16 +72,16 @@ must clear it, so no choice of measurement can loosen it.
 **Learnings carry an edit budget: +250 net tokens per round, or the headroom left
 under the ratchet — whichever is smaller.** The ratchet is the ceiling, the budget
 a rate limit, and the ceiling usually binds first, so measure before writing.
-Without a cap a skill walks up to its ceiling one plausible addition at a time,
-which is how this file reached 82% over. When either binds, **demote or tighten
-first**.
+Uncapped, a skill walks to its ceiling one plausible addition at a time — how
+this file reached 82% over. When either binds, **demote or tighten first**.
 
-Changes to the skill itself carry extra procedure: an abandoned change is
-recorded in [references/rejected-changes.md](references/rejected-changes.md) with
-what refuted it, and nothing is adopted on judgement — the cohort is a held-out
-validation split ([references/validation-gate.md](references/validation-gate.md),
-with what each run produced in
-[references/experiment-log.md](references/experiment-log.md)).
+Changes to the skill itself carry extra procedure: an abandoned change goes to
+[references/rejected-changes.md](references/rejected-changes.md) with what
+refuted it, and nothing is adopted on judgement — the cohort is a held-out
+validation split ([references/validation-gate.md](references/validation-gate.md);
+runs: [references/experiment-log.md](references/experiment-log.md)). Quarterly,
+the skill turns on itself — Phases 1–7 over this file, demote/tighten only,
+never delete ([references/self-curation.md](references/self-curation.md)).
 
 ## Parameterized invocation
 
@@ -234,11 +234,10 @@ clean file:
    [references/cohort-patterns.md](references/cohort-patterns.md).
 4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text; do
    not paraphrase it in transit — a paraphrase during a move is an unreviewable
-   content change wearing a refactor's clothes, and the one thing a reader
-   skimming the diff will not notice. Before extending an existing doc, read its
-   `##` headings and merge into the canonical section rather than appending a
-   near-duplicate beside it, and keep provenance out of headings. Phase 6.5
-   checks both.
+   content change wearing a refactor's clothes. Before extending an existing
+   doc, read its `##` headings and merge into the canonical section rather
+   than appending a near-duplicate beside it, and keep provenance out of
+   headings. Phase 6.5 checks both.
 
    Two mechanical adjustments come with every move, and only these two:
 

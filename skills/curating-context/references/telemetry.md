@@ -55,6 +55,11 @@ Use `verb:target`:
 - `split:<doc>` — an over-budget reference doc divided
 - `fix:dead-link`, `fix:stale-command`, `fix:stale-issue-ref` — Phase 2 repairs
 - `relink:<doc>` — an orphan given an index entry
+- `self:curation` — the quarterly self-curation pass over the skill's own
+  surface (`skills/curating-context/SKILL.md` as the policy file). Leads the
+  curation row's tag list, so no reader has to infer the pass from the `file`
+  path, and never travels with `delete:*` — the pass demotes and tightens only
+  ([self-curation.md](self-curation.md)).
 - `baseline:<kind>` — a measurement-only row, no edits. Written by
   `record-telemetry.sh --baseline[=KIND]`, which fixes the tag rather than taking
   `--actions`, so no reader has to guess whether a row describes a state or a
