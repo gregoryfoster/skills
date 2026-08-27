@@ -43,7 +43,7 @@ what makes this skill safe to run unattended
 | "This section looks redundant, cutting it" | Redundant with *what*? Verbatim duplication is a warrant; "feels like boilerplate" is not. |
 | "The path doesn't exist, so the claim is stale" | Policy files legitimately name paths that don't exist locally. Deleting on UNVERIFIABLE is how real guidance gets destroyed. |
 | "I'll write the architecture overview more concisely" | Overviews measurably did not help agents reach files faster. Tightening a section that shouldn't be inline is wasted work — classify first. |
-| "More context is safer" | Retrieval accuracy degrades as the window fills. An unnecessary token dilutes attention on the necessary ones. |
+| "More context is safer" | True of a **policy file**, loaded unconditionally: retrieval degrades as the window fills; an unnecessary token dilutes attention. Not of a **skill library**, where selection ambiguity dominates and measured context overhead is ~zero. |
 | "Nothing changed this week, skip the run" | The run's cheapest output is the telemetry row, and a flat week is a signal worth recording. |
 | "I can get seams to 0 by deleting the references" | That zeroes the metric while making the surface worse. Acknowledge in `.skills/context-seams-ok` instead. |
 
