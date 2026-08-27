@@ -30,6 +30,20 @@ installer defines the driver in the clone it runs in, and `--check` reports it
 as its own guarantee, because config and tree are two independent ways to lose
 the same file.
 
+#237 then split the two calibration files. `merge=ours` keeps the side of
+whoever RUNS the merge, which is unrelated to which side measured more
+recently — and the cadence bot only ever pushes to the default branch, so it
+was structurally always the side that lost: a branch merging `origin/main`
+silently reverted the week's fresh measurement (`c7be4eb` is the incident
+record). The counts file is keyed rows (`<bytes> <tokens> <path>`), so it now
+merges per row through `merge-token-counts.sh`: one-sided edits merge
+three-way, and a genuine collision keeps, per path, the row whose bytes match
+the file as it stands in the tree. The ratio file stays `merge=ours` — a
+single scalar has nothing to key on. `TestPerRowNewestWins` and
+`TestNewestWinsSurvivesARealMerge` execute that contract;
+`TestInstallerWiresTheNewestWinsDriver` pins its three legs (attribute,
+clone config, workflow job) and `--check`'s report of each.
+
 Every git invocation here carries an explicit `-C <repo>` and a config
 environment pinned to /dev/null. Both matter: a bare `git config` inside a
 linked worktree writes to the *shared* `.git/config` of the main checkout
@@ -53,6 +67,20 @@ LEDGER = ".skills/context-metrics.jsonl"
 RATIO = ".skills/context-token-ratio"
 COUNTS = ".skills/context-token-counts"
 DRIVER = "merge.ours.driver"
+
+MERGE_SCRIPT = (
+    REPO_ROOT / "skills" / "curating-context" / "scripts"
+    / "merge-token-counts.sh"
+)
+COUNTS_DRIVER = "merge.context-counts.driver"
+ATTR_COUNTS = f"{COUNTS} merge=context-counts"
+
+# The real artifact's header shape, so the driver is exercised against rows
+# that sit under comments the way they always do in the tree.
+HEADER = (
+    "# <bytes> <tokens> <path> — per-file token calibration (#145)\n"
+    "# Written by measure-context.sh --exact; regenerate rather than hand-edit.\n"
+)
 
 
 def _env() -> dict:
@@ -395,4 +423,398 @@ class TestTheDocSaysHowToGetIt:
     def test_it_names_the_calibration_attributes_too(self):
         section = self._section()
         assert f"{RATIO} merge=ours" in section, section
-        assert f"{COUNTS} merge=ours" in section, section
+        assert f"{COUNTS} merge=context-counts" in section, section
+        assert f"{COUNTS} merge=ours" not in section, (
+            "the doc still tells a reader to install the pre-#237 counts "
+            "attribute, which silently reverts the cadence's measurements"
+        )
+
+    def test_it_records_the_ratio_decision(self):
+        """#237 left the implementer to decide whether the ratio file gets the
+        newest-wins treatment or stays `merge=ours`. Either way the decision
+        and its reasons live in the merge section, not in an issue thread."""
+        section = self._section()
+        assert "#237" in section, section
+        assert COUNTS_DRIVER in section, (
+            "the section never names the config key that makes the counts "
+            "attribute mean anything:\n" + section
+        )
+
+
+def _drive(repo: Path, ancestor: str, current: str, other: str):
+    """Invoke the driver exactly as git does: three temp files — ancestor,
+    current, other — with the result left in the CURRENT file and exit 0
+    reporting a successful merge."""
+    o, a, b = repo / ".merge_O", repo / ".merge_A", repo / ".merge_B"
+    o.write_text(ancestor)
+    a.write_text(current)
+    b.write_text(other)
+    r = subprocess.run(
+        ["bash", str(MERGE_SCRIPT), str(o), str(a), str(b), COUNTS],
+        cwd=str(repo), capture_output=True, text=True, env=_env(), timeout=30,
+    )
+    return r, (a.read_text() if a.exists() else "")
+
+
+class TestPerRowNewestWins:
+    """#237's contract, executed against the driver script itself.
+
+    The file is keyed rows — `<bytes> <tokens> <path>` — and `merge=ours` kept
+    whichever side ran the merge, which has nothing to do with which side
+    measured more recently. Per row the driver merges three-way; a genuine
+    collision keeps the row whose bytes match the file as it stands in the
+    tree, because that row describes a file that exists and the other one
+    describes a file nobody has.
+    """
+
+    def test_a_one_sided_update_wins_without_consulting_the_tree(
+        self, tmp_path: Path
+    ):
+        """Ordinary three-way first: if only one side re-measured, that side
+        wins even when the file has drifted past BOTH rows since."""
+        repo = _repo(tmp_path)
+        (repo / "AGENTS.md").write_bytes(b"x" * 999)
+        base = HEADER + "100 40 AGENTS.md\n"
+        r, merged = _drive(repo, base, base, HEADER + "150 60 AGENTS.md\n")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 AGENTS.md" in merged
+        assert "100 40 AGENTS.md" not in merged
+
+        r, merged = _drive(repo, base, HEADER + "150 60 AGENTS.md\n", base)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 AGENTS.md" in merged
+
+    def test_a_collision_keeps_the_row_matching_the_tree(self, tmp_path: Path):
+        """Both sides re-measured. The tree is the arbiter, whichever side of
+        the merge the matching row sits on."""
+        repo = _repo(tmp_path)
+        (repo / "AGENTS.md").write_bytes(b"x" * 150)
+        base = HEADER + "100 40 AGENTS.md\n"
+        ours = HEADER + "120 44 AGENTS.md\n"
+        theirs = HEADER + "150 60 AGENTS.md\n"
+
+        r, merged = _drive(repo, base, ours, theirs)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 AGENTS.md" in merged, merged
+
+        r, merged = _drive(repo, base, theirs, ours)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 AGENTS.md" in merged, merged
+
+    def test_a_collision_matching_neither_keeps_the_current_side(
+        self, tmp_path: Path
+    ):
+        """The file moved on since both measurements (or is gone). Nothing to
+        arbitrate with, so keep the current side's row — exactly what
+        `merge=ours` did — and let the estimators' drift fallback and the next
+        --exact run absorb it."""
+        repo = _repo(tmp_path)
+        (repo / "AGENTS.md").write_bytes(b"x" * 999)
+        base = HEADER + "100 40 AGENTS.md\n"
+        r, merged = _drive(
+            repo, base, HEADER + "120 44 AGENTS.md\n",
+            HEADER + "150 60 AGENTS.md\n",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "120 44 AGENTS.md" in merged, merged
+
+        (repo / "AGENTS.md").unlink()
+        r, merged = _drive(
+            repo, base, HEADER + "120 44 AGENTS.md\n",
+            HEADER + "150 60 AGENTS.md\n",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "120 44 AGENTS.md" in merged, merged
+
+    def test_a_row_deleted_on_one_side_stays_deleted(self, tmp_path: Path):
+        """measure-context.sh drops a row when the file leaves the surface or
+        measures degenerate; a merge must not resurrect it."""
+        repo = _repo(tmp_path)
+        keep = "10 4 docs/a.md\n"
+        base = HEADER + keep + "100 40 docs/gone.md\n"
+        r, merged = _drive(repo, base, HEADER + keep, base)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "docs/gone.md" not in merged, merged
+
+        r, merged = _drive(repo, base, base, HEADER + keep)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "docs/gone.md" not in merged, merged
+
+    def test_rows_added_on_each_side_both_survive(self, tmp_path: Path):
+        """The self-budget gate measures one skill at a time, so two branches
+        legitimately calibrate disjoint files; a merge keeps both."""
+        repo = _repo(tmp_path)
+        base = HEADER + "10 4 docs/a.md\n"
+        r, merged = _drive(
+            repo, base, base + "20 8 docs/b.md\n", base + "30 12 docs/c.md\n",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        for row in ("10 4 docs/a.md", "20 8 docs/b.md", "30 12 docs/c.md"):
+            assert row in merged, merged
+
+    def test_the_output_is_the_writers_shape(self, tmp_path: Path):
+        """Header first, rows sorted by path under LC_ALL=C — the same shape
+        measure-context.sh writes, so a merged file and a regenerated one
+        diff clean."""
+        repo = _repo(tmp_path)
+        base = HEADER + "10 4 docs/a.md\n"
+        r, merged = _drive(
+            repo, base, base + "30 12 docs/z.md\n", base + "20 8 docs/b.md\n",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        lines = merged.splitlines()
+        assert lines[0].startswith("#"), merged
+        rows = [ln for ln in lines if not ln.startswith("#")]
+        paths = [" ".join(ln.split()[2:]) for ln in rows]
+        assert paths == sorted(paths), merged
+
+    def test_a_path_with_spaces_is_one_key(self, tmp_path: Path):
+        """The writer treats the path as fields 3..NF for exactly this case;
+        splitting on the third field alone would arbitrate the wrong file."""
+        repo = _repo(tmp_path)
+        (repo / "docs").mkdir()
+        (repo / "docs" / "a b.md").write_bytes(b"x" * 150)
+        base = HEADER + "100 40 docs/a b.md\n"
+        r, merged = _drive(
+            repo, base, HEADER + "120 44 docs/a b.md\n",
+            HEADER + "150 60 docs/a b.md\n",
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 docs/a b.md" in merged, merged
+
+
+class TestNewestWinsSurvivesARealMerge:
+    """The incident, replayed through real git with the attribute and the
+    driver wired the way the installer wires them — both merge directions,
+    because `git pull --rebase` on the bot swaps ours and theirs."""
+
+    def _calibrated_repo(self, tmp_path: Path, name: str) -> Path:
+        repo = _repo(tmp_path, name)
+        (repo / ".skills").mkdir()
+        (repo / ".gitattributes").write_text(f"{ATTR_COUNTS}\n")
+        (repo / "AGENTS.md").write_bytes(b"x" * 150)
+        (repo / COUNTS).write_text(HEADER + "100 40 AGENTS.md\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "base")
+        return repo
+
+    def _define(self, repo: Path) -> None:
+        _git(repo, "config", COUNTS_DRIVER,
+             f"bash '{MERGE_SCRIPT}' %O %A %B %P")
+
+    def test_the_incident_merge_keeps_the_fresh_measurement(
+        self, tmp_path: Path
+    ):
+        """#237 verbatim: a branch that touched the counts file merges
+        origin/main, which carries the cadence's fresh row. `merge=ours`
+        reverted the row to one describing a file 1,342 bytes smaller than
+        the one on disk and reported Auto-merging; this keeps it."""
+        repo = self._calibrated_repo(tmp_path, "incident")
+        self._define(repo)
+        _git(repo, "checkout", "-q", "-b", "cadence")
+        (repo / COUNTS).write_text(HEADER + "150 60 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "weekly measurement")
+        _git(repo, "checkout", "-q", "main")
+        (repo / COUNTS).write_text(
+            HEADER + "100 40 AGENTS.md\n120 44 docs/x.md\n"
+        )
+        _git(repo, "commit", "-qam", "branch work")
+        r = _git(repo, "merge", "cadence")
+        assert r.returncode == 0, r.stdout + r.stderr
+        merged = (repo / COUNTS).read_text()
+        assert "150 60 AGENTS.md" in merged, merged
+        assert "100 40 AGENTS.md" not in merged, (
+            "the stale row survived the merge — the silent revert is back:\n"
+            + merged
+        )
+        assert "120 44 docs/x.md" in merged, merged
+
+    def test_a_true_collision_is_arbitrated_by_the_tree(self, tmp_path: Path):
+        repo = self._calibrated_repo(tmp_path, "collision")
+        self._define(repo)
+        _git(repo, "checkout", "-q", "-b", "cadence")
+        (repo / COUNTS).write_text(HEADER + "150 60 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "fresh: matches the 150-byte file")
+        _git(repo, "checkout", "-q", "main")
+        (repo / COUNTS).write_text(HEADER + "120 44 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "stale re-measure")
+        r = _git(repo, "merge", "cadence")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 AGENTS.md" in (repo / COUNTS).read_text()
+
+    def test_the_bot_side_of_a_rebase_keeps_its_fresh_row_too(
+        self, tmp_path: Path
+    ):
+        """The push-retry path: the cadence rebases its measurement onto a
+        human commit, and `ours` during that rebase is the HUMAN side — which
+        is exactly why merge=ours structurally discarded the bot's row."""
+        repo = self._calibrated_repo(tmp_path, "rebase")
+        self._define(repo)
+        _git(repo, "checkout", "-q", "-b", "bot")
+        (repo / COUNTS).write_text(HEADER + "150 60 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "weekly measurement")
+        _git(repo, "checkout", "-q", "main")
+        (repo / COUNTS).write_text(HEADER + "120 44 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "human edit")
+        _git(repo, "checkout", "-q", "bot")
+        r = _git(repo, "rebase", "main")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "150 60 AGENTS.md" in (repo / COUNTS).read_text()
+
+    def test_the_attribute_without_the_driver_still_conflicts(
+        self, tmp_path: Path
+    ):
+        """Same inertness as merge=ours (#192): the new name buys nothing
+        until config defines it, and --check owns reporting that."""
+        repo = self._calibrated_repo(tmp_path, "inert")
+        assert _git(repo, "config", "--get", COUNTS_DRIVER).stdout.strip() == ""
+        _git(repo, "checkout", "-q", "-b", "other")
+        (repo / COUNTS).write_text(HEADER + "150 60 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "other")
+        _git(repo, "checkout", "-q", "main")
+        (repo / COUNTS).write_text(HEADER + "120 44 AGENTS.md\n")
+        _git(repo, "commit", "-qam", "main")
+        r = _git(repo, "merge", "other")
+        assert r.returncode != 0, r.stdout
+        assert "<<<<<<<" in (repo / COUNTS).read_text()
+
+
+class TestInstallerWiresTheNewestWinsDriver:
+    """The three-legged treatment #192 established, applied to the new driver:
+    the attribute in .gitattributes, the driver in the clone's config, and the
+    driver inside the workflow's rebase job — with --check reporting each leg,
+    because each is its own way to lose the row."""
+
+    def test_the_attribute_names_the_per_row_driver(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        assert _run(repo).returncode == 0
+        attrs = (repo / ".gitattributes").read_text()
+        assert ATTR_COUNTS in attrs, attrs
+        assert f"{COUNTS} merge=ours" not in attrs, attrs
+        # The ratio DECISION (#237): a single scalar has nothing for a per-row
+        # driver to key on, so it stays regenerate-on-collision.
+        assert f"{RATIO} merge=ours" in attrs, attrs
+
+    def test_a_plain_install_defines_both_drivers(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        r = _run(repo)
+        assert r.returncode == 0, r.stderr
+        assert _driver(repo) == "true"
+        value = _git(repo, "config", "--get", COUNTS_DRIVER).stdout.strip()
+        assert "merge-token-counts.sh" in value, (
+            "the counts attribute was written and left inert:\n" + r.stdout
+        )
+        for token in ("%O", "%A", "%B"):
+            assert token in value, value
+
+    def test_the_configured_command_actually_merges(self, tmp_path: Path):
+        """The value is a command line, and nothing else executes it before a
+        real collision does. Run it the way git will — through sh, with the
+        placeholders substituted."""
+        repo = _repo(tmp_path)
+        _run(repo)
+        value = _git(repo, "config", "--get", COUNTS_DRIVER).stdout.strip()
+        (repo / "AGENTS.md").write_bytes(b"x" * 150)
+        (repo / "O").write_text("100 40 AGENTS.md\n")
+        (repo / "A").write_text("120 44 AGENTS.md\n")
+        (repo / "B").write_text("150 60 AGENTS.md\n")
+        cmd = (value.replace("%O", "O").replace("%A", "A")
+               .replace("%B", "B").replace("%P", COUNTS))
+        r = subprocess.run(
+            ["sh", "-c", cmd], cwd=str(repo), capture_output=True, text=True,
+            env=_env(), timeout=30,
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert (repo / "A").read_text().strip() == "150 60 AGENTS.md"
+
+    def test_a_pre_237_install_is_migrated_in_place(self, tmp_path: Path):
+        """Every repo installed between #173 and #237 carries the counts file
+        under merge=ours. Re-running — which is what --check tells them to do
+        — must swap the one line and duplicate nothing."""
+        repo = _repo(tmp_path)
+        (repo / ".gitattributes").write_text(
+            "# Append-only telemetry: concurrent appends must union-merge, or a\n"
+            "# scheduled measurement racing a human commit conflicts and is lost.\n"
+            f"{LEDGER} merge=union\n"
+            "\n"
+            "# Calibration is regenerated, never reconciled: on a collision keep\n"
+            "# the branch's copy and let the next --exact run recompute it.\n"
+            f"{RATIO} merge=ours\n"
+            f"{COUNTS} merge=ours\n"
+        )
+        r = _run(repo)
+        assert r.returncode == 0, r.stderr
+        attrs = (repo / ".gitattributes").read_text()
+        assert f"{COUNTS} merge=ours" not in attrs, attrs
+        assert attrs.count(ATTR_COUNTS) == 1, attrs
+        assert attrs.count(f"{RATIO} merge=ours") == 1, attrs
+        assert attrs.count(f"{LEDGER} merge=union") == 1, attrs
+        assert _run(repo, "--check").returncode == 0
+
+    def test_check_reports_the_counts_driver_independently(
+        self, tmp_path: Path
+    ):
+        repo = _repo(tmp_path)
+        _run(repo)
+        _git(repo, "config", "--unset", COUNTS_DRIVER)
+        r = _run(repo, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "newest-wins driver: MISSING" in r.stdout, r.stdout
+        # Still independently true, and still reported as such.
+        assert "ours merge driver:  yes" in r.stdout, r.stdout
+        assert COUNTS_DRIVER in r.stdout, (
+            "the failure text never names the key to set:\n" + r.stdout
+        )
+
+    def test_check_flags_a_config_pointing_at_a_missing_script(
+        self, tmp_path: Path
+    ):
+        """A vendored skill reached through a dangling symlink — submodules
+        not initialised — leaves a defined driver whose command cannot run,
+        and git then conflicts as if the driver were absent."""
+        repo = _repo(tmp_path)
+        _run(repo)
+        _git(repo, "config", COUNTS_DRIVER,
+             "bash 'no/such/merge-token-counts.sh' %O %A %B %P")
+        r = _run(repo, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "newest-wins driver: BROKEN" in r.stdout, r.stdout
+
+    def test_check_flags_a_workflow_missing_the_driver_leg(
+        self, tmp_path: Path
+    ):
+        """A workflow rendered before #237 rebases on the runner without the
+        driver and conflicts on the counts file. The workflow is the third
+        leg, and --check must see all three."""
+        repo = _repo(tmp_path)
+        _run(repo)
+        wf = repo / ".github" / "workflows" / "context-cadence.yml"
+        wf.write_text("".join(
+            ln for ln in wf.read_text().splitlines(keepends=True)
+            if COUNTS_DRIVER not in ln
+        ))
+        r = _run(repo, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "workflow drivers:   STALE" in r.stdout, r.stdout
+
+    def test_a_rerun_heals_a_missing_counts_driver(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        _run(repo)
+        _git(repo, "config", "--unset", COUNTS_DRIVER)
+        assert _run(repo, "--check").returncode == 3
+        assert _run(repo).returncode == 0
+        assert _git(repo, "config", "--get", COUNTS_DRIVER).stdout.strip()
+        assert _run(repo, "--check").returncode == 0
+
+    def test_uninstall_removes_the_attribute_and_leaves_the_driver(
+        self, tmp_path: Path
+    ):
+        """Same asymmetry as the ours driver, same reason: the attributes are
+        this installer's to remove, a defined driver with nothing pointing at
+        it never runs, and unsetting config is one more worktree-shaped write
+        this script has no need to make."""
+        repo = _repo(tmp_path)
+        _run(repo)
+        assert _run(repo, "--uninstall").returncode == 0
+        assert not (repo / ".gitattributes").exists()
+        assert _git(repo, "config", "--get", COUNTS_DRIVER).stdout.strip()
