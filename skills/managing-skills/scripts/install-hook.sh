@@ -488,7 +488,63 @@ if [ "$MODE" = "check" ]; then
   # one you were not looking for.
   rc=0
   if is_linked; then
-    echo "hook symlink:       $HOOK_REL -> $(readlink "$HOOK")"
+    # SHAPE is checked on the resolving branch too (#233). Resolution proves
+    # the content is here, not that the link survives anyone else's checkout:
+    # an absolute target resolves on exactly the machine that wrote it and
+    # dangles everywhere else — and until #233 the shape case below ran only
+    # once the link was already dangling, so the one machine where the defect
+    # is invisible was the one machine that got a green check. The 2026-08-27
+    # cohort sweep found zero absolute hook symlinks across all twelve
+    # consumers, so gating this turns nobody's working green red.
+    #
+    # A relative target that does not spell skills-vendor/ gets a second
+    # reading before any verdict: resolved physically. The hooks this script
+    # manages are installed as direct vendor links, but other installers
+    # legitimately link through skills/ or .claude/skills/ indirection
+    # (curating-context's context-budget-guard.sh), and those chains land in
+    # the vendor tree — condemning them on spelling would misreport a correct
+    # install if this script is ever pointed at such a hook. So on THIS
+    # branch, where the chain can actually be walked, shape is judged by
+    # where the link lands, not only by what it says. The dangling branch
+    # cannot walk anything and keeps judging the spelling.
+    link_target="$(readlink "$HOOK")"
+    case "$link_target" in
+      /*) link_shape="absolute" ;;
+      *skills-vendor/*) link_shape="vendor" ;;
+      *) link_shape="other" ;;
+    esac
+    if [ "$link_shape" = "other" ]; then
+      case "$link_target" in
+        */*) target_dir="${link_target%/*}" ;;
+        *) target_dir="." ;;
+      esac
+      # Subshells, so the consumer's cwd survives; cd -P resolves every
+      # directory-level symlink in the chain, which is where the indirection
+      # lives. Compared against the PHYSICAL repo root — the repo itself may
+      # be checked out through a symlinked path (macOS /tmp is one).
+      resolved_dir="$(cd -- "${HOOK%/*}" 2>/dev/null \
+        && cd -P -- "$target_dir" 2>/dev/null && pwd -P)" || resolved_dir=""
+      root_phys="$(pwd -P)"
+      case "$resolved_dir" in
+        "$root_phys"/skills-vendor/*) link_shape="vendor" ;;
+      esac
+    fi
+    case "$link_shape" in
+      vendor)
+        echo "hook symlink:       $HOOK_REL -> $link_target" ;;
+      absolute)
+        echo "hook symlink:       ABSOLUTE ($HOOK_REL) -> $link_target"
+        echo "                    It resolves because this is the machine that"
+        echo "                    wrote it; in every other checkout of this"
+        echo "                    repo the link dangles. Re-run $RERUN."
+        rc=3 ;;
+      *)
+        echo "hook symlink:       $HOOK_REL -> $link_target"
+        echo "                    The target resolves, but not into"
+        echo "                    skills-vendor/, so vendor refreshes never"
+        echo "                    reach the file it names. Re-run $RERUN."
+        rc=3 ;;
+    esac
   elif [ -L "$HOOK" ]; then
     # SHAPE and RESOLUTION are different questions, and in a submodule-less
     # checkout they have different answers (#227). `actions/checkout` omits
