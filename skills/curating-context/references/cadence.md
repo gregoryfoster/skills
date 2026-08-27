@@ -94,49 +94,71 @@ attributes in the tree being *replayed onto*, so an attribute added after the
 fact does not rescue the conflict that motivated it. That is why the installer
 tells you to stage both files together.
 
-The same weekly run rewrites two more files, and they need a *different* merge.
+The same weekly run rewrites two more files, and each needs its *own* merge.
 `measure-context.sh --exact` refreshes `.skills/context-token-ratio` and
 `.skills/context-token-counts`, the workflow stages all three paths, and for a
 while the installer protected one — so the calibration files lost exactly the
-race the ledger was protected against (#173). Union is the wrong answer here:
-it would leave two values for one path and the estimators would read whichever
-they hit first, which is worse than a conflict because nothing reports it.
-These are pure functions of the tree at measurement time, so on a collision the
-answer is always *recompute*, never *reconcile*:
+race the ledger was protected against (#173). Union is the wrong answer for
+both: it would leave two values for one key and the estimators would read
+whichever they hit first, which is worse than a conflict because nothing
+reports it. Beyond that the two files part ways:
 
 ```
 .skills/context-token-ratio merge=ours
-.skills/context-token-counts merge=ours
+.skills/context-token-counts merge=context-counts
 ```
 
-**And `ours` is the one merge driver git does not define for you.** `union` is
-built in, which is why the ledger line above works the moment it lands. `ours`
-is not, and an attribute naming a driver that does not exist is inert — git
-falls back to the 3-way merge and leaves conflict markers in a file that is
-regenerated and must never be hand-merged. The driver is one line, and it is
-what makes the two entries above mean anything:
+The counts file merges **per row, newest wins**
+([#237](https://github.com/gregoryfoster/skills/issues/237)). It used to carry
+`merge=ours`, which keeps the side of whoever *runs* the merge — unrelated to
+which side measured more recently — and the cadence bot only ever pushes to
+the default branch, so it was structurally always the side that lost: merging
+`origin/main` onto a branch silently reverted the week's fresh row, and
+nothing went red because the file is a cache (`c7be4eb` is the incident
+record). The `context-counts` driver (`merge-token-counts.sh`) merges
+one-sided edits — deletions included — as ordinary three-way; on a genuine
+collision it keeps, per path, the row whose `bytes` matches the file in the
+tree, because that row describes a file that exists. When neither matches it
+keeps the current side's row, exactly what `merge=ours` did, leaving the
+drift fallback and the next `--exact` run to absorb it.
+
+The ratio file **stays `merge=ours`** — decided with #237, not left over.
+Newest-wins has nothing to key on: the file is one repo-wide scalar with no
+per-path rows and no recorded byte size, so arbitration would need a
+timestamp the format does not carry — a format change every cohort repo would
+have to migrate. And the stakes are lower: once counts rows survive merges,
+the ratio only prices files never counted exactly, it moves slowly, and a
+week-stale copy self-corrects at the next `--exact` run.
+
+**Both attributes name drivers, and neither is a git built-in** — `union` is,
+which is why the ledger line works the moment it lands. An attribute naming
+an undefined driver is inert: git falls back to the 3-way merge and leaves
+markers in files that must never be hand-merged. Two config lines make the
+entries above mean anything:
 
 ```
 git config merge.ours.driver true
+git config merge.context-counts.driver "bash 'skills/curating-context/scripts/merge-token-counts.sh' %O %A %B %P"
 ```
 
-`install-cadence.sh` sets that in the clone it runs in, and it cannot do more:
-**git config is not versioned**, so unlike the attributes it does not travel
-with the commit. A fresh clone of a correctly installed repo therefore arrives
-protected on paper and unprotected in fact, which is why `--check` reports the
-driver as its own line instead of folding it into the calibration one. The tree
-and the config are two independent ways to lose the same file, and in the second
-cadence pilot the audit read green on the attribute while the mechanism behind
-it was absent (#192). Run the installer — or the one-liner — once per checkout.
+(the installer resolves the script path to wherever the vendored skill's
+`scripts/` sits). `install-cadence.sh` sets both in the clone it runs in and
+cannot do more: **git config is not versioned**, so a fresh clone of a
+correctly installed repo arrives protected on paper and unprotected in fact.
+That is why `--check` reports each driver as its own line instead of folding
+it into the calibration one — in the second cadence pilot the audit read
+green on the attribute while the mechanism behind it was absent (#192) — and
+why the workflow's commit step defines both drivers for its own fresh clone.
+Run the installer — or the two one-liners — once per checkout.
 
-`--uninstall` removes the attribute along with the workflow, leaving
+`--uninstall` removes the attributes along with the workflow, leaving
 `.gitattributes` as it found it — the file itself goes only if nothing else was
 in it. The recorded rows stay either way: they are the series, and removing the
 mechanism that adds to it is not a reason to discard what it already collected.
 
-It leaves `merge.ours.driver` set, deliberately. The driver is generic, any
-other `merge=ours` rule in the repo depends on it, and with nothing pointing at
-it a defined driver simply never runs — so unsetting it could only break
+It leaves both drivers set, deliberately: with nothing pointing at it a
+defined driver never runs, `merge.ours.driver` is generic enough that other
+`merge=ours` rules may depend on it, and unsetting either could only break
 attributes this installer never wrote.
 
 ## What the scheduled `seams` count means
@@ -337,12 +359,14 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # `ours` is the one built-in merge driver git does NOT define for you:
-          # the .gitattributes entry alone is inert, and the calibration files
-          # would conflict exactly as if it were absent. `true` is the whole
-          # driver — it succeeds without writing, which leaves the branch's copy
-          # in place, and the next --exact run recomputes both (#173).
+          # Neither merge driver is a git built-in and the runner is a fresh
+          # clone, so without these two lines the .gitattributes entries are
+          # inert and the calibration files conflict as if unprotected (#192).
+          # `true` keeps the branch's ratio; the next --exact recomputes (#173).
           git config merge.ours.driver true
+          # The counts file merges per row (#237): a collision keeps, per path,
+          # the row whose bytes match the file in the tree.
+          git config merge.context-counts.driver "bash \"$SKILL_SCRIPTS/merge-token-counts.sh\" %O %A %B %P"
           # Staged separately, and the row is NOT tolerant of failure. One
           # `git add` over both paths stages NOTHING when either is missing —
           # it exits 128 on the unmatched pathspec — so `|| true` turned a
@@ -395,7 +419,7 @@ jobs:
               echo "::error::every staged path carries a merge attribute:"
               echo "::error::  \`.skills/context-metrics.jsonl merge=union\`"
               echo "::error::  \`.skills/context-token-ratio merge=ours\`"
-              echo "::error::  \`.skills/context-token-counts merge=ours\`"
+              echo "::error::  \`.skills/context-token-counts merge=context-counts\`"
               exit 1
             }
           done
