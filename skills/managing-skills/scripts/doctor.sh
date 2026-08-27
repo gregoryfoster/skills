@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-08-23-1"
+VERSION="2026-08-27-2"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -90,9 +90,25 @@ Every hook symlink that resolves is also checked for its SessionStart
 registration in .claude/settings.json, which is the half that makes it
 run at all. The repair printed comes from a one-line <hook>.install
 manifest the vendoring skill ships beside the script, so a skill adding a
-hook needs no edit here. Advisory: it warns and leaves the exit code
-alone, because a wiring gap is not a dangling symlink and Phase 1
-preflights gate on that code.
+hook needs no edit here. Advisory by default: it warns and leaves the
+exit code alone, because a wiring gap is not a dangling symlink and
+Phase 1 preflights gate on that code. Under --check-only the same state
+exits 1 — that mode is a deliberate probe, not a review preflight, so a
+CI job can finally gate on the wiring (#231). For per-hook gating, loop
+install-hook.sh --check instead: it exits 3 per half-installed hook.
+
+Local overrides are regular directories, not part of the symlink chain,
+but two things about them are checked anyway (#238). Their per-script
+symlinks (skills/<override>/scripts/*) join the dangling scan: they are
+how an override tracks the scripts it does not change, and an upstream
+rename or deletion strands them while every top-level symlink still
+resolves. And each override's SKILL.md frontmatter is compared against
+its overrides: target — warning when the recorded version (the vendor
+version LAST SYNCED FROM, bumped on every re-sync; or the synced-from:
+commit for vendors that ship no version) has fallen behind the vendor
+copy. Drift is advisory in every mode including --check-only, and
+nothing is ever auto-merged: the point of an override is that upstream
+text cannot be applied blindly.
 
 Re-syncs .skills/doctor.sh from the vendored source under skills-vendor/
 when the two differ, so upstream fixes reach consumers that did not
@@ -109,11 +125,13 @@ the agent isn't reachable from this shell. A separate remediation block
 covers host-key-verification failures (ssh-keyscan-based fix).
 
 Options:
-  --check-only    Report broken symlinks and uninitialized skills-vendor/
-                  submodules but make no changes: no submodule init, no
-                  self-sync. Exits 1 for either, EXCEPT a submodule
-                  .gitmodules holds with 'update = none' — the exit code
-                  covers everything this mode reports as damage. (The
+  --check-only    Report broken symlinks, uninitialized skills-vendor/
+                  submodules and unregistered hooks but make no changes:
+                  no submodule init, no self-sync. Exits 1 for any of the
+                  three, EXCEPT a submodule .gitmodules holds with
+                  'update = none' — the exit code covers everything this
+                  mode reports as damage, including the wiring gap the
+                  default invocation only warns about (#231). (The
                   archive-checkout path when .git is absent overrides the
                   reporting, printing its own diagnosis — it makes no
                   changes either.)
@@ -127,7 +145,8 @@ Options:
 Exit codes:
   0  All scanned symlinks resolve (or neither directory exists).
   1  One or more symlinks remain broken after self-heal attempt, or
-     pre-flight SSH check failed.
+     pre-flight SSH check failed. Under --check-only, also: an installed
+     hook that .claude/settings.json does not register (#231).
   2  Invalid invocation (e.g. unknown flag).
 EOF
       exit 0
@@ -301,6 +320,12 @@ hook_manifest_args() {
   printf '%s' "$args"
 }
 
+# Set by check_hook_registrations when any warning above printed. The default
+# mode never reads it — the warning IS the whole default-mode behaviour — but
+# --check-only exits 1 on it (#231): that mode is a deliberate CI probe, not a
+# review preflight, so it is the one audience the detected state may gate.
+REG_GAPS=0
+
 check_hook_registrations() {
   local settings=".claude/settings.json"
   [ -d ".claude/hooks" ] || return 0
@@ -360,6 +385,7 @@ check_hook_registrations() {
       continue
     fi
 
+    REG_GAPS=1
     echo "doctor: $hook is installed but $settings does not register it," >&2
     echo "doctor: so Claude Code never runs it and whatever it maintains is" >&2
     echo "doctor: frozen at whatever state it was in when the hook was" >&2
@@ -391,6 +417,178 @@ check_hook_registrations() {
 }
 
 check_hook_registrations
+
+# frontmatter_value <file> <key> — the value of the first `<key>:` line inside
+# the file's YAML frontmatter, surrounding double quotes stripped; empty when
+# absent. Not a YAML parser, deliberately: the doctor's dependency set is bash,
+# git and (optionally) jq, and the override recipe writes flat `key: value`
+# lines under `metadata:`, which a line scan reads exactly. Anything more
+# exotic reads as absent — and an absent field is REPORTED as un-assessable
+# below, never mis-assessed. Matching is prefix-exact on the key, so
+# `overrides:` cannot match `override-reason:`.
+frontmatter_value() {
+  local file="$1" key="$2" val
+  val="$(awk -v k="$key" '
+    NR == 1 { if ($0 !~ /^---[[:space:]]*$/) exit; next }
+    /^---[[:space:]]*$/ { exit }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[[:space:]]+/, "", line)
+      if (index(line, k ":") == 1) {
+        line = substr(line, length(k) + 2)
+        sub(/^[[:space:]]+/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "$file")"
+  val="${val%\"}"
+  val="${val#\"}"
+  printf '%s' "$val"
+}
+
+# The two voices of the drift check (#238), shared so every case below agrees
+# about the diagnosis. Drift names both sides and the re-sync DIRECTION —
+# reapplying upstream changes onto the old fork instead of local deltas onto
+# the new upstream text is the easy inversion, and it quietly discards every
+# release between the two. Un-assessable is its own warning rather than a
+# silent skip: an override nothing can compare is the same failure as not
+# detecting drift at all.
+report_override_drift() {
+  local dir="$1" target="$2" have="$3" now="$4"
+  echo "doctor: $dir overrides $target and has fallen behind: last synced" >&2
+  echo "doctor: at $have, vendor now at $now. Re-sync by reapplying the" >&2
+  echo "doctor: local deltas onto the newer upstream text — never upstream" >&2
+  echo "doctor: changes onto the old fork — then bump the override's" >&2
+  echo "doctor: version:/synced-from: to what was just synced. Advisory:" >&2
+  echo "doctor: nothing is auto-merged." >&2
+}
+
+report_override_unassessed() {
+  local dir="$1" target="$2" why="$3"
+  echo "doctor: $dir overrides $target but its drift cannot be assessed:" >&2
+  echo "doctor: $why. An override nothing can compare is the same failure" >&2
+  echo "doctor: as not detecting drift at all (#238)." >&2
+}
+
+# #238 — a local override is the one file the drift mitigations cannot reach.
+# The auto-refresh hook moves the submodule pointer, which never touches a
+# forked file; per-script symlinks track upstream for free; and the symlink
+# scans skip regular directories by construction. So an override fell further
+# behind on every release and the only detector was a consumer hitting a
+# broken instruction: one sat at v1.2 against vendor's v1.4 and reintroduced
+# #63's exact failure sixteen months after it was closed, because the file
+# carrying the fix was the fork.
+#
+# The frontmatter already carries the machine-readable link, from the override
+# recipe: `overrides:` names the vendor path and `version:` sits beside it.
+# `version:` in an override records THE VENDOR VERSION LAST SYNCED FROM — not
+# a version of the local file — bumped on every re-sync even when the local
+# deltas are unchanged; the two readings diverge as soon as someone edits an
+# override after syncing, which is an override's whole job. For a vendor that
+# ships no version: at all, the `synced-from:` sibling key pins the vendor
+# commit last synced from ("<repo> <tag> (<commit>)"), and the comparison is a
+# diff between that commit and HEAD scoped to the skill's path — so a
+# submodule bump that touches OTHER skills stays silent rather than training
+# the reader to skim.
+#
+# Warn only, in every mode. Never an exit code — not even under --check-only,
+# whose gate covers damage and wiring gaps (#231); drift is doc-sync debt the
+# operator pays down on their schedule, and a probe that failed on it would
+# push consumers toward deleting overrides rather than re-syncing them. Never
+# an auto-merge — upstream text cannot be applied to a fork blindly.
+check_override_drift() {
+  [ -d skills ] || return 0
+  local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
+  for dir in skills/*; do
+    # A regular directory carrying a SKILL.md whose frontmatter names an
+    # overrides: target. Symlinked skills track upstream by construction, and
+    # a local directory without the key is project-authored — a fork of
+    # nothing, with nothing to fall behind.
+    if [ -L "$dir" ] || [ ! -d "$dir" ] || [ ! -f "$dir/SKILL.md" ]; then
+      continue
+    fi
+    md="$dir/SKILL.md"
+    target="$(frontmatter_value "$md" overrides)"
+    [ -n "$target" ] || continue
+
+    repo_dir="skills-vendor/${target%%/*}"
+    skill_rel="skills/${target#*/}"
+    vendor_md="$repo_dir/$skill_rel/SKILL.md"
+    if [ ! -f "$vendor_md" ]; then
+      report_override_unassessed "$dir" "$target" \
+        "no vendor copy at $vendor_md (uninitialized submodule, or the skill moved upstream)"
+      continue
+    fi
+
+    v_ver="$(frontmatter_value "$vendor_md" version)"
+    o_ver="$(frontmatter_value "$md" version)"
+    if [ -n "$v_ver" ]; then
+      if [ -z "$o_ver" ]; then
+        report_override_unassessed "$dir" "$target" \
+          "the vendor is at version $v_ver and the override records no version: (the vendor version last synced from)"
+      elif [ "$o_ver" != "$v_ver" ]; then
+        report_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+      fi
+      continue
+    fi
+
+    # Unversioned upstream: the synced-from fallback.
+    synced="$(frontmatter_value "$md" synced-from)"
+    if [ -z "$synced" ]; then
+      report_override_unassessed "$dir" "$target" \
+        "the vendor ships no version: and the override records no synced-from: (\"<repo> <tag> (<commit>)\")"
+      continue
+    fi
+    rec="${synced##*(}"
+    rec="${rec%%)*}"
+    if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
+      report_override_unassessed "$dir" "$target" \
+        "synced-from: \"$synced\" carries no (commit) to compare against"
+      continue
+    fi
+    if ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
+      report_override_unassessed "$dir" "$target" \
+        "the recorded commit $rec is not in the vendor's history (shallow clone?)"
+      continue
+    fi
+    # diff --quiet: 0 unchanged, 1 changed, anything else is an error — which
+    # must land in "cannot be assessed" rather than in either verdict.
+    rc=0
+    git -C "$repo_dir" diff --quiet "$rec" HEAD -- "$skill_rel" 2>/dev/null || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      report_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
+    elif [ "$rc" -ne 0 ]; then
+      report_override_unassessed "$dir" "$target" \
+        "'git diff $rec HEAD -- $skill_rel' failed in $repo_dir"
+    fi
+  done
+  return 0
+}
+
+check_override_drift
+
+# #231 — the audience split, enforced. The unregistered-hook state was detected
+# (#224) and still ungated: every review preflight runs the default invocation,
+# whose exit code cannot change without hard-blocking nine skills' reviews in
+# every affected consumer over a defect that is not in the diff under review —
+# the same absent-vs-unusable failure #140 removed from the shellcheck gate. So
+# the severity stays and the audience splits: --check-only is a deliberate
+# probe, and a probe that reports damage and then signals "fine" to the CI job
+# branching on it is the #185 shape all over again. Called at every point
+# --check-only would otherwise exit 0; the default mode always falls through.
+# Finer-grained alternative for consumers gating per hook:
+# `install-hook.sh --check` exits 3 for exactly one hook's wiring.
+check_only_registration_gate() {
+  if [ "$CHECK_ONLY" = "1" ] && [ "$REG_GAPS" = "1" ]; then
+    echo "doctor: --check-only: the unregistered hook(s) above fail this" >&2
+    echo "doctor: probe (#231). The default invocation still warns and" >&2
+    echo "doctor: exits 0, so review preflights are unaffected." >&2
+    exit 1
+  fi
+  return 0
+}
 
 # Directories whose direct children are scanned for dangling symlinks.
 # skills/ is the vendored-skill chain; .claude/hooks/ holds the hook symlinks
@@ -425,9 +623,22 @@ declare -a BROKEN=()
 # A symlink is "broken" when it exists but its target does not resolve. Local
 # overrides (regular directories) and project-authored hook scripts (regular
 # files) are skipped — they're not symlinks.
+#
+# One nested level too: <dir>/*/scripts/* (#238). An override that follows the
+# per-script pattern is a regular directory whose scripts/ symlinks into the
+# submodule everything it does not change, and those links sit one level below
+# the walk this function used to do. The blind spot is narrow but real: with an
+# INITIALIZED submodule whose upstream renamed or deleted a script, every
+# top-level symlink resolves and scan_uninit reports nothing, so the dangling
+# nested link surfaced as `No such file or directory` mid-run — the failure
+# mode this script exists to turn into an actionable message. That is the new
+# risk the per-script pattern introduces, which is why this scan is a
+# prerequisite of the skill recommending it. The nested pass skips top-level
+# symlinks: a symlinked skill IS the healthy vendor chain, and its target's
+# internals belong to the vendor tree, not to this consumer's damage report.
 scan_broken() {
   BROKEN=()
-  local dir entry
+  local dir sub entry
   for dir in "${SCAN_DIRS[@]}"; do
     [ -d "$dir" ] || continue
     for entry in "$dir"/*; do
@@ -435,6 +646,17 @@ scan_broken() {
       if [ ! -e "$entry" ]; then
         BROKEN+=("$entry")
       fi
+    done
+    for sub in "$dir"/*; do
+      if [ -L "$sub" ] || [ ! -d "$sub" ]; then
+        continue
+      fi
+      for entry in "$sub"/scripts/*; do
+        [ -L "$entry" ] || continue
+        if [ ! -e "$entry" ]; then
+          BROKEN+=("$entry")
+        fi
+      done
     done
   done
 }
@@ -551,6 +773,7 @@ scan_broken
 scan_uninit
 
 if [ "${#BROKEN[@]}" -eq 0 ] && [ "${#UNINIT[@]}" -eq 0 ]; then
+  check_only_registration_gate
   # Names both checks, because the fast path now clears both. The old wording
   # claimed only the symlink half, which is the substitution this fix removed.
   [ "$VERBOSE" = "1" ] && \
@@ -600,6 +823,7 @@ if [ "$CHECK_ONLY" = "1" ]; then
     echo "doctor: --recursive', or drop --check-only to self-heal." >&2
     exit 1
   fi
+  check_only_registration_gate
   exit 0
 fi
 

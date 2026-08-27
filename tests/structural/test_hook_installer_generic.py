@@ -39,6 +39,11 @@ What this file pins, and why each one is a mechanism rather than a spelling:
   install does not resolve — and a copy is the only variant that does, so a
   resolution-based check passes on exactly the install #179 argues against.
   `--allow-unresolved` relaxes resolution and nothing else (#227).
+- **Shape is gated on the RESOLVING branch too.** An absolute symlink that
+  resolves passes a resolution-only probe on exactly the machine that wrote it
+  and dangles everywhere else — while a link that lands in the vendor tree
+  through skills/ indirection is judged by where it lands, not condemned on
+  spelling (#233).
 - **`--check` reports how many registrations it found, not just that it found
   one.** `yes` read the same for one entry and for two, so a repo left holding a
   stranded duplicate looked healthy while the hook ran twice a session (#222).
@@ -589,6 +594,121 @@ class TestCheckSeparatesShapeFromResolution:
         assert r.returncode == 1, r.stdout
         assert "--allow-unresolved requires --check" in r.stderr, r.stderr
         assert not (repo / ".claude" / "hooks" / REMINDER).exists()
+
+
+class TestCheckGatesShapeOnResolvingLinks:
+    """#233 — #227's shape/resolution split ran only once the link was already
+    dangling, so an ABSOLUTE symlink that resolves passed `--check` cleanly on
+    exactly the machine where the defect is invisible: the one that wrote it.
+    Everywhere else that link dangles, which is precisely what the shape case
+    exists to catch.
+
+    #233 recorded the asymmetry as deliberate — widening the gate could newly
+    fail consumers that work today. The 2026-08-27 cohort sweep answered that:
+    zero absolute hook symlinks across all twelve consumers, so the
+    compatibility argument is empty and the gate simply becomes correct
+    (option 3).
+
+    The scoping caveat from the same decision: a hook linked through skills/
+    or .claude/skills/ indirection (curating-context's context-budget-guard.sh
+    is the live example) resolves into the vendor tree without ever spelling
+    skills-vendor/ in its target. That class belongs to another installer, but
+    pointing this script at such a hook must not misreport it — on the
+    resolving branch, shape is judged by where the link LANDS, not only by
+    what it says.
+    """
+
+    def _replace_link(self, repo: Path, target) -> Path:
+        assert _run(repo, *REMINDER_ARGS).returncode == 0
+        link = repo / ".claude" / "hooks" / REMINDER
+        link.unlink()
+        link.symlink_to(target)
+        assert link.exists(), "fixture must build a link that RESOLVES"
+        return link
+
+    def test_an_absolute_target_that_resolves_fails_check(self, repo: Path):
+        """The #233 reproduction: an absolute link at the vendored source
+        itself. It resolves here and dangles for every other checkout — and
+        absolute-into-the-vendor is still absolute, so the `/*` arm must win
+        over the `*skills-vendor/*` one."""
+        target = (
+            repo / "skills-vendor" / "acme-skills" / "skills"
+            / "init-socraticode" / "scripts" / REMINDER
+        )
+        self._replace_link(repo, target)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "ABSOLUTE" in r.stdout, r.stdout
+
+    def test_allow_unresolved_does_not_cover_it(self, repo: Path):
+        """The flag relaxes resolution and nothing else. This link RESOLVES;
+        its defect is shape, which the flag has nothing to say about."""
+        target = (
+            repo / "skills-vendor" / "acme-skills" / "skills"
+            / "init-socraticode" / "scripts" / REMINDER
+        )
+        self._replace_link(repo, target)
+        r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
+        assert r.returncode == 3, r.stdout
+
+    def test_the_report_says_why_and_names_the_repair(self, repo: Path):
+        """A gate that flips a formerly green check red owes the operator the
+        reason (portability, not local breakage) and the repair command."""
+        target = (
+            repo / "skills-vendor" / "acme-skills" / "skills"
+            / "init-socraticode" / "scripts" / REMINDER
+        )
+        self._replace_link(repo, target)
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert "checkout" in r.stdout, r.stdout
+        assert "install-hook.sh --hook" in r.stdout, r.stdout
+
+    def test_a_resolving_target_outside_the_vendor_fails_check(
+        self, repo: Path
+    ):
+        """Relative and resolving, but at a non-vendor copy of the script:
+        vendor refreshes never reach that file, so this is #179's frozen-copy
+        drift wearing a symlink. The dangling branch already condemns this
+        shape; resolving must not launder it."""
+        local = repo / "local-hooks"
+        local.mkdir()
+        (local / REMINDER).write_text((SOC_SCRIPTS / REMINDER).read_text())
+        self._replace_link(repo, f"../../local-hooks/{REMINDER}")
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 3, r.stdout
+        assert "skills-vendor" in r.stdout, r.stdout
+
+    def test_indirection_that_lands_in_the_vendor_still_passes(
+        self, repo: Path
+    ):
+        """The caveat class: the target never spells skills-vendor/, but the
+        path passes through a skill symlink and lands in the vendor tree —
+        the shape context-budget-guard.sh installs in. Condemning it on
+        spelling would misreport a correct install of a hook this script does
+        not even manage."""
+        (repo / "skills").mkdir()
+        (repo / "skills" / "init-socraticode").symlink_to(
+            Path("..") / "skills-vendor" / "acme-skills" / "skills"
+            / "init-socraticode"
+        )
+        self._replace_link(
+            repo, f"../../skills/init-socraticode/scripts/{REMINDER}"
+        )
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_a_correct_relative_install_is_reported_as_before(
+        self, repo: Path
+    ):
+        """The gate must not disturb the healthy case: the report line other
+        suites bind to is unchanged and the exit stays 0."""
+        assert _run(repo, *REMINDER_ARGS).returncode == 0
+        r = _run(repo, *REMINDER_ARGS, "--check")
+        assert r.returncode == 0, r.stdout
+        assert (
+            f"hook symlink:       .claude/hooks/{REMINDER} -> "
+            f"../../skills-vendor/" in r.stdout
+        ), r.stdout
 
 
 class TestCheckReportsHowManyRegistrations:

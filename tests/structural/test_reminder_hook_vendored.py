@@ -19,10 +19,11 @@ What this file pins, and why each one is a mechanism rather than a spelling:
 
 - **The vendored script prints exactly what the prose printed.** The extraction
   is only safe if it is behaviour-preserving; the one line the hook emits is
-  its entire product, and `docs/SOCRATICODE.md`'s copy of the same `select:`
-  query is what an operator runs by hand when the hook did not fire. Two copies
-  that must agree, so the agreement is asserted rather than maintained by
-  attention.
+  its entire product. `docs/SOCRATICODE.md` used to carry a copy of the same
+  `select:` query for the operator whose hook did not fire — two copies that
+  had to agree, so the agreement was asserted here — until #234 retired the
+  transcription for a pointer at this script. What is asserted now is that
+  the transcription stays gone.
 - **The install step is a symlink with a copy fallback.** The mirror of
   `test_socraticode_graph_yield.py::TestHookIsInstalled`, which pins the same
   property for the health hook one Step down the same document. Both hooks land
@@ -117,20 +118,25 @@ class TestBehaviourIsPreserved:
         assert "ToolSearch" in out, out
         assert "Prefer codebase_search over grep" in out, out
 
-    def test_the_prefetch_query_matches_the_overflow_doc(self) -> None:
-        """`docs/SOCRATICODE.md` is what an operator runs when the hook did not
-        fire. If the two drift, one of them loads a tool set the other does not
-        and the failure is a validation error on a deferred schema."""
+    def test_the_overflow_doc_points_here_instead_of_transcribing(self) -> None:
+        """#234: `docs/SOCRATICODE.md` used to carry a copy of the `select:`
+        query for the operator whose hook did not fire, and every consumer's
+        copy went stale silently once this script became a symlink — #209 was
+        that exact drift, template-side. The doc now hands the operator the
+        hook itself: one copy, nothing left to agree."""
         from_script = _SELECT_RE.search(_run().stdout)
         assert from_script, f"no `select:` query in the hook's output:\n{_run().stdout}"
-        from_doc = _SELECT_RE.search(DOC_REF.read_text())
-        assert from_doc, f"no `select:` query in references/{DOC_REF.name}"
-        assert from_script.group(0) == from_doc.group(0), (
-            "the hook and references/socraticode-doc.md disagree about the "
-            "ToolSearch prefetch query. Both are transcribed into consumers; "
-            "they must name the same tools.\n"
-            f"  hook: {from_script.group(0)}\n"
-            f"  doc:  {from_doc.group(0)}"
+        doc = DOC_REF.read_text()
+        assert _SELECT_RE.search(doc) is None, (
+            f"references/{DOC_REF.name} transcribes the prefetch query again. "
+            "A consumer's generated copy of it goes stale silently when this "
+            "script changes (#209, #234); the doc must point at the hook, not "
+            "copy its output."
+        )
+        assert f"bash .claude/hooks/{SCRIPT.name}" in doc, (
+            f"references/{DOC_REF.name} neither transcribes the query nor "
+            "points at the hook that prints it — an operator whose hook did "
+            "not fire would have no path to the prefetch at all"
         )
 
     def test_the_policy_reference_no_longer_inlines_a_script_body(self) -> None:
@@ -312,22 +318,29 @@ class TestDoctorCoversTheSymlinkedHook:
     def test_a_resolving_hook_symlink_is_not_a_symlink_defect(
         self, consumer: Path
     ) -> None:
-        """Re-baselined by #224. This fixture resolves and carries no
-        SessionStart registration, which is precisely the half-install the
-        doctor now warns about — so "silent" was never the right expectation
-        for it, only "not reported as a broken symlink".
+        """Re-baselined by #224, and again by #231. This fixture resolves and
+        carries no SessionStart registration — precisely the half-install the
+        doctor warns about — so "silent" was never the right expectation for
+        it, only "not reported as a broken symlink": the dangling scan owns
+        that diagnosis, and its repair does not apply here.
 
-        The exit code is what separates the two: a dangling symlink fails the
-        preflight, a wiring gap is advisory and must not.
+        The exit code moved with #231: `--check-only` is the deliberate CI
+        probe and now fails on the wiring gap too. Only the DEFAULT invocation
+        stays advisory, which the default-mode assertion below pins.
         """
         result = _doctor(consumer, "--check-only")
-        assert result.returncode == 0, (
-            f"the doctor flagged a resolving hook symlink:\n{result.stderr}"
-        )
         assert "dangling" not in result.stderr.lower(), result.stderr
         assert "does not register it" in result.stderr, (
             "the reminder hook resolves but nothing registers it, and #224 is "
             f"the check that says so:\n{result.stderr}"
+        )
+        assert result.returncode != 0, (
+            "--check-only exited 0 on an unregistered hook — the #231 gate "
+            f"is the reason a CI probe can branch on it:\n{result.stderr}"
+        )
+        assert _doctor(consumer).returncode == 0, (
+            "the DEFAULT invocation must stay warn-and-exit-0 — nine "
+            "reviewing-*/shipping-* preflights gate on it with `|| exit 1`"
         )
 
     def test_a_dangling_hook_symlink_is_reported(self, consumer: Path) -> None:

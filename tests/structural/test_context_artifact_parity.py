@@ -624,6 +624,198 @@ class TestHealthCheckReportsStaleArtifacts:
         assert report["artifacts"]["error"], report
 
 
+class TestFreshnessWalkMatchesTheArtifactWalk:
+    """#235: the freshness clock must only be moved by content the artifact can contain.
+
+    `newestMtimeMs` judges a directory artifact by its newest descendant, and
+    until #235 it pruned exactly `node_modules` and `.git`. The server's
+    artifact walk prunes more: `dist/services/context-artifacts.js`
+    (socraticode 1.12.0) globs `**/*` with `dot: false` and
+    `ignore: ["**/node_modules/**", "**/.git/**"]`, so no dot-named file or
+    directory at any depth is ever embedded in a directory artifact. A
+    `.pytest_cache/` rewritten by every test run moved the driver's clock, the
+    artifact's `lastIndexed` did not move, and health-check reported a
+    byte-identical artifact stale — a finding the named remedy cannot clear,
+    which is #220's shape one feature over. Worse than neutral: the remedy,
+    `codebase_context_index`, re-embeds `__pycache__` (#229), so the false
+    finding pushes the operator toward making a real problem worse.
+
+    The prune list is therefore a CLAIM about the server's walker, not a local
+    convenience, and this class is where the two sides are pinned together.
+    Every semantic here was verified against the server's own glob (11.1.0):
+    dot exclusion applies to files as well as directories (`.coverage`), at
+    every depth, but NOT to the artifact root itself — glob matches paths
+    under `cwd`, so a dot-rooted artifact still embeds its plain contents.
+    """
+
+    @staticmethod
+    def _newest(target: Path) -> float | None:
+        script = (
+            f"import {{ newestMtimeMs }} from {json.dumps(str(DRIVER))};"
+            f"process.stdout.write(JSON.stringify(newestMtimeMs("
+            f"{json.dumps(str(target))})));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True, text=True, timeout=60, env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    @staticmethod
+    def _ms(when: str) -> float:
+        return datetime.fromisoformat(when).timestamp() * 1000
+
+    @requires_node
+    def test_toolchain_cache_churn_under_a_dot_directory_is_not_stale(
+        self, tmp_path: Path
+    ) -> None:
+        """The field case, end to end: a test run rewrote `.pytest_cache/`.
+
+        The cache contents are stamped after the index time; every non-dot
+        ancestor is restamped old afterwards, per this file's fixture
+        convention, because creating an entry bumps the containing directory's
+        own mtime and the property under test is the walk, not that bump.
+        Nothing the artifact embeds has changed, so health-check must be
+        silent: a stale finding here is repaired by no call — re-indexing
+        changes nothing, because the files that moved the clock are never
+        indexed (#235).
+        """
+        repo = _repo(tmp_path)
+        cache = repo / "docs" / ".pytest_cache" / "v" / "cache"
+        cache.mkdir(parents=True)
+        churned = cache / "lastfailed"
+        churned.write_text("{}\n")
+        _stamp(churned, EDITED_AFTER_INDEXING)
+        for directory in (repo / "docs", repo):
+            _stamp(directory)
+        replies = {**DEFAULT_REPLIES,
+                   "codebase_status": STATUS_COMPLETE,
+                   "codebase_context": CONTEXT_ALL_INDEXED}
+        result, report, _calls = _health_check(tmp_path, repo, replies)
+        stale = " ".join(f for f in report["findings"] if "stale" in f)
+        assert not stale, (
+            "a .pytest_cache rewrite under ./docs/ produced a stale finding, "
+            "but `dot: false` means the artifact never embeds it — the clock "
+            f"was moved by content the artifact cannot contain (#235):\n{report}"
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    @requires_node
+    def test_a_dot_file_is_not_counted(self, tmp_path: Path) -> None:
+        """`dot: false` excludes dot FILES too, not only dot directories.
+
+        `.coverage` is the field shape: a dot file at the artifact root,
+        rewritten by every test run, never embedded.
+        """
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "a.md").write_text("a\n")
+        (tree / ".coverage").write_text("sqlite\n")
+        _stamp(tree / "a.md")
+        _stamp(tree / ".coverage", EDITED_AFTER_INDEXING)
+        _stamp(tree)
+        newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            f"a dot file moved the freshness clock to {newest}; the server's "
+            "walk never embeds it (#235)"
+        )
+
+    @requires_node
+    def test_pycache_is_deliberately_still_counted(self, tmp_path: Path) -> None:
+        """`__pycache__` is not a dotfile, and `dot: false` does NOT exclude it.
+
+        Verified against the server's own glob: `__pycache__/m.pyc` is
+        embedded. It really moves both the clock and the artifact's content,
+        and #229's measured case depends on that staying true. An
+        over-eager prune list that treated it like the dot entries would
+        un-measure #229.
+        """
+        tree = tmp_path / "tree"
+        (tree / "__pycache__").mkdir(parents=True)
+        (tree / "a.py").write_text("pass\n")
+        bytecode = tree / "__pycache__" / "a.cpython-312.pyc"
+        bytecode.write_bytes(b"\x00")
+        _stamp(tree / "a.py")
+        _stamp(bytecode, EDITED_AFTER_INDEXING)
+        _stamp(tree / "__pycache__")
+        _stamp(tree)
+        newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(EDITED_AFTER_INDEXING), abs=10), (
+            f"__pycache__ stopped moving the freshness clock (got {newest}); "
+            "it is embedded by the server and #229's measured case depends on "
+            "it being counted (#235)"
+        )
+
+    @requires_node
+    def test_a_dot_rooted_artifact_is_still_judged(self, tmp_path: Path) -> None:
+        """The root is exempt from the dot rule, on both sides.
+
+        glob's `dot: false` filters the matched path segments UNDER `cwd`,
+        never `cwd` itself — verified: an artifact pointing at `./.claude/`
+        embeds `file.md` and `sub/deep.md`. So the walk must visit a dot-named
+        target unconditionally and only skip dot ENTRIES, or a dot-rooted
+        artifact would be reported eternally fresh.
+        """
+        root = tmp_path / ".claude"
+        (root / "sub").mkdir(parents=True)
+        deep = root / "sub" / "deep.md"
+        deep.write_text("d\n")
+        _stamp(deep, EDITED_AFTER_INDEXING)
+        _stamp(root / "sub")
+        _stamp(root)
+        newest = self._newest(root)
+        assert newest == pytest.approx(self._ms(EDITED_AFTER_INDEXING), abs=10), (
+            f"a dot-named artifact root was skipped or its descendants ignored "
+            f"(got {newest}); glob exempts the cwd from `dot: false`, and the "
+            "walk must match (#235)"
+        )
+
+    @requires_node
+    def test_node_modules_and_git_are_still_pruned(self, tmp_path: Path) -> None:
+        """The other half of the parity claim: the server's explicit ignores.
+
+        `.git` is doubly excluded now (ignore list and dot rule); pinning it
+        keeps the pair honest if the dot rule is ever reworked.
+        """
+        tree = tmp_path / "tree"
+        (tree / "node_modules" / "pkg").mkdir(parents=True)
+        (tree / ".git").mkdir()
+        (tree / "a.md").write_text("a\n")
+        vendored = tree / "node_modules" / "pkg" / "index.js"
+        vendored.write_text("x\n")
+        gitfile = tree / ".git" / "index"
+        gitfile.write_text("x\n")
+        _stamp(tree / "a.md")
+        for churned in (vendored, gitfile):
+            _stamp(churned, EDITED_AFTER_INDEXING)
+        for directory in (tree / "node_modules" / "pkg", tree / "node_modules",
+                          tree / ".git", tree):
+            _stamp(directory)
+        newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            f"node_modules or .git moved the freshness clock (got {newest}); "
+            "the server ignores both (#235)"
+        )
+
+    def test_the_prune_site_names_the_server_walker(self) -> None:
+        """The list is a claim about `context-artifacts.js`, and must say so.
+
+        The next editor of either side needs to know the walk is not a local
+        style choice: it mirrors `dot: false` plus the ignore list in the
+        server's artifact walk, and drifting from it re-opens #235. A source
+        pin, not a behavior — the behavior is the five tests above.
+        """
+        source = DRIVER.read_text()
+        walk = source[source.index("function newestMtimeMs"):]
+        walk = walk[:walk.index("\nfunction ")]
+        assert "context-artifacts.js" in walk and "dot: false" in walk, (
+            "newestMtimeMs's prune list no longer says which server walker it "
+            "mirrors; without the pointer, the parity looks like a style "
+            "choice and drifts (#235)"
+        )
+
+
 class TestParsesTheIndexTimestamp:
     """The freshness half of the same reply #214 already reads."""
 

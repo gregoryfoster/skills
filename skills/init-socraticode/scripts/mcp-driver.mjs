@@ -470,7 +470,25 @@ function newestMtimeMs(target) {
       // replaces, which is the safe direction — a walk that gave up must not
       // manufacture a finding.
       if (budget-- <= 0) return;
+      // PARITY, not preference: this prune list mirrors the server's artifact
+      // walk — dist/services/context-artifacts.js (socraticode 1.12.0) globs
+      // `**/*` with `dot: false`, ignore ["**/node_modules/**", "**/.git/**"].
+      // Anything counted here that the server never embeds moves the
+      // freshness clock for content the artifact cannot contain: a
+      // `.pytest_cache/` rewritten by every test run reported a byte-identical
+      // artifact stale, with a named remedy that changes nothing (#235).
+      // `dot: false` excludes dot-named entries at every depth — files too
+      // (`.coverage`) — but NOT the artifact root: glob filters paths under
+      // cwd, never cwd itself, so a dot-rooted artifact still embeds its plain
+      // contents, and `visit(target, …)` below this closure stays unconditional
+      // to match. `__pycache__` is not a dotfile and is deliberately still
+      // counted — it really is embedded, and #229's measured case depends on
+      // that. Known residual: creating or deleting a dot entry still bumps its
+      // parent directory's own mtime, which stays counted because it is the
+      // only trace a deleted embedded file leaves. Pinned, both directions, in
+      // tests/structural/test_context_artifact_parity.py.
       if (e.name === 'node_modules' || e.name === '.git') continue;
+      if (e.name.startsWith('.')) continue;
       // Dirent flags come from lstat, so a symlink to a directory is a symlink
       // here and is never descended: no cycles, and no wandering out of the
       // artifact through a link into a tree nobody declared.

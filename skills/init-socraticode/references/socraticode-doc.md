@@ -7,8 +7,8 @@ The template for the detail doc the trimmed `AGENTS.md` policy block links to
 `curating-context` refuses to edit the policy section, so anything left in the
 block is a cost the repo can never curate away. The split puts the two or three
 rows an agent needs on nearly every task in `AGENTS.md`, and everything read
-once — the full tool table, the ~680-byte `select:` prefetch string, the
-per-tool notes — behind a link ([#115](https://github.com/gregoryfoster/skills/issues/115)).
+once — the full tool table, the pointer to the prefetch hook, the per-tool
+notes — behind a link ([#115](https://github.com/gregoryfoster/skills/issues/115)).
 
 **Destination.** `docs/SOCRATICODE.md` at the repo root. This is the first file
 `init-socraticode` writes under `docs/` — the skill's other outputs are
@@ -47,9 +47,15 @@ can answer from it — see [`context-artifacts.md`](context-artifacts.md).
 ## Template
 
 Adapt before writing: the `codebase_context` row must name this project's real
-non-code knowledge, and the prefetch string must list the tools this server
-build actually exposes (check `claude mcp list` / the session toolset if a tool
-name has drifted).
+non-code knowledge. The Prefetch section stays as written — it points at the
+vendored hook instead of transcribing its `select:` query, because the hook is
+a symlink ([#186](https://github.com/gregoryfoster/skills/issues/186)) and a
+transcription goes stale silently when upstream changes the query
+([#209](https://github.com/gregoryfoster/skills/issues/209) was that exact
+drift). Migration for a consumer that already transcribed: the next marker-pair
+re-run swaps the copy for the pointer — `CannObserv/archiver` made the swap and
+reclaimed 108 tokens of context budget
+([#234](https://github.com/gregoryfoster/skills/issues/234)).
 
 ````markdown
 <!-- BEGIN socraticode-doc -->
@@ -84,11 +90,16 @@ heading down there, not in `AGENTS.md`.
 
 The `codebase_*` MCP tools are **deferred**: their schemas are not in the
 session until a `ToolSearch` prefetch loads them, and calling one before that
-fails validation. The SessionStart hook
-(`.claude/hooks/socraticode-reminder.sh`) prints this each session; run it
-verbatim if it did not fire.
+fails validation. The SessionStart hook prints the `select:` query each
+session. If it did not fire, run the hook by hand and use the line it prints:
 
-`select:mcp__plugin_socraticode_socraticode__codebase_search,mcp__plugin_socraticode_socraticode__codebase_symbol,mcp__plugin_socraticode_socraticode__codebase_symbols,mcp__plugin_socraticode_socraticode__codebase_flow,mcp__plugin_socraticode_socraticode__codebase_impact,mcp__plugin_socraticode_socraticode__codebase_graph_query,mcp__plugin_socraticode_socraticode__codebase_graph_circular,mcp__plugin_socraticode_socraticode__codebase_graph_stats,mcp__plugin_socraticode_socraticode__codebase_graph_visualize,mcp__plugin_socraticode_socraticode__codebase_status,mcp__plugin_socraticode_socraticode__codebase_context,mcp__plugin_socraticode_socraticode__codebase_context_search`
+```bash
+bash .claude/hooks/socraticode-reminder.sh
+```
+
+The query is deliberately not copied here: the hook is a vendored symlink, so
+upstream can change which tools it selects, and a copy in this file goes stale
+silently — the hook's output cannot drift from itself.
 
 ## Per-tool notes
 
@@ -180,9 +191,11 @@ carries it, that becomes the signal to read — until then, measure.
 ## Index scope
 
 `.socraticodeignore` (repo root, gitignore syntax, layered on the built-in
-defaults and `.gitignore`) controls what gets embedded. Editing it affects
-**subsequent** scans only — re-index to apply it. Vendored trees dominate the
-index if left in, and vendored prose outranks first-party code in
+defaults and `.gitignore`) controls what gets embedded **by the code index.
+Directory context artifacts are walked separately and honour none of it —
+scope each artifact path to the subtree you actually want embedded.** Editing
+it affects **subsequent** scans only — re-index to apply it. Vendored trees
+dominate the index if left in, and vendored prose outranks first-party code in
 `codebase_search` results.
 <!-- END socraticode-doc -->
 ````
