@@ -452,12 +452,30 @@ class TestDoctorHealsHookSymlinks:
         assert ".claude/hooks/context-budget-guard.sh" in result.stderr, result.stderr
 
     def test_resolving_hook_symlink_is_silent(self, tmp_path: Path):
+        """The fixture registers the hook because #231 made `--check-only`
+        gate on an installed-but-unregistered one. Before that, this fixture
+        was accidentally the #167 half-install — resolving symlink, no
+        registration — and passed only because the gap was advisory
+        everywhere. A registered guard hook is the state this test always
+        meant: healthy wiring is silent and exits 0."""
         repo = self._repo_with_hooks(tmp_path)
         target = repo / "real-hook.sh"
         target.write_text("#!/usr/bin/env bash\n")
         (repo / ".claude" / "hooks" / "context-budget-guard.sh").symlink_to(
             "../../real-hook.sh"
         )
+        (repo / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {
+                "PostToolUse": [{
+                    "matcher": "Edit|Write|MultiEdit",
+                    "hooks": [{
+                        "type": "command",
+                        "command": 'bash "$CLAUDE_PROJECT_DIR"/.claude/hooks'
+                                   "/context-budget-guard.sh",
+                    }],
+                }]
+            }
+        }))
 
         result = self._doctor(repo, "--check-only")
         assert result.returncode == 0, result.stdout + result.stderr

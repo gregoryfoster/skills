@@ -43,10 +43,12 @@ What this file pins, and why each one is a mechanism rather than a spelling:
   under some other event. The existing check earned its `[ -L ]` guard for this
   reason: nagging the group that is fine trains everyone to ignore the group
   that is not.
-- **The exit code stays advisory.** Phase 1 preflights invoke the doctor with
-  `|| exit 1`. Whether a wiring gap SHOULD gate a review is a separate call
-  from whether it is detected; this pins today's answer so a change to it is
-  deliberate.
+- **The exit code stays advisory — in the DEFAULT mode.** Phase 1 preflights
+  invoke the doctor with `|| exit 1`, and a wiring gap is a defect in the
+  repo's tooling wiring, not in the diff under review. #231 split the audience
+  rather than the severity: `--check-only`, the mode a deliberate CI health
+  probe reaches for, exits non-zero for the same state, while the default
+  invocation keeps warn-and-exit-0 so no review preflight is touched.
 
 Keep this list current — it is the file's index.
 """
@@ -183,9 +185,9 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _doctor(repo: Path) -> subprocess.CompletedProcess:
+def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(DOCTOR), "--no-preflight"],
+        ["bash", str(DOCTOR), "--no-preflight", *args],
         cwd=str(repo), capture_output=True, text=True,
         env=_clean_env(), timeout=120,
     )
@@ -282,8 +284,62 @@ class TestEveryInstalledHookIsChecked:
         """Three hooks unregistered and the doctor still exits 0. Phase 1
         preflights gate on this with `|| exit 1`, and #224 scoped itself to
         detection; making a wiring gap fail a review is a separate call with a
-        separate blast radius across every consumer's review gate."""
+        separate blast radius across every consumer's review gate. #231 made
+        that call for `--check-only` ONLY — see
+        TestCheckOnlyGatesOnTheWiringGap — which is exactly why this pin on the
+        default invocation must stay green."""
         assert _doctor(consumer).returncode == 0
+
+
+class TestCheckOnlyGatesOnTheWiringGap:
+    """#231 — the state was detected (#224) and still ungated. Nine
+    reviewing-*/shipping-* skills run the default invocation as a Phase 1
+    preflight, so its exit code cannot change without hard-blocking every
+    review in every affected consumer over a defect that is not in the diff
+    under review. The audience is split rather than the severity:
+    `--check-only` — already the mode a deliberate CI health probe reaches
+    for, since it skips the self-re-sync and stays safe against a
+    clean-working-tree assertion — exits non-zero for the unregistered-hook
+    state, and the default invocation keeps warn-and-exit-0."""
+
+    def test_check_only_exits_nonzero_when_a_hook_is_unregistered(
+        self, consumer: Path
+    ):
+        result = _doctor(consumer, "--check-only")
+        assert result.returncode == 1, (
+            f"--check-only exited {result.returncode} with three unregistered "
+            "hooks — a CI probe branching on this code reads the #167 "
+            f"half-install as healthy.\n{result.stderr}"
+        )
+        assert "does not register it" in result.stderr, (
+            "the gate must not replace the diagnosis: the warning that names "
+            f"the hook and its repair still has to print.\n{result.stderr}"
+        )
+
+    def test_check_only_exits_zero_once_every_hook_is_registered(
+        self, consumer: Path
+    ):
+        """The gate clears when the wiring does — otherwise it is a tax on
+        healthy consumers, not a probe."""
+        installer = (consumer / VENDOR_REL / "managing-skills" / "scripts"
+                     / "install-hook.sh")
+        for hook, skill, _ in HOOKS:
+            installed = subprocess.run(
+                ["bash", str(installer), *_manifest_args(hook, skill)],
+                cwd=str(consumer), capture_output=True, text=True,
+                env=_clean_env(), timeout=60,
+            )
+            assert installed.returncode == 0, installed.stderr
+        result = _doctor(consumer, "--check-only")
+        assert result.returncode == 0, result.stderr
+
+    def test_the_two_modes_diverge_on_the_same_repo(self, consumer: Path):
+        """The whole #231 decision in one assertion pair: same repo, same
+        wiring gap, advisory by default and gating under --check-only. If the
+        default ever starts failing here, that is the #140 absent-vs-unusable
+        hard-block across nine skills' preflights, not a bonus strictness."""
+        assert _doctor(consumer).returncode == 0
+        assert _doctor(consumer, "--check-only").returncode != 0
 
 
 class TestTheRepairLineComesFromTheManifest:
