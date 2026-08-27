@@ -186,22 +186,32 @@ class TestEveryStagedPathIsProtected:
         missing = self._staged(rendered) - declared
         assert not missing, f"staged but unprotected: {sorted(missing)}\n{attrs}"
 
-    def test_calibration_uses_ours_not_union(self, tmp_path: Path):
-        """Union-merging these produces two lines for one path with different
-        counts, and the estimators read whichever they hit first — worse than a
-        conflict, because nothing reports it."""
+    def test_calibration_merges_are_split_by_file_shape(self, tmp_path: Path):
+        """Union-merging either calibration file produces two values for one
+        key, and the estimators read whichever they hit first — worse than a
+        conflict, because nothing reports it. Beyond that the two files part
+        ways (#237): the counts file is keyed rows, so it merges per row
+        through the newest-wins driver; the ratio is a single scalar with
+        nothing to key on, so it stays regenerate-on-collision."""
         repo = _repo(tmp_path)
         _run(repo)
         attrs = (repo / ".gitattributes").read_text()
         assert f"{RATIO} merge=ours" in attrs
-        assert f"{COUNTS} merge=ours" in attrs
+        assert f"{COUNTS} merge=context-counts" in attrs
+        assert f"{COUNTS} merge=ours" not in attrs, (
+            "the pre-#237 counts attribute is back, which silently reverts "
+            "the cadence's fresh measurements on every branch merge:\n" + attrs
+        )
         assert f"{LEDGER} merge=union" in attrs
 
-    def test_the_ours_driver_is_defined_in_the_workflow(self, rendered: dict):
-        """`ours` is the one built-in git does NOT define. Without this the
-        attribute is inert and the files conflict exactly as before."""
+    def test_both_drivers_are_defined_in_the_workflow(self, rendered: dict):
+        """Neither driver is a git built-in. Without these lines the
+        attributes are inert on the runner and the rebase-retry path
+        conflicts exactly as before (#173, #237)."""
         commit = dict(_run_blocks(rendered))["Commit the row"]
         assert "git config merge.ours.driver true" in commit
+        assert "merge.context-counts.driver" in commit
+        assert "merge-token-counts.sh" in commit
 
 
 class TestCheckAndRepair:
@@ -227,7 +237,7 @@ class TestCheckAndRepair:
         attrs = (repo / ".gitattributes").read_text()
         assert attrs.count(f"{LEDGER} merge=union") == 1, attrs
         assert attrs.count(f"{RATIO} merge=ours") == 1, attrs
-        assert attrs.count(f"{COUNTS} merge=ours") == 1, attrs
+        assert attrs.count(f"{COUNTS} merge=context-counts") == 1, attrs
         assert _run(repo, "--check").returncode == 0
 
     def test_a_partial_calibration_repair_does_not_duplicate_the_heading(
@@ -246,7 +256,8 @@ class TestCheckAndRepair:
         _run(repo)
         final = (repo / ".gitattributes").read_text()
         assert final.count("Calibration is regenerated") == 1, final
-        assert final.count(f"{COUNTS} merge=ours") == 1, final
+        assert final.count("merges per row") == 1, final
+        assert final.count(f"{COUNTS} merge=context-counts") == 1, final
         assert _run(repo, "--check").returncode == 0
 
     def test_uninstall_removes_all_three(self, tmp_path: Path):

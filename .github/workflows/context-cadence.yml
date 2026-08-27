@@ -105,12 +105,14 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # `ours` is the one built-in merge driver git does NOT define for you:
-          # the .gitattributes entry alone is inert, and the calibration files
-          # would conflict exactly as if it were absent. `true` is the whole
-          # driver — it succeeds without writing, which leaves the branch's copy
-          # in place, and the next --exact run recomputes both (#173).
+          # Neither merge driver is a git built-in and the runner is a fresh
+          # clone, so without these two lines the .gitattributes entries are
+          # inert and the calibration files conflict as if unprotected (#192).
+          # `true` keeps the branch's ratio; the next --exact recomputes (#173).
           git config merge.ours.driver true
+          # The counts file merges per row (#237): a collision keeps, per path,
+          # the row whose bytes match the file in the tree.
+          git config merge.context-counts.driver "bash \"$SKILL_SCRIPTS/merge-token-counts.sh\" %O %A %B %P"
           # Staged separately, and the row is NOT tolerant of failure. One
           # `git add` over both paths stages NOTHING when either is missing —
           # it exits 128 on the unmatched pathspec — so `|| true` turned a
@@ -163,7 +165,7 @@ jobs:
               echo "::error::every staged path carries a merge attribute:"
               echo "::error::  \`.skills/context-metrics.jsonl merge=union\`"
               echo "::error::  \`.skills/context-token-ratio merge=ours\`"
-              echo "::error::  \`.skills/context-token-counts merge=ours\`"
+              echo "::error::  \`.skills/context-token-counts merge=context-counts\`"
               exit 1
             }
           done

@@ -9,10 +9,11 @@
 # this renders with its annotations: references/cadence.md (#118).
 #
 # Idempotent: a re-run rewrites the workflow in place and reports whether
-# anything changed. It never commits — but it does set ONE repo-local git config
-# value, `merge.ours.driver`, because that is the only place the value can live:
-# `ours` is the merge driver git does not define for you, config is not
-# versioned, and an attribute without it is inert (#192).
+# anything changed. It never commits — but it does set TWO repo-local git
+# config values, `merge.ours.driver` and `merge.context-counts.driver`,
+# because config is the only place a merge driver can live: neither is a git
+# built-in, config is not versioned, and an attribute naming an undefined
+# driver is inert (#192, #237).
 set -euo pipefail
 
 usage() {
@@ -33,19 +34,21 @@ Options:
                    the workflow's `git add`, and its error message — because a
                    cadence that measures correctly and stages the wrong path
                    records nothing.
-  --check          Report what is installed; change nothing. Four guarantees
-                   are reported independently — the workflow, the ledger's union
-                   merge, the calibration files' regenerate-on-collision merge,
-                   and the `ours` driver that merge needs to exist at all —
-                   because each is its own way to lose a row, and one combined
-                   "ok" would have read green through all of #173 and #192.
+  --check          Report what is installed; change nothing. Six guarantees
+                   are reported independently — the workflow, the driver setup
+                   inside it, the ledger's union merge, the calibration files'
+                   merge attributes, the `ours` driver the ratio attribute
+                   needs to exist at all, and the newest-wins driver behind the
+                   counts attribute — because each is its own way to lose a
+                   row, and one combined "ok" would have read green through
+                   all of #173, #192 and #237.
                    Exit 0 all present, 3 any missing.
-  --uninstall      Remove the workflow file AND the union-merge attribute it
+  --uninstall      Remove the workflow file AND every merge attribute it
                    installed, leaving .gitattributes as it found it (the file
                    itself goes only if nothing else was in it). The recorded
-                   rows stay — they are the series, and so does
-                   `merge.ours.driver`: it is generic, and other merge=ours
-                   rules may depend on it.
+                   rows stay — they are the series — and so do both merge
+                   drivers: a defined driver with no attribute pointing at it
+                   never runs, and other merge rules may depend on them.
   --print          Write the rendered workflow to stdout and exit; touch
                    nothing. Still needs to be inside a git repo: the default
                    schedule is derived from the repo identity.
@@ -59,11 +62,16 @@ What it does:
   It must be committed BEFORE the first concurrent run — git resolves using the
   attributes in the tree being replayed onto.
 
-  Sets `merge.ours.driver true` in this clone's git config. The two calibration
-  files carry `merge=ours`, and `ours` is the one merge driver git does NOT
-  define for you, so the attribute alone is inert. Config is not versioned, so
-  this is per clone and does not travel with the commit — run this (or the
-  one-liner) once in every checkout, and use --check to confirm.
+  Sets two merge drivers in this clone's git config. The ratio file carries
+  `merge=ours` (`merge.ours.driver true` — regenerate on collision, never
+  reconcile), and the counts file carries `merge=context-counts`
+  (`merge.context-counts.driver` running merge-token-counts.sh — per row,
+  newest wins: on a collision each path keeps the row whose bytes match the
+  file in the tree, so the cadence's fresh measurement survives whichever
+  side of the merge it lands on, #237). Neither driver is a git built-in, so
+  the attributes alone are inert. Config is not versioned, so this is per
+  clone and does not travel with the commit — run this (or the two config
+  one-liners) once in every checkout, and use --check to confirm.
 
   Renders .github/workflows/context-cadence.yml, which weekly:
     1. checks out with submodules (the skill is reached through a symlink into
@@ -91,7 +99,7 @@ Exit codes:
   1  usage error, or not in a git repo
   2  could not rewrite .gitattributes — nothing was changed
   3  --check only: a workflow, merge attribute or merge driver is missing
-  4  could not set merge.ours.driver — the calibration attributes are inert
+  4  could not set a merge driver — its calibration attribute is inert
 USAGE
 }
 
@@ -164,60 +172,97 @@ ATTR_LINE="$LEDGER merge=union"
 # stages all THREE paths, so protecting only the ledger left the other two to
 # conflict on exactly the race the ledger was protected against (#173).
 #
-# merge=ours, not merge=union. Union-merging these produces two lines for the
-# same path with different counts, and the estimators would silently read
-# whichever they hit first — worse than a conflict, because nothing reports it.
+# Union is the wrong answer for both: it produces two values for one key, and
+# the estimators would silently read whichever they hit first — worse than a
+# conflict, because nothing reports it. Beyond that the two files part ways:
 #
-# They are pure functions of the tree at measurement time, so the right answer
-# on a collision is always "recompute", never "reconcile". `ours` during a
-# rebase keeps whatever is already on the branch and drops the replayed
-# version; the next --exact run recomputes both from scratch. A week of stale
-# calibration is self-correcting. A lost row is not — it is a hole in the
-# series this whole mechanism exists to accumulate.
+# The RATIO is one repo-wide scalar, a pure function of the tree at
+# measurement time with nothing for a per-row merge to key on, so on a
+# collision the right answer is always "recompute", never "reconcile" —
+# merge=ours keeps whatever is already on the branch and the next --exact run
+# recomputes it. A week of stale ratio is self-correcting and shallow: it only
+# prices files never counted exactly.
+#
+# The COUNTS file is keyed rows (<bytes> <tokens> <path>), and merge=ours was
+# the wrong shape there (#237): `ours` keeps the side of whoever RUNS the
+# merge, which is unrelated to which side measured more recently, and the
+# cadence bot only ever pushes to the default branch — so it was structurally
+# always the side that lost, and its fresh measurement was silently reverted.
+# The context-counts driver merges per row instead: one-sided edits merge
+# three-way, and a genuine collision keeps the row whose bytes match the file
+# in the tree.
 RATIO_PATH=".skills/context-token-ratio"
 COUNTS_PATH=".skills/context-token-counts"
 ATTR_RATIO="$RATIO_PATH merge=ours"
-ATTR_COUNTS="$COUNTS_PATH merge=ours"
+COUNTS_DRIVER_NAME="context-counts"
+ATTR_COUNTS="$COUNTS_PATH merge=$COUNTS_DRIVER_NAME"
+# What pre-#237 installs carry; ensure_attr migrates it and --check names it.
+ATTR_COUNTS_STALE="$COUNTS_PATH merge=ours"
 
-# The attribute above names a driver; this is the driver. `union` and `binary`
-# are built in, `ours` is NOT — a `merge=ours` entry with no `merge.ours.driver`
-# in config makes git fall back to the 3-way merge and conflict exactly as if
-# the attribute were absent, markers and all. #173 set this correctly but INSIDE
-# the workflow job, on a throwaway runner; git config is not versioned, so every
-# developer clone was unprotected while --check reported the guarantee as
-# satisfied off the .gitattributes grep alone (#192).
+# The attributes above name drivers; these are the drivers. `union` and
+# `binary` are built in, `ours` and `context-counts` are NOT — an entry naming
+# a driver with no definition in config makes git fall back to the 3-way merge
+# and conflict exactly as if the attribute were absent, markers and all. #173
+# set the ours driver correctly but INSIDE the workflow job, on a throwaway
+# runner; git config is not versioned, so every developer clone was
+# unprotected while --check reported the guarantee as satisfied off the
+# .gitattributes grep alone (#192).
 #
-# Two independent things, so two independent reports and two independent
-# repairs: the attribute lives in the tree and travels with a clone, the driver
-# lives in config and never does.
+# Independent things, so independent reports and independent repairs: the
+# attributes live in the tree and travel with a clone, the drivers live in
+# config and never do.
 #
-# `true` is the whole driver. It succeeds without writing, which leaves the
-# copy already on the branch in place and drops the replayed one — exactly the
-# regenerate-on-collision semantics these files want.
+# `true` is the whole ours driver. It succeeds without writing, which leaves
+# the copy already on the branch in place and drops the replayed one — exactly
+# the regenerate-on-collision semantics the ratio wants.
 DRIVER_KEY="merge.ours.driver"
 DRIVER_VALUE="true"
 DRIVER_FIX="git config $DRIVER_KEY $DRIVER_VALUE"
+
+# The newest-wins driver is a script, resolved relative to this installer so
+# it lands wherever the vendored skill's scripts/ sits in the consumer repo.
+# Stored repo-relative when it is inside the repo — git runs merge drivers
+# from the top of the working tree, and a relative path survives the checkout
+# moving — absolute otherwise (a test fixture pointing at the source tree).
+MERGE_SCRIPT_NAME="merge-token-counts.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MERGE_SCRIPT="$SCRIPT_DIR/$MERGE_SCRIPT_NAME"
+case "$MERGE_SCRIPT" in
+  "$ROOT"/*) MERGE_SCRIPT_CFG="${MERGE_SCRIPT#"$ROOT"/}" ;;
+  *)         MERGE_SCRIPT_CFG="$MERGE_SCRIPT" ;;
+esac
+COUNTS_DRIVER_KEY="merge.$COUNTS_DRIVER_NAME.driver"
+COUNTS_DRIVER_VALUE="bash '$MERGE_SCRIPT_CFG' %O %A %B %P"
+COUNTS_DRIVER_FIX="git config $COUNTS_DRIVER_KEY \"$COUNTS_DRIVER_VALUE\""
 
 ATTR_NOTE_1="# Append-only telemetry: concurrent appends must union-merge, or a"
 ATTR_NOTE_2="# scheduled measurement racing a human commit conflicts and is lost."
 ATTR_NOTE_3="# Calibration is regenerated, never reconciled: on a collision keep"
 ATTR_NOTE_4="# the branch's copy and let the next --exact run recompute it."
+ATTR_NOTE_5="# The per-file calibration merges per row (#237): on a collision each"
+ATTR_NOTE_6="# path keeps the row whose bytes match the file in the tree."
 
 # strip_attr's failure path removes this itself; the trap covers the signal case
 # it cannot, so a killed run never strands a temp file beside .gitattributes for
 # `git add -A` to collect (CR finding 16).
 trap 'rm -f "$ATTR_FILE.tmp"' EXIT
 
-# Remove OUR block for a given ledger: the attribute line and the two comment
-# lines that introduce it. Factored rather than inlined twice — a superseded
-# ledger and an uninstall want the same operation, and hand-rolling this awk a
-# second time is the duplication the last three rounds kept finding.
-strip_attr() {
+# Every comment line this installer has ever written, newline-joined so the
+# strip below matches all generations of the block in one pass.
+ATTR_NOTES_ALL="$ATTR_NOTE_1
+$ATTR_NOTE_2
+$ATTR_NOTE_3
+$ATTR_NOTE_4
+$ATTR_NOTE_5
+$ATTR_NOTE_6"
+
+# Remove only the attribute LINE for a given prefix, comments untouched. The
+# migration path needs exactly this: swapping the counts attribute must not
+# take the heading that still introduces the ratio line beside it (#237).
+strip_line() {
   [ -f "$ATTR_FILE" ] || return 0
-  awk -v want="$1" -v n1="$ATTR_NOTE_1" -v n2="$ATTR_NOTE_2" \
-      -v n3="$ATTR_NOTE_3" -v n4="$ATTR_NOTE_4" '
+  awk -v want="$1" '
     { line = $0; sub(/^[ \t]+/, "", line) }
-    line == n1 || line == n2 || line == n3 || line == n4 { next }
     line !~ /^#/ && index(line, want) == 1 { next }
     { print }
   ' "$ATTR_FILE" >"$ATTR_FILE.tmp" || {
@@ -231,6 +276,30 @@ strip_attr() {
     echo "ERROR could not rewrite .gitattributes — nothing was changed" >&2
     exit 2; }
   mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+}
+
+# Remove OUR block for a given attribute: the line itself plus every comment
+# line this installer writes. Factored rather than inlined twice — a
+# superseded ledger and an uninstall want the same operation, and hand-rolling
+# this awk a second time is the duplication the last three rounds kept finding.
+strip_attr() {
+  [ -f "$ATTR_FILE" ] || return 0
+  # Through the environment, not -v: BSD awk rejects a -v value containing a
+  # literal newline ("newline in string"), and the note list is one per line.
+  ATTR_NOTES_ALL="$ATTR_NOTES_ALL" awk '
+    BEGIN {
+      n = split(ENVIRON["ATTR_NOTES_ALL"], N, "\n")
+      for (i = 1; i <= n; i++) drop[N[i]] = 1
+    }
+    { line = $0; sub(/^[ \t]+/, "", line) }
+    line in drop { next }
+    { print }
+  ' "$ATTR_FILE" >"$ATTR_FILE.tmp" || {
+    rm -f "$ATTR_FILE.tmp"
+    echo "ERROR could not rewrite .gitattributes — nothing was changed" >&2
+    exit 2; }
+  mv -f "$ATTR_FILE.tmp" "$ATTR_FILE"
+  strip_line "$1"
   # If nothing but blank lines is left, the file was ours to begin with.
   if [ ! -s "$ATTR_FILE" ] || ! grep -q '[^[:space:]]' "$ATTR_FILE"; then
     rm -f "$ATTR_FILE"
@@ -269,15 +338,34 @@ git_config() {
   env -u GIT_DIR -u GIT_WORK_TREE git -C "$ROOT" config "$@"
 }
 
-# Whatever `ours` currently resolves to in this repo, empty if nothing does.
+# Whatever the named driver currently resolves to in this repo, empty if
+# nothing does.
 #
 # `--get` searches system, global and local, and any of the three protects the
-# repo — a cohort that sets the driver in ~/.gitconfig is correct, and telling
+# repo — a cohort that sets a driver in ~/.gitconfig is correct, and telling
 # it to re-run would be a false alarm to match the false assurance #192 is
 # about. Empty is treated as missing: `git config merge.ours.driver ""` exits 0
 # and defines a key with no command, which git then fails the merge on.
 driver_value() {
-  git_config --get "$DRIVER_KEY" 2>/dev/null || true
+  git_config --get "$1" 2>/dev/null || true
+}
+
+# The script the configured newest-wins command names, resolved the way git
+# will resolve it: relative paths against the worktree top. Empty when the
+# value does not carry a recognisable quoted path — a deliberately customised
+# driver is not this script's to second-guess.
+counts_driver_script() {
+  local value="$1" path
+  case "$value" in
+    *"'"*"'"*) ;;
+    *) return 0 ;;
+  esac
+  path="${value#*\'}"
+  path="${path%%\'*}"
+  case "$path" in
+    /*) printf '%s' "$path" ;;
+    ?*) printf '%s' "$ROOT/$path" ;;
+  esac
 }
 
 # Every path the rendered workflow stages, paired with the attribute that keeps
@@ -308,6 +396,19 @@ if [ "$MODE" = "check" ]; then
   if [ -f "$WF" ]; then
     echo "workflow:           $WF_PATH"
     sed -n 's/^ *- cron: *\(.*\)$/  schedule:         \1/p' "$WF"
+    # The workflow is the THIRD place the drivers must exist — the runner is
+    # a fresh clone, so nothing set here or in any developer checkout reaches
+    # it. A workflow rendered before #237 rebases without the newest-wins
+    # driver and conflicts on the counts file.
+    if grep -qF "$COUNTS_DRIVER_KEY" "$WF"; then
+      echo "workflow drivers:   yes (defined inside the commit step)"
+    else
+      echo "workflow drivers:   STALE — the installed workflow predates the"
+      echo "                    per-row counts merge (#237); its rebase would"
+      echo "                    conflict on $COUNTS_PATH."
+      echo "                    Re-run install-cadence.sh to re-render it."
+      rc=3
+    fi
   else
     echo "workflow:           MISSING ($WF_PATH)"
     rc=3
@@ -323,12 +424,17 @@ if [ "$MODE" = "check" ]; then
   # stages three paths and each is a separate way to lose the row; a single
   # "attributes: ok" would have read green through the whole of #173.
   if has_attr "$ATTR_RATIO" && has_attr "$ATTR_COUNTS"; then
-    echo "calibration merge:  yes (regenerate-on-collision for both)"
+    echo "calibration merge:  yes (ratio regenerates, counts merge per row)"
   else
     echo "calibration merge:  MISSING — the workflow also stages"
     echo "                    $RATIO_PATH and $COUNTS_PATH,"
     echo "                    which conflict on the same race the ledger is"
     echo "                    protected against. Re-run install-cadence.sh."
+    if has_attr "$ATTR_COUNTS_STALE"; then
+      echo "                    ($COUNTS_PATH still carries the pre-#237"
+      echo "                    \`merge=ours\` line, which silently reverts the"
+      echo "                    cadence's measurements; re-running migrates it.)"
+    fi
     rc=3
   fi
   # The mechanism behind the attribute above, checked separately BECAUSE it is
@@ -337,14 +443,14 @@ if [ "$MODE" = "check" ]; then
   # installed repo has one and not the other — and reporting them together is
   # what told the second cadence pilot the collision case was handled when it
   # was not (#192).
-  driver="$(driver_value)"
+  driver="$(driver_value "$DRIVER_KEY")"
   if [ -n "$driver" ]; then
     echo "ours merge driver:  yes ($DRIVER_KEY=$driver)"
   else
-    echo "ours merge driver:  MISSING — \`ours\` is the one merge driver git"
-    echo "                    does not define for you, so the two calibration"
-    echo "                    attributes above are inert and conflict as if"
-    echo "                    absent. Config is not versioned: fix per clone."
+    echo "ours merge driver:  MISSING — \`ours\` is not a driver git defines"
+    echo "                    for you, so the ratio attribute above is inert"
+    echo "                    and conflicts as if absent. Config is not"
+    echo "                    versioned: fix per clone."
     # Don't send a worktree run at the installer — ensure_driver refuses there
     # by design, so "re-run install-cadence.sh" would be a loop (#199 CR round
     # 2, finding 11). Name the checkout that can actually take the write.
@@ -358,6 +464,39 @@ if [ "$MODE" = "check" ]; then
     echo "                      $DRIVER_FIX"
     rc=3
   fi
+  # The counts driver, on its own line for the same reason: it is a separate
+  # key protecting a separate file, and it has one failure mode the ours
+  # driver cannot have — a defined command whose script is not there (a
+  # vendored skill behind an uninitialised submodule), which git treats
+  # exactly like no driver at all.
+  counts_driver="$(driver_value "$COUNTS_DRIVER_KEY")"
+  if [ -z "$counts_driver" ]; then
+    echo "newest-wins driver: MISSING — the counts attribute above names the"
+    echo "                    \`$COUNTS_DRIVER_NAME\` driver, which git does not"
+    echo "                    define, so it is inert and conflicts as if"
+    echo "                    absent. Config is not versioned: fix per clone."
+    if [ -f "$ROOT/.git" ]; then
+      echo "                    Set it in the MAIN checkout, not this worktree:"
+    else
+      echo "                    Here, or by re-running install-cadence.sh:"
+    fi
+    echo "                      $COUNTS_DRIVER_FIX"
+    rc=3
+  else
+    counts_script="$(counts_driver_script "$counts_driver")"
+    if [ -n "$counts_script" ] && [ ! -f "$counts_script" ]; then
+      echo "newest-wins driver: BROKEN — $COUNTS_DRIVER_KEY is set, but the"
+      echo "                    script it names does not exist:"
+      echo "                      $counts_script"
+      echo "                    (dangling vendored symlink? run \`git submodule"
+      echo "                    update --init --recursive\`, or point the driver"
+      echo "                    at the real script:)"
+      echo "                      $COUNTS_DRIVER_FIX"
+      rc=3
+    else
+      echo "newest-wins driver: yes ($COUNTS_DRIVER_KEY=$counts_driver)"
+    fi
+  fi
   exit "$rc"
 fi
 
@@ -368,9 +507,9 @@ if [ "$MODE" = "uninstall" ]; then
   else
     echo "nothing to remove: no $WF_PATH"
   fi
-  # Every attribute this installer wrote, not just the ledger's — an uninstall
-  # that leaves two of the three behind is the same half-state --check exists
-  # to catch.
+  # Every attribute this installer EVER wrote, not just the current set — an
+  # uninstall that leaves the pre-#237 counts line behind is the same
+  # half-state --check exists to catch.
   while IFS= read -r attr; do
     if has_attr "$attr"; then
       strip_attr "$attr"
@@ -378,16 +517,23 @@ if [ "$MODE" = "uninstall" ]; then
     fi
   done <<EOF
 $ATTR_ALL
+$ATTR_COUNTS_STALE
 EOF
-  # The attributes come out; the driver deliberately does not. It is repo-wide
-  # and generic — any other `merge=ours` rule in the repo depends on it, and
-  # unsetting it here would break attributes this script never wrote. With
-  # nothing pointing at it, a defined driver simply never runs. Said out loud
-  # rather than left silent: the installer changed config, so the uninstall has
-  # to account for it either way.
-  if [ -n "$(driver_value)" ]; then
+  # The attributes come out; the drivers deliberately do not. `ours` is
+  # generic — any other `merge=ours` rule in the repo depends on it, and
+  # unsetting it here would break attributes this script never wrote. The
+  # newest-wins driver is this skill's own, but with nothing pointing at it a
+  # defined driver simply never runs, and unsetting config is one more
+  # worktree-shaped write (#189) this script has no need to make. Said out
+  # loud rather than left silent: the installer changed config, so the
+  # uninstall has to account for it either way.
+  if [ -n "$(driver_value "$DRIVER_KEY")" ]; then
     echo "note: left $DRIVER_KEY set — it is generic, and other merge=ours"
     echo "      rules in this repo may depend on it. Unset it by hand if not."
+  fi
+  if [ -n "$(driver_value "$COUNTS_DRIVER_KEY")" ]; then
+    echo "note: left $COUNTS_DRIVER_KEY set — with no attribute naming it, a"
+    echo "      defined driver never runs. Unset it by hand if you want it gone."
   fi
   echo "note: the recorded rows were left in place — they are the series."
   exit 0
@@ -426,6 +572,22 @@ fi
 # run — git resolves the merge using the attributes in the tree being replayed
 # onto, so an attribute added after the fact does not rescue the conflict that
 # motivated it.
+
+# One attribute plus the two comment lines that introduce it, appended only
+# when absent. The heading is guarded on its own first line rather than on the
+# attribute: emitting it whenever the attribute was missing left a second copy
+# above a lone repaired line, on exactly the partial-repair path this exists
+# for (CR finding 4).
+append_attr() {
+  local attr="$1" note_a="$2" note_b="$3"
+  has_attr "$attr" && return 0
+  if [ ! -f "$ATTR_FILE" ] || ! grep -qF "$note_a" "$ATTR_FILE"; then
+    printf '\n%s\n%s\n' "$note_a" "$note_b" >>"$ATTR_FILE"
+  fi
+  printf '%s\n' "$attr" >>"$ATTR_FILE"
+  echo "wrote .gitattributes: $attr"
+}
+
 ensure_attr() {
   # A deliberate ledger change supersedes the old attribute. Leaving it makes
   # .gitattributes accumulate one dead line per reconfiguration and makes
@@ -437,6 +599,15 @@ ensure_attr() {
       echo "removed superseded .gitattributes line: $stale"
     fi
   fi
+  # The pre-#237 counts attribute is superseded the same way — merge=ours on a
+  # keyed-row file silently reverts the cadence's fresh measurements. Only the
+  # LINE comes out: the heading beside it still introduces the ratio entry.
+  # That population is every repo installed between #173 and #237, including
+  # the ones whose --check read green.
+  if has_attr "$ATTR_COUNTS_STALE"; then
+    strip_line "$ATTR_COUNTS_STALE"
+    echo "removed superseded .gitattributes line: $ATTR_COUNTS_STALE (#237)"
+  fi
   if has_all_attrs; then
     echo "unchanged: .gitattributes already protects all three staged paths"
     return 0
@@ -446,28 +617,13 @@ ensure_attr() {
   if [ -s "$ATTR_FILE" ] && [ "$(tail -c 1 "$ATTR_FILE" | wc -l)" -eq 0 ]; then
     printf '\n' >>"$ATTR_FILE"
   fi
-  # Each line appended only if absent, so a repo that installed before the
-  # calibration attributes existed (#173) gains exactly the two it is missing
-  # rather than a duplicated ledger line beside them. That population is every
-  # repo the cohort adopted between #145 and this fix.
-  if ! has_attr "$ATTR_LINE"; then
-    printf '\n%s\n%s\n%s\n' "$ATTR_NOTE_1" "$ATTR_NOTE_2" "$ATTR_LINE" >>"$ATTR_FILE"
-    echo "wrote .gitattributes: $ATTR_LINE"
-  fi
-  # The heading goes in only when NEITHER line is present. Emitting it whenever
-  # either was missing left a second copy of it above a lone repaired line, on
-  # exactly the partial-repair path this branch exists for (CR finding 4).
-  if ! has_attr "$ATTR_RATIO" && ! has_attr "$ATTR_COUNTS"; then
-    printf '\n%s\n%s\n' "$ATTR_NOTE_3" "$ATTR_NOTE_4" >>"$ATTR_FILE"
-  fi
-  if ! has_attr "$ATTR_RATIO" || ! has_attr "$ATTR_COUNTS"; then
-    for attr in "$ATTR_RATIO" "$ATTR_COUNTS"; do
-      if ! has_attr "$attr"; then
-        printf '%s\n' "$attr" >>"$ATTR_FILE"
-        echo "wrote .gitattributes: $attr"
-      fi
-    done
-  fi
+  # Each block appended only if absent, so a repo that installed before the
+  # calibration attributes existed (#173) — or before the counts file left
+  # merge=ours (#237) — gains exactly what it is missing rather than a
+  # duplicated ledger line beside it.
+  append_attr "$ATTR_LINE"   "$ATTR_NOTE_1" "$ATTR_NOTE_2"
+  append_attr "$ATTR_RATIO"  "$ATTR_NOTE_3" "$ATTR_NOTE_4"
+  append_attr "$ATTR_COUNTS" "$ATTR_NOTE_5" "$ATTR_NOTE_6"
 }
 
 # The second half of the calibration guarantee, and the half that cannot be
@@ -487,10 +643,11 @@ ensure_attr() {
 DRIVER_STATE="unset"
 
 ensure_driver() {
-  local current
-  current="$(driver_value)"
-  if [ -n "$current" ]; then
-    echo "unchanged: $DRIVER_KEY is already set ($current)"
+  local ours counts
+  ours="$(driver_value "$DRIVER_KEY")"
+  counts="$(driver_value "$COUNTS_DRIVER_KEY")"
+  if [ -n "$ours" ] && [ -n "$counts" ]; then
+    echo "unchanged: $DRIVER_KEY and $COUNTS_DRIVER_KEY are already set"
     DRIVER_STATE="already"
     return 0
   fi
@@ -512,10 +669,11 @@ ensure_driver() {
   # checkout has it as a directory. Cheapest reliable discriminator there is.
   if [ -f "$ROOT/.git" ]; then
     echo "note: $ROOT is a linked worktree, whose \`git config --local\` writes" >&2
-    echo "      the SHARED config of the main checkout. Refusing to set" >&2
-    echo "      $DRIVER_KEY from here (#189). The attributes are installed;" >&2
-    echo "      run this once in the main checkout:" >&2
+    echo "      the SHARED config of the main checkout. Refusing to set the" >&2
+    echo "      merge drivers from here (#189). The attributes are installed;" >&2
+    echo "      run these once in the main checkout:" >&2
     echo "        $DRIVER_FIX" >&2
+    echo "        $COUNTS_DRIVER_FIX" >&2
     DRIVER_STATE="worktree"
     return 0
   fi
@@ -523,13 +681,23 @@ ensure_driver() {
   # opened read-only) leaves exactly the state this issue is about — attributes
   # present, driver absent, everything looking installed — and swallowing it
   # would rebuild the false assurance one layer down.
-  git_config --local "$DRIVER_KEY" "$DRIVER_VALUE" || {
-    echo "ERROR could not set $DRIVER_KEY in $ROOT — the calibration" >&2
-    echo "      attributes this installer just wrote are INERT until it is" >&2
-    echo "      set:" >&2
-    echo "        $DRIVER_FIX" >&2
-    exit 4; }
-  echo "set git config: $DRIVER_KEY=$DRIVER_VALUE (this clone only)"
+  if [ -z "$ours" ]; then
+    git_config --local "$DRIVER_KEY" "$DRIVER_VALUE" || {
+      echo "ERROR could not set $DRIVER_KEY in $ROOT — the ratio attribute" >&2
+      echo "      this installer just wrote is INERT until it is set:" >&2
+      echo "        $DRIVER_FIX" >&2
+      exit 4; }
+    echo "set git config: $DRIVER_KEY=$DRIVER_VALUE (this clone only)"
+  fi
+  if [ -z "$counts" ]; then
+    git_config --local "$COUNTS_DRIVER_KEY" "$COUNTS_DRIVER_VALUE" || {
+      echo "ERROR could not set $COUNTS_DRIVER_KEY in $ROOT — the counts" >&2
+      echo "      attribute this installer just wrote is INERT until it is" >&2
+      echo "      set:" >&2
+      echo "        $COUNTS_DRIVER_FIX" >&2
+      exit 4; }
+    echo "set git config: $COUNTS_DRIVER_KEY=$COUNTS_DRIVER_VALUE (this clone only)"
+  fi
   DRIVER_STATE="set"
 }
 
@@ -642,12 +810,14 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # \`ours\` is the one built-in merge driver git does NOT define for you:
-          # the .gitattributes entry alone is inert, and the calibration files
-          # would conflict exactly as if it were absent. \`true\` is the whole
-          # driver — it succeeds without writing, which leaves the branch's copy
-          # in place, and the next --exact run recomputes both (#173).
+          # Neither merge driver is a git built-in and the runner is a fresh
+          # clone, so without these two lines the .gitattributes entries are
+          # inert and the calibration files conflict as if unprotected (#192).
+          # \`true\` keeps the branch's ratio; the next --exact recomputes (#173).
           git config merge.ours.driver true
+          # The counts file merges per row (#237): a collision keeps, per path,
+          # the row whose bytes match the file in the tree.
+          git config $COUNTS_DRIVER_KEY "bash \\"\$SKILL_SCRIPTS/$MERGE_SCRIPT_NAME\\" %O %A %B %P"
           # Staged separately, and the row is NOT tolerant of failure. One
           # \`git add\` over both paths stages NOTHING when either is missing —
           # it exits 128 on the unmatched pathspec — so \`|| true\` turned a
@@ -769,19 +939,22 @@ ensure_driver
 # nothing (#199 CR round 2, finding 8).
 case "$DRIVER_STATE" in
   set|already)
-    DRIVER_NOTE="The $DRIVER_KEY setting above CANNOT be committed — git config is not
-versioned. It is set in this clone only, so every other checkout of this repo
-needs it once, or its \`merge=ours\` entries are inert:
-  $DRIVER_FIX" ;;
+    DRIVER_NOTE="The merge drivers above CANNOT be committed — git config is not
+versioned. They are set in this clone only, so every other checkout of this
+repo needs them once, or the calibration attributes are inert:
+  $DRIVER_FIX
+  $COUNTS_DRIVER_FIX" ;;
   worktree)
-    DRIVER_NOTE="$DRIVER_KEY was NOT set — this is a linked worktree, and its
-\`git config --local\` writes the main checkout's shared config. Until it is set
-there, the two \`merge=ours\` attributes this installer wrote are inert:
-  (in the main checkout)  $DRIVER_FIX" ;;
+    DRIVER_NOTE="The merge drivers were NOT set — this is a linked worktree, and
+its \`git config --local\` writes the main checkout's shared config. Until they
+are set there, the calibration attributes this installer wrote are inert:
+  (in the main checkout)  $DRIVER_FIX
+  (in the main checkout)  $COUNTS_DRIVER_FIX" ;;
   *)
-    DRIVER_NOTE="$DRIVER_KEY was NOT set, so the two \`merge=ours\` attributes
-this installer wrote are inert until it is:
-  $DRIVER_FIX" ;;
+    DRIVER_NOTE="The merge drivers were NOT set, so the calibration attributes
+this installer wrote are inert until they are:
+  $DRIVER_FIX
+  $COUNTS_DRIVER_FIX" ;;
 esac
 
 cat <<NEXT
