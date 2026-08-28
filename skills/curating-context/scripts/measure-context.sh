@@ -280,6 +280,10 @@ SKILL_COMMIT="${SKILL_META#*"$CTX_TAB"}"
 # it once points all three at one tree.
 DOCS_DIR="$(ctx_docs_dir "$ROOT" "$DOCS_DIR")"
 # --archival feeds the library's matcher, which both continuous surfaces use too.
+# Read by ctx_is_archival in _context-lib.sh, which shellcheck cannot see across
+# `source` — dropping this assignment silently pins the matcher to the library
+# default and makes --archival a no-op.
+# shellcheck disable=SC2034
 CTX_ARCHIVAL="$ARCHIVAL"
 
 if [ -z "$POLICY" ]; then
@@ -400,6 +404,11 @@ fi
 # Offline token estimate, used unless --exact supplies a real count. The ratio
 # and its calibration live in the library so the guard and context-delta.sh
 # cannot disagree with this script about it.
+# Read by ctx_est_from_bytes in _context-lib.sh (and by the repo-ratio fallback
+# in ctx_est_tokens_for), which shellcheck cannot see across `source` — dropping
+# this assignment silently discards the repo's measured calibration and prices
+# every estimate at CTX_BPT_DEFAULT_X100 instead.
+# shellcheck disable=SC2034
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
 # Report a broken calibration artifact once, here, rather than once per
 # file priced (CR finding 26). Advisory: never changes the exit code.
