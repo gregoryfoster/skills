@@ -225,6 +225,11 @@ fi
 # Offline by design: a hook must be fast, so it never calls count_tokens. The
 # estimate only decides whether to speak; the authoritative count is
 # measure-context.sh --exact, which also recalibrates the ratio for this repo.
+# Read by ctx_est_from_bytes in _context-lib.sh (and by the repo-ratio fallback
+# in ctx_est_tokens_for), which shellcheck cannot see across `source` — dropping
+# this assignment silently discards the repo's measured calibration and prices
+# every estimate at CTX_BPT_DEFAULT_X100 instead.
+# shellcheck disable=SC2034
 CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$ROOT")"
 # Report a broken calibration artifact once, here, rather than once per
 # file priced (CR finding 26). Advisory: never changes the exit code.

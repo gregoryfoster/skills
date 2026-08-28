@@ -26,6 +26,24 @@ from pathlib import Path
 
 import pytest
 
+from tests.utils.skill_families import (
+    infer_variant_candidates,
+    skill_family,
+    undeclared_variant_candidates,
+)
+
+
+def _candidates_for(names, baselines=None, declared=None):
+    """Run the detector's pure core over hypothetical names.
+
+    `declared` defaults to empty rather than to the real declaration: these
+    cases ask what the *inference* does with a name, so a name that happens to
+    be declared today (`reviewing-code-python-click`) must not be skipped.
+    """
+    return infer_variant_candidates(
+        names, baselines=baselines, declared={} if declared is None else declared
+    )
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ROUTING_PATH = _REPO_ROOT / "tests" / "integration" / "test_trigger_routing.py"
 
@@ -82,42 +100,78 @@ def _family_members(routing, family: str) -> list[str]:
 
 
 class TestSkillFamilyResolution:
-    """`_skill_family` maps a directory name onto its baseline skill."""
+    """`skill_family` maps a directory name onto its baseline skill.
 
-    @pytest.fixture(scope="class")
-    def known(self, routing):
-        return {skill.dir_name for skill in routing._all_skills}
+    Resolution is **declared-only** — it reads VARIANT_FAMILIES rather than
+    inferring from the `<baseline>-<stack>` name shape (CR finding 6). The
+    inference that used to do this job still exists, demoted to a detector in
+    `undeclared_variant_candidates`; see TestTheDetectorCatchesStaleness.
+    """
 
-    def test_a_baseline_resolves_to_itself(self, routing, known):
-        assert routing._skill_family("shipping-work", known) == "shipping-work"
+    def test_a_baseline_resolves_to_itself(self):
+        assert skill_family("shipping-work") == "shipping-work"
 
     @pytest.mark.parametrize(
         "variant",
         ["shipping-work-php", "shipping-work-python-click", "shipping-work-python-fastapi"],
     )
-    def test_a_variant_resolves_to_its_baseline(self, routing, known, variant):
-        assert routing._skill_family(variant, known) == "shipping-work"
+    def test_a_variant_resolves_to_its_baseline(self, variant):
+        assert skill_family(variant) == "shipping-work"
 
-    def test_a_hyphen_boundary_is_required(self, routing, known):
-        """`shipping-workflow` is not in the `shipping-work` family.
+    def test_an_unrecognized_name_resolves_to_itself(self):
+        assert skill_family("no-such-skill") == "no-such-skill"
 
-        Without the boundary check a plain `startswith` would swallow any
-        skill whose name merely begins with a baseline's name.
+    def test_a_lookalike_name_does_not_join_the_family(self):
+        """`shipping-work-orders` is not a variant just because it reads like one.
+
+        This is the whole point of declaring membership. Under the previous
+        name-inference resolver this returned `shipping-work`, silently
+        granting the family's xfails to a skill that never earned them and
+        turning any real routing regression in it into a quiet pass.
         """
-        assert (
-            routing._skill_family("shipping-workflow", known) == "shipping-workflow"
+        assert skill_family("shipping-work-orders") == "shipping-work-orders"
+
+    def test_the_routing_module_uses_the_shared_resolver(self, routing):
+        """The integration module must not carry its own copy of this logic."""
+        assert routing.skill_family is skill_family, (
+            "test_trigger_routing should import skill_family from "
+            "tests.utils.skill_families, not define its own — two encodings of "
+            "one relation is what CR finding 3 removed."
         )
 
-    def test_an_unrecognized_name_resolves_to_itself(self, routing, known):
-        assert routing._skill_family("no-such-skill", known) == "no-such-skill"
 
-    def test_the_longest_matching_baseline_wins(self, routing):
+class TestTheDetectorCatchesStaleness:
+    """Declaring membership is safe; forgetting to declare it must be loud.
+
+    An explicit list alone would reintroduce exactly the staleness #243 was
+    about. `undeclared_variant_candidates` keeps the name inference as a
+    detector so an undeclared lookalike fails `test_naming.py` by name.
+    """
+
+    def test_the_tree_is_currently_fully_declared(self):
+        assert undeclared_variant_candidates() == []
+
+    def test_a_hyphen_boundary_is_required(self):
+        """`shipping-workflow` must not be reported as an undeclared variant.
+
+        Without the boundary a plain `startswith` flags any skill whose name
+        merely begins with a baseline's.
+        """
+        assert not [
+            name
+            for name, _ in _candidates_for(["shipping-workflow"])
+        ], "a hyphen boundary is required before a name counts as a candidate"
+
+    def test_a_lookalike_is_reported_as_undeclared(self):
+        assert _candidates_for(["shipping-work-orders"]) == [
+            ("shipping-work-orders", "shipping-work")
+        ]
+
+    def test_the_longest_matching_baseline_wins(self):
         """With nested baselines the more specific family is the right one."""
-        known = {"reviewing-code", "reviewing-code-python"}
-        assert (
-            routing._skill_family("reviewing-code-python-click", known)
-            == "reviewing-code-python"
-        )
+        assert _candidates_for(
+            ["reviewing-code-python-click"], baselines=["reviewing-code", "reviewing-code-python"]
+        ) == [("reviewing-code-python-click", "reviewing-code-python")]
 
 
 class TestContextDependentTriggerKeying:

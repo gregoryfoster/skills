@@ -96,3 +96,48 @@ The auto-refresh hook resolves per-submodule pins via the same three-step lookup
 3. no pins — every `skills-vendor/` submodule refreshes (prior behaviour)
 
 A pinned submodule is excluded from both the update and the auto-commit, and each honoured pin is logged by name. Use it to hold one vendored repo at a known-good commit — an experiment control arm, say — while the rest keep refreshing; before this the only remedy was deleting the hook's `SessionStart` entry, which also stopped the sibling refreshes and the `.skills/doctor.sh` self-heal ([#100](https://github.com/gregoryfoster/skills/issues/100)).
+
+## Variant selection surface
+
+A variant is created by copying its baseline, so it inherits that baseline's
+`description:` — and the runtime selects on `name` + `description` alone. Three
+rules follow, each with a test behind it.
+
+**Remove the baseline's fallback clause.** Both baselines end their description
+by declaring themselves the fallback of last resort for stacks with no dedicated
+variant (#240 — on a Go project, Haiku-tier models otherwise pick *no* skill at
+all, 8/8 in #97's probe). A variant repeating that claim tells the runtime to
+pick it for stacks it does not handle. `tests/structural/test_baseline_fallback_clause.py`
+asserts the clause is on the baselines and on nothing else. Note that
+`test_description_differs_from_baseline` does **not** cover this — it catches a
+byte-identical copy, not a lightly-edited one that keeps the sentence.
+
+**Add a stack-distinguishing parenthetical.** Name what this variant actually
+covers, in terms traceable to its own body: `Click decorator order, custom
+ParamTypes` versus `async route handlers, Alembic migration safety`. Before
+#241 the Click and FastAPI pairs carried byte-identical toolchain parentheticals
+(`uv + ruff + pytest + Pydantic v2`), leaving a single differentiating token at
+0.94 pairwise similarity — the thinnest margin in the library. Do not describe
+capabilities the skill does not have; an unhonoured coverage claim on the
+selection surface is the same defect as a missing one, pointed the other way.
+
+**Leave `metadata.triggers` byte-identical to the baseline's.**
+`TestVariantFamilyConsistency::test_triggers_match_baseline` asserts exact
+equality, so editing a baseline's triggers turns every variant in its family red
+at once. This equality is also what licenses trigger xfails to be inherited
+family-wide (#243).
+
+### Declaring the family
+
+`tests/utils/skill_families.py`'s `VARIANT_FAMILIES` is the single authority on
+which skills are variants of which baseline; both the drift assertions and the
+trigger-xfail keying read it. Add `(baseline, variant, stack_keyword)` there.
+
+Membership is **declared, not inferred from the name**, so a future
+`shipping-work-orders` — a different skill that merely reads like a variant —
+cannot silently inherit the family's xfails and turn a real routing regression
+into a quiet pass. Because an authoritative list is also a list you can forget
+to update, the name inference survives as a *detector*:
+`undeclared_variant_candidates()` flags anything shaped like `<baseline>-<suffix>`
+that is undeclared, and `test_naming.py` fails on it by name. If a lookalike is
+genuinely not a variant, record it in `NOT_VARIANTS` with the reason.

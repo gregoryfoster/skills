@@ -17,11 +17,10 @@ Estimated cost: varies by skill count; ~$0.001 per (skill × probe) at Haiku
 rates (~64 tokens/call).
 """
 
-from collections.abc import Collection
-
 import pytest
 
 from tests.utils.api_harness import claude_with_skill
+from tests.utils.skill_families import skill_family
 from tests.utils.skill_loader import Skill, all_skills
 
 # ---------------------------------------------------------------------------
@@ -70,30 +69,6 @@ except Exception:
     # rather than aborting the entire collection session with an import error.
     _all_skills = []
 
-_SKILL_DIR_NAMES = frozenset(skill.dir_name for skill in _all_skills)
-
-
-def _skill_family(dir_name: str, known: Collection[str] = _SKILL_DIR_NAMES) -> str:
-    """Resolve a skill directory to the baseline skill whose family it belongs to.
-
-    Stack variants are named `<baseline>-<stack>` — `shipping-work-php`,
-    `reviewing-code-python-click` — the same convention
-    TestVariantFamilyConsistency's VARIANT_FAMILY_PAIRS spells out by hand.
-    A name that matches no baseline (including a baseline itself) is its own
-    family.
-
-    Resolving against the skills actually on disk, rather than a second
-    hand-maintained list, means a new variant joins its family the day it is
-    added. The `-` boundary is required so `shipping-workflow` would not be
-    swallowed by `shipping-work`, and the longest match wins so a nested
-    baseline beats a shorter prefix of it.
-    """
-    matches = [
-        base for base in known if base != dir_name and dir_name.startswith(base + "-")
-    ]
-    return max(matches, key=len) if matches else dir_name
-
-
 # Triggers that only work with prior conversational context — the bare phrase
 # is too ambiguous for the detection probe to reliably identify the skill.
 #
@@ -109,6 +84,11 @@ def _skill_family(dir_name: str, known: Collection[str] = _SKILL_DIR_NAMES) -> s
 # today, but it excuses the phrase everywhere: a future skill declaring `AR` or
 # `close GH` would silently inherit an xfail it never earned, turning a real
 # routing regression into a quiet non-failure. The family key stays narrow.
+#
+# `skill_family` resolves against tests/utils/skill_families.VARIANT_FAMILIES,
+# the single declaration this and the drift assertions in
+# test_content_invariants both read (CR findings 3/6). It is declared-only, so
+# a future `shipping-work-orders` does not join the family by name alone.
 # tests/structural/test_trigger_xfail_keying.py pins both directions.
 _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
     ("init-project-fastapi", "bootstrap project"),
@@ -124,7 +104,7 @@ _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
 def _trigger_param(skill: "Skill", trigger: str) -> pytest.param:
     """Wrap a (skill, trigger) pair in pytest.param, adding xfail for known context-dependent triggers."""
     marks = []
-    if (_skill_family(skill.dir_name), trigger) in _CONTEXT_DEPENDENT_TRIGGERS:
+    if (skill_family(skill.dir_name), trigger) in _CONTEXT_DEPENDENT_TRIGGERS:
         marks.append(
             pytest.mark.xfail(
                 reason=(
