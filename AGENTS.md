@@ -287,7 +287,7 @@ the rule that file already owns.
 When an agent-specific or stack-specific divergence is needed (see "Variant strategy"):
 
 1. Copy the baseline: `cp -r skills/reviewing-code skills/reviewing-code-<suffix>` (e.g. `-php`, `-python`, `-cursor`)
-2. Update the `name` field in `SKILL.md` to match the directory name
+2. Update `name`, rewrite `description:`, declare in `VARIANT_FAMILIES` — [why](docs/CONVENTIONS.md#variant-selection-surface)
 3. Tune instructions, scripts, and references for the target stack or agent
 4. Validate and commit
 

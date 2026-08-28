@@ -20,6 +20,7 @@ rates (~64 tokens/call).
 import pytest
 
 from tests.utils.api_harness import claude_with_skill
+from tests.utils.skill_families import skill_family
 from tests.utils.skill_loader import Skill, all_skills
 
 # ---------------------------------------------------------------------------
@@ -70,6 +71,25 @@ except Exception:
 
 # Triggers that only work with prior conversational context — the bare phrase
 # is too ambiguous for the detection probe to reliably identify the skill.
+#
+# Keyed on the skill FAMILY, not the exact directory name (#243). Variants are
+# required to declare triggers byte-identical to their baseline's
+# (test_content_invariants.py::TestVariantFamilyConsistency::
+# test_triggers_match_baseline), so a phrase too ambiguous for the baseline is
+# exactly as ambiguous for every variant — but directory-name keying excused
+# only `shipping-work`, leaving its three variants to fail for an already
+# accepted reason.
+#
+# Keying on the bare trigger phrase would be simpler and yields the same marks
+# today, but it excuses the phrase everywhere: a future skill declaring `AR` or
+# `close GH` would silently inherit an xfail it never earned, turning a real
+# routing regression into a quiet non-failure. The family key stays narrow.
+#
+# `skill_family` resolves against tests/utils/skill_families.VARIANT_FAMILIES,
+# the single declaration this and the drift assertions in
+# test_content_invariants both read (CR findings 3/6). It is declared-only, so
+# a future `shipping-work-orders` does not join the family by name alone.
+# tests/structural/test_trigger_xfail_keying.py pins both directions.
 _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
     ("init-project-fastapi", "bootstrap project"),
     ("init-project-fastapi", "set up foundation"),
@@ -84,7 +104,7 @@ _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
 def _trigger_param(skill: "Skill", trigger: str) -> pytest.param:
     """Wrap a (skill, trigger) pair in pytest.param, adding xfail for known context-dependent triggers."""
     marks = []
-    if (skill.dir_name, trigger) in _CONTEXT_DEPENDENT_TRIGGERS:
+    if (skill_family(skill.dir_name), trigger) in _CONTEXT_DEPENDENT_TRIGGERS:
         marks.append(
             pytest.mark.xfail(
                 reason=(

@@ -1,6 +1,6 @@
 ---
 name: shipping-work-python-click
-description: "For Python/Click CLI projects (uv + ruff + pytest): finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Use when the user says 'ship it', 'push GH', 'close GH', or 'wrap up' and the project is a Click-based CLI."
+description: "For Python/Click CLI projects (uv + ruff + pytest; Click command registration, --help output): finalizes work by ensuring everything is committed, pushed to the remote, and reflected on GitHub: closes issues, posts summary comments, and presents a completion table. Use when the user says 'ship it', 'push GH', 'close GH', or 'wrap up' and the project is a Click-based CLI."
 compatibility: Designed for Python Click CLI projects using uv, ruff, pytest. Requires git, gh, uv.
 metadata:
   author: gregoryfoster

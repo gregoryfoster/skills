@@ -15,6 +15,7 @@ import re
 
 import pytest
 
+from tests.utils.skill_families import VARIANT_FAMILIES
 from tests.utils.skill_loader import load_skill, SKILLS_DIR
 
 
@@ -1510,14 +1511,12 @@ class TestReviewingCodeGatherContextSharedBaseline:
 
 
 # (base, variant, stack-keyword-required-in-compatibility)
-VARIANT_FAMILY_PAIRS = [
-    ("reviewing-code", "reviewing-code-php", "PHP"),
-    ("reviewing-code", "reviewing-code-python-fastapi", "FastAPI"),
-    ("reviewing-code", "reviewing-code-python-click", "Click"),
-    ("shipping-work", "shipping-work-php", "PHP"),
-    ("shipping-work", "shipping-work-python-fastapi", "FastAPI"),
-    ("shipping-work", "shipping-work-python-click", "Click"),
-]
+#
+# Derived from the single family declaration rather than restated here (CR
+# finding 3). This list and test_trigger_routing's xfail keying used to encode
+# the same relation independently; each stayed internally correct, so a skill
+# added to one and not the other would have drifted invisibly.
+VARIANT_FAMILY_PAIRS = list(VARIANT_FAMILIES)
 
 
 def _iron_law_first_line(body: str) -> str:

@@ -11,6 +11,7 @@ import re
 
 import pytest
 
+from tests.utils.skill_families import undeclared_variant_candidates
 from tests.utils.skill_loader import Skill, all_skills
 
 # Pattern: lowercase letters, digits, hyphens; no consecutive hyphens; max 64 chars
@@ -46,4 +47,30 @@ class TestNameFieldConsistency:
         assert skill.name == skill.dir_name, (
             f"'name' field in frontmatter ('{skill.name}') must match "
             f"directory name ('{skill.dir_name}') exactly"
+        )
+
+
+class TestVariantFamilyDeclaration:
+    """A skill that *looks* like a variant must be declared as one, or excluded.
+
+    `tests/utils/skill_families.VARIANT_FAMILIES` is the authority on family
+    membership, so that a name like `shipping-work-orders` cannot silently
+    inherit its apparent baseline's trigger xfails (CR finding 6). Authority
+    alone would reintroduce exactly the staleness #243 was about, though: a
+    list you must remember to update goes stale quietly.
+
+    So name inference is kept as the *detector*. Adding `reviewing-code-go`
+    without declaring it fails here, naming the fix — rather than silently
+    gaining no drift assertions and no inherited xfails.
+    """
+
+    def test_no_undeclared_variant_candidates(self):
+        undeclared = undeclared_variant_candidates()
+        assert not undeclared, (
+            "These skill directories look like `<baseline>-<stack>` variants but are "
+            "not declared in tests/utils/skill_families.VARIANT_FAMILIES:\n"
+            + "\n".join(f"  {name} -> looks like a variant of {base}" for name, base in undeclared)
+            + "\n\nDeclare each as (baseline, variant, stack_keyword) so it inherits the "
+            "family's drift assertions and trigger xfails — or, if it is genuinely not a "
+            "variant, add it to NOT_VARIANTS with the reason."
         )
