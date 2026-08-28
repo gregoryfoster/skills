@@ -20,8 +20,15 @@ Two contracts, one per half of AGENTS.md's variant strategy:
 ## Trial count and cost
 
 Ten scenarios × 5 Haiku trials, plus the two fallback scenarios × 3 Sonnet
-trials: 56 calls, roughly $0.03 per full run (see `_TRIALS` for the arithmetic).
-#97's probe was 72 calls at a comparable price.
+trials: 56 calls, **≈$0.16 per full run**, ~45s wall clock. The listing dominates
+the bill — every call carries all 19 descriptions, measured at 2288 input tokens
+average via `count_tokens`, against ~10 output tokens for a bare skill name. So
+cost scales with `trials × scenarios × library size`, and it is the *library*
+that grows: each new variant adds a scenario **and** lengthens every other
+scenario's prompt, making this quadratic-ish in skill count. Re-measure rather
+than extrapolating when the library grows.
+
+#97's probe was 72 calls and reported "well under $0.50", which is consistent.
 
 Five was chosen over #97's eight because the assertion is unanimity, and the
 failure it guards against was total (8/8 and 0/8, never a near-miss): at that

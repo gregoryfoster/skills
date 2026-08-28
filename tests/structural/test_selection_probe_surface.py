@@ -23,6 +23,7 @@ structurally well-formed surface can still shadow.
 import pytest
 
 from tests.utils.selection_probe import (
+    LABEL_NAMING_CONTEXTS,
     NONE_CHOICE,
     UNCOVERED_STACK,
     parse_choice,
@@ -171,6 +172,50 @@ class TestTheContextsDoNotGiveTheAnswerAway:
         assert scenario.expected not in scenario.context, (
             f"{scenario.id}'s stack context names {scenario.expected} outright. "
             "Describe the repository's artifacts and let the model infer."
+        )
+
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            s
+            for s in _SCENARIOS
+            if s.context and s.stack != UNCOVERED_STACK
+        ],
+        ids=lambda s: s.id,
+    )
+    def test_context_does_not_name_its_own_stack_undeclared(self, scenario):
+        """Naming the stack turns inference into token matching.
+
+        A context that says "this is a Click project" would be passed by a
+        library where every description had been replaced with its stack tag —
+        which is exactly the shadowing this suite exists to detect. Allowed,
+        but only as a declared exception carrying its reason.
+        """
+        if scenario.stack.lower() in scenario.context.lower():
+            assert scenario.stack in LABEL_NAMING_CONTEXTS, (
+                f"{scenario.id}'s context contains its own stack keyword "
+                f"{scenario.stack!r}, weakening the scenario to a token match. "
+                "Rewrite it to describe the repository's artifacts, or — if the "
+                "stack genuinely cannot be described without naming it — add an "
+                "entry to `LABEL_NAMING_CONTEXTS` in tests/utils/selection_probe.py "
+                "stating why."
+            )
+
+    @pytest.mark.parametrize("stack", sorted(LABEL_NAMING_CONTEXTS))
+    def test_declared_label_naming_exceptions_are_still_needed(self, stack):
+        """A stale exception silently re-permits what it was granted for.
+
+        If the context is reworded to stop naming its stack, the entry should
+        go with it — otherwise the next contributor inherits a standing licence
+        nobody re-examined.
+        """
+        matching = [s for s in _SCENARIOS if s.stack == stack]
+        assert matching, f"{stack!r} is declared in LABEL_NAMING_CONTEXTS but has no scenario"
+        assert any(
+            stack.lower() in s.context.lower() for s in matching
+        ), (
+            f"{stack!r} no longer names itself in its context, so its "
+            "LABEL_NAMING_CONTEXTS exception is stale — remove it."
         )
 
     @pytest.mark.parametrize(
