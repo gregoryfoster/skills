@@ -59,9 +59,11 @@ the billed suite covers.
 """
 
 import os
+import time
 from dataclasses import dataclass
 
 import anthropic
+import pytest
 
 from tests.utils.skill_families import BASELINES, VARIANT_FAMILIES
 from tests.utils.skill_loader import Skill, all_skills
@@ -70,6 +72,17 @@ from tests.utils.skill_loader import Skill, all_skills
 # case-insensitively; kept as a named constant because both the prompt and the
 # assertions depend on it agreeing.
 NONE_CHOICE = "NONE"
+
+# Tallied when a response has no readable first line, so a formatting failure
+# is never scored as a wrong selection. See `parse_choice`.
+UNPARSEABLE = "<unparseable>"
+
+# Retry budget for transient API failures. Three attempts at 2s/4s covers the
+# brief 429/529 blips that would otherwise abort a 56-call billed run; it is
+# deliberately small, because a persistent outage should fail fast rather than
+# spend the run's cost slowly.
+_MAX_ATTEMPTS = 3
+_BACKOFF_BASE_SECONDS = 2.0
 
 # Stack evidence a real session would see, keyed on the stack keyword declared
 # in VARIANT_FAMILIES. None reuse their variant's description phrasing, and none
@@ -243,9 +256,17 @@ def parse_choice(response: str) -> str:
     NOT normalise to a valid name. Selection under competition is the thing
     being measured; a lenient parser that finds a name anywhere in prose would
     score hedging as a clean pick.
+
+    A response with no readable first line returns `UNPARSEABLE` rather than
+    `""` (CR finding 13). An empty string would tally as just another wrong
+    pick, which misreads a *formatting* failure — a truncated or blank
+    response — as the model having chosen the wrong skill. Those want
+    different responses from whoever reads the red test.
     """
     first_line = response.strip().split("\n")[0].strip()
     token = first_line.strip("`\"'*[]() \t.,:;")
+    if not token:
+        return UNPARSEABLE
     if token.upper() == NONE_CHOICE:
         return NONE_CHOICE
     return token
@@ -255,6 +276,7 @@ def choose_skill(
     prompt: str,
     model: str = "claude-haiku-4-5-20251001",
     max_tokens: int = 32,
+    attempts: int = _MAX_ATTEMPTS,
 ) -> str:
     """The one billed call: ask a live model to pick from the listing.
 
@@ -262,11 +284,35 @@ def choose_skill(
     count is the instrument here — the question is whether selection is
     *deterministic under sampling*, and a temperature-0 run of N trials would
     answer a different, weaker question N times.
+
+    Transient API failures are retried with backoff (CR finding 10). A full
+    run is 56 billed calls over ~45s, so a single 429 or 529 would otherwise
+    abort the suite with an exception instead of a selection verdict — and the
+    obvious response, re-running, costs the whole run again. Only transport
+    and status errors are retried; a selection result is never retried.
     """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip(
+            "ANTHROPIC_API_KEY is not set — the competitive-selection probe makes "
+            "live API calls. Set it in .env and run via scripts/run-integration-tests.sh."
+        )
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    message = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return message.content[0].text
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
+    raise RuntimeError(
+        f"{model}: {attempts} attempts all failed against the Anthropic API. This is an "
+        f"infrastructure failure, not a selection failure — the probe measured nothing. "
+        f"Last error: {last_error!r}"
+    ) from last_error

@@ -65,6 +65,7 @@ import pytest
 from tests.utils.selection_probe import (
     Scenario,
     UNCOVERED_STACK,
+    UNPARSEABLE,
     choose_skill,
     parse_choice,
     scenarios,
@@ -76,9 +77,16 @@ from tests.utils.selection_probe import (
 # pins, so both integration files move tiers together or not at all.
 _HAIKU = "claude-haiku-4-5-20251001"
 
-# #97's second tier, kept only where the two diverged. Pinned rather than
-# tracking the current Sonnet so the comparison stays like-for-like.
-_SONNET = "claude-sonnet-4-5-20250929"
+# #97's second tier, kept only where the two diverged.
+#
+# Tracks the repo's current Sonnet (the ID `tests/benchmarks/test_quality.py`
+# already uses) rather than pinning #97's exact `claude-sonnet-4-5-20250929`
+# (CR finding 9). Pinning the original would keep the comparison like-for-like,
+# but #242 asks this suite to run at growth checkpoints as a *regression guard*,
+# and a guard aimed at a superseded tier passes green while the tier users
+# actually get regresses. Reproducing #97 and detecting future drift are
+# different jobs; this file does the second.
+_SONNET = "claude-sonnet-4-6"
 
 _HAIKU_TRIALS = 5
 _SONNET_TRIALS = 3
@@ -118,10 +126,18 @@ def _assert_unanimous(picks: collections.Counter, scenario: Scenario, model: str
     between sampling noise worth investigating and a shadowed description.
     """
     wrong = {name: n for name, n in picks.items() if name != scenario.expected}
+    unparseable = picks.get(UNPARSEABLE, 0)
+    diagnosis = (
+        f"\n{unparseable}/{sum(picks.values())} response(s) had no readable first line. "
+        "That is a formatting failure, not a selection failure — check max_tokens "
+        "before concluding anything about the descriptions."
+        if unparseable
+        else ""
+    )
     assert not wrong, (
         f"{scenario.id} @ {model}: expected {scenario.expected} on every trial, "
         f"got {dict(picks)}.\n{note}\n"
-        f"Stack evidence given: {scenario.context or '(none)'}\n"
+        f"Stack evidence given: {scenario.context or '(none)'}{diagnosis}\n"
         f"Do NOT fix this by editing a SKILL.md description to match the test — "
         f"the descriptions are what is under measurement."
     )

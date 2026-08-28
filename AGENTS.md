@@ -258,7 +258,7 @@ pre-push. Run either by hand:
 
 ```bash
 pytest tests/structural/ -v              # fast, no API key needed
-pytest tests/integration/ -v -m integration  # requires ANTHROPIC_API_KEY
+pytest tests/integration/ -v -m integration  # needs .env, billed ≈$0.16
 ```
 
 **Put a new structural rule in its own `tests/structural/test_<rule>.py`, not at

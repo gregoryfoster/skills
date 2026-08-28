@@ -9,6 +9,7 @@ capability and provides ~20x cost reduction.
 import os
 
 import anthropic
+import pytest
 
 from tests.utils.skill_loader import Skill
 
@@ -58,6 +59,14 @@ def claude_with_skill(
     Returns:
         The assistant's response text.
     """
+    # A bare KeyError here names the wrong problem — it reads as a code defect
+    # rather than missing configuration (CR finding 11). Skipping is honest:
+    # without a key this test measured nothing, which is not the same as passing.
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        pytest.skip(
+            "ANTHROPIC_API_KEY is not set — integration tests make live API calls. "
+            "Set it in .env and run via scripts/run-integration-tests.sh."
+        )
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     message = client.messages.create(
         model=model,
