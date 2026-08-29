@@ -59,6 +59,18 @@ Options:
                    a skill's references/ directory.
   --ack-file PATH  Warrant file for lines this run had to rewrite rather than
                    move. Default: .skills/context-loss-ok.
+  --claims         Also check the file's ATOMS — backticked spans, `#NNN` issue
+                   references, link targets, bare URLs — base against now. Line
+                   matching cannot see a class-C tightening (Phase 3 rewrites a
+                   section in place, and a paragraph is one line, so a faithful
+                   rewrite is 100% "lost"); atom matching can, because the atoms
+                   are what a rewrite must carry across. REQUIRED by the
+                   `tighten` warrant: see "Warranted losses".
+  --claims-ack-file PATH
+                   Warrant file for atoms a tightening legitimately dropped.
+                   Default: .skills/context-claims-ok. Same grammar and warrants
+                   as --ack-file minus `tighten`, and ATOM is matched WHOLE, not
+                   as a substring.
   --show-relocated Also list which destination each moved line landed in.
   -h, --help       Show this help and exit 0.
 
@@ -101,6 +113,30 @@ Warranted losses (.skills/context-loss-ok):
     duplicate  the content is verbatim elsewhere in the surface already
     disproven  a command refuted the claim (see verify-facts.sh)
     default    the tool now does this by default, so the instruction is noise
+    tighten    Phase 3 class C rewrote the line in place — same claims, fewer
+               words. REQUIRES --claims, and is refused without it (#250).
+
+  `tighten` is the one warrant a run can always claim about its own edit, so
+  alone it would be self-certifying — and the breadth guard below cannot
+  restrain it, because class C's defining defect is a section written as ONE
+  paragraph. One entry, one line, a whole section waved through: on the run that
+  found this, five entries would have covered the entire body of a 9,826-token
+  document. The other five warrants do not have this problem. Two are
+  COMPULSORY, forced by the skill itself; three point at evidence outside the
+  entry (a duplicate elsewhere, a command's verdict, a tool's default). So
+  `tighten` is gated on a check the rewrite cannot perform on itself: --claims
+  must pass, meaning every atom of the base line turns up somewhere or carries
+  its own judged entry. Line matching proves the MOVES; atom matching proves
+  the REWRITES.
+
+  An entry that matched nothing is reported, and "re-judge and prune" is sound
+  advice for only some of them (#251). Two facts settle whether this run is
+  entitled to judge it, and either alone is enough: a PATH that matched says the
+  entry IS about this target, and so does CONTENT appearing in this target at
+  --base. With neither, the run cannot tell a re-worded line from an entry
+  judged against another surface, and says so instead of guessing — an unscoped
+  entry pinning an AGENTS.md line reported stale on every reference-doc run in
+  one repo, and pruning on that advice would have discarded a live warrant.
 
   CONTENT is a substring of the reported line. Matched on content, never on
   line number, so an entry expires the moment its line changes — which is
@@ -164,6 +200,45 @@ What counts as "present":
   which is what keeps "nothing was unaccounted for" and "eight lines were
   judged and waved through" distinguishable in the cohort's data.
 
+  With --claims, two more:
+
+    claims_dropped: <N>    atoms present at base and nowhere now, unwarranted
+    claims_warranted: <M>  dropped atoms carrying a judged entry
+
+The claim check (--claims):
+  Whole-line matching is blind to a rewrite in place, and Phase 3 PRESCRIBES
+  one. A `##` section holding a single 4,000-token paragraph is one line, so
+  reflowing it into subsections reports 100% lost however faithful the rewrite
+  is — the gate's strength is exactly what makes it blind here. `tighten`
+  therefore needs a second check that a rewrite CANNOT satisfy by construction,
+  and the atoms are it: the tokens a faithful rewrite has to carry across.
+
+    backticked span   `uv sync --frozen`, `docs/API.md`, `POST /v1/ingest`
+    issue reference   `#412`, `owner/repo#569`
+    link target       the path inside `](...)`, normalised for depth and root
+                      exactly as a whole line is
+    bare URL          http(s), trailing punctuation trimmed
+
+  Extracted from the base revision and from every destination, compared as
+  SETS, and reported when an atom exists at base and nowhere now. Fenced code
+  blocks are skipped on both sides: their content is protected line by line
+  already, and extracting from them double-reports every deletion.
+
+  This is not a formality. On the run that motivated it, the check surfaced 19
+  dropped atoms of which 12 were real over-compression that would otherwise have
+  shipped — including a `wp#569` that was the load-bearing justification for an
+  entire API being write-only.
+
+  An atom a tightening legitimately drops gets a judged entry in
+  .skills/context-claims-ok, same grammar and same warrants MINUS `tighten`
+  (warranting an atom with the warrant the atom check exists to gate would be
+  circular). The differences from --ack-file follow from atoms being tokens
+  rather than prose:
+
+    ATOM is matched WHOLE, against the dropped set — never as a substring. So
+    there is no minimum length (`#41` identifies itself exactly) and no
+    over-broad refusal (a set element matches at most one thing).
+
   <D> is a NOTE, not a failure, and never changes the exit code. Presence
   anywhere satisfies this check, so a block COPIED rather than moved is
   invisible to it — six shipped that way on one cohort run, one line reaching
@@ -174,10 +249,11 @@ What counts as "present":
 
 Exit codes:
   0  every line accounted for, or warranted
-  1  usage error, no policy file found, or a malformed acknowledgement entry
+  1  usage error, no policy file found, a malformed acknowledgement entry, or a
+     `tighten` warrant without --claims
   2  infrastructure failure (base revision unreadable, python3 missing)
-  3  one or more lines unaccounted for and unwarranted — the run must justify
-     or restore them
+  3  one or more lines — or, under --claims, atoms — unaccounted for and
+     unwarranted; the run must justify or restore them
 USAGE
 }
 
@@ -185,6 +261,8 @@ BASE="HEAD"
 POLICY=""
 DOCS_DIR=""
 ACK_FILE=".skills/context-loss-ok"
+CLAIMS_ACK_FILE=".skills/context-claims-ok"
+CLAIMS=0
 SHOW_RELOCATED=0
 EXTRA=()
 
@@ -195,6 +273,9 @@ while [ $# -gt 0 ]; do
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
     --also) EXTRA+=("${2:?--also needs a path}"); shift 2 ;;
     --ack-file) ACK_FILE="${2:?--ack-file needs a path}"; shift 2 ;;
+    --claims-ack-file)
+      CLAIMS_ACK_FILE="${2:?--claims-ack-file needs a path}"; shift 2 ;;
+    --claims) CLAIMS=1; shift ;;
     --show-relocated) SHOW_RELOCATED=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -303,19 +384,35 @@ sort -u "$TMP/dests" >"$TMP/dests.u"
 
 RC=0
 python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
-  "$DOCS_DIR" <<'PY' || RC=$?
+  "$DOCS_DIR" "$CLAIMS" "$CLAIMS_ACK_FILE" <<'PY' || RC=$?
 import os
 import re
 import sys
 
-before_path, policy, dests_path, show, ack_path, docs_dir = sys.argv[1:7]
+(before_path, policy, dests_path, show, ack_path, docs_dir, claims_on,
+ claims_ack_path) = sys.argv[1:9]
+claims_on = claims_on == "1"
 
 # Why an unaccounted line was legitimate. A CLOSED set on purpose: the point of
 # this file is to record a judgement, and free text would make it a mute
 # allowlist — the same file minus the only part a reviewer can check. The first
-# two are compulsory edits the skill itself forces (#111); the last three were
+# two are compulsory edits the skill itself forces (#111); the next three were
 # already the warrants the LOST message names in prose, and had nowhere to live.
-WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default")
+# `tighten` is the sixth and the only one that is not self-limiting, which is why
+# it is the only one carrying a precondition: see REQUIRES_CLAIMS (#250).
+WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default", "tighten")
+
+# Warrants that name an edit the run cannot certify for itself, and what each
+# needs before it counts. `tighten` is claimed ABOUT the author's own rewrite —
+# unlike `retarget`/`rename`, which the skill compels, and unlike
+# `duplicate`/`disproven`/`default`, which point at evidence outside the entry.
+# The atom check is that outside evidence, so the warrant is refused without it.
+REQUIRES_CLAIMS = ("tighten",)
+
+# The claim file's vocabulary is the loss file's minus `tighten`: warranting a
+# dropped atom with the very warrant the atom check exists to gate would close
+# the loop the gate is there to open.
+CLAIM_WARRANTS = tuple(w for w in WARRANTS if w not in REQUIRES_CLAIMS)
 
 # Below this, a line shared by the policy file and a destination is structure,
 # not duplicated content: fences, `---`, `## Detail Docs`, one-word bullets.
@@ -420,6 +517,73 @@ def strip_frontmatter(lines):
             return lines, 0
     return lines, 0
 
+def delink(line):
+    """Erase the link re-aiming a move forces, in both directions.
+
+    Factored out because a link TARGET is one of the atoms --claims compares,
+    and an atom normalised differently from the line it sits on would report a
+    demoted link as a dropped claim on every run that moved one — the #119/#137
+    false-LOST storm, reproduced one layer down.
+    """
+    line = LINK_DEPTH.sub("](", line)
+    if LINK_ROOT is not None:
+        line = LINK_ROOT.sub("](", line)
+    return line
+
+
+# --- atoms (--claims) -----------------------------------------------------
+# The tokens a faithful rewrite must carry across. Deliberately narrow, for the
+# reason verify-facts.sh gives about its own FALSE verdict: a claim list padded
+# with prose teaches its reader to skim, and this one is the sole evidence
+# behind the `tighten` warrant. Every atom here is checkable and its loss is
+# real; nothing here is a judgement call about wording, which is exactly the
+# thing whole-line matching already refuses to arbitrate.
+FENCE = re.compile(r"^\s*(?:```|~~~)")
+# Single-backtick spans only. A span cannot contain a backtick or span a line,
+# so this leaves ``code with ` inside`` alone rather than mis-splitting it.
+CODE_SPAN = re.compile(r"`([^`\n]+)`")
+# `#412` and `owner/repo#569`. Two digits minimum, matching the seam
+# convention, and the digits must abut the `#` — so `## Heading` and `# 2026
+# plan` are not issue references.
+ISSUE_REF = re.compile(r"(?<![\w#])((?:[\w.-]+/[\w.-]+)?#\d{2,})")
+LINK_TARGET = re.compile(r"\]\(([^)\s]+)")
+BARE_URL = re.compile(r"(?<![(\w])(https?://[^\s)>\]]+)")
+# Sentence punctuation a URL collects at the end of a prose line and does not own.
+URL_TRAILING = ".,;:!?'\""
+
+
+def atoms_of(lines):
+    """Every atom in `lines`, as a set, with the line each first appeared on.
+
+    Returns (set, {atom: line}) — the map is for the report, so a dropped atom
+    can be shown in the context it was dropped from rather than alone.
+
+    Fenced blocks are skipped. Their content is protected line by line already,
+    so extracting from them would report every deleted code line twice: once as
+    LOST and once as a dropped atom, with the second report adding nothing.
+    """
+    found, origin, fenced = set(), {}, False
+    for raw in lines:
+        if FENCE.match(raw):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        line = delink(raw.strip())
+        if not line:
+            continue
+        hits = [m.group(1).strip() for m in CODE_SPAN.finditer(line)]
+        hits += [m.group(1) for m in ISSUE_REF.finditer(line)]
+        hits += [m.group(1) for m in LINK_TARGET.finditer(line)]
+        hits += [m.group(1).rstrip(URL_TRAILING) for m in BARE_URL.finditer(line)]
+        for a in hits:
+            if not a:
+                continue
+            found.add(a)
+            origin.setdefault(a, raw.strip())
+    return found, origin
+
+
 def normalise(raw):
     """One line -> its comparable form, or "" when it carries no content.
 
@@ -441,9 +605,7 @@ def normalise(raw):
     line = raw.strip()
     if not line:
         return ""
-    line = LINK_DEPTH.sub("](", line)
-    if LINK_ROOT is not None:
-        line = LINK_ROOT.sub("](", line)
+    line = delink(line)
     m = HEADING.match(line)
     return "H:" + m.group(1).strip() if m else line
 
@@ -460,10 +622,18 @@ try:
     # almost anything. Short and common lines were effectively unchecked, and a
     # policy file is mostly those.
     dests = {}
+    # Atoms are pooled across ALL destinations rather than kept per file. An
+    # atom is evidence that a claim survived the rewrite SOMEWHERE, which is the
+    # same standard whole-line matching already applies; asking it to survive in
+    # a particular file would fail every tightening that also demoted.
+    dest_atoms = set()
     for path in dest_paths:
         lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
         lines, _ = strip_frontmatter(lines)
         dests[path] = {n for n in (normalise(l) for l in lines) if n}
+        if claims_on:
+            dest_atoms |= atoms_of(lines)[0]
+    base_atoms, atom_origin = atoms_of(before) if claims_on else (set(), {})
 except OSError as exc:
     print(f"ERROR {exc}", file=sys.stderr)
     sys.exit(2)
@@ -488,54 +658,80 @@ except OSError as exc:
 # another target (#139). PATH is matched as a substring of the target, the same
 # way .skills/context-seams-ok pins an entry to one file. Scoping only ever
 # NARROWS what an entry can reach.
-entries, malformed = [], []
-try:
-    with open(ack_path, encoding="utf-8") as fh:
+def parse_ack(path, warrants, min_chars, unit):
+    """Read an acknowledgement file. Returns (entries, malformed).
+
+    Shared by the loss file and the claim file, because two files with the same
+    grammar and two parsers is how they drift: the scoped form (#139) would have
+    had to be found and fixed twice. What differs between them is passed in —
+    the vocabulary, the length floor, and the noun for the error messages —
+    and nothing else does.
+    """
+    entries, malformed = [], []
+    try:
+        fh = open(path, encoding="utf-8")
+    except OSError:
+        return entries, malformed
+    with fh:
         for lineno, raw in enumerate(fh, 1):
             raw = raw.rstrip("\n")
             if not raw.strip() or raw.lstrip().startswith("#"):
                 continue
             head, sep, tail = raw.partition("::")
             scope, warrant, content = None, head.strip(), tail.strip()
-            if sep and warrant not in WARRANTS and "::" in tail:
+            if sep and warrant not in warrants and "::" in tail:
                 second, _, rest = tail.partition("::")
                 scope, warrant, content = warrant, second.strip(), rest.strip()
             if not sep:
-                why = "no `::` — an entry is `WARRANT :: CONTENT`"
+                why = f"no `::` — an entry is `WARRANT :: {unit}`"
             elif scope is not None and not scope:
                 why = ("empty PATH — an entry scoped to nothing matches every "
                        "target; drop the PATH half instead")
-            elif warrant not in WARRANTS:
+            elif warrant not in warrants:
                 # Name the form it was read as. A three-field entry whose
                 # warrant is typo'd is otherwise reported against a field the
                 # author thought was a path.
-                form = " (read as `PATH :: WARRANT :: CONTENT`)" if scope else ""
+                form = f" (read as `PATH :: WARRANT :: {unit}`)" if scope else ""
                 why = (f"unknown warrant '{warrant}'{form} — one of: "
-                       + ", ".join(WARRANTS))
+                       + ", ".join(warrants))
             elif not content:
-                why = "empty CONTENT — an entry with no content matches every line"
-            elif len(content) < WARRANT_MIN_CHARS:
+                why = (f"empty {unit} — an entry with no {unit.lower()} matches "
+                       "everything")
+            elif len(content) < min_chars:
                 # Checked here as well as by the over-broad refusal below, because
                 # a two-character entry that happens to hit exactly one line
                 # today is not identifying that line — it will silently move to
                 # a different one the moment the surface changes, which is the
                 # opposite of the expiry this file promises.
-                why = (f"CONTENT is {len(content)} characters — an entry must be "
-                       f"at least {WARRANT_MIN_CHARS} to identify one line")
+                why = (f"{unit} is {len(content)} characters — an entry must be "
+                       f"at least {min_chars} to identify one line")
             else:
                 entries.append((warrant, content, scope))
                 continue
             malformed.append((lineno, raw.strip()[:100], why))
-except OSError:
-    pass
+    return entries, malformed
 
-if malformed:
-    print(f"ERROR {ack_path} has {len(malformed)} malformed entry(ies):",
+
+def refuse_malformed(path, malformed):
+    if not malformed:
+        return
+    print(f"ERROR {path} has {len(malformed)} malformed entry(ies):",
           file=sys.stderr)
     for lineno, text, why in malformed:
         print(f"  line {lineno}: {why}", file=sys.stderr)
         print(f"    {text}", file=sys.stderr)
     sys.exit(1)
+
+
+entries, malformed = parse_ack(ack_path, WARRANTS, WARRANT_MIN_CHARS, "CONTENT")
+refuse_malformed(ack_path, malformed)
+
+# An atom is matched WHOLE against a set, so neither guard the loss file needs
+# applies: a set element cannot be over-broad, and `#41` identifies itself at
+# three characters. Passing the floor as 1 is the whole difference.
+claim_entries, claim_malformed = parse_ack(
+    claims_ack_path, CLAIM_WARRANTS, 1, "ATOM") if claims_on else ([], [])
+refuse_malformed(claims_ack_path, claim_malformed)
 
 inline = dests.get(policy, set())
 others = [p for p in dest_paths if p != policy]
@@ -574,6 +770,25 @@ for i, entry in enumerate(entries):
         in_scope.append(i)
     else:
         out_of_scope.append(entry)
+
+# A warrant that cannot certify itself is refused when its evidence was not
+# gathered, rather than downgraded to a warning — warnings ride in stdout, where
+# the exit code and the ledger row do not read them, which is the lesson the
+# over-broad refusal below already paid for. Checked against IN-SCOPE entries
+# only: a `tighten` judged for another target is not this run's claim to make,
+# and demanding --claims for it would make one target's file dictate another
+# target's flags.
+ungated = sorted({entries[i][0] for i in in_scope
+                  if entries[i][0] in REQUIRES_CLAIMS}) if not claims_on else []
+if ungated:
+    print(f"ERROR {ack_path} uses {', '.join(ungated)} without --claims.",
+          file=sys.stderr)
+    print("  A rewrite in place is the one edit a run can always claim about "
+          "itself, so\n  the warrant is gated on evidence the rewrite cannot "
+          "produce: re-run with\n  --claims, which checks that every atom of "
+          "the rewritten lines survived.", file=sys.stderr)
+    sys.exit(1)
+
 warranted, unwarranted = [], []
 charged = [[] for _ in entries]
 for line in lost:
@@ -600,6 +815,31 @@ if broad:
         print("    split it into one entry per line, or narrow the content so it "
               "identifies a single line", file=sys.stderr)
     sys.exit(1)
+
+# --- the claim check ------------------------------------------------------
+# Set difference, not line matching: an atom that exists at --base and in no
+# destination is a claim the rewrite dropped. Sorted so the report is stable
+# across runs — a gate whose output reorders is one nobody can diff.
+dropped_atoms = sorted(base_atoms - dest_atoms) if claims_on else []
+
+# Scoping and charging work exactly as they do for lines, so an entry judged
+# against one target does not report stale on another (#139) and no entry can
+# quietly become a blanket. The match is WHOLE rather than substring: `#41`
+# must not warrant `#412`, and a dropped path must not be waved through by an
+# entry naming its parent directory.
+claim_in_scope = [i for i, e in enumerate(claim_entries)
+                  if e[2] is None or e[2] in policy]
+claim_out_of_scope = [e for e in claim_entries
+                      if e[2] is not None and e[2] not in policy]
+claims_warranted, claims_unwarranted = [], []
+claim_charged = [[] for _ in claim_entries]
+for atom in dropped_atoms:
+    idx = next((i for i in claim_in_scope if claim_entries[i][1] == atom), None)
+    if idx is None:
+        claims_unwarranted.append(atom)
+    else:
+        claims_warranted.append((claim_entries[idx][0], atom))
+        claim_charged[idx].append(atom)
 
 # One stream for the whole report. Split across stdout and stderr it interleaved
 # through a pipe, and the failure list printed above the counts explaining it.
@@ -650,12 +890,54 @@ if warranted:
             continue
         print(f"    {len(hits)} hit(s): {warrant} :: {content[:70]}", file=out)
 
-unused = [entries[i] for i in in_scope if not charged[i]]
-if unused:
-    print(f"\n  {len(unused)} entry(ies) matched nothing — the line each "
-          "acknowledged has changed\n  or gone, which is when it needs "
-          "re-judging; re-judge and prune:", file=out)
-    for warrant, content, _ in unused:
+# An entry that matched nothing was called stale outright, and "prune it" is
+# only sound advice for some of them (#251). Two facts decide which:
+#
+#   Is the entry ABOUT this target? A PATH that matched says yes outright.
+#   Unscoped says nothing — the file is per-repo while --file is per-target.
+#   Was its CONTENT in this target at --base? If so the entry is certainly about
+#   this target, whatever its scope, and its line is now accounted for.
+#
+# Either fact alone settles it as STALE, which is the expiry this file promises
+# and the case worth pruning. Neither holding leaves a question this run cannot
+# answer, and the report must say so rather than pick:
+#
+#   the line was re-worded, so the entry no longer matches it — re-judge, OR
+#   the entry was judged against another surface entirely and this run is no
+#   evidence about it whatsoever.
+#
+# Pruning on the second reading discards a live warrant: an unscoped entry
+# pinning an AGENTS.md line reported "matched nothing" on every reference-doc
+# run in one cohort repo, and following that advice would have thrown away a
+# warrant the next AGENTS.md curation still needs. #139 established that expiry
+# is trustworthy only while every warning means something — so the honest move
+# is to name the ambiguity, not to resolve it by guessing. A near-match test
+# would resolve it, and is refused deliberately: "close enough to be the same
+# line" is exactly the judgement whole-line matching exists to not make.
+base_lines = [r.strip() for r in before if r.strip()]
+stale, ambiguous = [], []
+for i in in_scope:
+    if charged[i]:
+        continue
+    warrant, content, scope = entries[i]
+    settled = scope is not None or any(content in b for b in base_lines)
+    (stale if settled else ambiguous).append(entries[i])
+
+if stale:
+    print(f"\n  {len(stale)} entry(ies) matched nothing — the line each "
+          f"acknowledged is a line of\n  {policy}, and is accounted for now, "
+          "which is when an entry needs\n  re-judging; re-judge and prune:",
+          file=out)
+    for warrant, content, _ in stale:
+        print(f"    {warrant} :: {content[:70]}", file=out)
+
+if ambiguous:
+    print(f"\n  {len(ambiguous)} entry(ies) matched nothing AND pin content "
+          f"that is not in\n  {policy} at --base, so this run cannot tell which "
+          "of two things happened:\n  the line was re-worded (re-judge and "
+          "prune), or the entry was judged for\n  another surface (add a PATH "
+          "scope). Do not prune on this run alone:", file=out)
+    for warrant, content, _ in ambiguous:
         print(f"    {warrant} :: {content[:70]}", file=out)
 
 # Said out loud rather than silently skipped. An entry this run never consulted
@@ -667,6 +949,49 @@ if out_of_scope:
     for warrant, content, scope in out_of_scope:
         print(f"    {scope} :: {warrant} :: {content[:60]}", file=out)
 
+if claims_on:
+    print("\nclaims — backticked spans, issue refs, link targets, URLs:",
+          file=out)
+    print(f"  atoms at base:              {len(base_atoms)}", file=out)
+    print(f"  DROPPED:                    {len(dropped_atoms)}", file=out)
+    if claim_entries or claims_warranted:
+        print(f"    warranted:                {len(claims_warranted)}", file=out)
+        print(f"    unwarranted:              {len(claims_unwarranted)}",
+              file=out)
+    if claims_warranted:
+        width = max(len(w) for w, _ in claims_warranted)
+        for warrant, atom in claims_warranted:
+            # With the line it came from. An atom alone is unreviewable — `#569`
+            # says nothing about whether dropping it was right, and the sentence
+            # it sat in is the whole of the evidence.
+            print(f"  WARRANTED {warrant:<{width}}  {atom}", file=out)
+            print(f"            {'':<{width}}  in: "
+                  f"{atom_origin.get(atom, '')[:100]}", file=out)
+    claim_unused = [claim_entries[i] for i in claim_in_scope
+                    if not claim_charged[i]]
+    if claim_unused:
+        print(f"\n  {len(claim_unused)} claim entry(ies) matched nothing — the "
+              "atom each acknowledged is\n  present again or gone from the base; "
+              "re-judge and prune:", file=out)
+        for warrant, content, _ in claim_unused:
+            print(f"    {warrant} :: {content[:70]}", file=out)
+    if claim_out_of_scope:
+        print(f"\n  {len(claim_out_of_scope)} claim entry(ies) scoped to another "
+              f"target — not consulted for {policy}:", file=out)
+        for warrant, content, scope in claim_out_of_scope:
+            print(f"    {scope} :: {warrant} :: {content[:60]}", file=out)
+
+if claims_unwarranted:
+    print(
+        f"\nEach atom below is in {policy} at --base and in no destination.\n"
+        "A tightening must carry its claims across — restore each, or add a "
+        f"judged\nentry to {claims_ack_path} saying why the claim is gone.\n",
+        file=out,
+    )
+    for atom in claims_unwarranted:
+        print(f"  DROPPED  {atom}", file=out)
+        print(f"           in: {atom_origin.get(atom, '')[:120]}", file=out)
+
 if unwarranted:
     print(
         f"\nEach line below is missing from {policy} AND from every "
@@ -677,6 +1002,12 @@ if unwarranted:
     )
     for line in unwarranted:
         print(f"  LOST  {line[:160]}", file=out)
+elif claims_unwarranted:
+    # Deliberately no OK line. Every line being accounted for is TRUE here and
+    # printing it would still read as a pass twenty lines above exit 3 — the
+    # shape the validation gate had to fix in itself, where a WARN at the top
+    # and a rejection below left the reader believing the top.
+    pass
 elif warranted:
     print(f"\nOK — {len(warranted)} line(s) warranted, none unexplained.",
           file=out)
@@ -687,8 +1018,14 @@ else:
 print(f"\nduplicated: {len(duplicated)}", file=out)
 print(f"loss_warranted: {len(warranted)}", file=out)
 print(f"lost: {len(unwarranted)}", file=out)
+# Emitted only under --claims. A `claims_dropped: 0` from a run that never
+# looked would read as a clean bill of health, and this trailer is what the
+# ledger row is copied from.
+if claims_on:
+    print(f"claims_warranted: {len(claims_warranted)}", file=out)
+    print(f"claims_dropped: {len(claims_unwarranted)}", file=out)
 out.flush()
-if unwarranted:
+if unwarranted or claims_unwarranted:
     sys.exit(3)
 
 PY

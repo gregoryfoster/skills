@@ -75,6 +75,49 @@ packaging shrinks.
   the policy file closely; emphasis written to overcome an older model's
   reluctance now over-triggers.
 
+### Proving a class-C tightening
+
+Class C is the one disposition `prove-no-loss.sh` could not score. Its five
+original warrants all name *moves*, and a tightening is a rewrite in place — so
+a run that did exactly what this rubric prescribes had no honest verdict: `ok`
+contradicts exit 3, `failed` tells `score-cohort.sh` content was dropped when
+none was, `skipped` is false. The more disciplined the run, the worse its ledger
+row looked (#247, #250).
+
+A bare sixth warrant would have been worse than the gap. The other five are each
+constrained by something outside the entry — `retarget` and `rename` are
+**compulsory**, forced by this skill; `duplicate`, `disproven` and `default`
+point at checkable evidence. `tighten` points at nothing but the author's own
+edit, and the over-broad refusal cannot restrain it, because **class C's
+defining defect is a section written as one paragraph**. One line, one entry, a
+whole section waved through: on the run that found this, five entries would have
+covered the entire body of a 9,826-token document.
+
+So `tighten` is gated on evidence the rewrite cannot produce for itself, and is
+**refused** — not warned about — if claimed without it:
+
+```bash
+bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point> --claims
+```
+
+**Line matching proves the moves; atom matching proves the rewrites.** The atoms
+are the tokens a faithful rewrite must carry across — backticked spans, `#NNN`
+issue references, link targets, bare URLs — taken from `--base` and from every
+destination and compared as sets. Anything a tightening legitimately drops, such
+as the changelog reference that made a sentence long, gets a judged entry in
+`.skills/context-claims-ok`: same grammar and same warrants as
+`.skills/context-loss-ok` minus `tighten` itself, with the atom matched **whole**
+rather than as a substring, so `#41` cannot warrant `#412`.
+
+Both judgements are needed, and they are not the same judgement. `tighten`
+accounts for the *line*; every atom that line carried is accounted for
+separately, or the gate is back to trusting an author about their own rewrite.
+
+The check earns its keep independently of the warrant it gates. On the run that
+motivated it, it surfaced 19 dropped atoms of which **12 were real
+over-compression that would otherwise have shipped** — including a `wp#569` that
+was the load-bearing justification for an entire API being write-only.
+
 ### Class D — delete
 
 Requires a named warrant. One of exactly three:
