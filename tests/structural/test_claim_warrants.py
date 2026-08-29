@@ -221,6 +221,29 @@ class TestJudgingADroppedClaim:
         _ack(repo, "duplicate :: #412", path=CLAIM_ACK)
         assert _prove(repo, "--claims").returncode == 0
 
+    def test_an_unscoped_claim_entry_for_another_surface_is_not_called_stale(
+            self, tmp_path: Path):
+        """CR finding 3. #251 was fixed for the loss file and reintroduced here
+        in the same change — the partition has to hold for both files or the
+        shared grammar is only half shared."""
+        repo = _tightened(tmp_path, FAITHFUL)
+        _ack(repo, TIGHTEN)
+        _ack(repo, "duplicate :: #412", "duplicate :: #999", path=CLAIM_ACK)
+        r = _prove(repo, "--claims")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Do not prune\n  on this run alone" in r.stdout, r.stdout
+
+    def test_naming_the_claim_file_without_the_flag_is_refused(
+            self, tmp_path: Path):
+        """CR finding 4. The file would go unread and its malformed entries
+        unrefused, while the run reported a claim column it never computed. A
+        flag that quietly does nothing is the mute failure this script refuses
+        everywhere else."""
+        repo = _tightened(tmp_path, FAITHFUL)
+        r = _prove(repo, "--claims-ack-file", "warrants.txt")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "needs --claims" in r.stderr, r.stderr
+
     def test_claims_are_silent_without_the_flag(self, tmp_path: Path):
         """`claims_dropped: 0` from a run that never looked would read as a
         clean bill of health, and the trailer is what the ledger row is copied
@@ -257,6 +280,23 @@ class TestAtomsAreNotNoise:
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         r = _prove(repo, "--claims")
         assert r.returncode == 3, r.stdout + r.stderr
+        assert "claims_dropped: 0" in r.stdout, r.stdout
+
+    def test_prose_tightened_into_a_fenced_block_is_not_a_dropped_claim(
+            self, tmp_path: Path):
+        """CR finding 1. Skipping fences on BOTH sides reported every atom of a
+        prose-to-fence tightening as dropped — an ordinary class-C move, failing
+        falsely. Reading fenced lines was not enough on its own: inside a fence
+        there are no backticks delimiting a span, so the whole line has to count
+        as the atom."""
+        repo = _repo(
+            tmp_path,
+            "# P\n\n## A\n\nRun `uv sync --frozen` before anything else here.\n")
+        (repo / "AGENTS.md").write_text(
+            "# P\n\n## A\n\nSetup:\n\n```bash\nuv sync --frozen\n```\n")
+        _ack(repo, "tighten :: Run `uv sync --frozen` before anything")
+        r = _prove(repo, "--claims")
+        assert r.returncode == 0, r.stdout + r.stderr
         assert "claims_dropped: 0" in r.stdout, r.stdout
 
     def test_a_heading_is_not_an_issue_reference(self, tmp_path: Path):

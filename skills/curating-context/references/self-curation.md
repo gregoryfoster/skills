@@ -40,7 +40,9 @@ bash "<SKILL_SCRIPTS>/verify-facts.sh" --issues \
   --also skills/curating-context/references/telemetry.md   # ... and the rest
 
 # Phase 6 — prove no loss, the same flags the self-budget gate already uses.
-bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point> \
+# --claims is not optional here: this pass is demote/tighten only, so every
+# round produces class-C rewrites, and `tighten` is refused without it.
+bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point> --claims \
   --file skills/curating-context/SKILL.md \
   --docs-dir skills/curating-context/references
 ```

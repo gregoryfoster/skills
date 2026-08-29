@@ -220,9 +220,14 @@ The claim check (--claims):
     bare URL          http(s), trailing punctuation trimmed
 
   Extracted from the base revision and from every destination, compared as
-  SETS, and reported when an atom exists at base and nowhere now. Fenced code
-  blocks are skipped on both sides: their content is protected line by line
-  already, and extracting from them double-reports every deletion.
+  SETS, and reported when an atom exists at base and nowhere now.
+
+  Fenced code blocks are skipped at BASE and read in DESTINATIONS. Skipping them
+  at base keeps a deleted code block from being reported twice, once as LOST and
+  once as an atom. Reading them in destinations is what makes tightening prose
+  INTO a fenced command block — an ordinary class-C move — stop reporting every
+  atom of it as dropped. The asymmetry only ever reduces what is reported, so it
+  cannot invent a loss.
 
   This is not a formality. On the run that motivated it, the check surfaced 19
   dropped atoms of which 12 were real over-compression that would otherwise have
@@ -249,8 +254,8 @@ The claim check (--claims):
 
 Exit codes:
   0  every line accounted for, or warranted
-  1  usage error, no policy file found, a malformed acknowledgement entry, or a
-     `tighten` warrant without --claims
+  1  usage error, no policy file found, a malformed acknowledgement entry, a
+     `tighten` warrant without --claims, or --claims-ack-file without --claims
   2  infrastructure failure (base revision unreadable, python3 missing)
   3  one or more lines — or, under --claims, atoms — unaccounted for and
      unwarranted; the run must justify or restore them
@@ -262,6 +267,7 @@ POLICY=""
 DOCS_DIR=""
 ACK_FILE=".skills/context-loss-ok"
 CLAIMS_ACK_FILE=".skills/context-claims-ok"
+CLAIMS_ACK_SET=0
 CLAIMS=0
 SHOW_RELOCATED=0
 EXTRA=()
@@ -274,13 +280,24 @@ while [ $# -gt 0 ]; do
     --also) EXTRA+=("${2:?--also needs a path}"); shift 2 ;;
     --ack-file) ACK_FILE="${2:?--ack-file needs a path}"; shift 2 ;;
     --claims-ack-file)
-      CLAIMS_ACK_FILE="${2:?--claims-ack-file needs a path}"; shift 2 ;;
+      CLAIMS_ACK_FILE="${2:?--claims-ack-file needs a path}"
+      CLAIMS_ACK_SET=1; shift 2 ;;
     --claims) CLAIMS=1; shift ;;
     --show-relocated) SHOW_RELOCATED=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+# Naming the warrant file without turning the check on is a usage error, not a
+# no-op: the file would go unread, its malformed entries unrefused, and the run
+# would report a clean claim column it never computed. Silence is the wrong
+# answer twice over here — this script refuses a typo'd warrant rather than
+# ignoring it, and a flag that quietly does nothing is the same mute failure.
+if [ "$CLAIMS_ACK_SET" -eq 1 ] && [ "$CLAIMS" -eq 0 ]; then
+  echo "ERROR --claims-ack-file needs --claims; without it the file is never read" >&2
+  exit 1
+fi
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
@@ -552,15 +569,27 @@ BARE_URL = re.compile(r"(?<![(\w])(https?://[^\s)>\]]+)")
 URL_TRAILING = ".,;:!?'\""
 
 
-def atoms_of(lines):
+def atoms_of(lines, skip_fenced=True):
     """Every atom in `lines`, as a set, with the line each first appeared on.
 
     Returns (set, {atom: line}) — the map is for the report, so a dropped atom
     can be shown in the context it was dropped from rather than alone.
 
-    Fenced blocks are skipped. Their content is protected line by line already,
-    so extracting from them would report every deleted code line twice: once as
-    LOST and once as a dropped atom, with the second report adding nothing.
+    Fenced blocks are skipped on the BASE side and read on the DESTINATION side,
+    and the asymmetry is the point. Skipping them at base stops a deleted code
+    block being reported twice — once as LOST, once as a dropped atom, the
+    second adding nothing. Skipping them in a destination reported a claim as
+    dropped when it was plainly present: `Run `uv sync --frozen` first.`
+    tightened into a fenced bash block is an ordinary class-C move, and every
+    atom of it came back DROPPED. A false failure in a safety gate is worse than
+    no gate, because a reader who learns to ignore this report will ignore a
+    real loss in it — the lesson #119 already paid for.
+
+    Reading fences only on the destination side can only ever REDUCE what is
+    reported, so it cannot manufacture a drop. What it can do is call an atom
+    present because it turns up in some unrelated code sample; that is the
+    presence-anywhere standard whole-line matching already applies, not a new
+    weakness.
     """
     found, origin, fenced = set(), {}, False
     for raw in lines:
@@ -568,6 +597,17 @@ def atoms_of(lines):
             fenced = not fenced
             continue
         if fenced:
+            if skip_fenced:
+                continue
+            # Inside a fence the WHOLE LINE is the code. There are no backticks
+            # delimiting a span — that is what the fence replaced — so reading
+            # fenced lines and running the span regex over them finds nothing,
+            # which is how the first attempt at this asymmetry still reported
+            # `uv sync --frozen` as dropped. The line itself is the atom.
+            code = raw.strip()
+            if code:
+                found.add(code)
+                origin.setdefault(code, code)
             continue
         line = delink(raw.strip())
         if not line:
@@ -632,7 +672,7 @@ try:
         lines, _ = strip_frontmatter(lines)
         dests[path] = {n for n in (normalise(l) for l in lines) if n}
         if claims_on:
-            dest_atoms |= atoms_of(lines)[0]
+            dest_atoms |= atoms_of(lines, skip_fenced=False)[0]
     base_atoms, atom_origin = atoms_of(before) if claims_on else (set(), {})
 except OSError as exc:
     print(f"ERROR {exc}", file=sys.stderr)
@@ -666,6 +706,14 @@ def parse_ack(path, warrants, min_chars, unit):
     had to be found and fixed twice. What differs between them is passed in —
     the vocabulary, the length floor, and the noun for the error messages —
     and nothing else does.
+
+    A MISSING file is not an error: most repos will never have one, and the
+    default path must not turn every clean run into an infrastructure failure.
+    A file that exists and then fails mid-read is a different thing and is left
+    to propagate. The version this was factored out of swallowed both, which
+    silently truncated the warrant list at the bad line — and a warrant list
+    that is quietly shorter than the file says is precisely what this file
+    cannot be allowed to be.
     """
     entries, malformed = [], []
     try:
@@ -967,13 +1015,30 @@ if claims_on:
             print(f"  WARRANTED {warrant:<{width}}  {atom}", file=out)
             print(f"            {'':<{width}}  in: "
                   f"{atom_origin.get(atom, '')[:100]}", file=out)
-    claim_unused = [claim_entries[i] for i in claim_in_scope
-                    if not claim_charged[i]]
-    if claim_unused:
-        print(f"\n  {len(claim_unused)} claim entry(ies) matched nothing — the "
-              "atom each acknowledged is\n  present again or gone from the base; "
-              "re-judge and prune:", file=out)
-        for warrant, content, _ in claim_unused:
+    # The same two-fact partition the loss file uses (#251), on the same
+    # reasoning and with a cheaper test: `base_atoms` is already computed, so
+    # "was this atom ever in this target" is a set lookup rather than a scan.
+    # Shipping the fix for lines and the defect for atoms in one change is
+    # exactly the drift a shared rule is supposed to prevent.
+    claim_stale, claim_ambiguous = [], []
+    for i in claim_in_scope:
+        if claim_charged[i]:
+            continue
+        settled = claim_entries[i][2] is not None or claim_entries[i][1] in base_atoms
+        (claim_stale if settled else claim_ambiguous).append(claim_entries[i])
+    if claim_stale:
+        print(f"\n  {len(claim_stale)} claim entry(ies) matched nothing — the "
+              "atom each acknowledged is\n  an atom of this target and is "
+              "present again; re-judge and prune:", file=out)
+        for warrant, content, _ in claim_stale:
+            print(f"    {warrant} :: {content[:70]}", file=out)
+    if claim_ambiguous:
+        print(f"\n  {len(claim_ambiguous)} claim entry(ies) matched nothing AND "
+              f"pin an atom that is not in\n  {policy} at --base, so this run "
+              "cannot tell whether the atom came back or\n  the entry was "
+              "judged for another surface (add a PATH scope). Do not prune\n  "
+              "on this run alone:", file=out)
+        for warrant, content, _ in claim_ambiguous:
             print(f"    {warrant} :: {content[:70]}", file=out)
     if claim_out_of_scope:
         print(f"\n  {len(claim_out_of_scope)} claim entry(ies) scoped to another "

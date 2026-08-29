@@ -65,13 +65,18 @@ skills/init-socraticode/SKILL.md :: duplicate :: **Migrate a legacy top-level ar
 # addition pay for itself with a class-C trim two bullets up ("which is why
 # this is a script" — narrative the reference doc still carries in full, next
 # to the pointer that makes it useful). Both edits rewrote lines IN PLACE, so
-# whole-line matching reports nine losses and none of the five original
+# whole-line matching reports the losses below and none of the five original
 # warrants fits: exactly the gap #247 and #250 reported.
 #
 # What makes these judged rather than asserted is the second check, which is
 # why `tighten` is refused without it: --claims read 103 atoms at base and
 # found 0 dropped. Every backticked span, issue reference and link target the
-# rewritten lines carried is still in the surface. Re-run to confirm:
+# rewritten lines carried is still in the surface.
+#
+# Nine on the first pass, five now: CR finding 6 rewrapped the paragraph and
+# four base lines came back verbatim. The next run named all four stale and
+# they were pruned here — the expiry these entries promise, working on the
+# first change that exercised it. Re-run to confirm:
 #
 #   bash skills/curating-context/scripts/prove-no-loss.sh --base main \
 #     --file skills/curating-context/SKILL.md \
@@ -84,7 +89,3 @@ skills/curating-context/SKILL.md :: tighten :: Carry the verdict to Phase 7 (`--
 skills/curating-context/SKILL.md :: tighten :: never a pass.
 skills/curating-context/SKILL.md :: tighten :: retargeted, a heading Phase 6.5 forced you to rename — is not a loss. Give each
 skills/curating-context/SKILL.md :: tighten :: a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or
-skills/curating-context/SKILL.md :: tighten :: `PATH :: WARRANT :: CONTENT` to scope it to one target; warrant from the
-skills/curating-context/SKILL.md :: tighten :: closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as
-skills/curating-context/SKILL.md :: tighten :: `--no-loss-warrants M`. **Never** warrant a line you have not read against its
-skills/curating-context/SKILL.md :: tighten :: replacement.

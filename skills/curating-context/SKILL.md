@@ -266,12 +266,12 @@ Re-run Phase 1 and assert, before committing:
 
   A line the run had to **rewrite** rather than move — a pointer this change
   retargeted, a heading Phase 6.5 forced you to rename, a class-C tightening
-  (which needs `--claims`) — is not a
-  loss. Give each a judged entry in `.skills/context-loss-ok`
-  (`WARRANT :: CONTENT`, or `PATH :: WARRANT :: CONTENT` to scope it to one
-  target; warrant from the closed set in `--help`), re-run, and carry
-  `loss_warranted:` to Phase 7 as `--no-loss-warrants M`. **Never** warrant a
-  line you have not read against its replacement.
+  (which needs `--claims`) — is not a loss. Give each a judged entry in
+  `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or
+  `PATH :: WARRANT :: CONTENT` to scope it to one target; warrant from the
+  closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as
+  `--no-loss-warrants M`. **Never** warrant a line you have not read against its
+  replacement.
 - **No block was copied instead of moved.** Presence *anywhere* satisfies the
   check, so a bullet left inline *and* in a destination is invisible to it, to
   Phase 6.5 and to `links.dead`. `duplicated: N` lists them; judge each.
