@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.11"
+  version: "1.12"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -261,13 +261,13 @@ Re-run Phase 1 and assert, before committing:
 
   Every non-blank line of the policy file as it was at `--base` must still be
   present verbatim, inline or in a destination. Exit 3 lists what is not; a
-  distinctive-phrase grep is **not** sufficient, which is why this is a script.
-  Carry the verdict to Phase 7 (`--no-loss ok`); a missing one is unscorable,
-  never a pass.
+  distinctive-phrase grep is **not** sufficient. Carry the verdict to Phase 7
+  (`--no-loss ok`); a missing one is unscorable, never a pass.
 
   A line the run had to **rewrite** rather than move — a pointer this change
-  retargeted, a heading Phase 6.5 forced you to rename — is not a loss. Give each
-  a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or
+  retargeted, a heading Phase 6.5 forced you to rename, a class-C tightening
+  (which needs `--claims`) — is not a loss. Give each a judged entry in
+  `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or
   `PATH :: WARRANT :: CONTENT` to scope it to one target; warrant from the
   closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as
   `--no-loss-warrants M`. **Never** warrant a line you have not read against its
