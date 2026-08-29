@@ -59,33 +59,3 @@ skills/init-socraticode/SKILL.md :: retarget :: 6,000-token standard, set at cur
 skills/init-socraticode/SKILL.md :: duplicate :: **Also write `.socraticodeignore` (repo root).** It's layered on the built-in
 skills/init-socraticode/SKILL.md :: duplicate :: **Migrate a legacy top-level array first (idempotent audit).** The server
 
-# --- 2026-08-28, #250 ----------------------------------------------------
-# The first `tighten` warrants, and this skill proving its own fix on itself.
-# Phase 6 gained a clause naming the class-C case, and the ratchet made the
-# addition pay for itself with a class-C trim two bullets up ("which is why
-# this is a script" — narrative the reference doc still carries in full, next
-# to the pointer that makes it useful). Both edits rewrote lines IN PLACE, so
-# whole-line matching reports the losses below and none of the five original
-# warrants fits: exactly the gap #247 and #250 reported.
-#
-# What makes these judged rather than asserted is the second check, which is
-# why `tighten` is refused without it: --claims read 103 atoms at base and
-# found 0 dropped. Every backticked span, issue reference and link target the
-# rewritten lines carried is still in the surface.
-#
-# Nine on the first pass, five now: CR finding 6 rewrapped the paragraph and
-# four base lines came back verbatim. The next run named all four stale and
-# they were pruned here — the expiry these entries promise, working on the
-# first change that exercised it. Re-run to confirm:
-#
-#   bash skills/curating-context/scripts/prove-no-loss.sh --base main \
-#     --file skills/curating-context/SKILL.md \
-#     --docs-dir skills/curating-context/references --claims
-#
-# Scoped to SKILL.md: PATH matches the run's --file, and no run against a
-# reference doc should consult these.
-skills/curating-context/SKILL.md :: tighten :: distinctive-phrase grep is **not** sufficient, which is why this is a script.
-skills/curating-context/SKILL.md :: tighten :: Carry the verdict to Phase 7 (`--no-loss ok`); a missing one is unscorable,
-skills/curating-context/SKILL.md :: tighten :: never a pass.
-skills/curating-context/SKILL.md :: tighten :: retargeted, a heading Phase 6.5 forced you to rename — is not a loss. Give each
-skills/curating-context/SKILL.md :: tighten :: a judged entry in `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or
