@@ -54,14 +54,18 @@ The recommended pattern for using these skills in your project is **git submodul
 # 1. Add as a submodule
 git submodule add https://github.com/gregoryfoster/skills.git skills-vendor/gregoryfoster-skills
 
-# 2. Symlink the skills you want
+# 2. Symlink the skills you want — the whole directory, so everything under it
+#    tracks upstream by construction. Vendoring file by file also works and is
+#    in cohort use, but then any file committed as a REGULAR file silently
+#    stops receiving updates: https://github.com/gregoryfoster/skills/issues/256
 #    (relative paths assume skills-vendor/ is at the repo root)
 mkdir -p skills
 ln -s ../../skills-vendor/gregoryfoster-skills/skills/reviewing-code skills/reviewing-code
 ln -s ../../skills-vendor/gregoryfoster-skills/skills/shipping-work skills/shipping-work
 
 # 3. Install the doctor preflight (self-heals dangling symlinks in fresh
-#    worktrees, shallow CI clones, etc.)
+#    worktrees, shallow CI clones, etc., and reports a vendored file that
+#    stopped tracking upstream)
 bash skills-vendor/gregoryfoster-skills/skills/managing-skills/scripts/install-doctor.sh
 
 # 4. Install the auto-refresh hook — OPTIONAL, but skipping it means the
