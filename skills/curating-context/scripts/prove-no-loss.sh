@@ -205,6 +205,12 @@ What counts as "present":
     claims_dropped: <N>    atoms present at base and nowhere now, unwarranted
     claims_warranted: <M>  dropped atoms carrying a judged entry
 
+  Both go on the ledger row via `record-telemetry.sh --claims-dropped N
+  --claims-warranted M`. Without them a run that passed this check writes the
+  same row as one that never ran it, so nothing downstream can tell a VERIFIED
+  class-C tightening from an unverified one (#253) — the `tighten` warrant is
+  refused without --claims, but the ledger cannot see warrants by kind.
+
 The claim check (--claims):
   Whole-line matching is blind to a rewrite in place, and Phase 3 PRESCRIBES
   one. A `##` section holding a single 4,000-token paragraph is one line, so

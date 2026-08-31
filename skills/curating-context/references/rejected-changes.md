@@ -148,3 +148,42 @@ the OAuth path kept last with its limitation announced.
 
 **Generalisable lesson:** obtaining a credential is not the same as it working.
 Gate on the operation succeeding, not on the precondition being satisfied.
+
+## A `tightened` count as the measure of what class C recovers
+
+**Proposed:** the ledger carries one before/after token pair for a whole run,
+and a curation almost always demotes *and* tightens in the same pass — so the
+rubric's claim that [class C](keep-cut-rubric.md#proving-a-class-c-tightening)
+recovers real tokens has never been checked against demotion. The cheap way to
+start: record a plain count of `tighten` warrants on the row and read tokens
+per warrant across the cohort.
+
+**Refuted by:** the two runs that would have supplied the first data points.
+One `tighten` warrant covered a **62-token** trim in
+[#247](https://github.com/gregoryfoster/skills/issues/247); another covered a
+**1,013-token** restructure in
+[#250](https://github.com/gregoryfoster/skills/issues/250). A count that spans
+a 16× range in its first two observations measures the operator's warranting
+style, not the technique — and it is the same asymmetry that made the bare
+`tighten` warrant unsafe in the first place, which is why that warrant is now
+refused without `--claims`. The cohort is a held-out validation split and this
+number would feed adoption decisions, so a proxy this weak is worse than an
+honest gap: it would be read as measured.
+
+**Replaced by:** nothing, deliberately, and this entry is the "say so"
+([#253](https://github.com/gregoryfoster/skills/issues/253)). **The ledger does
+not measure tokens recovered by rewriting versus by moving, and no field on the
+row should be read as an estimate of it.** What the row does now carry is
+whether the tightening's own check ran and passed (`claims_dropped` /
+`claims_warranted`) — a verification fact, not an effectiveness one.
+
+The measurement that would settle it is per-section attribution: diff Phase 1's
+before-census against Phase 6's after-census per section and attribute by that
+section's action tag. `measure-context.sh` already produces the census, so the
+raw material exists; nothing threads it to the row, and the method still breaks
+down on a section that was both demoted and tightened. That is the shape to
+build when someone wants the answer — not a warrant count.
+
+**Generalisable lesson:** an unmeasured quantity recorded as a weak proxy stops
+being unmeasured to every downstream reader. Leave the gap visible and name the
+measurement that would close it.

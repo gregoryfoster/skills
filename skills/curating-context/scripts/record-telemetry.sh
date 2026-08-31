@@ -67,6 +67,23 @@ Options:
                    Without this the ledger cannot tell a clean run from one
                    that waved eight lines through, and the cohort already holds
                    both recorded as `ok` (#111).
+  --claims-dropped N
+  --claims-warranted N
+                   Record prove-no-loss.sh --claims' two trailer lines:
+                   `claims_dropped:` (atoms present at base and nowhere now,
+                   unwarranted) and `claims_warranted:` (dropped atoms carrying
+                   a judged entry). Both require --no-loss ok or failed, for
+                   the reason --no-loss-warrants does. Omitted is null, and
+                   null is not 0: without them a run that passed --claims and
+                   cleared it writes the same row as one that never ran the
+                   check, so the ledger cannot tell a VERIFIED class-C
+                   tightening from an unverified one (#253). `no_loss_warrants`
+                   cannot answer it — it aggregates all six warrant kinds, so a
+                   `tighten` is indistinguishable from a `retarget` in the
+                   count.
+                   A non-zero --claims-dropped requires --no-loss failed:
+                   prove-no-loss.sh exits 3 on an unwarranted dropped atom, so
+                   `ok` beside one is a verdict the run did not reach.
   --seams N        Record check-seams.sh's final count for this run: the number
                    of UNACKNOWLEDGED cross-reference seams after Phase 6.5's
                    hits were judged — the wrong ones fixed, the legitimate ones
@@ -166,6 +183,12 @@ Row schema (one JSON object per line):
                     "nothing was unaccounted for" from "eight lines were judged
                     and waved through", and two cohort adoptions recorded that
                     same state in opposite ways (#111)
+  claims_dropped    atoms prove-no-loss.sh --claims found at base and nowhere
+  claims_warranted  now, and how many of those carried a judged entry, from
+                    --claims-dropped / --claims-warranted. Null when the run
+                    did not report them — which is never the same as 0, and is
+                    the only thing distinguishing a tightening whose claim
+                    check ran and passed from one that was never checked (#253)
   seams             check-seams.sh's unacknowledged count, from --seams; null
                     if not swept
   seams_acked       the sweep's acknowledged count, from --seams-acked; null
@@ -182,8 +205,9 @@ Row schema (one JSON object per line):
 
 Exit codes:
   0  row appended or backfilled (or printed, with --dry-run)
-  1  usage error (including --baseline with --actions, --no-loss or
-     --no-loss-warrants; --no-loss-warrants without a verdict; or --repo-commit
+  1  usage error (including --baseline with --actions, --no-loss,
+     --no-loss-warrants or --claims-*; --no-loss-warrants or --claims-*
+     without a verdict; --claims-dropped N>0 against `ok`; or --repo-commit
      with an append-only flag, an unknown revision, an empty ledger or a
      baseline row), or stdin was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
@@ -197,6 +221,8 @@ ACTIONS=""
 NOTE=""
 NO_LOSS=""
 NO_LOSS_WARRANTS=""
+CLAIMS_DROPPED=""
+CLAIMS_WARRANTED=""
 SEAMS=""
 SEAMS_ACKED=""
 REPO_OVERRIDE=""
@@ -227,6 +253,10 @@ while [ $# -gt 0 ]; do
     --no-loss) NO_LOSS="${2:?--no-loss needs ok, failed, or skipped}"; shift 2 ;;
     --no-loss-warrants)
       NO_LOSS_WARRANTS="${2:?--no-loss-warrants needs a count}"; shift 2 ;;
+    --claims-dropped)
+      CLAIMS_DROPPED="${2:?--claims-dropped needs a count}"; shift 2 ;;
+    --claims-warranted)
+      CLAIMS_WARRANTED="${2:?--claims-warranted needs a count}"; shift 2 ;;
     --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
     --seams-acked) SEAMS_ACKED="${2:?--seams-acked needs a count}"; shift 2 ;;
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
@@ -252,6 +282,8 @@ if [ "$BACKFILL" -eq 1 ]; then
   [ "$BASELINE" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --baseline"
   [ -z "$NO_LOSS" ] || APPEND_ONLY="$APPEND_ONLY --no-loss"
   [ -z "$NO_LOSS_WARRANTS" ] || APPEND_ONLY="$APPEND_ONLY --no-loss-warrants"
+  [ -z "$CLAIMS_DROPPED" ] || APPEND_ONLY="$APPEND_ONLY --claims-dropped"
+  [ -z "$CLAIMS_WARRANTED" ] || APPEND_ONLY="$APPEND_ONLY --claims-warranted"
   [ -z "$SEAMS" ] || APPEND_ONLY="$APPEND_ONLY --seams"
   [ -z "$SEAMS_ACKED" ] || APPEND_ONLY="$APPEND_ONLY --seams-acked"
   [ -z "$REPO_OVERRIDE" ] || APPEND_ONLY="$APPEND_ONLY --repo"
@@ -278,10 +310,12 @@ if [ "$BASELINE" -eq 1 ]; then
     echo "      is measurement-only and carries the fixed tag \`baseline\`." >&2
     echo "      Record the edits on the Phase 7 row instead." >&2
     exit 1; }
-  if [ -n "$NO_LOSS" ] || [ -n "$NO_LOSS_WARRANTS" ]; then
-    echo "ERROR --baseline and --no-loss/--no-loss-warrants are mutually" >&2
-    echo "      exclusive: nothing has been relocated yet, so there is no" >&2
-    echo "      verdict to record and nothing to have warranted." >&2
+  if [ -n "$NO_LOSS" ] || [ -n "$NO_LOSS_WARRANTS" ] \
+    || [ -n "$CLAIMS_DROPPED" ] || [ -n "$CLAIMS_WARRANTED" ]; then
+    echo "ERROR --baseline and --no-loss/--no-loss-warrants/--claims-* are" >&2
+    echo "      mutually exclusive: nothing has been relocated or rewritten" >&2
+    echo "      yet, so there is no verdict to record, nothing to have" >&2
+    echo "      warranted and no atom that could have been dropped." >&2
     exit 1
   fi
   # The KIND is on the TAG, not in --note. Two kinds of baseline row mean
@@ -321,10 +355,43 @@ if [ -n "$NO_LOSS_WARRANTS" ]; then
        exit 1 ;;
   esac
 fi
+# The claim check is a MODE of the same run, not a second run, so its counts
+# answer to the same verdict (#253). Recorded against `skipped` or nothing they
+# would say atoms were compared by a check nobody ran — `no_loss_warrants`'
+# failure mode exactly, one field over.
+for _claim in "--claims-dropped=$CLAIMS_DROPPED" \
+              "--claims-warranted=$CLAIMS_WARRANTED"; do
+  _flag="${_claim%%=*}"; _val="${_claim#*=}"
+  [ -n "$_val" ] || continue
+  case "$NO_LOSS" in
+    ok|failed) ;;
+    *) echo "ERROR $_flag needs --no-loss ok or --no-loss failed (got" >&2
+       echo "      '${NO_LOSS:-nothing}'). A claim count with no verdict says" >&2
+       echo "      atoms were compared by a check that did not run." >&2
+       exit 1 ;;
+  esac
+done
+# An unwarranted dropped atom exits prove-no-loss.sh 3, so `ok` beside one is a
+# verdict that run never reached. Refused rather than stored: this pair is the
+# only evidence the ledger will ever hold that a class-C tightening was
+# verified, and a row saying "checked, clean" over a check that failed is worse
+# than the null it replaces.
+case "$CLAIMS_DROPPED" in
+  ''|0) ;;
+  *) if [ "$NO_LOSS" = "ok" ]; then
+       echo "ERROR --claims-dropped $CLAIMS_DROPPED with --no-loss ok:" >&2
+       echo "      prove-no-loss.sh exits 3 on an unwarranted dropped atom, so" >&2
+       echo "      that run did not pass. Record --no-loss failed, or warrant" >&2
+       echo "      the atoms in .skills/context-loss-ok and re-run the check." >&2
+       exit 1
+     fi ;;
+esac
 # Digits only — the value comes from check-seams.sh's `seams: N` line, and
 # anything else here is a transcription error, not a count.
 for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED" \
-             "--no-loss-warrants=$NO_LOSS_WARRANTS"; do
+             "--no-loss-warrants=$NO_LOSS_WARRANTS" \
+             "--claims-dropped=$CLAIMS_DROPPED" \
+             "--claims-warranted=$CLAIMS_WARRANTED"; do
   _flag="${_pair%%=*}"; _val="${_pair#*=}"
   case "$_val" in
     ''|*[!0-9]*)
@@ -414,7 +481,7 @@ else
 fi
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" <<'PY' || RC=$?
 import datetime as dt
 import json
 import os
@@ -423,7 +490,7 @@ import tempfile
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
  no_loss, seams, seams_acked, no_loss_warrants, repo_commit,
- mode) = sys.argv[1:16]
+ mode, claims_dropped, claims_warranted) = sys.argv[1:18]
 
 
 def is_curation_row(r):
@@ -579,6 +646,15 @@ row = {
     # `or None` shape used above would fold it back into "not measured". That
     # distinction is the whole point of the field (#111).
     "no_loss_warrants": int(no_loss_warrants) if no_loss_warrants != "" else None,
+    # Same empty-string test, and the same reason: `claims_dropped: 0` from a
+    # run that passed --claims is the positive claim the field exists to carry
+    # (#253). Two fields rather than one because a dropped-but-judged atom and
+    # an unwarranted one are different states — the first is a judgement, the
+    # second is why the run exited 3.
+    "claims_dropped": int(claims_dropped) if claims_dropped != "" else None,
+    "claims_warranted": (
+        int(claims_warranted) if claims_warranted != "" else None
+    ),
     "seams": int(seams) if seams else None,
     "seams_acked": int(seams_acked) if seams_acked else None,
     "top_section": top.get("title"),
