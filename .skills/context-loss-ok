@@ -58,30 +58,3 @@ skills/init-socraticode/SKILL.md :: retarget :: 6,000-token standard, set at cur
 # reports these is the SKILL.md curation, not one against the reference.
 skills/init-socraticode/SKILL.md :: duplicate :: **Also write `.socraticodeignore` (repo root).** It's layered on the built-in
 skills/init-socraticode/SKILL.md :: duplicate :: **Migrate a legacy top-level array first (idempotent audit).** The server
-
-# --- AGENTS.md curation, branch curate-agents-md (#257 CR item 8) ---
-# The index into docs/STYLE.md had grown a summary of each argument it points
-# at; tightened to name + why-you-would-go-there. --claims: 136 atoms at base,
-# 0 dropped. The two `disproven` lines are figures this run re-measured.
-# Spent once this branch merges — prune then.
-AGENTS.md :: tighten :: Three conventions here carry a full template and a rationale, and live in
-AGENTS.md :: tighten :: [docs/STYLE.md](docs/STYLE.md):
-AGENTS.md :: tighten :: - **A repo-creating git command must scrub `GIT_DIR`.** An inherited `GIT_DIR`
-AGENTS.md :: tighten :: overrides `git -C` and cwd, and git exports it to every hook — so a test
-AGENTS.md :: tighten :: fixture's throwaway repo writes to the real one
-AGENTS.md :: tighten :: ([#189](https://github.com/gregoryfoster/skills/issues/189)). Its sibling
-AGENTS.md :: tighten :: proposal `extensions.worktreeConfig` was measured and **refused** — it does
-AGENTS.md :: tighten :: not redirect a worktree's `--local` writes.
-AGENTS.md :: tighten :: - **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a SKILL.md —
-AGENTS.md :: tighten :: the agent's cwd is the *project* root, so a bare relative path resolves to a file
-AGENTS.md :: tighten :: that does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)).
-AGENTS.md :: tighten :: `TestNoBareScriptPaths` fails the suite if the form reappears.
-AGENTS.md :: tighten :: `TestGateScriptHardening` enforces it across `shipping-work*` and
-AGENTS.md :: tighten :: `reviewing-code*`, every script classified gate or reporting (#255).
-AGENTS.md :: tighten :: Every `pre-ship.sh` also publishes a project-local override point recommending
-AGENTS.md :: tighten :: a *wrapper* — `exec` the vendored script through the `skills/…` symlink —
-AGENTS.md :: tighten :: never a fork, which drifts silently on every submodule update.
-AGENTS.md :: tighten :: `test_pre_ship_env_override.py` keeps the block from drifting back to one
-AGENTS.md :: tighten :: variant (#105).
-AGENTS.md :: disproven :: it. Fourteen of nineteen skills meet it; the rest carry a named exception with
-AGENTS.md :: disproven :: the end of `test_context_surface.py`.** That file is already ~3,600 lines and is
