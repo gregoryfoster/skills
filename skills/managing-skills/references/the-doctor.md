@@ -14,6 +14,19 @@ installed one hook should not have to reach a reference doc to learn its first
 run fails ([#228](https://github.com/gregoryfoster/skills/issues/228)). Stated
 once, there; this section is about the heal scope only.
 
+## Silent forks: the shape a symlink scan cannot see
+
+Two vendoring shapes are in cohort use, and from a shell they look identical — `ls skills/` shows the same names either way:
+
+- **A whole-directory symlink.** `skills/<name>` is one tree entry, mode `120000`, pointing at `../skills-vendor/<owner>-<repo>/skills/<name>`. Everything beneath it is upstream by construction; nothing can drift.
+- **A directory of per-file symlinks.** `skills/<name>/` is a real directory (`040000`) holding `SKILL.md` and `scripts/`, each entry individually `120000`. A change reaches it file by file — so **any one file committed as `100644`/`100755` silently opts out of every future update**, permanently.
+
+Nothing detected the second case until [#256](https://github.com/gregoryfoster/skills/issues/256): the dangling scans skip regular files by construction, the refresh hook moves a submodule pointer that a forked file never reads, and the drift check ([#238](https://github.com/gregoryfoster/skills/issues/238)) looks only at declared overrides. It cost measurably. One member carried `skills/shipping-work-php/scripts/doc-check.sh` as a regular file among five symlinked siblings, still running the pre-[#252](https://github.com/gregoryfoster/skills/issues/252) matcher — so its own carefully tailored path list had matched nothing since it was written, which is the exact bug #252 fixed. Three others forked `SKILL.md` while symlinking every script beneath it: the scripts update, the instructions describing them do not, and an agent following those instructions misreads the new verdict. All four were found by hand-reading a trees API listing.
+
+The check walks each real `skills/<name>/` against the vendored skill of the same name and reports any path present in both where the consumer's copy is a regular file. Three things are deliberately **not** forks: a whole-directory symlink (it *is* the vendor tree), a file the consumer does not carry (using less of a skill is not diverging from it), and a **declared override** — local by definition, and its staleness is the drift check's business, so reporting every file in one would bury the real finding.
+
+Reported, never healed — a project-local divergence is sometimes the right answer, so the operator decides. Two ways to say so: `pre-ship.sh` is exempt by name (upstream ships a stub for the bare variant, and [docs/STYLE.md](https://github.com/gregoryfoster/skills/blob/main/docs/STYLE.md) blesses a project-supplied wrapper), and anything else goes in `.skills/forked-ok`, one repo-relative path per line, `#`-comments and blank lines ignored. Advisory in every mode including `--check-only`: a fork is sync debt an operator pays down on their schedule, and a probe that failed on it would push consumers toward deleting the local file rather than declaring it. The named remedy is the one from `docs/STYLE.md` — **wrap, don't fork**: a project that needs different behaviour keeps a thin local script that `exec`s the vendored one through the `skills/…` symlink.
+
 ## Why the doctor is a copy, not a symlink
 
 **The doctor is a copy, not a symlink** — deliberately. A symlink into `skills-vendor/` would itself dangle in exactly the uninitialized-submodule state the doctor exists to repair. The copy stays reachable there; the price is that upstream fixes don't arrive by submodule bump alone. Three things close that gap, in order of how much they ask of the consumer:
