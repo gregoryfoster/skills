@@ -18,11 +18,18 @@ true` straight to stdout) is invisible to it, and because the distinction that
 matters is at runtime: **an empty answer and an unanswerable question must not
 look the same to the caller.**
 
-Everything here runs against a fake `uv` on `PATH`; no venv, no network, no
-real resolver.
+`check-status.sh` is the third instance and the one that decides a ship
+directly ([#257](https://github.com/gregoryfoster/skills/issues/257)): it read
+its verdict out of `[ -n "$(git status --porcelain)" ]`, where a failing git
+substitutes the empty string — exactly what a clean tree substitutes to. Same
+rule, third spelling, so it is pinned here rather than in a file of its own.
+
+Everything here runs against a fake `uv` or a fake `git` on `PATH`; no venv, no
+network, no real resolver.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -176,3 +183,130 @@ class TestTheExitCodeIsPublished:
             "caller branches on them, and 2 now means 'could not run' rather "
             f"than 'nothing found'. Got:\n{r.stdout}"
         )
+
+
+# ---------------------------------------------------------------------------
+# check-status.sh — the verdict is the exit code (#257)
+# ---------------------------------------------------------------------------
+
+SHIPPING_VARIANTS = sorted(
+    p.parent.parent.name
+    for p in SKILLS_DIR.glob("shipping-work*/scripts/check-status.sh")
+)
+
+# Fails ONLY the call that decides the verdict, which is what makes this the
+# defect rather than a broken git: `git status --short` above it still prints
+# the modification, so the report and the verdict contradict each other on one
+# screen. (A whole-git failure aborts earlier under `set -e` — loudly, which
+# was never the problem.)
+GIT_SHIM = """#!/bin/sh
+if [ "$1" = "status" ] && [ "$2" = "--porcelain" ]; then
+  echo "fatal: Unable to read index" >&2
+  exit 128
+fi
+exec %s "$@"
+"""
+
+
+def _git(repo: Path, *args: str) -> None:
+    """`GIT_*` scrubbed, and the identity passed with `-c` — a fixture that
+    inherits either reaches out of tmp_path and writes the real repo (#189)."""
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+         *args],
+        check=True, capture_output=True, timeout=60,
+        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+    )
+
+
+@pytest.fixture
+def worktree(tmp_path: Path) -> Path:
+    """A repo with one commit and one uncommitted modification — dirty, and
+    unambiguously so."""
+    root = tmp_path / "wt"
+    (root / "fakebin").mkdir(parents=True)
+    _git(root, "init", "-q", "-b", "main")
+    (root / "work.txt").write_text("committed\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "init")
+    (root / "work.txt").write_text("committed\nuncommitted\n")
+    return root
+
+
+def _break_git_status(worktree: Path) -> None:
+    shim = worktree / "fakebin" / "git"
+    real = shutil.which("git")
+    assert real, "git is required for these tests"
+    shim.write_text(GIT_SHIM % real)
+    shim.chmod(0o755)
+
+
+def _check_status(variant: str, worktree: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(SKILLS_DIR / variant / "scripts" / "check-status.sh")],
+        cwd=str(worktree), capture_output=True, text=True, timeout=60,
+        env=_clean_env(worktree),
+    )
+
+
+@pytest.mark.parametrize("variant", SHIPPING_VARIANTS)
+class TestAnUnknownTreeIsNotACleanTree:
+    def test_every_variant_ships_the_script(self, variant: str) -> None:
+        """The four are one file reached through three symlinks; the guard is
+        that all four resolve, so a variant that forks its copy is still held
+        to every case below."""
+        assert (SKILLS_DIR / variant / "scripts" / "check-status.sh").is_file()
+
+    def test_a_failing_git_status_is_not_reported_as_clean(
+        self, variant: str, worktree: Path
+    ) -> None:
+        _break_git_status(worktree)
+        r = _check_status(variant, worktree)
+        assert "Working tree is clean" not in r.stdout, (
+            f"{variant}: a dirty tree was reported CLEAN because git failed — "
+            "and the modification is printed four lines above the verdict "
+            f"denying it:\n{r.stdout}"
+        )
+        assert r.returncode == 2, (
+            f"{variant}: expected the tooling/infra code 2, got "
+            f"{r.returncode}. 0 would let the ship proceed with the work "
+            f"still in the tree.\nstdout={r.stdout}\nstderr={r.stderr}"
+        )
+        assert "UNKNOWN" in r.stderr, (
+            f"{variant}: the error must name the state as unknown rather than "
+            f"as a git detail the reader has to interpret:\n{r.stderr}"
+        )
+
+    def test_a_dirty_tree_still_exits_one(self, variant: str, worktree: Path) -> None:
+        r = _check_status(variant, worktree)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "UNCOMMITTED CHANGES DETECTED" in r.stdout, r.stdout
+
+    def test_a_clean_tree_still_exits_zero(self, variant: str, worktree: Path) -> None:
+        _git(worktree, "commit", "-qam", "more")
+        r = _check_status(variant, worktree)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Working tree is clean" in r.stdout, r.stdout
+
+    def test_help_publishes_the_infra_code(self, variant: str, worktree: Path) -> None:
+        """Three exit codes now, and the caller branches on all three."""
+        r = subprocess.run(
+            ["bash", str(SKILLS_DIR / variant / "scripts" / "check-status.sh"),
+             "--help"],
+            cwd=str(worktree), capture_output=True, text=True, timeout=30,
+            env=_clean_env(worktree),
+        )
+        assert r.returncode == 0, r.stderr
+        assert "Exit codes:" in r.stdout and "2" in r.stdout, r.stdout
+
+
+@pytest.mark.parametrize("variant", SHIPPING_VARIANTS)
+def test_the_skill_tells_the_agent_what_exit_2_means(variant: str) -> None:
+    """The exit code only helps if Step 2 reads it. Its sibling doc-check step
+    already documents 1 and 2; this one documented neither."""
+    body = (SKILLS_DIR / variant / "SKILL.md").read_text()
+    assert "exits 2" in body and "unknown" in body.lower(), (
+        f"skills/{variant}/SKILL.md must say what check-status.sh's exit 2 "
+        "means — an agent that reads it as 'not 1, therefore clean' ships the "
+        "work it was supposed to commit"
+    )
