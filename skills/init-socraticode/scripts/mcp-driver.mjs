@@ -1506,7 +1506,18 @@ Env:
                       socraticode-health.sh exports 60000 instead, because a
                       SessionStart hook must not hang a session on a server
                       that will never answer. So through the hook the effective
-                      ceiling is 60000, and this default never applies.`;
+                      ceiling is 60000, and this default never applies.
+
+Exit codes:
+  0  clean — the command ran and found nothing to report
+  1  the command ran and found a defect (health-check, verify)
+  2  usage
+  3  the command DID NOT COMPLETE — it threw, or health-check hit its
+     timeout. Nothing was measured, so this is not a clean result and it is
+     not a finding either (#254). A consumer must not read a non-zero code as
+     "defects found": a driver older than this one exits 1 here too, which is
+     why socraticode-health.sh branches on whether any finding was printed
+     rather than on the code.`;
 
 // Only dispatch when run as a script. Importing the module (to exercise the
 // PARSERS against captured status strings) must not spawn a server or exit.
@@ -1540,7 +1551,31 @@ const RUN_AS_SCRIPT = (() => {
   return invoked !== null && invoked === _realOrNull(fileURLToPath(import.meta.url));
 })();
 
-if (RUN_AS_SCRIPT) {
+// A run that DID NOT COMPLETE gets its own code (#254). 0 is clean, 1 is
+// "defects found" (#220) and 2 is usage, so an error thrown out of the dispatch
+// had nowhere to land: node exits 1 for an unhandled rejection too, which makes
+// a crashed health-check indistinguishable from one that measured the repo and
+// found something. Consumers that key on the exit code — socraticode-health.sh
+// is one — cannot rely on this alone, since a vendored driver predating it
+// still exits 1; they need their own crash branch. It is here so the state is
+// legible to anything reading the code rather than the stderr.
+const EXIT_INCOMPLETE = 3;
+
+function _reportIncomplete(err) {
+  const msg = (err && err.message) ? err.message : String(err);
+  console.error(`[driver] DID NOT COMPLETE: ${msg}`);
+  if (err && err.stack) console.error(err.stack);
+  console.error(
+    '[driver] nothing was measured — this is not a clean result. ' +
+    'Re-run by hand to see the failure, or check that the server launches ' +
+    '(node mcp-driver.mjs resolve).'
+  );
+}
+
+// The dispatch lives in a function so the caller below can wrap it in one
+// try/catch. As a bare top-level `await` inside `if (RUN_AS_SCRIPT)` it had no
+// catch anywhere, and every throw left as an unhandled rejection (#254).
+async function runCli() {
   const argv = process.argv.slice(2);
   const probeIdx = argv.indexOf('--probe');
   let probePath = null;
@@ -1571,7 +1606,9 @@ if (RUN_AS_SCRIPT) {
       const ms = Number(process.env.HEALTH_TIMEOUT_MS || 120000);
       const bomb = setTimeout(() => {
         console.error(`[driver] health-check exceeded ${ms}ms — giving up`);
-        process.exit(1);
+        // EXIT_INCOMPLETE, not 1: giving up on a server that never answered
+        // measured nothing, and 1 would report it as defects found (#254).
+        process.exit(EXIT_INCOMPLETE);
       }, ms);
       bomb.unref();
       await cmdHealthCheck(projectPath, probePath);
@@ -1584,6 +1621,25 @@ if (RUN_AS_SCRIPT) {
     default:
       console.error(USAGE);
       process.exit(2);
+  }
+}
+
+if (RUN_AS_SCRIPT) {
+  // A rejection that never reaches the awaited chain — a stray server-side
+  // error, say — otherwise takes node's default path and exits 1, which is the
+  // ambiguity EXIT_INCOMPLETE exists to remove, by another route.
+  process.on('unhandledRejection', (err) => {
+    _reportIncomplete(err);
+    process.exit(EXIT_INCOMPLETE);
+  });
+  try {
+    await runCli();
+  } catch (err) {
+    _reportIncomplete(err);
+    // exitCode, not exit(): console.error is ASYNC on a pipe, and the message
+    // naming what failed is the entire value of this branch — abandoning it
+    // half-written reproduces the silence it replaces.
+    process.exitCode = EXIT_INCOMPLETE;
   }
 }
 
