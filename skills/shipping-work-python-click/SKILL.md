@@ -83,6 +83,8 @@ If the script exits 1: review the listed files, decide whether each requires a d
 bash "<SKILL_SCRIPTS>/check-status.sh"
 ```
 
+If the script exits 2, `git status` itself failed: the tree state is **unknown**, which is not the same as clean. Investigate git's error rather than proceeding ([#257](https://github.com/gregoryfoster/skills/issues/257)).
+
 If uncommitted changes exist, commit them following the project convention. Check AGENTS.md for project-specific overrides — some Click projects use a `#<number>: <topic> - <description>` convention instead of the upstream default. Default format:
 
 ```

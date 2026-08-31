@@ -44,7 +44,9 @@ Notes on the shape:
 
 `TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) enforces the four common lines across every skill carrying a block, and fails the suite if a skill uses `<SKILL_SCRIPTS>` without publishing it.
 
-## Gate-script discipline (pre-ship, doc-check)
+## Gate-script discipline
+
+*(The heading named `(pre-ship, doc-check)` until [#255](https://github.com/gregoryfoster/skills/issues/255). Two filenames in the title read as the scope, and the enforcement followed the title rather than the rule.)*
 
 Scripts whose output drives a control-flow decision (will-we-ship vs. will-we-skip) must never silently swallow stderr from the tool that produces that output. The two-bucket rule:
 
@@ -63,13 +65,14 @@ All three exit-code-capture patterns below (`LS_RC`, `FIND_RC`, `DIFF_RC`) requi
 
 Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2>/dev/null || pwd`) with a one-line comment describing what the fallback actually does, not the rationale you assume it has.
 
-This convention is enforced by [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestGateScriptHardening`). Reverting a hardened site to `done < <(...)` form fails the structural suite. If process substitution is genuinely required, tag the loop with `# unhardened: <reason>` either on the `done` line itself or anywhere within the prior 10 lines as an opt-out.
+This convention is enforced by [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestGateScriptHardening`). Reverting a hardened site to `done < <(...)` form fails the structural suite. **The rule is wider than that detector**: `cmd || true` straight to stdout and `[ -n "$(cmd)" ]` in a condition swallow a failure just as completely, and no regex over the text catches them — they are pinned by behaviour instead, in [tests/structural/test_gate_producer_exit_codes.py](../tests/structural/test_gate_producer_exit_codes.py). If process substitution is genuinely required, tag the loop with `# unhardened: <reason>` either on the `done` line itself or anywhere within the prior 10 lines as an opt-out.
 
 **Which files it examines is derived from the discipline, not from one filename.** Every script under `skills/shipping-work*/scripts/` and `skills/reviewing-code*/scripts/` is classified in that file as `GATE_SCRIPTS` or `NON_GATE_SCRIPTS`, with a reason, and a new script cannot ship unclassified — the same forcing function [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) applies to a new variant. Until [#255](https://github.com/gregoryfoster/skills/issues/255) the gate ran against `pre-ship.sh` alone, though this section named both scripts and cites `doc-check.sh` as canonical: a `done < <(git ls-files)` duly shipped in `doc-check.sh` with the suite green, feeding a did-we-match-anything branch whose empty answer is reported as *"the list is misconfigured for this repo"* — a confident diagnosis of the wrong problem, at the same exit code as the real one.
 
-Two classifications are worth stating, since neither is obvious from the filename:
+Three classifications are worth stating, since none is obvious from the filename:
 
 - `reviewing-code*/scripts/gather-context.sh` is **reporting-only** — its output is context for a human, not a branch — and keeps its process-substitution sites.
+- `check-status.sh` is a **gate**: its exit code *is* the working-tree verdict Step 2 branches on. It decided that verdict with `[ -n "$(git status --porcelain)" ]` until [#257](https://github.com/gregoryfoster/skills/issues/257) — a failing git substitutes the empty string, which is exactly what a clean tree substitutes to, so a dirty tree was reported clean with the modification printed four lines above the verdict denying it. Note where `set -e` does and does not help: it aborts on a failing simple command, but not on one inside `if [ -n "$(…)" ]`, so the three reporting commands failed loudly and the single deciding one failed silently.
 - `detect-import-targets.sh` and `detect-test-dirs.sh` are **gate producers**, because `pre-ship.sh` skips the import check or pytest entirely when either answers with an empty list. Both used to run `uv run python -c …` under a `|| true`, so a `uv` that could not run at all was indistinguishable from a project with no package name and no test directories — while the caller's own careful exit-code capture around them reported a pass. Their behaviour is pinned by [tests/structural/test_gate_producer_exit_codes.py](../tests/structural/test_gate_producer_exit_codes.py): a resolver that cannot run exits 2, a resolver that answers nothing exits 0.
 
 ## Project-local overrides: wrap, don't fork
