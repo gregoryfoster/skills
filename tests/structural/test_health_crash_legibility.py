@@ -25,21 +25,15 @@ exit the way a crashed one does.
 """
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
-HOOK = SCRIPTS / "socraticode-health.sh"
-DRIVER = SCRIPTS / "mcp-driver.mjs"
-
-requires_node = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="node is required to run mcp-driver.mjs and the stub drivers",
+# The hook's fixtures live with the hook's other tests. Imported rather than
+# re-derived: a private `_repo` here would drift the first time the manifest
+# guard those tests pin changes, and this file would keep passing against a
+# repo shape the hook no longer recognises (#254 CR round 1).
+from .test_socraticode_graph_yield import (
+    DRIVER, HOOK, _clean_env, _repo, requires_node,
 )
 
 # The two sentences that mean "measured, and here is the list". Neither may
@@ -56,26 +50,9 @@ CRASH_STDERR = (
 )
 
 
-def _clean_env(**extra: str) -> dict:
-    """Strip `GIT_*` (docs/STYLE.md) and every knob this hook reads."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("SOCRATICODE_DRIVER", "SOCRATICODE_PROBE_FILE",
-              "HEALTH_TIMEOUT_MS", "SOCRATICODE_HEALTH_FORCE"):
-        env.pop(k, None)
-    env.update(extra)
-    return env
-
-
-def _repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "-C", str(repo), "init", "-q"],
-                   check=True, capture_output=True, env=_clean_env())
-    (repo / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
-    return repo
-
-
 def _stub(repo: Path, *, exit_code: int, stderr: str = "") -> Path:
+    """Local rather than imported: the sibling's `_stub_driver` also writes a
+    JSON verdict on stdout, and every case here turns on stderr alone."""
     stub = repo / "stub-driver.mjs"
     stub.write_text(
         f"process.stderr.write({json.dumps(stderr)});\n"

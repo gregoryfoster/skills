@@ -148,10 +148,30 @@ class TestTheyAnswerToAVerdict:
         r = _record(tmp_path, "--baseline=pre-curation", "--claims-dropped", "0")
         assert r.returncode == 1, r.stdout + r.stderr
 
+    @pytest.mark.parametrize("flag", ["--claims-dropped", "--claims-warranted"])
     @pytest.mark.parametrize("bad", ["two", "-1", "1.5", ""])
-    def test_a_non_numeric_count_is_refused(self, tmp_path: Path, bad):
-        r = _record(tmp_path, "--no-loss", "ok", "--claims-warranted", bad)
+    def test_a_non_numeric_count_is_refused(self, tmp_path: Path, flag, bad):
+        r = _record(tmp_path, "--no-loss", "ok", flag, bad)
         assert r.returncode == 1, f"{bad!r} was accepted: {r.stdout}{r.stderr}"
+
+    def test_a_typo_is_diagnosed_as_a_typo_not_as_a_contradiction(
+        self, tmp_path: Path
+    ):
+        """Ordering, and it is load-bearing.
+
+        With the digits check below the semantic ones, `--claims-dropped two
+        --no-loss ok` took the non-zero branch and was answered with
+        "prove-no-loss.sh exits 3 on an unwarranted dropped atom … record
+        --no-loss failed" — a confident diagnosis of the wrong problem whose
+        remedy writes a false `failed` on the row. A value that is not a count
+        is not a count whatever the verdict says (#257 CR round 1).
+        """
+        r = _record(tmp_path, "--no-loss", "ok", "--claims-dropped", "two")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "non-negative integer" in r.stderr, (
+            f"a transcription error was diagnosed as a semantic one:\n{r.stderr}"
+        )
+        assert "exits 3" not in r.stderr, r.stderr
 
     def test_the_backfill_mode_refuses_them(self, tmp_path: Path):
         """`--repo-commit` reads no measurement and writes no new row, so a

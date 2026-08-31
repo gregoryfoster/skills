@@ -2,7 +2,7 @@
 
 Conventions with a reference implementation. The short rules that apply to every
 script live inline in [AGENTS.md](../AGENTS.md) under `## Scripts`; this file
-carries the two that need a full template and a rationale.
+carries the conventions that need a full template and a rationale.
 
 ## Invoking a skill's own scripts (`<SKILL_SCRIPTS>`)
 
@@ -46,8 +46,6 @@ Notes on the shape:
 
 ## Gate-script discipline
 
-*(The heading named `(pre-ship, doc-check)` until [#255](https://github.com/gregoryfoster/skills/issues/255). Two filenames in the title read as the scope, and the enforcement followed the title rather than the rule.)*
-
 Scripts whose output drives a control-flow decision (will-we-ship vs. will-we-skip) must never silently swallow stderr from the tool that produces that output. The two-bucket rule:
 
 - **Gate-like commands** — output drives a `for` loop, a "did we find anything?" branch, a "is the tree clean?" check, or a stamp-write. Capture exit code explicitly and treat non-zero as ERROR + exit 2. Use a tempfile when the command runs inside a process substitution (`done < <(...)`), since process-substitution exit codes aren't visible in the parent shell.
@@ -67,7 +65,7 @@ Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2
 
 This convention is enforced by [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestGateScriptHardening`). Reverting a hardened site to `done < <(...)` form fails the structural suite. **The rule is wider than that detector**: `cmd || true` straight to stdout and `[ -n "$(cmd)" ]` in a condition swallow a failure just as completely, and no regex over the text catches them — they are pinned by behaviour instead, in [tests/structural/test_gate_producer_exit_codes.py](../tests/structural/test_gate_producer_exit_codes.py). If process substitution is genuinely required, tag the loop with `# unhardened: <reason>` either on the `done` line itself or anywhere within the prior 10 lines as an opt-out.
 
-**Which files it examines is derived from the discipline, not from one filename.** Every script under `skills/shipping-work*/scripts/` and `skills/reviewing-code*/scripts/` is classified in that file as `GATE_SCRIPTS` or `NON_GATE_SCRIPTS`, with a reason, and a new script cannot ship unclassified — the same forcing function [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) applies to a new variant. Until [#255](https://github.com/gregoryfoster/skills/issues/255) the gate ran against `pre-ship.sh` alone, though this section named both scripts and cites `doc-check.sh` as canonical: a `done < <(git ls-files)` duly shipped in `doc-check.sh` with the suite green, feeding a did-we-match-anything branch whose empty answer is reported as *"the list is misconfigured for this repo"* — a confident diagnosis of the wrong problem, at the same exit code as the real one.
+**Which files it examines is derived from the discipline, not from one filename** — and not from this heading, which named `(pre-ship, doc-check)` until [#255](https://github.com/gregoryfoster/skills/issues/255): two filenames in a title read as the scope, and the enforcement followed the title rather than the rule. Every script under `skills/shipping-work*/scripts/` and `skills/reviewing-code*/scripts/` is classified in that file as `GATE_SCRIPTS` or `NON_GATE_SCRIPTS`, with a reason, and a new script cannot ship unclassified — the same forcing function [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) applies to a new variant. Until [#255](https://github.com/gregoryfoster/skills/issues/255) the gate ran against `pre-ship.sh` alone, though this section named both scripts and cites `doc-check.sh` as canonical: a `done < <(git ls-files)` duly shipped in `doc-check.sh` with the suite green, feeding a did-we-match-anything branch whose empty answer is reported as *"the list is misconfigured for this repo"* — a confident diagnosis of the wrong problem, at the same exit code as the real one.
 
 Three classifications are worth stating, since none is obvious from the filename:
 

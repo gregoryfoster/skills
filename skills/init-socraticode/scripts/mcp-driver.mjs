@@ -1630,7 +1630,13 @@ if (RUN_AS_SCRIPT) {
   // ambiguity EXIT_INCOMPLETE exists to remove, by another route.
   process.on('unhandledRejection', (err) => {
     _reportIncomplete(err);
-    process.exit(EXIT_INCOMPLETE);
+    // exitCode, not exit(), matching the catch below — console.error is ASYNC
+    // on a pipe, and on this path the message IS the whole output, so exiting
+    // under it can truncate the one thing that says what failed. Node's own
+    // default for an unhandled rejection is a hard exit; the loop here is
+    // already unwound, so letting it drain costs nothing and keeps the two
+    // crash paths saying the same thing the same way (#254 CR round 1).
+    process.exitCode = EXIT_INCOMPLETE;
   });
   try {
     await runCli();

@@ -28,7 +28,9 @@ What this file pins:
   in it would bury the real finding.
 - **Two ways to declare a deliberate fork**: `pre-ship.sh` by name (upstream
   ships a stub for the bare variant, and docs/STYLE.md blesses a
-  project-supplied wrapper), and `.skills/forked-ok` for anything else.
+  project-supplied wrapper), and `.skills/forked-ok` for anything else —
+  **and the line the report prints is the line that file wants**, since
+  pasting what you were just shown is the only workflow the message implies.
 - **Advisory in every mode, including `--check-only`**, and never healed —
   same call as the override-drift warning it sits beside.
 
@@ -268,6 +270,44 @@ class TestDeclaringADeliberateFork:
         assert "skills/shipping-work/SKILL.md" in result.stderr, result.stderr
         assert "doc-check.sh" not in result.stderr, (
             f"a declared fork must not be reported:\n{result.stderr}"
+        )
+
+    def test_the_reported_line_can_be_pasted_into_the_ack_file(self, consumer: Path):
+        """The only workflow the message implies, so it has to work.
+
+        The report used to print `path (vendor: path)` on one line while the
+        matcher compared the bare path, so pasting the line you were just shown
+        declared nothing — silently, with the same fork reported again next run
+        (#256 CR round 1). Pinned as a round trip rather than as a format, so a
+        later reword of the report cannot break it without failing here.
+        """
+        _vendor_skill(consumer)
+        _copy(consumer, "shipping-work", "scripts/doc-check.sh")
+        first = _doctor(consumer)
+        assert FORK_MARKER in first.stderr, first.stderr
+
+        # What an operator copies: the indented path lines under the heading,
+        # excluding the `(upstream: …)` context lines.
+        listed = [
+            ln.strip() for ln in first.stderr.splitlines()
+            if ln.startswith("  ") and not ln.strip().startswith("(")
+        ]
+        assert listed, first.stderr
+        (consumer / ".skills").mkdir()
+        (consumer / ".skills" / "forked-ok").write_text("\n".join(listed) + "\n")
+
+        second = _doctor(consumer)
+        assert FORK_MARKER not in second.stderr, (
+            "pasting the reported line(s) into .skills/forked-ok declared "
+            f"nothing:\n{second.stderr}"
+        )
+
+    def test_the_remedy_says_to_copy_the_path_alone(self, consumer: Path):
+        _vendor_skill(consumer)
+        _copy(consumer, "shipping-work", "scripts/doc-check.sh")
+        r = _doctor(consumer)
+        assert "one path per line" in r.stderr, (
+            f"the remedy must say what the ack file wants:\n{r.stderr}"
         )
 
     def test_a_list_without_a_trailing_newline_still_matches(self, consumer: Path):

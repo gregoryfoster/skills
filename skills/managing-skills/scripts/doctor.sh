@@ -114,7 +114,9 @@ A vendored file committed as a REGULAR FILE where the vendor ships one of
 the same name is reported as silently forked (#256) — it stops tracking
 upstream forever and nothing else detects it. Only inside a skills/<name>
 that is a real directory: a whole-directory symlink cannot fork, and a
-declared override is local by definition. pre-ship.sh is exempt by name
+declared override is local by definition. The walk covers the skill's own
+*.md plus one level under each of scripts/, references/ and assets/ — a
+fork nested deeper than that is not seen. pre-ship.sh is exempt by name
 (consumers are expected to supply their own), and any other deliberate
 divergence is declared one repo-relative path per line in
 .skills/forked-ok. Advisory in every mode, and never healed: a fork is
@@ -633,20 +635,35 @@ fork_declared() {
 # same reason BROKEN and UNINIT are. One remedy block for the whole list, not
 # one per file: the three repos that forked a SKILL.md would otherwise print
 # the same six lines for every file they link.
+#
+# Two parallel arrays rather than one "path (vendor: path)" string, because the
+# consumer path is the exact text .skills/forked-ok has to hold. The combined
+# form printed a line that could not be pasted into the ack file — the obvious
+# and only implied workflow — and the paste then declared nothing, silently,
+# with the doctor reporting the same fork again next run (#256 CR round 1). An
+# escape hatch that quietly does not apply is the defect it exists to declare.
 declare -a FORKED=()
+declare -a FORKED_VENDOR=()
 
 report_forked() {
+  local i
   echo "doctor: silently forked — regular files where the vendor ships one:" >&2
-  printf '  %s\n' "${FORKED[@]}" >&2
+  for i in "${!FORKED[@]}"; do
+    echo "  ${FORKED[$i]}" >&2
+    echo "      (upstream: ${FORKED_VENDOR[$i]})" >&2
+  done
   echo "doctor: they will never receive upstream fixes, and nothing else" >&2
   echo "doctor: detects that. Replace each with a relative symlink into" >&2
-  echo "doctor: skills-vendor/ (wrap, don't fork — docs/STYLE.md), or list" >&2
-  echo "doctor: the path in .skills/forked-ok if the divergence is" >&2
-  echo "doctor: deliberate (#256). Advisory: nothing is changed for you." >&2
+  echo "doctor: skills-vendor/ (wrap, don't fork — docs/STYLE.md), or declare" >&2
+  echo "doctor: it deliberate in .skills/forked-ok — one path per line, copied" >&2
+  echo "doctor: exactly as listed above and nothing else on the line; the" >&2
+  echo "doctor: (upstream: …) line is context, not part of the path (#256)." >&2
+  echo "doctor: Advisory: nothing is changed for you." >&2
 }
 
 check_silent_forks() {
   FORKED=()
+  FORKED_VENDOR=()
   [ -d skills ] || return 0
   local dir name vendor_dir vendor_file rel local_file
   for dir in skills/*; do
@@ -678,7 +695,8 @@ check_silent_forks() {
         [ -L "$local_file" ] && continue
         [ -f "$local_file" ] || continue
         fork_declared "$local_file" && continue
-        FORKED+=("$local_file (vendor: $vendor_file)")
+        FORKED+=("$local_file")
+        FORKED_VENDOR+=("$vendor_file")
       done
       # First matching vendor wins, as everywhere else in this script.
       break
@@ -690,6 +708,12 @@ check_silent_forks() {
   return 0
 }
 
+# Call site 1 of 2. A fresh clone has no vendor tree to compare against, so
+# this pass is silent there and the one below — after the heal, where the tree
+# has only just become readable — is the one that reports. Same two-call shape
+# sync_self uses, for the same reason: the check that needs the vendor content
+# cannot run before the content exists, and a fresh clone or a new worktree is
+# exactly where a consumer runs the doctor first (#256 CR round 1).
 check_silent_forks
 
 # #231 — the audience split, enforced. The unregistered-hook state was detected
@@ -1151,6 +1175,10 @@ fi
 # Call site 2 of 2: the vendor tree may have only just become readable — call
 # site 1 ran before the init and would have found nothing to sync against.
 sync_self
+
+# Call site 2 of 2, for the same reason (#256): before the init there was no
+# vendored skill to compare a consumer's regular file against.
+check_silent_forks
 
 # Re-check after self-heal.
 scan_broken
