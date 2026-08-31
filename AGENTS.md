@@ -112,14 +112,9 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - No interactive prompts — agents run in non-interactive shells
 - Use structured output (JSON, TSV) on stdout; diagnostics to stderr
 - Use `set -euo pipefail` in bash scripts
-- A write through a temp file must be checked — `set -e` exempts the first element
-  of an `&&` list — and a success message must sit inside the branch that succeeded
-  ([#181](https://github.com/gregoryfoster/skills/issues/181)). Same family, second
-  spelling: `> "$F" || true` discards the failure of a write something later reads
-  back, so it shows up as state that never changed rather than as an error
-  ([#193](https://github.com/gregoryfoster/skills/issues/193)). Both are gated by
-  `test_checked_temp_writes.py`; a deliberate one is allowed but must say so, with
-  `# unchecked-write-ok: <reason>` on the line or just above it
+- A write through a temp file must be checked, and a deliberate exception must
+  say so with `# unchecked-write-ok: <reason>` — gated by
+  `test_checked_temp_writes.py`, explained in [docs/STYLE.md](docs/STYLE.md)
 - Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
@@ -132,29 +127,21 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
   pairing, so a suppression stays a documented decision rather than a silencer
   ([#90](https://github.com/gregoryfoster/skills/issues/90)).
 
-Three conventions here carry a full template and a rationale, and live in
-[docs/STYLE.md](docs/STYLE.md):
+These carry a full template and a rationale in
+[docs/STYLE.md](docs/STYLE.md), and each is enforced:
 
-- **A repo-creating git command must scrub `GIT_DIR`.** An inherited `GIT_DIR`
-  overrides `git -C` and cwd, and git exports it to every hook — so a test
-  fixture's throwaway repo writes to the real one
-  ([#189](https://github.com/gregoryfoster/skills/issues/189)). Its sibling
-  proposal `extensions.worktreeConfig` was measured and **refused** — it does
-  not redirect a worktree's `--local` writes.
-
-- **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a SKILL.md —
-  the agent's cwd is the *project* root, so a bare relative path resolves to a file
-  that does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)).
-  `TestNoBareScriptPaths` fails the suite if the form reappears.
+- **A repo-creating git command must scrub `GIT_DIR`** — it overrides `git -C`
+  and cwd, and git exports it to every hook, so a fixture's throwaway repo
+  writes to the real one ([#189](https://github.com/gregoryfoster/skills/issues/189)).
+  `extensions.worktreeConfig` was measured and **refused**.
+- **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a
+  SKILL.md: the agent's cwd is the *project* root
+  ([#63](https://github.com/gregoryfoster/skills/issues/63)). `TestNoBareScriptPaths`.
 - **Gate-script discipline.** A script whose output drives a ship/skip decision
   must never silently swallow the stderr of the tool producing that output.
-  `TestGateScriptHardening` enforces it across `shipping-work*` and
-  `reviewing-code*`, every script classified gate or reporting (#255).
-  Every `pre-ship.sh` also publishes a project-local override point recommending
-  a *wrapper* — `exec` the vendored script through the `skills/…` symlink —
-  never a fork, which drifts silently on every submodule update.
-  `test_pre_ship_env_override.py` keeps the block from drifting back to one
-  variant (#105).
+  `TestGateScriptHardening` binds every `shipping-work*` / `reviewing-code*`
+  script, each classified gate or reporting (#255); `test_pre_ship_env_override.py`
+  holds the wrapper-don't-fork override block across all four variants (#105).
 
 ## Resolution knobs
 
@@ -197,24 +184,15 @@ Every `SKILL.md` is held to a **6,000-token ratchet** — the figure
 which also holds every `references/*.md` to the 10,000-token per-doc budget,
 with nothing exempt — [#152](https://github.com/gregoryfoster/skills/issues/152)
 retired the one exemption by splitting the append-only log rather than excusing
-it. Fourteen of nineteen skills meet it; the rest carry a named exception with
+it. Fifteen of nineteen skills meet it; the rest carry a named exception with
 its reason beside it, and every file names its own figure in prose so the gate
 and the run read the same number. A ratchet only ever comes down.
 
-It binds **both** readings — the offline estimate pre-commit sees, and
-`count_tokens` under `SKILL_BUDGET_EXACT=1`. On SKILL.md files the estimate is
-observed running 13% low to 6% high, and `POLICY_ESTIMATE_BAND` permits 15%
-either way — that band edge, not the observed figure, is what the warning below
-computes a worst case from. So neither reading alone is the contract — and only
-the estimate is always on, which let
-three ratchets be breached past a green suite. Two things close that
-([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
-run now **warns** about each skill whose worst permissible exact count exceeds
-its ratchet (seven today — a warning, not a failure), and
-[.github/workflows/skill-budget-exact.yml](.github/workflows/skill-budget-exact.yml)
-runs the exact pass weekly as the gate that does fail. On the commit path the
-exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
-surface, and an unusable key must never be able to block a commit.
+Two readings bind it, not one: the offline estimate pre-commit sees, and
+`count_tokens` under `SKILL_BUDGET_EXACT=1`. Only the estimate is always on,
+which let three ratchets be breached past a green suite. How the two are
+reconciled, what pre-commit warns about, and the weekly exact gate:
+[docs/STYLE.md](docs/STYLE.md).
 
 `AGENTS.md` itself is gated: the `context-budget-gate` pre-commit hook fails any commit that puts it over `.skills/context-budget` (#88).
 
@@ -263,7 +241,7 @@ pytest tests/integration/ -v -m integration  # needs .env, billed ≈$0.16
 ```
 
 **Put a new structural rule in its own `tests/structural/test_<rule>.py`, not at
-the end of `test_context_surface.py`.** That file is already ~3,600 lines and is
+the end of `test_context_surface.py`.** That file is already ~4,100 lines and is
 the obvious default home, which is exactly the problem: when several agents work
 the backlog in parallel worktrees, appending to one shared file turns every merge
 into a conflict, while a new per-rule file merges clean. It also keeps a rule
