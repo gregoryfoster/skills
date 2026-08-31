@@ -315,6 +315,8 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
 ```
 
 `<N>` and `<M>` are Phase 6.5's two counts; `<W>` is Phase 6's `loss_warranted:`.
+Ran `--claims`? Add `--claims-dropped <D> --claims-warranted <C>` from its
+trailer — without them the row cannot say the tightening was checked (#253).
 Tag `--actions` honestly and specifically — the tags are what lets a later run
 or the cohort roll-up attribute a token delta to its cause. `"cleanup"` teaches
 nothing;

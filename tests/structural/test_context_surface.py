@@ -1489,8 +1489,10 @@ def _arm(root: Path, name: str, before: int, after: int | None, version: str,
             # fixture keeps producing a row that PREDATES the field — the null
             # path score-cohort must not gate on, or every historical row in
             # the cohort would retroactively REJECT. Same for no_loss_warrants
-            # (#111), whose null path is the entire existing cohort.
-            **{k: kw[k] for k in ("links_dead_anchors", "no_loss_warrants")
+            # (#111) and the claims pair (#253), whose null paths are the
+            # entire existing cohort.
+            **{k: kw[k] for k in ("links_dead_anchors", "no_loss_warrants",
+                                  "claims_dropped", "claims_warranted")
                if k in kw},
             docs_orphaned=kw.get("orph_after", 0),
         ))

@@ -141,6 +141,14 @@ Safety gates (checked before any score)
   own report and the DELTA across runs, the same two the cohort settled on for
   seams_acked.
 
+  claims_dropped / claims_warranted get the same treatment for the same reason
+  (#253): surfaced, never gated. They ride the same column as `/c`, `/c2w`,
+  `/c3d` — the marker says the run ran prove-no-loss.sh --claims at all, which
+  is the whole distinction a `tighten` needs and which no_loss_warrants cannot
+  make (it aggregates all six warrant kinds). A dropped-but-judged atom is a
+  judgement, not a safety violation; an unwarranted one already fails the run
+  through no_loss, which IS a gate.
+
   Any tripped gate in the treatment arm is an outright REJECT, whatever the token
   numbers say — a change that reduces tokens by losing content is the one failure
   this skill exists to prevent, and no amount of closure buys it back.
@@ -854,6 +862,7 @@ def score_repo(key, info):
         # with a zero.
         "metric_raw": None,
         "no_loss_warrants": None,
+        "claims_dropped": None, "claims_warranted": None,
         "skill_version": None, "ts": None, "file": None, "other_files": 0,
         "gates": [], "unverified": [],
     }
@@ -944,6 +953,10 @@ def score_repo(key, info):
     rec["budget"] = scored.get("budget")
     rec["no_loss"] = scored.get("no_loss")
     rec["no_loss_warrants"] = scored.get("no_loss_warrants")
+    # Carried, not scored (#253). A consumer of this record's JSON can ask
+    # whether a class-C tightening was verified; the gate never asks.
+    rec["claims_dropped"] = scored.get("claims_dropped")
+    rec["claims_warranted"] = scored.get("claims_warranted")
     if metric != "closure":
         rec["metric_raw"] = scored.get(metric)
 
@@ -1711,7 +1724,28 @@ def no_loss_cell(r):
     """
     n = r.get("no_loss_warrants")
     base = r["no_loss"] or "-"
-    return f"{base}+{n}w" if isinstance(n, int) and n > 0 else base
+    cell = f"{base}+{n}w" if isinstance(n, int) and n > 0 else base
+    return cell + claims_suffix(r)
+
+
+def claims_suffix(r):
+    """`/c`, `/c2w`, `/c3d` — whether the claim check ran, and what it found.
+
+    The bare `/c` carries most of the value (#253): `tighten` is refused
+    without --claims, so its absence on a row tagged `prune:` is the one thing
+    saying the tightening's own check was never run. Same isinstance shape as
+    above, and for the same reason — every row predating the field is null, and
+    a null must not render as a check that ran and found nothing.
+    """
+    d, w = r.get("claims_dropped"), r.get("claims_warranted")
+    if not isinstance(d, int) and not isinstance(w, int):
+        return ""
+    parts = []
+    if isinstance(w, int) and w > 0:
+        parts.append(f"{w}w")
+    if isinstance(d, int) and d > 0:
+        parts.append(f"{d}d")
+    return "/c" + "+".join(parts)
 
 
 def metric_cell(r):

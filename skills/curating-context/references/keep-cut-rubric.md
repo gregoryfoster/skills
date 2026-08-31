@@ -118,6 +118,24 @@ motivated it, it surfaced 19 dropped atoms of which **12 were real
 over-compression that would otherwise have shipped** — including a `wp#569` that
 was the load-bearing justification for an entire API being write-only.
 
+**Carry both counts to Phase 7**: `--claims-dropped <D> --claims-warranted <C>`,
+from the check's own trailer. Until
+[#253](https://github.com/gregoryfoster/skills/issues/253) the ledger could not
+see this check at all, so a run that passed `--claims` and cleared it wrote the
+same row as one that never ran it — and `no_loss_warrants` cannot stand in,
+because it aggregates all six warrant kinds and a `tighten` is
+indistinguishable from a `retarget` in the count. Recorded and surfaced, never
+gated: a dropped-but-judged atom is a judgement, and an unwarranted one already
+fails the run through `no_loss`.
+
+What the row still does **not** say is how many tokens the tightening recovered
+as against the demotion beside it. That is deliberate and is the honest state:
+one before/after pair covers the whole run, and a bare count of `tighten`
+warrants is too weak to substitute — one covered a 62-token trim and the next a
+1,013-token restructure. The measurement that would settle it, and why the
+proxy was refused, are in
+[rejected-changes.md](rejected-changes.md#a-tightened-count-as-the-measure-of-what-class-c-recovers).
+
 ### Class D — delete
 
 Requires a named warrant. One of exactly three:
