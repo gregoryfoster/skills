@@ -16,11 +16,3 @@ docs/SKILLS.md :: which AGENTS.md points at directly
 
 # docs/STYLE.md's header claim is true: AGENTS.md still carries ## Scripts.
 docs/STYLE.md :: script live inline in [AGENTS.md](../AGENTS.md) under
-
-# Both verified 2026-08-31 on the branch that created them: the demoted
-# sections name what AGENTS.md kept, and it did keep it — the two figures and
-# the ratchet rule under ## Self-budget, the rule and the
-# `# unchecked-write-ok:` marker under ## Scripts. Same shape as the four
-# above: a destination orienting a reader who landed in it from elsewhere.
-docs/STYLE.md :: Demoted from `AGENTS.md`, which keeps the two figures
-docs/STYLE.md :: Demoted from `AGENTS.md`'s `## Scripts`, which keeps the rule

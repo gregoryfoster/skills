@@ -1176,9 +1176,6 @@ fi
 # site 1 ran before the init and would have found nothing to sync against.
 sync_self
 
-# Call site 2 of 2, for the same reason (#256): before the init there was no
-# vendored skill to compare a consumer's regular file against.
-check_silent_forks
 
 # Re-check after self-heal.
 scan_broken
@@ -1217,6 +1214,14 @@ if [ "${#UNHELD[@]}" -gt 0 ]; then
   printf '  %s\n' "${UNHELD[@]}" >&2
   exit 1
 fi
+
+# Call site 2 of 2, for the same reason (#256): before the init there was no
+# vendored skill to compare a consumer's regular file against.
+#
+# BELOW the post-heal gates, not above them. This report is advisory and the
+# two checks above exit 1; printing a fork list ahead of a hard failure buries
+# the failure under output the operator does not have to act on today.
+check_silent_forks
 
 [ "$VERBOSE" = "1" ] && echo "doctor: self-healed; all scanned symlinks resolve" >&2
 exit 0
