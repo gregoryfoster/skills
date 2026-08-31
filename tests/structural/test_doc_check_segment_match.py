@@ -13,8 +13,12 @@ Three properties are pinned here, and they are load-bearing together:
 
 - **Segment matching.** Entries match whole path components at any depth, so
   nested-package layouts — the ordinary shape of a uv or hatch workspace — stop
-  being invisible. Filename entries match a whole final component, so
-  `pyproject.toml` does not also claim `pyproject.toml.bak`.
+  being invisible. Every continuation requires a literal `/`, so
+  `pyproject.toml` does not also claim `pyproject.toml.bak`, while a slash-less
+  `docs` still names the directory the way prefix matching used to. Paths are
+  read with `core.quotePath=false`: git's C-quoting puts a `"` in front of any
+  path with a non-ASCII byte, which defeats an anchored match and reproduces
+  the same silent green via a filename rather than via nesting.
 - **Dead-entry reporting, on the green path only.** When nothing matched, the
   script probes the tree and says which entries could not have matched. When
   *no* entry can match anything tracked, that is not a pass — it exits 2, the
@@ -46,11 +50,14 @@ VARIANTS = [
     "shipping-work-python-fastapi",
 ]
 
-# A nested path that each variant's own defaults must flag. Every entry here is
-# a real default of that variant, buried one or more package levels down.
+# A nested path that each variant's own defaults must flag. Every row must MISS
+# under the pre-#252 root-anchored matcher, or the case proves nothing — a
+# Bedrock path under `web/app/plugins/` is already root-anchored, so the obvious
+# php choice is exactly the one that passes against the unfixed script.
+# `test_nested_hit_rows_are_real_regression_cases` enforces that.
 NESTED_HITS = {
     "shipping-work": "vendor/co-core/src/api/routes.py",
-    "shipping-work-php": "web/app/plugins/co-sync/src/models/Post.php",
+    "shipping-work-php": "bedrock/web/app/themes/co/functions.php",
     "shipping-work-python-click": "packages/co-core/src/co_core/api.py",
     "shipping-work-python-fastapi": "services/ingest/src/models/user.py",
 }
@@ -58,6 +65,22 @@ NESTED_HITS = {
 
 def _script(variant: str) -> Path:
     return SKILLS_DIR / variant / "scripts" / "doc-check.sh"
+
+
+def _default_entries(variant: str) -> list[str]:
+    """The variant's built-in SENSITIVE_PATHS, read out of the script."""
+    block = re.search(
+        r"^SENSITIVE_PATHS=\(\n(.*?)^\)", _script(variant).read_text(), re.S | re.M
+    )
+    assert block, f"{variant}/scripts/doc-check.sh must declare SENSITIVE_PATHS=(…)"
+    entries = re.findall(r'"([^"]+)"', block.group(1))
+    assert entries, f"{variant}/scripts/doc-check.sh declares an empty SENSITIVE_PATHS"
+    return entries
+
+
+def _root_anchored_hit(file: str, entry: str) -> bool:
+    """The pre-#252 matcher: `case "$file" in "$entry"|"$entry"*)`."""
+    return file.startswith(entry)
 
 
 def _clean_env() -> dict:
@@ -165,6 +188,19 @@ class TestSegmentMatching:
         assert "packages/co-core/pyproject.toml" in result.stdout
 
     @pytest.mark.parametrize("variant", VARIANTS)
+    def test_nested_hit_rows_are_real_regression_cases(self, variant: str):
+        """A row that the old matcher already caught tests nothing. Keep the
+        table honest here rather than discovering it the next time someone
+        trusts a green parametrized case."""
+        nested = NESTED_HITS[variant]
+        already = [e for e in _default_entries(variant) if _root_anchored_hit(nested, e)]
+        assert not already, (
+            f"NESTED_HITS[{variant}] = {nested} is matched root-anchored by "
+            f"{already}, so the case passes against the pre-#252 script and "
+            "proves nothing about segment matching. Bury the path deeper."
+        )
+
+    @pytest.mark.parametrize("variant", VARIANTS)
     def test_every_variant_matches_its_own_defaults_at_depth(
         self, variant: str, tmp_path: Path
     ):
@@ -214,6 +250,36 @@ class TestSegmentMatching:
             f"a change under root src/ must still be flagged; got exit {result.returncode}"
         )
 
+    def test_slash_less_entries_still_name_directories(self, tmp_path: Path):
+        """Root-anchored prefix matching accepted `docs` for the docs directory,
+        whatever the header said about trailing slashes. Projects wrote lists
+        against the behavior, so segment matching has to keep honoring it or a
+        tailored list quietly loses coverage on upgrade."""
+        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
+        _write(repo, ".skills/doc-sensitive-paths", "docs\nsrc\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", "slash-less list")
+        result = _run(repo)
+        assert result.returncode == 1, (
+            "`docs` without a trailing slash must still cover docs/other.md; got "
+            f"exit {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "docs/other.md" in result.stdout
+
+    def test_non_ascii_paths_are_not_c_quoted(self, tmp_path: Path):
+        """git C-quotes paths with non-ASCII bytes unless core.quotePath is off,
+        and the leading quote defeats the anchored half of the matcher — the
+        #252 miss-as-pass, reached by a filename instead of by nesting."""
+        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["src/co/café.py"])
+        result = _run(repo)
+        assert result.returncode == 1, (
+            "a non-ASCII filename under src/ must be flagged; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "\\303" not in result.stdout, (
+            f"paths must be reported raw, not octal-escaped:\n{result.stdout}"
+        )
+
 
 class TestDeadEntryReporting:
     def test_wholly_dead_list_exits_two(self, tmp_path: Path):
@@ -260,6 +326,55 @@ class TestDeadEntryReporting:
         assert "No sensitive paths changed" in result.stdout
         assert "Note:" not in result.stdout, (
             f"no entry is dead, so no note is due:\n{result.stdout}"
+        )
+
+    def test_entries_live_only_at_depth_are_not_called_dead(self, tmp_path: Path):
+        """The probe and the matcher have to agree. If the probe were written
+        against root-anchored pathspecs it would call `src/` dead in exactly the
+        workspace layout #252 is about — a false 'misconfigured' on a correctly
+        tailored repo, which is the same defect pointed the other way."""
+        repo = _repo(
+            tmp_path,
+            [
+                "AGENTS.md",
+                "README.md",
+                "uv.lock",
+                ".env.example",
+                "packages/co/pyproject.toml",
+                "packages/co/src/co/x.py",
+                "docs/notes.md",
+            ],
+            ["docs/other.md"],
+        )
+        result = _run(repo)
+        assert result.returncode == 0, (
+            f"expected a pass; got exit {result.returncode}\nstderr: {result.stderr}"
+        )
+        assert "Note:" not in result.stdout, (
+            "src/ and pyproject.toml exist only under packages/co/, which the "
+            f"matcher covers, so neither is dead:\n{result.stdout}"
+        )
+
+    def test_non_ascii_paths_do_not_look_dead(self, tmp_path: Path):
+        """The probe reads git output too, so it needs the same quoting fix."""
+        repo = _repo(
+            tmp_path,
+            [
+                "AGENTS.md",
+                "README.md",
+                "pyproject.toml",
+                "uv.lock",
+                ".env.example",
+                "packages/café/src/co/x.py",
+                "docs/notes.md",
+            ],
+            ["docs/other.md"],
+        )
+        result = _run(repo)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "Note:" not in result.stdout, (
+            "src/ is live — its only instance just has a non-ASCII ancestor:\n"
+            f"{result.stdout}"
         )
 
     def test_no_dead_probe_on_the_hit_path(self, tmp_path: Path):
@@ -414,11 +529,14 @@ class TestBodyParity:
     def _body(self, variant: str) -> str:
         lines = _script(variant).read_text().splitlines()
         ends = [i for i, ln in enumerate(lines) if self.MARKER.match(ln)]
-        assert ends, (
-            f"{variant}/scripts/doc-check.sh must close its configuration block "
-            "with a `# ---…` marker line — the parity check splits there."
+        assert len(ends) == 1, (
+            f"{variant}/scripts/doc-check.sh must contain exactly one `# ---…` "
+            f"marker line, the one closing its configuration block; found "
+            f"{len(ends)} at lines {[i + 1 for i in ends]}. Splitting on the last "
+            "of several would silently shrink the region this parity check "
+            "compares, which is how four copies drift while the test stays green."
         )
-        return "\n".join(lines[ends[-1] + 1 :])
+        return "\n".join(lines[ends[0] + 1 :])
 
     def test_variant_inventory_is_exhaustive(self):
         discovered = sorted(

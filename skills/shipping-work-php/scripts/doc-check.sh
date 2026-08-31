@@ -17,7 +17,8 @@
 set -euo pipefail
 
 # --- Project-configurable section ---------------------------------------------
-# Add paths (one per line) — exact filenames, or directory prefixes ending in /.
+# Add paths (one per line) — filenames, or directories, conventionally written
+# with a trailing / (a slash-less entry still matches a directory).
 # Entries match path SEGMENTS, not just the start of the path: `src/` matches
 # `src/x.py` and `packages/co-core/src/x.py`, and `pyproject.toml` matches the
 # root file and `packages/*/pyproject.toml`. Nested-package layouts (uv and
@@ -123,16 +124,20 @@ if [[ -f .skills/doc-sensitive-paths ]]; then
   LIST_SOURCE=".skills/doc-sensitive-paths"
 fi
 
-# Segment match. A directory entry (trailing /) matches at any depth; a
-# filename entry matches a whole final component. The two cases differ
-# deliberately — a trailing * on a filename entry would also match
-# pyproject.toml.bak and pyproject.tomlish.
+# Segment match. Entries match whole path components at any depth. A
+# slash-less entry names a file OR a directory, so `docs` still covers
+# `docs/a.md` the way root-anchored prefix matching used to — the trailing
+# slash stays a convention rather than a trap for anyone who omits it. Every
+# continuation pattern requires a literal / after the entry, which is what
+# keeps `pyproject.toml` from also claiming pyproject.toml.bak.
 path_matches() {
   local file="$1" entry="$2"
   if [[ "$entry" == */ ]]; then
     case "$file" in "$entry"*|*"/$entry"*) return 0 ;; esac
   else
-    case "$file" in "$entry"|*"/$entry") return 0 ;; esac
+    case "$file" in
+      "$entry"|*"/$entry"|"$entry"/*|*"/$entry"/*) return 0 ;;
+    esac
   fi
   return 1
 }
@@ -151,8 +156,13 @@ if [[ -z "$BASE_REF" ]]; then
   fi
 fi
 
+# core.quotePath=false: git otherwise C-quotes any path with a non-ASCII or
+# special character — `src/co/café.py` arrives as `"src/co/caf\303\251.py"`,
+# and the leading quote defeats the anchored half of path_matches. That is the
+# #252 failure mode (a miss printing as a clean green) reached by a filename
+# instead of by nesting. It also keeps the reported paths readable.
 DIFF_RC=0
-CHANGED=$(git diff --name-only "${BASE_REF}...HEAD") || DIFF_RC=$?
+CHANGED=$(git -c core.quotePath=false diff --name-only "${BASE_REF}...HEAD") || DIFF_RC=$?
 if [[ $DIFF_RC -ne 0 ]]; then
   echo "ERROR: git diff --name-only ${BASE_REF}...HEAD failed (exit $DIFF_RC)" >&2
   exit 2
@@ -190,7 +200,7 @@ if [[ ${#HITS[@]} -eq 0 ]]; then
         LIVE[i]=1
       fi
     done
-  done < <(git ls-files)
+  done < <(git -c core.quotePath=false ls-files)
 
   DEAD=()
   for i in "${!SENSITIVE_PATHS[@]}"; do
