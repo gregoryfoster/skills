@@ -36,6 +36,8 @@ No API calls. Self-contained: each test builds a throwaway git repo.
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -375,6 +377,46 @@ class TestDeadEntryReporting:
         assert "Note:" not in result.stdout, (
             "src/ is live — its only instance just has a non-ASCII ancestor:\n"
             f"{result.stdout}"
+        )
+
+    def test_failed_ls_files_is_reported_as_tooling_not_misconfiguration(
+        self, tmp_path: Path
+    ):
+        """docs/STYLE.md's gate-script rule, in its concrete form here: if the
+        probe's input silently fails, every entry looks unmatched and the script
+        blames a path list that was fine. Both exits are 2, so only the message
+        distinguishes a real tooling fault from a misconfigured list — and the
+        reader acts on the message."""
+        real_git = shutil.which("git")
+        assert real_git, "git must be on PATH to run this test"
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "git").write_text(
+            "#!/usr/bin/env bash\n"
+            'for a in "$@"; do [[ "$a" == "ls-files" ]] && exit 1; done\n'
+            f'exec {shlex.quote(real_git)} "$@"\n'
+        )
+        (shim / "git").chmod(0o755)
+        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
+        env = _clean_env()
+        env["PATH"] = f"{shim}:{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(_script("shipping-work-python-click"))],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env,
+        )
+        assert result.returncode == 2, (
+            f"a failed ls-files must not pass; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "ls-files failed" in result.stderr, (
+            f"the message must name the tooling fault:\n{result.stderr}"
+        )
+        assert "misconfigured" not in result.stderr, (
+            f"the list is fine; blaming it sends the reader to the wrong fix:\n"
+            f"{result.stderr}"
         )
 
     def test_no_dead_probe_on_the_hit_path(self, tmp_path: Path):

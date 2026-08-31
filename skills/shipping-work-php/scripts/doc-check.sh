@@ -66,13 +66,13 @@ usage() {
   echo "Exit codes:"
   echo "  0  no sensitive paths changed (or no changes at all)"
   echo "  1  one or more sensitive paths changed"
-  echo "  2  infra/tooling failure — the gate did not run. Covers: an unknown or"
-  echo "     incomplete argument, a base ref auto-detection failure, a git diff"
-  echo "     failure, an empty .skills/doc-sensitive-paths, or a path list where"
-  echo "     no entry matches any tracked file (a list that cannot hit anything"
-  echo "     is not a pass). Other unexpected failures (e.g., running outside a"
-  echo "     git repo) may surface git's own exit code instead; check stderr in"
-  echo "     either case."
+  echo "  2  infra/tooling failure — the gate did not run. Covers: an unknown"
+  echo "     or incomplete argument, a base ref auto-detection failure, a git"
+  echo "     diff or git ls-files failure, an empty .skills/doc-sensitive-paths,"
+  echo "     or a path list where no entry matches any tracked file (a list that"
+  echo "     cannot hit anything is not a pass). Other unexpected failures"
+  echo "     (e.g., running outside a git repo) may surface git's own exit code"
+  echo "     instead; check stderr in either case."
 }
 
 BASE_REF=""
@@ -190,6 +190,21 @@ if [[ ${#HITS[@]} -eq 0 ]]; then
   # exit-1 path the list has demonstrably hit, and a dead-entry census would
   # be noise. The probe reuses path_matches so it cannot disagree with the
   # matcher it is vouching for.
+  #
+  # Scalar capture, not `done < <(git ls-files)`: this output drives a
+  # did-we-find-anything branch, and a process substitution hides the exit code
+  # from the parent shell. A silently failed ls-files would leave every entry
+  # unmatched and turn the verdict below into "the list is misconfigured for
+  # this repo" — a confident diagnosis of the wrong problem, pointing the
+  # reader at a list that was fine. See docs/STYLE.md, gate-script discipline.
+  LS_RC=0
+  TRACKED=$(git -c core.quotePath=false ls-files) || LS_RC=$?
+  if [[ $LS_RC -ne 0 ]]; then
+    echo "ERROR: git ls-files failed (exit $LS_RC); cannot tell a doc-neutral" >&2
+    echo "branch from a path list that matches nothing." >&2
+    exit 2
+  fi
+
   LIVE=()
   for i in "${!SENSITIVE_PATHS[@]}"; do
     LIVE[i]=0
@@ -200,7 +215,7 @@ if [[ ${#HITS[@]} -eq 0 ]]; then
         LIVE[i]=1
       fi
     done
-  done < <(git -c core.quotePath=false ls-files)
+  done <<< "$TRACKED"
 
   DEAD=()
   for i in "${!SENSITIVE_PATHS[@]}"; do
