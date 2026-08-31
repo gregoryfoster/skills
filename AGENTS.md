@@ -148,12 +148,13 @@ Three conventions here carry a full template and a rationale, and live in
   `TestNoBareScriptPaths` fails the suite if the form reappears.
 - **Gate-script discipline.** A script whose output drives a ship/skip decision
   must never silently swallow the stderr of the tool producing that output.
-  `TestPreShipGateHardening` enforces it for `shipping-work*/scripts/pre-ship.sh`.
-  Each of those four also publishes a project-local override point recommending
+  `TestGateScriptHardening` enforces it across `shipping-work*` and
+  `reviewing-code*`, every script classified gate or reporting (#255).
+  Every `pre-ship.sh` also publishes a project-local override point recommending
   a *wrapper* — `exec` the vendored script through the `skills/…` symlink —
   never a fork, which drifts silently on every submodule update.
   `test_pre_ship_env_override.py` keeps the block from drifting back to one
-  variant ([#105](https://github.com/gregoryfoster/skills/issues/105)).
+  variant (#105).
 
 ## Resolution knobs
 
@@ -293,6 +294,6 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 
 ## Detail Docs
 
-- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, the gate-script rules for `pre-ship.sh` / `doc-check.sh`, why a repo-creating git command must scrub `GIT_DIR`, and why `extensions.worktreeConfig` is refused
+- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, the gate-script rules and which scripts they bind, why a repo-creating git command must scrub `GIT_DIR`, and why `extensions.worktreeConfig` is refused
 - [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the three `.skills/` resolution knobs
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery

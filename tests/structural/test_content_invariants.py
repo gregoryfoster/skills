@@ -12,6 +12,7 @@ No API calls required.
 """
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -1195,7 +1196,7 @@ class TestPythonClickHelperByteEquality:
 
 
 # ---------------------------------------------------------------------------
-# Pre-ship gate-script hardening (cross-variant)
+# Gate-script hardening (cross-variant, cross-script)
 # ---------------------------------------------------------------------------
 
 
@@ -1223,47 +1224,163 @@ def _unhardened_process_substitution_sites(content: str) -> list[tuple[int, str]
     return violations
 
 
-class TestPreShipGateHardening:
-    """Enforce the gate-script discipline codified in AGENTS.md.
+# Every `.sh` under these families is classified below, gate or not. The two
+# families are the ones docs/STYLE.md's discipline addresses; a script anywhere
+# else is out of its stated scope.
+_GATE_FAMILY_GLOBS = ("shipping-work*/scripts/*.sh", "reviewing-code*/scripts/*.sh")
 
-    Pre-ship scripts must not use `done < <(producer ...)` for control-flow
+# Bucket 1 of the two-bucket rule: output drives a control-flow decision, so a
+# producer that fails silently turns into a false pass. Keyed by basename —
+# the variants are held byte-identical or near-identical by other rules in this
+# file, so a per-path list would be four copies of the same judgement.
+GATE_SCRIPTS = {
+    "pre-ship.sh": (
+        "the ship gate itself: every producer it reads decides ship vs. skip"
+    ),
+    "doc-check.sh": (
+        "gates the doc surface and exits 2 on tooling failure; its tracked-file "
+        "probe drives a did-we-match-anything branch whose empty answer is "
+        "reported as a misconfigured path list (#252)"
+    ),
+    "check-status.sh": (
+        "its exit code IS the working-tree verdict the ship flow branches on"
+    ),
+    "detect-import-targets.sh": (
+        "produces pre-ship.sh's import-check list; an empty answer means "
+        "nothing was import-checked"
+    ),
+    "detect-test-dirs.sh": (
+        "produces pre-ship.sh's test-directory list; an empty answer makes it "
+        "skip pytest and say 'No tests directory found' while doing it. The "
+        "reviewing-code-python-click copy is held byte-equal to the shipping "
+        "one, so both are held to the stricter role"
+    ),
+}
+
+# Bucket 2: reporting-only, or an action whose own exit code is the verdict.
+# Degraded output is acceptable here; a false pass on a gate is not.
+NON_GATE_SCRIPTS = {
+    "gather-context.sh": (
+        "reporting-only: its output is context for a human reviewer, not a "
+        "branch. It carries legitimate process-substitution sites"
+    ),
+    "push.sh": (
+        "an action, not a gate: `git push`'s own exit code is the verdict and "
+        "no output is parsed"
+    ),
+    "close-issue.sh": "an action: `gh issue close`'s exit code is the verdict",
+    "comment-issue.sh": "an action: `gh issue comment`'s exit code is the verdict",
+}
+
+
+def _gate_family_scripts() -> list[Path]:
+    out: list[Path] = []
+    for pattern in _GATE_FAMILY_GLOBS:
+        out.extend(SKILLS_DIR.glob(pattern))
+    return sorted(out)
+
+
+class TestGateScriptHardening:
+    """Enforce the gate-script discipline codified in docs/STYLE.md.
+
+    A gate script must not use `done < <(producer ...)` for control-flow
     inputs: process-substitution exit codes aren't visible in the parent shell,
     so a producer failure (git, find, helper script) silently empties the loop
     and the gate falsely passes. The canonical hardened pattern captures
     producer output to a tempfile and its exit code into a scalar — see
-    `LS_RC` in skills/shipping-work-php/scripts/pre-ship.sh and the
-    "Gate-script discipline" subsection in AGENTS.md.
+    `LS_RC` in skills/shipping-work-php/scripts/pre-ship.sh, or the simpler
+    `DIFF_RC` scalar capture in skills/shipping-work/scripts/doc-check.sh.
 
-    Scope is intentionally pre-ship only. Review/gather-context scripts are
-    reporting-only producers (degraded output is acceptable), so they are
-    exempt — extending this assertion to them would force the existing
-    legitimate process-substitution sites in those scripts to be rewritten
-    unnecessarily.
+    Scope was `pre-ship.sh` only until [#255](https://github.com/gregoryfoster/skills/issues/255),
+    though the prose has always scoped the rule to gate scripts and names
+    `doc-check.sh` as one of its two canonical implementations. The cost was
+    real: a `done < <(git ls-files)` shipped in `doc-check.sh` — the file the
+    rule cites — and the suite stayed green. Its output drove a
+    did-we-match-anything branch, so a silent `git ls-files` failure would
+    have reported "the list is misconfigured for this repo", a confident
+    diagnosis of the wrong problem, at the same exit code as the real one.
 
-    Escape hatch: tag the loop with `# unhardened: <reason>` either on the
-    `done` line itself or anywhere within the prior 10 lines, if a
+    So the file list is derived from the discipline rather than from one
+    filename: every script in the `shipping-work*` / `reviewing-code*`
+    families is classified into GATE_SCRIPTS or NON_GATE_SCRIPTS above, and a
+    new one cannot ship unclassified — the same forcing function
+    `test_pre_ship_env_override.py` applies to new variants.
+
+    Escape hatch, unchanged: tag the loop with `# unhardened: <reason>` either
+    on the `done` line itself or anywhere within the prior 10 lines, if a
     process-substitution input is genuinely required.
     """
 
-    _PRE_SHIP_PATHS = sorted(
+    _GATE_PATHS = sorted(
         p.relative_to(SKILLS_DIR).as_posix()
-        for p in SKILLS_DIR.glob("shipping-work*/scripts/pre-ship.sh")
+        for p in _gate_family_scripts()
+        if p.name in GATE_SCRIPTS
     )
 
     @pytest.fixture(
-        params=_PRE_SHIP_PATHS,
-        ids=lambda p: p.split("/")[0],
+        params=_GATE_PATHS,
+        ids=lambda p: p.split("/")[0] + "/" + p.split("/")[-1],
     )
     def script_path(self, request):
         return SKILLS_DIR / request.param
 
-    def test_pre_ship_scripts_discovered(self):
-        # Sanity guard: if the glob ever returns nothing, the parameterized
+    def test_every_family_script_is_classified(self):
+        """A new script must be classified, not silently uncovered.
+
+        This is the half that keeps the gate honest: without it, adding
+        `skills/shipping-work-php/scripts/new-gate.sh` extends the surface the
+        rule claims to cover while extending nothing that checks it.
+        """
+        unclassified = sorted(
+            p.relative_to(SKILLS_DIR).as_posix()
+            for p in _gate_family_scripts()
+            if p.name not in GATE_SCRIPTS and p.name not in NON_GATE_SCRIPTS
+        )
+        assert not unclassified, (
+            "unclassified script(s) in the shipping-work* / reviewing-code* "
+            "families:\n" + "\n".join(f"  {p}" for p in unclassified)
+            + "\n\nAdd each basename to GATE_SCRIPTS (its output drives a "
+            "control-flow decision) or to NON_GATE_SCRIPTS (reporting-only, "
+            "or an action whose own exit code is the verdict), with a reason. "
+            'See the two-bucket rule in docs/STYLE.md, "Gate-script '
+            'discipline".'
+        )
+
+    def test_classification_covers_only_scripts_that_exist(self):
+        """A stale entry silently shrinks the enforced set to nothing.
+
+        `GATE_SCRIPTS` is keyed by basename, so a renamed script leaves an
+        entry matching no file — and the parametrization below quietly loses
+        it. Failing on the dead key is what #252 taught about dead lists.
+        """
+        present = {p.name for p in _gate_family_scripts()}
+        dead = sorted((set(GATE_SCRIPTS) | set(NON_GATE_SCRIPTS)) - present)
+        assert not dead, (
+            f"classified script name(s) matching no file on disk: {dead}. "
+            "Remove the entry, or fix the name — a dead key enforces nothing "
+            "while reading as coverage."
+        )
+
+    def test_gate_scripts_discovered(self):
+        # Sanity guard: if the globs ever return nothing, the parameterized
         # test would silently skip and the gate would vanish unnoticed.
-        assert len(self._PRE_SHIP_PATHS) >= 1, (
-            "Glob `shipping-work*/scripts/pre-ship.sh` matched zero files — "
-            "the hardening gate has silently disabled itself. Check whether "
-            "the skills/ directory layout or naming convention changed."
+        assert len(self._GATE_PATHS) >= 1, (
+            "The gate-family globs matched zero gate scripts — the hardening "
+            "gate has silently disabled itself. Check whether the skills/ "
+            "directory layout or naming convention changed."
+        )
+
+    @pytest.mark.parametrize("name", sorted(GATE_SCRIPTS))
+    def test_each_gate_script_is_actually_examined(self, name):
+        """Every gate basename must resolve to at least one examined file.
+
+        The parametrization is built by intersecting the classification with
+        what is on disk; this asserts the intersection is non-empty per entry,
+        so a typo in a key cannot look like coverage.
+        """
+        assert any(p.split("/")[-1] == name for p in self._GATE_PATHS), (
+            f"{name} is classified as a gate script but no file with that "
+            "name was found under skills/{shipping-work,reviewing-code}*/scripts/"
         )
 
     def test_no_unhardened_process_substitution(self, script_path):
@@ -1274,8 +1391,10 @@ class TestPreShipGateHardening:
             + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations)
             + "\n\nGate-script inputs must capture the producer's exit code. "
             "Replace with the tempfile + `*_RC=$?` pattern (see `LS_RC` in "
-            "skills/shipping-work-php/scripts/pre-ship.sh and the "
-            '"Gate-script discipline" subsection of AGENTS.md). '
+            "skills/shipping-work-php/scripts/pre-ship.sh, or the simpler "
+            "`DIFF_RC` scalar capture in "
+            "skills/shipping-work/scripts/doc-check.sh, and the "
+            '"Gate-script discipline" section of docs/STYLE.md). '
             "If process substitution is genuinely required, tag the loop "
             "with `# unhardened: <reason>` on the `done` line itself or "
             "anywhere within the prior 10 lines."
