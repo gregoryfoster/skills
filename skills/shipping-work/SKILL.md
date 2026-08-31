@@ -70,9 +70,9 @@ If pre-ship fails: stop, report the failure, fix before proceeding. Do not push 
 bash "<SKILL_SCRIPTS>/doc-check.sh"
 ```
 
-`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's `SENSITIVE_PATHS` array (AGENTS.md, README.md, schema files, public-API directories, etc.). When sensitive paths change, the matching doc sections may need updates too.
+`doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's sensitive-path list (AGENTS.md, README.md, schema files, public-API directories, etc.). Entries match path *segments*, so `src/api/` also covers `packages/<pkg>/src/api/`. When sensitive paths change, the matching doc sections may need updates too. Projects tailor the list by committing `.skills/doc-sensitive-paths` at the repo root (one path per line, `#`-comments ignored); it replaces the defaults rather than extending them.
 
-If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2: an infra/tooling problem prevented the doc check from running — investigate the underlying error rather than proceeding. If the project doesn't ship a `doc-check.sh`, skip this step.
+If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2: an infra/tooling problem prevented the doc check from running — investigate the underlying error rather than proceeding. One exit-2 case is worth naming: when no entry in the list matches any tracked file, the script says so instead of passing, because a list that cannot hit anything would otherwise print the same clean green as a genuinely doc-neutral branch. Fix the list; do not wave the step through. If the project doesn't ship a `doc-check.sh`, skip this step.
 
 ### Step 2 — Ensure a clean working tree
 

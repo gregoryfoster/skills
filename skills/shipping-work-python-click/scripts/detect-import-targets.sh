@@ -31,7 +31,12 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
 if [[ -f .skills/import-targets ]]; then
-  while IFS= read -r pkg; do
+  # `|| [[ -n "$pkg" ]]` keeps the final line when the file has no trailing
+  # newline — otherwise a one-line list written by an editor that omits it
+  # resolves to nothing, and the import check silently targets the
+  # pyproject.toml name the override existed to replace. doc-check.sh reads
+  # .skills/doc-sensitive-paths with the same guard.
+  while IFS= read -r pkg || [[ -n "$pkg" ]]; do
     [[ -z "$pkg" || "$pkg" =~ ^[[:space:]]*# ]] && continue
     # Pure-bash trim of leading/trailing whitespace (no fork+pipe per line).
     pkg="${pkg#"${pkg%%[![:space:]]*}"}"
