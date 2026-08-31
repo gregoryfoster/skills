@@ -341,6 +341,27 @@ case "$NO_LOSS" in
   ''|ok|failed|skipped) ;;
   *) echo "ERROR --no-loss must be ok, failed, or skipped (got '$NO_LOSS')" >&2; exit 1 ;;
 esac
+# Digits only — the value comes from check-seams.sh's `seams: N` line, and
+# anything else here is a transcription error, not a count.
+#
+# BEFORE the semantic checks below, deliberately. A value that is not a count is
+# not a count whatever the verdict says, and with this block underneath them a
+# typo took the `--claims-dropped` branch instead: `--claims-dropped two
+# --no-loss ok` was answered with "prove-no-loss.sh exits 3 on an unwarranted
+# dropped atom … record --no-loss failed", a confident diagnosis of the wrong
+# problem whose remedy would have written a false `failed` on the row (#257 CR
+# round 1).
+for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED" \
+             "--no-loss-warrants=$NO_LOSS_WARRANTS" \
+             "--claims-dropped=$CLAIMS_DROPPED" \
+             "--claims-warranted=$CLAIMS_WARRANTED"; do
+  _flag="${_pair%%=*}"; _val="${_pair#*=}"
+  case "$_val" in
+    ''|*[!0-9]*)
+      [ -z "$_val" ] || {
+        echo "ERROR $_flag must be a non-negative integer (got '$_val')" >&2; exit 1; } ;;
+  esac
+done
 # Warrants are the COMPOSITION of a verdict, never a verdict of their own.
 # Recorded against `skipped` or against nothing they would assert that lines
 # were judged by a check nobody ran — the over-statement #111 found already in
@@ -386,19 +407,6 @@ case "$CLAIMS_DROPPED" in
        exit 1
      fi ;;
 esac
-# Digits only — the value comes from check-seams.sh's `seams: N` line, and
-# anything else here is a transcription error, not a count.
-for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED" \
-             "--no-loss-warrants=$NO_LOSS_WARRANTS" \
-             "--claims-dropped=$CLAIMS_DROPPED" \
-             "--claims-warranted=$CLAIMS_WARRANTED"; do
-  _flag="${_pair%%=*}"; _val="${_pair#*=}"
-  case "$_val" in
-    ''|*[!0-9]*)
-      [ -z "$_val" ] || {
-        echo "ERROR $_flag must be a non-negative integer (got '$_val')" >&2; exit 1; } ;;
-  esac
-done
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR python3 is required" >&2; exit 2; }
 
