@@ -184,7 +184,7 @@ Every `SKILL.md` is held to a **6,000-token ratchet** — the figure
 which also holds every `references/*.md` to the 10,000-token per-doc budget,
 with nothing exempt — [#152](https://github.com/gregoryfoster/skills/issues/152)
 retired the one exemption by splitting the append-only log rather than excusing
-it. Fifteen of nineteen skills meet it; the rest carry a named exception with
+it. Most skills meet it; the rest carry a named exception with
 its reason beside it, and every file names its own figure in prose so the gate
 and the run read the same number. A ratchet only ever comes down.
 

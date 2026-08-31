@@ -204,7 +204,7 @@ if [ "$1" = "status" ] && [ "$2" = "--porcelain" ]; then
   echo "fatal: Unable to read index" >&2
   exit 128
 fi
-exec %s "$@"
+exec "%s" "$@"
 """
 
 

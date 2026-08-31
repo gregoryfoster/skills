@@ -126,9 +126,6 @@ The defences that do work are already in place — the `GIT_DIR` scrub above, an
 
 ## The SKILL.md self-budget, and how its two readings are reconciled
 
-Demoted from `AGENTS.md`, which keeps the two figures and the ratchet rule; this
-is the mechanism behind them.
-
 It binds **both** readings — the offline estimate pre-commit sees, and
 `count_tokens` under `SKILL_BUDGET_EXACT=1`. On SKILL.md files the estimate is
 observed running 13% low to 6% high, and `POLICY_ESTIMATE_BAND` permits 15%
@@ -145,8 +142,6 @@ exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
 surface, and an unusable key must never be able to block a commit.
 
 ## A write through a temp file must be checked
-
-Demoted from `AGENTS.md`'s `## Scripts`, which keeps the rule and the marker.
 
 - A write through a temp file must be checked — `set -e` exempts the first element
 of an `&&` list — and a success message must sit inside the branch that succeeded
