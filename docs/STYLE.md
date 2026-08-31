@@ -123,3 +123,36 @@ Separately, `git config --local` from a **linked worktree** writes the *shared* 
 - **Two costs, no offsetting benefit.** A clone does not inherit the extension, so it cannot be a property of the repository anyone else gets; and this repo is at `core.repositoryformatversion = 0`, where `extensions.*` is out of contract. Git 2.39.3 honours it there anyway, which is worse than refusing it: the behaviour is version-dependent and unannounced.
 
 The defences that do work are already in place — the `GIT_DIR` scrub above, and Rule 6 reading the exit code rather than stdout.
+
+## The SKILL.md self-budget, and how its two readings are reconciled
+
+Demoted from `AGENTS.md`, which keeps the two figures and the ratchet rule; this
+is the mechanism behind them.
+
+It binds **both** readings — the offline estimate pre-commit sees, and
+`count_tokens` under `SKILL_BUDGET_EXACT=1`. On SKILL.md files the estimate is
+observed running 13% low to 6% high, and `POLICY_ESTIMATE_BAND` permits 15%
+either way — that band edge, not the observed figure, is what the warning below
+computes a worst case from. So neither reading alone is the contract — and only
+the estimate is always on, which let
+three ratchets be breached past a green suite. Two things close that
+([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
+run now **warns** about each skill whose worst permissible exact count exceeds
+its ratchet (seven today — a warning, not a failure), and
+[.github/workflows/skill-budget-exact.yml](../.github/workflows/skill-budget-exact.yml)
+runs the exact pass weekly as the gate that does fail. On the commit path the
+exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
+surface, and an unusable key must never be able to block a commit.
+
+## A write through a temp file must be checked
+
+Demoted from `AGENTS.md`'s `## Scripts`, which keeps the rule and the marker.
+
+- A write through a temp file must be checked — `set -e` exempts the first element
+of an `&&` list — and a success message must sit inside the branch that succeeded
+([#181](https://github.com/gregoryfoster/skills/issues/181)). Same family, second
+spelling: `> "$F" || true` discards the failure of a write something later reads
+back, so it shows up as state that never changed rather than as an error
+([#193](https://github.com/gregoryfoster/skills/issues/193)). Both are gated by
+`test_checked_temp_writes.py`; a deliberate one is allowed but must say so, with
+`# unchecked-write-ok: <reason>` on the line or just above it

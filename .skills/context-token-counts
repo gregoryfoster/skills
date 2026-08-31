@@ -3,10 +3,10 @@
 # The offline estimators prefer a file's own last exact measurement to the
 # repo-wide figure in .skills/context-token-ratio, falling back to it for a
 # file never counted exactly or since drifted far from the size recorded here.
-15611 5925 AGENTS.md
-8121 2863 docs/CONVENTIONS.md
-3963 1481 docs/SKILLS.md
-15137 5702 docs/STYLE.md
+14239 5464 AGENTS.md
+10792 3818 docs/CONVENTIONS.md
+4528 1698 docs/SKILLS.md
+20109 7489 docs/STYLE.md
 24118 9257 skills/init-socraticode/SKILL.md
 2931 1049 skills/init-socraticode/references/audit-rerun.md
 19430 7316 skills/init-socraticode/references/code-exploration-policy.md
