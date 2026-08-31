@@ -59,6 +59,10 @@ Behaviour:
     git dir, so N worktrees of one repo produce one report a day, not N.
   - Silent when there is nothing to report, and on every infrastructure
     condition it cannot judge (no node, no driver, no manifest).
+  - Says FAILED TO RUN when the driver exits non-zero without printing any
+    findings (#254). A crashed check and a check that found defects both exit
+    1, and the crash must not be rendered in the shape that means "measured,
+    and here is the list" — a broken check would then read as a healthy one.
   - Bounded: HEALTH_TIMEOUT_MS caps the driver run. This hook exports 60000,
     tightening mcp-driver.mjs's own 120000 default, because a session start
     must not wait two minutes on a server that will never answer.
@@ -262,12 +266,36 @@ node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "$PROJECT" \
   >>"$LOG" 2>"$FINDINGS_FILE" \
   || RC=$?
 
-if [ "$RC" -ne 0 ] && [ -s "$FINDINGS_FILE" ]; then
-  echo "socraticode-health: findings from today's once-per-day check (see $LOG):"
+# A non-zero RC has TWO meanings and they are opposites (#254): the driver
+# exits 1 for "defects found" (#220), and node also exits 1 for an error thrown
+# out of the dispatch — `server process exited (code N) with requests in
+# flight`, say, which is what an interpreter change under the plugin's mcp.json
+# produced in the field. So the findings themselves, not the exit code, decide
+# which sentence the operator gets.
+#
+# Captured into a scalar first, then branched on. Printing the header before
+# the grep is what made a crash render as a clean-but-listed result: the header
+# and footer were unconditional, `grep` matched nothing, and the `|| true` —
+# correctly there, so a findings-free grep cannot kill this `set -e` hook —
+# swallowed the last chance to notice. Same shape the gate scripts use for the
+# same reason (docs/STYLE.md, "Gate-script discipline").
+#
+# The guard is RC alone, no longer `RC != 0 && -s findings`: a driver that dies
+# with an empty stderr (SIGKILL, an OOM) also measured nothing, and the
+# invariant behind #177/#214/#225/#254 is that for a reporter that is silent
+# when clean, EVERY failure mode must be louder than silence, never quieter.
+if [ "$RC" -ne 0 ]; then
   # `  - ` lines are the driver's findings; the rest is launch chatter.
   # POSIX bracket class, not `\s`: BSD grep -E does not know the escape.
-  grep -E '^[[:space:]]+- ' "$FINDINGS_FILE" || true
-  echo "socraticode-health: this hook reports only. Re-index with codebase_index, or re-run init-socraticode, to act on it."
+  _found="$(grep -E '^[[:space:]]+- ' "$FINDINGS_FILE" || true)"
+  if [ -n "$_found" ]; then
+    echo "socraticode-health: findings from today's once-per-day check (see $LOG):"
+    printf '%s\n' "$_found"
+    echo "socraticode-health: this hook reports only. Re-index with codebase_index, or re-run init-socraticode, to act on it."
+  else
+    echo "socraticode-health: the check FAILED TO RUN (driver exited $RC with no findings) — see $LOG."
+    echo "socraticode-health: this is not a clean result. Nothing was measured today."
+  fi
 fi
 
 _log "health-check exited $RC"
