@@ -9,7 +9,7 @@ the others do not, and the wiring etiquette. Design of the weekly job lives in
 ## Phase 8 — Wire the continuous surfaces
 
 Three surfaces keep the ground this run won. Offer all three once per repo, after
-the first successful curation.
+the first successful curation:
 
 ### The cadence
 
@@ -30,11 +30,10 @@ estimate against exact rows. Set the secret first, then run it once by hand.
 Design, the annotated template, and what it deliberately does not do:
 [references/cadence.md](cadence.md) ([#118](https://github.com/gregoryfoster/skills/issues/118)).
 
-As Phase 8 summarised it inline until v1.9:
+As Phase 8 summarised it inline until v1.14:
 
-- **The cadence** — `install-cadence.sh`. What goes on the clock is a
-  **measurement, not a curation**. It needs the `ANTHROPIC_API_KEY` repository
-  secret, or the job records *nothing*, silently, every week
+- **The cadence** — `install-cadence.sh`. A **measurement, not a curation**, and
+  it needs the `ANTHROPIC_API_KEY` repository secret or records *nothing*
   ([references/cadence.md](cadence.md)).
 
 The next two catch regrowth *between* those weekly measurements.
@@ -54,12 +53,11 @@ straight gain; and it matches `Edit|Write|MultiEdit`, so a shell redirect
 ([#103](https://github.com/gregoryfoster/skills/issues/103)). Review sees the
 whole branch however the bytes arrived, while the tradeoff is still cheap.
 
-As Phase 8 summarised it inline until v1.9:
+As Phase 8 summarised it inline until v1.14:
 
-- **Review-time delta** — `context-delta.sh`, already called from the four
-  `reviewing-code*` variants' `gather-context.sh`, so it needs no wiring. It sees
-  what the guard cannot: the guard matches `Edit|Write|MultiEdit`, so a shell
-  redirect (`cat >> AGENTS.md <<'EOF'`) or a `NotebookEdit` never reaches it.
+- **Review-time delta** — `context-delta.sh`, already wired into the four
+  `reviewing-code*` variants. It sees what the guard's `Edit|Write|MultiEdit`
+  matcher cannot: a shell redirect or `NotebookEdit`.
 
 ### Write guard
 
@@ -85,9 +83,8 @@ The installer prints its `git add` line rather than committing, and names the lo
 path to tail. Hook wiring lands through the project's normal gate — a hook that
 starts running because something committed it unannounced is a bad surprise.
 
-As Phase 8 summarised it inline until v1.9:
+As Phase 8 summarised it inline until v1.14:
 
 - **Write guard** — `install-guard.sh --budget 6000 --doc-budget 10000`, a
-  `PostToolUse` hook that flags an edit pushing a file further over budget. It
-  never blocks and stays silent when an edit reduces the count
+  `PostToolUse` hook that never blocks
   ([references/write-guard-hook.md](write-guard-hook.md)).

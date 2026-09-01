@@ -3648,7 +3648,7 @@ class TestCadenceShellActuallyRuns:
         env["SKILL_SCRIPTS"] = str(SCRIPTS)
         env["GITHUB_ENV"] = str(tmp_path / "gh_env")
         (tmp_path / "gh_env").write_text("")
-        r = subprocess.run(["bash", "-e", "-c", self._step(tmp_path, "Sweep the seams")],
+        r = subprocess.run(["bash", "-e", "-c", self._step(tmp_path, "Sweep the seams and the counts")],
                            capture_output=True, text=True, cwd=str(repo),
                            env=env, timeout=60)
         assert r.returncode == 0, r.stderr

@@ -44,6 +44,7 @@ Determine which GitHub issue(s) to close (priority order):
 
 ### Step 1 — Run pre-ship checks
 
+<!-- skill:required -->
 ```bash
 N=shipping-work-python-fastapi S=pre-ship.sh SD=
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1

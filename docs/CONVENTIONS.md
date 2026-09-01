@@ -40,6 +40,34 @@ If the same upstream repo is vendored from two forks, the submodule directory na
 
 These keys make it possible to audit divergence across downstream repos (e.g. "which overrides have drifted from upstream") without inspecting every SKILL.md by hand. Upstream skills in this repo do not carry these keys — they aren't overrides.
 
+### Fragments an override may not drop
+
+`version:` in an override records **the vendor version last synced from**, and comparing it to the vendor's catches an override that has fallen *behind* ([#238](https://github.com/gregoryfoster/skills/issues/238)). It cannot catch divergence at the *same* version — an override synced honestly from v1.1 whose text replaced upstream v1.1 with something worse — and [#63](https://github.com/gregoryfoster/skills/issues/63) was reintroduced a second time through exactly that opening ([#260](https://github.com/gregoryfoster/skills/issues/260)): a `shipping-work-php` override at a matching `1.1` had swapped `bash "<SKILL_SCRIPTS>/pre-ship.sh"` for `bash scripts/pre-ship.sh`, with a note explaining that the scripts `cd "$(git rev-parse --show-toplevel)"` so the path was safe. True, and beside the point — that resolves the root the scripts *operate on*, not the path `bash` uses to *open the file*.
+
+An override exists to differ, so no diff-and-warn can work here. Instead an upstream skill fences the small set that is **not** optional:
+
+Shown four-backticked so the inner fence survives; a zero-width space would
+have hidden an invisible character in text people copy.
+
+````markdown
+<!-- skill:required -->
+```bash
+N=<skill-name> S=<script>.sh SD=
+for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+  [ -f "$d/$S" ] && { SD="$d"; break; }
+done
+```
+````
+
+The marker arms **the fenced block that follows it**, and only a fenced block — prose gets legitimately reworded, so a fragment check over prose would flag every honest edit. `.skills/doctor.sh` reads each override's `overrides:` target, extracts the vendor's armed blocks, and warns when the override does not carry one, compared insensitive to whitespace. It runs whatever the version stamps say, because a matching stamp is the state being reported.
+
+Two rules for an override author:
+
+- **Carry every armed block verbatim.** Re-indent it if you must; do not rewrite it. If a fragment genuinely cannot survive in your project, that is a case for an upstream issue, not a local deletion.
+- **Never write a bare `bash scripts/X.sh`.** The doctor reports that shape in an override regardless of any fence, because it needs no vendor cooperation and it is what the two occurrences of #63 had in common. Use the resolved `<SKILL_SCRIPTS>` placeholder.
+
+Both findings are advisory in every mode, like the drift check beside them: re-syncing an override is debt paid down on a schedule, and a probe that failed on it would push consumers toward deleting overrides rather than repairing them. The most durable fix is to need less override — per-file symlinks for everything not genuinely local, leaving `SKILL.md` as the one file no symlink can reach.
+
 #### Legacy unqualified form
 
 The earlier convention allowed bare `overrides: <skill-name>` without a vendor prefix. That form is **tolerated for existing downstream files** but should be migrated to the qualified form during the next routine touch (e.g., as part of a downstream sweep). New overrides must use the qualified form. Bare entries are ambiguous as soon as a second vendor ships a skill of the same name, so the tolerance window closes once the audited downstreams have been updated.

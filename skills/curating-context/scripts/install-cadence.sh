@@ -79,7 +79,8 @@ What it does:
     2. preflights the credential FIRST,
     3. sweeps seams, measures once with --exact, records a `baseline` row,
     4. commits that one JSONL line to the default branch,
-    5. emits ::warning:: when the surface is over budget or seams accrued.
+    5. emits ::warning:: when the surface is over budget, seams accrued, or
+       a rot-prone count went unjudged.
 
   It never runs on pull_request and never blocks a merge. Turning the budget
   into a merge gate is a different job (#88), with its own sequencing rule.
@@ -791,12 +792,19 @@ jobs:
       # newest repo_commit is the previous measurement, so the sweep spans the
       # interval since it. With no such row the report SAYS the interval is
       # empty rather than presenting a standing count as a week's accrual.
-      - name: Sweep the seams
+      - name: Sweep the seams and the counts
         run: |
           bash "\$SKILL_SCRIPTS/check-seams.sh" --base-ledger "$LEDGER" >/tmp/seams.txt 2>&1 || true
           tail -20 /tmp/seams.txt
           echo "SEAMS=\$(sed -n 's/^seams: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
           echo "SEAMS_ACKED=\$(sed -n 's/^seams_acked: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
+          # Same step, same file, same shape (#258): without it the scheduled
+          # row carries a null counts field forever and the class is recorded
+          # only by hand-run curations — #169's shape, one field over.
+          bash "\$SKILL_SCRIPTS/check-counts.sh" >/tmp/counts.txt 2>&1 || true
+          tail -20 /tmp/counts.txt
+          echo "COUNTS=\$(sed -n 's/^counts: \([0-9]*\)\$/\1/p' /tmp/counts.txt | tail -1)" >>"\$GITHUB_ENV"
+          echo "COUNTS_ACKED=\$(sed -n 's/^counts_acked: \([0-9]*\)\$/\1/p' /tmp/counts.txt | tail -1)" >>"\$GITHUB_ENV"
 
       # Measured ONCE — the drift report below reads this file rather than
       # re-running --exact, which would disagree with the row just recorded.
@@ -808,6 +816,7 @@ jobs:
           bash "\$SKILL_SCRIPTS/record-telemetry.sh" --baseline=scheduled \\
               --ledger "$LEDGER" \\
               \${SEAMS:+--seams "\$SEAMS"} \${SEAMS_ACKED:+--seams-acked "\$SEAMS_ACKED"} \\
+              \${COUNTS:+--counts "\$COUNTS"} \${COUNTS_ACKED:+--counts-acked "\$COUNTS_ACKED"} \\
               --print-trend </tmp/ctx.json
 
       - name: Commit the row
@@ -902,6 +911,9 @@ jobs:
               print(f"::warning::{p['path']} is {p['tokens']} tokens against a "
                     f"{p['budget']} budget. Run \`curate context\` in this repo.")
           PY
+          if [ "\${COUNTS:-0}" -gt 0 ]; then
+            echo "::warning::\$COUNTS unjudged count(s) or over-long index line(s). Run \\\`curate context\\\`."
+          fi
           if [ "\${SEAMS:-0}" -gt 0 ]; then
             echo "::warning::\$SEAMS unacknowledged cross-reference seam(s). Run \\\`curate context\\\`."
           fi

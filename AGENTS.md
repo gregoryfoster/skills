@@ -272,6 +272,6 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 
 ## Detail Docs
 
-- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` resolution template, the gate-script rules and which scripts they bind, why a repo-creating git command must scrub `GIT_DIR`, and why `extensions.worktreeConfig` is refused
+- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` template, the gate-script rules and the scripts they bind, the `GIT_DIR` scrub, and the refused `extensions.worktreeConfig`
 - [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the three `.skills/` resolution knobs
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery

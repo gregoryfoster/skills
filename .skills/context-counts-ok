@@ -1,0 +1,63 @@
+# Judged counts. WARRANT :: CONTENT — see check-counts.sh --help for the closed
+# set. Entries match the reported clause as a substring and expire the moment
+# that text changes, which is when they need re-judging.
+#
+# A warrant is RECURRING, unlike .skills/context-loss-ok. The sentence stays in
+# the file, so its acknowledgement earns its place until the sentence changes —
+# the same lifecycle as .skills/context-seams-ok, and the opposite of a loss
+# warrant, which is spent the moment its rewrite lands on main.
+#
+# Every entry below judged 2026-08-31, against AGENTS.md as it then stood.
+# `stable` is the warrant to be suspicious of: "nothing has changed yet" is not
+# that warrant, it is the defect.
+
+# Followed immediately by exactly two bullets, so the number is checkable by
+# reading the section it introduces.
+AGENTS.md :: enumerated :: Two situations warrant a suffix
+
+# Hypothetical, not a tally: it describes a collision between any two vendored
+# sources, and no repo state can make it wrong.
+AGENTS.md :: stable :: when two vendored sources ship the same skill name
+
+# tests/structural/test_pre_ship_env_override.py discovers the shipping-work*
+# variants and asserts the set equals its own ALL_VARIANTS, so a fifth variant
+# turns that test red rather than leaving this sentence quietly stale. Form 3.
+AGENTS.md :: gated :: across all four variants (#105)
+
+# The three are named in the two sentences that follow: WORKTREE_ROOT,
+# PLANS_DIR and SKILLS_PIN_FILE.
+AGENTS.md :: enumerated :: Three skills resolve a path through the same three-step lookup
+
+# Followed immediately by exactly two bullets.
+AGENTS.md :: enumerated :: Two rules are enforced by the structural suite
+
+# Followed immediately by the two readings it names: the offline estimate and
+# count_tokens under SKILL_BUDGET_EXACT=1.
+AGENTS.md :: enumerated :: Two readings bind it, not one
+
+# A closed historical fact about #217. It cannot rot: no future change makes a
+# different number of ratchets have been breached then.
+AGENTS.md :: stable :: which let three ratchets be breached past a green suite
+
+# Back-reference to the two readings enumerated three sentences earlier, not an
+# independent tally.
+AGENTS.md :: stable :: How the two are reconciled
+
+# --- the skill's own surface (v1.14 self-curation pass, 2026-08-31) ---
+#
+# Path-scoped: this file is shared with the repo's AGENTS.md surface.
+# `enumerated` here means the counted things are named in the same sentence or
+# in the bullets it introduces, so the number is checkable by reading on.
+# `stable` means the count is structural — the three warrants, the two
+# normalisations, the eight phases — and cannot change without the sentence
+# being rewritten. Each verified against its section 2026-08-31.
+skills/curating-context/SKILL.md :: enumerated :: Deletion needs one of exactly three warrants
+skills/curating-context/SKILL.md :: stable :: the third clause is what makes this skill safe
+skills/curating-context/SKILL.md :: stable :: it costs eight phases of work toward a ledger row
+skills/curating-context/SKILL.md :: enumerated :: Four numbers drive the whole run
+skills/curating-context/SKILL.md :: enumerated :: Three verdicts, not interchangeable
+skills/curating-context/SKILL.md :: enumerated :: Two mechanical adjustments come with every move
+skills/curating-context/SKILL.md :: stable :: normalises exactly these two, and skips frontmatter
+skills/curating-context/SKILL.md :: enumerated :: `--help` has the three
+skills/curating-context/SKILL.md :: enumerated :: Three surfaces keep the ground this run won
+skills/curating-context/SKILL.md :: stable :: Offer all three **once per repo**

@@ -395,7 +395,7 @@ class TestTheCadenceUsesIt:
         assert out.returncode == 0, out.stderr
         doc = yaml.safe_load(out.stdout)
         return next(s["run"] for s in doc["jobs"]["measure"]["steps"]
-                    if s.get("name") == "Sweep the seams")
+                    if s.get("name") == "Sweep the seams and the counts")
 
     def _run_step(self, tmp_path: Path, repo: Path) -> tuple[
             subprocess.CompletedProcess, str]:
