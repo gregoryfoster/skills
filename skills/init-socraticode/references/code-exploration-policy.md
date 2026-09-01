@@ -176,7 +176,8 @@ by hand:
 ```bash
 bash "<SKILL_DIR>/../managing-skills/scripts/install-hook.sh" \
   --hook socraticode-reminder.sh --skill init-socraticode \
-  --marker socraticode-prefetch --marker socraticode-reminder --copy-fallback
+  --marker socraticode-prefetch --marker socraticode-reminder --copy-fallback \
+  --timeout 5
 ```
 
 It writes **two** artifacts, and only the second makes the hook run:
@@ -261,8 +262,21 @@ copy fallback:
 ```bash
 bash "<SKILL_DIR>/../managing-skills/scripts/install-hook.sh" \
   --hook socraticode-health.sh --skill init-socraticode \
-  --marker socraticode-health --copy-fallback
+  --marker socraticode-health --copy-fallback --timeout 120
 ```
+
+**`--timeout 120` is not decoration.** Without it the harness default bounds the
+run, and this is the hook that can least afford an implicit one
+([#259](https://github.com/gregoryfoster/skills/issues/259)): it shells out to
+`mcp-driver.mjs`, which starts the server via `npx -y socraticode` — 4.0s warm,
+a package download cold — and it stamps its once-per-UTC-day lock **before**
+doing the work, so a timeout kill consumes the day's attempt and reports
+nothing. A hook that is silent when clean cannot then be told from one that
+never finished, and the lock guarantees no retry until tomorrow. 120 sits above
+the 60s ceiling the hook already exports to the driver, so the inner bound is
+the one that fires and the outer one only catches a driver that never returns.
+A value already in `settings.json` is **preserved** by a re-run, so a consumer
+who tuned this figure keeps it.
 
 Its marker is deliberately distinct from `socraticode-prefetch` /
 `socraticode-reminder`: markers are per-hook precisely so that one hook's

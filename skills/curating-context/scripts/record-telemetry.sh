@@ -39,8 +39,9 @@ Options:
 
                    Refuses --actions (a baseline row is measurement-only, and
                    its tag is fixed) and --no-loss (nothing was relocated yet).
-                   --note, --seams and --seams-acked are allowed: they measure
-                   the surface as found, which is a before-state too.
+                   --note, --seams, --seams-acked, --counts and
+                   --counts-acked are allowed: they measure the surface as
+                   found, which is a before-state too.
   --actions LIST   Comma-separated action tags applied this run, e.g.
                    "demote:Project Layout,prune:Conventions,fix:dead-link".
                    Recorded verbatim so a later run can correlate a token
@@ -95,6 +96,27 @@ Options:
                    alongside --seams so a repo whose acknowledged set balloons
                    is visible in the roll-up: 0 new / 0 acked and 0 new /
                    50 acked are different states. Null when not swept.
+  --counts N       Record check-counts.sh's final count for this run: the
+                   number of UNJUDGED rot-prone counts and over-long index
+                   lines after Phase 6.5's hits were resolved — the rhetorical
+                   ones de-precised, the load-bearing ones gated, the rest
+                   warranted in .skills/context-counts-ok. Omitted means "not
+                   checked", recorded as null, which like no_loss is never the
+                   same as 0.
+
+                   A bare number in a policy file rots silently and no other
+                   gate has an opinion about it: prove-no-loss.sh compares
+                   claims and not their arithmetic, check-seams.sh sweeps
+                   references and a count is not one, and the budget cadence
+                   reports the total. On the row, a skill change claiming to
+                   reduce this class becomes visible to the validation gate
+                   that judges it (#258).
+  --counts-acked N Record the check's warranted count — hits judged legitimate
+                   and carried in .skills/context-counts-ok. Alongside --counts
+                   for the same reason --seams-acked sits alongside --seams: 0
+                   new / 0 warranted and 0 new / 50 warranted are different
+                   states, and only the second is a file that has learned to
+                   state numbers it cannot keep. Null when not checked.
   --repo NAME      Override the row's repo identity. Needed only when neither
                    the origin remote nor the checkout directory names the
                    repository the cohort roster knows this repo as.
@@ -193,6 +215,10 @@ Row schema (one JSON object per line):
                     if not swept
   seams_acked       the sweep's acknowledged count, from --seams-acked; null
                     if not swept
+  counts            check-counts.sh's unjudged count of rot-prone counts and
+                    over-long index lines, from --counts; null if not checked
+  counts_acked      the check's warranted count, from --counts-acked; null if
+                    not checked
   top_section       largest section title, and its share of the file
   delta_tokens      change vs the previous row for this file. Null on the first
                     row, and null when the measurement method changed since the
@@ -225,6 +251,8 @@ CLAIMS_DROPPED=""
 CLAIMS_WARRANTED=""
 SEAMS=""
 SEAMS_ACKED=""
+COUNTS=""
+COUNTS_ACKED=""
 REPO_OVERRIDE=""
 DRY=0
 TREND=0
@@ -259,6 +287,8 @@ while [ $# -gt 0 ]; do
       CLAIMS_WARRANTED="${2:?--claims-warranted needs a count}"; shift 2 ;;
     --seams) SEAMS="${2:?--seams needs a count}"; shift 2 ;;
     --seams-acked) SEAMS_ACKED="${2:?--seams-acked needs a count}"; shift 2 ;;
+    --counts) COUNTS="${2:?--counts needs a count}"; shift 2 ;;
+    --counts-acked) COUNTS_ACKED="${2:?--counts-acked needs a count}"; shift 2 ;;
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
     --repo-commit)
       BACKFILL=1; BACKFILL_REV="${2:?--repo-commit needs a revision}"; shift 2 ;;
@@ -286,6 +316,8 @@ if [ "$BACKFILL" -eq 1 ]; then
   [ -z "$CLAIMS_WARRANTED" ] || APPEND_ONLY="$APPEND_ONLY --claims-warranted"
   [ -z "$SEAMS" ] || APPEND_ONLY="$APPEND_ONLY --seams"
   [ -z "$SEAMS_ACKED" ] || APPEND_ONLY="$APPEND_ONLY --seams-acked"
+  [ -z "$COUNTS" ] || APPEND_ONLY="$APPEND_ONLY --counts"
+  [ -z "$COUNTS_ACKED" ] || APPEND_ONLY="$APPEND_ONLY --counts-acked"
   [ -z "$REPO_OVERRIDE" ] || APPEND_ONLY="$APPEND_ONLY --repo"
   [ "$ALLOW_METHOD_CHANGE" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --allow-method-change"
   [ "$TREND" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --print-trend"
@@ -303,7 +335,11 @@ fi
 #
 # --seams/--seams-acked are deliberately NOT refused: a sweep of the surface as
 # found measures the state before the run, which is a before-state like any
-# other and the one #117 argues the next experiment turns on.
+# other and the one #117 argues the next experiment turns on. --counts/
+# --counts-acked go with them for the same reason, and more strongly: the counts
+# a run INHERITS are the ones it is most likely to carry forward unchanged, and
+# a baseline row is the only place that number is ever recorded before an agent
+# has rewritten the sentences holding it (#258).
 if [ "$BASELINE" -eq 1 ]; then
   [ "$ACTIONS_SET" -eq 0 ] || {
     echo "ERROR --baseline and --actions are mutually exclusive: a baseline row" >&2
@@ -352,6 +388,7 @@ esac
 # problem whose remedy would have written a false `failed` on the row (#257 CR
 # round 1).
 for _pair in "--seams=$SEAMS" "--seams-acked=$SEAMS_ACKED" \
+             "--counts=$COUNTS" "--counts-acked=$COUNTS_ACKED" \
              "--no-loss-warrants=$NO_LOSS_WARRANTS" \
              "--claims-dropped=$CLAIMS_DROPPED" \
              "--claims-warranted=$CLAIMS_WARRANTED"; do
@@ -489,7 +526,7 @@ else
 fi
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" <<'PY' || RC=$?
 import datetime as dt
 import json
 import os
@@ -498,7 +535,7 @@ import tempfile
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
  no_loss, seams, seams_acked, no_loss_warrants, repo_commit,
- mode, claims_dropped, claims_warranted) = sys.argv[1:18]
+ mode, claims_dropped, claims_warranted, counts, counts_acked) = sys.argv[1:20]
 
 
 def is_curation_row(r):
@@ -665,6 +702,8 @@ row = {
     ),
     "seams": int(seams) if seams else None,
     "seams_acked": int(seams_acked) if seams_acked else None,
+    "counts": int(counts) if counts else None,
+    "counts_acked": int(counts_acked) if counts_acked else None,
     "top_section": top.get("title"),
     "top_section_share": top.get("share"),
     "delta_tokens": None,

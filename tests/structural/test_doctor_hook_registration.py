@@ -93,7 +93,13 @@ HOOKS = [
 COSMETIC_FLAGS = {"--label", "--note"}
 
 # Flags that consume the following token. Everything else is a bare switch.
-VALUE_FLAGS = {"--hook", "--skill", "--marker", "--label", "--note"}
+#
+# `--timeout` has to be here rather than falling through to the bare-switch
+# branch, which is where a new value flag lands by default and where it silently
+# stops being compared: the flag name alone matches on both sides while the
+# seconds drift apart, so a manifest saying 5 and a documented install saying
+# 120 would agree (#259). The value is the entire content of that constant.
+VALUE_FLAGS = {"--hook", "--skill", "--marker", "--label", "--note", "--timeout"}
 
 
 def _skill_scripts(skill: str) -> Path:

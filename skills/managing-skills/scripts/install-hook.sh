@@ -75,14 +75,38 @@ Options:
                        install day and .skills/doctor.sh cannot see it (it scans
                        for DANGLING symlinks, and a copy is a valid file), so
                        this is the fallback, never the default (#179).
+  --timeout <seconds>  Seconds Claude Code allows this hook before killing it,
+                       written as the entry's `timeout` key. Omitted, the
+                       harness default applies — which is the wrong budget for
+                       a hook that shells out to the network, and the worst
+                       possible one for a hook that stamps a once-per-day lock
+                       BEFORE doing its work: a timeout kill then consumes the
+                       day's attempt and reports nothing (#259). Each hook's
+                       figure belongs in its <hook>.install manifest beside its
+                       other constants, not in a branch here.
+
+                       A timeout ALREADY on the entry being replaced WINS over
+                       this flag, and the run says so. The dedupe-strip removes
+                       every matching entry and appends one canonical entry,
+                       which is what upgrades a stale command string — but it
+                       also silently discarded a timeout the consumer had added
+                       by hand, so the tool that prescribed the repair undid it
+                       on the next refresh. To CHANGE a value already there,
+                       edit it in settings.json, or --uninstall and reinstall;
+                       --check reports the disagreement either way.
   --label <name>       Name to speak in, for a wrapper that owns a path of its
                        own (e.g. install-refresh.sh). Default: install-hook.
   --note <text>        Extra text printed after a successful install.
   --check      Report what is installed; change nothing. The contract is TWO
                artifacts, so both are reported independently and the exit code
                reflects either being absent. The registration half reports HOW
-               MANY entries it found, because two run the hook twice a session.
+               MANY entries it found, because two run the hook twice a session,
+               and the entry's `timeout` if it carries one.
                Exit 0 both present, 3 either missing, duplicated or not repaired.
+               A registered entry with NO timeout where --timeout names one is
+               "not repaired" and exits 3; a registered entry whose timeout
+               merely DISAGREES with --timeout is a local choice this installer
+               preserves, so it is reported and does not change the exit code.
   --allow-unresolved
                --check only. Accept a hook symlink whose SHAPE is right — a
                relative link into skills-vendor/ — but which does not resolve
@@ -113,7 +137,9 @@ What it does:
   not only for the one-hook groups this installer writes (#222).
 
   Neither step clobbers unrelated content: other SessionStart hooks, other hook
-  events, and every other key in settings.json are preserved.
+  events, and every other key in settings.json are preserved — and since #259
+  that includes a `timeout` on the entry this run replaces, which the strip
+  used to discard because the append rebuilt the entry from constants only.
 
 Requires jq, which is what merges settings.json without rewriting it.
 
@@ -137,6 +163,8 @@ COPY_FALLBACK=0
 ALLOW_UNRESOLVED=0
 LABEL=""
 NOTE=""
+TIMEOUT=""
+TIMEOUT_SET=0
 
 # Bare basenames only. Both values are joined into .claude/hooks/ and into a
 # vendor glob, so a path component here installs somewhere nobody looks — and
@@ -162,6 +190,7 @@ while [ $# -gt 0 ]; do
     --hook) need_value "$1" $#; HOOK_NAME="$2"; shift 2 ;;
     --skill) need_value "$1" $#; SKILL="$2"; shift 2 ;;
     --marker) need_value "$1" $#; MARKERS+=("$2"); shift 2 ;;
+    --timeout) need_value "$1" $#; TIMEOUT="$2"; TIMEOUT_SET=1; shift 2 ;;
     --label) need_value "$1" $#; LABEL="$2"; shift 2 ;;
     --note) need_value "$1" $#; NOTE="$2"; shift 2 ;;
     --copy-fallback) COPY_FALLBACK=1; shift ;;
@@ -193,6 +222,36 @@ reject_unless_token "--skill" "$SKILL"
 # pre-#200 behaviour, including a registered command with no trailing comment.
 [ "${#MARKERS[@]}" -gt 0 ] || MARKERS=("$HOOK_NAME")
 for m in "${MARKERS[@]}"; do reject_unless_token "--marker" "$m"; done
+
+# Digits, and a real duration. The value goes into settings.json as a JSON
+# NUMBER rather than a string, so it is the one argument here that is not
+# quoted on the way in — `--timeout 60s` would otherwise write invalid JSON and
+# leave the consumer with a settings file Claude Code cannot parse, which is a
+# worse outcome than the missing timeout this flag exists to fix. Zero is
+# refused because it reads as "no limit" and means "kill immediately"; the
+# ceiling is a day, well past any hook's honest budget and short of the
+# overflow a pasted millisecond value would produce.
+#
+# Keyed on the flag having been SEEN, not on the value being non-empty. A
+# manifest whose line ends `--timeout ` — or a wrapper interpolating an unset
+# shell variable — otherwise passes the empty string, every `[ -n "$TIMEOUT" ]`
+# below reads it as "no ceiling asked for", and the run installs the harness
+# default while the caller believes it named one. That is #259 reached from the
+# fix for #259.
+if [ "$TIMEOUT_SET" = "1" ]; then
+  case "$TIMEOUT" in
+    "" | *[!0-9]* )
+      echo "install-hook: --timeout must be a whole number of seconds: $TIMEOUT" >&2
+      exit 1 ;;
+  esac
+  # `10#` so a manifest written `--timeout 060` is decimal sixty, not an octal
+  # parse error that aborts the install under set -e.
+  if [ "$((10#$TIMEOUT))" -lt 1 ] || [ "$((10#$TIMEOUT))" -gt 86400 ]; then
+    echo "install-hook: --timeout must be between 1 and 86400 seconds: $TIMEOUT" >&2
+    exit 1
+  fi
+  TIMEOUT="$((10#$TIMEOUT))"
+fi
 
 # One flag, two derived strings: what to prefix messages with, and what to tell
 # an operator to re-run. A wrapper owns a path of its own, and a report that
@@ -393,14 +452,22 @@ fi
 # it is in: an install predating the $CLAUDE_PROJECT_DIR form (#110) is
 # cwd-relative and still a real registration.
 #
-# The selector is a constant and the projection is the argument, because two
+# The selector is a constant and the projection is the argument, because three
 # callers want the same selection and different things from it: the commands
-# themselves, and how MANY there are. Spelling the selector twice is the same
-# reader/writer drift one level in — and it is a strip filter written twice that
-# #222 is about.
+# themselves, how MANY there are, and — since #259 — the `timeout` sitting
+# beside each command. Spelling the selector twice is the same reader/writer
+# drift one level in, and it is a strip filter written twice that #222 is about.
+#
+# It selects the hook OBJECTS, not the command strings, which is the whole
+# reason #259 could be fixed without a second selector: the timeout is a
+# sibling key of `command`, so a selector that had already thrown the object
+# away could not see it. Every projection below re-derives `.command` the same
+# defensive way the select does, so a non-object element still cannot abort the
+# read.
 # shellcheck disable=SC2016
-MATCHING_SELECT='[.hooks.SessionStart[]?.hooks[]?.command // ""]
-      | map(select(. as $c | $m | any(. as $t | $c | contains($t))))'
+MATCHING_SELECT='[.hooks.SessionStart[]?.hooks[]?
+      | select(((.command? // "") | tostring) as $c
+          | ($m | any(. as $t | $c | contains($t))))]'
 
 matching() {
   [ -f "$SETTINGS" ] || return 0
@@ -409,7 +476,14 @@ matching() {
       "$SETTINGS" 2>/dev/null || return 2
 }
 
-matching_commands() { matching '| .[]'; }
+matching_commands() { matching '| map((.command? // "") | tostring) | .[]'; }
+
+# One line per matching entry: the entry's `timeout`, or `-` where it carries
+# none. A sentinel rather than a blank line, because "no timeout" and "no
+# entries" are different answers and an empty projection cannot tell them apart
+# — which is the same absent-vs-unanswerable split every other reader here
+# already makes.
+matching_timeouts() { matching '| map(.timeout? // "-" | tostring) | .[]'; }
 
 # How many, not merely whether. --check said `yes` for one entry and for two, so
 # a repo left holding a stranded duplicate — the state #222's group-scoped strip
@@ -449,6 +523,62 @@ is_registered() {
   [ -n "$out" ]
 }
 
+# The timeout the registration ALREADY carries — the first matching entry that
+# has one — or empty when none does, when nothing is registered, or when the
+# file cannot be read. Empty is safe for all four: the caller falls back to
+# whatever --timeout named, which is what a fresh install writes anyway.
+#
+# An `if`, not `[ "$line" = "-" ] && continue`: under set -e an AND-list that is
+# the last statement in a loop body carries its failing test's status out of the
+# body, which is the shape this file has been bitten by twice (#181).
+existing_timeout() {
+  local out line rc=0
+  out="$(matching_timeouts)" || rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  while IFS= read -r line; do
+    if [ -n "$line" ] && [ "$line" != "-" ]; then
+      printf '%s' "$line"
+      return 0
+    fi
+  done <<EOF
+$out
+EOF
+  return 0
+}
+
+# What this run will write: the value already there if there is one, else
+# --timeout. PRESERVE beats prescribe, which is #259's actual finding — the
+# dedupe-then-append rebuilt the entry from constants, so a consumer who added a
+# timeout by hand (on this installer's own advice, in the per-repo issues) lost
+# it to the next refresh, silently, and had no way to keep it short of not
+# re-running the installer.
+#
+# The disagreement is REPORTED rather than resolved by precedence. Nothing here
+# can tell a figure an operator chose from one a manifest supplied — both arrive
+# as --timeout — so a rule that let the argument win would undo the repair again
+# for the one caller that matters, and a rule that let it lose silently would
+# freeze a raised default forever. Saying both numbers costs a line and leaves
+# the choice where it belongs.
+EFFECTIVE_TIMEOUT=""
+resolve_timeout() {
+  local existing
+  existing="$(existing_timeout)"
+  if [ -z "$existing" ]; then
+    EFFECTIVE_TIMEOUT="$TIMEOUT"
+    return 0
+  fi
+  EFFECTIVE_TIMEOUT="$existing"
+  if [ -n "$TIMEOUT" ] && [ "$TIMEOUT" != "$existing" ]; then
+    # err, not log: this is the one line that says the run deliberately ignored
+    # an argument it was given, and every other log line is genuine progress.
+    # Through log() it was suppressed by --quiet — and the quiet caller is the
+    # automated one, least likely to notice the difference any other way.
+    err "keeping the registered timeout of ${existing}s; this hook now prescribes"
+    err "${TIMEOUT}s. A value already in $SETTINGS_REL is never overwritten (#259)"
+    err "— edit it there, or --uninstall and re-install, if you want the new one."
+  fi
+}
+
 # Registered AND in the current anchored form. The two are deliberately
 # different questions, because they answer to different callers:
 #
@@ -470,8 +600,16 @@ is_registered() {
 #
 # Against ALL the matches joined, so two entries can never compare equal to one
 # — a duplicate is not the state a fresh install produces either.
+#
+# The timeout is compared too, against the RESOLVED value rather than the
+# argument, so preserving an operator's differing figure still reads as
+# unchanged. Comparing against $TIMEOUT instead would make every re-run on such
+# a repo report "upgrading the registration" and rewrite the file to the same
+# bytes — an idempotent tool that says it changed something is how a real change
+# stops being noticed.
 is_current() {
-  [ "$(matching_commands)" = "$HOOK_COMMAND" ]
+  [ "$(matching_commands)" = "$HOOK_COMMAND" ] &&
+    [ "$(matching_timeouts)" = "${EFFECTIVE_TIMEOUT:--}" ]
 }
 
 # Resolves, not merely exists. A dangling symlink is the state doctor.sh exists
@@ -662,6 +800,30 @@ if [ "$MODE" = "check" ]; then
     rc=3
   elif [ "$registered_n" -eq 1 ]; then
     echo "SessionStart entry: yes (1 entry in $SETTINGS_REL)"
+    # Reported on its own line, because the two failures it stands between are
+    # both invisible from the entry alone (#259). With no timeout the harness
+    # default applies, and for a hook that stamps a once-per-day lock BEFORE
+    # doing its work a kill consumes the day's attempt and reports nothing. With
+    # a timeout that disagrees with this hook's prescription, the difference is
+    # a choice someone made and this installer will keep.
+    registered_timeout="$(existing_timeout)"
+    if [ -z "$registered_timeout" ]; then
+      echo "timeout:            none — the harness default applies"
+      if [ -n "$TIMEOUT" ]; then
+        echo "                    This hook prescribes ${TIMEOUT}s. Re-run $RERUN"
+        echo "                    to add it; a re-run preserves it thereafter."
+        rc=3
+      fi
+    elif [ -n "$TIMEOUT" ] && [ "$registered_timeout" != "$TIMEOUT" ]; then
+      # Not rc=3. This installer PRESERVES the registered value, so there is
+      # nothing here for a re-run to repair, and failing the check would push a
+      # consumer toward deleting a deliberate local figure to get a green light.
+      echo "timeout:            ${registered_timeout}s — this hook prescribes ${TIMEOUT}s."
+      echo "                    Kept as-is: a re-run never overwrites a value"
+      echo "                    already in $SETTINGS_REL. Edit it there to change it."
+    else
+      echo "timeout:            ${registered_timeout}s"
+    fi
   elif [ -L "$HOOK" ] || [ -f "$HOOK" ]; then
     # The half-installed state this script exists for. Say what it costs, not
     # just what is absent — "MISSING" alone reads as cosmetic next to a hook
@@ -811,6 +973,10 @@ fi
 
 [ -f "$SETTINGS" ] || { echo '{}' >"$SETTINGS"; log "created $SETTINGS_REL"; }
 
+# After the file is guaranteed to exist and before is_current reads it: the
+# resolved value is half of what "current" means.
+resolve_timeout
+
 if is_current; then
   log "unchanged: $SETTINGS_REL already registers the hook"
 else
@@ -831,20 +997,30 @@ else
   # that is an undocumented assumption. The :-. fallback matters: with the
   # variable unset a bare "$CLAUDE_PROJECT_DIR/..." becomes "/.claude/hooks/..."
   # and errors on every session start, where "." degrades to the old behaviour.
-  # $m and $cmd are jq variables bound by --argjson/--arg, not shell ones — see
-  # the matching note on the uninstall rewrite.
+  #
+  # $t is the resolved timeout, or JSON null when neither the caller nor the
+  # entry being replaced named one. `null` and not 0: absent means "the harness
+  # default applies", which is a real state a consumer may want, and writing a
+  # number for it would invent a policy nobody chose.
+  #
+  # $m, $cmd and $t are jq variables bound by --argjson/--arg, not shell ones —
+  # see the matching note on the uninstall rewrite.
   # shellcheck disable=SC2016
   settings_rewrite "registered the SessionStart entry in $SETTINGS_REL" \
     --argjson m "$MARKERS_JSON" --arg cmd "$HOOK_COMMAND" \
+    --argjson t "${EFFECTIVE_TIMEOUT:-null}" \
     "$STRIP_MATCHING"'(.hooks //= {}) |
      (.hooks.SessionStart //= []) |
      .hooks.SessionStart |= strip_matching($m) |
      .hooks.SessionStart += [{
        "matcher": ".*",
-       "hooks": [{
-         "type": "command",
-         "command": $cmd
-       }]
+       "hooks": [
+         {
+           "type": "command",
+           "command": $cmd
+         }
+         | if $t == null then . else .timeout = $t end
+       ]
      }]'
 fi
 

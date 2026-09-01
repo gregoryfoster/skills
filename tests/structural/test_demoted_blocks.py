@@ -191,6 +191,7 @@ PHASE_6 = "## Phase 6 — Prove no loss"
 PHASE_7 = "## Phase 7 — Record and ship"
 PHASE_8 = "## Phase 8 — Wire the continuous surfaces"
 SCOPE = "## Scope: one repo, and only this repo"
+OWN_SURFACE = "## This skill's own surface"
 
 REGISTRY: dict[tuple[str, str], dict] = {
     # -- budget-and-metrics.md -------------------------------------------------
@@ -275,6 +276,23 @@ REGISTRY: dict[tuple[str, str], dict] = {
             "Cross-repo work is filed as **issues**, not commits",
         ),
     },
+    # -- self-curation.md ------------------------------------------------------
+    ("self-curation.md", "## The ratchet and the edit budget, in full"): {
+        "source": OWN_SURFACE,
+        # v1.14's self-curation pass demoted three justifications and kept the
+        # figures and the four pointers, so this is a record of what left rather
+        # than a long form of what stayed — past tense, and dated in the lead-in.
+        # It is pinned rather than dated all the same: what SKILL.md kept is
+        # quoted inside the block, so there are contracts on both sides, and
+        # #148 prefers pins wherever they exist because only pins catch
+        # rewording.
+        "kind": "record",
+        "pins": (
+            "7,600-token ratchet (estimate and exact)",
+            "demote/tighten only, never delete",
+            "references/rejected-changes.md",
+        ),
+    },
     # -- continuous-surfaces.md ------------------------------------------------
     ("continuous-surfaces.md", "as SKILL.md carried them before"): {
         "source": PHASE_8,
@@ -285,34 +303,29 @@ REGISTRY: dict[tuple[str, str], dict] = {
         "kind": "record",  # "as SKILL.md carried them before v1.7 demoted them here"
         "dated": True,
     },
-    ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.9:", 1): {
+    # All three lost their pins in v1.13, and the reason is the mechanism
+    # working rather than a weakening of it. The three bullets had survived in
+    # SKILL.md since v1.9 while these blocks claimed to record text it no
+    # longer carried — so the pins were passing on a copy that was still
+    # inline, which is not what a `record` asserts. v1.13 finished the
+    # demotion to make room for Phase 6.5's count check under a ratchet the
+    # file was already over, and with Phase 8 now a pointer there is no token
+    # left to quote on both sides. `dated` is exactly the case: "a demotion so
+    # total that SKILL.md no longer states the rule at all".
+    ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.14:", 1): {
         "source": PHASE_8,
-        "kind": "record",  # "summarised it inline until v1.9:"
-        "pins": (
-            "`install-cadence.sh`",
-            "**measurement, not a curation**",
-            "`ANTHROPIC_API_KEY` repository secret",
-        ),
+        "kind": "record",  # "summarised it inline until v1.14:"
+        "dated": True,
     },
-    ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.9:", 2): {
+    ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.14:", 2): {
         "source": PHASE_8,
         "kind": "record",
-        "pins": (
-            "`context-delta.sh`",
-            "`reviewing-code*`",
-            "`Edit|Write|MultiEdit`",
-            "`NotebookEdit`",
-            "shell redirect",
-        ),
+        "dated": True,
     },
-    ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.9:", 3): {
+    ("continuous-surfaces.md", "As Phase 8 summarised it inline until v1.14:", 3): {
         "source": PHASE_8,
         "kind": "record",
-        "pins": (
-            "`install-guard.sh --budget 6000 --doc-budget 10000`",
-            "`PostToolUse` hook",
-            "never blocks",
-        ),
+        "dated": True,
     },
     # -- telemetry.md ----------------------------------------------------------
     ("telemetry.md", "### Tagging the row — the Phase 7 text in full"): {
@@ -322,12 +335,14 @@ REGISTRY: dict[tuple[str, str], dict] = {
         # remaining paragraphs went to four other destinations.
         "kind": "excerpt",
         "covers": (
-            "`<N>` and `<M>` are Phase 6.5's two counts",
+            "`<N>` and `<M>` are Phase 6.5's seam counts",
             "makes the cohort look uniform when it isn't.",
         ),
         "pins": (
             "`<N>`",
             "`<M>`",
+            "`<P>`",
+            "`<Q>`",
             "`<W>`",
             "`loss_warranted:`",
             "Tag `--actions` honestly and specifically",

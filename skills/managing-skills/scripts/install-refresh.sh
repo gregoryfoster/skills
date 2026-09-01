@@ -35,9 +35,18 @@ SELF_DIR="$(cd -- "$SELF_DIR" && pwd)"
 # registered command byte-identical to the one every installed consumer already
 # carries — an entry no `is_current` comparison in the cohort has to be told
 # about.
+# --timeout 120 is refresh's fourth constant (#259). It is the slowest of the
+# three hooks a consumer ends up with — one network round trip per vendored
+# repo — so under the harness default it is the likeliest to be killed midway,
+# and its UTC-day lock then holds that failure until tomorrow. A value already
+# in settings.json is preserved rather than overwritten, so this never undoes a
+# consumer's own figure. It is duplicated in skills-submodule-update.install
+# because the doctor prints the manifest, and
+# tests/structural/test_doctor_hook_registration.py is what keeps the two equal.
 exec bash "$SELF_DIR/install-hook.sh" \
   --hook skills-submodule-update.sh \
   --skill managing-skills \
+  --timeout 120 \
   --label install-refresh.sh \
   --note 'The hook runs at most once per UTC day, on main only, and auto-commits
 the pointer bumps. To confirm it ran, check .git/skills-update.log after a

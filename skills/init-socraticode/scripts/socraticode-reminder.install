@@ -17,4 +17,9 @@
 # writes it as the trailing `# <token>` comment on the registered command — and
 # socraticode-reminder is the legacy alias, recognised on read so an older
 # install is upgraded rather than duplicated.
---hook socraticode-reminder.sh --skill init-socraticode --marker socraticode-prefetch --marker socraticode-reminder --copy-fallback
+#
+# --timeout 5, because this hook is one `echo`. It touches no network, no
+# Docker and no submodule, so anything above a few seconds is not a budget but
+# an absence of one — and a consumer that had chosen exactly this value lost it
+# to a re-run of the installer before #259 preserved it.
+--hook socraticode-reminder.sh --skill init-socraticode --marker socraticode-prefetch --marker socraticode-reminder --copy-fallback --timeout 5

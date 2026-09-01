@@ -70,6 +70,34 @@ Two Phase 2 specifics, learned by running it on this surface:
   token figure the surface quotes against the fresh Phase 1 measurement. This
   surface quotes many, and they rot fastest.
 
+## The ratchet and the edit budget, in full
+
+SKILL.md's "This skill's own surface" carried these three justifications inline
+until v1.14, which demoted them here and kept the two figures and the four
+pointers. The words it carried:
+
+> …**7,600-token ratchet (estimate and exact)** — not the 6,000 it enforces on
+> `AGENTS.md`: this file was 10,902, and the last 1,600 cannot go without
+> deleting procedure (Phase 4's escape clause, not a licence — the ratchet only
+> ever comes down). Both readings bind, so no measurement choice loosens it.
+
+> The ratchet is the ceiling, the budget a rate limit, and the ceiling usually
+> binds first, so measure before writing. Uncapped, a skill walks to its ceiling
+> one plausible addition at a time.
+
+> Changes to the skill itself carry extra procedure: an abandoned change goes to
+> [references/rejected-changes.md](rejected-changes.md) with what
+> refuted it, and nothing is adopted on judgement — the cohort is a held-out
+> validation split ([references/validation-gate.md](validation-gate.md);
+> runs: [references/experiment-log.md](experiment-log.md)). Quarterly
+> the skill turns on itself: Phases 1–7 over this file,
+> demote/tighten only, never delete
+> ([references/self-curation.md](self-curation.md)).
+
+The last of the three is why this document exists, and the first is why the pass
+has anything to do: a file that reaches its ratchet can only take a new phase by
+demoting an old justification, which is the eviction rule below in one sentence.
+
 ## Cadence: quarterly
 
 Quarterly, not every-Nth-run. Runs in this repo are event-driven — review

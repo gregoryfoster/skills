@@ -16,3 +16,47 @@ docs/SKILLS.md :: which AGENTS.md points at directly
 
 # docs/STYLE.md's header claim is true: AGENTS.md still carries ## Scripts.
 docs/STYLE.md :: script live inline in [AGENTS.md](../AGENTS.md) under
+
+# --- the skill's own surface (v1.14 self-curation pass, 2026-08-31) ---
+#
+# Every entry below is the #138 case check-seams.sh documents in its own header:
+# swept against a skill whose SUBJECT is a policy file, a mention of SKILL.md is
+# subject matter, not a reference to the swept file. self-curation.md is about
+# running the pass ON SKILL.md; validation-gate.md and telemetry.md discuss
+# --file against a SKILL.md; continuous-surfaces.md and rejected-changes.md
+# record what SKILL.md carried and when. None points at content that moved.
+#
+# Path-scoped so none can match the repo's AGENTS.md surface, which shares this
+# file. All fifteen verified 2026-08-31.
+skills/curating-context/references/continuous-surfaces.md :: The three surfaces Phase 8 offers once per repo, as SKILL.md carried t
+skills/curating-context/references/rejected-changes.md :: **Proposed:** SKILL.md instructed that `totals.tokens_live` — the poli
+skills/curating-context/references/self-curation.md :: Phases 1–7 of [SKILL.md](../SKILL.md), unchanged, with one substitutio
+skills/curating-context/references/self-curation.md :: policy file is `skills/curating-context/SKILL.md` and the docs tree is
+skills/curating-context/references/self-curation.md :: --file skills/curating-context/SKILL.md \
+skills/curating-context/references/self-curation.md :: --file skills/curating-context/SKILL.md \
+skills/curating-context/references/self-curation.md :: --file skills/curating-context/SKILL.md \
+skills/curating-context/references/self-curation.md :: - **Known FALSE rows to adjudicate, not fix.** SKILL.md's Phase 5 expl
+skills/curating-context/references/self-curation.md :: SKILL.md's "This skill's own surface" carried these three justificatio
+skills/curating-context/references/self-curation.md :: `skills/curating-context/SKILL.md`** in `.skills/context-metrics.jsonl
+skills/curating-context/references/self-curation.md :: - A pass that edits SKILL.md plausibly alters what a run does, so it *
+skills/curating-context/references/telemetry.md :: surface (`skills/curating-context/SKILL.md` as the policy file). Leads
+skills/curating-context/references/validation-gate.md :: `AGENTS.md` plus a skill's own `SKILL.md`. The file is per-repo but `-
+skills/curating-context/references/validation-gate.md :: the next run against a `SKILL.md` and aged into a stale-entry warning
+skills/curating-context/references/self-curation.md :: What "gated by #94" means now
+
+# --- the v1.15 cadence.md doc split (2026-09-01) ---
+#
+# Hits from `check-seams.sh --file skills/curating-context/references/cadence.md`,
+# the per-split sweep Phase 6.5 requires in ADDITION to the policy-file run.
+# Every one is a reference to cadence.md's SCHEDULE material, which did not
+# move — only the seam-accounting section left, and nothing points at it by
+# title. Path-scoped, and verified 2026-09-01.
+skills/curating-context/references/cadence.md :: # curating-context/references/cadence.md
+skills/curating-context/references/continuous-surfaces.md :: [cadence.md](cadence.md); guard semantics in
+skills/curating-context/references/continuous-surfaces.md :: [references/cadence.md](cadence.md) ([#118](https://github.com/gregory
+skills/curating-context/references/continuous-surfaces.md :: ([references/cadence.md](cadence.md)).
+skills/curating-context/references/seam-accounting.md :: Split out of [cadence.md](cadence.md) in v1.15: the subject is what th
+skills/curating-context/references/seam-accounting.md :: schedule's, and cadence.md had reached its per-doc budget
+skills/curating-context/references/telemetry.md :: reading of a surface nobody touched. See [cadence.md](cadence.md).
+skills/curating-context/references/write-guard-hook.md :: See [cadence.md](cadence.md).
+skills/curating-context/references/self-curation.md ::

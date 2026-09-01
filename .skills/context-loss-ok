@@ -58,3 +58,123 @@ skills/init-socraticode/SKILL.md :: retarget :: 6,000-token standard, set at cur
 # reports these is the SKILL.md curation, not one against the reference.
 skills/init-socraticode/SKILL.md :: duplicate :: **Also write `.socraticodeignore` (repo root).** It's layered on the built-in
 skills/init-socraticode/SKILL.md :: duplicate :: **Migrate a legacy top-level array first (idempotent audit).** The server
+
+# --- v1.14 self-curation pass (2026-08-31), and the #258-#260 batch under it ---
+#
+# The interval is `--base main`, so it spans two changes and the warrants below
+# cover both. Every entry is `tighten`: a class-C rewrite of a line that stayed
+# in SKILL.md, verified against its replacement. The pass's own demotion — "This
+# skill's own surface"'s three justifications — relocated verbatim into
+# references/self-curation.md, and Phase 8's three bullets into
+# references/continuous-surfaces.md; those are relocations, not losses, and are
+# not warranted here.
+#
+# SINGLE-TRANSITION. These are spent the moment this branch is an ancestor of
+# every future --base, i.e. once it lands on main. Prune them then.
+
+skills/curating-context/SKILL.md :: tighten :: else is a **move**, and the co
+skills/curating-context/SKILL.md :: tighten :: | "I'll move the bloat into `d
+skills/curating-context/SKILL.md :: tighten :: | "I'll write the architecture
+skills/curating-context/SKILL.md :: tighten :: | "More context is safer" | Tr
+skills/curating-context/SKILL.md :: tighten :: and exact)** — not the 6,000 i
+skills/curating-context/SKILL.md :: tighten :: and the last 1,600 cannot go w
+skills/curating-context/SKILL.md :: tighten :: clause, not a licence — the ra
+skills/curating-context/SKILL.md :: tighten :: clear it, so no measurement ch
+skills/curating-context/SKILL.md :: tighten :: under the ratchet — whichever
+skills/curating-context/SKILL.md :: tighten :: a rate limit, and the ceiling
+skills/curating-context/SKILL.md :: tighten :: Uncapped, a skill walks to its
+skills/curating-context/SKILL.md :: tighten :: either binds, **demote or tigh
+skills/curating-context/SKILL.md :: tighten :: Changes to the skill itself ca
+skills/curating-context/SKILL.md :: tighten :: [references/rejected-changes.m
+skills/curating-context/SKILL.md :: tighten :: refuted it, and nothing is ado
+skills/curating-context/SKILL.md :: tighten :: runs: [references/experiment-l
+skills/curating-context/SKILL.md :: tighten :: the skill turns on itself — Ph
+skills/curating-context/SKILL.md :: tighten :: never delete ([references/self
+skills/curating-context/SKILL.md :: tighten :: budgets** from `_context-lib.s
+skills/curating-context/SKILL.md :: tighten :: run**. Found any later, it cos
+skills/curating-context/SKILL.md :: tighten :: substitute `tiktoken` — it is
+skills/curating-context/SKILL.md :: tighten :: **Be on a branch before you ru
+skills/curating-context/SKILL.md :: tighten :: a tracked file; an aborted run
+skills/curating-context/SKILL.md :: tighten :: any edit. Without it the score
+skills/curating-context/SKILL.md :: tighten :: eligible for correction or rem
+skills/curating-context/SKILL.md :: tighten :: reasons, project-specific gotc
+skills/curating-context/SKILL.md :: tighten :: `docs/<TOPIC>.md` and gets an
+skills/curating-context/SKILL.md :: tighten :: Classification is where the va
+skills/curating-context/SKILL.md :: tighten :: Check the destination too: a d
+skills/curating-context/SKILL.md :: tighten :: per-doc budget has moved the p
+skills/curating-context/SKILL.md :: tighten :: points at what moves; once rel
+skills/curating-context/SKILL.md :: tighten :: Order matters — do the mechani
+skills/curating-context/SKILL.md :: tighten :: clean file:
+skills/curating-context/SKILL.md :: tighten :: a doc→doc split reports `seams
+skills/curating-context/SKILL.md :: tighten :: too once a section leaves the
+skills/curating-context/SKILL.md :: tighten :: `docs/X.md`; no installed whee
+skills/curating-context/SKILL.md :: tighten :: --no-loss ok --no-loss-warrant
+skills/curating-context/SKILL.md :: tighten :: `<N>` and `<M>` are Phase 6.5'
+skills/curating-context/SKILL.md :: tighten :: PR whose body carries:
+skills/curating-context/SKILL.md :: tighten :: the before/after token count,
+skills/curating-context/SKILL.md :: tighten :: block with its destination**,
+skills/curating-context/SKILL.md :: tighten :: Then get the branch a **fresh-
+skills/curating-context/SKILL.md :: tighten :: The prompt to offer, the ratch
+skills/curating-context/SKILL.md :: tighten :: etiquette: [references/continu
+# Phase 8's closing pointer needed no entry of its own: both its lines were
+# already covered by the `tighten` warrants above, and the two `retarget`
+# entries written for them matched nothing — which the report says to prune,
+# and which is why this run's row records 44 warrants and not 46.
+
+# --- v1.15: cadence.md's doc split and the counts step (2026-09-01) ---
+#
+# Every entry is `tighten`: a class-C rewrite of a line that stayed in
+# cadence.md, or a line of the rendered workflow block that install-cadence.sh
+# now emits differently. The seam-accounting section itself RELOCATED verbatim
+# into references/seam-accounting.md and is not warranted here.
+#
+# SINGLE-TRANSITION — spent once this branch lands on main. Prune them then.
+skills/curating-context/references/cadence.md :: tighten :: This skill named "the schedule
+skills/curating-context/references/cadence.md :: tighten :: trend shapes and `delta_days`
+skills/curating-context/references/cadence.md :: tighten :: scheduling mechanism and no co
+skills/curating-context/references/cadence.md :: tighten :: exactly one ledger row. A desi
+skills/curating-context/references/cadence.md :: tighten :: needs a past, and there was no
+skills/curating-context/references/cadence.md :: tighten :: falls back to an offline estim
+skills/curating-context/references/cadence.md :: tighten :: append and exits 4** against a
+skills/curating-context/references/cadence.md :: tighten :: estimate and an exact count ar
+skills/curating-context/references/cadence.md :: tighten :: secret therefore produces *not
+skills/curating-context/references/cadence.md :: tighten :: the Actions tab.
+skills/curating-context/references/cadence.md :: tighten :: Do not read that as a promise
+skills/curating-context/references/cadence.md :: tighten :: curation's own relocations. Si
+skills/curating-context/references/cadence.md :: tighten :: a curation row's `repo_commit`
+skills/curating-context/references/cadence.md :: tighten :: the next interval starts *afte
+skills/curating-context/references/cadence.md :: tighten :: already judged it. The class's
+skills/curating-context/references/cadence.md :: tighten :: `curating-context` run.
+skills/curating-context/references/cadence.md :: tighten :: tree and the report printed *"
+skills/curating-context/references/cadence.md :: tighten :: scheduled run had never opened
+skills/curating-context/references/cadence.md :: tighten :: `source-back-reference` with i
+skills/curating-context/references/cadence.md :: tighten :: added after 16 stale docstring
+skills/curating-context/references/cadence.md :: tighten :: So the honest reading of a sch
+skills/curating-context/references/cadence.md :: tighten :: plus seams accrued since the l
+skills/curating-context/references/cadence.md :: tighten :: pure state. `check-seams.sh --
+skills/curating-context/references/cadence.md :: tighten :: and the report's `seam_base:`
+skills/curating-context/references/cadence.md :: tighten :: no row carrying a `repo_commit
+skills/curating-context/references/cadence.md :: tighten :: every ledger written before th
+skills/curating-context/references/cadence.md :: tighten :: is empty, the two interval cla
+skills/curating-context/references/cadence.md :: tighten :: `note:` saying exactly that. T
+skills/curating-context/references/cadence.md :: tighten :: `repo_commit`, so the *second*
+skills/curating-context/references/cadence.md :: tighten :: interval. A recorded commit th
+skills/curating-context/references/cadence.md :: tighten :: shallow clone — falls back the
+skills/curating-context/references/cadence.md :: tighten :: than failing the sweep and los
+skills/curating-context/references/cadence.md :: tighten :: GitHub also delays scheduled w
+skills/curating-context/references/cadence.md :: tighten :: repos with no activity for 60
+skills/curating-context/references/cadence.md :: tighten :: `delta_days` records what actu
+skills/curating-context/references/cadence.md :: tighten :: by it rather than assumed to b
+skills/curating-context/references/cadence.md :: tighten :: can still be split by version
+skills/curating-context/references/cadence.md :: tighten :: correlates with time, repo act
+skills/curating-context/references/cadence.md :: tighten :: having a cadence. They need th
+
+# v1.15 reflowed Phase 6.5's judgement paragraph to make room for the pointer at
+# references/seam-accounting.md. Same two claims, one sentence earlier.
+skills/curating-context/SKILL.md :: tighten :: The report is hits **to judge**, not defects to fix: a reference to the policy
+skills/curating-context/SKILL.md :: tighten :: file is wrong only if what it points at moved. Fix what lies, acknowledge what is
+
+# The cadence step gained the count check, so its name widened to match what it
+# runs (CR round 2, finding 10). Same step, same position, one word longer.
+skills/curating-context/references/cadence.md :: rename :: - name: Sweep the seams
+

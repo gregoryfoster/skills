@@ -16,4 +16,17 @@
 # The marker is deliberately distinct from the reminder hook's: markers are
 # per-hook precisely so that one hook's dedupe-strip cannot evict the other's
 # entry from the SessionStart array they share.
---hook socraticode-health.sh --skill init-socraticode --marker socraticode-health --copy-fallback
+#
+# --timeout 120 is this hook's constant, and it is the one hook in the cohort
+# for which an implicit ceiling is worst (#259). It shells out to mcp-driver.mjs,
+# which launches the server via `npx -y socraticode` — 4.0s warm on
+# CannObserv/cli, a package download cold — and it stamps its once-per-UTC-day
+# lock BEFORE doing the work, deliberately, so a transient Docker restart does
+# not re-run and re-log on every same-day session. A timeout kill therefore
+# consumes the day's attempt and reports nothing, and the lock guarantees no
+# retry until tomorrow: the silent-when-clean hook becomes silent-when-killed,
+# which is the ambiguity #179 is about. 120 matches skills-submodule-update.sh,
+# the other network-touching hook, and sits above the 60s ceiling this hook
+# already exports to the driver (HEALTH_TIMEOUT_MS) so the inner bound is the
+# one that fires.
+--hook socraticode-health.sh --skill init-socraticode --marker socraticode-health --copy-fallback --timeout 120

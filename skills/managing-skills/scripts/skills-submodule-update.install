@@ -18,4 +18,12 @@
 # changes which artifacts land. install-refresh.sh remains the path README.md,
 # docs/SKILLS.md and the #167 per-repo issues name; it is simply no longer a
 # string the doctor derives from a hook it has just discovered.
---hook skills-submodule-update.sh --skill managing-skills
+#
+# --timeout 120 IS this hook's constant, unlike those two, so it belongs here
+# and in install-refresh.sh both (#259). This is the slowest hook a consumer
+# installs — a `git submodule update --remote` reaches the network for every
+# vendored repo — and it is the value CannObserv/cli had already settled on by
+# hand for exactly that reason. Under the harness default it is the likeliest of
+# the three to be killed mid-fetch, and its own UTC-day lock then holds the
+# failure until tomorrow.
+--hook skills-submodule-update.sh --skill managing-skills --timeout 120

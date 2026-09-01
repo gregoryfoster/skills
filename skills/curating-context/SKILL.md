@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.12"
+  version: "1.15"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -30,7 +30,7 @@ NO CONTENT DELETED THAT IS NOT RELOCATED, DUPLICATED, OR DISPROVEN
 
 Deletion needs one of exactly three warrants: verbatim duplication elsewhere in
 the surface, a command that proved the claim false, or rubric class D. Everything
-else is a **move**, and the commit body names where it went — the third clause is
+else is a **move**, and the commit body says where it went — the third clause is
 what makes this skill safe to run unattended
 ([the warrants](references/keep-cut-rubric.md#the-third-clause-and-the-three-warrants)).
 
@@ -39,11 +39,11 @@ what makes this skill safe to run unattended
 | Thought | Reality |
 |---|---|
 | "It's under 200 lines, so it's fine" | Line count is not the budget. `watcher` and `usa-wa` differ by **one line** and 33,238 tokens. Gate on tokens. |
-| "I'll move the bloat into `docs/`" | Only helps if the destination is smaller than what an agent would otherwise read. Demoting into an over-budget doc moves the cost; Phase 4 checks the destination. |
+| "I'll move the bloat into `docs/`" | Only helps if the destination is smaller than what an agent would otherwise read. Demoting into an over-budget doc moves the cost; Phase 4 checks it. |
 | "This section looks redundant, cutting it" | Redundant with *what*? Verbatim duplication is a warrant; "feels like boilerplate" is not. |
 | "The path doesn't exist, so the claim is stale" | Policy files legitimately name paths that don't exist locally. Deleting on UNVERIFIABLE is how real guidance gets destroyed. |
-| "I'll write the architecture overview more concisely" | Overviews measurably did not help agents reach files faster. Tightening a section that shouldn't be inline is wasted work — classify first. |
-| "More context is safer" | True of a **policy file**, loaded unconditionally: retrieval degrades as the window fills; an unnecessary token dilutes attention. Not of a **skill library**, where selection ambiguity dominates and measured context overhead is ~zero. |
+| "I'll write the architecture overview more concisely" | Overviews measurably did not help agents reach files faster. Tightening a section that should not be inline is wasted work — classify first. |
+| "More context is safer" | True of a **policy file**, loaded unconditionally: retrieval degrades as the window fills, and an unnecessary token dilutes attention. Not of a **skill library**, where selection ambiguity dominates and measured context overhead is ~zero. |
 | "Nothing changed this week, skip the run" | The run's cheapest output is the telemetry row, and a flat week is a signal worth recording. |
 | "I can get seams to 0 by deleting the references" | That zeroes the metric while making the surface worse. Acknowledge in `.skills/context-seams-ok` instead. |
 
@@ -64,24 +64,20 @@ behind. A member reporting "no ledger" is the expected pre-adoption state
 
 `tests/structural/test_skill_self_budget.py` holds each `references/*.md` to the
 10,000-token per-doc budget and `SKILL.md` to a **7,600-token ratchet (estimate
-and exact)** — not the 6,000 it enforces on `AGENTS.md`: this file was 10,902,
-and the last 1,600 cannot go without deleting procedure (Phase 4's escape
-clause, not a licence — the ratchet only ever comes down). Both readings must
-clear it, so no measurement choice can loosen it.
+and exact)** — not the 6,000 it enforces on `AGENTS.md`
+([why](references/self-curation.md#the-ratchet-and-the-edit-budget-in-full)).
+Both readings bind, so no measurement choice loosens it.
 
 **Learnings carry an edit budget: +250 net tokens per round, or the headroom left
-under the ratchet — whichever is smaller.** The ratchet is the ceiling, the budget
-a rate limit, and the ceiling usually binds first, so measure before writing.
-Uncapped, a skill walks to its ceiling one plausible addition at a time. When
-either binds, **demote or tighten first**.
+under the ratchet — whichever is smaller.** When either binds, **demote or
+tighten first**.
 
-Changes to the skill itself carry extra procedure: an abandoned change goes to
-[references/rejected-changes.md](references/rejected-changes.md) with what
-refuted it, and nothing is adopted on judgement — the cohort is a held-out
+Changes to the skill itself carry extra procedure — a refuted change recorded in
+[references/rejected-changes.md](references/rejected-changes.md), a held-out
 validation split ([references/validation-gate.md](references/validation-gate.md);
-runs: [references/experiment-log.md](references/experiment-log.md)). Quarterly,
-the skill turns on itself — Phases 1–7 over this file, demote/tighten only,
-never delete ([references/self-curation.md](references/self-curation.md)).
+runs: [references/experiment-log.md](references/experiment-log.md)), and a
+quarterly pass of Phases 1–7 over this file, demote/tighten only, never delete
+([references/self-curation.md](references/self-curation.md#the-ratchet-and-the-edit-budget-in-full)).
 
 ## Parameterized invocation
 
@@ -96,6 +92,7 @@ The skill's `scripts/` directory is not at the project root — it ships inside 
 skill. Resolve it once, then substitute the printed path wherever
 `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
+<!-- skill:required -->
 ```bash
 N=curating-context S=measure-context.sh SD=
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
@@ -109,7 +106,7 @@ A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a
 invocation is a fresh shell.
 
 Every script reads the ratio, the archival matcher, the docs-dir knob and **both
-budgets** from `_context-lib.sh`, so vendor the whole `scripts/` directory, never
+budgets** from `_context-lib.sh` — vendor the whole `scripts/` directory, never
 individual files ([why](references/budget-and-metrics.md#the-library-the-chain-lives-in)).
 
 ## Phase 0 — Preflight the credential
@@ -120,7 +117,7 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --check-credential
 
 One command, before anything else. Exit 0 means `--exact` will work; exit 3 means
 resolve a credential **now** — interactively, ask; autonomously, **abort the
-run**. Found any later, it costs eight phases of work toward a ledger row that
+run**. Found later, it costs eight phases of work toward a ledger row that
 `record-telemetry.sh` refuses at the very end.
 
 ## Phase 1 — Measure
@@ -134,14 +131,14 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
 `--exact` counts via the Anthropic `count_tokens` endpoint — the only accurate
 tokenizer for Claude models, and **free to call**. Run it always; without a
 credential it degrades to a calibrated offline estimate with a WARN. Never
-substitute `tiktoken` — it is OpenAI's tokenizer and undercounts Claude badly.
+`tiktoken`: OpenAI's tokenizer, and it undercounts Claude badly.
 
-**Be on a branch before you run this.** It is the run's first write and it writes
-a tracked file; an aborted run otherwise leaves a modified ledger on the branch
+**Be on a branch before you run this.** It is the run's first write, to a
+tracked file; an aborted run otherwise leaves a modified ledger on the branch
 you started from.
 
 `--baseline` appends a measurement-only row for the surface **as found**, before
-any edit. Without it the scored run is precisely the run that can never be scored
+any edit. Without it the scored run is precisely the run that can never be scored,
 and the `docs_orphaned` gate has nothing to compare against. Phase 7 appends the
 after-row; **never rewrite the baseline row to match it**.
 
@@ -169,13 +166,13 @@ bash "<SKILL_SCRIPTS>/verify-facts.sh" --issues > /tmp/context-facts.tsv
 ```
 
 Three verdicts, not interchangeable. **FALSE** — a command refuted the claim;
-eligible for correction or removal, and deliberately narrow. **TRUE** —
+eligible for correction or removal, deliberately narrow. **TRUE** —
 confirmed, though a *closed* issue reference is TRUE-the-reference while the
 prose around it may be stale. **UNVERIFIABLE** — the script could not decide,
 which is **never a licence to delete**.
 
-Then verify what no script can, using
-[references/fact-verification.md](references/fact-verification.md): behavioural
+Then verify what no script can
+([references/fact-verification.md](references/fact-verification.md)): behavioural
 rules, version pins, ports, deployment topology, "known issues". Prioritise by
 decay rate — commands and issue state rot fastest, architecture prose slowest.
 
@@ -186,15 +183,15 @@ Assign each section from the Phase 1 census exactly one class, using
 
 - **A — keep inline.** Only the author knows it and nearly every task needs it:
   build/test commands with their non-obvious flags, hard constraints and their
-  reasons, project-specific gotchas, the reference-doc index.
+  reasons, project gotchas, the reference-doc index.
 - **B — demote.** Correct and valuable, needed on *some* tasks. Moves to
-  `docs/<TOPIC>.md` and gets an index entry.
+  `docs/<TOPIC>.md` with an index entry.
 - **C — tighten.** Class A content wrapped in prose an agent does not need,
   including narrative history of how a convention arose. Rewrite in place.
 - **D — delete.** Restates a trained default, duplicates another part of the
   surface, or was disproven in Phase 2. Delete with the warrant named.
 
-Classification is where the value is: compressing class B is wasted work;
+Classification is where the value is: compressing class B is wasted work,
 deleting class A is damage. Classify before writing a single edit.
 
 **Most large sections split A+B rather than taking one class.** Classify at `##`
@@ -210,19 +207,18 @@ class A as class D. If it still cannot be reached without touching
 class A, **stop and report that**: an irreducible file is a real finding, and a
 budget that cannot be met honestly is the wrong budget.
 
-Check the destination too: a demotion that pushes `docs/API.md` past its
-per-doc budget has moved the problem — split it or pick another.
+Check the destination: a demotion that pushes `docs/API.md` past its per-doc
+budget has moved the problem — split it or pick another.
 
 ## Phase 5 — Apply
 
 **Split before demoting, never after.** A doc split is free only while nothing
-points at what moves; once relocated prose points *into* a section, splitting it
+points at what moves; once relocated prose points *into* a section, splitting
 forces a choice between a circular pointer and a
 [no-loss failure](references/validation-gate.md#warranted-losses-are-not-the-same-claim-as-no-loss).
 If a destination needs splitting, split it first.
 
-Order matters — do the mechanical work first so the semantic edits land on a
-clean file:
+Order matters — mechanical work first, so semantic edits land on a clean file:
 
 1. **Fix FALSE facts.** Repair dead links, correct refuted commands.
 2. **Relink orphans.** Every live doc gets a link from the policy file's index
@@ -292,18 +288,26 @@ bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
 ```
 
 Then **once per doc you split**: `--file <that doc>`, as in Phase 6 — without it
-a doc→doc split reports `seams: 0`. **Sum both** counts across the runs.
+a doc→doc split reports `seams: 0`. **Sum both** counts.
+
 
 `prove-no-loss.sh` proves moved content arrived; this proves the surface still
 **describes where it went**. Tracked **source** outside the docs tree is swept
-too once a section leaves the policy file. Never repoint one at a bare
-`docs/X.md`; no installed wheel resolves it. Qualify or inline it.
+once a section leaves the policy file. Never repoint one at a bare
+`docs/X.md` — no installed wheel resolves it; qualify or inline it.
 
-The report is hits **to judge**, not defects to fix: a reference to the policy
-file is wrong only if what it points at moved. Fix what lies, acknowledge what is
+The count is a standing half plus an interval half
+([references/seam-accounting.md](references/seam-accounting.md)). The report is
+hits **to judge**, not defects to fix: a reference to the policy file is wrong
+only if what it points at moved. Fix what lies, acknowledge what is
 legitimate in `.skills/context-seams-ok`, re-run, and carry both counts to Phase 7
 (`--seams N --seams-acked M`). Run this sweep *last*, and re-read any command
 beside a block that moved.
+
+Then the counts nothing else judges — `bash "<SKILL_SCRIPTS>/check-counts.sh"`.
+A number earns its place by carrying the command that re-derives it, by dropping
+the precision (the default), or by being gated — `--help` has the three. Warrant
+the rest in `.skills/context-counts-ok`.
 
 ## Phase 7 — Record and ship
 
@@ -311,10 +315,12 @@ beside a block that moved.
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
   | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
-      --no-loss ok --no-loss-warrants <W> --seams <N> --seams-acked <M> --print-trend
+      --no-loss ok --no-loss-warrants <W> --seams <N> --seams-acked <M> \
+      --counts <P> --counts-acked <Q> --print-trend
 ```
 
-`<N>` and `<M>` are Phase 6.5's two counts; `<W>` is Phase 6's `loss_warranted:`.
+`<N>` and `<M>` are Phase 6.5's seam counts, `<P>` and `<Q>` its count
+check's; `<W>` is Phase 6's `loss_warranted:`.
 Ran `--claims`? Add `--claims-dropped <D> --claims-warranted <C>` from its
 trailer — without them the row cannot say the tightening was checked (#253).
 Tag `--actions` honestly and specifically — the tags are what lets a later run
@@ -335,13 +341,13 @@ new arm for a change no row experienced.
 
 Commit the ledger with the edits, on a branch, then `record-telemetry.sh
 --repo-commit HEAD` and commit that: the append could not know the hash. Open a
-PR whose body carries:
-the before/after token count, the per-section disposition table, **every relocated
-block with its destination**, and every deletion with its warrant. In autonomous
+PR whose body carries the before/after token count, the per-section disposition
+table, **every relocated block with its destination**, and every deletion with
+its warrant. In autonomous
 mode this PR body is the entire audit trail — a reviewer must be able to
 reconstruct and revert any single decision from it.
 
-Then get the branch a **fresh-eyes review pass**. If a late fix changes the count,
+Then get the branch a **fresh-eyes review**. If a late fix changes the count,
 **rewrite this run's row to match what ships; across runs, only ever append**
 ([telemetry.md](references/telemetry.md#one-row-per-phase-rewrite-within-append-across)).
 
@@ -353,18 +359,11 @@ The cross-repo view is `cohort-report.sh`
 
 ## Phase 8 — Wire the continuous surfaces
 
-Three surfaces keep the ground this run won. Offer all three once per repo, after
-the first successful curation:
-
-- **The cadence** — `install-cadence.sh`. A **measurement, not a curation**, and
-  it needs the `ANTHROPIC_API_KEY` repository secret or records *nothing*
-  ([references/cadence.md](references/cadence.md)).
-- **Review-time delta** — `context-delta.sh`, already wired into the four
-  `reviewing-code*` variants. It sees what the guard's `Edit|Write|MultiEdit`
-  matcher cannot: a shell redirect or `NotebookEdit`.
-- **Write guard** — `install-guard.sh --budget 6000 --doc-budget 10000`, a
-  `PostToolUse` hook that never blocks
-  ([references/write-guard-hook.md](references/write-guard-hook.md)).
-
-The prompt to offer, the ratchet the three form together, and the hook-wiring
-etiquette: [references/continuous-surfaces.md](references/continuous-surfaces.md).
+Three surfaces keep the ground this run won — `install-cadence.sh`,
+`context-delta.sh` and `install-guard.sh`, the second seeing the shell-redirect
+writes the third's matcher cannot. Offer all three **once per repo**, after the
+first successful curation; on every later run this phase is a no-op. What each
+is, the prompt to offer, the ratchet they form together and the hook-wiring
+etiquette: [references/continuous-surfaces.md](references/continuous-surfaces.md)
+(the cadence's credential requirement: [references/cadence.md](references/cadence.md);
+the guard's: [references/write-guard-hook.md](references/write-guard-hook.md)).
