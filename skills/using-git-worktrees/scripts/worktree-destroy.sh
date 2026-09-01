@@ -4,6 +4,7 @@
 # into the base ref AND --descoped <reason> was not supplied (Iron Law).
 #
 # Usage: bash <SKILL_SCRIPTS>/worktree-destroy.sh <branch> [--base <ref>] [--descoped <reason>] [--force] [--unlock] [--dry-run] [--help]
+# Flags are position-independent: `--force <branch>` and `<branch> --force` are equivalent.
 set -euo pipefail
 
 usage() {
@@ -11,6 +12,9 @@ usage() {
   echo ""
   echo "Destroys the worktree for <branch>. Iron Law: refuses if the branch has"
   echo "NOT been merged into the base ref unless --descoped <reason> is supplied."
+  echo ""
+  echo "Flags may appear before or after <branch>; both orders are equivalent."
+  echo "'--force <branch>' and '<branch> --force' do the same thing."
   echo ""
   echo "Worktree lookup:"
   echo "  The branch is looked up in git's worktree registry, so any layout works"
@@ -77,25 +81,42 @@ usage() {
   echo "     command runs from, git list/unlock/remove failed)"
 }
 
-if [[ "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+# One line, not the whole block. The full usage dump is 69 lines here, and it
+# printed to stderr directly underneath the ERROR line — so the one line
+# carrying the actual diagnosis scrolled off the top, and a `| tail` on the
+# output showed nothing but boilerplate. That is how the misdiagnosis in #262
+# was lost in the first place. `--help` still prints everything.
+usage_hint() {
+  echo "Usage: bash \"$0\" <branch> [--base <ref>] [--descoped <reason>] [--force] [--unlock] [--dry-run]"
+  echo "  (run with --help for the full description)"
+}
 
-BRANCH="${1:-}"
-if [[ -z "$BRANCH" ]]; then
-  echo "ERROR: <branch> argument required" >&2
-  usage >&2
-  exit 2
-fi
-shift
+# Scan every argument for --help before anything runs — the convention
+# worktree-list.sh already states in its own preamble, and which this script
+# did not follow: --help was recognised only as $1, so `destroy <branch>
+# --help` reported it as an unknown flag (#262).
+for arg in "$@"; do
+  if [[ "$arg" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+done
 
+# <branch> is the first NON-FLAG argument, wherever it falls, rather than a
+# blind positional $1. The blind read is what made this script mis-diagnose its
+# sibling's habit: `destroy --force <branch>` accepted '--force' AS the branch
+# name with no shape check, shifted past it, and handed the real branch to the
+# '*)' arm below — so the error named the one token that was correct, and the
+# worktree stayed in place. That habit is routine, not exotic: `git worktree
+# remove` demands --force for any worktree containing submodules.
 DESCOPED=0
 DESCOPE_REASON=""
 BASE_OVERRIDE=""
 FORCE=0
 UNLOCK=0
 DRY_RUN=0
+BRANCH=""
+BRANCH_SET=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --descoped)
@@ -103,16 +124,18 @@ while [[ $# -gt 0 ]]; do
       DESCOPE_REASON="${2:-}"
       if [[ -z "$DESCOPE_REASON" ]]; then
         echo "ERROR: --descoped requires a <reason> argument" >&2
-        usage >&2
+        usage_hint >&2
         exit 2
       fi
+      # shift 2 consumes the reason HERE, so a reason that happens to look like
+      # a branch name can never be captured as <branch> by the '*)' arm.
       shift 2
       ;;
     --base)
       BASE_OVERRIDE="${2:-}"
       if [[ -z "$BASE_OVERRIDE" ]]; then
         echo "ERROR: --base requires a <ref> argument" >&2
-        usage >&2
+        usage_hint >&2
         exit 2
       fi
       shift 2
@@ -129,13 +152,32 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
-    *)
+    -*)
       echo "ERROR: unknown flag '$1'" >&2
-      usage >&2
+      usage_hint >&2
       exit 2
+      ;;
+    *)
+      # A second non-flag argument is an ERROR that says what it is. The old
+      # '*)' arm called it an "unknown flag", which is its own misdiagnosis: a
+      # bare word is not a flag.
+      if [[ $BRANCH_SET -eq 1 ]]; then
+        echo "ERROR: unexpected argument '$1' (<branch> is already '$BRANCH')" >&2
+        usage_hint >&2
+        exit 2
+      fi
+      BRANCH="$1"
+      BRANCH_SET=1
+      shift
       ;;
   esac
 done
+
+if [[ -z "$BRANCH" ]]; then
+  echo "ERROR: <branch> argument required" >&2
+  usage_hint >&2
+  exit 2
+fi
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "ERROR: not inside a git repository" >&2

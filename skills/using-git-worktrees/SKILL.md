@@ -103,6 +103,8 @@ bash "<SKILL_SCRIPTS>/worktree-create.sh" <branch>          # existing branch
 bash "<SKILL_SCRIPTS>/worktree-create.sh" --new <branch>    # create the branch too
 ```
 
+Flags are position-independent in both `worktree-create.sh` and `worktree-destroy.sh` — `--new <branch>` and `<branch> --new` do the same thing, as do `--force <branch>` and `<branch> --force`. `--help` works from any position too, and never provisions anything. A second bare word is an error rather than a silent drop.
+
 The script:
 - Resolves the worktree root
 - Refuses if `<branch>` is already checked out elsewhere (per the Iron Law)
