@@ -171,7 +171,7 @@ The script:
 - Runs `git worktree prune` to clean stale metadata
 - Exits 0 on success, 1 on Iron Law violation (unmerged work without `--descoped`), 2 on tooling failure
 
-**Choosing a flag.** `--force` when the worktree contains submodules — it also discards uncommitted changes, so confirm the worktree is clean first. `--unlock` normally never: a held lock means the owner is still running, and `--force` is not the remedy. `--dry-run` previews the decision and exits with the code the real run would return. Harness-provisioned worktrees (`.claude/worktrees/agent-<id>`) need no flags — branch-first lookup reaches them. The reasoning behind each: [references/destroy-flags.md](references/destroy-flags.md).
+**Choosing a flag.** `--force` when the worktree contains submodules — it also discards uncommitted changes, so confirm the worktree is clean first. `--unlock` normally never: a held lock means the owner is still running **or** died without releasing — check which before overriding, and note `--force` is not the remedy. `--dry-run` previews the decision and exits with the code the real run would return. Harness-provisioned worktrees (`.claude/worktrees/agent-<id>`) need no flags — branch-first lookup reaches them. The reasoning behind each: [references/destroy-flags.md](references/destroy-flags.md).
 
 The branch ref itself is **not** deleted — that's a separate decision. Use `git branch -d <branch>` afterward if you also want to drop the local ref.
 
