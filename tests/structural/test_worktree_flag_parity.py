@@ -152,6 +152,11 @@ def tmp_repo(tmp_path: Path) -> Path:
     _git(repo, "commit", "-m", "ahead of main")
     _git(repo, "checkout", "-q", "main")
 
+    # A local-only integration branch at `unmerged`'s commit, mirroring a
+    # multi-agent orchestration: the worker branch is an ancestor of batch/x
+    # but NOT of main, which is the case --base exists to serve.
+    _git(repo, "branch", "batch/x", "unmerged")
+
     (repo / ".worktrees").mkdir()
     return repo
 
@@ -253,6 +258,26 @@ def test_descoped_overrides_iron_law_in_either_position(tmp_repo: Path, position
 
 
 @pytest.mark.parametrize("position", ["before", "after"])
+def test_base_override_in_either_position(tmp_repo: Path, position: str):
+    """--base must take EFFECT from either position.
+
+    Shares its control with --descoped: test_unmerged_branch_refuses_without_
+    descoped proves the default base (main) refuses this branch, so a destroy
+    that succeeds here can only have honoured --base. Value-consuming flags are
+    the risky shape in first position, since `shift 2` runs before <branch> is
+    set — this covers that shape a second time alongside --descoped.
+    """
+    worktree = _provision(tmp_repo, "unmerged")
+    args = _ordered("unmerged", ["--base", "batch/x"], position)
+    result = _run(DESTROY, tmp_repo, *args)
+    assert result.returncode == 0, (
+        f"--base {position} <branch> must verify against the given ref, "
+        f"got {result.returncode}\nstderr: {result.stderr}"
+    )
+    assert str(worktree) not in _worktree_paths(tmp_repo)
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
 def test_new_creates_branch_in_either_position(tmp_repo: Path, position: str):
     """--new must take EFFECT from either position."""
     branch = f"feat/{position}"
@@ -305,14 +330,23 @@ def test_quiet_silences_the_audit(tmp_repo: Path):
     assert quiet.stdout == "", f"--quiet must print nothing, got {quiet.stdout!r}"
 
 
-def test_create_does_not_route_audit_stdout_into_its_own():
-    """create's stdout contract must not depend on the audit honouring --quiet.
+def test_create_source_redirects_the_audit_call():
+    """SOURCE-SHAPE check, not a behavioural one — see the caveat below.
+
+    create's stdout contract must not depend on the audit honouring --quiet.
 
     create's stdout is exactly the worktree path. It runs the audit as a
     pre-flight, and neutering QUIET in the audit failed nine tests in
     test_worktree_venv_knob.py — a file about the venv knob, which is where the
     breakage would have been misdiagnosed. The redirect makes the isolation
     structural rather than a behaviour of the child.
+
+    This asserts the shape of the CALL, not the behaviour: it cannot catch the
+    audit growing a second stdout path that ignores --quiet. A behavioural
+    version would have to fabricate a zombie — a background process whose argv
+    references a deleted worktree path — which is racy and spawns processes in
+    the suite. The redirect is what actually provides the guarantee; this test
+    only keeps it from being removed.
     """
     calls = [
         line
