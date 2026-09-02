@@ -22,12 +22,42 @@ usage() {
   echo "  2  Tooling/infra failure (not a git repo, unknown flag)"
 }
 
+# Argument errors print one line, not the whole usage block — the rule the rest
+# of this directory adopted in #262, so a diagnosis is not buried under
+# boilerplate that a `| tail` would show instead.
+usage_hint() {
+  echo "Usage: bash \"$0\" [--quiet]   (run with --help for the full description)"
+}
+
+# Scan every argument for --help before the loop runs. Handling it inside the
+# loop covered `--quiet --help` but not `stray --help`, where the bare word hit
+# the error arm first — so a help request could still be answered with an
+# error. This is the convention worktree-list.sh states in its own preamble
+# and the one create/destroy adopted in #262.
+for arg in "$@"; do
+  if [[ "$arg" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+done
+
+# This script takes no positional arguments, so a bare word is an unexpected
+# argument, not an "unknown flag" — the same misdiagnosis #262 removed from
+# worktree-destroy.sh, where the branch name was reported as a flag.
 QUIET=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --help) usage; exit 0 ;;
     --quiet) QUIET=1; shift ;;
-    *) echo "ERROR: unknown flag '$1'" >&2; usage >&2; exit 2 ;;
+    -*)
+      echo "ERROR: unknown flag '$1'" >&2
+      usage_hint >&2
+      exit 2
+      ;;
+    *)
+      echo "ERROR: unexpected argument '$1' (this script takes no positional arguments)" >&2
+      usage_hint >&2
+      exit 2
+      ;;
   esac
 done
 

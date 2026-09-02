@@ -19,16 +19,38 @@ for arg in "$@"; do
     echo ""
     echo "Exit codes:"
     echo "  0  Success"
-    echo "  2  Not inside a git repository"
+    echo "  2  Not inside a git repository, or an unrecognised argument"
     exit 0
   fi
 done
 
+# Reject what we do not understand rather than ignoring it. The previous scan
+# set PORCELAIN if it saw --porcelain and dropped every other argument in
+# silence, so `worktree-list.sh --porcelian` (typo) printed human-readable
+# output and exited 0 — a caller parsing porcelain keys got none and could not
+# tell why. That is the same silent-drop class as #262, and it is the third of
+# the four conventions this directory used to carry.
+#
+# This script takes no positional arguments at all, so a bare word is reported
+# as an unexpected argument rather than as an "unknown flag" it plainly is not.
 PORCELAIN=0
-for arg in "$@"; do
-  if [[ "$arg" == "--porcelain" ]]; then
-    PORCELAIN=1
-  fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --porcelain)
+      PORCELAIN=1
+      shift
+      ;;
+    -*)
+      echo "ERROR: unknown flag '$1'" >&2
+      echo "Usage: bash \"$0\" [--porcelain]   (run with --help for the full description)" >&2
+      exit 2
+      ;;
+    *)
+      echo "ERROR: unexpected argument '$1' (this script takes no positional arguments)" >&2
+      echo "Usage: bash \"$0\" [--porcelain]   (run with --help for the full description)" >&2
+      exit 2
+      ;;
+  esac
 done
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {

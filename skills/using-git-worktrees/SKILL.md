@@ -103,7 +103,7 @@ bash "<SKILL_SCRIPTS>/worktree-create.sh" <branch>          # existing branch
 bash "<SKILL_SCRIPTS>/worktree-create.sh" --new <branch>    # create the branch too
 ```
 
-Flags are position-independent in both `worktree-create.sh` and `worktree-destroy.sh` — `--new <branch>` and `<branch> --new` do the same thing, as do `--force <branch>` and `<branch> --force`. `--help` works from any position too, and never provisions anything. A second bare word is an error rather than a silent drop.
+Flags are position-independent: `--new <branch>` and `<branch> --new` are equivalent. `--help` works anywhere and never provisions. A stray second word is an error, not a silent drop.
 
 The script:
 - Resolves the worktree root
@@ -159,6 +159,8 @@ bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --force        # required wh
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --unlock       # only when the destroy reports a held lock
 bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --dry-run      # preview the decision, change nothing
 ```
+
+Flags are position-independent here too, so `--force <branch>` works — the flag-first habit `worktree-create.sh` teaches carries over.
 
 The script:
 - **Finds the worktree by branch**, via `git worktree list --porcelain`, so any layout works regardless of how the directory leaf is named. Only when the branch has no registered worktree does it fall back to the `<root>/<slug>` scheme `worktree-create.sh` uses, so a mistyped branch still names a concrete path.

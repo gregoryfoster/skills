@@ -1,8 +1,8 @@
-"""Flag-position parity between worktree-create.sh and worktree-destroy.sh (#262).
+"""Flag-position parity across the using-git-worktrees scripts (#262).
 
-The two scripts took flags in OPPOSITE positions — create wanted its flag
-before `<branch>`, destroy wanted its flags after — and each mis-diagnosed the
-other's habit in a way that pointed the reader at the wrong token:
+The four scripts in `skills/using-git-worktrees/scripts/` carried three
+different argument conventions, and the two that disagreed most each
+mis-diagnosed the other's habit by naming the wrong token:
 
 - `destroy --force <branch>` read '--force' AS the branch (a blind positional
   `$1` with no shape check), shifted past it, and handed the real branch to the
@@ -12,15 +12,24 @@ other's habit in a way that pointed the reader at the wrong token:
 - `--help` was recognised only as `$1` in both. On create that was
   side-effecting: `create <existing-branch> --help` provisioned a worktree and
   printed its path instead of printing help.
+- `worktree-list.sh` ignored unrecognised arguments entirely and exited 0, so a
+  `--porcelian` typo silently produced human-readable output.
+- `audit-worktree-zombies.sh` reported a bare word as an "unknown flag".
 
 `--force` is the routine destroy invocation for any repo with submodules
 (`git worktree remove` refuses those without it), so the destroy direction was
 hit on ordinary use, not at an edge.
 
-These tests own the PARITY rather than either script's individual behaviour:
-divergence between the pair is the defect that recurs, and `worktree-list.sh`
-already documents the convention both should follow ("scan all args for --help
-first so any combination still prints help rather than running the command").
+These tests own the PARITY rather than any one script's behaviour: divergence
+between siblings is the defect that recurs.
+
+**Every flag exercised here is load-bearing, and each has a control test
+asserting the command FAILS without it.** An earlier version of this file
+parametrized position over flags that were inert in the fixture — the branch
+was already merged and the worktree already clean — so all of it passed with
+`--force` neutered to a no-op. A parity test that only proves `<branch>` parsed
+would have shipped a silent `--force` regression, which is the original bug's
+user-visible symptom (the worktree stays in place) with a green suite.
 
 No API calls. Self-contained: each test gets a fresh tmp repo.
 """
@@ -39,51 +48,92 @@ SCRIPTS = (
 )
 CREATE = SCRIPTS / "worktree-create.sh"
 DESTROY = SCRIPTS / "worktree-destroy.sh"
+LIST = SCRIPTS / "worktree-list.sh"
+AUDIT = SCRIPTS / "audit-worktree-zombies.sh"
 
 
-def _clean_env(repo: Path) -> dict:
-    """Env without inherited GIT_* vars, pinned to the fixture's worktree root.
+def _scrubbed() -> dict:
+    """Env without inherited GIT_* vars.
 
-    Pre-commit and other tooling set GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE,
-    which would otherwise leak into the scripts' git calls.
+    An inherited GIT_DIR outranks both `git -C` and the process cwd, and git
+    exports it to every hook — so under pre-commit a throwaway fixture would
+    address the real repo (docs/STYLE.md, #189).
     """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["WORKTREE_ROOT"] = str(repo / ".worktrees")
-    return env
-
-
-def _run(script: Path, repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["bash", str(script), *args],
-        capture_output=True,
-        text=True,
-        cwd=str(repo),
-        env=_clean_env(repo),
-    )
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run git against the fixture. check=True so setup failures raise HERE.
+
+    Provisioning used to go through worktree-create.sh unchecked, which meant a
+    create regression surfaced as a destroy assertion ("flag-first destroy must
+    work") — the same misdiagnosis-by-wrong-token that #262 is about, rebuilt
+    inside the test that guards it.
+    """
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
         check=True,
-        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+        env=_scrubbed(),
     )
 
 
-def _worktree_count(repo: Path) -> int:
-    out = _git(repo, "worktree", "list", "--porcelain").stdout
-    return out.count("\nworktree ") + out.startswith("worktree ")
+def _run(script: Path, repo: Path, *args: str) -> subprocess.CompletedProcess:
+    env = _scrubbed()
+    env["WORKTREE_ROOT"] = str(repo / ".worktrees")
+    return subprocess.run(
+        ["bash", str(script), *args],
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=env,
+    )
+
+
+def _worktree_paths(repo: Path) -> list:
+    """Registered worktree paths, main checkout included."""
+    return [
+        line[len("worktree ") :]
+        for line in _git(repo, "worktree", "list", "--porcelain").stdout.splitlines()
+        if line.startswith("worktree ")
+    ]
+
+
+def _provision(repo: Path, branch: str) -> Path:
+    """Register a worktree for `branch` with git directly, not via create.sh.
+
+    destroy.sh resolves by branch through git's registry, so the leaf name is
+    immaterial; using the slug scheme keeps it consistent with the constructed
+    fallback path.
+    """
+    path = repo / ".worktrees" / branch.replace("/", "-")
+    _git(repo, "worktree", "add", str(path), branch)
+    return path
+
+
+def _dirty(worktree: Path) -> None:
+    """Make git refuse removal without --force.
+
+    `git worktree remove` on a worktree with modified tracked files exits 128
+    with 'contains modified or untracked files, use --force to delete it'.
+    This is what makes --force observable.
+    """
+    (worktree / "README.md").write_text("modified in the worktree\n")
+
+
+def _ordered(branch: str, flag: list, position: str) -> list:
+    """Build an argv with `flag` before or after `<branch>`."""
+    return [*flag, branch] if position == "before" else [branch, *flag]
 
 
 @pytest.fixture
 def tmp_repo(tmp_path: Path) -> Path:
-    """A repo with `merged` pointing at main's commit, so the Iron Law passes.
+    """A repo with both a merged and an unmerged branch.
 
-    Base resolution finds no origin, falls back to local `main`; `merged` is
-    the same commit, so it is trivially an ancestor and destroy is free to
-    exercise flag ORDER without the merge gate interfering.
+    `merged` sits on main's commit (trivially an ancestor, Iron Law passes).
+    `unmerged` is one commit ahead of main, so the Iron Law REFUSES it unless
+    --descoped is honoured — which is what makes that flag observable.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -93,7 +143,15 @@ def tmp_repo(tmp_path: Path) -> Path:
     (repo / "README.md").write_text("initial\n")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-m", "initial")
+
     _git(repo, "branch", "merged")
+
+    _git(repo, "checkout", "-q", "-b", "unmerged")
+    (repo / "ahead.txt").write_text("ahead\n")
+    _git(repo, "add", "ahead.txt")
+    _git(repo, "commit", "-m", "ahead of main")
+    _git(repo, "checkout", "-q", "main")
+
     (repo / ".worktrees").mkdir()
     return repo
 
@@ -105,9 +163,11 @@ def test_destroy_accepts_force_before_branch(tmp_repo: Path):
     """`destroy --force <branch>` must not read '--force' as the branch.
 
     The filed repro: the error named 'feat/some-branch', the one token that was
-    correct, and the worktree stayed in place.
+    correct, and the worktree stayed in place. The worktree is dirtied first so
+    this also proves --force reached `git worktree remove`.
     """
-    _run(CREATE, tmp_repo, "merged")
+    worktree = _provision(tmp_repo, "merged")
+    _dirty(worktree)
     result = _run(DESTROY, tmp_repo, "--force", "merged")
     assert result.returncode == 0, (
         f"flag-first destroy must work, got {result.returncode}\nstderr: {result.stderr}"
@@ -115,61 +175,106 @@ def test_destroy_accepts_force_before_branch(tmp_repo: Path):
     assert "unknown flag 'merged'" not in result.stderr, (
         "the branch must never be reported as a flag"
     )
-    assert _worktree_count(tmp_repo) == 1, "the worktree must actually be gone"
+    assert str(worktree) not in _worktree_paths(tmp_repo)
 
 
 def test_create_accepts_new_after_branch(tmp_repo: Path):
-    """`create <branch> --new` must create the branch, not drop the flag.
-
-    Trailing `--new` used to vanish without a word, surfacing as git's
-    `fatal: invalid reference` for a branch the caller asked to have created.
-    """
+    """`create <branch> --new` must create the branch, not drop the flag."""
     result = _run(CREATE, tmp_repo, "feat/trailing", "--new")
     assert result.returncode == 0, (
         f"trailing --new must be honoured, got {result.returncode}\n"
         f"stderr: {result.stderr}"
     )
     assert "invalid reference" not in result.stderr
-    branches = _git(tmp_repo, "branch", "--list", "feat/trailing").stdout
-    assert "feat/trailing" in branches, "--new must have created the branch"
+    assert "feat/trailing" in _git(tmp_repo, "branch", "--list", "feat/trailing").stdout
 
 
-# --- Parity: the property that must hold for BOTH --------------------------
+# --- Controls: each flag below is proven load-bearing before parity is tested
+
+
+def test_dirty_worktree_refuses_without_force(tmp_repo: Path):
+    """Control for --force: without it, a dirty worktree must NOT be removed."""
+    worktree = _provision(tmp_repo, "merged")
+    _dirty(worktree)
+    result = _run(DESTROY, tmp_repo, "merged")
+    assert result.returncode == 2, (
+        f"a dirty worktree must refuse removal without --force, "
+        f"got {result.returncode}\nstderr: {result.stderr}"
+    )
+    assert str(worktree) in _worktree_paths(tmp_repo), "the worktree must survive"
+
+
+def test_unmerged_branch_refuses_without_descoped(tmp_repo: Path):
+    """Control for --descoped: the Iron Law must refuse an unmerged branch."""
+    _provision(tmp_repo, "unmerged")
+    result = _run(DESTROY, tmp_repo, "unmerged")
+    assert result.returncode == 1, (
+        f"expected Iron Law exit 1, got {result.returncode}\nstderr: {result.stderr}"
+    )
+
+
+def test_create_refuses_nonexistent_branch_without_new(tmp_repo: Path):
+    """Control for --new: without it, a nonexistent branch must fail."""
+    result = _run(CREATE, tmp_repo, "feat/nope")
+    assert result.returncode == 2, (
+        f"expected exit 2 without --new, got {result.returncode}\n"
+        f"stderr: {result.stderr}"
+    )
+
+
+# --- Parity: the same flag, either side of <branch>, same effect ------------
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_force_removes_dirty_worktree_in_either_position(tmp_repo: Path, position: str):
+    """--force must take EFFECT from either position, not merely parse."""
+    worktree = _provision(tmp_repo, "merged")
+    _dirty(worktree)
+    result = _run(DESTROY, tmp_repo, *_ordered("merged", ["--force"], position))
+    assert result.returncode == 0, (
+        f"--force {position} <branch> must remove a dirty worktree, "
+        f"got {result.returncode}\nstderr: {result.stderr}"
+    )
+    assert str(worktree) not in _worktree_paths(tmp_repo)
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_descoped_overrides_iron_law_in_either_position(tmp_repo: Path, position: str):
+    """--descoped must take EFFECT from either position."""
+    worktree = _provision(tmp_repo, "unmerged")
+    args = _ordered("unmerged", ["--descoped", "probe"], position)
+    result = _run(DESTROY, tmp_repo, *args)
+    assert result.returncode == 0, (
+        f"--descoped {position} <branch> must override the Iron Law, "
+        f"got {result.returncode}\nstderr: {result.stderr}"
+    )
+    assert "probe" in result.stdout, "the descope reason must be echoed"
+    assert str(worktree) not in _worktree_paths(tmp_repo)
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_new_creates_branch_in_either_position(tmp_repo: Path, position: str):
+    """--new must take EFFECT from either position."""
+    branch = f"feat/{position}"
+    result = _run(CREATE, tmp_repo, *_ordered(branch, ["--new"], position))
+    assert result.returncode == 0, (
+        f"--new {position} <branch> must create the branch, got {result.returncode}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert branch in _git(tmp_repo, "branch", "--list", branch).stdout
+
+
+# --- Properties every script in the directory must share -------------------
 
 
 @pytest.mark.parametrize(
-    ("script", "args_before", "args_after"),
-    [
-        pytest.param(CREATE, ["--new", "flag/first"], ["flag/last", "--new"], id="create"),
-        pytest.param(
-            DESTROY,
-            ["--descoped", "probe", "merged"],
-            ["merged", "--descoped", "probe"],
-            id="destroy",
-        ),
-    ],
+    "script", [CREATE, DESTROY, LIST, AUDIT], ids=["create", "destroy", "list", "audit"]
 )
-def test_flag_order_is_immaterial(
-    tmp_repo: Path, script: Path, args_before: list, args_after: list
-):
-    """Flags before and after <branch> must be equivalent in both scripts."""
-    if script is DESTROY:
-        _run(CREATE, tmp_repo, "merged")
-    first = _run(script, tmp_repo, *args_before)
-    assert first.returncode == 0, f"flag-first failed\nstderr: {first.stderr}"
-
-    if script is DESTROY:
-        _run(CREATE, tmp_repo, "merged")
-    second = _run(script, tmp_repo, *args_after)
-    assert second.returncode == 0, f"flag-last failed\nstderr: {second.stderr}"
-
-
-@pytest.mark.parametrize("script", [CREATE, DESTROY], ids=["create", "destroy"])
 def test_help_works_in_any_position(tmp_repo: Path, script: Path):
-    """`--help` after <branch> prints help, in both scripts.
+    """A trailing --help prints help in all four scripts.
 
-    worktree-list.sh already scans every argument for --help before running;
-    these two did not.
+    worktree-list.sh already scanned every argument for --help and said why in
+    a comment; the other three did not follow it.
     """
     result = _run(script, tmp_repo, "merged", "--help")
     assert result.returncode == 0, (
@@ -186,30 +291,49 @@ def test_help_after_existing_branch_does_not_provision(tmp_repo: Path):
     `create <existing-branch> --help` fell through to provisioning — it created
     a worktree and printed its path where help was asked for.
     """
-    before = _worktree_count(tmp_repo)
+    before = _worktree_paths(tmp_repo)
     result = _run(CREATE, tmp_repo, "merged", "--help")
     assert result.stdout.startswith("Usage:")
-    assert _worktree_count(tmp_repo) == before, (
-        "--help must never provision a worktree"
-    )
+    assert _worktree_paths(tmp_repo) == before, "--help must never provision a worktree"
 
 
-@pytest.mark.parametrize("script", [CREATE, DESTROY], ids=["create", "destroy"])
-def test_second_positional_is_a_named_error(tmp_repo: Path, script: Path):
-    """A stray bare word is rejected AS an argument, not dropped or misnamed.
+@pytest.mark.parametrize(
+    "script", [CREATE, DESTROY, LIST, AUDIT], ids=["create", "destroy", "list", "audit"]
+)
+def test_bare_word_is_never_called_a_flag(tmp_repo: Path, script: Path):
+    """A stray bare word is rejected AS an argument — never dropped, never
+    reported as a flag.
 
-    create silently ignored it; destroy called it an "unknown flag", which is
-    its own misdiagnosis — a bare word is not a flag.
+    create dropped it; destroy and audit called it an "unknown flag" (a bare
+    word is not a flag); list ignored it and exited 0.
     """
     result = _run(script, tmp_repo, "merged", "stray")
     assert result.returncode == 2, (
         f"expected tooling exit 2, got {result.returncode}\nstderr: {result.stderr}"
     )
-    assert "unexpected argument 'stray'" in result.stderr
+    assert "unexpected argument" in result.stderr
     assert "unknown flag" not in result.stderr, "a bare word must not be called a flag"
 
 
-@pytest.mark.parametrize("script", [CREATE, DESTROY], ids=["create", "destroy"])
+@pytest.mark.parametrize(
+    "script", [CREATE, DESTROY, LIST, AUDIT], ids=["create", "destroy", "list", "audit"]
+)
+def test_unknown_flag_is_rejected(tmp_repo: Path, script: Path):
+    """An unrecognised flag is an error in all four, not a silent no-op.
+
+    worktree-list.sh used to ignore it and exit 0, so `--porcelian` produced
+    human-readable output and a caller parsing porcelain keys got none.
+    """
+    result = _run(script, tmp_repo, "--bogus")
+    assert result.returncode == 2, (
+        f"expected exit 2, got {result.returncode}\nstderr: {result.stderr}"
+    )
+    assert "unknown flag '--bogus'" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "script", [CREATE, DESTROY, LIST, AUDIT], ids=["create", "destroy", "list", "audit"]
+)
 def test_argument_error_does_not_bury_the_diagnosis(tmp_repo: Path, script: Path):
     """An argument error prints a short hint, not the whole usage block.
 
