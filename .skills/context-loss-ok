@@ -178,3 +178,7 @@ skills/curating-context/SKILL.md :: tighten :: file is wrong only if what it poi
 # runs (CR round 2, finding 10). Same step, same position, one word longer.
 skills/curating-context/references/cadence.md :: rename :: - name: Sweep the seams
 
+skills/using-git-worktrees/SKILL.md :: tighten :: **Agent-provisioned worktrees.** The Claude Code Agent tool's
+skills/using-git-worktrees/SKILL.md :: tighten :: **When to pass `--force`:** git's `worktree remove` refuses
+skills/using-git-worktrees/SKILL.md :: tighten :: **When to pass `--unlock`:** normally never.
+skills/using-git-worktrees/SKILL.md :: tighten :: **`--dry-run`** reports the resolved path

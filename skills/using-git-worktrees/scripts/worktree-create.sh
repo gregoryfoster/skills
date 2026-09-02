@@ -4,6 +4,7 @@
 # Refuses if <branch> is already checked out in another worktree (Iron Law).
 #
 # Usage: bash <SKILL_SCRIPTS>/worktree-create.sh [--new] <branch> [--help]
+# Flags are position-independent: `--new <branch>` and `<branch> --new` are equivalent.
 set -euo pipefail
 
 usage() {
@@ -23,6 +24,8 @@ usage() {
   echo "Options:"
   echo "  --new   Create the branch (passes -b to git worktree add). Default: branch must already exist."
   echo ""
+  echo "Flags may appear before or after <branch>; both orders are equivalent."
+  echo ""
   echo "Iron Law: refuses if <branch> is already checked out in another worktree."
   echo ""
   echo "Exit codes:"
@@ -31,21 +34,65 @@ usage() {
   echo "  2  Tooling/infra failure (not a git repo, missing arg, git worktree add failed)"
 }
 
-if [[ "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+# One line, not the whole block. An argument error used to print the full usage
+# dump to stderr underneath the ERROR line — 23 lines here, 69 in the destroy
+# script — so the one line carrying the actual diagnosis scrolled off the top,
+# and a `| tail` on the output showed nothing but boilerplate (#262). `--help`
+# still prints everything; a mistake gets a pointer to it.
+usage_hint() {
+  echo "Usage: bash \"$0\" [--new] <branch>   (run with --help for the full description)"
+}
+
+# Scan every argument for --help before anything runs, then parse flags in any
+# position. Both properties are the convention worktree-list.sh already states
+# in its own preamble; create and destroy were the two scripts in this
+# directory that had drifted from it, in OPPOSITE directions (#262).
+#
+# The drift was not cosmetic. `--new` was recognised only as $1, so trailing it
+# was dropped in silence and the failure surfaced as git's `fatal: invalid
+# reference: <branch>` — the script blaming git for its own omission. And
+# `--help` trailing an EXISTING branch fell through to provisioning: a request
+# for documentation that created a worktree and printed its path.
+for arg in "$@"; do
+  if [[ "$arg" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+done
 
 NEW_BRANCH=0
-if [[ "${1:-}" == "--new" ]]; then
-  NEW_BRANCH=1
-  shift
-fi
+BRANCH=""
+BRANCH_SET=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --new)
+      NEW_BRANCH=1
+      shift
+      ;;
+    -*)
+      echo "ERROR: unknown flag '$1'" >&2
+      usage_hint >&2
+      exit 2
+      ;;
+    *)
+      # First non-flag argument is <branch>. A second one is an ERROR, not a
+      # silent drop: `create foo bar` previously ignored 'bar' entirely, which
+      # is the same failure mode as the dropped trailing flag.
+      if [[ $BRANCH_SET -eq 1 ]]; then
+        echo "ERROR: unexpected argument '$1' (<branch> is already '$BRANCH')" >&2
+        usage_hint >&2
+        exit 2
+      fi
+      BRANCH="$1"
+      BRANCH_SET=1
+      shift
+      ;;
+  esac
+done
 
-BRANCH="${1:-}"
 if [[ -z "$BRANCH" ]]; then
   echo "ERROR: <branch> argument required" >&2
-  usage >&2
+  usage_hint >&2
   exit 2
 fi
 
@@ -85,8 +132,16 @@ fi
 # scripts/ directory.
 # Runs AFTER the Iron Law + existing-path checks so we don't pay the audit
 # cost when we're about to abort anyway.
+#
+# `>/dev/null` as well as `--quiet`: this script's stdout contract is exactly
+# the worktree path, and routing it through a child's flag makes the contract
+# depend on that flag still working. Neutering QUIET in the audit script failed
+# nine tests in test_worktree_venv_knob.py — a file about the venv knob, which
+# is where the breakage would have been diagnosed. The redirect makes the
+# coupling structural instead of behavioural; --quiet stays so the audit is not
+# doing work whose output is thrown away.
 if [[ -x "$SCRIPT_DIR/audit-worktree-zombies.sh" ]]; then
-  if ! "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet; then
+  if ! "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet >/dev/null; then
     echo "WARN: worktree zombies detected — run 'bash $SCRIPT_DIR/audit-worktree-zombies.sh' for details" >&2
   fi
 fi
