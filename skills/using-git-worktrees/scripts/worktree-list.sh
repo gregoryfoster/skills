@@ -6,20 +6,30 @@
 # Usage: bash <SKILL_SCRIPTS>/worktree-list.sh [--porcelain] [--help]
 set -euo pipefail
 
+usage() {
+  echo "Usage: bash \"$0\" [--porcelain]"
+  echo ""
+  echo "Lists all worktrees for the current repo. First row is always the main checkout."
+  echo ""
+  echo "Options:"
+  echo "  --porcelain   Machine-readable output (one key per line, blank-line-separated records)"
+  echo ""
+  echo "Exit codes:"
+  echo "  0  Success"
+  echo "  2  Not inside a git repository, or an unrecognised argument"
+}
+
+# One line, not the whole block — the rule the rest of this directory adopted
+# in #262, so an argument error is not buried under boilerplate.
+usage_hint() {
+  echo "Usage: bash \"$0\" [--porcelain]   (run with --help for the full description)"
+}
+
 # Scan all args for --help first so any combination (e.g. `--porcelain --help`)
 # still prints help rather than running the command.
 for arg in "$@"; do
   if [[ "$arg" == "--help" ]]; then
-    echo "Usage: bash \"$0\" [--porcelain]"
-    echo ""
-    echo "Lists all worktrees for the current repo. First row is always the main checkout."
-    echo ""
-    echo "Options:"
-    echo "  --porcelain   Machine-readable output (one key per line, blank-line-separated records)"
-    echo ""
-    echo "Exit codes:"
-    echo "  0  Success"
-    echo "  2  Not inside a git repository, or an unrecognised argument"
+    usage
     exit 0
   fi
 done
@@ -42,12 +52,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "ERROR: unknown flag '$1'" >&2
-      echo "Usage: bash \"$0\" [--porcelain]   (run with --help for the full description)" >&2
+      usage_hint >&2
       exit 2
       ;;
     *)
       echo "ERROR: unexpected argument '$1' (this script takes no positional arguments)" >&2
-      echo "Usage: bash \"$0\" [--porcelain]   (run with --help for the full description)" >&2
+      usage_hint >&2
       exit 2
       ;;
   esac

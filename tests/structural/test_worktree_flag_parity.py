@@ -264,6 +264,71 @@ def test_new_creates_branch_in_either_position(tmp_repo: Path, position: str):
     assert branch in _git(tmp_repo, "branch", "--list", branch).stdout
 
 
+# --- The other two scripts' flags must take effect too ---------------------
+
+
+def test_porcelain_selects_porcelain_output(tmp_repo: Path):
+    """--porcelain must actually change the output format.
+
+    Nothing covered this: with PORCELAIN neutered to 0, all 28 tests passed —
+    the same gap this file was rewritten to close, reintroduced in the commit
+    that closed it. orchestrating-issue-backlog counts worktree slots with
+    `worktree-list.sh --porcelain | grep -c '^worktree '`, so a dropped flag
+    yields 0, reads as "no slots consumed", and over-provisions against the
+    project ceiling — silently, and in the unsafe direction.
+    """
+    _provision(tmp_repo, "merged")
+
+    porcelain = _run(LIST, tmp_repo, "--porcelain")
+    assert porcelain.returncode == 0, porcelain.stderr
+    keyed = [ln for ln in porcelain.stdout.splitlines() if ln.startswith("worktree ")]
+    assert len(keyed) == 2, (
+        "--porcelain must emit one 'worktree <path>' key per worktree "
+        f"(main + merged); got {porcelain.stdout!r}"
+    )
+
+    default = _run(LIST, tmp_repo)
+    assert default.returncode == 0, default.stderr
+    assert not [
+        ln for ln in default.stdout.splitlines() if ln.startswith("worktree ")
+    ], "the default output must NOT be porcelain, or the flag proves nothing"
+
+
+def test_quiet_silences_the_audit(tmp_repo: Path):
+    """--quiet must actually silence the audit's stdout."""
+    loud = _run(AUDIT, tmp_repo)
+    assert loud.returncode == 0, loud.stderr
+    assert loud.stdout.strip(), "without --quiet the audit reports its verdict"
+
+    quiet = _run(AUDIT, tmp_repo, "--quiet")
+    assert quiet.returncode == 0, quiet.stderr
+    assert quiet.stdout == "", f"--quiet must print nothing, got {quiet.stdout!r}"
+
+
+def test_create_does_not_route_audit_stdout_into_its_own():
+    """create's stdout contract must not depend on the audit honouring --quiet.
+
+    create's stdout is exactly the worktree path. It runs the audit as a
+    pre-flight, and neutering QUIET in the audit failed nine tests in
+    test_worktree_venv_knob.py — a file about the venv knob, which is where the
+    breakage would have been misdiagnosed. The redirect makes the isolation
+    structural rather than a behaviour of the child.
+    """
+    calls = [
+        line
+        for line in CREATE.read_text().splitlines()
+        if "audit-worktree-zombies.sh" in line
+        and "--quiet" in line
+        and not line.lstrip().startswith("#")
+    ]
+    assert calls, "expected worktree-create.sh to invoke the audit with --quiet"
+    for line in calls:
+        assert ">/dev/null" in line, (
+            "the audit's stdout must be redirected, not merely quietened: "
+            f"{line.strip()!r}"
+        )
+
+
 # --- Properties every script in the directory must share -------------------
 
 
@@ -297,21 +362,38 @@ def test_help_after_existing_branch_does_not_provision(tmp_repo: Path):
     assert _worktree_paths(tmp_repo) == before, "--help must never provision a worktree"
 
 
-@pytest.mark.parametrize(
-    "script", [CREATE, DESTROY, LIST, AUDIT], ids=["create", "destroy", "list", "audit"]
-)
-def test_bare_word_is_never_called_a_flag(tmp_repo: Path, script: Path):
-    """A stray bare word is rejected AS an argument — never dropped, never
-    reported as a flag.
+@pytest.mark.parametrize("script", [CREATE, DESTROY], ids=["create", "destroy"])
+def test_second_positional_is_rejected_by_name(tmp_repo: Path, script: Path):
+    """create and destroy take ONE positional; a second is named in the error.
 
-    create dropped it; destroy and audit called it an "unknown flag" (a bare
-    word is not a flag); list ignored it and exited 0.
+    create dropped it silently; destroy called it an "unknown flag", which a
+    bare word is not. Asserting the token — 'stray', not just the phrase — is
+    the point: reporting the wrong token is the whole subject of #262.
     """
     result = _run(script, tmp_repo, "merged", "stray")
     assert result.returncode == 2, (
         f"expected tooling exit 2, got {result.returncode}\nstderr: {result.stderr}"
     )
-    assert "unexpected argument" in result.stderr
+    assert "unexpected argument 'stray'" in result.stderr, (
+        f"the SECOND positional must be the token named; got: {result.stderr!r}"
+    )
+    assert "unknown flag" not in result.stderr, "a bare word must not be called a flag"
+
+
+@pytest.mark.parametrize("script", [LIST, AUDIT], ids=["list", "audit"])
+def test_any_positional_is_rejected_by_name(tmp_repo: Path, script: Path):
+    """list and audit take NO positionals; the first bare word is the error.
+
+    Kept separate from the create/destroy case rather than parametrized with
+    it: passing ("merged", "stray") to these two reports 'merged', so a shared
+    test asserting on a generic phrase silently checked a different token than
+    its name implied.
+    """
+    result = _run(script, tmp_repo, "stray")
+    assert result.returncode == 2, (
+        f"expected tooling exit 2, got {result.returncode}\nstderr: {result.stderr}"
+    )
+    assert "unexpected argument 'stray'" in result.stderr
     assert "unknown flag" not in result.stderr, "a bare word must not be called a flag"
 
 

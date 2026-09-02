@@ -132,8 +132,16 @@ fi
 # scripts/ directory.
 # Runs AFTER the Iron Law + existing-path checks so we don't pay the audit
 # cost when we're about to abort anyway.
+#
+# `>/dev/null` as well as `--quiet`: this script's stdout contract is exactly
+# the worktree path, and routing it through a child's flag makes the contract
+# depend on that flag still working. Neutering QUIET in the audit script failed
+# nine tests in test_worktree_venv_knob.py — a file about the venv knob, which
+# is where the breakage would have been diagnosed. The redirect makes the
+# coupling structural instead of behavioural; --quiet stays so the audit is not
+# doing work whose output is thrown away.
 if [[ -x "$SCRIPT_DIR/audit-worktree-zombies.sh" ]]; then
-  if ! "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet; then
+  if ! "$SCRIPT_DIR/audit-worktree-zombies.sh" --quiet >/dev/null; then
     echo "WARN: worktree zombies detected — run 'bash $SCRIPT_DIR/audit-worktree-zombies.sh' for details" >&2
   fi
 fi

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh [--quiet]"
+  echo "Usage: bash \"$0\" [--quiet]"
   echo ""
   echo "Lists processes whose cmdline references a path under the resolved"
   echo "worktree root that no longer exists on disk. Detection-only — does"
@@ -12,9 +12,6 @@ usage() {
   echo ""
   echo "Searches for zombies under the resolved worktree root (env WORKTREE_ROOT"
   echo "→ .skills/worktree_root → <repo>/.worktrees/, in that order)."
-  echo ""
-  echo "Adjust the path prefix when the skill is vendored under a different"
-  echo "layout (e.g. skills-vendor/<owner>-<repo>/skills/using-git-worktrees/...)."
   echo ""
   echo "Exit codes:"
   echo "  0  No zombies found"
@@ -102,7 +99,11 @@ if (( ${#ZOMBIES[@]} > 0 )); then
     printf 'Worktree zombie processes detected (%d):\n' "${#ZOMBIES[@]}"
     printf '  %s\n' "${ZOMBIES[@]}"
     echo ""
-    echo "Kill all: bash skills/using-git-worktrees/scripts/audit-worktree-zombies.sh | awk '/^  [0-9]/ {print \$1}' | xargs kill"
+    # $0, not a hardcoded path: under vendoring the script lives at
+    # skills-vendor/<owner>-<repo>/skills/using-git-worktrees/scripts/, where a
+    # hardcoded prefix names a file that does not exist. $0 is whatever the
+    # caller actually invoked, so the recipe is copy-pasteable as printed.
+    echo "Kill all: bash \"$0\" | awk '/^  [0-9]/ {print \$1}' | xargs kill"
   fi
   exit 1
 fi
