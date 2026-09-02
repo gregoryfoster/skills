@@ -60,3 +60,4 @@ skills/curating-context/references/seam-accounting.md :: schedule's, and cadence
 skills/curating-context/references/telemetry.md :: reading of a surface nobody touched. See [cadence.md](cadence.md).
 skills/curating-context/references/write-guard-hook.md :: See [cadence.md](cadence.md).
 skills/curating-context/references/self-curation.md ::
+skills/using-git-worktrees/references/destroy-flags.md :: [SKILL.md](../SKILL.md#phase-5--destroy-the-worktree); this is the reasoning

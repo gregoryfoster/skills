@@ -171,13 +171,7 @@ The script:
 - Runs `git worktree prune` to clean stale metadata
 - Exits 0 on success, 1 on Iron Law violation (unmerged work without `--descoped`), 2 on tooling failure
 
-**Agent-provisioned worktrees.** The Claude Code Agent tool's `isolation: "worktree"` checks out branch `worktree-agent-<id>` at `.claude/worktrees/agent-<id>/` — branch and directory leaf under different names, so no `WORKTREE_ROOT` override can reach it. Branch-first lookup handles it with no configuration and no extra flags.
-
-**When to pass `--force`:** git's `worktree remove` refuses to act on worktrees containing checked-out submodules (`fatal: working trees containing submodules cannot be moved or removed`). If the project ships submodules (e.g., `skills-vendor/*` consumed via `managing-skills`), every destroy will hit this — pass `--force` to bypass git's submodule refusal. The Iron Law's merge gate is unaffected — `--force` only controls the final removal mechanics. **Caveat:** `--force` also bypasses git's dirty-working-tree refusal, so any uncommitted changes in the worktree are silently discarded; verify the worktree is clean before forcing.
-
-**When to pass `--unlock`:** normally never. The Agent tool releases its lock when the agent exits, and teardown runs after that, so the plain invocation is the normal path. Pass `--unlock` only when a destroy actually reports a held lock — which means the owner is still running or died without releasing, so check which before overriding. git refuses to remove a locked worktree and `--force` is *not* the remedy: it is a single `-f`, and git demands `-f -f` for a lock. `--unlock` releases the lock and changes nothing else, so uncommitted work still blocks removal. A gitignored `.venv` symlink is invisible to git's clean check and needs neither flag.
-
-**`--dry-run`** reports the resolved path, base ref, merge verdict, lock state and removal command, then exits without side effects — with the exit code the real run would return (1 on an Iron Law violation, 2 on a lock with no `--unlock`). Safe to point at a live worktree, including one an agent is working in.
+**Choosing a flag.** `--force` when the worktree contains submodules — it also discards uncommitted changes, so confirm the worktree is clean first. `--unlock` normally never: a held lock means the owner is still running, and `--force` is not the remedy. `--dry-run` previews the decision and exits with the code the real run would return. Harness-provisioned worktrees (`.claude/worktrees/agent-<id>`) need no flags — branch-first lookup reaches them. The reasoning behind each: [references/destroy-flags.md](references/destroy-flags.md).
 
 The branch ref itself is **not** deleted — that's a separate decision. Use `git branch -d <branch>` afterward if you also want to drop the local ref.
 
@@ -207,6 +201,10 @@ Wrappers must not silently bypass the Iron Law gates. If the wrapper genuinely n
 - `git worktree list` is authoritative — never maintain a separate registry
 - A branch may be deleted while a worktree on it exists; reattach with `git worktree repair` if you need to recover
 - Bare repositories: out of scope; the consumers covered by this skill are all non-bare
+
+## Detail Docs
+
+- [references/destroy-flags.md](references/destroy-flags.md) — when each `worktree-destroy.sh` flag is the right instrument, and what each does not cover
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — both readings must clear it, so

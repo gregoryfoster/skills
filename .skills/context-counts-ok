@@ -61,3 +61,6 @@ skills/curating-context/SKILL.md :: stable :: normalises exactly these two, and 
 skills/curating-context/SKILL.md :: enumerated :: `--help` has the three
 skills/curating-context/SKILL.md :: enumerated :: Three surfaces keep the ground this run won
 skills/curating-context/SKILL.md :: stable :: Offer all three **once per repo**
+skills/using-git-worktrees/SKILL.md :: stable :: Same branch in two worktrees is fine
+skills/using-git-worktrees/SKILL.md :: enumerated :: Two symptoms identify the case
+skills/using-git-worktrees/SKILL.md :: enumerated :: Three responsibilities the calling agent must handle
