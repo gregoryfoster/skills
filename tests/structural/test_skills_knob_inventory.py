@@ -22,14 +22,19 @@ Two directions are pinned, and both matter:
   promising a project something it will silently not get, which is worse than
   the gap it replaced.
 
-`NOT_A_KNOB` carries the deliberate exclusions, each with a reason, and is
-itself held minimal: an entry that stops appearing in the tree is a failure,
-so the list cannot quietly grow into a place to hide a real knob.
+There is deliberately **no ignore-list**. The first version needed one, and it
+held only artifacts of its own scope: fixture paths from `tests/`, and a stem
+left behind when a `.skills/context-token-*` glob or a wrapped line was parsed
+as a name. Excluding what does not ship knobs, and rejecting a captured name
+that ends in a hyphen, removes both classes structurally. An ignore-list is
+somewhere a real knob can hide, and the guard against that can only check the
+name still appears — not that it is still not a knob.
 
 No API calls. Pure text analysis of the repo.
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -37,50 +42,58 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = REPO_ROOT / "docs" / "KNOBS.md"
 
-# Where a `.skills/<name>` literal counts as a live reference. `docs/plans/` is
-# excluded: plans are dated records of what was decided, not current guidance,
-# and a knob named only in one is a knob that was discussed, not shipped.
-SCAN_DIRS = ("skills", "scripts", ".claude/hooks", "docs")
-SCAN_FILES = ("AGENTS.md", "README.md")
-SCAN_SUFFIXES = {".sh", ".md", ".py", ".yml", ".yaml", ".json"}
-EXCLUDE_PARTS = ("docs/plans/",)
+# Everything git tracks is in scope, minus three prefixes. A directory-and-
+# suffix allowlist was the first attempt and it had holes exactly where knobs
+# ship: `.install` hook installers and `.mjs` drivers under skills/*/scripts/
+# are production files with no listed suffix, and .github/workflows/,
+# .pre-commit-config.yaml and .gitattributes all read knobs from outside any
+# listed directory. A knob introduced only there would have shipped
+# undocumented with this test green, which is the failure it exists to prevent.
+EXCLUDED_PREFIXES = (
+    # Dated records of what was decided, not current guidance. A knob named
+    # only in a plan is one that was discussed, not shipped.
+    "docs/plans/",
+    # Fixtures deliberately construct paths that look like knobs and are not
+    # (`skills-pin.override` demonstrating a redirected env var, `.skills/x` in
+    # quoted help text). Knobs ship from skills/, scripts/, hooks and repo
+    # config; nothing ships from here, so scanning it only forced an
+    # ignore-list — and an ignore-list is somewhere a real knob can hide.
+    "tests/",
+    # This repo's own committed knob FILES. Their contents are data — acked
+    # sentences quoting other files, a cohort roster — not references.
+    ".skills/",
+)
 
-# A path component that cannot end in `.` or `-`, so `.skills/doctor.sh.` at the
-# end of a sentence yields `doctor.sh`, and a `.skills/context-token-*` glob
-# wrapped across a line does not yield a phantom `context-token`.
-KNOB_RE = re.compile(r"\.skills/([A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)")
+# Capture the whole run of name characters, then judge it. A trailing `-` means
+# the source had `.skills/context-token-*` (a glob) or wrapped the name across a
+# line; either way it is a stem, not a name. A trailing `.` is sentence
+# punctuation after a real name (`.skills/doctor.sh.`).
+KNOB_RE = re.compile(r"\.skills/([A-Za-z0-9_.-]+)")
 
-# Literals that look like knobs and are not. Each must still appear somewhere,
-# enforced by test_every_exclusion_is_still_real.
-NOT_A_KNOB = {
-    "skills-pin.override": (
-        "an env-var value in test_skills_update_hook.py, demonstrating that "
-        "SKILLS_PIN_FILE can point somewhere other than the default"
-    ),
-    "x": (
-        "an illustrative path inside quoted help text, cited in "
-        "test_checked_temp_writes.py's docstring as a false-positive it excludes"
-    ),
-}
+
+def _knob_names(text: str):
+    for m in KNOB_RE.finditer(text):
+        name = m.group(1)
+        if name.endswith("-"):
+            continue
+        name = name.rstrip(".")
+        if name:
+            yield name
 
 
 def _scan_files() -> list[Path]:
-    files: list[Path] = []
-    for d in SCAN_DIRS:
-        root = REPO_ROOT / d
-        if not root.exists():
-            continue
-        files += [
-            f
-            for f in root.rglob("*")
-            if f.is_file() and f.suffix in SCAN_SUFFIXES
-        ]
-    files += [REPO_ROOT / f for f in SCAN_FILES]
+    tracked = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
     return [
-        f
-        for f in files
-        if f.exists()
-        and not any(p in f.relative_to(REPO_ROOT).as_posix() for p in EXCLUDE_PARTS)
+        REPO_ROOT / rel
+        for rel in tracked
+        if rel
+        and not rel.startswith(EXCLUDED_PREFIXES)
+        and (REPO_ROOT / rel).is_file()
     ]
 
 
@@ -91,28 +104,34 @@ def referenced_knobs() -> dict[str, list[str]]:
         try:
             text = f.read_text()
         except (OSError, UnicodeDecodeError):
-            continue
+            continue  # binary asset; no knob reference to find
         rel = f.relative_to(REPO_ROOT).as_posix()
-        for m in KNOB_RE.finditer(text):
-            found.setdefault(m.group(1), []).append(rel)
+        for name in _knob_names(text):
+            found.setdefault(name, []).append(rel)
     return found
 
 
-def inventoried_knobs() -> set[str]:
-    """Names in the leftmost column of any table in docs/KNOBS.md.
+def _row_name(line: str) -> str | None:
+    """The backticked name in a table row's first cell, if it has one.
 
-    Rows are read as `| \\`name\\` | …`, and a trailing `/` marks a directory
-    (`experiments/`), which is stripped so it matches the literal in the tree.
+    Header rows (`| Path |`) and separator rows (`|---|`) carry no backticks
+    and yield None, which is how they are skipped. A trailing `/` marks a
+    directory (`experiments/`) and is stripped to match the literal in the tree.
     """
-    names: set[str] = set()
-    for line in INVENTORY.read_text().splitlines():
-        if not line.startswith("|"):
-            continue
-        first = line.split("|")[1].strip()
-        m = re.fullmatch(r"`([^`]+)`", first)
-        if m:
-            names.add(m.group(1).rstrip("/"))
-    return names
+    cells = line.split("|")
+    if len(cells) < 2:
+        return None
+    m = re.fullmatch(r"`([^`]+)`", cells[1].strip())
+    return m.group(1).rstrip("/") if m else None
+
+
+def inventoried_knobs() -> set[str]:
+    """Every name in the leftmost column of any table in docs/KNOBS.md."""
+    return {
+        name
+        for line in INVENTORY.read_text().splitlines()
+        if line.startswith("|") and (name := _row_name(line))
+    }
 
 
 @pytest.fixture(scope="module")
@@ -125,14 +144,31 @@ def inventoried() -> set[str]:
     return inventoried_knobs()
 
 
-def test_the_inventory_parses(inventoried: set[str]):
+def test_every_table_in_the_inventory_yields_rows():
     """A table whose rows stop parsing would pass every check below by
-    vacuously matching nothing, which is the failure mode this whole file
-    exists to prevent one level down."""
-    assert len(inventoried) >= 20, (
-        f"docs/KNOBS.md yielded only {len(inventoried)} rows "
-        f"({sorted(inventoried)}). Either the table shrank drastically or its "
-        "row format changed and the parser above no longer reads it."
+    vacuously matching nothing — the failure mode this whole file exists to
+    prevent, one level down.
+
+    Asserted per SECTION rather than as a total: a bare row count is the kind
+    of number this repo makes authors justify, and it would drift on every knob
+    added or retired. Three sections each yielding rows is the structural
+    property actually wanted, and it localises a parser break to the table it
+    broke on."""
+    section = None
+    per_section: dict[str, int] = {}
+    for line in INVENTORY.read_text().splitlines():
+        if line.startswith("#"):
+            section = line.lstrip("#").strip()
+            per_section.setdefault(section, 0)
+        elif line.startswith("|") and section and _row_name(line):
+            per_section[section] += 1
+    populated = {s: n for s, n in per_section.items() if n}
+    assert len(populated) >= 3, (
+        f"docs/KNOBS.md yielded rows in {len(populated)} section(s) "
+        f"({populated}). Every table must parse: configuration a project "
+        "commits, the acknowledgement files, and state a skill writes. A "
+        "section at zero means its row format changed and the parser above no "
+        "longer reads it."
     )
 
 
@@ -143,7 +179,7 @@ def test_every_referenced_knob_is_inventoried(
     missing = {
         name: sorted(set(where))[:3]
         for name, where in referenced.items()
-        if name not in inventoried and name not in NOT_A_KNOB
+        if name not in inventoried
     }
     assert not missing, (
         "these .skills/ paths are read or written but have no row in "
@@ -151,8 +187,8 @@ def test_every_referenced_knob_is_inventoried(
         + "\n".join(f"  .skills/{n} — e.g. {', '.join(w)}" for n, w in sorted(missing.items()))
         + "\n\nAdd the row in the same change that adds the reader, saying what "
         "the file is for, whether it replaces or extends a default, and what "
-        "its absence means. If it is not a knob, add it to NOT_A_KNOB with the "
-        "reason."
+        "its absence means. If it is genuinely not a knob, the honest fix is "
+        "almost always the extractor or the scope above, not an exception."
     )
 
 
@@ -163,33 +199,10 @@ def test_every_inventoried_knob_is_still_referenced(
     silently not get."""
     stale = sorted(inventoried - set(referenced))
     assert not stale, (
-        f"docs/KNOBS.md has rows for {stale}, which no file under "
-        f"{', '.join(SCAN_DIRS)} references any more. Remove the row, or fix "
-        "the name if it was renamed."
+        f"docs/KNOBS.md has rows for {stale}, which no tracked file outside "
+        f"{', '.join(EXCLUDED_PREFIXES)} references any more. Remove the row, "
+        "or fix the name if it was renamed."
     )
-
-
-def test_every_exclusion_is_still_real(referenced: dict[str, list[str]]):
-    """NOT_A_KNOB must not become a place to park a real knob. Every entry has
-    to still appear somewhere in the repo, or it is dead weight that would
-    silently swallow a future path of the same name."""
-    for name in NOT_A_KNOB:
-        hits = list(REPO_ROOT.glob("tests/**/*.py"))
-        assert any(
-            f".skills/{name}" in f.read_text() for f in hits if f.is_file()
-        ), (
-            f"NOT_A_KNOB names {name!r}, but no `.skills/{name}` literal exists "
-            "under tests/ any more. Drop the entry: a stale exclusion silently "
-            "excuses a future knob that happens to share the name."
-        )
-
-
-def test_every_exclusion_has_a_reason():
-    for name, reason in NOT_A_KNOB.items():
-        assert len(reason.split()) >= 5, (
-            f"NOT_A_KNOB[{name!r}] needs a reason a reader can check, not "
-            f"{reason!r}"
-        )
 
 
 def test_the_inventory_is_linked_from_agents_md():
