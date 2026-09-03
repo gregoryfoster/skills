@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from tests.utils.skill_families import VARIANT_FAMILIES
-from tests.utils.skill_loader import load_skill, SKILLS_DIR
+from tests.utils.skill_loader import SKILLS_DIR, load_skill
 
 
 def skill(name: str):
@@ -29,7 +29,14 @@ def skill(name: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["shipping-work", "shipping-work-php", "shipping-work-python-fastapi", "shipping-work-python-click"])
+@pytest.fixture(
+    params=[
+        "shipping-work",
+        "shipping-work-php",
+        "shipping-work-python-fastapi",
+        "shipping-work-python-click",
+    ]
+)
 def shipping_work_skill(request):
     return skill(request.param)
 
@@ -38,7 +45,9 @@ class TestShippingWork:
     """Cross-cutting invariants — must hold for the baseline and every variant."""
 
     def test_iron_law_no_closure_without_implementation(self, shipping_work_skill):
-        assert "NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION" in shipping_work_skill.body, (
+        assert (
+            "NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION" in shipping_work_skill.body
+        ), (
             "Iron Law text 'NO ISSUE CLOSURE WITHOUT FULL IMPLEMENTATION' must be present verbatim"
         )
 
@@ -122,8 +131,15 @@ class TestShippingWorkPhp:
 
     def test_wp_next_steps_categories_present(self):
         body = self.s.body
-        for category in ("ACF JSON sync", "Asset build", "WP-CLI cache", "Composer deps"):
-            assert category in body, f"WP next-steps category '{category}' must be present"
+        for category in (
+            "ACF JSON sync",
+            "Asset build",
+            "WP-CLI cache",
+            "Composer deps",
+        ):
+            assert category in body, (
+                f"WP next-steps category '{category}' must be present"
+            )
 
 
 class TestShippingWorkPythonFastapi:
@@ -155,8 +171,16 @@ class TestShippingWorkPythonFastapi:
 
     def test_fastapi_next_steps_categories_present(self):
         body = self.s.body
-        for category in ("DB migration", "Service restart", "Integration tests", "Env var", "Dev-server cleanup"):
-            assert category in body, f"FastAPI next-steps category '{category}' must be present"
+        for category in (
+            "DB migration",
+            "Service restart",
+            "Integration tests",
+            "Env var",
+            "Dev-server cleanup",
+        ):
+            assert category in body, (
+                f"FastAPI next-steps category '{category}' must be present"
+            )
 
     def test_auto_derived_stamp_prefix_documented(self):
         assert "auto-derives" in self.s.body or "auto-derived" in self.s.body, (
@@ -205,8 +229,15 @@ class TestShippingWorkPythonClick:
 
     def test_click_next_steps_categories_present(self):
         body = self.s.body
-        for category in ("Dep update", "Cross-package consumer", "Pydantic pin", "New command"):
-            assert category in body, f"Click next-steps category '{category}' must be present"
+        for category in (
+            "Dep update",
+            "Cross-package consumer",
+            "Pydantic pin",
+            "New command",
+        ):
+            assert category in body, (
+                f"Click next-steps category '{category}' must be present"
+            )
 
     def test_auto_detected_import_target_documented(self):
         body = self.s.body
@@ -260,7 +291,9 @@ class TestInitProjectFastapi:
             "GIT_USER_EMAIL",
         ]
         for param in required_params:
-            assert param in self.s.body, f"Required parameter '{param}' must be documented"
+            assert param in self.s.body, (
+                f"Required parameter '{param}' must be documented"
+            )
 
     def test_confirm_all_before_proceeding(self):
         assert "Confirm all" in self.s.body, (
@@ -310,7 +343,9 @@ class TestVendoringOpenapiClient:
 
     def test_branch_point_parameters_listed(self):
         for param in ["OUTPUT_LAYOUT", "FILTER_SPEC", "DRIFT_GUARD"]:
-            assert param in self.s.body, f"Branch-point parameter '{param}' must be documented"
+            assert param in self.s.body, (
+                f"Branch-point parameter '{param}' must be documented"
+            )
 
     def test_contract_of_record_invariant(self):
         assert "contract-of-record" in self.s.body, (
@@ -371,9 +406,10 @@ class TestUsingGitWorktrees:
         )
 
     def test_iron_law_no_destroy_without_merge(self):
-        assert "NO WORKTREE DESTROY WITHOUT VERIFIED MERGE OR EXPLICIT DESCOPE" in self.s.body, (
-            "Iron Law line 1 must be present verbatim"
-        )
+        assert (
+            "NO WORKTREE DESTROY WITHOUT VERIFIED MERGE OR EXPLICIT DESCOPE"
+            in self.s.body
+        ), "Iron Law line 1 must be present verbatim"
 
     def test_iron_law_no_double_checkout(self):
         assert "NO BRANCH CHECKED OUT IN TWO WORKTREES SIMULTANEOUSLY" in self.s.body, (
@@ -413,14 +449,17 @@ class TestUsingGitWorktrees:
 
     def test_phase_ordering(self):
         body = self.s.body
-        positions = [body.find(p) for p in (
-            "Phase 1 — Decide",
-            "Phase 2 — Create",
-            "Phase 3 — Work",
-            "Phase 3.5 — Verify",
-            "Phase 4 — Merge",
-            "Phase 5 — Destroy",
-        )]
+        positions = [
+            body.find(p)
+            for p in (
+                "Phase 1 — Decide",
+                "Phase 2 — Create",
+                "Phase 3 — Work",
+                "Phase 3.5 — Verify",
+                "Phase 4 — Merge",
+                "Phase 5 — Destroy",
+            )
+        ]
         assert all(p != -1 for p in positions), "All phases must be discoverable"
         assert positions == sorted(positions), (
             "Phases must appear in numeric order in the body "
@@ -429,7 +468,12 @@ class TestUsingGitWorktrees:
 
     def test_scripts_referenced_in_body(self):
         body = self.s.body
-        for script in ("worktree-create.sh", "worktree-destroy.sh", "worktree-list.sh", "resolve-worktree-root.sh"):
+        for script in (
+            "worktree-create.sh",
+            "worktree-destroy.sh",
+            "worktree-list.sh",
+            "resolve-worktree-root.sh",
+        ):
             assert script in body, (
                 f"Script '{script}' must be referenced in SKILL.md body"
             )
@@ -537,12 +581,13 @@ class TestWritingPlans:
         self.s = skill("writing-plans")
 
     def test_h1_present(self):
-        assert "# Writing Plans" in self.s.body, (
-            "H1 must be '# Writing Plans'"
-        )
+        assert "# Writing Plans" in self.s.body, "H1 must be '# Writing Plans'"
 
     def test_iron_law_no_implementation_without_plan(self):
-        assert "NO NON-TRIVIAL IMPLEMENTATION WITHOUT A WRITTEN, REVIEWED PLAN" in self.s.body, (
+        assert (
+            "NO NON-TRIVIAL IMPLEMENTATION WITHOUT A WRITTEN, REVIEWED PLAN"
+            in self.s.body
+        ), (
             "Iron Law text 'NO NON-TRIVIAL IMPLEMENTATION WITHOUT A WRITTEN, REVIEWED PLAN' "
             "must be present verbatim"
         )
@@ -595,12 +640,15 @@ class TestWritingPlans:
 
     def test_phase_ordering(self):
         body = self.s.body
-        positions = [body.find(p) for p in (
-            "Phase 1 — Decide",
-            "Phase 2 — Draft",
-            "Phase 3 — Request review",
-            "Phase 4 — Execute",
-        )]
+        positions = [
+            body.find(p)
+            for p in (
+                "Phase 1 — Decide",
+                "Phase 2 — Draft",
+                "Phase 3 — Request review",
+                "Phase 4 — Execute",
+            )
+        ]
         assert all(p != -1 for p in positions), "All phases must be discoverable"
         assert positions == sorted(positions), (
             "Phases must appear in numeric order in the body"
@@ -699,7 +747,9 @@ class TestOrchestratingIssueBacklog:
         citation is resolved against the cited step's TITLE.
         """
         body = self.s.body
-        protocol = body[body.index("### Worker agents"):body.index("## Key Principles")]
+        protocol = body[
+            body.index("### Worker agents") : body.index("## Key Principles")
+        ]
         steps = {
             int(n): title
             for n, title in re.findall(r"(?m)^(\d+)\. \*\*(.+?)\*\*", protocol)
@@ -771,8 +821,9 @@ class TestOrchestratingIssueBacklog:
         """
         body = self.s.body
         section = body[
-            body.index("### Step 5–6: Conflict zone analysis"):
-            body.index("### Step 7: Batch design")
+            body.index("### Step 5–6: Conflict zone analysis") : body.index(
+                "### Step 7: Batch design"
+            )
         ]
         assert "vacuous" in section, (
             "Step 5's conflict-zone analysis must tell the orchestrator to grep "
@@ -792,8 +843,9 @@ class TestOrchestratingIssueBacklog:
         """
         body = self.s.body
         rule6 = body[
-            body.index("### Rule 6 — Detect worktree fall-through at runtime"):
-            body.index("## Recovery")
+            body.index(
+                "### Rule 6 — Detect worktree fall-through at runtime"
+            ) : body.index("## Recovery")
         ]
         assert "exit" in rule6, (
             "Rule 6 must instruct the orchestrator to read the exit code of "
@@ -823,7 +875,7 @@ class TestOrchestratingIssueBacklog:
         """
         body = self.s.body
         orchestrator = body[
-            body.index("### Orchestrator agent"):body.index("### Worker agents")
+            body.index("### Orchestrator agent") : body.index("### Worker agents")
         ]
         assert "failed" in orchestrator, (
             "Orchestrator step 5 must state that a `failed` worker signal takes "
@@ -840,7 +892,7 @@ class TestOrchestratingIssueBacklog:
         four workers diagnosed a stale briefed baseline instead of silently
         reconciling to it (#182 Batch A, sourced from #156).
         """
-        protocol = self.s.body[self.s.body.index("### Worker agents"):]
+        protocol = self.s.body[self.s.body.index("### Worker agents") :]
         assert "N passed, M skipped" in protocol, (
             "The worker protocol's required report-back slot must demand the "
             "suite's COLLECTED COUNT (`N passed, M skipped`), not a bare "
@@ -869,9 +921,7 @@ class TestOrchestratingIssueBacklog:
             "The red-phase-commit rule must name `--no-verify`, since a hook "
             "that runs the suite rejects the red commit outright."
         )
-        paragraph = next(
-            p for p in body.split("\n") if "--no-verify" in p
-        )
+        paragraph = next(p for p in body.split("\n") if "--no-verify" in p)
         assert re.search(r"\bonly where\b|\bcheck\b", paragraph), (
             "The red commit lands cleanly ONLY where the pre-commit hook does "
             "not run the suite, and checking which is the worker's job. State "
@@ -885,7 +935,14 @@ class TestOrchestratingIssueBacklog:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["reviewing-code", "reviewing-code-php", "reviewing-code-python-fastapi", "reviewing-code-python-click"])
+@pytest.fixture(
+    params=[
+        "reviewing-code",
+        "reviewing-code-php",
+        "reviewing-code-python-fastapi",
+        "reviewing-code-python-click",
+    ]
+)
 def reviewing_code_skill(request):
     return skill(request.param)
 
@@ -894,13 +951,19 @@ class TestReviewingCode:
     """Cross-cutting invariants — must hold for the baseline and every variant."""
 
     def test_iron_law_no_changes_without_report(self, reviewing_code_skill):
-        assert "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES" in reviewing_code_skill.body, (
+        assert (
+            "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES"
+            in reviewing_code_skill.body
+        ), (
             "Iron Law text 'NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES' "
             "must be present verbatim"
         )
 
     def test_iron_law_no_report_without_gather_context(self, reviewing_code_skill):
-        assert "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in reviewing_code_skill.body, (
+        assert (
+            "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST"
+            in reviewing_code_skill.body
+        ), (
             "Iron Law text 'NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST' "
             "must be present verbatim"
         )
@@ -911,15 +974,20 @@ class TestReviewingCode:
         )
 
     def test_phase4_stop_instruction(self, reviewing_code_skill):
-        assert "Stop. Do not make changes until the user responds." in reviewing_code_skill.body, (
-            "'Stop. Do not make changes until the user responds.' must appear in Phase 4"
-        )
+        assert (
+            "Stop. Do not make changes until the user responds."
+            in reviewing_code_skill.body
+        ), "'Stop. Do not make changes until the user responds.' must appear in Phase 4"
 
     def test_findings_format_inline(self, reviewing_code_skill):
         body = reviewing_code_skill.body
         assert "What:" in body, "'What:' label must appear in findings format"
-        assert "Why it matters:" in body, "'Why it matters:' label must appear in findings format"
-        assert "Suggested fix:" in body, "'Suggested fix:' label must appear in findings format"
+        assert "Why it matters:" in body, (
+            "'Why it matters:' label must appear in findings format"
+        )
+        assert "Suggested fix:" in body, (
+            "'Suggested fix:' label must appear in findings format"
+        )
 
     def test_directives_table_inline(self, reviewing_code_skill):
         body = reviewing_code_skill.body
@@ -1108,7 +1176,10 @@ class TestReviewingCodePythonClick:
 
     def test_auto_detected_import_target_documented(self):
         body = self.s.body
-        assert "auto-detected from `pyproject.toml`" in body or "auto-detected from pyproject.toml" in body, (
+        assert (
+            "auto-detected from `pyproject.toml`" in body
+            or "auto-detected from pyproject.toml" in body
+        ), (
             "Variant must document that the import target is auto-detected from pyproject.toml"
         )
         assert ".skills/import-targets" in body, (
@@ -1178,8 +1249,12 @@ class TestPythonClickHelperByteEquality:
     def test_review_and_ship_copies_byte_equal(self, helper_name):
         review = SKILLS_DIR / "reviewing-code-python-click" / "scripts" / helper_name
         ship = SKILLS_DIR / "shipping-work-python-click" / "scripts" / helper_name
-        assert review.exists(), f"missing helper copy in reviewing-code-python-click: {helper_name}"
-        assert ship.exists(), f"missing helper copy in shipping-work-python-click: {helper_name}"
+        assert review.exists(), (
+            f"missing helper copy in reviewing-code-python-click: {helper_name}"
+        )
+        assert ship.exists(), (
+            f"missing helper copy in shipping-work-python-click: {helper_name}"
+        )
         assert not review.is_symlink(), (
             f"reviewing-code-python-click/scripts/{helper_name} is a symlink — variants must be "
             "self-contained per the Agent Skills spec; replace with a real copy"
@@ -1338,7 +1413,8 @@ class TestGateScriptHardening:
         )
         assert not unclassified, (
             "unclassified script(s) in the shipping-work* / reviewing-code* "
-            "families:\n" + "\n".join(f"  {p}" for p in unclassified)
+            "families:\n"
+            + "\n".join(f"  {p}" for p in unclassified)
             + "\n\nAdd each basename to GATE_SCRIPTS (its output drives a "
             "control-flow decision) or to NON_GATE_SCRIPTS (reporting-only, "
             "or an action whose own exit code is the verdict), with a reason. "
@@ -1415,7 +1491,7 @@ class TestProcessSubstitutionDetector:
         assert len(v) == 1, f"inline one-liner regression must trip, got {v}"
 
     def test_multiline_loop_regression_detected(self):
-        src = "while read x; do\n  echo \"$x\"\ndone < <(producer)\n"
+        src = 'while read x; do\n  echo "$x"\ndone < <(producer)\n'
         v = _unhardened_process_substitution_sites(src)
         assert len(v) == 1, f"multiline `done < <(...)` must trip, got {v}"
 
@@ -1437,14 +1513,18 @@ class TestProcessSubstitutionDetector:
     def test_escape_hatch_inline_same_line_bypasses(self):
         # Finding 2: a `# unhardened:` comment on the `done` line itself
         # must also be honored — inline suppression is ergonomic and common.
-        src = 'while read x; do :; done < <(producer)  # unhardened: deliberate'
+        src = "while read x; do :; done < <(producer)  # unhardened: deliberate"
         assert _unhardened_process_substitution_sites(src) == []
 
     def test_stale_escape_hatch_beyond_lookback_rejected(self):
         # An `# unhardened:` comment more than 10 lines above the offending
         # `done` must NOT greenlight it — otherwise stale comments could
         # silently authorize unrelated regressions further down the file.
-        src = "# unhardened: legitimate older site\n" + "\n" * 12 + "while read x; do :; done < <(producer)\n"
+        src = (
+            "# unhardened: legitimate older site\n"
+            + "\n" * 12
+            + "while read x; do :; done < <(producer)\n"
+        )
         v = _unhardened_process_substitution_sites(src)
         assert len(v) == 1, f"stale whitelist >10 lines away must not bypass, got {v}"
 
@@ -1480,12 +1560,17 @@ class TestReviewingArchitecture:
         )
 
     def test_iron_law_no_report_without_gather_context(self):
-        assert "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in self.s.body, (
+        assert (
+            "NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST" in self.s.body
+        ), (
             "Iron Law text 'NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST' must be present verbatim"
         )
 
     def test_iron_law_no_changes_without_report(self):
-        assert "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES" in self.s.body, (
+        assert (
+            "NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES"
+            in self.s.body
+        ), (
             "Iron Law text 'NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES' must be present verbatim"
         )
 
@@ -1497,8 +1582,12 @@ class TestReviewingArchitecture:
     def test_findings_format_inline(self):
         body = self.s.body
         assert "What:" in body, "'What:' label must appear in findings format"
-        assert "Why it matters:" in body, "'Why it matters:' label must appear in findings format"
-        assert "Suggested approach:" in body, "'Suggested approach:' label must appear in findings format"
+        assert "Why it matters:" in body, (
+            "'Why it matters:' label must appear in findings format"
+        )
+        assert "Suggested approach:" in body, (
+            "'Suggested approach:' label must appear in findings format"
+        )
 
     def test_directives_table_inline(self):
         body = self.s.body
@@ -1882,8 +1971,7 @@ class TestNoBareScriptPaths:
 
 
 RESOLUTION_LOOP = (
-    'for d in scripts ".claude/skills/$N/scripts" '
-    '"$HOME/.claude/skills/$N/scripts"; do'
+    'for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do'
 )
 
 RESOLUTION_GUARD = (
@@ -1964,9 +2052,7 @@ class TestScriptResolutionBlock:
     "No such file or directory" — rather than as anything self-explanatory.
     """
 
-    @pytest.fixture(
-        params=_skills_with_resolution_block(), ids=lambda p: p.parent.name
-    )
+    @pytest.fixture(params=_skills_with_resolution_block(), ids=lambda p: p.parent.name)
     def skill_md(self, request):
         return request.param
 
@@ -2012,8 +2098,8 @@ class TestScriptResolutionBlock:
         if not uses:
             pytest.skip("skill has no <SKILL_SCRIPTS> substitution sites")
         assert 'echo "SKILL_SCRIPTS=' in skill_md.read_text(), (
-            f"{skill_dir.name} has {uses} `bash \"<SKILL_SCRIPTS>/…\"` site(s) "
+            f'{skill_dir.name} has {uses} `bash "<SKILL_SCRIPTS>/…"` site(s) '
             "(SKILL.md + references/) but SKILL.md never prints the path to "
-            'substitute. The resolution block must publish it:\n  echo '
+            "substitute. The resolution block must publish it:\n  echo "
             f'"SKILL_SCRIPTS={RESOLUTION_GUARD}"'
         )

@@ -42,7 +42,11 @@ SELFTEST = SCRIPTS / "parser-selftest.mjs"
 HOOK = SCRIPTS / "socraticode-health.sh"
 SKILL_MD = REPO_ROOT / "skills" / "init-socraticode" / "SKILL.md"
 POLICY_REF = (
-    REPO_ROOT / "skills" / "init-socraticode" / "references" / "code-exploration-policy.md"
+    REPO_ROOT
+    / "skills"
+    / "init-socraticode"
+    / "references"
+    / "code-exploration-policy.md"
 )
 DOC_REF = (
     REPO_ROOT / "skills" / "init-socraticode" / "references" / "socraticode-doc.md"
@@ -56,8 +60,12 @@ requires_node = pytest.mark.skipif(
 
 def _clean_env(**extra: str) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("SOCRATICODE_DRIVER", "SOCRATICODE_PROBE_FILE",
-              "HEALTH_TIMEOUT_MS", "SOCRATICODE_HEALTH_FORCE"):
+    for k in (
+        "SOCRATICODE_DRIVER",
+        "SOCRATICODE_PROBE_FILE",
+        "HEALTH_TIMEOUT_MS",
+        "SOCRATICODE_HEALTH_FORCE",
+    ):
         env.pop(k, None)
     env.update(extra)
     return env
@@ -70,7 +78,10 @@ class TestParserSelftestRuns:
     def test_selftest_passes(self) -> None:
         result = subprocess.run(
             ["node", str(SELFTEST)],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, (
             "scripts/parser-selftest.mjs failed. It pins mcp-driver.mjs's status "
@@ -84,7 +95,10 @@ class TestParserSelftestRuns:
         """A green selftest that never exercised yield would prove nothing."""
         result = subprocess.run(
             ["node", str(SELFTEST)],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert "graph YIELD" in result.stdout, (
             "parser-selftest.mjs must exercise the yield parsers — the #107 "
@@ -115,7 +129,10 @@ class TestDriverRunsThroughASymlink:
         link.symlink_to(DRIVER)
         result = subprocess.run(
             ["node", str(link), "--help"],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip(), (
@@ -133,7 +150,10 @@ class TestDriverRunsThroughASymlink:
         link.symlink_to(DRIVER)
         result = subprocess.run(
             ["node", str(link), "no-such-command"],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 2, (
             "an unrecognised command must exit 2 through a symlink just as it "
@@ -151,7 +171,10 @@ class TestDriverRunsThroughASymlink:
         script = f"await import({json.dumps(str(DRIVER))});"
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == "", (
@@ -172,7 +195,10 @@ class TestDriverRunsThroughASymlink:
         link.symlink_to(importer)
         result = subprocess.run(
             ["node", str(link)],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == "", (
@@ -191,7 +217,10 @@ class TestYieldVerdicts:
         )
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -216,8 +245,10 @@ class TestYieldVerdicts:
     @pytest.mark.parametrize(
         "graph_status",
         [
-            pytest.param("Status: READY\nFiles (nodes): 6\nDependencies (edges): 0",
-                         id="too-few-files-to-judge"),
+            pytest.param(
+                "Status: READY\nFiles (nodes): 6\nDependencies (edges): 0",
+                id="too-few-files-to-judge",
+            ),
             pytest.param("Status: BUILDING", id="unparseable"),
         ],
     )
@@ -240,7 +271,7 @@ def _graph_health(doc_text: str) -> str:
     """
     start = doc_text.index("## Graph health")
     end = doc_text.find("\n## ", start + len("## Graph health"))
-    return doc_text[start:end if end != -1 else len(doc_text)]
+    return doc_text[start : end if end != -1 else len(doc_text)]
 
 
 def _flowed(text: str) -> str:
@@ -276,7 +307,10 @@ class TestUnresolvedFindingIsVerdictAware:
         )
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         return result.stdout
@@ -293,7 +327,7 @@ class TestUnresolvedFindingIsVerdictAware:
     @requires_node
     def test_an_ok_verdict_does_not_accuse(self) -> None:
         assert "corrobo" not in self._finding("61.7", "ok"), (
-            "beside `verdict: \"ok\"` there is no finding for the statistic to "
+            'beside `verdict: "ok"` there is no finding for the statistic to '
             "corroborate, and the corroboration wording is then read as the "
             "accusation #216 was filed about"
         )
@@ -412,7 +446,9 @@ def _health_check(tmp_path: Path, project: Path, replies: dict) -> tuple:
     reply_file.write_text(json.dumps(replies))
     result = subprocess.run(
         ["node", str(DRIVER), "health-check", str(project)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(
             SOCRATICODE_ENTRY=str(stub),
             STUB_REPLIES=str(reply_file),
@@ -452,11 +488,15 @@ class TestANeutralFindingDoesNotFailTheCheck:
     def test_a_neutral_statistic_alone_exits_zero(self, tmp_path: Path) -> None:
         project = tmp_path / "repo"
         project.mkdir()
-        result, report = _health_check(tmp_path, project, {
-            "codebase_health": HEALTH_OK,
-            "codebase_status": STATUS_CLEAN,
-            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
-        })
+        result, report = _health_check(
+            tmp_path,
+            project,
+            {
+                "codebase_health": HEALTH_OK,
+                "codebase_status": STATUS_CLEAN,
+                "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+            },
+        )
         assert report is not None, result.stdout + result.stderr
         assert result.returncode == 0, (
             "a verdict-`ok` graph with a high unresolvedPct still exited 1, so "
@@ -470,11 +510,15 @@ class TestANeutralFindingDoesNotFailTheCheck:
         """The rejected option 3 was to drop the line on an `ok` verdict."""
         project = tmp_path / "repo"
         project.mkdir()
-        _, report = _health_check(tmp_path, project, {
-            "codebase_health": HEALTH_OK,
-            "codebase_status": STATUS_CLEAN,
-            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
-        })
+        _, report = _health_check(
+            tmp_path,
+            project,
+            {
+                "codebase_health": HEALTH_OK,
+                "codebase_status": STATUS_CLEAN,
+                "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+            },
+        )
         assert any("61.7%" in f for f in report["findings"]), (
             "the unresolvedPct figure vanished from the report. It is worth "
             f"having on a healthy graph too; only its cost changes: {report}"
@@ -489,11 +533,15 @@ class TestANeutralFindingDoesNotFailTheCheck:
         """
         project = tmp_path / "repo"
         project.mkdir()
-        _, report = _health_check(tmp_path, project, {
-            "codebase_health": HEALTH_OK,
-            "codebase_status": STATUS_CLEAN,
-            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
-        })
+        _, report = _health_check(
+            tmp_path,
+            project,
+            {
+                "codebase_health": HEALTH_OK,
+                "codebase_status": STATUS_CLEAN,
+                "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+            },
+        )
         line = next(f for f in report["findings"] if "61.7%" in f)
         assert line.startswith("note: "), (
             "the unresolvedPct entry carries no severity marker, so nothing in "
@@ -505,11 +553,15 @@ class TestANeutralFindingDoesNotFailTheCheck:
         """Severity gates the exit code; it must not soften a real finding."""
         project = tmp_path / "repo"
         project.mkdir()
-        result, report = _health_check(tmp_path, project, {
-            "codebase_health": HEALTH_DOWN,
-            "codebase_status": STATUS_CLEAN,
-            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
-        })
+        result, report = _health_check(
+            tmp_path,
+            project,
+            {
+                "codebase_health": HEALTH_DOWN,
+                "codebase_status": STATUS_CLEAN,
+                "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+            },
+        )
         assert result.returncode == 1, result.stdout + result.stderr
         assert report["healthy"] is False, report
         assert any("Qdrant" in f for f in report["findings"]), report
@@ -519,11 +571,15 @@ class TestANeutralFindingDoesNotFailTheCheck:
         """Severity is a property of the finding, not of the run."""
         project = tmp_path / "repo"
         project.mkdir()
-        _, report = _health_check(tmp_path, project, {
-            "codebase_health": HEALTH_DOWN,
-            "codebase_status": STATUS_CLEAN,
-            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
-        })
+        _, report = _health_check(
+            tmp_path,
+            project,
+            {
+                "codebase_health": HEALTH_DOWN,
+                "codebase_status": STATUS_CLEAN,
+                "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+            },
+        )
         note = next(f for f in report["findings"] if "61.7%" in f)
         defect = next(f for f in report["findings"] if "Qdrant" in f)
         assert note.startswith("note: "), note
@@ -541,14 +597,16 @@ class TestANeutralFindingDoesNotFailTheCheck:
         """
         project = tmp_path / "repo"
         project.mkdir()
-        result, _ = _health_check(tmp_path, project, {
-            "codebase_health": HEALTH_DOWN,
-            "codebase_status": STATUS_CLEAN,
-            "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
-        })
-        bullets = [
-            ln for ln in result.stderr.splitlines() if re.match(r"^\s+- ", ln)
-        ]
+        result, _ = _health_check(
+            tmp_path,
+            project,
+            {
+                "codebase_health": HEALTH_DOWN,
+                "codebase_status": STATUS_CLEAN,
+                "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+            },
+        )
+        bullets = [ln for ln in result.stderr.splitlines() if re.match(r"^\s+- ", ln)]
         assert any("Qdrant" in ln for ln in bullets), result.stderr
         stat = next(ln for ln in bullets if "61.7%" in ln)
         assert "note:" in stat, (
@@ -616,17 +674,32 @@ class TestSkillGatesOnYield:
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.email=t@example.com",
-         "-c", "user.name=t", *args],
-        check=True, capture_output=True, text=True, env=_clean_env(),
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
     )
 
 
 def _repo(tmp_path: Path, *, manifest: bool = True, commit: bool = False) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "-C", str(repo), "init", "-q"],
-                   check=True, capture_output=True, env=_clean_env())
+    subprocess.run(
+        ["git", "-C", str(repo), "init", "-q"],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
     if manifest:
         (repo / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
     if commit:
@@ -669,7 +742,10 @@ def _stub_driver(repo: Path, *, exit_code: int, findings: str = "") -> Path:
 def _run_hook(repo: Path, **env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(HOOK)],
-        cwd=str(repo), capture_output=True, text=True, timeout=60,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(**env),
     )
 
@@ -686,7 +762,10 @@ class TestHealthHook:
     def test_help_exits_zero(self) -> None:
         result = subprocess.run(
             ["bash", str(HOOK), "--help"],
-            capture_output=True, text=True, timeout=30, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_clean_env(),
         )
         assert result.returncode == 0
         assert "once-per-day" in result.stdout.lower()
@@ -842,7 +921,10 @@ class TestHookMeasuresTheIndexedProject:
         """
         result = subprocess.run(
             ["node", str(DRIVER), "validate-manifest", *args],
-            cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=60,
             env=_clean_env(),
         )
         return result, json.loads(result.stdout)
@@ -851,7 +933,10 @@ class TestHookMeasuresTheIndexedProject:
     def _measured(cwd: Path, stub: Path, out: Path, **env: str) -> str:
         result = subprocess.run(
             ["bash", str(HOOK)],
-            cwd=str(cwd), capture_output=True, text=True, timeout=60,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=60,
             env=_clean_env(
                 SOCRATICODE_DRIVER=str(stub), HEALTH_ARGS_OUT=str(out), **env
             ),
@@ -893,7 +978,9 @@ class TestHookMeasuresTheIndexedProject:
         out = tmp_path / "args.txt"
         self._measured(repo, stub, out, SOCRATICODE_PROBE_FILE="src/app.py")
         assert out.read_text().splitlines()[:3] == [
-            "health-check", "--probe", "src/app.py"
+            "health-check",
+            "--probe",
+            "src/app.py",
         ], out.read_text()
 
     @requires_node
@@ -986,9 +1073,7 @@ class TestHookMeasuresTheIndexedProject:
         )
 
     @requires_node
-    def test_a_subdirectory_resolves_to_the_checkout_root(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_subdirectory_resolves_to_the_checkout_root(self, tmp_path: Path) -> None:
         """`.` inside `src/` is the same class of wrong answer as `.` in a worktree.
 
         SocratiCode indexes the project root; a subdirectory is a path it never
@@ -1114,9 +1199,11 @@ class TestHookPrefersTheRealDriver:
         start = body.index("Resolution of the driver")
         block = [
             line.split(". ", 1)[-1].strip()
-            for line in body[start:body.index("Env:", start)].splitlines()
+            for line in body[start : body.index("Env:", start)].splitlines()
         ]
-        vendor = block.index("skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs")
+        vendor = block.index(
+            "skills-vendor/*/skills/init-socraticode/scripts/mcp-driver.mjs"
+        )
         symlinked = block.index("skills/init-socraticode/scripts/mcp-driver.mjs")
         assert vendor < symlinked, (
             "socraticode-health.sh --help still lists the symlink candidates "
@@ -1134,7 +1221,7 @@ def _health_hook_install_step() -> str:
     """
     body = POLICY_REF.read_text()
     start = body.index("**Step C —")
-    return body[start:body.index("**It reports; it does not repair.**", start)]
+    return body[start : body.index("**It reports; it does not repair.**", start)]
 
 
 class TestHookIsInstalled:
@@ -1187,7 +1274,7 @@ class TestHookIsInstalled:
         of each kind in the same directory."""
         body = SKILL_MD.read_text()
         idx = body.index(".claude/hooks/socraticode-health.sh")
-        window = body[idx:idx + 500]
+        window = body[idx : idx + 500]
         assert "symlink" in window.lower(), (
             "SKILL.md Phase 3 still describes the health hook as a copy while "
             f"the reference installs a symlink (#179).\n---\n{window}"

@@ -59,9 +59,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 INSTALL_CADENCE = (
     REPO_ROOT / "skills" / "curating-context" / "scripts" / "install-cadence.sh"
 )
-CADENCE_DOC = (
-    REPO_ROOT / "skills" / "curating-context" / "references" / "cadence.md"
-)
+CADENCE_DOC = REPO_ROOT / "skills" / "curating-context" / "references" / "cadence.md"
 
 LEDGER = ".skills/context-metrics.jsonl"
 RATIO = ".skills/context-token-ratio"
@@ -69,8 +67,7 @@ COUNTS = ".skills/context-token-counts"
 DRIVER = "merge.ours.driver"
 
 MERGE_SCRIPT = (
-    REPO_ROOT / "skills" / "curating-context" / "scripts"
-    / "merge-token-counts.sh"
+    REPO_ROOT / "skills" / "curating-context" / "scripts" / "merge-token-counts.sh"
 )
 COUNTS_DRIVER = "merge.context-counts.driver"
 ATTR_COUNTS = f"{COUNTS} merge=context-counts"
@@ -102,7 +99,10 @@ def _env() -> dict:
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, env=_env(), timeout=30,
+        capture_output=True,
+        text=True,
+        env=_env(),
+        timeout=30,
     )
 
 
@@ -119,7 +119,11 @@ def _repo(tmp_path: Path, name: str = "r") -> Path:
 def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(INSTALL_CADENCE), *args],
-        cwd=str(repo), capture_output=True, text=True, env=_env(), timeout=30,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_env(),
+        timeout=30,
     )
 
 
@@ -157,9 +161,7 @@ class TestTheAttributeAloneIsInert:
         _git(repo, "commit", "-qam", "main")
         return repo
 
-    def test_without_the_driver_the_calibration_file_conflicts(
-        self, tmp_path: Path
-    ):
+    def test_without_the_driver_the_calibration_file_conflicts(self, tmp_path: Path):
         repo = self._diverge(tmp_path, "undefined")
         assert _driver(repo) == "", "the driver must be unset for this repro"
         r = _git(repo, "merge", "other")
@@ -191,7 +193,7 @@ class TestTheAttributeAloneIsInert:
         """
         repo = self._diverge(tmp_path, "union")
         assert _driver(repo) == ""
-        _git(repo, "merge", "other")          # conflicts on the ratio only
+        _git(repo, "merge", "other")  # conflicts on the ratio only
         assert (repo / LEDGER).read_text() == (
             '{"row":0}\n{"row":"main"}\n{"row":"other"}\n'
         ), "union did not auto-merge without a driver"
@@ -293,7 +295,11 @@ class TestTheWriteCannotEscapeTheRepoItWasPointedAt:
         )
         r = subprocess.run(
             ["bash", str(INSTALL_CADENCE)],
-            cwd=str(target), capture_output=True, text=True, env=env, timeout=30,
+            cwd=str(target),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert _driver(bystander) == "", (
@@ -316,7 +322,11 @@ class TestTheWriteCannotEscapeTheRepoItWasPointedAt:
         )
         r = subprocess.run(
             ["bash", str(INSTALL_CADENCE), "--check"],
-            cwd=str(here), capture_output=True, text=True, env=env, timeout=30,
+            cwd=str(here),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert "ours merge driver:  MISSING" in r.stdout, r.stdout
 
@@ -334,9 +344,7 @@ class TestCheckReportsTheDriverIndependently:
         assert r.returncode == 0, r.stdout
         assert "ours merge driver:  yes" in r.stdout, r.stdout
 
-    def test_the_attributes_alone_are_not_reported_as_protection(
-        self, tmp_path: Path
-    ):
+    def test_the_attributes_alone_are_not_reported_as_protection(self, tmp_path: Path):
         """The bug verbatim: all three attributes present, driver absent,
         `--check` exiting 0 on a guarantee that does not hold."""
         repo = _repo(tmp_path)
@@ -372,8 +380,12 @@ class TestCheckReportsTheDriverIndependently:
         repo = _repo(tmp_path)
         r = _run(repo, "--check")
         assert r.returncode == 3
-        for label in ("workflow:", "ledger union merge:", "calibration merge:",
-                      "ours merge driver:"):
+        for label in (
+            "workflow:",
+            "ledger union merge:",
+            "calibration merge:",
+            "ours merge driver:",
+        ):
             assert label in r.stdout, f"{label} missing from:\n{r.stdout}"
 
     def test_a_driver_set_to_something_else_counts(self, tmp_path: Path):
@@ -451,7 +463,11 @@ def _drive(repo: Path, ancestor: str, current: str, other: str):
     b.write_text(other)
     r = subprocess.run(
         ["bash", str(MERGE_SCRIPT), str(o), str(a), str(b), COUNTS],
-        cwd=str(repo), capture_output=True, text=True, env=_env(), timeout=30,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_env(),
+        timeout=30,
     )
     return r, (a.read_text() if a.exists() else "")
 
@@ -467,9 +483,7 @@ class TestPerRowNewestWins:
     describes a file nobody has.
     """
 
-    def test_a_one_sided_update_wins_without_consulting_the_tree(
-        self, tmp_path: Path
-    ):
+    def test_a_one_sided_update_wins_without_consulting_the_tree(self, tmp_path: Path):
         """Ordinary three-way first: if only one side re-measured, that side
         wins even when the file has drifted past BOTH rows since."""
         repo = _repo(tmp_path)
@@ -501,9 +515,7 @@ class TestPerRowNewestWins:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "150 60 AGENTS.md" in merged, merged
 
-    def test_a_collision_matching_neither_keeps_the_current_side(
-        self, tmp_path: Path
-    ):
+    def test_a_collision_matching_neither_keeps_the_current_side(self, tmp_path: Path):
         """The file moved on since both measurements (or is gone). Nothing to
         arbitrate with, so keep the current side's row — exactly what
         `merge=ours` did — and let the estimators' drift fallback and the next
@@ -512,7 +524,9 @@ class TestPerRowNewestWins:
         (repo / "AGENTS.md").write_bytes(b"x" * 999)
         base = HEADER + "100 40 AGENTS.md\n"
         r, merged = _drive(
-            repo, base, HEADER + "120 44 AGENTS.md\n",
+            repo,
+            base,
+            HEADER + "120 44 AGENTS.md\n",
             HEADER + "150 60 AGENTS.md\n",
         )
         assert r.returncode == 0, r.stdout + r.stderr
@@ -520,7 +534,9 @@ class TestPerRowNewestWins:
 
         (repo / "AGENTS.md").unlink()
         r, merged = _drive(
-            repo, base, HEADER + "120 44 AGENTS.md\n",
+            repo,
+            base,
+            HEADER + "120 44 AGENTS.md\n",
             HEADER + "150 60 AGENTS.md\n",
         )
         assert r.returncode == 0, r.stdout + r.stderr
@@ -546,7 +562,10 @@ class TestPerRowNewestWins:
         repo = _repo(tmp_path)
         base = HEADER + "10 4 docs/a.md\n"
         r, merged = _drive(
-            repo, base, base + "20 8 docs/b.md\n", base + "30 12 docs/c.md\n",
+            repo,
+            base,
+            base + "20 8 docs/b.md\n",
+            base + "30 12 docs/c.md\n",
         )
         assert r.returncode == 0, r.stdout + r.stderr
         for row in ("10 4 docs/a.md", "20 8 docs/b.md", "30 12 docs/c.md"):
@@ -559,7 +578,10 @@ class TestPerRowNewestWins:
         repo = _repo(tmp_path)
         base = HEADER + "10 4 docs/a.md\n"
         r, merged = _drive(
-            repo, base, base + "30 12 docs/z.md\n", base + "20 8 docs/b.md\n",
+            repo,
+            base,
+            base + "30 12 docs/z.md\n",
+            base + "20 8 docs/b.md\n",
         )
         assert r.returncode == 0, r.stdout + r.stderr
         lines = merged.splitlines()
@@ -576,7 +598,9 @@ class TestPerRowNewestWins:
         (repo / "docs" / "a b.md").write_bytes(b"x" * 150)
         base = HEADER + "100 40 docs/a b.md\n"
         r, merged = _drive(
-            repo, base, HEADER + "120 44 docs/a b.md\n",
+            repo,
+            base,
+            HEADER + "120 44 docs/a b.md\n",
             HEADER + "150 60 docs/a b.md\n",
         )
         assert r.returncode == 0, r.stdout + r.stderr
@@ -599,12 +623,9 @@ class TestNewestWinsSurvivesARealMerge:
         return repo
 
     def _define(self, repo: Path) -> None:
-        _git(repo, "config", COUNTS_DRIVER,
-             f"bash '{MERGE_SCRIPT}' %O %A %B %P")
+        _git(repo, "config", COUNTS_DRIVER, f"bash '{MERGE_SCRIPT}' %O %A %B %P")
 
-    def test_the_incident_merge_keeps_the_fresh_measurement(
-        self, tmp_path: Path
-    ):
+    def test_the_incident_merge_keeps_the_fresh_measurement(self, tmp_path: Path):
         """#237 verbatim: a branch that touched the counts file merges
         origin/main, which carries the cadence's fresh row. `merge=ours`
         reverted the row to one describing a file 1,342 bytes smaller than
@@ -615,17 +636,14 @@ class TestNewestWinsSurvivesARealMerge:
         (repo / COUNTS).write_text(HEADER + "150 60 AGENTS.md\n")
         _git(repo, "commit", "-qam", "weekly measurement")
         _git(repo, "checkout", "-q", "main")
-        (repo / COUNTS).write_text(
-            HEADER + "100 40 AGENTS.md\n120 44 docs/x.md\n"
-        )
+        (repo / COUNTS).write_text(HEADER + "100 40 AGENTS.md\n120 44 docs/x.md\n")
         _git(repo, "commit", "-qam", "branch work")
         r = _git(repo, "merge", "cadence")
         assert r.returncode == 0, r.stdout + r.stderr
         merged = (repo / COUNTS).read_text()
         assert "150 60 AGENTS.md" in merged, merged
         assert "100 40 AGENTS.md" not in merged, (
-            "the stale row survived the merge — the silent revert is back:\n"
-            + merged
+            "the stale row survived the merge — the silent revert is back:\n" + merged
         )
         assert "120 44 docs/x.md" in merged, merged
 
@@ -642,9 +660,7 @@ class TestNewestWinsSurvivesARealMerge:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "150 60 AGENTS.md" in (repo / COUNTS).read_text()
 
-    def test_the_bot_side_of_a_rebase_keeps_its_fresh_row_too(
-        self, tmp_path: Path
-    ):
+    def test_the_bot_side_of_a_rebase_keeps_its_fresh_row_too(self, tmp_path: Path):
         """The push-retry path: the cadence rebases its measurement onto a
         human commit, and `ours` during that rebase is the HUMAN side — which
         is exactly why merge=ours structurally discarded the bot's row."""
@@ -661,9 +677,7 @@ class TestNewestWinsSurvivesARealMerge:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "150 60 AGENTS.md" in (repo / COUNTS).read_text()
 
-    def test_the_attribute_without_the_driver_still_conflicts(
-        self, tmp_path: Path
-    ):
+    def test_the_attribute_without_the_driver_still_conflicts(self, tmp_path: Path):
         """Same inertness as merge=ours (#192): the new name buys nothing
         until config defines it, and --check owns reporting that."""
         repo = self._calibrated_repo(tmp_path, "inert")
@@ -718,11 +732,19 @@ class TestInstallerWiresTheNewestWinsDriver:
         (repo / "O").write_text("100 40 AGENTS.md\n")
         (repo / "A").write_text("120 44 AGENTS.md\n")
         (repo / "B").write_text("150 60 AGENTS.md\n")
-        cmd = (value.replace("%O", "O").replace("%A", "A")
-               .replace("%B", "B").replace("%P", COUNTS))
+        cmd = (
+            value.replace("%O", "O")
+            .replace("%A", "A")
+            .replace("%B", "B")
+            .replace("%P", COUNTS)
+        )
         r = subprocess.run(
-            ["sh", "-c", cmd], cwd=str(repo), capture_output=True, text=True,
-            env=_env(), timeout=30,
+            ["sh", "-c", cmd],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            env=_env(),
+            timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert (repo / "A").read_text().strip() == "150 60 AGENTS.md"
@@ -751,9 +773,7 @@ class TestInstallerWiresTheNewestWinsDriver:
         assert attrs.count(f"{LEDGER} merge=union") == 1, attrs
         assert _run(repo, "--check").returncode == 0
 
-    def test_check_reports_the_counts_driver_independently(
-        self, tmp_path: Path
-    ):
+    def test_check_reports_the_counts_driver_independently(self, tmp_path: Path):
         repo = _repo(tmp_path)
         _run(repo)
         _git(repo, "config", "--unset", COUNTS_DRIVER)
@@ -766,33 +786,36 @@ class TestInstallerWiresTheNewestWinsDriver:
             "the failure text never names the key to set:\n" + r.stdout
         )
 
-    def test_check_flags_a_config_pointing_at_a_missing_script(
-        self, tmp_path: Path
-    ):
+    def test_check_flags_a_config_pointing_at_a_missing_script(self, tmp_path: Path):
         """A vendored skill reached through a dangling symlink — submodules
         not initialised — leaves a defined driver whose command cannot run,
         and git then conflicts as if the driver were absent."""
         repo = _repo(tmp_path)
         _run(repo)
-        _git(repo, "config", COUNTS_DRIVER,
-             "bash 'no/such/merge-token-counts.sh' %O %A %B %P")
+        _git(
+            repo,
+            "config",
+            COUNTS_DRIVER,
+            "bash 'no/such/merge-token-counts.sh' %O %A %B %P",
+        )
         r = _run(repo, "--check")
         assert r.returncode == 3, r.stdout
         assert "newest-wins driver: BROKEN" in r.stdout, r.stdout
 
-    def test_check_flags_a_workflow_missing_the_driver_leg(
-        self, tmp_path: Path
-    ):
+    def test_check_flags_a_workflow_missing_the_driver_leg(self, tmp_path: Path):
         """A workflow rendered before #237 rebases on the runner without the
         driver and conflicts on the counts file. The workflow is the third
         leg, and --check must see all three."""
         repo = _repo(tmp_path)
         _run(repo)
         wf = repo / ".github" / "workflows" / "context-cadence.yml"
-        wf.write_text("".join(
-            ln for ln in wf.read_text().splitlines(keepends=True)
-            if COUNTS_DRIVER not in ln
-        ))
+        wf.write_text(
+            "".join(
+                ln
+                for ln in wf.read_text().splitlines(keepends=True)
+                if COUNTS_DRIVER not in ln
+            )
+        )
         r = _run(repo, "--check")
         assert r.returncode == 3, r.stdout
         assert "workflow drivers:   STALE" in r.stdout, r.stdout

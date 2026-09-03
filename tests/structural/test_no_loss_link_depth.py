@@ -52,7 +52,9 @@ def _clean_env() -> dict:
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-C", str(repo), *args],
-        check=True, capture_output=True, env=_clean_env(),
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
     )
 
 
@@ -75,9 +77,7 @@ def _split_repo(tmp_path: Path, base_line: str, moved_line: str) -> Path:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "before")
 
-    (repo / "docs" / "API.md").write_text(
-        "# API\n\n- [Hooks](api/conventions.md)\n"
-    )
+    (repo / "docs" / "API.md").write_text("# API\n\n- [Hooks](api/conventions.md)\n")
     (repo / "docs" / "api").mkdir()
     (repo / "docs" / "api" / "conventions.md").write_text(
         f"# Hooks\n\n## Hooks\n\n{moved_line}\n"
@@ -88,8 +88,11 @@ def _split_repo(tmp_path: Path, base_line: str, moved_line: str) -> Path:
 def _run(repo: Path, *extra: str):
     return subprocess.run(
         ["bash", str(PROVE), "--base", "HEAD", "--file", "docs/API.md", *extra],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=30,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -226,8 +229,11 @@ def _run_policy(repo: Path, *extra: str):
     """A policy-file run — the default target, which is what a demotion proves."""
     return subprocess.run(
         ["bash", str(PROVE), "--base", "HEAD", *extra],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=30,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -264,18 +270,31 @@ class TestARemovedDirectoryPrefixIsNormalised:
         (repo / "AGENTS.md").write_text("# P\n")
         (repo / "docs").mkdir()
         (repo / "docs" / "STYLE.md").write_text(
-            "# Style\n\n- See [other](OTHER.md) for the rules.\n")
+            "# Style\n\n- See [other](OTHER.md) for the rules.\n"
+        )
         (repo / "docs" / "OTHER.md").write_text("# Other\n\nthe rules\n")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-qm", "before")
         (repo / "docs" / "STYLE.md").write_text("# Style\n")
         (repo / "AGENTS.md").write_text(
-            "# P\n\n- See [other](docs/OTHER.md) for the rules.\n")
+            "# P\n\n- See [other](docs/OTHER.md) for the rules.\n"
+        )
         result = subprocess.run(
-            ["bash", str(PROVE), "--base", "HEAD", "--file", "docs/STYLE.md",
-             "--also", "AGENTS.md"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            [
+                "bash",
+                str(PROVE),
+                "--base",
+                "HEAD",
+                "--file",
+                "docs/STYLE.md",
+                "--also",
+                "AGENTS.md",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
@@ -291,14 +310,16 @@ class TestARemovedDirectoryPrefixIsNormalised:
         _git(repo, "config", "user.email", "t@t")
         _git(repo, "config", "user.name", "t")
         (repo / "AGENTS.md").write_text(
-            "# P\n\n- See [other](reference/OTHER.md) for the rules.\n")
+            "# P\n\n- See [other](reference/OTHER.md) for the rules.\n"
+        )
         (repo / "reference").mkdir()
         (repo / "reference" / "OTHER.md").write_text("# Other\n")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-qm", "before")
         (repo / "AGENTS.md").write_text("# P\n")
         (repo / "reference" / "STYLE.md").write_text(
-            "# Style\n\n- See [other](OTHER.md) for the rules.\n")
+            "# Style\n\n- See [other](OTHER.md) for the rules.\n"
+        )
         result = _run_policy(repo, "--docs-dir", "reference")
         assert result.returncode == 0, result.stdout + result.stderr
 
@@ -323,9 +344,7 @@ class TestPrefixErasureIsNotTargetBlind:
         )
         assert "lib/OTHER.md" in result.stdout, result.stdout
 
-    def test_a_changed_target_under_the_docs_root_is_still_lost(
-        self, tmp_path: Path
-    ):
+    def test_a_changed_target_under_the_docs_root_is_still_lost(self, tmp_path: Path):
         repo = _demote_repo(
             tmp_path,
             "- See [other](docs/ALPHA.md) for the rules.",
@@ -389,26 +408,41 @@ def _skill_demote_repo(tmp_path: Path, base_line: str, moved_line: str) -> Path:
     _git(repo, "config", "user.name", "t")
     (repo / "skills" / "demo" / "references").mkdir(parents=True)
     (repo / "skills" / "demo" / "SKILL.md").write_text(
-        f"# Demo\n\n## Rules\n\n{base_line}\n")
+        f"# Demo\n\n## Rules\n\n{base_line}\n"
+    )
     (repo / "skills" / "demo" / "references" / "OTHER.md").write_text(
-        "# Other\n\nthe rules\n")
+        "# Other\n\nthe rules\n"
+    )
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "before")
 
     (repo / "skills" / "demo" / "SKILL.md").write_text(
-        "# Demo\n\nSee [references/STYLE.md](references/STYLE.md).\n")
+        "# Demo\n\nSee [references/STYLE.md](references/STYLE.md).\n"
+    )
     (repo / "skills" / "demo" / "references" / "STYLE.md").write_text(
-        f"# Style\n\n## Rules\n\n{moved_line}\n")
+        f"# Style\n\n## Rules\n\n{moved_line}\n"
+    )
     return repo
 
 
 def _run_skill(repo: Path, *extra: str):
     return subprocess.run(
-        ["bash", str(PROVE), "--base", "HEAD",
-         "--file", "skills/demo/SKILL.md",
-         "--docs-dir", "skills/demo/references", *extra],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=30,
+        [
+            "bash",
+            str(PROVE),
+            "--base",
+            "HEAD",
+            "--file",
+            "skills/demo/SKILL.md",
+            "--docs-dir",
+            "skills/demo/references",
+            *extra,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -461,9 +495,7 @@ class TestThePolicyRelativePrefixIsNotTargetBlind:
     """The same bargain as every other relaxation here: the prefix is one
     prefix, at the start of the target, anchored to `](`."""
 
-    def test_a_repointed_link_under_the_docs_root_is_still_lost(
-        self, tmp_path: Path
-    ):
+    def test_a_repointed_link_under_the_docs_root_is_still_lost(self, tmp_path: Path):
         repo = _skill_demote_repo(
             tmp_path,
             "- See [other](references/ALPHA.md) for the rules.",

@@ -48,7 +48,9 @@ from .test_context_surface import _arm, _roster, _score  # shared cohort fixture
 
 SCRIPTS = (
     Path(__file__).resolve().parent.parent.parent
-    / "skills" / "curating-context" / "scripts"
+    / "skills"
+    / "curating-context"
+    / "scripts"
 )
 PROVE = SCRIPTS / "prove-no-loss.sh"
 RECORD = SCRIPTS / "record-telemetry.sh"
@@ -71,8 +73,12 @@ def _clean_env() -> dict:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True,
-                   capture_output=True, env=_clean_env())
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
 
 
 def _repo(tmp_path: Path, policy_body: str) -> Path:
@@ -96,8 +102,11 @@ def _ack(repo: Path, *entries: str, path: str = ACK) -> None:
 def _prove(repo: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(PROVE), "--base", "HEAD", *extra],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=30,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -109,14 +118,14 @@ class TestTheWarrantedLossIsNotALoss:
         """power-map's shape: the policy file points into a section, the run
         splits that section out, and the pointer must be retargeted."""
         repo = _repo(tmp_path, f"# P\n\n## Conventions\n\n{POINTER}\n")
-        (repo / "AGENTS.md").write_text(
-            f"# P\n\n## Conventions\n\n{RETARGETED}\n")
+        (repo / "AGENTS.md").write_text(f"# P\n\n## Conventions\n\n{RETARGETED}\n")
         (repo / "docs" / "naming").mkdir(parents=True)
-        (repo / "docs" / "naming" / "STYLE.md").write_text("# Style\n\n## Naming\n\nrules\n")
+        (repo / "docs" / "naming" / "STYLE.md").write_text(
+            "# Style\n\n## Naming\n\nrules\n"
+        )
         return repo
 
-    def test_without_a_warrant_the_retarget_still_reports_as_loss(
-            self, tmp_path: Path):
+    def test_without_a_warrant_the_retarget_still_reports_as_loss(self, tmp_path: Path):
         """The status quo, pinned. If this ever passes on its own the ack file
         has stopped being necessary — and, far more likely, the normaliser has
         gone target-blind and the check is worthless."""
@@ -132,8 +141,7 @@ class TestTheWarrantedLossIsNotALoss:
         assert "loss_warranted: 1" in r.stdout, r.stdout
         assert "lost: 0" in r.stdout, r.stdout
 
-    def test_the_warranted_line_is_still_named_in_the_report(
-            self, tmp_path: Path):
+    def test_the_warranted_line_is_still_named_in_the_report(self, tmp_path: Path):
         """A clean exit that prints nothing about what it waved through is how
         an ack file becomes a blanket. check-seams.sh lists every acknowledged
         hit for the same reason."""
@@ -150,21 +158,26 @@ class TestTheWarrantedLossIsNotALoss:
         repo = self._split_repo(tmp_path)
         _ack(repo, f"retarget :: {POINTER}")
         r = _prove(repo)
-        assert "every line is either still inline or relocated verbatim" \
-            not in r.stdout, r.stdout
+        assert (
+            "every line is either still inline or relocated verbatim" not in r.stdout
+        ), r.stdout
         assert "1 line(s) warranted, none unexplained" in r.stdout, r.stdout
 
     def test_the_provenance_rename_phase_65_mandates_has_a_warrant(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """cannobserv's case. check-seams.sh class 3b fires on `#\\d{2,}` in any
         heading, so the rename is compulsory; prove-no-loss normalises heading
         level but not heading text, so it reports LOST. No ordering discipline
         avoids this one — the two phases genuinely cannot both be satisfied."""
-        repo = _repo(tmp_path, "# P\n\n### uv workspace layout (introduced #129)\n\nbody\n")
+        repo = _repo(
+            tmp_path, "# P\n\n### uv workspace layout (introduced #129)\n\nbody\n"
+        )
         (repo / "AGENTS.md").write_text("# P\n\nSee [docs/UV.md](docs/UV.md).\n")
         (repo / "docs").mkdir()
         (repo / "docs" / "UV.md").write_text(
-            "# UV\n\n## uv workspace layout\n\nbody\n\nIntroduced in #129.\n")
+            "# UV\n\n## uv workspace layout\n\nbody\n\nIntroduced in #129.\n"
+        )
         assert _prove(repo).returncode == 3, "fixture must reproduce the rename loss"
         _ack(repo, "rename :: uv workspace layout (introduced #129)")
         r = _prove(repo)
@@ -179,7 +192,8 @@ class TestAGenuineLossStillFails:
     def test_an_unwarranted_line_still_exits_three(self, tmp_path: Path):
         repo = _repo(
             tmp_path,
-            f"# P\n\n## A\n\n{POINTER}\n\nload-bearing constraint nobody judged\n")
+            f"# P\n\n## A\n\n{POINTER}\n\nload-bearing constraint nobody judged\n",
+        )
         (repo / "AGENTS.md").write_text(f"# P\n\n## A\n\n{RETARGETED}\n")
         _ack(repo, f"retarget :: {POINTER}")
         r = _prove(repo)
@@ -200,8 +214,7 @@ class TestAGenuineLossStillFails:
         assert r.returncode == 3, r.stdout
         assert "matched nothing" in r.stdout, r.stdout
 
-    def test_an_entry_cannot_reach_a_line_that_was_accounted_for(
-            self, tmp_path: Path):
+    def test_an_entry_cannot_reach_a_line_that_was_accounted_for(self, tmp_path: Path):
         """A warrant only ever applies to a line already unaccounted for, so it
         can neither hide a relocation nor manufacture one."""
         repo = _repo(tmp_path, f"# P\n\n## A\n\n{POINTER}\n")
@@ -223,7 +236,10 @@ class TestAGenuineLossStillFails:
         can turn a content-loss failure into a pass, so breadth gets the same
         treatment malformed syntax already got.
         """
-        repo = _repo(tmp_path, "# P\n\n## A\n\nfirst rule here\nsecond rule here\nthird rule here\n")
+        repo = _repo(
+            tmp_path,
+            "# P\n\n## A\n\nfirst rule here\nsecond rule here\nthird rule here\n",
+        )
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         _ack(repo, "duplicate :: rule here")
         r = _prove(repo)
@@ -235,13 +251,21 @@ class TestAGenuineLossStillFails:
         )
 
     def test_splitting_a_blanket_into_one_entry_per_line_is_accepted(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The refusal has to leave a way through, or it is just a ban on
         warranting more than one line per run."""
-        repo = _repo(tmp_path, "# P\n\n## A\n\nfirst rule here\nsecond rule here\nthird rule here\n")
+        repo = _repo(
+            tmp_path,
+            "# P\n\n## A\n\nfirst rule here\nsecond rule here\nthird rule here\n",
+        )
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
-        _ack(repo, "duplicate :: first rule here", "duplicate :: second rule here",
-             "duplicate :: third rule here")
+        _ack(
+            repo,
+            "duplicate :: first rule here",
+            "duplicate :: second rule here",
+            "duplicate :: third rule here",
+        )
         r = _prove(repo)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "loss_warranted: 3" in r.stdout, r.stdout
@@ -312,9 +336,11 @@ class TestAnEntryCanBeScopedToOneTarget:
         against one target must not accuse the other's entry of having expired,
         or the warning stops meaning anything."""
         repo = self._two_targets(tmp_path)
-        _ack(repo,
-             f"AGENTS.md :: retarget :: {POINTER}",
-             f"docs/API.md :: retarget :: {INDEX_ENTRY}")
+        _ack(
+            repo,
+            f"AGENTS.md :: retarget :: {POINTER}",
+            f"docs/API.md :: retarget :: {INDEX_ENTRY}",
+        )
         r = _prove(repo)
         assert r.returncode == 0, r.stdout + r.stderr
         assert "matched nothing" not in r.stdout, r.stdout
@@ -328,8 +354,7 @@ class TestAnEntryCanBeScopedToOneTarget:
         assert "matched nothing" not in other.stdout, other.stdout
         assert "loss_warranted: 1" in other.stdout, other.stdout
 
-    def test_an_entry_scoped_elsewhere_cannot_warrant_this_run(
-            self, tmp_path: Path):
+    def test_an_entry_scoped_elsewhere_cannot_warrant_this_run(self, tmp_path: Path):
         """The direction that matters: scoping must narrow, never widen. An
         entry judged against another target does not wave a line through
         here."""
@@ -361,7 +386,8 @@ class TestAnEntryCanBeScopedToOneTarget:
         assert "loss_warranted: 1" in r.stdout, r.stdout
 
     def test_an_unknown_warrant_in_the_scoped_form_is_still_refused(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         repo = self._two_targets(tmp_path)
         _ack(repo, f"AGENTS.md :: retargetted :: {POINTER}")
         r = _prove(repo)
@@ -377,12 +403,10 @@ class TestAnEntryCanBeScopedToOneTarget:
         r = _prove(repo)
         assert r.returncode == 1, r.stdout + r.stderr
 
-    def test_an_out_of_scope_entry_is_not_charged_with_breadth(
-            self, tmp_path: Path):
+    def test_an_out_of_scope_entry_is_not_charged_with_breadth(self, tmp_path: Path):
         """An entry that cannot apply here has no hits here, so the over-broad
         refusal must not fire on it — and must still fire on one that does."""
-        repo = _repo(tmp_path,
-                     "# P\n\n## A\n\nfirst rule here\nsecond rule here\n")
+        repo = _repo(tmp_path, "# P\n\n## A\n\nfirst rule here\nsecond rule here\n")
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         _ack(repo, "docs/NOWHERE.md :: duplicate :: rule here")
         r = _prove(repo)
@@ -433,8 +457,7 @@ class TestAWarrantMustBeNamed:
         r = _prove(repo)
         assert r.returncode == 1, r.stdout + r.stderr
 
-    def test_comments_and_blanks_are_ignored_at_line_start_only(
-            self, tmp_path: Path):
+    def test_comments_and_blanks_are_ignored_at_line_start_only(self, tmp_path: Path):
         """An inline `#` must not be stripped. check-seams.sh learned this the
         hard way: stripping one turned `Fixed in #412` into `Fixed in`, a
         strictly broader pattern than its author wrote."""
@@ -529,7 +552,8 @@ class TestProvingADocSplit:
         docs = repo / "docs"
         docs.mkdir()
         (docs / "API.md").write_text(
-            "# API\n\n## Shapes\n\nSee the [helper](../tests/x.py) for the shape.\n")
+            "# API\n\n## Shapes\n\nSee the [helper](../tests/x.py) for the shape.\n"
+        )
         _git(repo, "add", "-A")
         _git(repo, "commit", "-qm", "the doc before its split")
         (docs / "api").mkdir()
@@ -539,7 +563,8 @@ class TestProvingADocSplit:
         # source doc's own `# API` title has to survive.
         (docs / "api" / "README.md").write_text("# API\n\n- [Shapes](shapes.md)\n")
         (docs / "api" / "shapes.md").write_text(
-            "# Shapes\n\nSee the [helper](../../tests/x.py) for the shape.\n")
+            "# Shapes\n\nSee the [helper](../../tests/x.py) for the shape.\n"
+        )
         if not keep_source:
             (docs / "API.md").unlink()
         return repo
@@ -550,7 +575,8 @@ class TestProvingADocSplit:
         assert "docs/api/shapes.md" in r.stdout, r.stdout
 
     def test_it_says_the_source_is_gone_rather_than_implying_it_is_empty(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """0 still inline out of 3 is indistinguishable from a file that was
         emptied in place, and the two want different review."""
         r = _prove(self._split(tmp_path, keep_source=False), "--file", "docs/API.md")
@@ -570,7 +596,8 @@ class TestProvingADocSplit:
         assert "helper" in r.stdout, r.stdout
 
     def test_a_file_absent_at_base_too_is_still_an_infrastructure_error(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """Exit 2, not a silent pass over zero lines."""
         repo = _repo(tmp_path, "# P\n")
         r = _prove(repo, "--file", "docs/NEVER.md")
@@ -578,7 +605,8 @@ class TestProvingADocSplit:
         assert "does not exist at" in r.stderr, r.stderr
 
     def test_no_file_flag_and_no_policy_file_is_still_a_usage_error(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The autodetect branch keeps its own message — the fix must not turn
         a repo with no policy file into a run over nothing."""
         repo = tmp_path / "bare"
@@ -602,21 +630,34 @@ class TestTheCountRidesTheRow:
     """
 
     def _payload(self) -> str:
-        return json.dumps({
-            "policy": {"path": "AGENTS.md", "lines": 10, "bytes": 100,
-                       "tokens": 40, "tokens_exact": True,
-                       "bytes_per_token": 2.5, "budget": 6000,
-                       "over_budget": False},
-            "totals": {"tokens_live": 40, "files_docs": 0},
-            "docs": [], "links": {"dead": [], "orphans": [], "dead_anchors": []},
-            "sections": [],
-        })
+        return json.dumps(
+            {
+                "policy": {
+                    "path": "AGENTS.md",
+                    "lines": 10,
+                    "bytes": 100,
+                    "tokens": 40,
+                    "tokens_exact": True,
+                    "bytes_per_token": 2.5,
+                    "budget": 6000,
+                    "over_budget": False,
+                },
+                "totals": {"tokens_live": 40, "files_docs": 0},
+                "docs": [],
+                "links": {"dead": [], "orphans": [], "dead_anchors": []},
+                "sections": [],
+            }
+        )
 
     def _record(self, tmp_path: Path, *flags: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(RECORD), "--dry-run", *flags], input=self._payload(),
-            capture_output=True, text=True,
-            cwd=str(_repo(tmp_path, "# P\n")), env=_clean_env(), timeout=30,
+            ["bash", str(RECORD), "--dry-run", *flags],
+            input=self._payload(),
+            capture_output=True,
+            text=True,
+            cwd=str(_repo(tmp_path, "# P\n")),
+            env=_clean_env(),
+            timeout=30,
         )
 
     def _row(self, tmp_path: Path, *flags: str) -> dict:
@@ -713,11 +754,13 @@ class TestTheGateSeesTheWarrantsWithoutRejectingThem:
         assert "ok+" not in r.stdout, r.stdout
 
     def test_a_recorded_failure_still_rejects_however_many_were_warranted(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The whole point of keeping `failed` meaningful: warranting five of
         eight lines does not make the other three acceptable."""
-        r = _score(_three_good_pairs_local(
-            tmp_path, no_loss="failed", no_loss_warrants=5))
+        r = _score(
+            _three_good_pairs_local(tmp_path, no_loss="failed", no_loss_warrants=5)
+        )
         assert r.returncode == 3, r.stdout + r.stderr
         assert "verdict: REJECT" in r.stdout
         assert "no_loss=failed" in r.stdout
@@ -727,8 +770,11 @@ def _three_good_pairs_local(root: Path, **treatment_kw) -> Path:
     """test_context_surface's fixture, with the treatment arm's extra row
     fields passed through. Shared rather than reimplemented so a change to the
     cohort fixture cannot leave this file testing a shape nobody writes."""
-    pairs = [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000),
-             (19000, 9000, 14000, 7000)]
+    pairs = [
+        (52000, 20000, 49000, 12000),
+        (28000, 12000, 26000, 9000),
+        (19000, 9000, 14000, 7000),
+    ]
     spec = []
     for i, (cb, ca, tb, ta) in enumerate(pairs, start=1):
         _arm(root, f"ctl{i}", cb, ca, "1.1")

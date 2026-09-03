@@ -143,7 +143,8 @@ def test_no_stale_entries():
     wave annotations had.
     """
     stale = [
-        rel for rel, (link, _why) in NOT_MINE_TO_FIX.items()
+        rel
+        for rel, (link, _why) in NOT_MINE_TO_FIX.items()
         if (SKILLS / rel).exists()
         and link not in {text for _n, text in _self_links(SKILLS / rel)}
     ]

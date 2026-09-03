@@ -63,9 +63,9 @@ import collections
 import pytest
 
 from tests.utils.selection_probe import (
-    Scenario,
     UNCOVERED_STACK,
     UNPARSEABLE,
+    Scenario,
     choose_skill,
     parse_choice,
     scenarios,
@@ -100,9 +100,7 @@ _TRIALS = [(s, _HAIKU, _HAIKU_TRIALS) for s in _SCENARIOS] + [
 ]
 
 
-def _distribution(
-    scenario: Scenario, model: str, trials: int
-) -> collections.Counter:
+def _distribution(scenario: Scenario, model: str, trials: int) -> collections.Counter:
     """Sample `trials` independent selections and tally them.
 
     Each trial is a fresh single-turn request: no conversation state, so the
@@ -118,7 +116,9 @@ def _distribution(
     return picks
 
 
-def _assert_unanimous(picks: collections.Counter, scenario: Scenario, model: str, note: str) -> None:
+def _assert_unanimous(
+    picks: collections.Counter, scenario: Scenario, model: str, note: str
+) -> None:
     """Deterministic selection is the contract, so unanimity is the assertion.
 
     Any non-`expected` pick is reported with its count rather than a bare

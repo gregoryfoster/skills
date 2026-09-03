@@ -68,9 +68,7 @@ class Skill:
             r'bash\s+"<SKILL_SCRIPTS>/([^"\s]+\.sh)"',
             r"(?m)^\s*(?:N=\S+\s+)?S=([^\s\n]+\.sh)\b",
         )
-        return {
-            m.group(1) for p in patterns for m in re.finditer(p, self.body)
-        }
+        return {m.group(1) for p in patterns for m in re.finditer(p, self.body)}
 
 
 def load_skill(skill_dir: Path) -> Skill:

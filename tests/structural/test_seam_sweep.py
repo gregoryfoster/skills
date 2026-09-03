@@ -26,7 +26,10 @@ from pathlib import Path
 
 SEAMS = (
     Path(__file__).resolve().parent.parent.parent
-    / "skills" / "curating-context" / "scripts" / "check-seams.sh"
+    / "skills"
+    / "curating-context"
+    / "scripts"
+    / "check-seams.sh"
 )
 
 
@@ -38,8 +41,12 @@ def _clean_env() -> dict:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True,
-                   capture_output=True, env=_clean_env())
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
 
 
 def _write(repo: Path, rel: str, text: str) -> None:
@@ -73,18 +80,25 @@ def _moved_repo(tmp_path: Path, name: str = "seams") -> Path:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "pre")
     _write(repo, "AGENTS.md", NOW_POLICY)
-    _write(repo, "docs/ENTITIES.md",
-           "# Entities\n\n## People\n\nEvery person carries a canonical "
-           "name.\n\n## Organizations\n\nOrgs own assignments.\n\n"
-           "## Deployment Topology\n\nThe workers connect to the bus "
-           "directly.\n")
+    _write(
+        repo,
+        "docs/ENTITIES.md",
+        "# Entities\n\n## People\n\nEvery person carries a canonical "
+        "name.\n\n## Organizations\n\nOrgs own assignments.\n\n"
+        "## Deployment Topology\n\nThe workers connect to the bus "
+        "directly.\n",
+    )
     return repo
 
 
 def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(SEAMS), "--base", "HEAD", *args],
-        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=60,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -92,26 +106,34 @@ class TestGenericMovedTitles:
     """#131: a one-word title matches every ordinary mention of the word."""
 
     def test_ordinary_prose_mentioning_a_one_word_title_is_not_a_seam(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The three shapes measured on power-map, verbatim. None of them
         points at anything; all three were reported."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "docs/UI.md",
-               "# UI\n\n"
-               '<a href="/admin/orgs/">Organizations</a><span>*</span>\n'
-               "| POST | /api/v1/organizations | organizations:write scope |\n"
-               "- **No dup surface** — organizations have no dup tables\n")
+        _write(
+            repo,
+            "docs/UI.md",
+            "# UI\n\n"
+            '<a href="/admin/orgs/">Organizations</a><span>*</span>\n'
+            "| POST | /api/v1/organizations | organizations:write scope |\n"
+            "- **No dup surface** — organizations have no dup tables\n",
+        )
         r = _run(repo)
         assert "moved-title" not in r.stdout, r.stdout
         assert r.returncode == 0, r.stdout
 
     def test_a_one_word_title_is_still_caught_where_something_points_at_it(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The case the class exists for. `People` is one word, so it is only
         swept on lines that point somewhere — and this one does."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "docs/API.md",
-               "# API\n\nSee docs/ENTITIES.md § People for the field list.\n")
+        _write(
+            repo,
+            "docs/API.md",
+            "# API\n\nSee docs/ENTITIES.md § People for the field list.\n",
+        )
         r = _run(repo)
         assert r.returncode == 3, r.stdout
         assert "moved-title" in r.stdout
@@ -126,8 +148,11 @@ class TestGenericMovedTitles:
 
     def test_a_markdown_link_corroborates(self, tmp_path: Path):
         repo = _moved_repo(tmp_path)
-        _write(repo, "docs/API.md",
-               "# API\n\nRead [People](#people) before adding a field.\n")
+        _write(
+            repo,
+            "docs/API.md",
+            "# API\n\nRead [People](#people) before adding a field.\n",
+        )
         r = _run(repo)
         assert r.returncode == 3, r.stdout
         assert "docs/API.md:3" in r.stdout
@@ -137,8 +162,11 @@ class TestGenericMovedTitles:
         programme, and #113's source sweep depends on bare matching: seven of
         its sixteen misses named the title and nothing else."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "docs/API.md",
-               "# API\n\nThe Deployment Topology section has the diagram.\n")
+        _write(
+            repo,
+            "docs/API.md",
+            "# API\n\nThe Deployment Topology section has the diagram.\n",
+        )
         r = _run(repo)
         assert r.returncode == 3, r.stdout
         assert "moved-title" in r.stdout
@@ -149,13 +177,13 @@ class TestGenericMovedTitles:
         thirteen characters. Word count is what separates a pointer from a
         noun."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "docs/UI.md",
-               "# UI\n\nOrganizations are listed alphabetically.\n")
+        _write(repo, "docs/UI.md", "# UI\n\nOrganizations are listed alphabetically.\n")
         r = _run(repo)
         assert r.returncode == 0, r.stdout
 
     def test_the_report_names_the_titles_it_only_swept_for_pointers(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """A silent narrowing is the failure mode of a heuristic that fixes a
         flood: the run must be able to see which titles got the weaker sweep."""
         r = _run(_moved_repo(tmp_path))
@@ -168,24 +196,24 @@ class TestSourceSweep:
     16 docstring references in shipped packages survived a clean exit — worse
     than missing all of them, because the clean exit reads as 'swept'."""
 
-    def test_a_docstring_naming_the_policy_file_is_reported(
-            self, tmp_path: Path):
+    def test_a_docstring_naming_the_policy_file_is_reported(self, tmp_path: Path):
         repo = _moved_repo(tmp_path)
-        _write(repo, "src/app.py",
-               '"""Bounds semantics live in AGENTS.md."""\n')
+        _write(repo, "src/app.py", '"""Bounds semantics live in AGENTS.md."""\n')
         _git(repo, "add", "-A")
         r = _run(repo)
         assert r.returncode == 3, r.stdout
         assert "source-back-reference" in r.stdout
         assert "src/app.py:1" in r.stdout
 
-    def test_a_docstring_naming_only_the_moved_title_is_reported(
-            self, tmp_path: Path):
+    def test_a_docstring_naming_only_the_moved_title_is_reported(self, tmp_path: Path):
         """Seven of the sixteen cited the section title and not the filename,
         so a filename-only grep finds nine."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "src/app.py",
-               '"""Ordering follows the Deployment Topology section."""\n')
+        _write(
+            repo,
+            "src/app.py",
+            '"""Ordering follows the Deployment Topology section."""\n',
+        )
         _git(repo, "add", "-A")
         r = _run(repo)
         assert r.returncode == 3, r.stdout
@@ -196,8 +224,11 @@ class TestSourceSweep:
         """A line naming both is one judgement, not two — the source classes
         must not drown the docs classes they sit beside."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "src/app.py",
-               '"""See AGENTS.md, the Deployment Topology section."""\n')
+        _write(
+            repo,
+            "src/app.py",
+            '"""See AGENTS.md, the Deployment Topology section."""\n',
+        )
         _git(repo, "add", "-A")
         r = _run(repo)
         assert "seams: 1" in r.stdout, r.stdout
@@ -210,8 +241,7 @@ class TestSourceSweep:
         r = _run(repo)
         assert r.returncode == 0, r.stdout
 
-    def test_markdown_outside_the_docs_tree_is_not_a_source_hit(
-            self, tmp_path: Path):
+    def test_markdown_outside_the_docs_tree_is_not_a_source_hit(self, tmp_path: Path):
         repo = _moved_repo(tmp_path)
         _write(repo, "README.md", "Conventions live in AGENTS.md.\n")
         _git(repo, "add", "-A")
@@ -231,8 +261,11 @@ class TestSourceSweep:
         """.skills holds the ack file and the telemetry ledger, both of which
         quote the policy filename by design."""
         repo = _moved_repo(tmp_path)
-        _write(repo, ".skills/context-metrics.jsonl",
-               '{"policy": "AGENTS.md", "tokens": 1}\n')
+        _write(
+            repo,
+            ".skills/context-metrics.jsonl",
+            '{"policy": "AGENTS.md", "tokens": 1}\n',
+        )
         _git(repo, "add", "-A")
         r = _run(repo)
         assert r.returncode == 0, r.stdout
@@ -245,7 +278,8 @@ class TestSourceSweep:
         assert r.returncode == 0, r.stdout
 
     def test_source_is_not_swept_when_nothing_left_the_policy_file(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """A source mention is fallout only if content moved. Sweeping
         unconditionally makes the class unreadable: this repo alone carries 180
         legitimate mentions in scripts that read the policy file for a living.
@@ -283,11 +317,13 @@ class TestSourceSweep:
         """The ack file's substring form works on the new classes, so a
         docstring that legitimately names the policy file is judged once."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "src/app.py",
-               '"""Bounds semantics live in AGENTS.md."""\n')
+        _write(repo, "src/app.py", '"""Bounds semantics live in AGENTS.md."""\n')
         # The :: form, because a docstring's content does not start its line.
-        _write(repo, ".skills/context-seams-ok",
-               "src/app.py :: Bounds semantics live in AGENTS.md\n")
+        _write(
+            repo,
+            ".skills/context-seams-ok",
+            "src/app.py :: Bounds semantics live in AGENTS.md\n",
+        )
         _git(repo, "add", "-A")
         r = _run(repo)
         assert r.returncode == 0, r.stdout
@@ -320,15 +356,24 @@ def _skill_repo(tmp_path: Path, name: str = "skillseams") -> Path:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "pre")
     _write(repo, "skills/demo/SKILL.md", SKILL_NOW)
-    _write(repo, "skills/demo/references/TOPOLOGY.md",
-           "# Topology\n\n## Deployment Topology\n\nThe workers connect to "
-           "the bus directly.\n")
+    _write(
+        repo,
+        "skills/demo/references/TOPOLOGY.md",
+        "# Topology\n\n## Deployment Topology\n\nThe workers connect to "
+        "the bus directly.\n",
+    )
     return repo
 
 
 def _run_skill(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return _run(repo, "--file", "skills/demo/SKILL.md",
-                "--docs-dir", "skills/demo/references", *args)
+    return _run(
+        repo,
+        "--file",
+        "skills/demo/SKILL.md",
+        "--docs-dir",
+        "skills/demo/references",
+        *args,
+    )
 
 
 class TestBackReferencesFollowTheNamedPolicyFile:
@@ -344,26 +389,32 @@ class TestBackReferencesFollowTheNamedPolicyFile:
     repo's real seam ledger.
     """
 
-    def test_the_policy_files_own_name_is_the_back_reference(
-            self, tmp_path: Path):
+    def test_the_policy_files_own_name_is_the_back_reference(self, tmp_path: Path):
         repo = _skill_repo(tmp_path)
-        _write(repo, "skills/demo/references/TOPOLOGY.md",
-               "# Topology\n\n## Deployment Topology\n\nThe workers connect "
-               "to the bus directly.\n\nSee SKILL.md for the rest.\n")
+        _write(
+            repo,
+            "skills/demo/references/TOPOLOGY.md",
+            "# Topology\n\n## Deployment Topology\n\nThe workers connect "
+            "to the bus directly.\n\nSee SKILL.md for the rest.\n",
+        )
         r = _run_skill(repo)
         assert r.returncode == 3, r.stdout + r.stderr
         assert "back-reference" in r.stdout, r.stdout
         assert "See SKILL.md for the rest." in r.stdout, r.stdout
 
     def test_the_default_policy_names_are_not_swept_for_another_target(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The 296-hit case. A doc that discusses `AGENTS.md` is discussing a
         file this run is not sweeping; it is subject matter, not a seam."""
         repo = _skill_repo(tmp_path)
-        _write(repo, "skills/demo/references/TOPOLOGY.md",
-               "# Topology\n\n## Deployment Topology\n\nThe workers connect "
-               "to the bus directly.\n\nCurate AGENTS.md against a budget, "
-               "and CLAUDE.md when it is a real file.\n")
+        _write(
+            repo,
+            "skills/demo/references/TOPOLOGY.md",
+            "# Topology\n\n## Deployment Topology\n\nThe workers connect "
+            "to the bus directly.\n\nCurate AGENTS.md against a budget, "
+            "and CLAUDE.md when it is a real file.\n",
+        )
         r = _run_skill(repo)
         assert r.returncode == 0, (
             f"a mention of another repo's policy file was called a seam:"
@@ -374,41 +425,47 @@ class TestBackReferencesFollowTheNamedPolicyFile:
         """The second call site, added by #113. Its guard is `src and moved`,
         so it needs a moved title present to run at all."""
         repo = _skill_repo(tmp_path)
-        _write(repo, "src/app.py",
-               '"""Curating AGENTS.md is what the demo skill documents."""\n')
+        _write(
+            repo,
+            "src/app.py",
+            '"""Curating AGENTS.md is what the demo skill documents."""\n',
+        )
         _git(repo, "add", "-A")
         r = _run_skill(repo)
         assert r.returncode == 0, (
             f"the source class swept for the wrong policy name:\n{r.stdout}"
         )
 
-    def test_the_source_class_still_catches_the_named_policy_file(
-            self, tmp_path: Path):
+    def test_the_source_class_still_catches_the_named_policy_file(self, tmp_path: Path):
         repo = _skill_repo(tmp_path)
-        _write(repo, "src/app.py",
-               '"""Bounds semantics live in skills/demo/SKILL.md."""\n')
+        _write(
+            repo, "src/app.py", '"""Bounds semantics live in skills/demo/SKILL.md."""\n'
+        )
         _git(repo, "add", "-A")
         r = _run_skill(repo)
         assert r.returncode == 3, r.stdout
         assert "source-back-reference" in r.stdout, r.stdout
 
-    def test_autodetection_still_sweeps_for_both_default_names(
-            self, tmp_path: Path):
+    def test_autodetection_still_sweeps_for_both_default_names(self, tmp_path: Path):
         """The cohort norm is `CLAUDE.md -> ./AGENTS.md`, so a doc naming
         either one back-references the one policy file. An autodetected run
         must not lose the sibling name."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "docs/ENTITIES.md",
-               "# Entities\n\n## People\n\nEvery person carries a canonical "
-               "name.\n\n## Organizations\n\nOrgs own assignments.\n\n"
-               "## Deployment Topology\n\nThe workers connect to the bus "
-               "directly.\n\nSee CLAUDE.md for the rest.\n")
+        _write(
+            repo,
+            "docs/ENTITIES.md",
+            "# Entities\n\n## People\n\nEvery person carries a canonical "
+            "name.\n\n## Organizations\n\nOrgs own assignments.\n\n"
+            "## Deployment Topology\n\nThe workers connect to the bus "
+            "directly.\n\nSee CLAUDE.md for the rest.\n",
+        )
         r = _run(repo)
         assert r.returncode == 3, r.stdout
         assert "See CLAUDE.md for the rest." in r.stdout, r.stdout
 
     def test_a_bare_name_outside_the_policy_files_own_tree_is_not_a_hit(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The basename alone is not enough when the target is a SKILL.md.
 
         Deriving `policy_names` from the basename and stopping there trades 296
@@ -420,8 +477,7 @@ class TestBackReferencesFollowTheNamedPolicyFile:
         """
         repo = _skill_repo(tmp_path)
         _write(repo, "skills/other/SKILL.md", "# Other\n")
-        _write(repo, "src/app.py",
-               '"""Every skill ships a SKILL.md at its root."""\n')
+        _write(repo, "src/app.py", '"""Every skill ships a SKILL.md at its root."""\n')
         _git(repo, "add", "-A")
         r = _run_skill(repo)
         assert r.returncode == 0, (
@@ -429,10 +485,12 @@ class TestBackReferencesFollowTheNamedPolicyFile:
         )
 
     def test_a_bare_name_inside_the_policy_files_own_tree_is_a_hit(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         repo = _skill_repo(tmp_path)
-        _write(repo, "skills/demo/scripts/run.sh",
-               '# Bounds semantics live in SKILL.md.\n')
+        _write(
+            repo, "skills/demo/scripts/run.sh", "# Bounds semantics live in SKILL.md.\n"
+        )
         _git(repo, "add", "-A")
         r = _run_skill(repo)
         assert r.returncode == 3, r.stdout
@@ -442,8 +500,11 @@ class TestBackReferencesFollowTheNamedPolicyFile:
         """The scoping must not narrow the canonical shape: a policy file at
         the repo root owns the whole tree, so every file is inside it."""
         repo = _moved_repo(tmp_path)
-        _write(repo, "src/deep/nested/app.py",
-               '"""Bounds semantics live in AGENTS.md."""\n')
+        _write(
+            repo,
+            "src/deep/nested/app.py",
+            '"""Bounds semantics live in AGENTS.md."""\n',
+        )
         _git(repo, "add", "-A")
         r = _run(repo)
         assert r.returncode == 3, r.stdout

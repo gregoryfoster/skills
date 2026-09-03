@@ -60,8 +60,11 @@ def _clean_env() -> dict:
 def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(DOCTOR), "--no-preflight", *args],
-        cwd=str(repo), capture_output=True, text=True,
-        env=_clean_env(), timeout=120,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=120,
     )
 
 
@@ -89,8 +92,13 @@ def consumer(tmp_path: Path) -> Path:
     repo = tmp_path / "consumer"
     (repo / "skills").mkdir(parents=True)
     subprocess.run(
-        ["git", "init", "-q", "-b", "main"], cwd=str(repo), check=True,
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        ["git", "init", "-q", "-b", "main"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
     return repo
 
@@ -183,8 +191,9 @@ class TestARegularFileIsReported:
         """Report, never repair — a local divergence is sometimes deliberate,
         and the doctor cannot tell which from the file alone."""
         _vendor_skill(consumer)
-        forked = _copy(consumer, "shipping-work", "scripts/doc-check.sh",
-                       "echo local edit\n")
+        forked = _copy(
+            consumer, "shipping-work", "scripts/doc-check.sh", "echo local edit\n"
+        )
         _doctor(consumer)
         assert not forked.is_symlink(), "the doctor replaced a local file"
         assert forked.read_text() == "echo local edit\n", (
@@ -229,8 +238,12 @@ class TestWhatIsNotAFork:
         check's business (#238). Reporting every file in it would bury the
         real finding under the one case that is always expected."""
         _vendor_skill(consumer)
-        _copy(consumer, "shipping-work", "SKILL.md",
-              _skill_md("shipping-work", overrides=f"{VENDOR_REPO}/shipping-work"))
+        _copy(
+            consumer,
+            "shipping-work",
+            "SKILL.md",
+            _skill_md("shipping-work", overrides=f"{VENDOR_REPO}/shipping-work"),
+        )
         _copy(consumer, "shipping-work", "scripts/doc-check.sh")
         result = _doctor(consumer)
         assert FORK_MARKER not in result.stderr, result.stderr
@@ -242,8 +255,7 @@ class TestDeclaringADeliberateFork:
         blesses a project-supplied wrapper — so a regular pre-ship.sh is the
         documented shape, not a defect."""
         _vendor_skill(consumer)
-        _copy(consumer, "shipping-work", "scripts/pre-ship.sh",
-              "echo project gate\n")
+        _copy(consumer, "shipping-work", "scripts/pre-ship.sh", "echo project gate\n")
         result = _doctor(consumer)
         assert FORK_MARKER not in result.stderr, result.stderr
 
@@ -289,7 +301,8 @@ class TestDeclaringADeliberateFork:
         # What an operator copies: the indented path lines under the heading,
         # excluding the `(upstream: …)` context lines.
         listed = [
-            ln.strip() for ln in first.stderr.splitlines()
+            ln.strip()
+            for ln in first.stderr.splitlines()
             if ln.startswith("  ") and not ln.strip().startswith("(")
         ]
         assert listed, first.stderr
@@ -328,7 +341,10 @@ class TestTheHelpDocumentsIt:
     def test_help_names_the_check_and_its_escape_hatches(self):
         result = subprocess.run(
             ["bash", str(DOCTOR), "--help"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert "forked" in result.stdout, (

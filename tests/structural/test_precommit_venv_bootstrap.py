@@ -207,8 +207,7 @@ class TestVenvBootstrap:
         assert result.returncode != 0, "a missing venv must fail the hook"
         combined = result.stdout + result.stderr
         assert "python3 -m venv .venv" in combined, (
-            "the diagnosis must name the remedy for a main checkout; got: "
-            + combined
+            "the diagnosis must name the remedy for a main checkout; got: " + combined
         )
 
     def test_linked_worktree_diagnoses_when_the_parent_has_no_venv_either(
@@ -269,7 +268,9 @@ class TestWorktreeCreateLinksVenv:
         # introduces nor fixes. What matters here is that the venv NOTE went to
         # stderr and so did not add a second polluting line.
         wt = Path(result.stdout.strip().splitlines()[-1])
-        assert wt.is_dir(), f"stdout must end with the worktree path; got {result.stdout!r}"
+        assert wt.is_dir(), (
+            f"stdout must end with the worktree path; got {result.stdout!r}"
+        )
         link = wt / ".venv"
         assert link.is_symlink(), (
             "worktree-create.sh must link the parent's .venv into the new "

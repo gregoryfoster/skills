@@ -255,7 +255,9 @@ class TestOtherDirectoryScopingShapes:
 
     def test_subshell_form_resolves(self, repo: Path):
         rows = _commands(repo)
-        claim = next((c for c in rows if c.endswith("cd frontend && npm run build")), None)
+        claim = next(
+            (c for c in rows if c.endswith("cd frontend && npm run build")), None
+        )
         assert claim is not None, f"the subshell form was not checked: {rows}"
         verdict, evidence = rows[claim]
         assert verdict == "TRUE", f"{verdict} — {evidence}"

@@ -119,8 +119,14 @@ def _add_submodule(primary: Path, tmp_path: Path, name: str = "vendor") -> Path:
     _git(sub, "add", "s.txt")
     _git(sub, "commit", "-q", "-m", "sub initial")
     _git(
-        primary, "-c", "protocol.file.allow=always",
-        "submodule", "add", "-q", str(sub), name,
+        primary,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(sub),
+        name,
     )
     return primary / name
 
@@ -142,7 +148,7 @@ class TestStdoutContract:
         lines = r.stdout.splitlines()
         assert len(lines) == 1, (
             "stdout must carry the worktree path and nothing else — "
-            "`WT=$(worktree-create.sh --new x); cd \"$WT\"` is the documented "
+            '`WT=$(worktree-create.sh --new x); cd "$WT"` is the documented '
             f"usage and breaks on any extra line. Got {len(lines)}: {lines!r}"
         )
         assert Path(lines[0]) == primary / ".worktrees" / "feature-alpha"
@@ -163,7 +169,11 @@ class TestStdoutContract:
     def test_captured_path_is_usable_as_a_directory(self, primary: Path):
         """The failure mode in the issue, reproduced as the caller sees it."""
         captured = subprocess.run(
-            ["bash", "-c", f'WT=$(bash "{CREATE}" --new feature/gamma 2>/dev/null); cd "$WT" && pwd'],
+            [
+                "bash",
+                "-c",
+                f'WT=$(bash "{CREATE}" --new feature/gamma 2>/dev/null); cd "$WT" && pwd',
+            ],
             capture_output=True,
             text=True,
             cwd=str(primary),
@@ -194,7 +204,9 @@ class TestStdoutContract:
 class TestWorktreeRootDoesNotNest:
     """resolve-worktree-root.sh must name the project, not the current checkout."""
 
-    def test_resolve_from_linked_worktree_equals_primary(self, primary: Path, linked: Path):
+    def test_resolve_from_linked_worktree_equals_primary(
+        self, primary: Path, linked: Path
+    ):
         from_primary = _run(RESOLVE, cwd=primary)
         from_linked = _run(RESOLVE, cwd=linked)
         assert from_primary.returncode == 0 and from_linked.returncode == 0
@@ -262,7 +274,9 @@ class TestWorktreeRootDoesNotNest:
             f"{created} is nested inside {linked}; each generation would sink deeper"
         )
 
-    def test_config_file_is_read_from_the_primary_checkout(self, primary: Path, linked: Path):
+    def test_config_file_is_read_from_the_primary_checkout(
+        self, primary: Path, linked: Path
+    ):
         """`.skills/worktree_root` is a machine-local knob, so it is untracked.
 
         An untracked file in the primary checkout does not exist in a linked
@@ -285,13 +299,19 @@ class TestWorktreeRootDoesNotNest:
         env = _clean_env()
         env["WORKTREE_ROOT"] = "/tmp/override-root"
         r = subprocess.run(
-            ["bash", str(RESOLVE)], capture_output=True, text=True, cwd=str(linked), env=env
+            ["bash", str(RESOLVE)],
+            capture_output=True,
+            text=True,
+            cwd=str(linked),
+            env=env,
         )
         assert r.stdout.strip() == "/tmp/override-root", (
             "WORKTREE_ROOT is first in the resolution order and must stay first"
         )
 
-    def test_submodule_resolves_to_the_submodule_root(self, primary: Path, tmp_path: Path):
+    def test_submodule_resolves_to_the_submodule_root(
+        self, primary: Path, tmp_path: Path
+    ):
         """--git-common-dir's parent is NOT a work tree inside a submodule.
 
         There it is `<super>/.git/modules`, and taking it unconditionally would

@@ -74,10 +74,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Search path: every shell script a consumer repo can end up running.
-SEARCH_DIRS = (
-    sorted(REPO_ROOT.glob("skills/*/scripts"))
-    + [REPO_ROOT / "scripts", REPO_ROOT / ".claude" / "hooks"]
-)
+SEARCH_DIRS = sorted(REPO_ROOT.glob("skills/*/scripts")) + [
+    REPO_ROOT / "scripts",
+    REPO_ROOT / ".claude" / "hooks",
+]
 
 # A file redirect (not `>&2`, not a `->` arrow, not `>=`) followed on the same
 # logical line by `&&`. `[^&|;]*` keeps the match inside a single list element.
@@ -134,20 +134,20 @@ def _offenders(path: Path):
         if not m:
             continue
         if CONDITION_HEAD.match(head):
-            continue          # the list's status governs a branch
+            continue  # the list's status governs a branch
         if EXEMPT_MARKER in joined or EXEMPT_MARKER in preamble:
-            continue          # named, at the line, with a reason
+            continue  # named, at the line, with a reason
         # A handler belongs to THIS list only if it FOLLOWS the `&&`. Testing the
         # whole logical line instead let a `||` anywhere on it — inside an
         # earlier command substitution, most plausibly — exempt an unchecked
         # write further along, in the one rule that is supposed to be
         # mechanism-shaped rather than symptom-shaped (CR finding 26).
-        tail = joined[m.end():]
+        tail = joined[m.end() :]
         if re.search(r"\|\|\s*true\b", tail):
-            out.append((lineno, joined))   # #187's shape; needs the marker
+            out.append((lineno, joined))  # #187's shape; needs the marker
             continue
         if "||" in tail:
-            continue          # a real handler runs on failure
+            continue  # a real handler runs on failure
         if re.search(r";\s*then\b", joined) or joined.rstrip().endswith("then"):
             continue
         out.append((lineno, joined))
@@ -219,17 +219,17 @@ def _swallowed_state_writes(path: Path):
         if not TRUNCATING_REDIRECT.search(joined):
             continue
         if EXEMPT_MARKER in joined or EXEMPT_MARKER in preamble:
-            continue          # named, at the line, with a reason
+            continue  # named, at the line, with a reason
         if SINGLE_PIPE.search(joined):
-            continue          # the status is the last command's, not the write's
+            continue  # the status is the last command's, not the write's
         if lineno in heredoc:
-            continue          # emitted text, not code this script runs
+            continue  # emitted text, not code this script runs
         for m in TRUNCATING_REDIRECT.finditer(joined):
-            redirect_on = joined[m.start():]
+            redirect_on = joined[m.start() :]
             if DISCARD.match(redirect_on):
-                continue      # this one discards output; keep looking
+                continue  # this one discards output; keep looking
             if not SWALLOWED.search(redirect_on):
-                continue      # nothing swallows this one's failure
+                continue  # nothing swallows this one's failure
             out.append((lineno, joined))
             break
     return out
@@ -240,7 +240,7 @@ def _shell_scripts():
         if d.is_dir():
             for f in sorted(d.rglob("*.sh")):
                 if f.is_symlink():
-                    continue      # linked into .claude/hooks/; linted at source
+                    continue  # linked into .claude/hooks/; linted at source
                 yield f
 
 
@@ -254,8 +254,7 @@ def test_no_unchecked_temp_file_write():
         "a write whose failure errexit does not catch. Put the `&&` list in an "
         "`if`, so the success message lives in the branch that succeeded — see "
         "install-hook.sh's settings_rewrite(). If the swallow is deliberate, "
-        f"mark the line `# {EXEMPT_MARKER} <reason>`.\n\n  "
-        + "\n  ".join(found)
+        f"mark the line `# {EXEMPT_MARKER} <reason>`.\n\n  " + "\n  ".join(found)
     )
 
 
@@ -278,9 +277,7 @@ def test_the_second_rule_catches_the_defect_it_was_written_for(tmp_path: Path):
     """#193's exact pre-fix text, so a later loosening is caught here."""
     s = tmp_path / "lock.sh"
     s.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        'date -u +%Y%m%d > "$LOCK" || true\n'
+        '#!/usr/bin/env bash\nset -euo pipefail\ndate -u +%Y%m%d > "$LOCK" || true\n'
     )
     assert [n for n, _ in _swallowed_state_writes(s)] == [3]
 
@@ -333,12 +330,11 @@ def test_a_colon_with_a_redirect_is_a_real_handler(tmp_path: Path):
 
 def test_a_discard_is_not_a_state_write(tmp_path: Path):
     s = tmp_path / "quiet.sh"
-    s.write_text('command -v node >/dev/null || true\n')
+    s.write_text("command -v node >/dev/null || true\n")
     assert _swallowed_state_writes(s) == []
 
 
-def test_a_discard_does_not_speak_for_a_later_write_on_the_same_line(
-        tmp_path: Path):
+def test_a_discard_does_not_speak_for_a_later_write_on_the_same_line(tmp_path: Path):
     """The rule judged only the FIRST redirect, so `>/dev/null` earlier on the
     line answered for a real state write later on it. `command -v x >/dev/null`
     is common enough to sit next to one."""
@@ -346,7 +342,7 @@ def test_a_discard_does_not_speak_for_a_later_write_on_the_same_line(
     s.write_text('cmd >/dev/null 2>&1 && printf x >"$STATE" || true\n')
     assert [n for n, _ in _swallowed_state_writes(s)] == [1]
     # …and a line whose only redirect is the discard stays clean.
-    s.write_text('cmd >/dev/null 2>&1 || true\n')
+    s.write_text("cmd >/dev/null 2>&1 || true\n")
     assert _swallowed_state_writes(s) == []
 
 
@@ -363,12 +359,7 @@ def test_a_heredoc_body_is_emitted_text_not_code(tmp_path: Path):
     )
     assert _swallowed_state_writes(s) == []
     # …and the tracker closes again, so a later write is still judged.
-    s.write_text(
-        "cat <<YAML\n"
-        "hello\n"
-        "YAML\n"
-        'date -u +%Y%m%d > "$LOCK" || true\n'
-    )
+    s.write_text('cat <<YAML\nhello\nYAML\ndate -u +%Y%m%d > "$LOCK" || true\n')
     assert [n for n, _ in _swallowed_state_writes(s)] == [4]
 
 
@@ -376,10 +367,7 @@ def test_a_here_string_does_not_open_a_heredoc(tmp_path: Path):
     """`<<<` shares a prefix with `<<`. Treating it as an opener would swallow
     the rest of the file into a body that never terminates."""
     s = tmp_path / "herestring.sh"
-    s.write_text(
-        'read -r x <<<"EOF"\n'
-        'date -u +%Y%m%d > "$LOCK" || true\n'
-    )
+    s.write_text('read -r x <<<"EOF"\ndate -u +%Y%m%d > "$LOCK" || true\n')
     assert [n for n, _ in _swallowed_state_writes(s)] == [2]
 
 
@@ -389,13 +377,13 @@ def test_the_rule_still_catches_the_defect_it_was_written_for(tmp_path: Path):
     loosening of the regex is caught here rather than in the next incident."""
     sample = tmp_path / "sample.sh"
     sample.write_text(
-        '#!/usr/bin/env bash\n'
-        'set -euo pipefail\n'
-        'merge_settings() {\n'
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "merge_settings() {\n"
         '  jq --arg cmd "$COMMAND" --arg marker "$MARKER" \\\n'
         '    "$expr" "$SETTINGS" >"$SETTINGS.tmp" \\\n'
         '    && mv -f "$SETTINGS.tmp" "$SETTINGS"\n'
-        '}\n'
+        "}\n"
     )
     assert _offenders(sample), "the rule no longer detects #181's own defect"
 
@@ -404,13 +392,13 @@ def test_the_rule_accepts_the_checked_form(tmp_path: Path):
     """And a gate that fails on the fix is a gate nobody keeps."""
     sample = tmp_path / "fixed.sh"
     sample.write_text(
-        '#!/usr/bin/env bash\n'
-        'set -euo pipefail\n'
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
         'if jq "$@" "$S" >"$S.tmp" && mv -f "$S.tmp" "$S"; then\n'
         '  log "wrote it"\n'
-        'else\n'
+        "else\n"
         '  rm -f "$S.tmp"; exit 1\n'
-        'fi\n'
+        "fi\n"
     )
     assert not _offenders(sample)
 
@@ -424,7 +412,7 @@ def test_a_bare_or_true_is_not_an_exemption(tmp_path: Path):
     assert _offenders(sample)
     sample.write_text(
         'tail -n 200 "$LOG" >"$LOG.tmp" && mv -f "$LOG.tmp" "$LOG" || true '
-        '# unchecked-write-ok: best-effort log trim in a hook that must not block\n'
+        "# unchecked-write-ok: best-effort log trim in a hook that must not block\n"
     )
     assert not _offenders(sample)
 
@@ -435,7 +423,7 @@ def test_an_unrelated_handler_earlier_on_the_line_is_not_an_exemption(tmp_path: 
     about whether the write was checked, and used to exempt it."""
     s = tmp_path / "x.sh"
     s.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'v="$(get_it || echo default)"; jq . "$F" >"$F.tmp" && mv -f "$F.tmp" "$F"\n'
     )
     assert [n for n, _ in _offenders(s)] == [2]
@@ -446,7 +434,7 @@ def test_a_handler_after_the_and_still_exempts(tmp_path: Path):
     form. A handler that really does run on this list's failure is evidence."""
     s = tmp_path / "x.sh"
     s.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'jq . "$F" >"$F.tmp" && mv -f "$F.tmp" "$F" || die "rewrite failed"\n'
     )
     assert _offenders(s) == []

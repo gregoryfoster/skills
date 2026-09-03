@@ -37,8 +37,12 @@ POLICY_LINE = "- a policy line naming `some/path.py` and explaining why\n"
 
 def _clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR",
-              "ANTHROPIC_API_KEY"):
+    for k in (
+        "CONTEXT_BUDGET",
+        "CONTEXT_DOC_BUDGET",
+        "CONTEXT_DOCS_DIR",
+        "ANTHROPIC_API_KEY",
+    ):
         env.pop(k, None)
     return env
 
@@ -46,7 +50,9 @@ def _clean_env() -> dict:
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-C", str(repo), *args],
-        check=True, capture_output=True, env=_clean_env(),
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
     )
 
 
@@ -66,8 +72,11 @@ def _repo(tmp_path: Path, policy: str) -> Path:
 def _measure(repo: Path, *args: str, env: dict | None = None) -> dict:
     result = subprocess.run(
         ["bash", str(MEASURE), "--no-write", *args],
-        capture_output=True, text=True, cwd=str(repo),
-        env=env if env is not None else _clean_env(), timeout=60,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=env if env is not None else _clean_env(),
+        timeout=60,
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -98,7 +107,9 @@ class TestAnchorsResolveAgainstHeadings:
     def test_the_split_case(self, tmp_path: Path):
         """The operation the skill exists to encourage: a section moves to a new
         file and the file it left behind still exists."""
-        repo = _repo(tmp_path, "# P\n\n[c](docs/CONSUMERS.md#adding-a-new-analysis-stage)\n")
+        repo = _repo(
+            tmp_path, "# P\n\n[c](docs/CONSUMERS.md#adding-a-new-analysis-stage)\n"
+        )
         (repo / "docs" / "CONSUMERS.md").write_text("# C\n\n## Overview\n\nx\n")
         (repo / "docs" / "CONSUMERS-STAGES.md").write_text(
             "# C\n\n## Adding a new analysis stage\n\nx\n"
@@ -118,7 +129,9 @@ class TestAnchorsResolveAgainstHeadings:
         assert data["links"]["dead_anchors"] == ["AGENTS.md -> AGENTS.md#teardown"]
         assert data["links"]["dead"] == []
 
-    def test_a_missing_file_still_reports_dead_without_its_fragment(self, tmp_path: Path):
+    def test_a_missing_file_still_reports_dead_without_its_fragment(
+        self, tmp_path: Path
+    ):
         repo = _repo(tmp_path, "# P\n\n[g](docs/GONE.md#whatever)\n")
         data = _measure(repo)
         assert data["links"]["dead"] == ["AGENTS.md -> docs/GONE.md"]
@@ -149,27 +162,40 @@ class TestSlugRules:
         return _measure(repo)["links"]["dead_anchors"]
 
     def test_punctuation_is_dropped_and_case_folded(self, tmp_path: Path):
-        assert self._anchors(
-            tmp_path, "## The `count_tokens` fallback: why?", "the-count_tokens-fallback-why"
-        ) == []
+        assert (
+            self._anchors(
+                tmp_path,
+                "## The `count_tokens` fallback: why?",
+                "the-count_tokens-fallback-why",
+            )
+            == []
+        )
 
     def test_a_stripped_character_leaves_its_spaces(self, tmp_path: Path):
         """`Tranche 5h3 — 2026-06-15` slugs to `...5h3--2026-06-15`: the em dash
         is dropped and both of its spaces still become hyphens. Collapsing runs
         of spaces would validate against a slug GitHub never mints."""
+        assert (
+            self._anchors(
+                tmp_path,
+                "## Segments tranche 5h3 — 2026-06-15",
+                "segments-tranche-5h3--2026-06-15",
+            )
+            == []
+        )
         assert self._anchors(
-            tmp_path, "## Segments tranche 5h3 — 2026-06-15",
-            "segments-tranche-5h3--2026-06-15",
-        ) == []
-        assert self._anchors(
-            tmp_path, "## Segments tranche 5h3 — 2026-06-15",
+            tmp_path,
+            "## Segments tranche 5h3 — 2026-06-15",
             "segments-tranche-5h3-2026-06-15",
         ) == ["AGENTS.md -> docs/GUIDE.md#segments-tranche-5h3-2026-06-15"]
 
     def test_a_heading_link_slugs_on_its_text(self, tmp_path: Path):
-        assert self._anchors(
-            tmp_path, "## See [the rubric](keep-cut-rubric.md)", "see-the-rubric"
-        ) == []
+        assert (
+            self._anchors(
+                tmp_path, "## See [the rubric](keep-cut-rubric.md)", "see-the-rubric"
+            )
+            == []
+        )
 
     def test_headings_inside_fences_do_not_count(self, tmp_path: Path):
         """A `# comment` in a bash fence otherwise manufactures an anchor that
@@ -179,9 +205,7 @@ class TestSlugRules:
             "# G\n\n```bash\n# cleanup\nrm -rf x\n```\n\n## Real\n"
         )
         data = _measure(repo)
-        assert data["links"]["dead_anchors"] == [
-            "AGENTS.md -> docs/GUIDE.md#cleanup"
-        ]
+        assert data["links"]["dead_anchors"] == ["AGENTS.md -> docs/GUIDE.md#cleanup"]
 
     def test_headings_in_an_indented_code_block_do_not_count(self, tmp_path: Path):
         """Four columns of indent is a code block, fence or no fence."""
@@ -367,9 +391,31 @@ class TestUncheckedLinksAreReportedHonestly:
 
 def _bin_with_real_tools(bin_dir: Path) -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc", "sort",
-                 "find", "head", "tr", "dirname", "basename", "mktemp", "date",
-                 "cat", "rm", "mkdir", "printf", "ls", "cut", "tail", "uniq"):
+    for tool in (
+        "git",
+        "python3",
+        "bash",
+        "awk",
+        "sed",
+        "grep",
+        "wc",
+        "sort",
+        "find",
+        "head",
+        "tr",
+        "dirname",
+        "basename",
+        "mktemp",
+        "date",
+        "cat",
+        "rm",
+        "mkdir",
+        "printf",
+        "ls",
+        "cut",
+        "tail",
+        "uniq",
+    ):
         real = shutil.which(tool)
         if real and not (bin_dir / tool).exists():
             (bin_dir / tool).symlink_to(real)

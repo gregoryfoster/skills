@@ -57,14 +57,20 @@ def _clean_env() -> dict:
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(cwd), *args],
-        capture_output=True, text=True, check=True, env=_clean_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_clean_env(),
     )
 
 
 def _create(*args: str, cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(CREATE), *args],
-        capture_output=True, text=True, cwd=str(cwd), env=_clean_env(),
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=_clean_env(),
     )
 
 
@@ -226,7 +232,9 @@ class TestKnobIsDocumented:
     def test_help_names_the_knob(self):
         r = subprocess.run(
             ["bash", str(CREATE), "--help"],
-            capture_output=True, text=True, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
         )
         assert r.returncode == 0
         assert ".skills/worktree_venv" in r.stdout, (

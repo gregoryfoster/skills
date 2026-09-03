@@ -85,7 +85,9 @@ class TestOverrideReplacesAdvice:
     ):
         """The bug that motivated #261 was in four copies; the fix has to be."""
         repo = make_repo(
-            tmp_path, ["README.md", "docs/contracts/ingest.md"], ["docs/contracts/ingest.md"]
+            tmp_path,
+            ["README.md", "docs/contracts/ingest.md"],
+            ["docs/contracts/ingest.md"],
         )
         _commit_override(repo, "doc-sensitive-paths", CHARTER_PATHS)
         _commit_override(repo, "doc-sections", CHARTER_ADVICE)
@@ -105,7 +107,9 @@ class TestOverrideReplacesAdvice:
     def test_override_replaces_rather_than_extends(self, tmp_path: Path):
         """A default the override drops must stop printing — otherwise a repo
         with no route table cannot get rid of the line telling it to check one."""
-        repo = make_repo(tmp_path, ["README.md", "docs/contracts/ingest.md"], ["README.md"])
+        repo = make_repo(
+            tmp_path, ["README.md", "docs/contracts/ingest.md"], ["README.md"]
+        )
         _commit_override(repo, "doc-sections", CHARTER_ADVICE)
         result = run_doc_check(repo)
         assert result.returncode == 1, f"stderr: {result.stderr}"
@@ -154,7 +158,9 @@ class TestGrammar:
     def test_a_hash_later_in_the_line_is_content(self, tmp_path: Path):
         """Advice cites issues. Only a line that STARTS with # is a comment."""
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
-        _commit_override(repo, "doc-sections", "AGENTS.md: the worker section, per #75\n")
+        _commit_override(
+            repo, "doc-sections", "AGENTS.md: the worker section, per #75\n"
+        )
         result = run_doc_check(repo)
         assert result.returncode == 1, f"stderr: {result.stderr}"
         assert "per #75" in _advice(result.stdout), (

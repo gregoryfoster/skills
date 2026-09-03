@@ -81,8 +81,21 @@ def _path_without_jq(tmp_path: Path) -> Path:
     degraded paths without touching the developer's environment."""
     bin_dir = tmp_path / "nojq-bin"
     bin_dir.mkdir(exist_ok=True)
-    for tool in ("bash", "git", "sed", "grep", "awk", "readlink", "mkdir",
-                 "ln", "rm", "mv", "cat", "printf", "command"):
+    for tool in (
+        "bash",
+        "git",
+        "sed",
+        "grep",
+        "awk",
+        "readlink",
+        "mkdir",
+        "ln",
+        "rm",
+        "mv",
+        "cat",
+        "printf",
+        "command",
+    ):
         found = shutil.which(tool)
         if found:
             target = bin_dir / tool
@@ -355,7 +368,11 @@ class TestInstallRefresh:
         env["PATH"] = str(_path_without_jq(tmp_path))
         r = subprocess.run(
             ["bash", str(INSTALL_REFRESH), "--uninstall"],
-            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode != 0, (
             "exited 0 having removed only the symlink:\n" + r.stdout + r.stderr
@@ -379,14 +396,16 @@ class TestInstallRefresh:
         env["PATH"] = str(_path_without_jq(tmp_path))
         r = subprocess.run(
             ["bash", str(INSTALL_REFRESH), "--uninstall"],
-            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert not (repo / HOOK_REL).is_symlink()
 
-    def test_an_unparseable_settings_file_is_not_reported_as_missing(
-        self, repo: Path
-    ):
+    def test_an_unparseable_settings_file_is_not_reported_as_missing(self, repo: Path):
         """MISSING would advise re-running the installer, which dies on the same
         parse error (CR finding 10)."""
         _half_install(repo)
@@ -428,9 +447,7 @@ class TestInstallRefresh:
             p.name for p in (repo / ".claude").iterdir()
         )
 
-    def test_uninstall_against_unparseable_settings_changes_nothing(
-        self, repo: Path
-    ):
+    def test_uninstall_against_unparseable_settings_changes_nothing(self, repo: Path):
         """Discovering the file is unreadable after the symlink is gone leaves
         the half-state the need_jq ordering exists to prevent."""
         _run(repo, INSTALL_REFRESH)

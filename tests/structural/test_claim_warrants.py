@@ -32,7 +32,7 @@ own rewrite is strictly worse than the forced choice it replaces.
 import subprocess
 from pathlib import Path
 
-from .test_loss_warrants import ACK, PROVE, _ack, _clean_env, _repo
+from .test_loss_warrants import PROVE, _ack, _clean_env, _repo
 
 CLAIM_ACK = ".skills/context-claims-ok"
 
@@ -73,8 +73,11 @@ def _tightened(tmp_path: Path, after: str) -> Path:
 def _prove(repo: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(PROVE), "--base", "HEAD", *extra],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=30,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -90,8 +93,7 @@ class TestTighteningHasAVerdictAtAll:
         assert r.returncode == 3, r.stdout + r.stderr
         assert "lost: 1" in r.stdout, r.stdout
 
-    def test_a_faithful_reflow_passes_with_tighten_and_claims(
-            self, tmp_path: Path):
+    def test_a_faithful_reflow_passes_with_tighten_and_claims(self, tmp_path: Path):
         """Two judgements, because a class-C reflow makes two kinds of edit: it
         rewrites a line (the `tighten`) and it deletes the narrative that made
         the line long (the `#412`). The atom is not waved through by the line
@@ -105,8 +107,7 @@ class TestTighteningHasAVerdictAtAll:
         assert "lost: 0" in r.stdout, r.stdout
         assert "claims_dropped: 0" in r.stdout, r.stdout
 
-    def test_a_reflow_is_not_clean_until_its_atoms_are_judged_too(
-            self, tmp_path: Path):
+    def test_a_reflow_is_not_clean_until_its_atoms_are_judged_too(self, tmp_path: Path):
         """The warrant is not a blanket over the rewrite. `tighten` accounts for
         the LINE; every atom the line carried is accounted for separately, or
         the gate is back to trusting the author about their own edit."""
@@ -144,7 +145,8 @@ class TestTheWarrantCannotCertifyItself:
         assert "--claims" in r.stderr, r.stderr
 
     def test_the_line_warrant_alone_would_have_passed_the_bad_rewrite(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The heart of #250. Line matching cannot tell FAITHFUL from
         OVER_COMPRESSED — both replace the same one line — so the warrant on its
         own converts a real content drop into exit 0."""
@@ -156,7 +158,8 @@ class TestTheWarrantCannotCertifyItself:
         assert "claims_dropped: 2" in r.stdout, r.stdout
 
     def test_the_dropped_claim_is_named_with_the_line_it_came_from(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """An atom alone is unreviewable — `wp#569` says nothing about whether
         dropping it was right, and the sentence it sat in is the whole of the
         evidence."""
@@ -166,8 +169,7 @@ class TestTheWarrantCannotCertifyItself:
         assert "wp#569" in out, out
         assert "in: The cohort mechanism was introduced" in out, out
 
-    def test_no_ok_line_is_printed_when_only_the_claims_failed(
-            self, tmp_path: Path):
+    def test_no_ok_line_is_printed_when_only_the_claims_failed(self, tmp_path: Path):
         """Every line being accounted for is TRUE here, and printing it would
         still read as a pass twenty lines above exit 3 — the shape the
         validation gate had to fix in itself."""
@@ -199,8 +201,7 @@ class TestJudgingADroppedClaim:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "claims_warranted: 1" in r.stdout, r.stdout
 
-    def test_an_atom_entry_matches_whole_never_as_a_substring(
-            self, tmp_path: Path):
+    def test_an_atom_entry_matches_whole_never_as_a_substring(self, tmp_path: Path):
         """`#41` must not warrant `#412`, and a path must not be waved through
         by an entry naming its parent directory. This is why the atom file needs
         neither a length floor nor an over-broad refusal: a set element matches
@@ -222,7 +223,8 @@ class TestJudgingADroppedClaim:
         assert _prove(repo, "--claims").returncode == 0
 
     def test_an_unscoped_claim_entry_for_another_surface_is_not_called_stale(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """CR finding 3. #251 was fixed for the loss file and reintroduced here
         in the same change — the partition has to hold for both files or the
         shared grammar is only half shared."""
@@ -233,8 +235,7 @@ class TestJudgingADroppedClaim:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "Do not prune\n  on this run alone" in r.stdout, r.stdout
 
-    def test_naming_the_claim_file_without_the_flag_is_refused(
-            self, tmp_path: Path):
+    def test_naming_the_claim_file_without_the_flag_is_refused(self, tmp_path: Path):
         """CR finding 4. The file would go unread and its malformed entries
         unrefused, while the run reported a claim column it never computed. A
         flag that quietly does nothing is the mute failure this script refuses
@@ -276,14 +277,16 @@ class TestAtomsAreNotNoise:
         it would report every deleted code line twice — once as LOST and once
         as a dropped atom, the second adding nothing."""
         repo = _repo(
-            tmp_path, "# P\n\n## A\n\n```bash\nuv run pytest --maxfail=1\n```\n")
+            tmp_path, "# P\n\n## A\n\n```bash\nuv run pytest --maxfail=1\n```\n"
+        )
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         r = _prove(repo, "--claims")
         assert r.returncode == 3, r.stdout + r.stderr
         assert "claims_dropped: 0" in r.stdout, r.stdout
 
     def test_prose_tightened_into_a_fenced_block_is_not_a_dropped_claim(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """CR finding 1. Skipping fences on BOTH sides reported every atom of a
         prose-to-fence tightening as dropped — an ordinary class-C move, failing
         falsely. Reading fenced lines was not enough on its own: inside a fence
@@ -291,9 +294,11 @@ class TestAtomsAreNotNoise:
         as the atom."""
         repo = _repo(
             tmp_path,
-            "# P\n\n## A\n\nRun `uv sync --frozen` before anything else here.\n")
+            "# P\n\n## A\n\nRun `uv sync --frozen` before anything else here.\n",
+        )
         (repo / "AGENTS.md").write_text(
-            "# P\n\n## A\n\nSetup:\n\n```bash\nuv sync --frozen\n```\n")
+            "# P\n\n## A\n\nSetup:\n\n```bash\nuv sync --frozen\n```\n"
+        )
         _ack(repo, "tighten :: Run `uv sync --frozen` before anything")
         r = _prove(repo, "--claims")
         assert r.returncode == 0, r.stdout + r.stderr
@@ -318,15 +323,23 @@ class TestAnEntryThatMatchedNothing:
         repo = _repo(tmp_path, "# P\n\nRules live in [docs/S.md](docs/S.md).\n")
         (repo / "docs").mkdir(exist_ok=True)
         (repo / "docs" / "OLD.md").write_text(
-            "# Old\n\nA line that stays put entirely unchanged forever.\n")
-        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
-                       capture_output=True, env=_clean_env())
-        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "docs"],
-                       check=True, capture_output=True, env=_clean_env())
+            "# Old\n\nA line that stays put entirely unchanged forever.\n"
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "add", "-A"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-qm", "docs"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
         return repo
 
-    def test_an_entry_pinning_another_surface_is_not_called_stale(
-            self, tmp_path: Path):
+    def test_an_entry_pinning_another_surface_is_not_called_stale(self, tmp_path: Path):
         repo = self._two_surfaces(tmp_path)
         _ack(repo, "retarget :: Rules live in [docs/S.md]")
         r = _prove(repo, "--file", "docs/OLD.md")
@@ -334,7 +347,8 @@ class TestAnEntryThatMatchedNothing:
         assert "Do not prune on this run alone" in r.stdout, r.stdout
 
     def test_an_entry_whose_line_is_in_this_target_is_still_called_stale(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The direction that must not regress: where the run CAN judge, the
         prune advice stands. Expiry is the whole promise of content matching."""
         repo = self._two_surfaces(tmp_path)
@@ -344,8 +358,7 @@ class TestAnEntryThatMatchedNothing:
         assert "re-judge and prune" in r.stdout, r.stdout
         assert "Do not prune" not in r.stdout, r.stdout
 
-    def test_a_path_scoped_entry_that_matched_nothing_is_stale(
-            self, tmp_path: Path):
+    def test_a_path_scoped_entry_that_matched_nothing_is_stale(self, tmp_path: Path):
         """A PATH that matched settles it on its own: the entry says which
         target it is about, so this run is entitled to judge it."""
         repo = self._two_surfaces(tmp_path)

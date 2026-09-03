@@ -191,7 +191,9 @@ def matched() -> dict[tuple, object]:
 
 def _entries():
     return [
-        pytest.param(k, v, id=f"{k[0]}::{k[1][:44]}" + (f"#{k[2]}" if len(k) > 2 else ""))
+        pytest.param(
+            k, v, id=f"{k[0]}::{k[1][:44]}" + (f"#{k[2]}" if len(k) > 2 else "")
+        )
         for k, v in REGISTRY.items()
     ]
 
@@ -213,7 +215,9 @@ class TestEveryBlockCommitsToOneKind:
         )
 
     def test_both_kinds_are_populated(self):
-        counts = {k: sum(1 for e in REGISTRY.values() if e.get("kind") == k) for k in KINDS}
+        counts = {
+            k: sum(1 for e in REGISTRY.values() if e.get("kind") == k) for k in KINDS
+        }
         assert all(counts.values()), (
             f"one kind is now empty: {counts}. A classification with a single "
             "inhabited class is a field nobody reads; if the convention really "
@@ -264,7 +268,9 @@ class TestAnExcerptTracksItsSourceBothWays:
         )
 
     @pytest.mark.parametrize("key,entry", _entries_of("excerpt"))
-    def test_the_source_states_nothing_the_excerpt_omits(self, key, entry, skill_sections, matched):
+    def test_the_source_states_nothing_the_excerpt_omits(
+        self, key, entry, skill_sections, matched
+    ):
         """The check #148 named and could not make: drift by **omission**.
 
         Every contract token the source states inside the covered span must also

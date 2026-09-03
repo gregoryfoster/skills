@@ -64,8 +64,7 @@ _CODE_REVIEW_PROMPT = (
     "followed by severity sections (🔴 🟡 💭), "
     "sequential numbering across all sections, per-finding subfields "
     "(What:, Why it matters:, Suggested fix:), "
-    "and end with a '### Summary' section.\n\n"
-    + _CODE_SNIPPET
+    "and end with a '### Summary' section.\n\n" + _CODE_SNIPPET
 )
 
 # ---------------------------------------------------------------------------
@@ -96,8 +95,7 @@ _ARCH_REVIEW_PROMPT = (
     "sequential numbering across all sections, per-finding subfields "
     "(What:, Evidence:, Why it matters:, Suggested approach:, "
     "Effort/Blast radius:), "
-    "and end with a '### Summary' section.\n\n"
-    + _ARCH_DESCRIPTION
+    "and end with a '### Summary' section.\n\n" + _ARCH_DESCRIPTION
 )
 
 

@@ -91,9 +91,7 @@ def _scan_files() -> list[Path]:
     return [
         REPO_ROOT / rel
         for rel in tracked
-        if rel
-        and not rel.startswith(EXCLUDED_PREFIXES)
-        and (REPO_ROOT / rel).is_file()
+        if rel and not rel.startswith(EXCLUDED_PREFIXES) and (REPO_ROOT / rel).is_file()
     ]
 
 
@@ -184,7 +182,9 @@ def test_every_referenced_knob_is_inventoried(
     assert not missing, (
         "these .skills/ paths are read or written but have no row in "
         "docs/KNOBS.md:\n"
-        + "\n".join(f"  .skills/{n} — e.g. {', '.join(w)}" for n, w in sorted(missing.items()))
+        + "\n".join(
+            f"  .skills/{n} — e.g. {', '.join(w)}" for n, w in sorted(missing.items())
+        )
         + "\n\nAdd the row in the same change that adds the reader, saying what "
         "the file is for, whether it replaces or extends a default, and what "
         "its absence means. If it is genuinely not a knob, the honest fix is "

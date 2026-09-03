@@ -60,6 +60,8 @@ def _documented_surface() -> list[str]:
     texts = [MS_SKILL.read_text()]
     texts += [p.read_text() for p in sorted(MS_REFERENCES.rglob("*.md"))]
     return texts
+
+
 INSTALL_HOOK = MS_SCRIPTS / "install-hook.sh"
 INSTALL_REFRESH = MS_SCRIPTS / "install-refresh.sh"
 SOC_SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
@@ -71,12 +73,22 @@ REFRESH = "skills-submodule-update.sh"
 SETTINGS_REL = ".claude/settings.json"
 
 REMINDER_ARGS = (
-    "--hook", REMINDER, "--skill", "init-socraticode",
-    "--marker", "socraticode-prefetch", "--marker", "socraticode-reminder",
+    "--hook",
+    REMINDER,
+    "--skill",
+    "init-socraticode",
+    "--marker",
+    "socraticode-prefetch",
+    "--marker",
+    "socraticode-reminder",
 )
 HEALTH_ARGS = (
-    "--hook", HEALTH, "--skill", "init-socraticode",
-    "--marker", "socraticode-health",
+    "--hook",
+    HEALTH,
+    "--skill",
+    "init-socraticode",
+    "--marker",
+    "socraticode-health",
 )
 
 # The exact pair watcher carried, in the order it carried them: the reminder
@@ -96,7 +108,11 @@ def _clean_env() -> dict:
 def _run(repo: Path, *args: str, script: Path = INSTALL_HOOK):
     return subprocess.run(
         ["bash", str(script), *args],
-        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=30,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -134,14 +150,22 @@ def _seed_group(repo: Path, *commands: str) -> None:
     """ONE matcher group holding every command — the shape no other fixture in
     this suite builds, and the whole point of this file."""
     (repo / ".claude").mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_REL).write_text(json.dumps({
-        "hooks": {"SessionStart": [{
-            "matcher": ".*",
-            "hooks": [
-                {"type": "command", "command": c} for c in commands
-            ],
-        }]}
-    }))
+    (repo / SETTINGS_REL).write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": ".*",
+                            "hooks": [
+                                {"type": "command", "command": c} for c in commands
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+    )
 
 
 class TestRegisteringAHookDoesNotEvictItsGroupMates:
@@ -208,8 +232,7 @@ class TestReRegisteringANonFirstHookDoesNotDuplicateIt:
             f"registration appended beside it:\n{hits}"
         )
         assert hits == [
-            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/'
-            'skills-submodule-update.sh"'
+            'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh"'
         ], hits
 
     def test_two_forms_of_the_same_hook_in_one_group_collapse(self, repo: Path):
@@ -223,19 +246,19 @@ class TestReRegisteringANonFirstHookDoesNotDuplicateIt:
         _seed_group(repo, canonical, LEGACY_REMINDER_CMD)
         assert _run(repo, *REMINDER_ARGS).returncode == 0
         assert len(_commands(repo)) == 1, _groups(repo)
-        assert _groups(repo) == [{
-            "matcher": ".*",
-            "hooks": [{"type": "command", "command": canonical}],
-        }], _groups(repo)
+        assert _groups(repo) == [
+            {
+                "matcher": ".*",
+                "hooks": [{"type": "command", "command": canonical}],
+            }
+        ], _groups(repo)
 
 
 class TestUninstallHasTheIdenticalDefect:
     """`--uninstall` shares the filter, so it shares both failures — and here
     eviction is worse, because the operator asked for exactly one hook to go."""
 
-    def test_uninstalling_one_hook_leaves_its_group_mate_registered(
-        self, repo: Path
-    ):
+    def test_uninstalling_one_hook_leaves_its_group_mate_registered(self, repo: Path):
         _seed_group(repo, LEGACY_REMINDER_CMD, LEGACY_REFRESH_CMD)
         r = _run(repo, *REMINDER_ARGS, "--uninstall")
         assert r.returncode == 0, r.stderr
@@ -244,9 +267,7 @@ class TestUninstallHasTheIdenticalDefect:
             f"registration too:\n{json.dumps(_groups(repo), indent=2)}"
         )
 
-    def test_uninstalling_a_non_first_hook_actually_removes_it(
-        self, repo: Path
-    ):
+    def test_uninstalling_a_non_first_hook_actually_removes_it(self, repo: Path):
         """The `[0]` probe never sees index 1, so the strip is a no-op and
         `--uninstall` exits 0 having left the entry running."""
         _seed_group(repo, LEGACY_REFRESH_CMD, LEGACY_REMINDER_CMD)
@@ -271,14 +292,23 @@ class TestUninstallHasTheIdenticalDefect:
         edit content this installer never wrote, which the script's own
         contract forbids — only groups this run emptied may go."""
         (repo / ".claude").mkdir(parents=True, exist_ok=True)
-        (repo / SETTINGS_REL).write_text(json.dumps({
-            "hooks": {"SessionStart": [
-                {"matcher": "startup", "hooks": []},
-                {"matcher": ".*", "hooks": [
-                    {"type": "command", "command": LEGACY_REMINDER_CMD},
-                ]},
-            ]}
-        }))
+        (repo / SETTINGS_REL).write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"matcher": "startup", "hooks": []},
+                            {
+                                "matcher": ".*",
+                                "hooks": [
+                                    {"type": "command", "command": LEGACY_REMINDER_CMD},
+                                ],
+                            },
+                        ]
+                    }
+                }
+            )
+        )
         assert _run(repo, *REMINDER_ARGS, "--uninstall").returncode == 0
         assert {"matcher": "startup", "hooks": []} in _groups(repo), _groups(repo)
 
@@ -302,7 +332,8 @@ class TestTheDocumentedUninstallFilterIsFixedToo:
 
     def _documented_block(self) -> str:
         blocks = [
-            b for text in _documented_surface()
+            b
+            for text in _documented_surface()
             for b in re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
             if "jq " in b and REFRESH in b
         ]
@@ -313,13 +344,14 @@ class TestTheDocumentedUninstallFilterIsFixedToo:
         )
         return blocks[0]
 
-    def test_it_strips_the_hook_without_evicting_its_group_mate(
-        self, repo: Path
-    ):
+    def test_it_strips_the_hook_without_evicting_its_group_mate(self, repo: Path):
         _seed_group(repo, LEGACY_REFRESH_CMD, "bash .skills/doctor.sh")
         r = subprocess.run(
             ["bash", "-c", self._documented_block()],
-            cwd=repo, capture_output=True, text=True, env=_clean_env(),
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
             timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
@@ -329,13 +361,14 @@ class TestTheDocumentedUninstallFilterIsFixedToo:
         )
         assert not [c for c in _commands(repo) if REFRESH in c], _groups(repo)
 
-    def test_it_removes_the_hook_when_it_is_not_first_in_its_group(
-        self, repo: Path
-    ):
+    def test_it_removes_the_hook_when_it_is_not_first_in_its_group(self, repo: Path):
         _seed_group(repo, "bash .skills/doctor.sh", LEGACY_REFRESH_CMD)
         r = subprocess.run(
             ["bash", "-c", self._documented_block()],
-            cwd=repo, capture_output=True, text=True, env=_clean_env(),
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
             timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr

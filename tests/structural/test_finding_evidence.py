@@ -42,12 +42,19 @@ from pathlib import Path
 
 import pytest
 
-SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "reviewing-architecture"
+SKILL_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "skills" / "reviewing-architecture"
+)
 SKILL_MD = SKILL_DIR / "SKILL.md"
 DIMENSIONS = SKILL_DIR / "references" / "dimensions.md"
 
 # The original four, in their original order, plus the new derivation slot.
-ORIGINAL_LABELS = ("What:", "Why it matters:", "Suggested approach:", "Effort/Blast radius:")
+ORIGINAL_LABELS = (
+    "What:",
+    "Why it matters:",
+    "Suggested approach:",
+    "Effort/Blast radius:",
+)
 EVIDENCE_LABEL = "Evidence:"
 REQUIRED_LABELS = ("What:", EVIDENCE_LABEL, *ORIGINAL_LABELS[1:])
 
@@ -63,7 +70,9 @@ def format_line(body: str) -> str:
     for line in body.splitlines():
         if line.startswith("> ") and "**[module/file]**" in line:
             return line
-    pytest.fail("Phase 3 finding-format template line ('> N. **[module/file]** …') not found")
+    pytest.fail(
+        "Phase 3 finding-format template line ('> N. **[module/file]** …') not found"
+    )
 
 
 def _section(body: str, start: str, end: str) -> str:
@@ -96,7 +105,7 @@ class TestFindingCarriesItsDerivation:
         )
 
     def test_evidence_slot_asks_for_a_rerunnable_command(self, format_line):
-        slot = format_line[format_line.index(EVIDENCE_LABEL):]
+        slot = format_line[format_line.index(EVIDENCE_LABEL) :]
         slot = slot.split("Why it matters:")[0].lower()
         assert "command" in slot, (
             "The Evidence slot must ask for the command (or query) that produced the "
@@ -108,7 +117,9 @@ class TestFindingCarriesItsDerivation:
         )
 
     def test_labels_required_sentence_names_all_five(self, body):
-        m = re.search(r"All five labels \(([^)]*)\) are required in every finding, verbatim", body)
+        m = re.search(
+            r"All five labels \(([^)]*)\) are required in every finding, verbatim", body
+        )
         assert m, (
             "SKILL.md must state that all five labels are required in every finding, "
             "verbatim — the sentence that previously said 'All four labels'"
@@ -118,7 +129,9 @@ class TestFindingCarriesItsDerivation:
         assert not missing, f"The required-labels sentence omits: {missing}"
 
     def test_phase35_requires_the_derivation_not_only_the_location(self, body):
-        phase35 = _section(body, "### Phase 3.5 — Verify before reporting", "### Phase 4")
+        phase35 = _section(
+            body, "### Phase 3.5 — Verify before reporting", "### Phase 4"
+        )
         assert "Evidence:" in phase35, (
             "Phase 3.5's citation bullet must name the Evidence: label — it is the bullet "
             "that previously required a location and nothing about how it was obtained"
@@ -149,7 +162,9 @@ class TestSpecificsAreDatedNotSpecified:
 
     def test_note_demotes_line_numbers_to_evidence(self, phase3):
         lowered = phase3.lower()
-        assert "line numbers" in lowered, "The shelf-life note must name line numbers explicitly"
+        assert "line numbers" in lowered, (
+            "The shelf-life note must name line numbers explicitly"
+        )
         assert "specification" in lowered or "not spec" in lowered, (
             "The shelf-life note must say line numbers are evidence-of-the-moment rather "
             "than specification — the fix is to stop presenting them as authoritative"
@@ -175,7 +190,9 @@ class TestDimensionsReferenceDoesNotDrift:
             "SKILL.md Phase 3"
         )
         named = m.group(1)
-        missing = [lbl.rstrip(":") for lbl in REQUIRED_LABELS if lbl.rstrip(":") not in named]
+        missing = [
+            lbl.rstrip(":") for lbl in REQUIRED_LABELS if lbl.rstrip(":") not in named
+        ]
         assert not missing, (
             f"dimensions.md's envelope pointer has drifted from SKILL.md — missing: {missing}"
         )

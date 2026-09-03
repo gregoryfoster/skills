@@ -207,7 +207,9 @@ class TestApiCorrectionsVerifiedByProbe:
         for path in _surface():
             for lineno, line in enumerate(path.read_text().splitlines(), 1):
                 if self.JOBS_ENDPOINT.search(line) and "filter=all" not in line:
-                    offenders.append(f"{path.relative_to(SKILLS_DIR)}:{lineno}: {line.strip()}")
+                    offenders.append(
+                        f"{path.relative_to(SKILLS_DIR)}:{lineno}: {line.strip()}"
+                    )
         assert not offenders, (
             "Every jobs-endpoint call in this skill must pass `filter=all`:\n  "
             + "\n  ".join(offenders)
@@ -339,16 +341,23 @@ def _census(tmp_path, rows: list[dict], *args) -> subprocess.CompletedProcess:
     cache.write_text("\n".join(json.dumps(r) for r in [meta, *rows]) + "\n")
     return subprocess.run(
         ["bash", str(CENSUS), "--cache", str(cache), "--json", *args],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
 def _job(started: str, completed: str, conclusion: str = "success", **kw) -> dict:
     return {
-        "job": kw.get("job", "j"), "workflow": kw.get("workflow", "W"),
-        "attempt": 1, "conclusion": conclusion, "started": started,
-        "completed": completed, "branch": "main",
-        "event": kw.get("event", "push"), "run_id": kw.get("run_id", 1),
+        "job": kw.get("job", "j"),
+        "workflow": kw.get("workflow", "W"),
+        "attempt": 1,
+        "conclusion": conclusion,
+        "started": started,
+        "completed": completed,
+        "branch": "main",
+        "event": kw.get("event", "push"),
+        "run_id": kw.get("run_id", 1),
     }
 
 
@@ -368,10 +377,18 @@ class TestTheBillingArithmetic:
         `completed_at`. `max(1, ceil(-7/60))` is 1, so a naive census bills a
         full minute for a job that never occupied a runner.
         """
-        result = _census(tmp_path, [
-            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
-            _job("2026-08-02T10:00:34Z", "2026-08-02T10:00:27Z", "skipped", job="gate"),
-        ])
+        result = _census(
+            tmp_path,
+            [
+                _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+                _job(
+                    "2026-08-02T10:00:34Z",
+                    "2026-08-02T10:00:27Z",
+                    "skipped",
+                    job="gate",
+                ),
+            ],
+        )
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
         assert report["raw"]["billed_minutes"] == 1, (
@@ -391,10 +408,18 @@ class TestTheBillingArithmetic:
         which the floor then rounds up to a full billed minute. Only the
         `conclusion` test excludes that one, which is why both exist.
         """
-        result = _census(tmp_path, [
-            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
-            _job("2026-08-02T10:00:27Z", "2026-08-02T10:00:34Z", "skipped", job="gate"),
-        ])
+        result = _census(
+            tmp_path,
+            [
+                _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+                _job(
+                    "2026-08-02T10:00:27Z",
+                    "2026-08-02T10:00:34Z",
+                    "skipped",
+                    job="gate",
+                ),
+            ],
+        )
         report = json.loads(result.stdout)
         assert report["raw"]["billed_minutes"] == 1, (
             "a skipped job reporting +7s billed a minute: "
@@ -408,10 +433,20 @@ class TestTheBillingArithmetic:
         formula was never meant to see. The floor applies to work that happened;
         zero seconds of work is not one minute of work.
         """
-        report = json.loads(_census(tmp_path, [
-            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
-            _job("2026-08-02T10:05:00Z", "2026-08-02T10:05:00Z", "cancelled", job="zero"),
-        ]).stdout)
+        report = json.loads(
+            _census(
+                tmp_path,
+                [
+                    _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+                    _job(
+                        "2026-08-02T10:05:00Z",
+                        "2026-08-02T10:05:00Z",
+                        "cancelled",
+                        job="zero",
+                    ),
+                ],
+            ).stdout
+        )
         assert report["raw"]["billed_minutes"] == 1, (
             "a zero-duration job billed a minute: "
             f"{report['raw']['billed_minutes']} for one real 30s job"
@@ -435,12 +470,23 @@ class TestTheBillingArithmetic:
         Excluded rather than estimated: the job is billing right now and its
         final duration is not knowable, so guessing one would invent spend.
         """
-        result = _census(tmp_path, [
-            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
-            {"job": "live", "workflow": "w", "attempt": 1, "conclusion": None,
-             "started": "2026-08-02T10:05:00Z", "completed": None,
-             "branch": "main", "event": "push", "run_id": 2},
-        ])
+        result = _census(
+            tmp_path,
+            [
+                _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+                {
+                    "job": "live",
+                    "workflow": "w",
+                    "attempt": 1,
+                    "conclusion": None,
+                    "started": "2026-08-02T10:05:00Z",
+                    "completed": None,
+                    "branch": "main",
+                    "event": "push",
+                    "run_id": 2,
+                },
+            ],
+        )
         assert result.returncode == 0, (
             "a null completed_at aborted the census instead of being excluded: "
             f"{result.stderr.strip()}"
@@ -461,9 +507,16 @@ class TestTheBillingArithmetic:
         plausible number for a repository the user did not ask about — the
         exact failure this skill exists to find, from inside its own tool.
         """
-        result = _census(tmp_path, [
-            _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
-        ], "--repo", "someone/else", "--days", "7")
+        result = _census(
+            tmp_path,
+            [
+                _job("2026-08-02T10:00:00Z", "2026-08-02T10:00:30Z"),
+            ],
+            "--repo",
+            "someone/else",
+            "--days",
+            "7",
+        )
         assert result.returncode == 0
         assert "--repo someone/else ignored" in result.stderr, (
             "an ignored --repo must say so; the cache holds o/r. "
@@ -475,13 +528,17 @@ class TestTheBillingArithmetic:
 
     def test_the_one_minute_floor_is_applied(self, tmp_path):
         """Three seconds of work bills a full minute. The whole premise."""
-        result = _census(tmp_path, [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:03Z")])
+        result = _census(
+            tmp_path, [_job("2026-08-02T10:00:00Z", "2026-08-02T10:00:03Z")]
+        )
         assert json.loads(result.stdout)["raw"]["billed_minutes"] == 1
 
     def test_seconds_round_up_not_down(self, tmp_path):
         """119s bills 2 minutes; 121s bills 3. This is the duration lever."""
         for completed, expected in (("10:01:59Z", 2), ("10:02:01Z", 3)):
-            result = _census(tmp_path, [_job("2026-08-02T10:00:00Z", f"2026-08-02T{completed}")])
+            result = _census(
+                tmp_path, [_job("2026-08-02T10:00:00Z", f"2026-08-02T{completed}")]
+            )
             assert json.loads(result.stdout)["raw"]["billed_minutes"] == expected, (
                 f"a job ending at {completed} must bill {expected} minutes"
             )
@@ -489,7 +546,8 @@ class TestTheBillingArithmetic:
     def test_a_repo_inside_the_floor_classifies_as_job_count(self, tmp_path):
         rows = [
             _job(f"2026-08-{d:02d}T10:0{n}:00Z", f"2026-08-{d:02d}T10:0{n}:30Z")
-            for d in range(2, 8) for n in range(3)
+            for d in range(2, 8)
+            for n in range(3)
         ]
         report = json.loads(_census(tmp_path, rows).stdout)
         assert report["cost_shape"] == "job-count", report["structural"]
@@ -498,7 +556,8 @@ class TestTheBillingArithmetic:
     def test_a_repo_above_the_floor_classifies_as_duration(self, tmp_path):
         rows = [
             _job(f"2026-08-{d:02d}T10:0{n}:00Z", f"2026-08-{d:02d}T10:0{n + 2}:10Z")
-            for d in range(2, 8) for n in range(3)
+            for d in range(2, 8)
+            for n in range(3)
         ]
         report = json.loads(_census(tmp_path, rows).stdout)
         assert report["cost_shape"] == "duration", report["structural"]
@@ -514,7 +573,8 @@ class TestTheAnomalyGateExecuted:
         """Six days of three 30-second jobs — 3 billed min/day at 1.00/job."""
         return [
             _job(f"2026-08-{d:02d}T10:0{n}:00Z", f"2026-08-{d:02d}T10:0{n}:30Z")
-            for d in range(first, last) for n in range(3)
+            for d in range(first, last)
+            for n in range(3)
         ]
 
     def test_an_incident_day_is_flagged_and_excluded_from_the_baseline(self, tmp_path):
@@ -560,8 +620,10 @@ class TestTheAnomalyGateExecuted:
         understated the spend by 46 minutes — the gate, inverted.
         """
         busy = [
-            _job(f"2026-08-20T{10 + n // 6:02d}:{n % 6:02d}:00Z",
-                 f"2026-08-20T{10 + n // 6:02d}:{n % 6:02d}:30Z")
+            _job(
+                f"2026-08-20T{10 + n // 6:02d}:{n % 6:02d}:00Z",
+                f"2026-08-20T{10 + n // 6:02d}:{n % 6:02d}:30Z",
+            )
             for n in range(30)
         ]
         report = json.loads(_census(tmp_path, self._ordinary_days() + busy).stdout)
@@ -588,20 +650,30 @@ class TestTheCensusRefusesBadInput:
         cache.write_text('{"job":"x"}\n')
         result = subprocess.run(
             ["bash", str(CENSUS), "--cache", str(cache)],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 2, result.stdout
         assert "meta record" in result.stderr
 
     @pytest.mark.parametrize(
         "args",
-        [["--days", "0"], ["--days", "abc"], ["--anomaly-factor", "x"],
-         ["--anomaly-factor", "-1"], ["--bogus"]],
+        [
+            ["--days", "0"],
+            ["--days", "abc"],
+            ["--anomaly-factor", "x"],
+            ["--anomaly-factor", "-1"],
+            ["--bogus"],
+        ],
         ids=lambda a: " ".join(a),
     )
     def test_bad_arguments_exit_one(self, args):
         result = subprocess.run(
-            ["bash", str(CENSUS), *args], capture_output=True, text=True, timeout=60,
+            ["bash", str(CENSUS), *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 1, (
             f"{' '.join(args)} should be a usage error, got {result.returncode}"

@@ -168,24 +168,34 @@ class TestGitReallySkipsAnUnregisteredSubmodule:
 
     def test_update_without_init_exits_zero_and_moves_nothing(self, half_healed):
         assert _uninitialized(half_healed) == [SUBMODULE_PATH]
-        before = (half_healed / SUBMODULE_PATH / "skills" / "demo" / "SKILL.md").read_text()
+        before = (
+            half_healed / SUBMODULE_PATH / "skills" / "demo" / "SKILL.md"
+        ).read_text()
 
         r = subprocess.run(
             ["git", "submodule", "update", "--remote", "--merge"],
-            cwd=str(half_healed), capture_output=True, text=True,
-            env=_clean_env(), timeout=60,
+            cwd=str(half_healed),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
 
         assert r.returncode == 0, r.stdout + r.stderr
         assert _uninitialized(half_healed) == [SUBMODULE_PATH], "git registered it"
-        after = (half_healed / SUBMODULE_PATH / "skills" / "demo" / "SKILL.md").read_text()
+        after = (
+            half_healed / SUBMODULE_PATH / "skills" / "demo" / "SKILL.md"
+        ).read_text()
         assert after == before
 
     def test_adding_init_registers_the_path(self, half_healed):
         r = subprocess.run(
             ["git", "submodule", "update", "--init", "--remote", "--merge"],
-            cwd=str(half_healed), capture_output=True, text=True,
-            env=_clean_env(), timeout=60,
+            cwd=str(half_healed),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
 
         assert r.returncode == 0, r.stdout + r.stderr
@@ -204,8 +214,7 @@ class TestSkillTeachesTheInitForm:
         ]
         assert not offenders, (
             "a documented bulk update without --init silently skips every "
-            "submodule missing from .git/config and exits 0:\n"
-            + "\n".join(offenders)
+            "submodule missing from .git/config and exits 0:\n" + "\n".join(offenders)
         )
 
 
@@ -306,8 +315,14 @@ class TestDoctorHealsTheHalfHealedCheckout:
         """
         upstream = _upstream(tmp_path)
         origin = _consumer(tmp_path, upstream)
-        _git(origin, "config", "-f", ".gitmodules",
-             f"submodule.{SUBMODULE_PATH}.update", "none")
+        _git(
+            origin,
+            "config",
+            "-f",
+            ".gitmodules",
+            f"submodule.{SUBMODULE_PATH}.update",
+            "none",
+        )
         _git(origin, "add", ".gitmodules")
         _git(origin, "commit", "-qm", "hold the vendor submodule")
 
@@ -319,7 +334,8 @@ class TestDoctorHealsTheHalfHealedCheckout:
             r = _doctor(repo, *args)
             assert r.returncode == 0, (
                 f"a held submodule failed doctor {args or ['(heal)']}:\n"
-                + r.stdout + r.stderr
+                + r.stdout
+                + r.stderr
             )
         assert _uninitialized(repo) == [SUBMODULE_PATH], (
             "the hold should survive the heal that just ran"
@@ -391,7 +407,10 @@ class TestDoctorHealsTheHalfHealedCheckout:
     def test_help_documents_the_second_trigger(self):
         help_text = subprocess.run(
             ["bash", str(DOCTOR), "--help"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         ).stdout
 
         assert "skills-vendor/" in help_text, help_text

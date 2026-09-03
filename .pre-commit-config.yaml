@@ -17,6 +17,22 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # The Python gate (#246): ruff check + ruff format --check over the tree,
+      # configured in [tool.ruff] and pinned exactly in requirements-test.txt.
+      # Ahead of the suite for the same reason the budget gate is — a format
+      # breach fails in ~1s instead of after the ~4 min suite. The suite still
+      # carries it (tests/structural/test_python_lint.py) so a run outside
+      # pre-commit is gated too; this hook is the fast spelling, not a second
+      # source of truth. The script delegates venv resolution to
+      # structural-tests.sh --check rather than reimplementing #156's fix.
+      - id: python-lint
+        name: Python Lint (ruff)
+        entry: bash scripts/python-lint.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: structural-tests
         name: Structural Tests
         # Not an inline `source .venv/bin/activate` (#156): a linked worktree

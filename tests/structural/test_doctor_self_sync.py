@@ -195,15 +195,22 @@ class TestCheckOnlyMakesNoWrites:
             ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
         ):
             subprocess.run(
-                ["git", *args], cwd=healthy_repo, check=True,
-                capture_output=True, env=env,
+                ["git", *args],
+                cwd=healthy_repo,
+                check=True,
+                capture_output=True,
+                env=env,
             )
 
         _run_installed_doctor(healthy_repo, extra_args=["--check-only"])
 
         status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=healthy_repo, check=True, capture_output=True, text=True, env=env,
+            cwd=healthy_repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         assert status.stdout == "", (
             f"--check-only dirtied the working tree: {status.stdout!r}"
@@ -225,9 +232,7 @@ class TestSelfSyncIsNonFatal:
         assert "refreshed" not in result.stderr
 
     def test_failing_installer_does_not_change_exit_code(self, healthy_repo):
-        _install_vendor(
-            healthy_repo, installer_body="#!/usr/bin/env bash\nexit 1\n"
-        )
+        _install_vendor(healthy_repo, installer_body="#!/usr/bin/env bash\nexit 1\n")
         stale = _stale_doctor_text()
         dest = _install_doctor_copy(healthy_repo, stale)
 
@@ -403,7 +408,11 @@ class TestInstallerReplacesByRename:
         # No --quiet, so the installer names the path it took.
         result = subprocess.run(
             ["bash", str(vendor / "install-doctor.sh")],
-            check=True, capture_output=True, text=True, cwd=repo, env=_clean_env(),
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=repo,
+            env=_clean_env(),
         )
 
         assert "no-op" in result.stdout, (
@@ -442,7 +451,10 @@ class TestInstallerRefusesANonFileDestination:
 
         result = subprocess.run(
             ["bash", str(vendor / "install-doctor.sh")],
-            capture_output=True, text=True, cwd=repo, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            cwd=repo,
+            env=_clean_env(),
         )
 
         assert result.returncode != 0, result.stdout + result.stderr
@@ -462,7 +474,10 @@ class TestInstallerRefusesANonFileDestination:
 
         result = subprocess.run(
             ["bash", str(vendor / "install-doctor.sh")],
-            capture_output=True, text=True, cwd=repo, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            cwd=repo,
+            env=_clean_env(),
         )
         assert "doctor.sh" in result.stderr, result.stderr
         assert "not a regular file" in result.stderr, result.stderr
@@ -482,7 +497,10 @@ class TestInstallerRefusesANonFileDestination:
 
         result = subprocess.run(
             ["bash", str(vendor / "install-doctor.sh")],
-            capture_output=True, text=True, cwd=repo, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            cwd=repo,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert not dest.is_symlink(), "the doctor must end up a real file"

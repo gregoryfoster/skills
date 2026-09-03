@@ -79,7 +79,11 @@ def exact_env(tmp_path: Path) -> dict:
 def _measure(repo: Path, env: dict, *args: str) -> dict:
     r = subprocess.run(
         ["bash", str(MEASURE), *args],
-        capture_output=True, text=True, cwd=str(repo), env=env, timeout=120,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=env,
+        timeout=120,
     )
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -163,7 +167,10 @@ class TestThePersistedRatioIsSurfaceWide:
         repo = _repo(tmp_path)
         r = subprocess.run(
             ["bash", str(MEASURE), "--exact", "--no-write"],
-            capture_output=True, text=True, cwd=str(repo), env=exact_env,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=exact_env,
             timeout=120,
         )
         assert r.returncode == 0, r.stderr

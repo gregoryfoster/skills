@@ -157,8 +157,12 @@ DEFAULT_REPLIES = {
 
 def _clean_env(**extra: str) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("SOCRATICODE_DRIVER", "SOCRATICODE_PROBE_FILE",
-              "HEALTH_TIMEOUT_MS", "SOCRATICODE_HEALTH_FORCE"):
+    for k in (
+        "SOCRATICODE_DRIVER",
+        "SOCRATICODE_PROBE_FILE",
+        "HEALTH_TIMEOUT_MS",
+        "SOCRATICODE_HEALTH_FORCE",
+    ):
         env.pop(k, None)
     env.update(extra)
     return env
@@ -197,15 +201,18 @@ def _repo(tmp_path: Path, artifacts: object = "default") -> Path:
     if artifacts == "default":
         artifacts = {
             "artifacts": [
-                {"name": "database-schema", "path": "./docs/schema.sql", "description": "d"},
+                {
+                    "name": "database-schema",
+                    "path": "./docs/schema.sql",
+                    "description": "d",
+                },
                 {"name": "reference-docs", "path": "./docs/", "description": "d"},
                 {"name": "agent-guidelines", "path": "./AGENTS.md", "description": "d"},
             ]
         }
     if artifacts is not None:
         (repo / MANIFEST_NAME).write_text(json.dumps(artifacts))
-    for path in (repo / "docs" / "schema.sql", repo / "AGENTS.md",
-                 repo / "docs", repo):
+    for path in (repo / "docs" / "schema.sql", repo / "AGENTS.md", repo / "docs", repo):
         _stamp(path)
     return repo
 
@@ -223,7 +230,9 @@ def _health_check(tmp_path: Path, repo: Path, replies: dict) -> tuple:
     calls.write_text("")
     result = subprocess.run(
         ["node", str(DRIVER), "health-check", str(repo)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(
             SOCRATICODE_ENTRY=str(stub),
             STUB_REPLIES=str(reply_file),
@@ -250,7 +259,10 @@ class TestParsesPerArtifactStatus:
         )
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -259,7 +271,9 @@ class TestParsesPerArtifactStatus:
     def test_the_live_reply_parses(self) -> None:
         parsed = self._parse(CONTEXT_LISTING)
         assert [a["name"] for a in parsed] == [
-            "database-schema", "reference-docs", "agent-guidelines"
+            "database-schema",
+            "reference-docs",
+            "agent-guidelines",
         ], parsed
         assert [a["indexed"] for a in parsed] == [True, False, True], parsed
 
@@ -298,7 +312,9 @@ class TestHealthCheckReportsTheParityGap:
     def test_a_completed_index_that_left_an_artifact_unindexed_is_a_finding(
         self, tmp_path: Path
     ) -> None:
-        result, report, _calls = _health_check(tmp_path, _repo(tmp_path), DEFAULT_REPLIES)
+        result, report, _calls = _health_check(
+            tmp_path, _repo(tmp_path), DEFAULT_REPLIES
+        )
         assert report is not None, result.stdout + result.stderr
         assert report["healthy"] is False, report
         parity = [f for f in report["findings"] if "context artifact" in f]
@@ -352,9 +368,11 @@ class TestHealthCheckReportsTheParityGap:
         count re-derived from `declared` would satisfy `indexed == 3` on its
         own, which is why the tool call itself is asserted.
         """
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         result, report, calls = _health_check(tmp_path, _repo(tmp_path), replies)
         assert "codebase_context" in calls, (
             "health-check declared full parity without ever asking "
@@ -370,9 +388,11 @@ class TestHealthCheckReportsTheParityGap:
     @requires_node
     def test_a_repo_with_no_manifest_is_not_a_finding(self, tmp_path: Path) -> None:
         """No artifacts configured is a choice, not a degradation."""
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_NONE}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_NONE,
+        }
         repo = _repo(tmp_path, artifacts=None)
         result, report, _calls = _health_check(tmp_path, repo, replies)
         assert report["healthy"] is True, report
@@ -390,9 +410,14 @@ class TestHealthCheckReportsTheParityGap:
         `codebase_status` then omits the artifact line entirely, and every
         reading reports a contented `0/0`.
         """
-        repo = _repo(tmp_path, artifacts={"artifacts": [{"name": "x", "path": "./nope.md"}]})
-        replies = {**DEFAULT_REPLIES, "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_NONE}
+        repo = _repo(
+            tmp_path, artifacts={"artifacts": [{"name": "x", "path": "./nope.md"}]}
+        )
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_NONE,
+        }
         result, report, _calls = _health_check(tmp_path, repo, replies)
         assert report is not None, (
             "health-check died on an invalid manifest instead of reporting it, "
@@ -450,9 +475,11 @@ class TestHealthCheckReportsStaleArtifacts:
     def test_an_edited_artifact_is_a_finding(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         result, report, _calls = _health_check(tmp_path, repo, replies)
         assert self._stale(report), (
             "every artifact reported indexed, one of them edited after its "
@@ -471,9 +498,11 @@ class TestHealthCheckReportsStaleArtifacts:
         """
         repo = _repo(tmp_path)
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         _, report, _calls = _health_check(tmp_path, repo, replies)
         line = next(f for f in report["findings"] if "stale" in f)
         assert not line.startswith("note: "), (
@@ -489,9 +518,11 @@ class TestHealthCheckReportsStaleArtifacts:
         repo = _repo(tmp_path)
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)
         _stamp(repo / "docs" / "schema.sql", EDITED_AFTER_INDEXING)
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         _, report, _calls = _health_check(tmp_path, repo, replies)
         line = self._stale(report)
         assert "agent-guidelines" in line, line
@@ -520,9 +551,11 @@ class TestHealthCheckReportsStaleArtifacts:
         _stamp(new_plan, EDITED_AFTER_INDEXING)
         for directory in (plans, repo / "docs" / "plans", repo / "docs", repo):
             _stamp(directory)
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         result, report, _calls = _health_check(tmp_path, repo, replies)
         assert "reference-docs" in self._stale(report), (
             "a file added two levels under the `./docs/` artifact left it "
@@ -534,9 +567,11 @@ class TestHealthCheckReportsStaleArtifacts:
     @requires_node
     def test_a_fresh_tree_is_silent(self, tmp_path: Path) -> None:
         """The check must not fire on every repo that has ever been indexed."""
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         result, report, _calls = _health_check(tmp_path, _repo(tmp_path), replies)
         assert not self._stale(report), report
         assert result.returncode == 0, result.stdout + result.stderr
@@ -555,7 +590,8 @@ class TestHealthCheckReportsStaleArtifacts:
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)
         _, report, _calls = _health_check(tmp_path, repo, DEFAULT_REPLIES)
         parity = " ".join(
-            f for f in report["findings"]
+            f
+            for f in report["findings"]
             if "context artifact" in f and "stale" not in f
         )
         assert "2/3" in parity and "reference-docs" in parity, parity
@@ -581,9 +617,11 @@ class TestHealthCheckReportsStaleArtifacts:
             "Status: ✓ indexed (3 chunks, 2026-08-09T04:46:35.009Z)",
             "Status: ✓ indexed",
         )
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": untimed}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": untimed,
+        }
         result, report, _calls = _health_check(tmp_path, repo, replies)
         assert not self._stale(report), (
             "an artifact whose index time the server did not report was called "
@@ -601,9 +639,11 @@ class TestHealthCheckReportsStaleArtifacts:
         """
         repo = _repo(tmp_path)
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         _, report, _calls = _health_check(tmp_path, repo, replies)
         entry = next(
             a for a in report["artifacts"]["stale"] if a["name"] == "agent-guidelines"
@@ -657,7 +697,10 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         )
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -689,9 +732,11 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         _stamp(churned, EDITED_AFTER_INDEXING)
         for directory in (repo / "docs", repo):
             _stamp(directory)
-        replies = {**DEFAULT_REPLIES,
-                   "codebase_status": STATUS_COMPLETE,
-                   "codebase_context": CONTEXT_ALL_INDEXED}
+        replies = {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
         result, report, _calls = _health_check(tmp_path, repo, replies)
         stale = " ".join(f for f in report["findings"] if "stale" in f)
         assert not stale, (
@@ -789,8 +834,12 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         _stamp(tree / "a.md")
         for churned in (vendored, gitfile):
             _stamp(churned, EDITED_AFTER_INDEXING)
-        for directory in (tree / "node_modules" / "pkg", tree / "node_modules",
-                          tree / ".git", tree):
+        for directory in (
+            tree / "node_modules" / "pkg",
+            tree / "node_modules",
+            tree / ".git",
+            tree,
+        ):
             _stamp(directory)
         newest = self._newest(tree)
         assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
@@ -807,8 +856,8 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         pin, not a behavior — the behavior is the five tests above.
         """
         source = DRIVER.read_text()
-        walk = source[source.index("function newestMtimeMs"):]
-        walk = walk[:walk.index("\nfunction ")]
+        walk = source[source.index("function newestMtimeMs") :]
+        walk = walk[: walk.index("\nfunction ")]
         assert "context-artifacts.js" in walk and "dot: false" in walk, (
             "newestMtimeMs's prune list no longer says which server walker it "
             "mirrors; without the pointer, the parity looks like a style "
@@ -828,7 +877,10 @@ class TestParsesTheIndexTimestamp:
         )
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=60, env=_clean_env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -846,7 +898,9 @@ class TestParsesTheIndexTimestamp:
         """Freshness needs the path, and the manifest is not keyed by name here."""
         parsed = self._parse(CONTEXT_LISTING)
         assert [a["path"] for a in parsed] == [
-            "./docs/schema.sql", "./docs/", "./AGENTS.md"
+            "./docs/schema.sql",
+            "./docs/",
+            "./AGENTS.md",
         ], parsed
 
 
@@ -883,7 +937,7 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         text = ARTIFACTS_REF.read_text()
         start = text.index("## Field notes")
         end = text.find("\n## ", start + len("## Field notes"))
-        return text[start:end if end != -1 else len(text)]
+        return text[start : end if end != -1 else len(text)]
 
     @staticmethod
     def _bullet(opening: str) -> str:
@@ -917,7 +971,7 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         )
         start = notes.index(opening)
         end = notes.find("\n- ", start + len(opening))
-        return notes[start:end if end != -1 else len(notes)]
+        return notes[start : end if end != -1 else len(notes)]
 
     def test_the_ignore_exception_is_still_stated(self) -> None:
         """The bullet the two new ones are written as continuations of.
@@ -939,7 +993,7 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
             f"references/{ARTIFACTS_REF.name}'s **Field notes** describes the "
             "missing ignore chain but not the mechanism underneath it: the "
             "binary guard is already written and cannot fire, because "
-            "`fsp.readFile(path, \"utf-8\")` returns U+FFFD replacement "
+            '`fsp.readFile(path, "utf-8")` returns U+FFFD replacement '
             "characters rather than throwing. Without that, a reader hunts for "
             "a text filter the server already believes it has (#229)."
         )
@@ -1000,7 +1054,7 @@ class TestGeneratedDocExplainsTheSymptom:
         text = DOC_REF.read_text()
         start = text.index("## Per-tool notes")
         end = text.find("\n## ", start + len("## Per-tool notes"))
-        return text[start:end if end != -1 else len(text)]
+        return text[start : end if end != -1 else len(text)]
 
     @classmethod
     def _context_search_note(cls) -> str:
@@ -1008,7 +1062,7 @@ class TestGeneratedDocExplainsTheSymptom:
         notes = cls._per_tool_notes()
         start = notes.index("- **`codebase_context_search`**")
         end = notes.find("\n- ", start)
-        return notes[start:end if end != -1 else len(notes)]
+        return notes[start : end if end != -1 else len(notes)]
 
     def test_the_note_covers_the_resolving_but_unindexed_case(self) -> None:
         notes = self._per_tool_notes().lower()

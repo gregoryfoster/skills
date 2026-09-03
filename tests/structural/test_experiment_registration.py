@@ -61,8 +61,14 @@ EXPERIMENTS = ROOT / ".skills" / "experiments"
 TEMPLATE = EXPERIMENTS / "TEMPLATE.yml"
 
 REQUIRED_KEYS = (
-    "experiment", "proposal", "registered", "treatment_version",
-    "control_version", "arm_predicate", "primary_metric", "direction",
+    "experiment",
+    "proposal",
+    "registered",
+    "treatment_version",
+    "control_version",
+    "arm_predicate",
+    "primary_metric",
+    "direction",
     "min_pairs",
 )
 
@@ -81,17 +87,26 @@ def _flat(text: str) -> str:
 
 def _row(**kw) -> str:
     row = {
-        "ts": "2026-08-05", "repo": "x", "file": "AGENTS.md",
-        "tokens": None, "tokens_exact": True, "skill_version": None,
-        "skill_commit": None, "budget": 6000, "docs_orphaned": 0,
-        "links_dead": 0, "no_loss": "ok", "actions": [],
+        "ts": "2026-08-05",
+        "repo": "x",
+        "file": "AGENTS.md",
+        "tokens": None,
+        "tokens_exact": True,
+        "skill_version": None,
+        "skill_commit": None,
+        "budget": 6000,
+        "docs_orphaned": 0,
+        "links_dead": 0,
+        "no_loss": "ok",
+        "actions": [],
     }
     row.update(kw)
     return json.dumps(row, sort_keys=True)
 
 
-def _member(root: Path, name: str, before: int, after: int, version: str,
-            **extra) -> None:
+def _member(
+    root: Path, name: str, before: int, after: int, version: str, **extra
+) -> None:
     """A member with a baseline row and one scored curation.
 
     `extra` lands on the scored row only, which is the row score-cohort.sh
@@ -102,25 +117,42 @@ def _member(root: Path, name: str, before: int, after: int, version: str,
     d.mkdir(parents=True, exist_ok=True)
     rows = [
         _row(repo=name, tokens=before, actions=["baseline:pre-curation"]),
-        _row(repo=name, tokens=after, actions=["demote:Big"], ts="2026-08-06",
-             skill_version=version, skill_commit="deadbee", **extra),
+        _row(
+            repo=name,
+            tokens=after,
+            actions=["demote:Big"],
+            ts="2026-08-06",
+            skill_version=version,
+            skill_commit="deadbee",
+            **extra,
+        ),
     ]
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
 
 
 def _roster(root: Path, spec) -> Path:
     path = root / "cohort"
-    path.write_text("".join(
-        f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec))
+    path.write_text(
+        "".join(f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec)
+    )
     return path
 
 
-def _cohort(root: Path, *, sizes=None, t_extra=None, c_extra=None,
-            t_version="1.3", c_version="1.2") -> Path:
+def _cohort(
+    root: Path,
+    *,
+    sizes=None,
+    t_extra=None,
+    c_extra=None,
+    t_version="1.3",
+    c_version="1.2",
+) -> Path:
     """Three pairs, treatment newer than control, all six scorable."""
-    sizes = sizes or [(52000, 20000, 49000, 12000),
-                      (28000, 12000, 26000, 9000),
-                      (19000, 10000, 18000, 8000)]
+    sizes = sizes or [
+        (52000, 20000, 49000, 12000),
+        (28000, 12000, 26000, 9000),
+        (19000, 10000, 18000, 8000),
+    ]
     spec = []
     for i, (cb, ca, tb, ta) in enumerate(sizes, 1):
         _member(root, f"ctl{i}", cb, ca, c_version, **(c_extra or {}))
@@ -146,8 +178,7 @@ def _register(root: Path, name: str = "02-a-proposal.yml", **over) -> Path:
     fields.update({k: v for k, v in over.items() if v is not None})
     for k in [k for k, v in over.items() if v is None]:
         fields.pop(k, None)
-    (d / name).write_text(
-        "".join(f"{k}: {v}\n" for k, v in fields.items()))
+    (d / name).write_text("".join(f"{k}: {v}\n" for k, v in fields.items()))
     return d
 
 
@@ -157,9 +188,21 @@ def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
     point: before #194 the flags named waves and could not be checked against a
     registration at all."""
     return subprocess.run(
-        ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "1.3", "--control", "1.2", *args],
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        [
+            "bash",
+            str(SCORE),
+            "--cohort-file",
+            str(roster),
+            "--treatment",
+            "1.3",
+            "--control",
+            "1.2",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -174,8 +217,8 @@ def _refused(r: subprocess.CompletedProcess) -> str:
     """
     assert r.returncode == 1, r.stdout
     assert "unknown argument" not in r.stderr, (
-        "this is an argument-parsing error, not a registration refusal:\n"
-        + r.stderr)
+        "this is an argument-parsing error, not a registration refusal:\n" + r.stderr
+    )
     return r.stderr
 
 
@@ -197,14 +240,16 @@ class TestTheMetricCannotComeFromAFlag:
         """Matched as an OPTION LINE, not as a substring: the help says "there
         is NO --metric flag" in prose, and a substring test would read the
         sentence promising the flag does not exist as evidence that it does."""
-        r = subprocess.run(["bash", str(SCORE), "--help"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["bash", str(SCORE), "--help"], capture_output=True, text=True, timeout=30
+        )
         assert not re.search(r"^\s+--metric\b", r.stdout, re.M), r.stdout
         assert re.search(r"^\s+--experiment\b", r.stdout, re.M), r.stdout
 
     def test_the_help_says_why_there_is_no_flag(self):
-        r = subprocess.run(["bash", str(SCORE), "--help"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["bash", str(SCORE), "--help"], capture_output=True, text=True, timeout=30
+        )
         flat = _flat(r.stdout).lower()
         assert "no --metric flag" in flat, r.stdout
         assert "committed" in flat, r.stdout
@@ -214,20 +259,33 @@ class TestTheGateResolvesACommittedRegistration:
     def test_it_reads_the_file_named_by_its_number(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path)
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02", "--format", "json")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         assert payload["experiment"]["primary_metric"] == "closure"
         assert payload["experiment"]["file"].endswith("02-a-proposal.yml")
 
     def test_a_missing_registration_is_a_usage_error_naming_the_directory(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """Not INCONCLUSIVE. Nothing was scored, so there is no verdict to
         report — and a verdict-shaped output would suggest the experiment ran."""
         roster = _cohort(tmp_path)
         (tmp_path / "experiments").mkdir()
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "07")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "07",
+        )
         err = _refused(r)
         assert "experiments" in err and "07" in err, err
 
@@ -235,8 +293,13 @@ class TestTheGateResolvesACommittedRegistration:
         roster = _cohort(tmp_path)
         _register(tmp_path, "02-a-proposal.yml")
         _register(tmp_path, "02-another-proposal.yml")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         err = _refused(r)
         assert "02-a-proposal.yml" in err, err
         assert "02-another-proposal.yml" in err, err
@@ -248,16 +311,26 @@ class TestTheGateResolvesACommittedRegistration:
         other experiment's history."""
         roster = _cohort(tmp_path)
         _register(tmp_path, "02-a-proposal.yml", experiment="03")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         err = _refused(r)
         assert "03" in err and "02" in err, err
 
     def test_a_missing_required_key_is_named(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path, direction=None)
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert "direction" in _refused(r)
 
     def test_the_default_scoring_needs_no_registration(self, tmp_path: Path):
@@ -279,18 +352,29 @@ class TestTheArmPredicateIsTheRowStamp:
     def test_skill_version_is_accepted(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path)
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02", "--format", "json")
-        assert json.loads(r.stdout)["experiment"]["arm_predicate"] \
-            == "skill_version"
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
+        assert json.loads(r.stdout)["experiment"]["arm_predicate"] == "skill_version"
 
     def test_wave_is_refused_by_name(self, tmp_path: Path):
         """The specific wrong answer, refused specifically. A generic "not a
         legal value" would let the next reader think it was a typo."""
         roster = _cohort(tmp_path)
         _register(tmp_path, arm_predicate="wave")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         err = _refused(r)
         assert "wave" in err, err
         assert "rollout order" in _flat(err).lower(), err
@@ -302,8 +386,13 @@ class TestTheArmPredicateIsTheRowStamp:
         the rows this script refuses to score."""
         roster = _cohort(tmp_path)
         _register(tmp_path, arm_predicate="wave")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert "baseline:scheduled" in _refused(r)
 
 
@@ -311,8 +400,13 @@ class TestARejectedMetricCannotBeRegistered:
     def test_tokens_live_is_refused(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path, primary_metric="tokens_live")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         err = _refused(r)
         assert "tokens_live" in err, err
         assert "rejected-changes.md" in err, err
@@ -324,19 +418,33 @@ class TestARejectedMetricCannotBeRegistered:
         not produce.
         """
         heading = next(
-            line[3:].strip() for line in REJECTED.read_text().splitlines()
-            if line.startswith("## ") and "`tokens_live`" in line)
+            line[3:].strip()
+            for line in REJECTED.read_text().splitlines()
+            if line.startswith("## ") and "`tokens_live`" in line
+        )
         roster = _cohort(tmp_path)
         _register(tmp_path, primary_metric="tokens_live")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert heading in _refused(r)
 
     def test_a_metric_with_no_rejection_entry_is_allowed(self, tmp_path: Path):
         roster = _cohort(tmp_path, t_extra={"seams": 0}, c_extra={"seams": 4})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02", "--format", "json")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert json.loads(r.stdout)["primary_metric"] == "seams"
 
@@ -348,8 +456,13 @@ class TestTheArmsObservedMustBeTheArmsRegistered:
         comparison that is not the one in front of it is exactly that."""
         roster = _cohort(tmp_path, t_version="1.3", c_version="1.2")
         _register(tmp_path, treatment_version="1.4", control_version="1.3")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert r.returncode == 5, r.stdout
         assert "INCONCLUSIVE" in r.stdout, r.stdout
         assert "1.4" in r.stdout and "1.3" in r.stdout, r.stdout
@@ -360,8 +473,13 @@ class TestTheArmsObservedMustBeTheArmsRegistered:
         registration reads as a mismatch for a cosmetic difference."""
         roster = _cohort(tmp_path, t_version="1.3.0", c_version="1.2")
         _register(tmp_path, treatment_version="v1.3")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -377,8 +495,13 @@ class TestAProposalIsNotJudgedByAnInstrumentItAdded:
     def test_a_null_control_column_is_named_as_the_reason(self, tmp_path: Path):
         roster = _cohort(tmp_path, t_extra={"seams": 0})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert r.returncode == 5, r.stdout
         flat = _flat(r.stdout).lower()
         assert "its own instrument" in flat, r.stdout
@@ -387,29 +510,43 @@ class TestAProposalIsNotJudgedByAnInstrumentItAdded:
     def test_it_is_not_recorded_as_a_rejection(self, tmp_path: Path):
         roster = _cohort(tmp_path, t_extra={"seams": 0})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert "rejected-changes.md" in r.stdout, r.stdout
         assert "not a rejection" in _flat(r.stdout), r.stdout
 
     def test_one_control_row_carrying_the_field_is_enough_to_score(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """EVERY control row, not most. One measured control surface is a weak
         comparison, and a weak comparison is still a comparison — the script
         does not get to decide it is too weak."""
-        sizes = [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000),
-                 (19000, 10000, 18000, 8000)]
+        sizes = [
+            (52000, 20000, 49000, 12000),
+            (28000, 12000, 26000, 9000),
+            (19000, 10000, 18000, 8000),
+        ]
         spec = []
         for i, (cb, ca, tb, ta) in enumerate(sizes, 1):
-            _member(tmp_path, f"ctl{i}", cb, ca, "1.2",
-                    **({"seams": 9} if i == 1 else {}))
+            _member(
+                tmp_path, f"ctl{i}", cb, ca, "1.2", **({"seams": 9} if i == 1 else {})
+            )
             _member(tmp_path, f"trt{i}", tb, ta, "1.3", seams=0)
             spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
         roster = _roster(tmp_path, spec)
-        _register(tmp_path, primary_metric="seams", direction="lower",
-                  min_pairs="1")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        _register(tmp_path, primary_metric="seams", direction="lower", min_pairs="1")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert "its own instrument" not in _flat(r.stdout).lower(), r.stdout
 
     def test_a_safety_failure_still_rejects_ahead_of_it(self, tmp_path: Path):
@@ -418,8 +555,13 @@ class TestAProposalIsNotJudgedByAnInstrumentItAdded:
         safety veto — it sits below it in the ladder for that reason."""
         roster = _cohort(tmp_path, t_extra={"seams": 0, "no_loss": "FAILED"})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert r.returncode == 3, r.stdout
         assert "REJECT" in r.stdout, r.stdout
 
@@ -435,12 +577,18 @@ class TestAMetricTheLedgerDoesNotCarryIsNamed:
     measured", which is true and says nothing about the cause.
     """
 
-    def test_a_metric_on_no_row_at_all_is_named_as_the_reason(
-            self, tmp_path: Path):
+    def test_a_metric_on_no_row_at_all_is_named_as_the_reason(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path, primary_metric="truthfulness", direction="higher")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02", "--format", "json")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         assert payload["verdict"] == "INCONCLUSIVE"
         assert payload["metric_unreadable"] is True
@@ -454,17 +602,30 @@ class TestAMetricTheLedgerDoesNotCarryIsNamed:
         reading identically."""
         roster = _cohort(tmp_path, t_extra={"seams": 0})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        payload = json.loads(_score(
-            roster, "--experiments-dir", str(tmp_path / "experiments"),
-            "--experiment", "02", "--format", "json").stdout)
+        payload = json.loads(
+            _score(
+                roster,
+                "--experiments-dir",
+                str(tmp_path / "experiments"),
+                "--experiment",
+                "02",
+                "--format",
+                "json",
+            ).stdout
+        )
         assert payload["added_its_own_instrument"] is True
         assert payload["metric_unreadable"] is False
 
     def test_it_points_at_the_row_schema(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path, primary_metric="truthfulness", direction="higher")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert "telemetry.md" in r.stdout, r.stdout
 
 
@@ -472,20 +633,35 @@ class TestTheRegisteredDirectionDecidesTheWinner:
     def test_lower_is_better_inverts_who_wins(self, tmp_path: Path):
         roster = _cohort(tmp_path, t_extra={"seams": 2}, c_extra={"seams": 7})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        won = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                     "--experiment", "02")
+        won = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert won.returncode == 0, won.stdout + won.stderr
 
         _register(tmp_path, primary_metric="seams", direction="higher")
-        lost = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                      "--experiment", "02")
+        lost = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert lost.returncode == 3, lost.stdout
 
     def test_an_unknown_direction_is_refused(self, tmp_path: Path):
         roster = _cohort(tmp_path)
         _register(tmp_path, direction="better")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+        )
         assert "direction" in _refused(r)
 
     def test_equal_values_are_a_tie_and_a_tie_loses(self, tmp_path: Path):
@@ -495,8 +671,15 @@ class TestTheRegisteredDirectionDecidesTheWinner:
         ran out of room rather than finding the arms equal."""
         roster = _cohort(tmp_path, t_extra={"seams": 3}, c_extra={"seams": 3})
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02", "--format", "json")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         assert payload["informative_pairs"] == 3
         assert {p["winner"] for p in payload["pairs"]} == {"tie"}
@@ -510,28 +693,41 @@ class TestTheRegisteredDirectionDecidesTheWinner:
         default proves the file was read."""
         roster = _cohort(tmp_path, sizes=[(52000, 20000, 49000, 12000)])
         _register(tmp_path, min_pairs="1")
-        r = _score(roster, "--experiments-dir", str(tmp_path / "experiments"),
-                   "--experiment", "02", "--format", "json")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         assert payload["min_pairs"] == 1
         assert payload["verdict"] == "ADOPT"
 
     def test_a_flag_may_tighten_the_registered_floor_but_not_loosen_it(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """Loosening after the pair count is known is the move `--min-pairs 2`
         nearly made in experiment 1. Tightening is always safe."""
         roster = _cohort(tmp_path, sizes=[(52000, 20000, 49000, 12000)])
         _register(tmp_path, min_pairs="1")
-        args = ("--experiments-dir", str(tmp_path / "experiments"),
-                "--experiment", "02", "--format", "json")
+        args = (
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         tightened = json.loads(_score(roster, *args, "--min-pairs", "3").stdout)
         assert tightened["min_pairs"] == 3
         assert tightened["verdict"] == "INCONCLUSIVE"
 
         _register(tmp_path, min_pairs="3")
         loosened = json.loads(_score(roster, *args, "--min-pairs", "1").stdout)
-        assert loosened["min_pairs"] == 3, (
-            "a flag must not lower a registered floor")
+        assert loosened["min_pairs"] == 3, "a flag must not lower a registered floor"
 
 
 class TestSaturationIsCountedAndPrinted:
@@ -540,40 +736,57 @@ class TestSaturationIsCountedAndPrinted:
     and it read as "nothing happened"."""
 
     def test_the_count_is_printed(self, tmp_path: Path):
-        roster = _cohort(tmp_path, sizes=[(52000, 3000, 49000, 3000),
-                                          (28000, 12000, 26000, 9000),
-                                          (19000, 10000, 18000, 8000)])
+        roster = _cohort(
+            tmp_path,
+            sizes=[
+                (52000, 3000, 49000, 3000),
+                (28000, 12000, 26000, 9000),
+                (19000, 10000, 18000, 8000),
+            ],
+        )
         r = _score(roster)
         assert "saturated" in r.stdout.lower(), r.stdout
         assert "1 of 3" in r.stdout, r.stdout
 
     def test_a_majority_saturated_round_is_a_finding(self, tmp_path: Path):
-        roster = _cohort(tmp_path, sizes=[(52000, 3000, 49000, 3000),
-                                          (28000, 3000, 26000, 3000),
-                                          (19000, 10000, 18000, 8000)])
+        roster = _cohort(
+            tmp_path,
+            sizes=[
+                (52000, 3000, 49000, 3000),
+                (28000, 3000, 26000, 3000),
+                (19000, 10000, 18000, 8000),
+            ],
+        )
         r = _score(roster)
         flat = _flat(r.stdout).lower()
         assert "finding" in flat, r.stdout
         assert "no longer the binding constraint" in flat, r.stdout
 
     def test_the_finding_refuses_to_license_retightening_the_budget(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The trap this proposal walks straight into. Changing the budget
         after seeing where the cohort landed is the same integrity failure as
         choosing the metric late, and `rejected-changes.md` carries the
         precedent — the 4,000 budget was refused for being derived from where
         repos happened to sit."""
-        roster = _cohort(tmp_path, sizes=[(52000, 3000, 49000, 3000),
-                                          (28000, 3000, 26000, 3000),
-                                          (19000, 10000, 18000, 8000)])
+        roster = _cohort(
+            tmp_path,
+            sizes=[
+                (52000, 3000, 49000, 3000),
+                (28000, 3000, 26000, 3000),
+                (19000, 10000, 18000, 8000),
+            ],
+        )
         r = _score(roster)
         flat = _flat(r.stdout).lower()
         assert "retroactive" in flat or "not a reason to tighten" in flat, r.stdout
         assert "pre-registered" in flat, r.stdout
 
     def test_json_carries_the_count(self, tmp_path: Path):
-        roster = _cohort(tmp_path, sizes=[(52000, 3000, 49000, 3000),
-                                          (28000, 12000, 26000, 9000)])
+        roster = _cohort(
+            tmp_path, sizes=[(52000, 3000, 49000, 3000), (28000, 12000, 26000, 9000)]
+        )
         payload = json.loads(_score(roster, "--format", "json").stdout)
         assert payload["saturated_pairs"] == 1
 
@@ -585,9 +798,14 @@ class TestSaturationIsCountedAndPrinted:
         Compared against its own printed output rather than against a second
         cohort: saturation legitimately removes pairs, so two different rosters
         would differ for a reason that is not the finding."""
-        roster = _cohort(tmp_path, sizes=[(52000, 3000, 49000, 3000),
-                                          (28000, 3000, 26000, 3000),
-                                          (19000, 10000, 18000, 8000)])
+        roster = _cohort(
+            tmp_path,
+            sizes=[
+                (52000, 3000, 49000, 3000),
+                (28000, 3000, 26000, 3000),
+                (19000, 10000, 18000, 8000),
+            ],
+        )
         r = _score(roster, "--min-pairs", "1")
         assert "FINDING" in r.stdout, r.stdout
         assert r.returncode == 0, r.stdout
@@ -597,7 +815,8 @@ class TestTheCommittedRegistrationsAreValid:
     def test_the_directory_exists(self):
         assert EXPERIMENTS.is_dir(), (
             "`.skills/experiments/` is where a registration is committed; "
-            "without it there is nowhere for the proof to live")
+            "without it there is nowhere for the proof to live"
+        )
 
     def test_the_template_carries_every_required_key(self):
         text = TEMPLATE.read_text()
@@ -616,16 +835,23 @@ class TestTheCommittedRegistrationsAreValid:
         make visible."""
         assert not list(EXPERIMENTS.glob("01-*.yml")), (
             "experiment 1 ran unregistered; a file for it now would be a "
-            "pre-registration written after the results")
+            "pre-registration written after the results"
+        )
 
     def test_every_committed_registration_validates(self, tmp_path: Path):
         registrations = sorted(EXPERIMENTS.glob("[0-9][0-9]-*.yml"))
         roster = _cohort(tmp_path)
         for path in registrations:
-            r = _score(roster, "--experiments-dir", str(EXPERIMENTS),
-                       "--experiment", path.name[:2])
+            r = _score(
+                roster,
+                "--experiments-dir",
+                str(EXPERIMENTS),
+                "--experiment",
+                path.name[:2],
+            )
             assert r.returncode != 1, (
-                f"{path.name} is not a valid registration:\n{r.stderr}")
+                f"{path.name} is not a valid registration:\n{r.stderr}"
+            )
 
 
 class TestTheGateRecordsTheRule:

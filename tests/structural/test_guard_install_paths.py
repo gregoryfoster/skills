@@ -36,7 +36,9 @@ CTX_SCRIPTS = REPO_ROOT / "skills" / "curating-context" / "scripts"
 GUARD = CTX_SCRIPTS / "context-budget-guard.sh"
 INSTALL = CTX_SCRIPTS / "install-guard.sh"
 CTX_SKILL = REPO_ROOT / "skills" / "curating-context" / "SKILL.md"
-GUARD_DOC = REPO_ROOT / "skills" / "curating-context" / "references" / "write-guard-hook.md"
+GUARD_DOC = (
+    REPO_ROOT / "skills" / "curating-context" / "references" / "write-guard-hook.md"
+)
 
 MS_SCRIPTS = REPO_ROOT / "skills" / "managing-skills" / "scripts"
 DOCTOR = MS_SCRIPTS / "doctor.sh"
@@ -48,7 +50,9 @@ FASTAPI_SKILL = REPO_ROOT / "skills" / "init-project-fastapi" / "SKILL.md"
 # hook without the variable set from degrading to `bash "/.claude/hooks/…"`.
 GUARD_COMMAND = 'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/context-budget-guard.sh"'
 LEGACY_GUARD_COMMAND = "bash .claude/hooks/context-budget-guard.sh"
-UPDATE_COMMAND = 'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh"'
+UPDATE_COMMAND = (
+    'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skills-submodule-update.sh"'
+)
 LEGACY_UPDATE_COMMAND = "bash .claude/hooks/skills-submodule-update.sh"
 
 POLICY_LINE = "- a policy line naming `some/path.py` and explaining why\n"
@@ -60,8 +64,12 @@ requires_jq = pytest.mark.skipif(
 
 def _clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR",
-              "CLAUDE_PROJECT_DIR"):
+    for k in (
+        "CONTEXT_BUDGET",
+        "CONTEXT_DOC_BUDGET",
+        "CONTEXT_DOCS_DIR",
+        "CLAUDE_PROJECT_DIR",
+    ):
         env.pop(k, None)
     return env
 
@@ -69,7 +77,10 @@ def _clean_env() -> dict:
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(cwd), *args],
-        check=True, capture_output=True, text=True, env=_clean_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
     ).stdout.strip()
 
 
@@ -98,7 +109,11 @@ def _install_guard_at(repo: Path) -> Path:
 def _run_installer(repo: Path, vendored: Path, *args: str):
     return subprocess.run(
         ["bash", str(vendored / "install-guard.sh"), *args],
-        capture_output=True, text=True, cwd=str(repo), env=_clean_env(), timeout=60,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -126,9 +141,13 @@ class TestGuardLogPath:
     def test_main_checkout_logs_under_dot_git(self, tmp_path: Path):
         repo = _repo(tmp_path)
         result = subprocess.run(
-            ["bash", str(GUARD)], input=_payload(repo / "AGENTS.md"),
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            ["bash", str(GUARD)],
+            input=_payload(repo / "AGENTS.md"),
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         log = repo / ".git" / "context-budget.log"
@@ -146,9 +165,13 @@ class TestGuardLogPath:
         # Push it over budget in the worktree so the guard has something to say.
         (wt / "AGENTS.md").write_text(POLICY_LINE * 2600)
         result = subprocess.run(
-            ["bash", str(GUARD)], input=_payload(wt / "AGENTS.md"),
-            capture_output=True, text=True, cwd=str(wt),
-            env=_clean_env(), timeout=30,
+            ["bash", str(GUARD)],
+            input=_payload(wt / "AGENTS.md"),
+            capture_output=True,
+            text=True,
+            cwd=str(wt),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip(), "the guard stayed silent on an over-budget file"
@@ -174,7 +197,6 @@ class TestGuardLogPath:
 
         gitdir = _git(wt, "rev-parse", "--absolute-git-dir")
         assert f"{gitdir}/context-budget.log" in result.stdout, result.stdout
-
 
 
 class TestGuardCommandForm:
@@ -203,9 +225,13 @@ class TestGuardCommandForm:
         env["CLAUDE_PROJECT_DIR"] = str(repo)
         command = _post_tool_commands(repo)[0]
         result = subprocess.run(
-            ["bash", "-c", command], input=_payload(repo / "AGENTS.md"),
-            capture_output=True, text=True, cwd=str(elsewhere),
-            env=env, timeout=30,
+            ["bash", "-c", command],
+            input=_payload(repo / "AGENTS.md"),
+            capture_output=True,
+            text=True,
+            cwd=str(elsewhere),
+            env=env,
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert "context budget" in result.stdout, (
@@ -217,15 +243,32 @@ class TestGuardCommandForm:
         repo = _repo(tmp_path)
         vendored = _install_guard_at(repo)
         (repo / ".claude").mkdir()
-        (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [
-                {"matcher": "Edit|Write|MultiEdit",
-                 "hooks": [{"type": "command", "command": LEGACY_GUARD_COMMAND,
-                            "timeout": 10}]},
-                {"matcher": "Bash",
-                 "hooks": [{"type": "command", "command": "bash other.sh"}]},
-            ]}
-        }))
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit|Write|MultiEdit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": LEGACY_GUARD_COMMAND,
+                                        "timeout": 10,
+                                    }
+                                ],
+                            },
+                            {
+                                "matcher": "Bash",
+                                "hooks": [
+                                    {"type": "command", "command": "bash other.sh"}
+                                ],
+                            },
+                        ]
+                    }
+                }
+            )
+        )
         assert _run_installer(repo, vendored).returncode == 0
 
         assert _post_tool_commands(repo) == ["bash other.sh", GUARD_COMMAND], (
@@ -239,15 +282,32 @@ class TestGuardCommandForm:
         repo = _repo(tmp_path)
         vendored = _install_guard_at(repo)
         (repo / ".claude").mkdir()
-        (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [
-                {"matcher": "Edit|Write|MultiEdit",
-                 "hooks": [{"type": "command", "command": LEGACY_GUARD_COMMAND,
-                            "timeout": 10}]},
-                {"matcher": "Bash",
-                 "hooks": [{"type": "command", "command": "bash other.sh"}]},
-            ]}
-        }))
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit|Write|MultiEdit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": LEGACY_GUARD_COMMAND,
+                                        "timeout": 10,
+                                    }
+                                ],
+                            },
+                            {
+                                "matcher": "Bash",
+                                "hooks": [
+                                    {"type": "command", "command": "bash other.sh"}
+                                ],
+                            },
+                        ]
+                    }
+                }
+            )
+        )
         result = _run_installer(repo, vendored, "--uninstall")
         assert result.returncode == 0, result.stdout + result.stderr
 
@@ -271,8 +331,9 @@ class TestGuardCommandForm:
         assert _run_installer(repo, vendored).returncode == 0
         settings = repo / ".claude" / "settings.json"
         settings.write_text(
-            settings.read_text().replace(json.dumps(GUARD_COMMAND)[1:-1],
-                                         LEGACY_GUARD_COMMAND)
+            settings.read_text().replace(
+                json.dumps(GUARD_COMMAND)[1:-1], LEGACY_GUARD_COMMAND
+            )
         )
 
         result = _run_installer(repo, vendored, "--check")
@@ -280,7 +341,6 @@ class TestGuardCommandForm:
         # A phrase, not the word "legacy" — pytest's tmp_path embeds the test
         # name, so a bare substring test passes on the paths --check prints.
         assert "cwd-relative command form" in result.stdout, result.stdout
-
 
 
 class TestManagingSkillsHookCommand:
@@ -297,19 +357,30 @@ class TestManagingSkillsHookCommand:
     def _consumer(self, tmp_path: Path) -> Path:
         """A checkout install-refresh.sh will act on: a git repo with the hook
         script vendored where the installer's glob looks for it."""
-        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True,
-                       env=_clean_env())
-        vendor = (tmp_path / "skills-vendor" / "acme-skills" / "skills"
-                  / "managing-skills" / "scripts")
+        subprocess.run(
+            ["git", "init", "-q"], cwd=tmp_path, check=True, env=_clean_env()
+        )
+        vendor = (
+            tmp_path
+            / "skills-vendor"
+            / "acme-skills"
+            / "skills"
+            / "managing-skills"
+            / "scripts"
+        )
         vendor.mkdir(parents=True)
         (vendor / "skills-submodule-update.sh").write_text(
-            (MS_SCRIPTS / "skills-submodule-update.sh").read_text())
+            (MS_SCRIPTS / "skills-submodule-update.sh").read_text()
+        )
         return tmp_path
 
     def _install(self, cwd: Path):
         result = subprocess.run(
             ["bash", str(MS_SCRIPTS / "install-refresh.sh"), "--quiet"],
-            capture_output=True, text=True, cwd=str(cwd), env=_clean_env(),
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            env=_clean_env(),
             timeout=30,
         )
         assert result.returncode == 0, result.stdout + result.stderr
@@ -329,7 +400,9 @@ class TestManagingSkillsHookCommand:
             for p in sorted((MS_SKILL.parent / "references").rglob("*.md"))
         ]
         blocks = [
-            b for text in texts for b in self._fenced_blocks(text)
+            b
+            for text in texts
+            for b in self._fenced_blocks(text)
             if "jq " in b and needle in b
         ]
         assert len(blocks) == 1, (
@@ -341,14 +414,26 @@ class TestManagingSkillsHookCommand:
 
     def _seed(self, tmp_path: Path, command: str) -> Path:
         (tmp_path / ".claude").mkdir(parents=True, exist_ok=True)
-        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"SessionStart": [
-                {"matcher": ".*",
-                 "hooks": [{"type": "command", "command": command}]},
-                {"matcher": ".*",
-                 "hooks": [{"type": "command", "command": "bash unrelated.sh"}]},
-            ]}
-        }))
+        (tmp_path / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {
+                                "matcher": ".*",
+                                "hooks": [{"type": "command", "command": command}],
+                            },
+                            {
+                                "matcher": ".*",
+                                "hooks": [
+                                    {"type": "command", "command": "bash unrelated.sh"}
+                                ],
+                            },
+                        ]
+                    }
+                }
+            )
+        )
         return tmp_path / ".claude" / "settings.json"
 
     def _session_commands(self, settings: Path) -> list[str]:
@@ -361,8 +446,12 @@ class TestManagingSkillsHookCommand:
 
     def _run_block(self, block: str, cwd: Path):
         result = subprocess.run(
-            ["bash", "-c", block], capture_output=True, text=True,
-            cwd=str(cwd), env=_clean_env(), timeout=30,
+            ["bash", "-c", block],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
@@ -381,9 +470,7 @@ class TestManagingSkillsHookCommand:
         settings = self._seed(repo, LEGACY_UPDATE_COMMAND)
         self._install(repo)
 
-        assert self._session_commands(settings) == [
-            "bash unrelated.sh", UPDATE_COMMAND
-        ]
+        assert self._session_commands(settings) == ["bash unrelated.sh", UPDATE_COMMAND]
 
     @requires_jq
     def test_documented_uninstall_snippet_removes_a_legacy_entry(self, tmp_path):
@@ -405,10 +492,9 @@ class TestManagingSkillsHookCommand:
         offenders = []
         for path in (MS_SKILL, FASTAPI_SKILL, INSTALL):
             for i, line in enumerate(path.read_text().splitlines(), 1):
-                if re.search(r'bash \.claude/hooks/\S+\.sh', line):
+                if re.search(r"bash \.claude/hooks/\S+\.sh", line):
                     offenders.append(f"{path.name}:{i}: {line.strip()}")
         assert not offenders, "\n".join(offenders)
-
 
 
 class TestDoctorHealsHookSymlinks:
@@ -424,8 +510,12 @@ class TestDoctorHealsHookSymlinks:
 
     def _doctor(self, repo: Path, *args: str):
         return subprocess.run(
-            ["bash", str(DOCTOR), *args], capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=60,
+            ["bash", str(DOCTOR), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
 
     def test_dangling_hook_symlink_is_reported(self, tmp_path: Path):
@@ -464,18 +554,26 @@ class TestDoctorHealsHookSymlinks:
         (repo / ".claude" / "hooks" / "context-budget-guard.sh").symlink_to(
             "../../real-hook.sh"
         )
-        (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {
-                "PostToolUse": [{
-                    "matcher": "Edit|Write|MultiEdit",
-                    "hooks": [{
-                        "type": "command",
-                        "command": 'bash "$CLAUDE_PROJECT_DIR"/.claude/hooks'
-                                   "/context-budget-guard.sh",
-                    }],
-                }]
-            }
-        }))
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit|Write|MultiEdit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": 'bash "$CLAUDE_PROJECT_DIR"/.claude/hooks'
+                                        "/context-budget-guard.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
 
         result = self._doctor(repo, "--check-only")
         assert result.returncode == 0, result.stdout + result.stderr
@@ -501,11 +599,13 @@ class TestDoctorHealsHookSymlinks:
         text = MS_SKILL.read_text()
         assert ".claude/hooks/" in text and "doctor" in text.lower()
         help_text = subprocess.run(
-            ["bash", str(DOCTOR), "--help"], capture_output=True, text=True,
-            env=_clean_env(), timeout=30,
+            ["bash", str(DOCTOR), "--help"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         ).stdout
         assert ".claude/hooks/" in help_text, help_text
-
 
 
 class TestUncoveredWritePathsAreDocumented:
@@ -525,10 +625,9 @@ class TestUncoveredWritePathsAreDocumented:
 
     def test_phase_8_names_which_half_covers_which_failure(self):
         text = CTX_SKILL.read_text()
-        phase8 = text[text.index("## Phase 8"):]
+        phase8 = text[text.index("## Phase 8") :]
         assert "NotebookEdit" in phase8 or "redirect" in phase8, (
-            "Phase 8 still frames the ratchet without naming what the guard "
-            "cannot see"
+            "Phase 8 still frames the ratchet without naming what the guard cannot see"
         )
         assert "context-delta.sh" in phase8
 
@@ -570,15 +669,29 @@ class TestCheckRecognisesTheFormItJustWrote:
         vendored = _install_guard_at(repo)
         hooks = repo / ".claude" / "hooks"
         hooks.mkdir(parents=True)
-        (hooks / "context-budget-guard.sh").symlink_to(vendored / "context-budget-guard.sh")
-        (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [{
-                "matcher": "Edit|Write|MultiEdit",
-                "hooks": [{"type": "command",
-                           "command": "bash .claude/hooks/context-budget-guard.sh",
-                           "timeout": 10}],
-            }]}
-        }))
+        (hooks / "context-budget-guard.sh").symlink_to(
+            vendored / "context-budget-guard.sh"
+        )
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit|Write|MultiEdit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/context-budget-guard.sh",
+                                        "timeout": 10,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
         assert self.LEGACY_NOTE in _run_installer(repo, vendored, "--check").stdout, (
             "the legacy form was not detected before normalizing — test is vacuous"
         )
@@ -595,14 +708,28 @@ class TestCheckRecognisesTheFormItJustWrote:
         vendored = _install_guard_at(repo)
         hooks = repo / ".claude" / "hooks"
         hooks.mkdir(parents=True)
-        (hooks / "context-budget-guard.sh").symlink_to(vendored / "context-budget-guard.sh")
-        (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [{
-                "matcher": "Edit|Write|MultiEdit",
-                "hooks": [{"type": "command",
-                           "command": "bash .claude/hooks/context-budget-guard.sh"}],
-            }]}
-        }))
+        (hooks / "context-budget-guard.sh").symlink_to(
+            vendored / "context-budget-guard.sh"
+        )
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit|Write|MultiEdit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/context-budget-guard.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
         r = _run_installer(repo, vendored, "--check")
         assert self.LEGACY_NOTE in r.stdout, r.stdout
 

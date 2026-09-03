@@ -42,7 +42,7 @@ _DETECTION_TEMPLATE = (
     "software development session. Does this request match what your skill is designed "
     "to handle? Respond with exactly 'YES' or 'NO' on the first line, nothing else on "
     "that line.\n\n"
-    "User request: \"{request}\""
+    'User request: "{request}"'
 )
 
 
@@ -101,6 +101,7 @@ _CONTEXT_DEPENDENT_TRIGGERS: set[tuple[str, str]] = {
     ("shipping-work", "push GH"),
 }
 
+
 def _trigger_param(skill: "Skill", trigger: str) -> pytest.param:
     """Wrap a (skill, trigger) pair in pytest.param, adding xfail for known context-dependent triggers."""
     marks = []
@@ -124,9 +125,7 @@ _skill_trigger_pairs = [
 ]
 
 _skill_probe_pairs = [
-    (skill, probe)
-    for skill in _all_skills
-    for probe in _OFF_TOPIC_PROBES
+    (skill, probe) for skill in _all_skills for probe in _OFF_TOPIC_PROBES
 ]
 
 

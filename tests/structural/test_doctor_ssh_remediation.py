@@ -112,9 +112,7 @@ def _make_ssh_shim_per_host(
         )
     body = (
         "#!/usr/bin/env bash\n"
-        'case " $* " in\n'
-        + "".join(arms)
-        + "  *)\n"
+        'case " $* " in\n' + "".join(arms) + "  *)\n"
         '    echo "ssh-shim: unmatched args: $*" >&2\n'
         "    exit 99\n"
         "    ;;\n"

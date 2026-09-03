@@ -127,8 +127,9 @@ def _strip_heredocs(script: str) -> list[str]:
 class TestRenderedShellIsValid:
     def test_every_run_block_parses(self, rendered: dict):
         for name, script in _run_blocks(rendered):
-            r = subprocess.run(["bash", "-n"], input=script, capture_output=True,
-                               text=True)
+            r = subprocess.run(
+                ["bash", "-n"], input=script, capture_output=True, text=True
+            )
             assert r.returncode == 0, f"{name}: {r.stderr}"
 
     def test_no_live_command_substitution_survives(self, rendered: dict):
@@ -147,7 +148,9 @@ class TestRenderedShellIsValid:
         """#171's actual damage: the message survived, its noun did not. Assert
         on the shell's OUTPUT, since the bug was invisible in its source."""
         commit = dict(_run_blocks(rendered))["Commit the row"]
-        errors = [ln for ln in commit.splitlines() if "::error::" in ln and "merge=" in ln]
+        errors = [
+            ln for ln in commit.splitlines() if "::error::" in ln and "merge=" in ln
+        ]
         assert len(errors) == 3, errors
         for line in errors:
             printed = subprocess.run(
@@ -173,8 +176,9 @@ class TestEveryStagedPathIsProtected:
         silently narrowing to whatever the regex still matched."""
         assert self._staged(rendered) == {LEDGER, RATIO, COUNTS}
 
-    def test_every_staged_path_gets_a_merge_attribute(self, tmp_path: Path,
-                                                      rendered: dict):
+    def test_every_staged_path_gets_a_merge_attribute(
+        self, tmp_path: Path, rendered: dict
+    ):
         repo = _repo(tmp_path)
         assert _run(repo).returncode == 0
         attrs = (repo / ".gitattributes").read_text()
@@ -249,9 +253,7 @@ class TestCheckAndRepair:
         repo = _repo(tmp_path)
         _run(repo)
         attrs = (repo / ".gitattributes").read_text()
-        kept = "\n".join(
-            ln for ln in attrs.splitlines() if COUNTS not in ln
-        ) + "\n"
+        kept = "\n".join(ln for ln in attrs.splitlines() if COUNTS not in ln) + "\n"
         (repo / ".gitattributes").write_text(kept)
         _run(repo)
         final = (repo / ".gitattributes").read_text()

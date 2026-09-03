@@ -117,7 +117,8 @@ pip install "git+https://github.com/agentskills/agentskills#subdirectory=skills-
 - A write through a temp file must be checked, and a deliberate exception must
   say so with `# unchecked-write-ok: <reason>` — gated by
   `test_checked_temp_writes.py`, explained in [docs/STYLE.md](docs/STYLE.md)
-- Pin versions when invoking tools (e.g., `uvx ruff@0.8.0`)
+- Pin versions when invoking tools (e.g., `uvx ruff@0.16.6` — the pin this
+  repo's own Python gate uses, kept in `requirements-test.txt`)
 - Must pass `shellcheck --external-sources --source-path=SCRIPTDIR --severity=style`
   (shellcheck's own default floor — no level is exempt). `TestShellcheck` runs it
   over `skills/*/scripts/`, `scripts/` and `.claude/hooks/`, and skips loudly when
@@ -240,7 +241,14 @@ pre-commit install                       # structural tests run on every commit
 Hooks use `.venv/` at the repo root. A worktree has none; link it, never
 re-create: `ln -s <main>/.venv .venv`.
 
-Structural tests are the only gate; integration tests are never wired to
+Python is gated by ruff, pinned exactly in `requirements-test.txt` (`ruff
+format`'s output is version-defined). `bash scripts/python-lint.sh` runs
+`check` + `format --check`, `--fix` applies both; it is a pre-commit hook ahead
+of the suite and `test_python_lint.py` inside it. A missing or mismatched ruff
+skips loudly; `RUFF_REQUIRED=1` fails
+([#246](https://github.com/gregoryfoster/skills/issues/246)).
+
+Structural tests are the only pytest gate; integration tests are never wired to
 pre-push. Run either by hand:
 
 ```bash

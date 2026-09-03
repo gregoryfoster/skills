@@ -46,17 +46,33 @@ def _clean_env() -> dict:
 
 def _row(**kw) -> str:
     row = {
-        "ts": "2026-08-05", "repo": "x", "file": "AGENTS.md",
-        "tokens": None, "tokens_exact": True, "skill_version": None,
-        "skill_commit": None, "budget": 6000, "docs_orphaned": 0,
-        "links_dead": 0, "no_loss": "ok", "actions": [],
+        "ts": "2026-08-05",
+        "repo": "x",
+        "file": "AGENTS.md",
+        "tokens": None,
+        "tokens_exact": True,
+        "skill_version": None,
+        "skill_commit": None,
+        "budget": 6000,
+        "docs_orphaned": 0,
+        "links_dead": 0,
+        "no_loss": "ok",
+        "actions": [],
     }
     row.update(kw)
     return json.dumps(row, sort_keys=True)
 
 
-def _member(root: Path, name: str, before: int | None, after: int,
-            version: str, *, actions=("demote:Big",), **extra) -> None:
+def _member(
+    root: Path,
+    name: str,
+    before: int | None,
+    after: int,
+    version: str,
+    *,
+    actions=("demote:Big",),
+    **extra,
+) -> None:
     """A member with a baseline row and one scored curation.
 
     `extra` lands on the scored row only — the row the gate reads. A field set
@@ -68,18 +84,26 @@ def _member(root: Path, name: str, before: int | None, after: int,
     d.mkdir(parents=True, exist_ok=True)
     rows = []
     if before is not None:
-        rows.append(_row(repo=name, tokens=before,
-                         actions=["baseline:pre-curation"]))
-    rows.append(_row(repo=name, tokens=after, actions=list(actions),
-                     ts="2026-08-06", skill_version=version,
-                     skill_commit="deadbee", **extra))
+        rows.append(_row(repo=name, tokens=before, actions=["baseline:pre-curation"]))
+    rows.append(
+        _row(
+            repo=name,
+            tokens=after,
+            actions=list(actions),
+            ts="2026-08-06",
+            skill_version=version,
+            skill_commit="deadbee",
+            **extra,
+        )
+    )
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
 
 
 def _roster(root: Path, spec) -> Path:
     path = root / "cohort"
-    path.write_text("".join(
-        f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec))
+    path.write_text(
+        "".join(f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec)
+    )
     return path
 
 
@@ -107,7 +131,10 @@ def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
     is the point: the flags stopped naming waves."""
     return subprocess.run(
         ["bash", str(SCORE), "--cohort-file", str(roster), *args],
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -129,8 +156,13 @@ def _three_pairs(root: Path, **kw) -> list[tuple[str, str, str]]:
     every one. Closures: 69.6/86.0, 72.7/85.0, 76.9/87.5."""
     spec = []
     for i, (cb, ca, tb, ta) in enumerate(
-            [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000),
-             (19000, 9000, 14000, 7000)], start=1):
+        [
+            (52000, 20000, 49000, 12000),
+            (28000, 12000, 26000, 9000),
+            (19000, 9000, 14000, 7000),
+        ],
+        start=1,
+    ):
         _member(root, f"ctl{i}", cb, ca, "1.2")
         _member(root, f"trt{i}", tb, ta, "1.3", **kw)
         spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
@@ -142,16 +174,18 @@ class TestTheArmIsTheVersionOnTheRow:
     tells the old rule from the new one."""
 
     def test_a_wave_b_repo_running_the_control_version_scores_as_control(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The pairing (`by_arm`). Under skills-vendor auto-refresh a repo runs
         whatever it last pulled, which is what #118 concluded a wave cannot
         prevent. Grouped by wave this repo carries pair 2 for the treatment;
         grouped by its own row it is a second control repo and pair 2 stops
         being a comparison at all."""
         spec = _three_pairs(tmp_path)
-        _member(tmp_path, "trt2", 26000, 9000, "1.2")   # drifted back
-        payload = _json(_arms(_roster(tmp_path, spec), "--min-pairs", "1",
-                              "--format", "json"))
+        _member(tmp_path, "trt2", 26000, 9000, "1.2")  # drifted back
+        payload = _json(
+            _arms(_roster(tmp_path, spec), "--min-pairs", "1", "--format", "json")
+        )
         assert _rec(payload, "trt2")["arm"] == "control", _rec(payload, "trt2")
         pair2 = next(p for p in payload["pairs"] if p["pair"] == "2")
         assert pair2["informative"] is False, pair2
@@ -168,8 +202,7 @@ class TestTheArmIsTheVersionOnTheRow:
         payload = _json(r)
         assert _rec(payload, "stray")["arm"] is None
         assert payload["treatment_versions"] == ["1.3"]
-        assert {x["entry"] for x in payload["out_of_arm"]} == {
-            str(tmp_path / "stray")}
+        assert {x["entry"] for x in payload["out_of_arm"]} == {str(tmp_path / "stray")}
         assert payload["out_of_arm"][0]["skill_version"] == "0.9"
 
     def test_the_no_arm_repo_is_reported_not_dropped(self, tmp_path: Path):
@@ -192,7 +225,8 @@ class TestTheArmIsTheVersionOnTheRow:
         d = tmp_path / "fresh" / ".skills"
         d.mkdir(parents=True)
         (d / "context-metrics.jsonl").write_text(
-            _row(repo="fresh", tokens=9000, actions=["baseline:exact"]) + "\n")
+            _row(repo="fresh", tokens=9000, actions=["baseline:exact"]) + "\n"
+        )
         spec.append(("fresh", "b", "9"))
         payload = _json(_arms(_roster(tmp_path, spec), "--format", "json"))
         assert _rec(payload, "fresh")["arm"] is None
@@ -204,7 +238,8 @@ class TestTheArmIsTheVersionOnTheRow:
         must score exactly as one labelled forwards."""
         spec = []
         for i, (cb, ca, tb, ta) in enumerate(
-                [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1):
+            [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1
+        ):
             _member(tmp_path, f"ctl{i}", cb, ca, "1.2")
             _member(tmp_path, f"trt{i}", tb, ta, "1.3")
             # Deliberately inverted: the control version sits under wave b.
@@ -221,7 +256,8 @@ class TestSafetyGatesFollowTheVersion:
     row's version."""
 
     def test_a_failure_on_the_treatment_version_rejects_whatever_its_wave_says(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         spec = _three_pairs(tmp_path)
         # wave a — the control side by rollout order — but the row says 1.3.
         _member(tmp_path, "ctl2", 28000, 12000, "1.3", no_loss="failed")
@@ -232,8 +268,7 @@ class TestSafetyGatesFollowTheVersion:
         assert "treatment-arm safety failures:" in r.stdout
         assert "control-arm safety failures" not in r.stdout
 
-    def test_a_failure_on_a_version_in_neither_arm_vetoes_nothing(
-            self, tmp_path: Path):
+    def test_a_failure_on_a_version_in_neither_arm_vetoes_nothing(self, tmp_path: Path):
         """A repo six releases adrift did not fail under the proposal, so it
         cannot reject it. Grouped by wave it would have."""
         spec = _three_pairs(tmp_path)
@@ -259,32 +294,39 @@ class TestThePairingStaysRosterDriven:
     """`pair:` encodes size-matching against the 2026-08-05 baseline — a
     property of the repos, not of any run — so it does NOT move to the row."""
 
-    def test_pair_comes_from_the_roster_not_from_the_versions(
-            self, tmp_path: Path):
+    def test_pair_comes_from_the_roster_not_from_the_versions(self, tmp_path: Path):
         """Two repos on the treatment version sharing a pair is still a
         malformed pair. If the pairing had followed the versions there would be
         nothing left to malform."""
         _member(tmp_path, "one", 52000, 20000, "1.3")
         _member(tmp_path, "two", 49000, 12000, "1.3")
-        r = _arms(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                  "--min-pairs", "1", "--format", "json")
+        r = _arms(
+            _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         pair = _json(r)["pairs"][0]
         assert "2 treatment and 0 control" in pair["why"], pair
 
-    def test_a_pair_whose_member_left_the_arm_names_the_repo(
-            self, tmp_path: Path):
-        """"0 treatment and 1 control" on its own sends the reader to the
+    def test_a_pair_whose_member_left_the_arm_names_the_repo(self, tmp_path: Path):
+        """ "0 treatment and 1 control" on its own sends the reader to the
         roster, which is correct and unchanged. The reason is on the other
         repo's row."""
         _member(tmp_path, "one", 52000, 20000, "1.2")
         _member(tmp_path, "two", 49000, 12000, "0.9")
-        r = _arms(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                  "--min-pairs", "1")
+        r = _arms(
+            _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert "two is in neither arm" in r.stdout, r.stdout
         assert "0.9" in r.stdout
 
     def test_a_pair_with_both_members_out_of_the_arms_still_appears(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """Every roster pair is listed. A pair that vanishes because neither
         member matched a version is the sample shrinking silently."""
         spec = _three_pairs(tmp_path)
@@ -307,13 +349,17 @@ class TestTheFlagsNameVersions:
         decoration and the versions decide."""
         _member(tmp_path, "one", 52000, 20000, "1.2")
         _member(tmp_path, "two", 49000, 12000, "1.3")
-        r = _arms(_roster(tmp_path, [("one", "x", "1"), ("two", "y", "1")]),
-                  "--min-pairs", "1")
+        r = _arms(
+            _roster(tmp_path, [("one", "x", "1"), ("two", "y", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "verdict: ADOPT" in r.stdout
 
     def test_omitting_them_without_a_registration_is_a_usage_error(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """There is no sensible default version, and picking one off the
         ledgers would choose the comparison after seeing the rows."""
         r = _score(_roster(tmp_path, [("one", "a", "1")]))
@@ -326,42 +372,58 @@ class TestTheFlagsNameVersions:
         versions are being compared, so a run that cites one needs no flags."""
         spec = _three_pairs(tmp_path)
         _register(tmp_path)
-        r = _score(_roster(tmp_path, spec), "--experiments-dir",
-                   str(tmp_path / "experiments"), "--experiment", "02",
-                   "--format", "json")
+        r = _score(
+            _roster(tmp_path, spec),
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = _json(r)
         assert payload["treatment_version"] == "1.3"
         assert payload["control_version"] == "1.2"
         assert payload["verdict"] == "ADOPT", payload["reasons"]
 
-    def test_flags_disagreeing_with_the_registration_are_refused(
-            self, tmp_path: Path):
+    def test_flags_disagreeing_with_the_registration_are_refused(self, tmp_path: Path):
         """A registration for 1.3-over-1.2 scored as 1.2-over-1.1 is a verdict
         about a different comparison. Checkable directly now that both name
         versions."""
         spec = _three_pairs(tmp_path)
         _register(tmp_path)
-        r = _score(_roster(tmp_path, spec), "--experiments-dir",
-                   str(tmp_path / "experiments"), "--experiment", "02",
-                   "--treatment", "1.2", "--control", "1.1")
+        r = _score(
+            _roster(tmp_path, spec),
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--treatment",
+            "1.2",
+            "--control",
+            "1.1",
+        )
         assert r.returncode == 5, r.stdout
         assert "not the experiment that was registered" in r.stdout
 
     def test_naming_one_release_twice_is_a_usage_error(self, tmp_path: Path):
         """1.2 and v1.2.0 are one release. Before #194 this was a verdict about
         the rows; it is now a mistyped invocation, and no data can fix it."""
-        r = _score(_roster(tmp_path, [("one", "a", "1")]),
-                   "--treatment", "1.2", "--control", "v1.2.0")
+        r = _score(
+            _roster(tmp_path, [("one", "a", "1")]),
+            "--treatment",
+            "1.2",
+            "--control",
+            "v1.2.0",
+        )
         assert r.returncode == 1, r.stdout
         assert "same release" in r.stderr, r.stderr
 
-    def test_the_older_version_as_treatment_is_still_caught(
-            self, tmp_path: Path):
+    def test_the_older_version_as_treatment_is_still_caught(self, tmp_path: Path):
         """Get the direction backwards and a winning change reads as a losing
         one. Read off the flags now rather than inferred from the arms."""
         spec = _three_pairs(tmp_path)
-        r = _score(_roster(tmp_path, spec), "--treatment", "1.2",
-                   "--control", "1.3")
+        r = _score(_roster(tmp_path, spec), "--treatment", "1.2", "--control", "1.3")
         assert r.returncode == 5, r.stdout
         assert "--treatment 1.3 --control 1.2" in r.stdout
         assert "verdict: REJECT" not in r.stdout
@@ -375,34 +437,34 @@ class TestTheFlagsNameVersions:
         spec = _three_pairs(tmp_path)
         r = _score(_roster(tmp_path, spec), "--treatment", "b", "--control", "a")
         assert r.returncode == 5, r.stdout
-        assert "names a wave in this roster" in r.stdout or \
-               "name waves in this roster" in r.stdout, r.stdout
+        assert (
+            "names a wave in this roster" in r.stdout
+            or "name waves in this roster" in r.stdout
+        ), r.stdout
         assert "--experiment NN" in r.stdout
 
     def test_two_real_versions_draw_no_wave_hint(self, tmp_path: Path):
         """The hint keys on the roster's own `wave:` values, so it must stay
         silent for a comparison that merely has nothing measured yet."""
         spec = _three_pairs(tmp_path)
-        r = _score(_roster(tmp_path, spec), "--treatment", "9.9",
-                   "--control", "9.8")
+        r = _score(_roster(tmp_path, spec), "--treatment", "9.9", "--control", "9.8")
         assert "in this roster, not versions" not in r.stdout, r.stdout
 
-    def test_a_non_numeric_version_draws_no_inversion_claim(
-            self, tmp_path: Path):
+    def test_a_non_numeric_version_draws_no_inversion_claim(self, tmp_path: Path):
         """version_key maps every non-numeric component to 0, so `vNext` keys
         to (0,) and compares older than every numbered release. Reported as an
         inversion it is a confident diagnosis pointing at flags that are not
         the problem — the same shape as the v1.2-vs-1.2 defect, from the other
         side. No numeric lead, no opinion about order."""
         spec = _three_pairs(tmp_path)
-        r = _score(_roster(tmp_path, spec), "--treatment", "vNext",
-                   "--control", "1.3")
+        r = _score(_roster(tmp_path, spec), "--treatment", "vNext", "--control", "1.3")
         assert "OLDER than" not in r.stdout, r.stdout
         assert "verdict: REJECT" not in r.stdout
 
     def test_the_help_calls_them_versions(self):
-        r = subprocess.run(["bash", str(SCORE), "--help"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["bash", str(SCORE), "--help"], capture_output=True, text=True, timeout=30
+        )
         assert r.returncode == 0
         assert re.search(r"^\s+--treatment VERSION\b", r.stdout, re.M), r.stdout
         assert re.search(r"^\s+--control VERSION\b", r.stdout, re.M), r.stdout
@@ -413,13 +475,14 @@ class TestAttributionFollowsTheVersion:
     missed. It feeds both named outcomes #117 introduced."""
 
     def test_instrument_only_reads_the_row_not_the_wave(self, tmp_path: Path):
-        """"This proposal added its own instrument" means the field is null on
+        """ "This proposal added its own instrument" means the field is null on
         every CONTROL row. A wave-a repo that has already moved to the treatment
         version and records the field is a treatment row; counted as a control
         row it silently refutes the outcome."""
         spec = []
         for i, (cb, ca, tb, ta) in enumerate(
-                [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1):
+            [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1
+        ):
             _member(tmp_path, f"ctl{i}", cb, ca, "1.2")
             _member(tmp_path, f"trt{i}", tb, ta, "1.3", seams=2)
             spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
@@ -428,31 +491,43 @@ class TestAttributionFollowsTheVersion:
         _member(tmp_path, "drift", 19000, 9000, "1.3", seams=1)
         spec.append(("drift", "a", "9"))
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(_roster(tmp_path, spec), "--experiments-dir",
-                   str(tmp_path / "experiments"), "--experiment", "02",
-                   "--format", "json")
+        r = _score(
+            _roster(tmp_path, spec),
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = _json(r)
         assert _rec(payload, "drift")["arm"] == "treatment"
         assert payload["added_its_own_instrument"] is True, payload["reasons"]
 
-    def test_an_unreadable_metric_is_not_rescued_by_a_no_arm_row(
-            self, tmp_path: Path):
+    def test_an_unreadable_metric_is_not_rescued_by_a_no_arm_row(self, tmp_path: Path):
         """The mirror. A repo on a third version carrying the field is evidence
         about neither arm, and counting it into one turns "this gate cannot read
         the metric at all" into "the proposal added an instrument" — a different
         diagnosis pointing somewhere else."""
         spec = []
         for i, (cb, ca, tb, ta) in enumerate(
-                [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1):
+            [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1
+        ):
             _member(tmp_path, f"ctl{i}", cb, ca, "1.2")
             _member(tmp_path, f"trt{i}", tb, ta, "1.3")
             spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
         _member(tmp_path, "stray", 19000, 9000, "0.9", seams=3)
         spec.append(("stray", "b", "9"))
         _register(tmp_path, primary_metric="seams", direction="lower")
-        r = _score(_roster(tmp_path, spec), "--experiments-dir",
-                   str(tmp_path / "experiments"), "--experiment", "02",
-                   "--format", "json")
+        r = _score(
+            _roster(tmp_path, spec),
+            "--experiments-dir",
+            str(tmp_path / "experiments"),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = _json(r)
         assert payload["metric_unreadable"] is True, payload["reasons"]
         assert payload["added_its_own_instrument"] is False
@@ -462,16 +537,17 @@ class TestTheSystemicDefectCheckCountsByVersion:
     """`t_arm_n`/`c_arm_n`. "No repo in either arm can satisfy this rule" is an
     inference from breadth, and the breadth has to be the arms as scored."""
 
-    def test_a_no_arm_repo_does_not_make_up_the_per_arm_floor(
-            self, tmp_path: Path):
+    def test_a_no_arm_repo_does_not_make_up_the_per_arm_floor(self, tmp_path: Path):
         """One treatment repo and one adrift is not two treatment repos, and a
         GATE DEFECT declared off it is the thin evidence the floor refuses."""
         _member(tmp_path, "c1", None, 20000, "1.2")
         _member(tmp_path, "c2", None, 14000, "1.2")
         _member(tmp_path, "t1", None, 12000, "1.3")
         _member(tmp_path, "stray", None, 9000, "0.9")
-        roster = _roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1"),
-                                    ("c2", "a", "2"), ("stray", "b", "2")])
+        roster = _roster(
+            tmp_path,
+            [("c1", "a", "1"), ("t1", "b", "1"), ("c2", "a", "2"), ("stray", "b", "2")],
+        )
         payload = _json(_arms(roster, "--min-pairs", "1", "--format", "json"))
         # Stated positively as well, so the assertion below cannot pass merely
         # because nothing landed in an arm at all.
@@ -481,13 +557,23 @@ class TestTheSystemicDefectCheckCountsByVersion:
         assert "GATE DEFECT" not in _arms(roster, "--min-pairs", "1").stdout
 
     def test_the_defect_still_fires_when_both_arms_really_are_full(
-            self, tmp_path: Path):
-        for name, ver in (("c1", "1.2"), ("c2", "1.2"),
-                          ("t1", "1.3"), ("t2", "1.3")):
+        self, tmp_path: Path
+    ):
+        for name, ver in (("c1", "1.2"), ("c2", "1.2"), ("t1", "1.3"), ("t2", "1.3")):
             _member(tmp_path, name, None, 12000, ver)
-        r = _arms(_roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1"),
-                                     ("c2", "a", "2"), ("t2", "b", "2")]),
-                  "--min-pairs", "1")
+        r = _arms(
+            _roster(
+                tmp_path,
+                [
+                    ("c1", "a", "1"),
+                    ("t1", "b", "1"),
+                    ("c2", "a", "2"),
+                    ("t2", "b", "2"),
+                ],
+            ),
+            "--min-pairs",
+            "1",
+        )
         assert "GATE DEFECT" in r.stdout, r.stdout
         assert "record-telemetry.sh --baseline" in r.stdout
 
@@ -496,11 +582,12 @@ class TestTheSystemicDefectCheckCountsByVersion:
         found it — so it has an arm even though it cannot be scored. Dropping it
         into no arm would make the untagged-run defect undetectable, which is
         the one hint that tells the reader to re-run Phase 7."""
-        for name, ver in (("c1", "1.2"), ("c2", "1.2"),
-                          ("t1", "1.3"), ("t2", "1.3")):
+        for name, ver in (("c1", "1.2"), ("c2", "1.2"), ("t1", "1.3"), ("t2", "1.3")):
             _member(tmp_path, name, 50000, 12000, ver, actions=())
-        roster = _roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1"),
-                                    ("c2", "a", "2"), ("t2", "b", "2")])
+        roster = _roster(
+            tmp_path,
+            [("c1", "a", "1"), ("t1", "b", "1"), ("c2", "a", "2"), ("t2", "b", "2")],
+        )
         payload = _json(_arms(roster, "--min-pairs", "1", "--format", "json"))
         assert _rec(payload, "t1")["arm"] == "treatment"
         assert _rec(payload, "c1")["arm"] == "control"
@@ -516,8 +603,7 @@ class TestTheRosterGateAsksForPairs:
 
     def test_a_roster_with_no_pair_annotation_is_refused(self, tmp_path: Path):
         path = tmp_path / "cohort"
-        path.write_text("CannObserv/archiver  wave:a\n"
-                        "CannObserv/notifier  wave:b\n")
+        path.write_text("CannObserv/archiver  wave:a\nCannObserv/notifier  wave:b\n")
         r = _score(path, "--treatment", "1.3", "--control", "1.2")
         assert r.returncode == 1
         assert "pair" in r.stderr
@@ -529,9 +615,7 @@ class TestTheRosterGateAsksForPairs:
         _member(tmp_path, "one", 52000, 20000, "1.2")
         _member(tmp_path, "two", 49000, 12000, "1.3")
         path = tmp_path / "cohort"
-        path.write_text(f"{tmp_path / 'one'}  pair:1\n"
-                        f"{tmp_path / 'two'}  pair:1\n")
-        r = _score(path, "--treatment", "1.3", "--control", "1.2",
-                   "--min-pairs", "1")
+        path.write_text(f"{tmp_path / 'one'}  pair:1\n{tmp_path / 'two'}  pair:1\n")
+        r = _score(path, "--treatment", "1.3", "--control", "1.2", "--min-pairs", "1")
         assert r.returncode == 0, r.stdout + r.stderr
         assert "verdict: ADOPT" in r.stdout

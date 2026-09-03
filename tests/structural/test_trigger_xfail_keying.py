@@ -44,6 +44,7 @@ def _candidates_for(names, baselines=None, declared=None):
         names, baselines=baselines, declared={} if declared is None else declared
     )
 
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ROUTING_PATH = _REPO_ROOT / "tests" / "integration" / "test_trigger_routing.py"
 
@@ -113,7 +114,11 @@ class TestSkillFamilyResolution:
 
     @pytest.mark.parametrize(
         "variant",
-        ["shipping-work-php", "shipping-work-python-click", "shipping-work-python-fastapi"],
+        [
+            "shipping-work-php",
+            "shipping-work-python-click",
+            "shipping-work-python-fastapi",
+        ],
     )
     def test_a_variant_resolves_to_its_baseline(self, variant):
         assert skill_family(variant) == "shipping-work"
@@ -157,10 +162,9 @@ class TestTheDetectorCatchesStaleness:
         Without the boundary a plain `startswith` flags any skill whose name
         merely begins with a baseline's.
         """
-        assert not [
-            name
-            for name, _ in _candidates_for(["shipping-workflow"])
-        ], "a hyphen boundary is required before a name counts as a candidate"
+        assert not [name for name, _ in _candidates_for(["shipping-workflow"])], (
+            "a hyphen boundary is required before a name counts as a candidate"
+        )
 
     def test_a_lookalike_is_reported_as_undeclared(self):
         assert _candidates_for(["shipping-work-orders"]) == [
@@ -170,7 +174,8 @@ class TestTheDetectorCatchesStaleness:
     def test_the_longest_matching_baseline_wins(self):
         """With nested baselines the more specific family is the right one."""
         assert _candidates_for(
-            ["reviewing-code-python-click"], baselines=["reviewing-code", "reviewing-code-python"]
+            ["reviewing-code-python-click"],
+            baselines=["reviewing-code", "reviewing-code-python"],
         ) == [("reviewing-code-python-click", "reviewing-code-python")]
 
 

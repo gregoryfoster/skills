@@ -108,9 +108,7 @@ class TestOverrideBlockCoverage:
             "`PW=two words` into a wrong value and exits 0 — silent, which is "
             "worse than the crash it replaced (#144)."
         )
-        recipe_cmds = [
-            ln.lstrip("#").strip() for ln in block.splitlines()
-        ]
+        recipe_cmds = [ln.lstrip("#").strip() for ln in block.splitlines()]
         assert not any(c.startswith(("set -f", "set +f")) for c in recipe_cmds), (
             f"{variant}/scripts/pre-ship.sh still disables globbing around an "
             "unquoted expansion. With a quoted export there is nothing to "
@@ -321,7 +319,7 @@ def _run_loader(variant: str, env_text: str, probe: str) -> subprocess.Completed
         script = (
             "set -euo pipefail\n"
             + _extract_loader(variant)
-            + f'\nload_env {shlex.quote(str(Path(td) / "absent.env"))}\n'
+            + f"\nload_env {shlex.quote(str(Path(td) / 'absent.env'))}\n"
             + f"load_env {shlex.quote(str(envfile))}\n"
             + f"{probe}\n"
         )

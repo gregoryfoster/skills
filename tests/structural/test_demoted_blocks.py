@@ -65,7 +65,9 @@ from pathlib import Path
 
 import pytest
 
-SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "curating-context"
+SKILL_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "skills" / "curating-context"
+)
 SKILL_MD = SKILL_DIR / "SKILL.md"
 REFERENCES = SKILL_DIR / "references"
 
@@ -195,7 +197,10 @@ OWN_SURFACE = "## This skill's own surface"
 
 REGISTRY: dict[tuple[str, str], dict] = {
     # -- budget-and-metrics.md -------------------------------------------------
-    ("budget-and-metrics.md", "Phase 1 carried this and the archival exclusion inline"): {
+    (
+        "budget-and-metrics.md",
+        "Phase 1 carried this and the archival exclusion inline",
+    ): {
         "source": PHASE_1,
         "kind": "record",  # "carried this ... inline until v1.9, in these words:"
         "pins": (
@@ -242,7 +247,10 @@ REGISTRY: dict[tuple[str, str], dict] = {
             "`docs/` filenames to align with",
         ),
     },
-    ("cohort-patterns.md", "### Starting with no `docs/` tree — the Phase 5 step 4 note in full"): {
+    (
+        "cohort-patterns.md",
+        "### Starting with no `docs/` tree — the Phase 5 step 4 note in full",
+    ): {
         "source": PHASE_5,
         # Headed and dated by #158: it shipped as an indented block under the
         # filenames table introduced by nothing at all. Phase 5 no longer says
@@ -473,8 +481,12 @@ def skill_sections(skill_text: str) -> dict[str, str]:
 
 def _entries():
     """(key, entry) for every registry row, for parametrization."""
-    return [pytest.param(k, v, id=f"{k[0]}::{k[1][:44]}" + (f"#{k[2]}" if len(k) > 2 else ""))
-            for k, v in REGISTRY.items()]
+    return [
+        pytest.param(
+            k, v, id=f"{k[0]}::{k[1][:44]}" + (f"#{k[2]}" if len(k) > 2 else "")
+        )
+        for k, v in REGISTRY.items()
+    ]
 
 
 class TestEveryDemotedBlockIsAccountedFor:
@@ -540,7 +552,11 @@ class TestEachBlockIsCoveredByAMechanism:
         # A backticked token is discriminating by construction — `<N>` is short
         # and is nonetheless the exact placeholder Phase 7's command substitutes.
         # Bare prose has to be long enough not to collide by accident.
-        flimsy = [p for p in pins if len(p) < 6 and not (p.startswith("`") and p.endswith("`"))]
+        flimsy = [
+            p
+            for p in pins
+            if len(p) < 6 and not (p.startswith("`") and p.endswith("`"))
+        ]
         assert not flimsy, f"{key}: pins too short to discriminate: {flimsy}"
 
 
@@ -582,13 +598,19 @@ class TestPinnedContractsAgreeOnBothSides:
         )
 
     @pytest.mark.parametrize("key,entry", _entries())
-    def test_at_least_one_pin_binds_to_the_registered_section(self, key, entry, skill_sections):
+    def test_at_least_one_pin_binds_to_the_registered_section(
+        self, key, entry, skill_sections
+    ):
         """A pin every section shares proves nothing about *this* one."""
         pins = entry.get("pins") or ()
         if not pins:
             pytest.skip("dated entry")
         for pin in pins:
-            hits = [h for h, body in skill_sections.items() if _normalize(pin) in _normalize(body)]
+            hits = [
+                h
+                for h, body in skill_sections.items()
+                if _normalize(pin) in _normalize(body)
+            ]
             if hits == [entry["source"]]:
                 return
         pytest.fail(
@@ -610,7 +632,9 @@ class TestDatedBlocksSayWhenTheyLeft:
             "reader cannot tell a historical record from current text."
         )
 
-    def test_no_block_claims_a_version_that_does_not_exist_yet(self, blocks, skill_text):
+    def test_no_block_claims_a_version_that_does_not_exist_yet(
+        self, blocks, skill_text
+    ):
         m = re.search(r'^\s*version:\s*"?(\d+)\.(\d+)"?', skill_text, re.M)
         assert m, "SKILL.md frontmatter has no `version:`"
         current = (int(m.group(1)), int(m.group(2)))

@@ -6,3 +6,45 @@ markers = [
     "benchmark: expensive LLM-as-judge tests, run on-demand only",
 ]
 addopts = "-m 'not integration and not benchmark'"
+
+# Adopted in #246, which asked for a decision either way: the repo DOES gate
+# Python with ruff, and `tests/structural/test_python_lint.py` is where that
+# gate lives (the same "loud skip when the tool is missing" idiom as the
+# shellcheck gate). The version is pinned exactly in requirements-test.txt —
+# `ruff format`'s output is defined by the version that produced it, so a
+# floor would let a newer build reformat a tree that is already clean.
+[tool.ruff]
+# The oldest interpreter this tree's syntax actually runs on: `X | None` and
+# builtin generics in annotations are 3.10. Not the venv's 3.12 — pinning the
+# target to the interpreter that happens to be installed would silently permit
+# syntax the declared floor cannot parse.
+target-version = "py310"
+
+# Python files only. ruff 0.16 formats fenced Python blocks inside Markdown as
+# well, and on this tree that reached two places it has no business editing:
+# `references/*.md` snippets, which are templates for consumer repos that set
+# their own line-length, and `references/process-log/`, whose entries quote
+# ANOTHER repo's source verbatim — reformatting a quotation silently makes the
+# record say something the quoted file does not. Prose is gated by the doc
+# tests, not by a code formatter.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Deliberately near-minimal. E4/E7/E9/F is ruff's own historical default and
+# was already clean here modulo seven findings; `I` is the one addition,
+# because `ruff format` does not sort imports and import order is exactly the
+# kind of thing every future review would otherwise re-litigate — which is the
+# cost #246 was raised to stop paying. Broader families (ANN, S, PL) were
+# considered and refused: 266 of ruff's newer defaults are PLW1510 on test
+# subprocess calls that read `returncode` on purpose.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# `skills/*/assets/*.py` are templates copied into OTHER repos. Import grouping
+# is a function of the consuming repo's first-party set, which this repo does
+# not have: sorting `alembic-env.py` here moves `from src.core.models import
+# Base` in beside the third-party imports, because `src` is first-party over
+# there and nothing at all over here — an order the consumer's own ruff undoes
+# on its first run. `ruff format` still applies to these files; it does not
+# move imports, so its output is the same on both sides.
+"skills/*/assets/*.py" = ["I001"]

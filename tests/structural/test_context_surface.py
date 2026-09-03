@@ -177,11 +177,18 @@ class TestSymlinkedPolicyFile:
         (repo / "AGENTS.md").write_text(POLICY_LINE * 2400)
         result = subprocess.run(
             ["bash", str(DELTA)],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
-        rows = [ln for ln in result.stdout.splitlines() if ".md" in ln and "tokens" not in ln]
+        rows = [
+            ln
+            for ln in result.stdout.splitlines()
+            if ".md" in ln and "tokens" not in ln
+        ]
         assert len(rows) == 1, f"expected one row, got {rows}"
         assert "AGENTS.md" in rows[0]
 
@@ -214,8 +221,11 @@ class TestDocsDirKnob:
     def test_delta_sees_the_configured_root(self, repo: Path):
         result = subprocess.run(
             ["bash", str(DELTA)],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert "documentation/BIG.md" in result.stdout, result.stdout
@@ -223,8 +233,11 @@ class TestDocsDirKnob:
     def test_measure_sees_the_configured_root(self, repo: Path):
         result = subprocess.run(
             ["bash", str(MEASURE)],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
@@ -234,9 +247,10 @@ class TestDocsDirKnob:
     def test_archival_subtrees_still_excluded_under_a_moved_root(self, repo: Path):
         (repo / "documentation" / "plans").mkdir()
         (repo / "documentation" / "plans" / "old.md").write_text(POLICY_LINE * 1200)
-        assert _advisory(
-            _run_guard(repo, repo / "documentation" / "plans" / "old.md")
-        ) is None
+        assert (
+            _advisory(_run_guard(repo, repo / "documentation" / "plans" / "old.md"))
+            is None
+        )
 
 
 class TestEmptyPolicyFile:
@@ -247,8 +261,11 @@ class TestEmptyPolicyFile:
         (repo / "AGENTS.md").write_text("")
         result = subprocess.run(
             ["bash", str(MEASURE)],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 2, (
             f"expected exit 2 (infrastructure failure), got {result.returncode}"
@@ -273,7 +290,10 @@ class TestCohortReportNet:
     def _report(self, repo: Path) -> dict:
         result = subprocess.run(
             ["bash", str(COHORT), "--local", str(repo), "--format", "json"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)[0]
@@ -281,25 +301,54 @@ class TestCohortReportNet:
     def test_net_ignores_rows_from_the_other_method(self, tmp_path: Path):
         """The reproduction: an estimate row then two exact rows for a file whose
         byte count never changed. Anchoring at row 0 reported +2743."""
-        repo = self._ledger(tmp_path, [
-            {"ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5633,
-             "tokens_exact": False, "bytes": 22533},
-            {"ts": "2026-08-02", "file": "AGENTS.md", "tokens": 8376,
-             "tokens_exact": True, "bytes": 22533},
-            {"ts": "2026-08-03", "file": "AGENTS.md", "tokens": 8376,
-             "tokens_exact": True, "bytes": 22533},
-        ])
+        repo = self._ledger(
+            tmp_path,
+            [
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 5633,
+                    "tokens_exact": False,
+                    "bytes": 22533,
+                },
+                {
+                    "ts": "2026-08-02",
+                    "file": "AGENTS.md",
+                    "tokens": 8376,
+                    "tokens_exact": True,
+                    "bytes": 22533,
+                },
+                {
+                    "ts": "2026-08-03",
+                    "file": "AGENTS.md",
+                    "tokens": 8376,
+                    "tokens_exact": True,
+                    "bytes": 22533,
+                },
+            ],
+        )
         rec = self._report(repo)
         assert rec["net"] == 0, f"net spanned the method change: {rec}"
         assert rec["net_from"] == "2026-08-02"
 
     def test_net_suppressed_when_the_method_just_changed(self, tmp_path: Path):
-        repo = self._ledger(tmp_path, [
-            {"ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5633,
-             "tokens_exact": False},
-            {"ts": "2026-08-02", "file": "AGENTS.md", "tokens": 8376,
-             "tokens_exact": True},
-        ])
+        repo = self._ledger(
+            tmp_path,
+            [
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 5633,
+                    "tokens_exact": False,
+                },
+                {
+                    "ts": "2026-08-02",
+                    "file": "AGENTS.md",
+                    "tokens": 8376,
+                    "tokens_exact": True,
+                },
+            ],
+        )
         rec = self._report(repo)
         assert rec["net"] is None
         assert "method changed" in rec["net_why"]
@@ -307,22 +356,40 @@ class TestCohortReportNet:
     def test_row_missing_tokens_degrades_one_cell(self, tmp_path: Path):
         """record-telemetry.sh tolerates a malformed line so one interrupted run
         cannot block every future measurement; the roll-up must match that."""
-        repo = self._ledger(tmp_path, [
-            {"ts": "2026-08-01", "file": "AGENTS.md", "tokens": 8376,
-             "tokens_exact": True},
-            {"ts": "2026-08-02", "file": "AGENTS.md", "tokens_exact": True},
-        ])
+        repo = self._ledger(
+            tmp_path,
+            [
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 8376,
+                    "tokens_exact": True,
+                },
+                {"ts": "2026-08-02", "file": "AGENTS.md", "tokens_exact": True},
+            ],
+        )
         rec = self._report(repo)
         assert rec["net"] is None
         assert rec["net_why"] == "latest row has no token count"
 
     def test_net_reported_across_same_method_rows(self, tmp_path: Path):
-        repo = self._ledger(tmp_path, [
-            {"ts": "2026-08-01", "file": "AGENTS.md", "tokens": 9000,
-             "tokens_exact": True},
-            {"ts": "2026-08-08", "file": "AGENTS.md", "tokens": 5800,
-             "tokens_exact": True},
-        ])
+        repo = self._ledger(
+            tmp_path,
+            [
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 9000,
+                    "tokens_exact": True,
+                },
+                {
+                    "ts": "2026-08-08",
+                    "file": "AGENTS.md",
+                    "tokens": 5800,
+                    "tokens_exact": True,
+                },
+            ],
+        )
         rec = self._report(repo)
         assert rec["net"] == -3200
         assert rec["net_why"] is None
@@ -336,7 +403,10 @@ class TestSharedLibrary:
         script = f'set -euo pipefail\n. "{LIB}"\necho SOURCED_OK\n'
         result = subprocess.run(
             ["bash", "-c", script, "caller", "--help"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert "SOURCED_OK" in result.stdout, result.stdout
@@ -356,13 +426,16 @@ class TestSharedLibrary:
         (repo / "AGENTS.md").write_text(POLICY_LINE * 2400)
 
         payload = json.dumps(
-            {"tool_name": "Edit",
-             "tool_input": {"file_path": str(repo / "AGENTS.md")}}
+            {"tool_name": "Edit", "tool_input": {"file_path": str(repo / "AGENTS.md")}}
         )
         result = subprocess.run(
             ["bash", ".claude/hooks/context-budget-guard.sh"],
-            input=payload, capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=payload,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip(), (
@@ -381,8 +454,11 @@ class TestSharedLibrary:
         (vendored / "install-guard.sh").write_text(INSTALL.read_text())
         result = subprocess.run(
             ["bash", str(vendored / "install-guard.sh")],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 1, result.stdout + result.stderr
         assert "_context-lib.sh not found" in result.stderr, result.stderr
@@ -397,17 +473,32 @@ class TestSharedLibrary:
         orphan = repo / "orphan-guard.sh"
         orphan.write_text(GUARD.read_text())
         (hooks / "context-budget-guard.sh").symlink_to(orphan)
-        (repo / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {"PostToolUse": [{
-                "matcher": "Edit|Write|MultiEdit",
-                "hooks": [{"type": "command",
-                           "command": "bash .claude/hooks/context-budget-guard.sh"}],
-            }]}
-        }))
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit|Write|MultiEdit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/context-budget-guard.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
         result = subprocess.run(
             ["bash", str(INSTALL), "--check"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 3, result.stdout
         assert "library beside target: no" in result.stdout, result.stdout
@@ -432,9 +523,27 @@ class TestCredentialParity:
         if bin_dir is not None:
             bin_dir.mkdir(parents=True, exist_ok=True)
             # Keep the real tools the script needs; drop everything else.
-            for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc",
-                         "sort", "find", "head", "tr", "dirname", "basename",
-                         "mktemp", "date", "cat", "rm", "mkdir", "printf"):
+            for tool in (
+                "git",
+                "python3",
+                "bash",
+                "awk",
+                "sed",
+                "grep",
+                "wc",
+                "sort",
+                "find",
+                "head",
+                "tr",
+                "dirname",
+                "basename",
+                "mktemp",
+                "date",
+                "cat",
+                "rm",
+                "mkdir",
+                "printf",
+            ):
                 real = shutil.which(tool)
                 if real and not (bin_dir / tool).exists():
                     (bin_dir / tool).symlink_to(real)
@@ -452,14 +561,13 @@ class TestCredentialParity:
             f"OTHER=$(touch {canary})\n"
             "export ANTHROPIC_API_KEY=sk-ant-from-dotenv\n"
         )
-        script = (
-            f'set -euo pipefail\n. "{LIB}"\n'
-            f'ctx_api_key_from_env_file "{repo}"\n'
-        )
+        script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True,
-            env=self._env_without_key(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=self._env_without_key(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout == "sk-ant-from-dotenv", repr(result.stdout)
@@ -473,8 +581,11 @@ class TestCredentialParity:
         (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-current\n")
         script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
         result = subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True,
-            env=self._env_without_key(), timeout=30,
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env=self._env_without_key(),
+            timeout=30,
         )
         assert result.stdout == "sk-current", repr(result.stdout)
 
@@ -485,8 +596,11 @@ class TestCredentialParity:
         (repo / "env").write_text("ANTHROPIC_API_KEY='sk-legacy'\n")
         script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
         result = subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True,
-            env=self._env_without_key(), timeout=30,
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env=self._env_without_key(),
+            timeout=30,
         )
         assert result.stdout == "sk-legacy", repr(result.stdout)
 
@@ -495,8 +609,11 @@ class TestCredentialParity:
         (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-unused\n")
         result = subprocess.run(
             ["bash", str(MEASURE), "--exact", "--no-write", "--no-env-file"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=self._env_without_key(tmp_path / "bin"), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=self._env_without_key(tmp_path / "bin"),
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["policy"]["tokens_exact"] is False
@@ -508,8 +625,11 @@ class TestCredentialParity:
         (repo / ".env").write_text("ANTHROPIC_API_KEY=your key here\n")
         script = f'set -euo pipefail\n. "{LIB}"\nctx_api_key_from_env_file "{repo}"\n'
         result = subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True,
-            env=self._env_without_key(), timeout=30,
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env=self._env_without_key(),
+            timeout=30,
         )
         assert result.stdout == "", repr(result.stdout)
 
@@ -522,18 +642,30 @@ class TestLedgerStaysSingleMethod:
     def _repo_with_ledger(self, tmp_path: Path, exact: bool) -> Path:
         repo = _repo(tmp_path, policy_lines=50)
         (repo / ".skills").mkdir()
-        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
-            "ts": "2026-08-01", "repo": "repo", "file": "AGENTS.md",
-            "tokens": 5000, "tokens_exact": exact, "budget": 6000,
-        }) + "\n")
+        (repo / ".skills" / "context-metrics.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-08-01",
+                    "repo": "repo",
+                    "file": "AGENTS.md",
+                    "tokens": 5000,
+                    "tokens_exact": exact,
+                    "budget": 6000,
+                }
+            )
+            + "\n"
+        )
         return repo
 
     def _measure(self, repo: Path) -> str:
         """An estimate measurement — no credential available."""
         result = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["policy"]["tokens_exact"] is False
@@ -542,8 +674,12 @@ class TestLedgerStaysSingleMethod:
     def _record(self, repo: Path, measurement: str, *extra: str):
         return subprocess.run(
             ["bash", str(SCRIPTS / "record-telemetry.sh"), *extra],
-            input=measurement, capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=measurement,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
 
     def test_refuses_an_estimate_row_after_an_exact_row(self, tmp_path: Path):
@@ -576,7 +712,9 @@ class TestLedgerStaysSingleMethod:
         assert result.returncode == 0, result.stderr
         rows = [
             json.loads(ln)
-            for ln in (repo / ".skills" / "context-metrics.jsonl").read_text().splitlines()
+            for ln in (repo / ".skills" / "context-metrics.jsonl")
+            .read_text()
+            .splitlines()
             if ln.strip()
         ]
         assert isinstance(rows[-1]["delta_tokens"], int), rows[-1]
@@ -611,15 +749,21 @@ class TestRepoCommitBackfill:
     def _rev(self, repo: Path, ref: str = "HEAD", *flags: str) -> str:
         out = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", *flags, ref],
-            check=True, capture_output=True, text=True, env=_clean_env(),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
         )
         return out.stdout.strip()
 
     def _measure(self, repo: Path) -> str:
         result = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         return result.stdout
@@ -627,8 +771,12 @@ class TestRepoCommitBackfill:
     def _record(self, repo: Path, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["bash", str(RECORD), *extra],
-            input=self._measure(repo), capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=60,
+            input=self._measure(repo),
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
 
     def _backfill(self, repo: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -641,9 +789,13 @@ class TestRepoCommitBackfill:
         r_fd, w_fd = os.pipe()
         try:
             return subprocess.run(
-                ["bash", str(RECORD), *extra], stdin=r_fd,
-                capture_output=True, text=True, cwd=str(repo),
-                env=_clean_env(), timeout=60,
+                ["bash", str(RECORD), *extra],
+                stdin=r_fd,
+                capture_output=True,
+                text=True,
+                cwd=str(repo),
+                env=_clean_env(),
+                timeout=60,
             )
         finally:
             os.close(r_fd)
@@ -722,16 +874,15 @@ class TestRepoCommitBackfill:
         broken ledger. Every line still parses and the field is still a commit,
         one behind — recoverable by running the backfill later."""
         repo, before, _ = self._through_phase_seven(tmp_path)
-        lines = [ln for ln in (repo / self.LEDGER).read_text().splitlines()
-                 if ln.strip()]
+        lines = [
+            ln for ln in (repo / self.LEDGER).read_text().splitlines() if ln.strip()
+        ]
         assert lines, "the record step wrote nothing"
         for line in lines:
             json.loads(line)  # a half-written row would raise here
         assert self._rows(repo)[-1]["repo_commit"] == before
 
-    def test_backfill_refuses_a_commit_this_repo_does_not_have(
-        self, tmp_path: Path
-    ):
+    def test_backfill_refuses_a_commit_this_repo_does_not_have(self, tmp_path: Path):
         """Null already means 'cannot name an interval'. A fabricated revision
         sends the next sweep to a tree nobody measured, which is worse."""
         repo, _, shipped = self._through_phase_seven(tmp_path)
@@ -769,9 +920,7 @@ class TestRepoCommitBackfill:
         assert "malformed" in result.stderr.lower()
         assert self._rows(repo)[-1]["repo_commit"] == shipped
 
-    def test_backfill_refuses_when_the_newest_row_is_a_baseline(
-        self, tmp_path: Path
-    ):
+    def test_backfill_refuses_when_the_newest_row_is_a_baseline(self, tmp_path: Path):
         """The baseline row records a state that has already passed, so a late
         commit cannot change what it describes. telemetry.md exempts it from the
         rewrite rule in both directions."""
@@ -805,7 +954,8 @@ class TestRepoCommitBackfill:
         silently discard the tags rather than record them."""
         repo, _, _ = self._through_phase_seven(tmp_path)
         result = self._backfill(
-            repo, "--repo-commit", "HEAD", "--actions", "demote:Layout")
+            repo, "--repo-commit", "HEAD", "--actions", "demote:Layout"
+        )
         assert result.returncode == 1, result.stderr
         assert "unknown argument" not in result.stderr, result.stderr
         assert "--actions" in result.stderr
@@ -824,9 +974,31 @@ def _bin_with_real_tools(bin_dir: Path) -> Path:
     """A PATH directory holding the real tools measure-context.sh needs, so a
     caller can then override exactly one of them."""
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc", "sort",
-                 "find", "head", "tr", "dirname", "basename", "mktemp", "date",
-                 "cat", "rm", "mkdir", "printf", "ls", "cut", "tail", "uniq"):
+    for tool in (
+        "git",
+        "python3",
+        "bash",
+        "awk",
+        "sed",
+        "grep",
+        "wc",
+        "sort",
+        "find",
+        "head",
+        "tr",
+        "dirname",
+        "basename",
+        "mktemp",
+        "date",
+        "cat",
+        "rm",
+        "mkdir",
+        "printf",
+        "ls",
+        "cut",
+        "tail",
+        "uniq",
+    ):
         real = shutil.which(tool)
         if real and not (bin_dir / tool).exists():
             (bin_dir / tool).symlink_to(real)
@@ -861,8 +1033,11 @@ class TestExactFlagReflectsCountsNotCredentials:
         repo = _repo(tmp_path, policy_lines=200)
         result = subprocess.run(
             ["bash", str(MEASURE), "--exact"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=env_with_failing_counter, timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env_with_failing_counter,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["policy"]["tokens_exact"] is False, (
@@ -879,8 +1054,11 @@ class TestExactFlagReflectsCountsNotCredentials:
         repo = _repo(tmp_path, policy_lines=200)
         result = subprocess.run(
             ["bash", str(MEASURE), "--exact"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=env_with_failing_counter, timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env_with_failing_counter,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         assert not (repo / ".skills" / "context-token-ratio").exists(), (
@@ -895,20 +1073,35 @@ class TestExactFlagReflectsCountsNotCredentials:
         and silently compared against real counts."""
         repo = _repo(tmp_path, policy_lines=200)
         (repo / ".skills").mkdir()
-        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
-            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
-            "tokens_exact": True, "budget": 6000,
-        }) + "\n")
+        (repo / ".skills" / "context-metrics.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 5000,
+                    "tokens_exact": True,
+                    "budget": 6000,
+                }
+            )
+            + "\n"
+        )
         measured = subprocess.run(
             ["bash", str(MEASURE), "--exact", "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=env_with_failing_counter, timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env_with_failing_counter,
+            timeout=60,
         )
         assert measured.returncode == 0, measured.stderr
         recorded = subprocess.run(
             ["bash", str(SCRIPTS / "record-telemetry.sh")],
-            input=measured.stdout, capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=measured.stdout,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert recorded.returncode == 4, (
             f"expected the ledger to refuse it, got {recorded.returncode}"
@@ -932,9 +1125,7 @@ class TestUnreadableDocInTheInventory:
 
     def _repo_with_unreadable_doc(self, tmp_path: Path) -> Path:
         repo = _repo(tmp_path, policy_lines=50)
-        (repo / "AGENTS.md").write_text(
-            POLICY_LINE * 50 + "\n[live](docs/D.md)\n"
-        )
+        (repo / "AGENTS.md").write_text(POLICY_LINE * 50 + "\n[live](docs/D.md)\n")
         (repo / "docs").mkdir()
         doc = repo / "docs" / "D.md"
         doc.write_text("# D\n\nsome live reference prose\n")
@@ -944,8 +1135,11 @@ class TestUnreadableDocInTheInventory:
     def _measure(self, repo: Path) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
 
     def test_exits_two_with_no_partial_json(self, tmp_path: Path):
@@ -970,7 +1164,8 @@ class TestUnreadableDocInTheInventory:
         `ct.err` are already carried; on a line of its own it is the defect."""
         result = self._measure(self._repo_with_unreadable_doc(tmp_path))
         stray = [
-            line for line in result.stderr.splitlines()
+            line
+            for line in result.stderr.splitlines()
             if re.search(r"measure-context\.sh: line \d+:", line)
             and not line.startswith(("ERROR", "WARN", "INFO"))
         ]
@@ -983,19 +1178,34 @@ class TestDryRunDescribesTheRealCommand:
         real command takes, not for the one --allow-method-change would take."""
         repo = _repo(tmp_path, policy_lines=50)
         (repo / ".skills").mkdir()
-        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
-            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
-            "tokens_exact": True, "budget": 6000,
-        }) + "\n")
+        (repo / ".skills" / "context-metrics.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 5000,
+                    "tokens_exact": True,
+                    "budget": 6000,
+                }
+            )
+            + "\n"
+        )
         measured = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         result = subprocess.run(
             ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
-            input=measured.stdout, capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=measured.stdout,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         # A preview is not a failure, so it still exits 0 …
         assert result.returncode == 0, result.stderr
@@ -1007,19 +1217,34 @@ class TestDryRunDescribesTheRealCommand:
     def test_dry_run_is_silent_about_refusal_when_methods_match(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=50)
         (repo / ".skills").mkdir()
-        (repo / ".skills" / "context-metrics.jsonl").write_text(json.dumps({
-            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
-            "tokens_exact": False, "budget": 6000,
-        }) + "\n")
+        (repo / ".skills" / "context-metrics.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 5000,
+                    "tokens_exact": False,
+                    "budget": 6000,
+                }
+            )
+            + "\n"
+        )
         measured = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         result = subprocess.run(
             ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
-            input=measured.stdout, capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=measured.stdout,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert "would be REFUSED" not in result.stderr, result.stderr
@@ -1063,16 +1288,25 @@ class TestProveNoLoss:
     def _run(self, repo: Path, *extra: str):
         return subprocess.run(
             ["bash", str(self.PROVE), "--base", "HEAD", *extra],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
 
     def test_clean_relocation_passes(self, tmp_path: Path):
-        repo = self._repo(tmp_path, f"# P\n\n## A\n\nkeep me\n\n### B\n\n{self.ORIGINAL}\n")
-        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nkeep me\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n")
+        repo = self._repo(
+            tmp_path, f"# P\n\n## A\n\nkeep me\n\n### B\n\n{self.ORIGINAL}\n"
+        )
+        (repo / "AGENTS.md").write_text(
+            "# P\n\n## A\n\nkeep me\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n"
+        )
         (repo / "docs").mkdir()
         # Heading promoted ### -> ##, link depth adjusted: both normalised away.
-        (repo / "docs" / "SKILLS.md").write_text(f"# S\n\n## B\n\n{self.RECOMBINED.replace('; this file is the reference a human or an audit needs', '')}\n")
+        (repo / "docs" / "SKILLS.md").write_text(
+            f"# S\n\n## B\n\n{self.RECOMBINED.replace('; this file is the reference a human or an audit needs', '')}\n"
+        )
         result = self._run(repo)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "UNACCOUNTED FOR:            0" in result.stdout, result.stdout
@@ -1080,7 +1314,9 @@ class TestProveNoLoss:
     def test_paraphrase_in_transit_is_caught(self, tmp_path: Path):
         """The defect from the first real run, reproduced verbatim."""
         repo = self._repo(tmp_path, f"# P\n\n## A\n\n{self.ORIGINAL}\n")
-        (repo / "AGENTS.md").write_text("# P\n\n## A\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n")
+        (repo / "AGENTS.md").write_text(
+            "# P\n\n## A\n\nSee [docs/SKILLS.md](docs/SKILLS.md).\n"
+        )
         (repo / "docs").mkdir()
         (repo / "docs" / "SKILLS.md").write_text(f"# S\n\n{self.RECOMBINED}\n")
         result = self._run(repo)
@@ -1123,7 +1359,9 @@ class TestProveNoLoss:
             f"append-after-terminator not caught (exit {result.returncode})"
         )
 
-    def test_a_fragment_inside_unrelated_prose_is_not_a_relocation(self, tmp_path: Path):
+    def test_a_fragment_inside_unrelated_prose_is_not_a_relocation(
+        self, tmp_path: Path
+    ):
         """Short and common lines — fence markers, numbered list items — were
         effectively unchecked under substring matching. Measured on this exact
         input, four of five dropped lines reported as "relocated verbatim"."""
@@ -1209,8 +1447,11 @@ class TestProveNoLoss:
         _git(repo, "commit", "-qm", "before")
         result = subprocess.run(
             ["bash", str(self.PROVE), "--base", "HEAD", "--file", "CLAUDE.md"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 2, result.stdout + result.stderr
         assert "mode 120000" in result.stderr, result.stderr
@@ -1235,13 +1476,7 @@ class TestFrontmatterIsNotContent:
     PROVE = SCRIPTS / "prove-no-loss.sh"
 
     def _front(self, version: str) -> str:
-        return (
-            "---\n"
-            "name: demo\n"
-            "metadata:\n"
-            f'  version: "{version}"\n'
-            "---\n"
-        )
+        return f'---\nname: demo\nmetadata:\n  version: "{version}"\n---\n'
 
     def _repo(self, tmp_path: Path, before: str) -> Path:
         repo = tmp_path / "repo"
@@ -1257,8 +1492,11 @@ class TestFrontmatterIsNotContent:
     def _run(self, repo: Path, *extra: str):
         return subprocess.run(
             ["bash", str(self.PROVE), "--base", "HEAD", *extra],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
 
     BODY = "\n# Demo\n\nA load-bearing constraint nobody may drop.\n"
@@ -1282,7 +1520,9 @@ class TestFrontmatterIsNotContent:
         """`---` opening a file is a frontmatter fence only when what follows
         reads as YAML. Prose between two rules is content, and dropping it is a
         loss."""
-        before = "---\n\nA rule-fenced sentence that is plainly prose.\n\n---\n\n# Demo\n"
+        before = (
+            "---\n\nA rule-fenced sentence that is plainly prose.\n\n---\n\n# Demo\n"
+        )
         repo = self._repo(tmp_path, before)
         (repo / "AGENTS.md").write_text("---\n\n---\n\n# Demo\n")
         result = self._run(repo)
@@ -1311,8 +1551,11 @@ class TestCensusInvariant:
     def _measure(self, repo: Path) -> dict:
         result = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -1328,25 +1571,31 @@ class TestCensusInvariant:
         """A `### ` preceding both the first `## ` and the first body line used to
         add its bytes to an unnamed section, which the preamble initialiser then
         reset to zero: 71 bytes of file, 49 in the rows."""
-        m = self._measure(self._repo(
-            tmp_path,
-            "### Orphan subsection\n\nsome body text here\n\n## Real section\n\nmore body\n",
-        ))
+        m = self._measure(
+            self._repo(
+                tmp_path,
+                "### Orphan subsection\n\nsome body text here\n\n## Real section\n\nmore body\n",
+            )
+        )
         assert sum(s["bytes"] for s in m["sections"]) == m["policy"]["bytes"]
         assert [s["title"] for s in m["subsections"]] == ["Orphan subsection"]
 
     def test_normal_file_sums_exactly(self, tmp_path: Path):
-        m = self._measure(self._repo(
-            tmp_path,
-            "# T\n\nintro\n\n## A\n\nbody\n\n### A1\n\nmore\n\n## B\n\ntail\n",
-        ))
+        m = self._measure(
+            self._repo(
+                tmp_path,
+                "# T\n\nintro\n\n## A\n\nbody\n\n### A1\n\nmore\n\n## B\n\ntail\n",
+            )
+        )
         assert sum(s["bytes"] for s in m["sections"]) == m["policy"]["bytes"]
 
     def test_subsection_bytes_never_exceed_the_parent(self, tmp_path: Path):
-        m = self._measure(self._repo(
-            tmp_path,
-            "# T\n\n## A\n\nbody\n\n### A1\n\nmore text here\n\n### A2\n\nand more\n",
-        ))
+        m = self._measure(
+            self._repo(
+                tmp_path,
+                "# T\n\n## A\n\nbody\n\n### A1\n\nmore text here\n\n### A2\n\nand more\n",
+            )
+        )
         parents = {s["title"]: s["bytes"] for s in m["sections"]}
         for sub in m["subsections"]:
             assert sub["bytes"] <= parents[sub["parent"]], sub
@@ -1354,9 +1603,12 @@ class TestCensusInvariant:
     def test_deeper_headings_are_not_reported_separately(self, tmp_path: Path):
         """`#### ` belongs to its enclosing `### ` — it is not independently
         demotable, and reporting it would invite splitting below the useful unit."""
-        m = self._measure(self._repo(
-            tmp_path, "# T\n\n## A\n\n### A1\n\n#### A1a\n\ndeep body\n",
-        ))
+        m = self._measure(
+            self._repo(
+                tmp_path,
+                "# T\n\n## A\n\n### A1\n\n#### A1a\n\ndeep body\n",
+            )
+        )
         assert [s["title"] for s in m["subsections"]] == ["A1"]
 
 
@@ -1369,8 +1621,11 @@ class TestSkillVersionAttribution:
         repo = _repo(tmp_path, policy_lines=50)
         result = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         skill = json.loads(result.stdout)["skill"]
@@ -1390,13 +1645,20 @@ class TestSkillVersionAttribution:
         repo = _repo(tmp_path, policy_lines=50)
         measured = subprocess.run(
             ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
         ).stdout
         row = subprocess.run(
             ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
-            input=measured, capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=measured,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert row.returncode == 0, row.stderr
         parsed = json.loads(row.stdout)
@@ -1409,16 +1671,25 @@ class TestSkillVersionAttribution:
         """A wrong attribution is worse than a missing one when the whole point is
         to A/B skill changes."""
         repo = _repo(tmp_path, policy_lines=50)
-        measured = json.loads(subprocess.run(
-            ["bash", str(MEASURE), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=60,
-        ).stdout)
+        measured = json.loads(
+            subprocess.run(
+                ["bash", str(MEASURE), "--no-write"],
+                capture_output=True,
+                text=True,
+                cwd=str(repo),
+                env=_clean_env(),
+                timeout=60,
+            ).stdout
+        )
         del measured["skill"]
         row = subprocess.run(
             ["bash", str(SCRIPTS / "record-telemetry.sh"), "--dry-run"],
-            input=json.dumps(measured), capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=30,
+            input=json.dumps(measured),
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert row.returncode == 0, row.stderr
         parsed = json.loads(row.stdout)
@@ -1429,13 +1700,24 @@ class TestSkillVersionAttribution:
         for name, ver in (("a", "1.0"), ("b", "1.1")):
             d = tmp_path / name / ".skills"
             d.mkdir(parents=True)
-            (d / "context-metrics.jsonl").write_text(json.dumps({
-                "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
-                "tokens_exact": True, "skill_version": ver,
-            }) + "\n")
+            (d / "context-metrics.jsonl").write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-08-01",
+                        "file": "AGENTS.md",
+                        "tokens": 5000,
+                        "tokens_exact": True,
+                        "skill_version": ver,
+                    }
+                )
+                + "\n"
+            )
         result = subprocess.run(
-            ["bash", str(COHORT), "--local", f"{tmp_path/'a'} {tmp_path/'b'}"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            ["bash", str(COHORT), "--local", f"{tmp_path / 'a'} {tmp_path / 'b'}"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert result.returncode == 0, result.stderr
         assert "skill versions in play:" in result.stdout
@@ -1445,13 +1727,24 @@ class TestSkillVersionAttribution:
     def test_rollup_says_when_the_cohort_is_uniform(self, tmp_path: Path):
         d = tmp_path / "a" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text(json.dumps({
-            "ts": "2026-08-01", "file": "AGENTS.md", "tokens": 5000,
-            "tokens_exact": True, "skill_version": "1.1",
-        }) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-08-01",
+                    "file": "AGENTS.md",
+                    "tokens": 5000,
+                    "tokens_exact": True,
+                    "skill_version": "1.1",
+                }
+            )
+            + "\n"
+        )
         result = subprocess.run(
             ["bash", str(COHORT), "--local", str(tmp_path / "a")],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert "a baseline, not a comparison" in result.stdout, result.stdout
 
@@ -1463,48 +1756,77 @@ class TestSkillVersionAttribution:
 
 def _ledger_row(**kw) -> str:
     row = {
-        "ts": "2026-08-05", "repo": kw.get("repo", "x"), "file": "AGENTS.md",
-        "tokens": None, "tokens_exact": True, "skill_version": None,
-        "skill_commit": None, "budget": 6000, "docs_orphaned": 0,
-        "links_dead": 0, "no_loss": None, "actions": [],
+        "ts": "2026-08-05",
+        "repo": kw.get("repo", "x"),
+        "file": "AGENTS.md",
+        "tokens": None,
+        "tokens_exact": True,
+        "skill_version": None,
+        "skill_commit": None,
+        "budget": 6000,
+        "docs_orphaned": 0,
+        "links_dead": 0,
+        "no_loss": None,
+        "actions": [],
     }
     row.update(kw)
     return json.dumps(row, sort_keys=True)
 
 
-def _arm(root: Path, name: str, before: int, after: int | None, version: str,
-         **kw) -> None:
+def _arm(
+    root: Path, name: str, before: int, after: int | None, version: str, **kw
+) -> None:
     """One cohort member with a baseline row and, optionally, a curation run."""
     d = root / name / ".skills"
     d.mkdir(parents=True, exist_ok=True)
-    rows = [_ledger_row(repo=name, tokens=before, actions=["baseline:exact"],
-                        docs_orphaned=kw.get("orph_before", 0))]
+    rows = [
+        _ledger_row(
+            repo=name,
+            tokens=before,
+            actions=["baseline:exact"],
+            docs_orphaned=kw.get("orph_before", 0),
+        )
+    ]
     if after is not None:
-        rows.append(_ledger_row(
-            repo=name, tokens=after, actions=["demote:Big"],
-            skill_version=version, skill_commit="deadbee",
-            no_loss=kw.get("no_loss", "ok"),
-            links_dead=kw.get("links_dead", 0),
-            # Passed through only when a caller asks for it, so the default
-            # fixture keeps producing a row that PREDATES the field — the null
-            # path score-cohort must not gate on, or every historical row in
-            # the cohort would retroactively REJECT. Same for no_loss_warrants
-            # (#111) and the claims pair (#253), whose null paths are the
-            # entire existing cohort.
-            **{k: kw[k] for k in ("links_dead_anchors", "no_loss_warrants",
-                                  "claims_dropped", "claims_warranted")
-               if k in kw},
-            docs_orphaned=kw.get("orph_after", 0),
-        ))
+        rows.append(
+            _ledger_row(
+                repo=name,
+                tokens=after,
+                actions=["demote:Big"],
+                skill_version=version,
+                skill_commit="deadbee",
+                no_loss=kw.get("no_loss", "ok"),
+                links_dead=kw.get("links_dead", 0),
+                # Passed through only when a caller asks for it, so the default
+                # fixture keeps producing a row that PREDATES the field — the null
+                # path score-cohort must not gate on, or every historical row in
+                # the cohort would retroactively REJECT. Same for no_loss_warrants
+                # (#111) and the claims pair (#253), whose null paths are the
+                # entire existing cohort.
+                **{
+                    k: kw[k]
+                    for k in (
+                        "links_dead_anchors",
+                        "no_loss_warrants",
+                        "claims_dropped",
+                        "claims_warranted",
+                    )
+                    if k in kw
+                },
+                docs_orphaned=kw.get("orph_after", 0),
+            )
+        )
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
 
 
 def _roster(root: Path, spec: list[tuple[str, str, str]]) -> Path:
     """spec entries are (name, wave, pair)."""
     path = root / "cohort"
-    path.write_text("".join(
-        f"{root / name}  wave:{wave} pair:{pair}\n" for name, wave, pair in spec
-    ))
+    path.write_text(
+        "".join(
+            f"{root / name}  wave:{wave} pair:{pair}\n" for name, wave, pair in spec
+        )
+    )
     return path
 
 
@@ -1514,9 +1836,21 @@ def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
     its own scored row, so the `wave:` values `_roster` writes are rollout order
     and score nothing."""
     return subprocess.run(
-        ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "1.2", "--control", "1.1", *args],
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        [
+            "bash",
+            str(SCORE),
+            "--cohort-file",
+            str(roster),
+            "--treatment",
+            "1.2",
+            "--control",
+            "1.1",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -1525,8 +1859,11 @@ def _three_good_pairs(root: Path, **treatment_kw) -> Path:
     control (wave a, v1.1) on every one."""
     # (control before, control after, treatment before, treatment after).
     # Closures: 69.6/86.0, 72.7/85.0, 76.9/87.5 — the treatment takes all three.
-    pairs = [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000),
-             (19000, 9000, 14000, 7000)]
+    pairs = [
+        (52000, 20000, 49000, 12000),
+        (28000, 12000, 26000, 9000),
+        (19000, 9000, 14000, 7000),
+    ]
     spec = []
     for i, (cb, ca, tb, ta) in enumerate(pairs, start=1):
         _arm(root, f"ctl{i}", cb, ca, "1.1")
@@ -1566,16 +1903,19 @@ class TestValidationGate:
         assert r.returncode == 3, r.stdout
         assert "pair 3 -> tie" in r.stdout
 
-    @pytest.mark.parametrize("kw,marker", [
-        ({"no_loss": "failed"}, "no_loss=failed"),
-        ({"links_dead": 2}, "links_dead=2"),
-        # The anchor half of the link gate (#120/#124). A doc split moves
-        # headings out of a file while leaving the file in place, so
-        # links_dead stays 0 and only this catches it — without it the
-        # measurement landed in Phase 6 while the gate stayed blind.
-        ({"links_dead_anchors": 3}, "links_dead_anchors=3"),
-        ({"orph_before": 0, "orph_after": 4}, "docs_orphaned 0->4"),
-    ])
+    @pytest.mark.parametrize(
+        "kw,marker",
+        [
+            ({"no_loss": "failed"}, "no_loss=failed"),
+            ({"links_dead": 2}, "links_dead=2"),
+            # The anchor half of the link gate (#120/#124). A doc split moves
+            # headings out of a file while leaving the file in place, so
+            # links_dead stays 0 and only this catches it — without it the
+            # measurement landed in Phase 6 while the gate stayed blind.
+            ({"links_dead_anchors": 3}, "links_dead_anchors=3"),
+            ({"orph_before": 0, "orph_after": 4}, "docs_orphaned 0->4"),
+        ],
+    )
     def test_safety_gate_vetoes_a_winning_score(self, tmp_path: Path, kw, marker):
         """A change that reduces tokens by dropping content, breaking links, or
         orphaning docs is rejected however good its numbers are. There is no
@@ -1587,10 +1927,13 @@ class TestValidationGate:
         assert "safety gate tripped in the treatment arm" in r.stdout
         assert marker in r.stdout
 
-    @pytest.mark.parametrize("verdict,marker", [
-        (None, "no_loss=not recorded"),
-        ("skipped", "no_loss=skipped"),
-    ])
+    @pytest.mark.parametrize(
+        "verdict,marker",
+        [
+            (None, "no_loss=not recorded"),
+            ("skipped", "no_loss=skipped"),
+        ],
+    )
     def test_missing_no_loss_never_adopts(self, tmp_path: Path, verdict, marker):
         """A run that skipped Phase 6 must not clear a Phase 6 gate by silence.
 
@@ -1653,8 +1996,11 @@ class TestValidationGate:
         treatment arm rather than as two arms that happened to match. Naming ONE
         release for both flags is the other half of the same guarantee and is a
         usage error — see test_same_version_for_both_arms_is_a_usage_error."""
-        pairs = [(52000, 12000, 49000, 20000), (28000, 8000, 26000, 12000),
-                 (19000, 7000, 14000, 9000)]
+        pairs = [
+            (52000, 12000, 49000, 20000),
+            (28000, 8000, 26000, 12000),
+            (19000, 7000, 14000, 9000),
+        ]
         spec = []
         for i, (cb, ca, tb, ta) in enumerate(pairs, start=1):
             _arm(tmp_path, f"ctl{i}", cb, ca, "1.1")
@@ -1685,13 +2031,17 @@ class TestValidationGate:
         """A baseline row is a measurement, not a curation."""
         _arm(tmp_path, "ctl1", 52000, None, "1.1")
         _arm(tmp_path, "trt1", 49000, 20000, "1.2")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 5, r.stdout
         assert "no attributed curation run" in r.stdout
 
     def test_unannotated_roster_refuses_rather_than_reporting_nothing(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """An empty comparison must not read as an experiment that found nothing.
 
         What the roster has to carry is `pair:` (#194). The arms come off each
@@ -1700,9 +2050,20 @@ class TestValidationGate:
         path = tmp_path / "cohort"
         path.write_text("CannObserv/archiver\nCannObserv/notifier\n")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file", str(path),
-             "--treatment", "1.2", "--control", "1.1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(path),
+                "--treatment",
+                "1.2",
+                "--control",
+                "1.1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert r.returncode == 1
         assert "no pair: assignment" in r.stderr
@@ -1711,7 +2072,10 @@ class TestValidationGate:
     def test_same_version_for_both_arms_is_a_usage_error(self, tmp_path: Path):
         r = subprocess.run(
             ["bash", str(SCORE), "--treatment", "1.2", "--control", "1.2"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert r.returncode == 1
         assert "same version" in r.stderr
@@ -1743,9 +2107,11 @@ class TestRosterAnnotations:
         path = tmp_path / "cohort"
         path.write_text("owner/one  pair:7\nowner/two  wave:b pair:7\n")
         out = subprocess.run(
-            ["bash", "-c",
-             f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert out.stdout.splitlines() == ["repo|owner/one||7", "repo|owner/two|b|7"]
 
@@ -1754,7 +2120,10 @@ class TestRosterAnnotations:
         path.write_text("owner/one  wave:a cohort:x\n")
         out = subprocess.run(
             ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert "unknown roster annotation" in out.stderr
         assert out.stdout.strip() == "repo|owner/one|a|"
@@ -1764,7 +2133,10 @@ class TestRosterAnnotations:
         path.write_text("# a comment\n\n/abs/path  wave:a pair:1\nowner/two\n")
         out = subprocess.run(
             ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert out.stdout.splitlines() == ["local|/abs/path|a|1", "repo|owner/two||"]
 
@@ -1774,9 +2146,15 @@ class TestRosterAnnotations:
         would produce a verdict from whichever repos happened to be annotated."""
         root = Path(__file__).resolve().parent.parent.parent
         out = subprocess.run(
-            ["bash", "-c",
-             f'. "{LIB}"; ctx_read_roster "{root / ".skills" / "cohort"}"'],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            [
+                "bash",
+                "-c",
+                f'. "{LIB}"; ctx_read_roster "{root / ".skills" / "cohort"}"',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         rows = [line.split("\x1f") for line in out.stdout.splitlines()]
         assert len(rows) == 12
@@ -1799,7 +2177,10 @@ class TestRosterAnnotations:
         roster = _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])
         r = subprocess.run(
             ["bash", str(COHORT), "--cohort-file", str(roster)],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert r.returncode == 0, r.stderr
         assert "rollout waves" in r.stdout
@@ -1814,20 +2195,32 @@ class TestNoLossOnTheRow:
     def test_verdict_lands_on_the_row(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=10)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run --no-loss ok'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run --no-loss ok',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert json.loads(out.stdout)["no_loss"] == "ok"
 
     def test_absent_flag_records_null_not_ok(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=10)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert json.loads(out.stdout)["no_loss"] is None
 
@@ -1836,10 +2229,16 @@ class TestNoLossOnTheRow:
         permanent failure — and a leniently-normalised 'OK' a silent pass."""
         repo = _repo(tmp_path, policy_lines=10)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run --no-loss OK'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run --no-loss OK',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert out.returncode == 1
         assert "must be ok, failed, or skipped" in out.stderr
@@ -1856,16 +2255,35 @@ class TestValidationGateRoundSix:
         file's 6,100 and handed the pair to the other arm."""
         d = tmp_path / "ctl1" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="ctl1", tokens=50000, actions=["baseline:exact"]),
-            _ledger_row(repo="ctl1", tokens=6100, file="sub/AGENTS.md",
-                        actions=["baseline:exact"]),
-            _ledger_row(repo="ctl1", tokens=9000, actions=["demote:X"],
-                        skill_version="1.1", no_loss="ok"),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(repo="ctl1", tokens=50000, actions=["baseline:exact"]),
+                    _ledger_row(
+                        repo="ctl1",
+                        tokens=6100,
+                        file="sub/AGENTS.md",
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="ctl1",
+                        tokens=9000,
+                        actions=["demote:X"],
+                        skill_version="1.1",
+                        no_loss="ok",
+                    ),
+                ]
+            )
+            + "\n"
+        )
         _arm(tmp_path, "trt1", 49000, 9500, "1.2")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1", "--format", "json")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         out = json.loads(r.stdout)
         ctl = next(x for x in out["repos"] if x["repo"] == "ctl1")
         assert ctl["before"] == 50000, ctl
@@ -1892,14 +2310,16 @@ class TestValidationGateRoundSix:
         so the two failures cannot line up again."""
         _arm(tmp_path, "ctl1", 6200, 5000, "1.1")
         _arm(tmp_path, "trt1", 6100, 4000, "1.2")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 5, r.stdout
         assert "no informative pairs" in r.stdout
         assert "verdict: ADOPT" not in r.stdout
 
-    def test_control_arm_missing_verdict_is_not_called_a_failure(
-            self, tmp_path: Path):
+    def test_control_arm_missing_verdict_is_not_called_a_failure(self, tmp_path: Path):
         """'Failure' in the control-arm report means the shipped version did
         something wrong. A run nobody checked is not that, and labelling it so
         is the sort of line that gets quoted in an issue."""
@@ -1920,18 +2340,29 @@ class TestValidationGateRoundSix:
         carrying stops being a comparison — which is the same refusal, reached
         without needing to notice the split."""
         for i, (cb, ca, tb, ta) in enumerate(
-                [(50000, 20000, 49000, 12000), (30000, 14000, 29000, 9000)],
-                start=1):
+            [(50000, 20000, 49000, 12000), (30000, 14000, 29000, 9000)], start=1
+        ):
             _arm(tmp_path, f"ctl{i}", cb, ca, "1.1")
             _arm(tmp_path, f"trt{i}", tb, ta, "1.2" if i == 1 else "1.9")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1"),
-                                      ("ctl2", "a", "2"), ("trt2", "b", "2")]),
-                   "--min-pairs", "2", "--format", "json")
+        r = _score(
+            _roster(
+                tmp_path,
+                [
+                    ("ctl1", "a", "1"),
+                    ("trt1", "b", "1"),
+                    ("ctl2", "a", "2"),
+                    ("trt2", "b", "2"),
+                ],
+            ),
+            "--min-pairs",
+            "2",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         assert r.returncode == 5, r.stdout
         assert payload["treatment_versions"] == ["1.2"]
-        assert next(x for x in payload["repos"]
-                    if x["repo"] == "trt2")["arm"] is None
+        assert next(x for x in payload["repos"] if x["repo"] == "trt2")["arm"] is None
         pair2 = next(p for p in payload["pairs"] if p["pair"] == "2")
         assert "0 treatment and 1 control" in pair2["why"], pair2
         assert "trt2 is in neither arm — 1.9" in pair2["why"], pair2
@@ -1945,8 +2376,7 @@ class TestValidationGateRoundSix:
         (tmp_path / "OrgB").mkdir()
         _arm(tmp_path, "OrgA/cli", 50000, 9000, "1.1")
         _arm(tmp_path, "OrgB/cli", 49000, 12000, "1.2")
-        roster = _roster(tmp_path, [("OrgA/cli", "a", "1"),
-                                    ("OrgB/cli", "b", "1")])
+        roster = _roster(tmp_path, [("OrgA/cli", "a", "1"), ("OrgB/cli", "b", "1")])
         r = _score(roster, "--min-pairs", "1", "--format", "json")
         payload = json.loads(r.stdout)
         assert len(payload["repos"]) == 2
@@ -1954,12 +2384,20 @@ class TestValidationGateRoundSix:
         assert payload["control_versions"] == ["1.1"]
         # Ambiguous basenames are shown in full rather than identically.
         assert {x["repo"] for x in payload["repos"]} == {
-            str(tmp_path / "OrgA/cli"), str(tmp_path / "OrgB/cli")}
+            str(tmp_path / "OrgA/cli"),
+            str(tmp_path / "OrgB/cli"),
+        }
 
     def test_unambiguous_basenames_stay_short(self, tmp_path: Path):
         r = _score(_three_good_pairs(tmp_path), "--format", "json")
         assert {x["repo"] for x in json.loads(r.stdout)["repos"]} == {
-            "ctl1", "ctl2", "ctl3", "trt1", "trt2", "trt3"}
+            "ctl1",
+            "ctl2",
+            "ctl3",
+            "trt1",
+            "trt2",
+            "trt3",
+        }
 
     def test_inverted_arms_are_detected_and_refuse_to_reject(self, tmp_path: Path):
         """In experiment 1 wave A adopted first and held the OLDER version, so
@@ -1976,9 +2414,20 @@ class TestValidationGateRoundSix:
         single output this script can produce."""
         roster = _three_good_pairs(tmp_path)
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file", str(roster),
-             "--treatment", "1.1", "--control", "1.2"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(roster),
+                "--treatment",
+                "1.1",
+                "--control",
+                "1.2",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert "OLDER than" in r.stdout, r.stdout
         assert "--treatment 1.2 --control 1.1" in r.stdout
@@ -1997,10 +2446,22 @@ class TestValidationGateRoundSix:
         _arm(tmp_path, "ctl1", 50000, 20000, "1.9")
         _arm(tmp_path, "trt1", 49000, 12000, "1.10")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file",
-             str(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])),
-             "--treatment", "1.10", "--control", "1.9", "--min-pairs", "1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])),
+                "--treatment",
+                "1.10",
+                "--control",
+                "1.9",
+                "--min-pairs",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert "OLDER than" not in r.stdout, r.stdout
         assert "verdict: ADOPT" in r.stdout
@@ -2011,14 +2472,27 @@ class TestValidationGateRoundSix:
         skill version; skipping past it hides the tagging gap."""
         d = tmp_path / "trt1" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="trt1", tokens=49000, actions=["baseline:exact"]),
-            _ledger_row(repo="trt1", tokens=48000, actions=[],
-                        skill_version="1.2", no_loss="ok"),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(repo="trt1", tokens=49000, actions=["baseline:exact"]),
+                    _ledger_row(
+                        repo="trt1",
+                        tokens=48000,
+                        actions=[],
+                        skill_version="1.2",
+                        no_loss="ok",
+                    ),
+                ]
+            )
+            + "\n"
+        )
         _arm(tmp_path, "ctl1", 50000, 20000, "1.1")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 5, r.stdout
         assert "no action tags" in r.stdout
         assert "tag it and re-score" in r.stdout
@@ -2032,21 +2506,38 @@ class TestCohortReportSingleFile:
         prevent, so it gets the same treatment."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="one", tokens=9000, actions=["baseline:exact"]),
-            _ledger_row(repo="one", tokens=500, file="sub/AGENTS.md",
-                        actions=["baseline:exact"]),
-            _ledger_row(repo="one", tokens=9000, actions=["demote:X"],
-                        skill_version="1.1"),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(repo="one", tokens=9000, actions=["baseline:exact"]),
+                    _ledger_row(
+                        repo="one",
+                        tokens=500,
+                        file="sub/AGENTS.md",
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        tokens=9000,
+                        actions=["demote:X"],
+                        skill_version="1.1",
+                    ),
+                ]
+            )
+            + "\n"
+        )
         r = subprocess.run(
-            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
-             "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"), "--format", "tsv"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert r.returncode == 0, r.stderr
-        header, row = r.stdout.splitlines()[0].split("\t"), \
-            r.stdout.splitlines()[1].split("\t")
+        header, row = (
+            r.stdout.splitlines()[0].split("\t"),
+            r.stdout.splitlines()[1].split("\t"),
+        )
         cells = dict(zip(header, row))
         # AGENTS.md never moved: 9000 both times. Against sub/AGENTS.md's 500 it
         # would read +8500.
@@ -2056,24 +2547,47 @@ class TestCohortReportSingleFile:
         assert cells["runs"] == "1", cells
 
 
-def _two_file_ledger(root: Path, name: str, version: str,
-                     main_after: int, sub_after: int) -> None:
+def _two_file_ledger(
+    root: Path, name: str, version: str, main_after: int, sub_after: int
+) -> None:
     """A repo whose ledger tracks two policy files: a big curation on the
     primary one, and a trivial prune on a secondary one recorded earlier."""
     d = root / name / ".skills"
     d.mkdir(parents=True)
-    (d / "context-metrics.jsonl").write_text("\n".join([
-        _ledger_row(repo=name, ts="2026-08-01", tokens=50000,
-                    actions=["baseline:exact"]),
-        _ledger_row(repo=name, ts="2026-08-01", file="sub/AGENTS.md",
-                    tokens=9000, actions=["baseline:exact"]),
-        _ledger_row(repo=name, ts="2026-08-02", file="sub/AGENTS.md",
-                    tokens=sub_after, actions=["prune:tiny"],
-                    skill_version=version, no_loss="ok"),
-        _ledger_row(repo=name, ts="2026-08-03", tokens=main_after,
-                    actions=["demote:Big"], skill_version=version,
-                    no_loss="ok"),
-    ]) + "\n")
+    (d / "context-metrics.jsonl").write_text(
+        "\n".join(
+            [
+                _ledger_row(
+                    repo=name, ts="2026-08-01", tokens=50000, actions=["baseline:exact"]
+                ),
+                _ledger_row(
+                    repo=name,
+                    ts="2026-08-01",
+                    file="sub/AGENTS.md",
+                    tokens=9000,
+                    actions=["baseline:exact"],
+                ),
+                _ledger_row(
+                    repo=name,
+                    ts="2026-08-02",
+                    file="sub/AGENTS.md",
+                    tokens=sub_after,
+                    actions=["prune:tiny"],
+                    skill_version=version,
+                    no_loss="ok",
+                ),
+                _ledger_row(
+                    repo=name,
+                    ts="2026-08-03",
+                    tokens=main_after,
+                    actions=["demote:Big"],
+                    skill_version=version,
+                    no_loss="ok",
+                ),
+            ]
+        )
+        + "\n"
+    )
 
 
 class TestValidationGateRoundSeven:
@@ -2084,8 +2598,13 @@ class TestValidationGateRoundSeven:
         50,000 -> 7,000 (93.2%)."""
         _two_file_ledger(tmp_path, "ctl1", "1.1", main_after=7000, sub_after=8900)
         _two_file_ledger(tmp_path, "trt1", "1.2", main_after=9000, sub_after=8800)
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1", "--format", "json")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         out = json.loads(r.stdout)
         by = {x["repo"]: x for x in out["repos"]}
         assert by["ctl1"]["file"] == "AGENTS.md", by["ctl1"]
@@ -2103,15 +2622,23 @@ class TestValidationGateRoundSeven:
         """One ledger produced two irreconcilable pictures of the same repo.
         The rule is duplicated in two languages, so pin them to one answer."""
         _two_file_ledger(tmp_path, "one", "1.1", main_after=7000, sub_after=8900)
-        gate = _score(_roster(tmp_path, [("one", "a", "1")]),
-                      "--min-pairs", "1", "--format", "json")
-        rollup = subprocess.run(
-            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
-             "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+        gate = _score(
+            _roster(tmp_path, [("one", "a", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
         )
-        cells = dict(zip(*(line.split("\t")
-                           for line in rollup.stdout.splitlines()[:2])))
+        rollup = subprocess.run(
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"), "--format", "tsv"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
+        )
+        cells = dict(
+            zip(*(line.split("\t") for line in rollup.stdout.splitlines()[:2]))
+        )
         gate_rec = json.loads(gate.stdout)["repos"][0]
         assert gate_rec["file"] == "AGENTS.md"
         assert int(cells["tokens"]) == gate_rec["after"] == 7000
@@ -2119,8 +2646,7 @@ class TestValidationGateRoundSeven:
         # read 2 — sub/AGENTS.md was pruned too.
         assert int(cells["runs"]) == 1
 
-    def test_uncurated_primary_file_names_the_file_and_the_others(
-            self, tmp_path: Path):
+    def test_uncurated_primary_file_names_the_file_and_the_others(self, tmp_path: Path):
         """Scoring a secondary file instead would be the bug this replaced; the
         honest answer names what was skipped rather than dropping the repo."""
         # AGENTS.md is the primary (3 rows) and was never curated; the curation
@@ -2128,27 +2654,59 @@ class TestValidationGateRoundSeven:
         # would be the bug this replaced.
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="one", ts="2026-08-01", tokens=50000,
-                        actions=["baseline:exact"]),
-            _ledger_row(repo="one", ts="2026-08-02", tokens=50000,
-                        actions=["baseline:exact"]),
-            _ledger_row(repo="one", ts="2026-08-03", tokens=50000,
-                        actions=["baseline:exact"]),
-            _ledger_row(repo="one", ts="2026-08-04", file="sub/AGENTS.md",
-                        tokens=9000, actions=["baseline:exact"]),
-            _ledger_row(repo="one", ts="2026-08-05", file="sub/AGENTS.md",
-                        tokens=7000, actions=["demote:X"], skill_version="1.1",
-                        no_loss="ok"),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-01",
+                        tokens=50000,
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-02",
+                        tokens=50000,
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-03",
+                        tokens=50000,
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-04",
+                        file="sub/AGENTS.md",
+                        tokens=9000,
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-05",
+                        file="sub/AGENTS.md",
+                        tokens=7000,
+                        actions=["demote:X"],
+                        skill_version="1.1",
+                        no_loss="ok",
+                    ),
+                ]
+            )
+            + "\n"
+        )
         _arm(tmp_path, "two", 49000, 12000, "1.2")
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert "no attributed curation run for AGENTS.md" in r.stdout, r.stdout
         assert "1 other file(s) in this ledger were not scored" in r.stdout
 
     def test_a_failure_with_no_proposal_in_front_of_it_is_not_a_rejection(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """There is no proposal to reject, so the entry would name no change.
         The failure is real and must stay visible — it is a finding about the
         shipped version.
@@ -2161,8 +2719,11 @@ class TestValidationGateRoundSeven:
         exist."""
         _arm(tmp_path, "ctl1", 52000, 20000, "1.1")
         _arm(tmp_path, "trt1", 49000, 12000, "1.1", no_loss="failed")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 5, r.stdout
         assert "no scored run carries the treatment version 1.2" in r.stdout
         assert "record this in references/rejected-changes.md" not in r.stdout
@@ -2171,8 +2732,7 @@ class TestValidationGateRoundSeven:
         assert "not a reason to reject the proposal" in r.stdout
         assert "no_loss=failed" in r.stdout
 
-    def test_real_failure_still_rejects_when_there_is_a_proposal(
-            self, tmp_path: Path):
+    def test_real_failure_still_rejects_when_there_is_a_proposal(self, tmp_path: Path):
         """The reordering must not have disarmed the veto."""
         r = _score(_three_good_pairs(tmp_path, no_loss="failed"))
         assert r.returncode == 3, r.stdout
@@ -2200,8 +2760,13 @@ class TestValidationGateRoundSeven:
             fh.write(f"{tmp_path / 'stray'}  wave:b pair:9\n")
         payload = json.loads(_score(roster, "--format", "json").stdout)
         assert payload["out_of_arm"] == [
-            {"entry": str(tmp_path / "stray"), "repo": "stray", "wave": "b",
-             "skill_version": "0.9"}]
+            {
+                "entry": str(tmp_path / "stray"),
+                "repo": "stray",
+                "wave": "b",
+                "skill_version": "0.9",
+            }
+        ]
 
     def test_duplicate_rows_do_not_shift_the_before_state(self, tmp_path: Path):
         """list.index matches by dict equality, not identity, so a byte-identical
@@ -2209,16 +2774,36 @@ class TestValidationGateRoundSeven:
         before-state a row too early."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
-        dup = _ledger_row(repo="one", ts="2026-08-02", tokens=9000,
-                          actions=["demote:X"], skill_version="1.1",
-                          no_loss="ok")
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="one", ts="2026-08-01", tokens=50000,
-                        actions=["baseline:exact"]),
-            dup, dup,
-        ]) + "\n")
-        r = _score(_roster(tmp_path, [("one", "a", "1")]), "--min-pairs", "1",
-                   "--format", "json")
+        dup = _ledger_row(
+            repo="one",
+            ts="2026-08-02",
+            tokens=9000,
+            actions=["demote:X"],
+            skill_version="1.1",
+            no_loss="ok",
+        )
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-01",
+                        tokens=50000,
+                        actions=["baseline:exact"],
+                    ),
+                    dup,
+                    dup,
+                ]
+            )
+            + "\n"
+        )
+        r = _score(
+            _roster(tmp_path, [("one", "a", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         rec = json.loads(r.stdout)["repos"][0]
         assert rec["before"] == 50000, rec
 
@@ -2232,32 +2817,64 @@ class TestValidationGateRoundEight:
         fed the cohort total. Row count is what a stray append cannot flip."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="one", ts="2026-08-01", tokens=50000,
-                        actions=["baseline:exact"]),
-            _ledger_row(repo="one", ts="2026-08-02", tokens=7000,
-                        actions=["demote:Big"], skill_version="1.1",
-                        no_loss="ok"),
-            _ledger_row(repo="one", ts="2026-08-03", tokens=6800,
-                        actions=["prune:X"], skill_version="1.1", no_loss="ok"),
-            _ledger_row(repo="one", ts="2026-08-04", file="docs/GUIDE.md",
-                        tokens=4000, actions=["baseline:exact"]),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-01",
+                        tokens=50000,
+                        actions=["baseline:exact"],
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-02",
+                        tokens=7000,
+                        actions=["demote:Big"],
+                        skill_version="1.1",
+                        no_loss="ok",
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-03",
+                        tokens=6800,
+                        actions=["prune:X"],
+                        skill_version="1.1",
+                        no_loss="ok",
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-04",
+                        file="docs/GUIDE.md",
+                        tokens=4000,
+                        actions=["baseline:exact"],
+                    ),
+                ]
+            )
+            + "\n"
+        )
         _arm(tmp_path, "two", 49000, 12000, "1.2")
-        gate = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                      "--min-pairs", "1", "--format", "json")
-        rec = next(x for x in json.loads(gate.stdout)["repos"]
-                   if x["repo"] == "one")
+        gate = _score(
+            _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
+        rec = next(x for x in json.loads(gate.stdout)["repos"] if x["repo"] == "one")
         assert rec["file"] == "AGENTS.md", rec
         assert rec["status"] == "scored"
         assert rec["before"] == 50000 and rec["after"] == 7000
         rollup = subprocess.run(
-            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
-             "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"), "--format", "tsv"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
-        cells = dict(zip(*(line.split("\t")
-                           for line in rollup.stdout.splitlines()[:2])))
+        cells = dict(
+            zip(*(line.split("\t") for line in rollup.stdout.splitlines()[:2]))
+        )
         assert cells["tokens"] == "6800", cells
         # Two curations on AGENTS.md, plus a baseline. Scored off the stray
         # docs/GUIDE.md row this would read 0 runs.
@@ -2268,20 +2885,27 @@ class TestValidationGateRoundEight:
         """The tie-break has to stay deterministic, and it has to be the same
         one cohort-report.sh uses."""
         _two_file_ledger(tmp_path, "one", "1.1", main_after=7000, sub_after=8900)
-        gate = _score(_roster(tmp_path, [("one", "a", "1")]), "--min-pairs", "1",
-                      "--format", "json")
+        gate = _score(
+            _roster(tmp_path, [("one", "a", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         assert json.loads(gate.stdout)["repos"][0]["file"] == "AGENTS.md"
         rollup = subprocess.run(
-            ["bash", str(COHORT), "--local", str(tmp_path / "one"),
-             "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            ["bash", str(COHORT), "--local", str(tmp_path / "one"), "--format", "tsv"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
-        cells = dict(zip(*(line.split("\t")
-                           for line in rollup.stdout.splitlines()[:2])))
+        cells = dict(
+            zip(*(line.split("\t") for line in rollup.stdout.splitlines()[:2]))
+        )
         assert cells["tokens"] == "7000", cells
 
-    def test_same_release_spelled_two_ways_is_not_an_experiment(
-            self, tmp_path: Path):
+    def test_same_release_spelled_two_ways_is_not_an_experiment(self, tmp_path: Path):
         """1.2 and 1.2.0 are one release. Comparing the raw strings made them
         two, and the gate returned ADOPT for a release scored against itself —
         the mirror of adopting on zero evidence.
@@ -2293,10 +2917,22 @@ class TestValidationGateRoundEight:
         _arm(tmp_path, "one", 50000, 20000, "1.2")
         _arm(tmp_path, "two", 49000, 12000, "1.2.0")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file",
-             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
-             "--treatment", "1.2.0", "--control", "1.2", "--min-pairs", "1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+                "--treatment",
+                "1.2.0",
+                "--control",
+                "1.2",
+                "--min-pairs",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert r.returncode == 1, r.stdout + r.stderr
         assert "canonicalise to the same release" in r.stderr
@@ -2309,11 +2945,22 @@ class TestValidationGateRoundEight:
         _arm(tmp_path, "one", 50000, 20000, "2.0-alpha")
         _arm(tmp_path, "two", 49000, 12000, "2.0-beta")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file",
-             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
-             "--treatment", "2.0-beta", "--control", "2.0-alpha",
-             "--min-pairs", "1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+                "--treatment",
+                "2.0-beta",
+                "--control",
+                "2.0-alpha",
+                "--min-pairs",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert "same release" not in r.stderr, r.stderr
         assert "verdict: ADOPT" in r.stdout, r.stdout
@@ -2325,17 +2972,21 @@ class TestValidationGateRoundEight:
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
         (d / "context-metrics.jsonl").write_text(
-            _ledger_row(repo="one", tokens=50000, actions=["baseline:exact"])
-            + "\n")
+            _ledger_row(repo="one", tokens=50000, actions=["baseline:exact"]) + "\n"
+        )
         _arm(tmp_path, "two", 49000, 12000, "1.2")
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 5, r.stdout
         assert "no scored run carries the control version 1.1" in r.stdout
         assert "nothing to be compared against" in r.stdout
 
     def test_a_mixed_cohort_is_diagnosed_repo_by_repo_not_as_an_arm(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The state the split-arm diagnosis existed for, under the new rule.
 
         Four repos on three versions used to produce one arm-level verdict —
@@ -2347,26 +2998,41 @@ class TestValidationGateRoundEight:
         _arm(tmp_path, "t1", 49000, 12000, "1.1")
         _arm(tmp_path, "c2", 30000, 14000, "1.3")
         _arm(tmp_path, "t2", 29000, 9000, "1.2")
-        r = _score(_roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1"),
-                                      ("c2", "a", "2"), ("t2", "b", "2")]),
-                   "--min-pairs", "1", "--format", "json")
+        r = _score(
+            _roster(
+                tmp_path,
+                [
+                    ("c1", "a", "1"),
+                    ("t1", "b", "1"),
+                    ("c2", "a", "2"),
+                    ("t2", "b", "2"),
+                ],
+            ),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         arms = {x["repo"]: x["arm"] for x in payload["repos"]}
-        assert arms == {"c1": None, "c2": None, "t1": "control",
-                        "t2": "treatment"}, arms
+        assert arms == {"c1": None, "c2": None, "t1": "control", "t2": "treatment"}, (
+            arms
+        )
         assert {x["repo"] for x in payload["out_of_arm"]} == {"c1", "c2"}
         assert "split across versions" not in r.stdout
         assert "OLDER than" not in r.stdout
 
-    def test_scored_file_is_named_when_a_ledger_holds_several(
-            self, tmp_path: Path):
+    def test_scored_file_is_named_when_a_ledger_holds_several(self, tmp_path: Path):
         """Without this the table reads as though the whole history were in
         view — two repos at 50,000 -> 7,000 with no sign that a prune on a
         secondary file was excluded from both."""
         _two_file_ledger(tmp_path, "one", "1.1", main_after=7000, sub_after=8900)
         _two_file_ledger(tmp_path, "two", "1.2", main_after=9000, sub_after=8800)
-        r = _score(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert "multi-file ledgers" in r.stdout, r.stdout
         assert "one: AGENTS.md (+1 other file(s) not scored)" in r.stdout
         assert "two: AGENTS.md (+1 other file(s) not scored)" in r.stdout
@@ -2398,19 +3064,23 @@ class TestValidationGateRoundNine:
         roster declaring four entries and two pairs produced one pair, no note,
         and a verdict of ADOPT."""
         path = tmp_path / "cohort"
-        path.write_text("owner/one  wave:a pair:1\n"
-                        "owner/two  wave:b pair:1\n"
-                        "owner/one  wave:b pair:2\n")
+        path.write_text(
+            "owner/one  wave:a pair:1\n"
+            "owner/two  wave:b pair:1\n"
+            "owner/one  wave:b pair:2\n"
+        )
         out = subprocess.run(
             ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{path}" | tr "\\037" "|"'],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert "listed more than once" in out.stderr
         assert "owner/one" in out.stderr
         assert out.stdout.splitlines() == ["repo|owner/one|a|1", "repo|owner/two|b|1"]
 
-    def test_duplicate_does_not_shrink_the_experiment_silently(
-            self, tmp_path: Path):
+    def test_duplicate_does_not_shrink_the_experiment_silently(self, tmp_path: Path):
         _arm(tmp_path, "c1", 50000, 20000, "1.1")
         _arm(tmp_path, "t1", 49000, 12000, "1.2")
         roster = _roster(tmp_path, [("c1", "a", "1"), ("t1", "b", "1")])
@@ -2418,8 +3088,9 @@ class TestValidationGateRoundNine:
             fh.write(f"{tmp_path / 'c1'}  wave:b pair:2\n")
         r = _score(roster, "--min-pairs", "1")
         assert "listed more than once" in r.stderr, r.stderr
-        payload = json.loads(_score(roster, "--min-pairs", "1",
-                                    "--format", "json").stdout)
+        payload = json.loads(
+            _score(roster, "--min-pairs", "1", "--format", "json").stdout
+        )
         # One pair, and the repo counted once — not two records and a phantom
         # pair 2 that never appears in the report.
         assert len(payload["repos"]) == 2
@@ -2433,16 +3104,20 @@ class TestValidationGateRoundNine:
         path.write_text(f"{tmp_path / 'one'}\n{tmp_path / 'one'}\n")
         r = subprocess.run(
             ["bash", str(COHORT), "--cohort-file", str(path), "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
-        cells = dict(zip(*(line.split("\t")
-                           for line in r.stdout.splitlines()[:2])))
+        cells = dict(zip(*(line.split("\t") for line in r.stdout.splitlines()[:2])))
         assert cells["runs"] == "1", cells
 
-    @pytest.mark.parametrize("a,b", [("1.2", "v1.2"), ("v1.2", "1.2"),
-                                     ("1.2", "1.2.0"), ("V1.2.0", "1.2")])
+    @pytest.mark.parametrize(
+        "a,b", [("1.2", "v1.2"), ("v1.2", "1.2"), ("1.2", "1.2.0"), ("V1.2.0", "1.2")]
+    )
     def test_one_release_spelled_two_ways_is_never_an_experiment(
-            self, tmp_path: Path, a, b):
+        self, tmp_path: Path, a, b
+    ):
         """v1.2 keyed to (0, 2) against 1.2's (1, 2), so the gate reported the
         arms as inverted for one release spelled two ways — a confidently wrong
         diagnosis pointing at the flags, which were not the problem.
@@ -2450,10 +3125,22 @@ class TestValidationGateRoundNine:
         Asked of the flags since #194, and a usage error rather than a verdict:
         the flags ARE the arms now, so this never reaches the rows."""
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file",
-             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
-             "--treatment", b, "--control", a, "--min-pairs", "1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+                "--treatment",
+                b,
+                "--control",
+                a,
+                "--min-pairs",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert r.returncode == 1, r.stdout + r.stderr
         assert "same release" in r.stderr
@@ -2465,31 +3152,57 @@ class TestValidationGateRoundNine:
         starts with v is not mangled into a different one."""
         out = subprocess.run(
             ["bash", str(SCORE), "--help"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert out.returncode == 0
         _arm(tmp_path, "one", 50000, 20000, "vNext")
         _arm(tmp_path, "two", 49000, 12000, "1.2")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file",
-             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
-             "--treatment", "1.2", "--control", "vNext", "--min-pairs", "1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+                "--treatment",
+                "1.2",
+                "--control",
+                "vNext",
+                "--min-pairs",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert "same release" not in r.stderr, r.stderr
         assert r.returncode != 1, r.stdout + r.stderr
 
-    def test_version_ordering_still_works_after_canonicalisation(
-            self, tmp_path: Path):
+    def test_version_ordering_still_works_after_canonicalisation(self, tmp_path: Path):
         """Deriving version_key from the canonical form must not break the
         older/newer test it exists for: 1.10 is still newer than 1.9."""
         _arm(tmp_path, "one", 50000, 20000, "1.10")
         _arm(tmp_path, "two", 49000, 12000, "1.9")
         r = subprocess.run(
-            ["bash", str(SCORE), "--cohort-file",
-             str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
-             "--treatment", "1.9", "--control", "1.10", "--min-pairs", "1"],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(SCORE),
+                "--cohort-file",
+                str(_roster(tmp_path, [("one", "a", "1"), ("two", "b", "1")])),
+                "--treatment",
+                "1.9",
+                "--control",
+                "1.10",
+                "--min-pairs",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         # The treatment is 1.9 against a 1.10 control — genuinely backwards.
         assert "OLDER than" in r.stdout, r.stdout
@@ -2506,24 +3219,29 @@ def _seam_repo(tmp_path: Path) -> Path:
     _git(repo, "init", "-q")
     (repo / "AGENTS.md").write_text(
         "# Guide\n\n## Build\n\nrun make\n\n## Deployment Topology\n\n"
-        "The workers connect to the bus directly.\n")
+        "The workers connect to the bus directly.\n"
+    )
     _git(repo, "add", "-A")
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-qm", "pre")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "pre")
     (repo / "docs").mkdir()
     (repo / "AGENTS.md").write_text(
         "# Guide\n\n## Build\n\nrun make\n\n## Detail Docs\n\n"
-        "- [docs/OPS.md](docs/OPS.md) — deployment\n")
+        "- [docs/OPS.md](docs/OPS.md) — deployment\n"
+    )
     (repo / "docs" / "OPS.md").write_text(
-        "# Ops\n\n## Deployment Topology\n\n"
-        "The workers connect to the bus directly.\n")
+        "# Ops\n\n## Deployment Topology\n\nThe workers connect to the bus directly.\n"
+    )
     return repo
 
 
 def _run_seams(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(SEAMS), "--base", "HEAD", *args],
-        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=60,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -2539,9 +3257,11 @@ class TestCheckSeams:
         AGENTS.md, after the run moved them into that very doc."""
         repo = _seam_repo(tmp_path)
         ops = repo / "docs" / "OPS.md"
-        ops.write_text("# Ops\n\nBounds semantics live in AGENTS.md.\n\n"
-                       "## Deployment Topology\n\n"
-                       "The workers connect to the bus directly.\n")
+        ops.write_text(
+            "# Ops\n\nBounds semantics live in AGENTS.md.\n\n"
+            "## Deployment Topology\n\n"
+            "The workers connect to the bus directly.\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 3, r.stdout
         assert "back-reference" in r.stdout
@@ -2553,15 +3273,16 @@ class TestCheckSeams:
         into the pointing file itself."""
         repo = _seam_repo(tmp_path)
         cmd = repo / "docs" / "COMMANDS.md"
-        cmd.write_text("# Commands\n\nSee the Deployment Topology section for "
-                       "canonical invocations.\n")
+        cmd.write_text(
+            "# Commands\n\nSee the Deployment Topology section for "
+            "canonical invocations.\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 3, r.stdout
         assert "moved-title" in r.stdout
         assert "Deployment Topology" in r.stdout
 
-    def test_the_relocated_sections_own_heading_is_not_a_seam(
-            self, tmp_path: Path):
+    def test_the_relocated_sections_own_heading_is_not_a_seam(self, tmp_path: Path):
         """docs/OPS.md's `## Deployment Topology` heading IS the moved section —
         reporting it would flag every correct demotion."""
         r = _run_seams(_seam_repo(tmp_path))
@@ -2572,8 +3293,7 @@ class TestCheckSeams:
         the demotion appended a second copy beside it."""
         repo = _seam_repo(tmp_path)
         ops = repo / "docs" / "OPS.md"
-        ops.write_text(ops.read_text()
-                       + "\n## Deployment Topology\n\nAppended copy.\n")
+        ops.write_text(ops.read_text() + "\n## Deployment Topology\n\nAppended copy.\n")
         r = _run_seams(repo)
         assert r.returncode == 3
         assert "duplicate-heading" in r.stdout
@@ -2582,8 +3302,9 @@ class TestCheckSeams:
     def test_provenance_in_a_heading_is_reported(self, tmp_path: Path):
         repo = _seam_repo(tmp_path)
         ops = repo / "docs" / "OPS.md"
-        ops.write_text(ops.read_text()
-                       + "\n## Migration workflow (from AGENTS.md, #412)\n\nx\n")
+        ops.write_text(
+            ops.read_text() + "\n## Migration workflow (from AGENTS.md, #412)\n\nx\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 3
         assert "provenance-heading" in r.stdout
@@ -2603,11 +3324,10 @@ class TestCheckSeams:
         repo = _seam_repo(tmp_path)
         # Move the SHORT section too.
         agents = repo / "AGENTS.md"
-        agents.write_text(agents.read_text().replace(
-            "## Build\n\nrun make\n\n", ""))
+        agents.write_text(agents.read_text().replace("## Build\n\nrun make\n\n", ""))
         (repo / "docs" / "OPS.md").write_text(
-            (repo / "docs" / "OPS.md").read_text()
-            + "\nUse the Build target.\n")
+            (repo / "docs" / "OPS.md").read_text() + "\nUse the Build target.\n"
+        )
         r = _run_seams(repo)
         assert "moved-title" not in r.stdout, r.stdout
 
@@ -2619,11 +3339,15 @@ class TestCredentialPreflight:
         env["ANTHROPIC_API_KEY"] = "sk-test"
         r = subprocess.run(
             ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "environment" in r.stdout
-        assert "sk-test" not in r.stdout + r.stderr    # never the value
+        assert "sk-test" not in r.stdout + r.stderr  # never the value
 
     def test_secrets_file_answers(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
@@ -2632,7 +3356,11 @@ class TestCredentialPreflight:
         env.pop("ANTHROPIC_API_KEY", None)
         r = subprocess.run(
             ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "secrets file" in r.stdout
@@ -2644,7 +3372,11 @@ class TestCredentialPreflight:
         env.pop("ANTHROPIC_API_KEY", None)
         r = subprocess.run(
             ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode == 3, r.stdout + r.stderr
         assert "BEFORE starting the run" in r.stderr
@@ -2663,7 +3395,11 @@ class TestCredentialPreflight:
         env["PATH"] = f"{stub}:{env['PATH']}"
         r = subprocess.run(
             ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo, capture_output=True, text=True, env=env, timeout=30,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
         assert r.returncode == 3, r.stdout + r.stderr
         assert "JWT" in r.stderr
@@ -2673,26 +3409,31 @@ class TestCredentialPreflight:
 class TestRepoIdentity:
     def _record(self, cwd: Path, *args: str) -> dict:
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{cwd}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run {" ".join(args)}'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{cwd}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run {" ".join(args)}',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         return json.loads(out.stdout)
 
     def test_origin_basename_wins_over_directory_name(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
-        _git(repo, "remote", "add", "origin",
-             "https://github.com/CannObserv/usa-wa.git")
+        _git(
+            repo, "remote", "add", "origin", "https://github.com/CannObserv/usa-wa.git"
+        )
         assert self._record(repo)["repo"] == "usa-wa"
 
-    def test_worktree_records_the_repository_not_the_branch_slug(
-            self, tmp_path: Path):
+    def test_worktree_records_the_repository_not_the_branch_slug(self, tmp_path: Path):
         """The #102 case: usa-wa mandates worktree-based feature work, and the
         row recorded `feat-161-curating-context` as the repo."""
         repo = _repo(tmp_path, policy_lines=5)
-        _git(repo, "remote", "add", "origin",
-             "git@github.com:CannObserv/usa-wa.git")
+        _git(repo, "remote", "add", "origin", "git@github.com:CannObserv/usa-wa.git")
         wt = tmp_path / "feat-161-curating-context"
         _git(repo, "worktree", "add", "-q", str(wt), "-b", "feat-161")
         row = self._record(wt)
@@ -2700,8 +3441,9 @@ class TestRepoIdentity:
 
     def test_explicit_override_wins(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
-        _git(repo, "remote", "add", "origin",
-             "https://github.com/CannObserv/usa-wa.git")
+        _git(
+            repo, "remote", "add", "origin", "https://github.com/CannObserv/usa-wa.git"
+        )
         assert self._record(repo, "--repo", "roster-name")["repo"] == "roster-name"
 
     def test_no_origin_falls_back_to_directory_name(self, tmp_path: Path):
@@ -2713,10 +3455,16 @@ class TestSeamsOnTheRow:
     def test_count_lands_on_the_row(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run --seams 4'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run --seams 4',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert json.loads(out.stdout)["seams"] == 4
 
@@ -2725,20 +3473,32 @@ class TestSeamsOnTheRow:
         with no_loss."""
         repo = _repo(tmp_path, policy_lines=5)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert json.loads(out.stdout)["seams"] is None
 
     def test_non_numeric_count_is_refused(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run --seams many'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run --seams many',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert out.returncode == 1
         assert "non-negative integer" in out.stderr
@@ -2755,7 +3515,8 @@ class TestSeamAcknowledgement:
         (repo / "docs" / "OPS.md").write_text(
             "# Ops\n\nThe short rules live in AGENTS.md; this file has the "
             "rest.\n\n## Deployment Topology\n\n"
-            "The workers connect to the bus directly.\n")
+            "The workers connect to the bus directly.\n"
+        )
         return repo
 
     def test_acknowledged_hit_is_excluded_and_exit_is_clean(self, tmp_path: Path):
@@ -2763,19 +3524,21 @@ class TestSeamAcknowledgement:
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
             "# judged legitimate: the short rules are still inline\n"
-            "docs/OPS.md The short rules live in AGENTS.md\n")
+            "docs/OPS.md The short rules live in AGENTS.md\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 0, r.stdout
         assert "no unacknowledged cross-reference seams" in r.stdout
         assert "1 acknowledged seam(s) skipped" in r.stdout
-        assert "docs/OPS.md:3" in r.stdout       # still visible, not hidden
+        assert "docs/OPS.md:3" in r.stdout  # still visible, not hidden
         assert r.stdout.rstrip().endswith("seams: 0")
 
     def test_non_matching_pattern_does_not_acknowledge(self, tmp_path: Path):
         repo = self._with_back_reference(tmp_path)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "docs/OTHER.md some other line entirely\n")
+            "docs/OTHER.md some other line entirely\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 3
         assert "seams: 1" in r.stdout
@@ -2787,11 +3550,15 @@ class TestSeamAcknowledgement:
         repo = self._with_back_reference(tmp_path)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "docs/OPS.md The short rules live in AGENTS.md\n")
+            "docs/OPS.md The short rules live in AGENTS.md\n"
+        )
         ops = repo / "docs" / "OPS.md"
-        ops.write_text(ops.read_text().replace(
-            "The short rules live in AGENTS.md",
-            "Everything that used to live in AGENTS.md"))
+        ops.write_text(
+            ops.read_text().replace(
+                "The short rules live in AGENTS.md",
+                "Everything that used to live in AGENTS.md",
+            )
+        )
         r = _run_seams(repo)
         assert r.returncode == 3, r.stdout
         assert "seams: 1" in r.stdout
@@ -2804,7 +3571,8 @@ class TestSeamAcknowledgement:
         repo = self._with_back_reference(tmp_path)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "\n# a comment\n\ndocs/OPS.md The short rules live in AGENTS.md\n")
+            "\n# a comment\n\ndocs/OPS.md The short rules live in AGENTS.md\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 0, r.stdout
 
@@ -2814,7 +3582,8 @@ class TestSeamAcknowledgement:
         ops.write_text(ops.read_text() + "\n## Fixed in #412\n\nx\n")
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "docs/OPS.md :: Fixed in #412\n")
+            "docs/OPS.md :: Fixed in #412\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 0, r.stdout
         assert "1 acknowledged seam(s) skipped" in r.stdout
@@ -2831,11 +3600,12 @@ class TestSeamAcknowledgement:
             p.write_text(base + "\nRules live in AGENTS.md.\n")
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "docs/OPS.md :: Rules live in AGENTS.md\n")
+            "docs/OPS.md :: Rules live in AGENTS.md\n"
+        )
         r = _run_seams(repo)
         assert r.returncode == 3, r.stdout
-        assert "seams: 1" in r.stdout            # OTHER.md still fires
-        assert "seams_acked: 1" in r.stdout      # OPS.md acknowledged
+        assert "seams: 1" in r.stdout  # OTHER.md still fires
+        assert "seams_acked: 1" in r.stdout  # OPS.md acknowledged
 
     def test_a_blanket_pattern_is_warned_about(self, tmp_path: Path):
         """One lazy line must not silently zero the count: the gaming vector
@@ -2845,11 +3615,12 @@ class TestSeamAcknowledgement:
         (repo / "docs" / "OPS.md").write_text(
             "# Ops\n\nRules live in AGENTS.md.\nSee AGENTS.md for style.\n"
             "And AGENTS.md for tests.\nAlso AGENTS.md for deploys.\n\n"
-            "## Deployment Topology\n\nThe workers connect to the bus directly.\n")
+            "## Deployment Topology\n\nThe workers connect to the bus directly.\n"
+        )
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text("back-reference\n")
         r = _run_seams(repo)
-        assert r.returncode == 0          # acknowledged is acknowledged
+        assert r.returncode == 0  # acknowledged is acknowledged
         assert "4 hit(s): back-reference" in r.stdout
         assert "WARN this pattern is broad" in r.stdout
         assert "an acknowledgement should cover ONE judged line" in r.stdout
@@ -2858,7 +3629,8 @@ class TestSeamAcknowledgement:
         repo = self._with_back_reference(tmp_path)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "docs/OPS.md The short rules live in AGENTS.md\n")
+            "docs/OPS.md The short rules live in AGENTS.md\n"
+        )
         r = _run_seams(repo)
         assert "WARN this pattern is broad" not in r.stdout
 
@@ -2871,7 +3643,8 @@ class TestSeamAcknowledgement:
         (repo / "docs" / "OPS.md").write_text(
             "# Ops\n\n" + ("x" * 130) + " AGENTS.md is " + long_tail + "\n\n"
             "## Deployment Topology\n\n"
-            "The workers connect to the bus directly.\n")
+            "The workers connect to the bus directly.\n"
+        )
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(long_tail + "\n")
         r = _run_seams(repo)
@@ -2882,7 +3655,8 @@ class TestSeamAcknowledgement:
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
             "docs/OPS.md The short rules live in AGENTS.md\n"
-            "docs/GONE.md something that no longer exists\n")
+            "docs/GONE.md something that no longer exists\n"
+        )
         r = _run_seams(repo)
         assert "matched nothing" in r.stdout, r.stdout
         assert "docs/GONE.md something that no longer exists" in r.stdout
@@ -2891,7 +3665,8 @@ class TestSeamAcknowledgement:
         repo = self._with_back_reference(tmp_path)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-seams-ok").write_text(
-            "docs/OPS.md The short rules live in AGENTS.md\n")
+            "docs/OPS.md The short rules live in AGENTS.md\n"
+        )
         r = _run_seams(repo)
         lines = r.stdout.rstrip().splitlines()
         assert lines[-2] == "seams_acked: 1"
@@ -2902,10 +3677,16 @@ class TestSeamsAckedOnTheRow:
     def test_both_counts_land_on_the_row(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run --seams 1 --seams-acked 4'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run --seams 1 --seams-acked 4',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         row = json.loads(out.stdout)
         assert row["seams"] == 1 and row["seams_acked"] == 4
@@ -2913,17 +3694,29 @@ class TestSeamsAckedOnTheRow:
     def test_absent_is_null_and_garbage_is_refused(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=5)
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert json.loads(out.stdout)["seams_acked"] is None
         bad = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run --seams-acked lots'],
-            capture_output=True, text=True, env=_clean_env(), timeout=60,
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run --seams-acked lots',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert bad.returncode == 1
         assert "--seams-acked must be a non-negative integer" in bad.stderr
@@ -2934,14 +3727,18 @@ class TestSeamsAckedOnTheRow:
         root = Path(__file__).resolve().parent.parent.parent
         r = subprocess.run(
             ["bash", str(SEAMS), "--base", "HEAD"],
-            cwd=root, capture_output=True, text=True, env=_clean_env(),
+            cwd=root,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
             timeout=60,
         )
         assert r.returncode == 0, (
             "an acknowledged line in this repo's own docs changed, so its "
             "entry in .skills/context-seams-ok expired — re-judge the hit and "
             "update the entry; this is the canary working, not the code "
-            f"breaking:\n{r.stdout}")
+            f"breaking:\n{r.stdout}"
+        )
         assert "acknowledged seam(s) skipped" in r.stdout
 
 
@@ -2954,13 +3751,14 @@ class TestSeamRenameNoise:
         _git(repo, "init", "-q")
         (repo / "AGENTS.md").write_text(
             "# G\n\n## Deployment Topology\n\nstuff\n\n## Ops Notes\n\n"
-            "see the Deployment Topology section above\n")
+            "see the Deployment Topology section above\n"
+        )
         _git(repo, "add", "-A")
-        _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
-             "commit", "-qm", "pre")
+        _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "pre")
         (repo / "AGENTS.md").write_text(
             "# G\n\n## Deployment Topology and Rollout\n\nstuff\n\n"
-            "## Ops Notes\n\nsee the Deployment Topology section above\n")
+            "## Ops Notes\n\nsee the Deployment Topology section above\n"
+        )
         r = _run_seams(repo)
         out = r.stdout
         # The successor heading (line 3) is not a hit; the stale prose (line 9) is.
@@ -2975,14 +3773,18 @@ class TestRelativeInvocationFromSubdir:
     tree and blamed the library for it. The guard is exempt: its bootstrap sits
     after log() by design, and hooks always run with cwd at the project root."""
 
-    @pytest.mark.parametrize("script,args,ok_codes", [
-        ("measure-context.sh", ["--no-write"], {0}),
-        ("prove-no-loss.sh", ["--base", "HEAD"], {0, 3}),
-        ("check-seams.sh", ["--base", "HEAD"], {0, 3}),
-        ("context-delta.sh", [], {0}),
-    ])
+    @pytest.mark.parametrize(
+        "script,args,ok_codes",
+        [
+            ("measure-context.sh", ["--no-write"], {0}),
+            ("prove-no-loss.sh", ["--base", "HEAD"], {0, 3}),
+            ("check-seams.sh", ["--base", "HEAD"], {0, 3}),
+            ("context-delta.sh", [], {0}),
+        ],
+    )
     def test_relative_path_from_a_subdirectory_works(
-            self, tmp_path: Path, script, args, ok_codes):
+        self, tmp_path: Path, script, args, ok_codes
+    ):
         repo = _seam_repo(tmp_path)
         # Vendor the scripts into the repo the way a submodule would.
         vendor = repo / "vendor" / "scripts"
@@ -2992,11 +3794,15 @@ class TestRelativeInvocationFromSubdir:
         sub = repo / "docs"
         r = subprocess.run(
             ["bash", f"../vendor/scripts/{script}", *args],
-            cwd=sub, capture_output=True, text=True, env=_clean_env(),
+            cwd=sub,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
             timeout=60,
         )
         assert r.returncode in ok_codes, (
-            f"{script}: exit {r.returncode}\n{r.stdout}\n{r.stderr}")
+            f"{script}: exit {r.returncode}\n{r.stdout}\n{r.stderr}"
+        )
         assert "_context-lib.sh not found" not in r.stderr
 
 
@@ -3017,21 +3823,35 @@ class TestBaselineRow:
 
     def _measure(self, repo: Path) -> str:
         r = subprocess.run(
-            ["bash", str(MEASURE), "--no-write"], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=60)
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
+        )
         assert r.returncode == 0, r.stderr
         return r.stdout
 
     def _record(self, repo: Path, measurement: str, *extra: str):
         return subprocess.run(
-            ["bash", str(RECORD), *extra], input=measurement,
-            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
-            timeout=30)
+            ["bash", str(RECORD), *extra],
+            input=measurement,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
 
     def _rows(self, repo: Path) -> list[dict]:
-        return [json.loads(ln) for ln
-                in (repo / ".skills" / "context-metrics.jsonl").read_text()
-                .splitlines() if ln.strip()]
+        return [
+            json.loads(ln)
+            for ln in (repo / ".skills" / "context-metrics.jsonl")
+            .read_text()
+            .splitlines()
+            if ln.strip()
+        ]
 
     def test_baseline_row_is_tagged_and_measurement_only(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=50)
@@ -3051,8 +3871,9 @@ class TestBaselineRow:
         repo = _repo(tmp_path, policy_lines=50)
         assert self._record(repo, self._measure(repo), "--baseline").returncode == 0
         (repo / "AGENTS.md").write_text(POLICY_LINE * 10)
-        r = self._record(repo, self._measure(repo), "--actions", "demote:Big",
-                         "--no-loss", "ok")
+        r = self._record(
+            repo, self._measure(repo), "--actions", "demote:Big", "--no-loss", "ok"
+        )
         assert r.returncode == 0, r.stderr
         rows = self._rows(repo)
         assert len(rows) == 2
@@ -3060,12 +3881,16 @@ class TestBaselineRow:
         assert isinstance(rows[1]["delta_tokens"], int)
         assert rows[1]["delta_tokens"] < 0, rows[1]
 
-    @pytest.mark.parametrize("extra,marker", [
-        (("--actions", "demote:X"), "--baseline and --actions"),
-        (("--no-loss", "ok"), "--baseline and --no-loss"),
-    ])
+    @pytest.mark.parametrize(
+        "extra,marker",
+        [
+            (("--actions", "demote:X"), "--baseline and --actions"),
+            (("--no-loss", "ok"), "--baseline and --no-loss"),
+        ],
+    )
     def test_flags_that_assert_a_curation_are_refused(
-            self, tmp_path: Path, extra, marker):
+        self, tmp_path: Path, extra, marker
+    ):
         """A baseline row records the surface AS FOUND. --no-loss in particular
         would put a relocation verdict on a row where nothing was relocated, and
         the gate reads that field as evidence."""
@@ -3082,8 +3907,15 @@ class TestBaselineRow:
         before-state like any other and the one #117 argues the next experiment
         turns on. Not refused."""
         repo = _repo(tmp_path, policy_lines=50)
-        r = self._record(repo, self._measure(repo), "--baseline",
-                         "--seams", "41", "--seams-acked", "9")
+        r = self._record(
+            repo,
+            self._measure(repo),
+            "--baseline",
+            "--seams",
+            "41",
+            "--seams-acked",
+            "9",
+        )
         assert r.returncode == 0, r.stderr
         assert self._rows(repo)[-1]["seams"] == 41
 
@@ -3092,25 +3924,45 @@ class TestFirstCurationIsScorable:
     """With a baseline row the gate scores a first curation — and the orphan
     gate, which needs a before-row to compare against, can trip at all."""
 
-    def _first_curation(self, root: Path, name: str, before: int, after: int,
-                        version: str, **kw) -> None:
+    def _first_curation(
+        self, root: Path, name: str, before: int, after: int, version: str, **kw
+    ) -> None:
         d = root / name / ".skills"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo=name, ts="2026-08-01", tokens=before,
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo=name,
+                        ts="2026-08-01",
+                        tokens=before,
                         actions=["baseline:pre-curation"],
-                        docs_orphaned=kw.get("orph_before", 0)),
-            _ledger_row(repo=name, ts="2026-08-02", tokens=after,
-                        actions=["demote:Big"], skill_version=version,
+                        docs_orphaned=kw.get("orph_before", 0),
+                    ),
+                    _ledger_row(
+                        repo=name,
+                        ts="2026-08-02",
+                        tokens=after,
+                        actions=["demote:Big"],
+                        skill_version=version,
                         no_loss=kw.get("no_loss", "ok"),
-                        docs_orphaned=kw.get("orph_after", 0)),
-        ]) + "\n")
+                        docs_orphaned=kw.get("orph_after", 0),
+                    ),
+                ]
+            )
+            + "\n"
+        )
 
     def test_a_first_curation_scores(self, tmp_path: Path):
         self._first_curation(tmp_path, "ctl1", 52000, 20000, "1.1")
         self._first_curation(tmp_path, "trt1", 49000, 12000, "1.2")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1", "--format", "json")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         out = json.loads(r.stdout)
         by = {x["repo"]: x for x in out["repos"]}
         assert by["trt1"]["status"] == "scored", by["trt1"]
@@ -3118,14 +3970,14 @@ class TestFirstCurationIsScorable:
         assert out["pairs"][0]["informative"] is True
         assert out["pairs"][0]["winner"] == "treatment"
 
-    def test_the_orphan_gate_can_now_trip_on_a_first_curation(
-            self, tmp_path: Path):
+    def test_the_orphan_gate_can_now_trip_on_a_first_curation(self, tmp_path: Path):
         """Without a before-row `prev is None`, so the docs_orphaned comparison
         was skipped entirely — one of the three safety gates was structurally
         inert on the modal case."""
         self._first_curation(tmp_path, "ctl1", 52000, 20000, "1.1")
-        self._first_curation(tmp_path, "trt1", 49000, 12000, "1.2",
-                             orph_before=0, orph_after=4)
+        self._first_curation(
+            tmp_path, "trt1", 49000, 12000, "1.2", orph_before=0, orph_after=4
+        )
         roster = _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])
         r = _score(roster, "--min-pairs", "1")
         assert r.returncode == 3, r.stdout
@@ -3154,9 +4006,16 @@ class TestSystematicUnscorable:
         row, no predecessor."""
         d = root / name / ".skills"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "context-metrics.jsonl").write_text(_ledger_row(
-            repo=name, tokens=5900, actions=["demote:Big"],
-            skill_version=version, no_loss="ok") + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            _ledger_row(
+                repo=name,
+                tokens=5900,
+                actions=["demote:Big"],
+                skill_version=version,
+                no_loss="ok",
+            )
+            + "\n"
+        )
 
     def test_one_shared_reason_is_reported_as_a_gate_defect(self, tmp_path: Path):
         spec = []
@@ -3199,8 +4058,11 @@ class TestSystematicUnscorable:
         than 'the gate is broken' — so the diagnosis stays off."""
         self._no_baseline(tmp_path, "ctl1", "1.1")
         self._no_baseline(tmp_path, "trt1", "1.2")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 5, r.stdout
         assert "GATE DEFECT" not in r.stdout, r.stdout
         assert "no informative pairs" in r.stdout
@@ -3232,8 +4094,15 @@ class TestRejectionFloor:
         _arm(root, "trt1", 49000, 12000, "1.2")
         _arm(root, "ctl2", 28000, 12000, "1.1")
         _arm(root, "trt2", 26000, 20000, "1.2")
-        return _roster(root, [("ctl1", "a", "1"), ("trt1", "b", "1"),
-                              ("ctl2", "a", "2"), ("trt2", "b", "2")])
+        return _roster(
+            root,
+            [
+                ("ctl1", "a", "1"),
+                ("trt1", "b", "1"),
+                ("ctl2", "a", "2"),
+                ("trt2", "b", "2"),
+            ],
+        )
 
     def test_two_pairs_cannot_reject(self, tmp_path: Path):
         roster = self._two_pairs_one_lost(tmp_path)
@@ -3246,8 +4115,7 @@ class TestRejectionFloor:
         assert "record this in references/rejected-changes.md" not in r.stdout
         # The floor a rejection had to clear, on the row, so a reader of the
         # JSON can see why an INCONCLUSIVE is not a REJECT.
-        out = json.loads(_score(roster, "--min-pairs", "2",
-                                "--format", "json").stdout)
+        out = json.loads(_score(roster, "--min-pairs", "2", "--format", "json").stdout)
         assert out["reject_floor"] == 3, out
         assert out["informative_pairs"] == 2, out
 
@@ -3255,8 +4123,15 @@ class TestRejectionFloor:
         """--min-pairs gates every verdict first, so when it is set higher it is
         what a rejection actually has to clear. The JSON reports that, while the
         branch below uses the constant."""
-        out = json.loads(_score(self._two_pairs_one_lost(tmp_path),
-                                "--min-pairs", "5", "--format", "json").stdout)
+        out = json.loads(
+            _score(
+                self._two_pairs_one_lost(tmp_path),
+                "--min-pairs",
+                "5",
+                "--format",
+                "json",
+            ).stdout
+        )
         assert out["reject_floor"] == 5, out
         assert out["verdict"] == "INCONCLUSIVE"
 
@@ -3275,8 +4150,11 @@ class TestRejectionFloor:
         own with no informative pairs at all."""
         _arm(tmp_path, "ctl1", 52000, 20000, "1.1")
         _arm(tmp_path, "trt1", 49000, 12000, "1.2", no_loss="failed")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+        )
         assert r.returncode == 3, r.stdout
         assert "verdict: REJECT" in r.stdout
         assert "no_loss=failed" in r.stdout
@@ -3291,19 +4169,35 @@ class TestRunsCountsCurationsNotRows:
     def _one_curation(self, root: Path) -> Path:
         d = root / "one" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="one", ts="2026-08-01", tokens=12000,
-                        actions=["baseline"]),
-            _ledger_row(repo="one", ts="2026-08-02", tokens=5800,
-                        actions=["demote:Big"], skill_version="1.4",
-                        no_loss="ok", delta_tokens=-6200),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo="one", ts="2026-08-01", tokens=12000, actions=["baseline"]
+                    ),
+                    _ledger_row(
+                        repo="one",
+                        ts="2026-08-02",
+                        tokens=5800,
+                        actions=["demote:Big"],
+                        skill_version="1.4",
+                        no_loss="ok",
+                        delta_tokens=-6200,
+                    ),
+                ]
+            )
+            + "\n"
+        )
         return root / "one"
 
     def _rollup(self, repo: Path) -> dict:
         r = subprocess.run(
             ["bash", str(COHORT), "--local", str(repo), "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30)
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
+        )
         assert r.returncode == 0, r.stderr
         head, row = (ln.split("\t") for ln in r.stdout.splitlines()[:2])
         return dict(zip(head, row))
@@ -3317,13 +4211,18 @@ class TestRunsCountsCurationsNotRows:
         case had exactly one row, which is why the display keyed on `runs == 1`."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text(_ledger_row(
-            repo="one", tokens=12000, actions=["baseline"]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            _ledger_row(repo="one", tokens=12000, actions=["baseline"]) + "\n"
+        )
         cells = self._rollup(tmp_path / "one")
         assert cells["runs"] == "0", cells
         table = subprocess.run(
             ["bash", str(COHORT), "--local", str(tmp_path / "one")],
-            capture_output=True, text=True, env=_clean_env(), timeout=30)
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
+        )
         assert "(baseline only)" in table.stdout, table.stdout
 
     def test_an_untagged_row_still_counts_as_a_run(self, tmp_path: Path):
@@ -3332,25 +4231,47 @@ class TestRunsCountsCurationsNotRows:
         same rule score-cohort.sh applies when it refuses to score one."""
         d = tmp_path / "one" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="one", ts="2026-08-01", tokens=12000,
-                        actions=["baseline"]),
-            _ledger_row(repo="one", ts="2026-08-02", tokens=9000, actions=[]),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo="one", ts="2026-08-01", tokens=12000, actions=["baseline"]
+                    ),
+                    _ledger_row(repo="one", ts="2026-08-02", tokens=9000, actions=[]),
+                ]
+            )
+            + "\n"
+        )
         assert self._rollup(tmp_path / "one")["runs"] == "1"
 
     def test_the_trend_reports_runs_and_rows_separately(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=50)
         measure = subprocess.run(
-            ["bash", str(MEASURE), "--no-write"], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
-        subprocess.run(["bash", str(RECORD), "--baseline"], input=measure,
-                       capture_output=True, text=True, cwd=str(repo),
-                       env=_clean_env(), timeout=30)
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
+        ).stdout
+        subprocess.run(
+            ["bash", str(RECORD), "--baseline"],
+            input=measure,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
         r = subprocess.run(
             ["bash", str(RECORD), "--actions", "demote:Big", "--print-trend"],
-            input=measure, capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30)
+            input=measure,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
         assert r.returncode == 0, r.stderr
         assert "1 run over 2 rows" in r.stderr, r.stderr
 
@@ -3375,26 +4296,63 @@ class TestCurationRuleIsOneRule:
     def _mixed_ledger(self, root: Path, name: str, exact: bool = True) -> Path:
         d = root / name / ".skills"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo=name, ts="2026-08-01", tokens=52000,
-                        tokens_exact=exact, actions=["baseline"],
-                        skill_version="1.4"),
-            _ledger_row(repo=name, ts="2026-08-02", tokens=50000,
-                        tokens_exact=exact, actions=["baseline:exact"],
-                        skill_version="1.4"),
-            _ledger_row(repo=name, ts="2026-08-03", tokens=7000,
-                        tokens_exact=exact, actions=["demote:Big"],
-                        skill_version="1.4", no_loss="ok"),
-            _ledger_row(repo=name, ts="2026-08-04", tokens=6900,
-                        tokens_exact=exact, actions=[], skill_version="1.4"),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo=name,
+                        ts="2026-08-01",
+                        tokens=52000,
+                        tokens_exact=exact,
+                        actions=["baseline"],
+                        skill_version="1.4",
+                    ),
+                    _ledger_row(
+                        repo=name,
+                        ts="2026-08-02",
+                        tokens=50000,
+                        tokens_exact=exact,
+                        actions=["baseline:exact"],
+                        skill_version="1.4",
+                    ),
+                    _ledger_row(
+                        repo=name,
+                        ts="2026-08-03",
+                        tokens=7000,
+                        tokens_exact=exact,
+                        actions=["demote:Big"],
+                        skill_version="1.4",
+                        no_loss="ok",
+                    ),
+                    _ledger_row(
+                        repo=name,
+                        ts="2026-08-04",
+                        tokens=6900,
+                        tokens_exact=exact,
+                        actions=[],
+                        skill_version="1.4",
+                    ),
+                ]
+            )
+            + "\n"
+        )
         return root / name
 
     def test_the_rollup_sees_two_runs(self, tmp_path: Path):
         r = subprocess.run(
-            ["bash", str(COHORT), "--local", str(self._mixed_ledger(tmp_path, "one")),
-             "--format", "tsv"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30)
+            [
+                "bash",
+                str(COHORT),
+                "--local",
+                str(self._mixed_ledger(tmp_path, "one")),
+                "--format",
+                "tsv",
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
+        )
         assert r.returncode == 0, r.stderr
         cells = dict(zip(*(ln.split("\t") for ln in r.stdout.splitlines()[:2])))
         # 4 if baselines counted, 1 if the untagged row did not.
@@ -3406,28 +4364,54 @@ class TestCurationRuleIsOneRule:
         has no predecessor, and report the repo unscorable instead."""
         self._mixed_ledger(tmp_path, "ctl1")
         _arm(tmp_path, "trt1", 49000, 12000, "1.5")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1", "--format", "json")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         rec = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
         assert rec["status"] == "scored", rec
         assert rec["before"] == 50000 and rec["after"] == 7000, rec
 
     def test_the_gate_still_refuses_an_untagged_run_it_reaches_first(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The other half of the rule: an untagged row counts as a run, and when
         it is the FIRST run it cannot be told from a baseline, so the gate says
         so rather than scoring it. Same classification, opposite consequence."""
         d = tmp_path / "ctl1" / ".skills"
         d.mkdir(parents=True)
-        (d / "context-metrics.jsonl").write_text("\n".join([
-            _ledger_row(repo="ctl1", ts="2026-08-01", tokens=52000,
-                        actions=["baseline"], skill_version="1.4"),
-            _ledger_row(repo="ctl1", ts="2026-08-02", tokens=7000, actions=[],
-                        skill_version="1.4"),
-        ]) + "\n")
+        (d / "context-metrics.jsonl").write_text(
+            "\n".join(
+                [
+                    _ledger_row(
+                        repo="ctl1",
+                        ts="2026-08-01",
+                        tokens=52000,
+                        actions=["baseline"],
+                        skill_version="1.4",
+                    ),
+                    _ledger_row(
+                        repo="ctl1",
+                        ts="2026-08-02",
+                        tokens=7000,
+                        actions=[],
+                        skill_version="1.4",
+                    ),
+                ]
+            )
+            + "\n"
+        )
         _arm(tmp_path, "trt1", 49000, 12000, "1.5")
-        r = _score(_roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
-                   "--min-pairs", "1", "--format", "json")
+        r = _score(
+            _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")]),
+            "--min-pairs",
+            "1",
+            "--format",
+            "json",
+        )
         rec = next(x for x in json.loads(r.stdout)["repos"] if x["repo"] == "ctl1")
         assert rec["why_code"] == "untagged_run", rec
 
@@ -3437,12 +4421,22 @@ class TestCurationRuleIsOneRule:
         repo = _repo(tmp_path, policy_lines=50)
         self._mixed_ledger(tmp_path, "repo", exact=False)
         measure = subprocess.run(
-            ["bash", str(MEASURE), "--no-write"], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
+        ).stdout
         r = subprocess.run(
             ["bash", str(RECORD), "--actions", "prune:X", "--print-trend"],
-            input=measure, capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30)
+            input=measure,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
         assert r.returncode == 0, r.stderr
         # Two runs in the fixture plus the one just recorded, over five rows.
         assert "3 runs over 5 rows" in r.stderr, r.stderr
@@ -3450,12 +4444,22 @@ class TestCurationRuleIsOneRule:
     def test_a_baseline_only_trend_reads_grammatically(self, tmp_path: Path):
         repo = _repo(tmp_path, policy_lines=50)
         measure = subprocess.run(
-            ["bash", str(MEASURE), "--no-write"], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=60).stdout
+            ["bash", str(MEASURE), "--no-write"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
+        ).stdout
         r = subprocess.run(
-            ["bash", str(RECORD), "--baseline", "--print-trend"], input=measure,
-            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
-            timeout=30)
+            ["bash", str(RECORD), "--baseline", "--print-trend"],
+            input=measure,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
         assert "0 runs over 1 row" in r.stderr, r.stderr
 
 
@@ -3470,8 +4474,13 @@ class TestCadenceInstaller:
 
     def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+            ["bash", str(INSTALL_CADENCE), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
 
     def _repo(self, tmp_path: Path) -> Path:
         repo = tmp_path / "r"
@@ -3480,7 +4489,8 @@ class TestCadenceInstaller:
         return repo
 
     def test_rendered_workflow_is_valid_yaml_with_the_right_triggers(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         yaml = pytest.importorskip("yaml")
         r = self._run(self._repo(tmp_path), "--print")
         assert r.returncode == 0, r.stderr
@@ -3508,8 +4518,7 @@ class TestCadenceInstaller:
         A clean render writes nothing to stderr."""
         r = self._run(self._repo(tmp_path), "--print")
         assert r.returncode == 0, r.stderr
-        assert r.stderr == "", (
-            "render-time command substitution leaked:\n" + r.stderr)
+        assert r.stderr == "", "render-time command substitution leaked:\n" + r.stderr
         # And the text that triggered it survives as text.
         assert 'git push origin ""` fails opaquely' in r.stdout
 
@@ -3519,10 +4528,13 @@ class TestCadenceInstaller:
         silently. Failing at second zero is the whole point of the ordering."""
         yaml = pytest.importorskip("yaml")
         doc = yaml.safe_load(self._run(self._repo(tmp_path), "--print").stdout)
-        names = [s.get("name", s.get("uses", ""))
-                 for s in doc["jobs"]["measure"]["steps"]]
+        names = [
+            s.get("name", s.get("uses", "")) for s in doc["jobs"]["measure"]["steps"]
+        ]
         assert "Preflight the credential" in names, names
-        assert names.index("Preflight the credential") < names.index("Measure and record")
+        assert names.index("Preflight the credential") < names.index(
+            "Measure and record"
+        )
 
     def test_checkout_takes_submodules(self, tmp_path: Path):
         """The skill is vendored under skills-vendor/ and reached through a
@@ -3584,8 +4596,13 @@ class TestCadenceInstaller:
         d = tmp_path / "bare"
         d.mkdir()
         r = subprocess.run(
-            ["bash", str(INSTALL_CADENCE)], capture_output=True, text=True,
-            cwd=str(d), env=_clean_env(), timeout=30)
+            ["bash", str(INSTALL_CADENCE)],
+            capture_output=True,
+            text=True,
+            cwd=str(d),
+            env=_clean_env(),
+            timeout=30,
+        )
         assert r.returncode == 1
         assert "not inside a git repository" in r.stderr
 
@@ -3602,6 +4619,7 @@ class TestCadenceTemplateMatchesTheRenderer:
 
     def test_the_documented_block_is_the_rendered_file(self, tmp_path: Path):
         import re
+
         doc = (REFERENCES / "cadence.md").read_text()
         block = re.search(r"```yaml\n(.*?)```", doc, re.S)
         assert block, "cadence.md no longer carries a yaml block"
@@ -3610,10 +4628,15 @@ class TestCadenceTemplateMatchesTheRenderer:
         _git(repo, "init", "-q")
         rendered = subprocess.run(
             ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
-            capture_output=True, text=True, cwd=str(repo), env=_clean_env(),
-            timeout=30).stdout.replace("- cron: '0 15 * * 1'", "- cron: '<CRON>'")
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        ).stdout.replace("- cron: '0 15 * * 1'", "- cron: '<CRON>'")
         assert block.group(1) == rendered, (
-            "cadence.md's yaml block has drifted from install-cadence.sh --print")
+            "cadence.md's yaml block has drifted from install-cadence.sh --print"
+        )
 
 
 class TestCadenceShellActuallyRuns:
@@ -3627,14 +4650,21 @@ class TestCadenceShellActuallyRuns:
         repo = tmp_path / "render"
         repo.mkdir()
         _git(repo, "init", "-q")
-        doc = yaml.safe_load(subprocess.run(
-            ["bash", str(INSTALL_CADENCE), "--print"], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=30).stdout)
-        return next(s["run"] for s in doc["jobs"]["measure"]["steps"]
-                    if s.get("name") == name)
+        doc = yaml.safe_load(
+            subprocess.run(
+                ["bash", str(INSTALL_CADENCE), "--print"],
+                capture_output=True,
+                text=True,
+                cwd=str(repo),
+                env=_clean_env(),
+                timeout=30,
+            ).stdout
+        )
+        return next(
+            s["run"] for s in doc["jobs"]["measure"]["steps"] if s.get("name") == name
+        )
 
-    def test_the_seam_extraction_parses_real_check_seams_output(
-            self, tmp_path: Path):
+    def test_the_seam_extraction_parses_real_check_seams_output(self, tmp_path: Path):
         """The counts are named exactly as record-telemetry's flags, and the
         first draft parsed `acknowledged:`, which check-seams.sh never emits."""
         repo = _repo(tmp_path, policy_lines=5)
@@ -3648,16 +4678,27 @@ class TestCadenceShellActuallyRuns:
         env["SKILL_SCRIPTS"] = str(SCRIPTS)
         env["GITHUB_ENV"] = str(tmp_path / "gh_env")
         (tmp_path / "gh_env").write_text("")
-        r = subprocess.run(["bash", "-e", "-c", self._step(tmp_path, "Sweep the seams and the counts")],
-                           capture_output=True, text=True, cwd=str(repo),
-                           env=env, timeout=60)
+        r = subprocess.run(
+            [
+                "bash",
+                "-e",
+                "-c",
+                self._step(tmp_path, "Sweep the seams and the counts"),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env,
+            timeout=60,
+        )
         assert r.returncode == 0, r.stderr
         written = (tmp_path / "gh_env").read_text()
         assert re.search(r"^SEAMS=\d+$", written, re.M), written
         assert re.search(r"^SEAMS_ACKED=\d+$", written, re.M), written
 
     def test_the_commit_step_stages_the_row_without_the_ratio_file(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """A single `git add` over both paths stages NOTHING when either is
         missing — it exits 128 on the unmatched pathspec — so the row was
         discarded silently. measure-context.sh does not persist the ratio when
@@ -3665,19 +4706,26 @@ class TestCadenceShellActuallyRuns:
         repo = _repo(tmp_path, policy_lines=5)
         (repo / ".skills").mkdir()
         (repo / ".skills" / "context-metrics.jsonl").write_text(
-            _ledger_row(repo="r", tokens=100) + "\n")
+            _ledger_row(repo="r", tokens=100) + "\n"
+        )
         assert not (repo / ".skills" / "context-token-ratio").exists()
         # Split on a stable sentinel rather than a variable name: renaming the
         # variable used to make the split find nothing and silently change what
         # this test exercised.
         step = self._step(tmp_path, "Commit the row")
         assert "# --- push ---" in step, step
-        r = subprocess.run(["bash", "-e", "-c", step.split("# --- push ---")[0]],
-                           capture_output=True, text=True, cwd=str(repo),
-                           env=_clean_env(), timeout=30)
+        r = subprocess.run(
+            ["bash", "-e", "-c", step.split("# --- push ---")[0]],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "nothing to commit" not in r.stdout, (
-            "the row was silently dropped: " + r.stdout)
+            "the row was silently dropped: " + r.stdout
+        )
         # env=_clean_env() is not optional here. Git exports GIT_DIR to hook
         # processes, so when the suite runs under the pre-commit hook this call
         # inherits it. From the main checkout GIT_DIR is the relative ".git",
@@ -3685,26 +4733,36 @@ class TestCadenceShellActuallyRuns:
         # passes; from a linked worktree it is absolute, so the log read comes
         # from the SHARED repo and the assertion fails on a diff that never
         # touched this code. The only call in this file that was missing it.
-        log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
-                             capture_output=True, text=True,
-                             env=_clean_env()).stdout
+        log = subprocess.run(
+            ["git", "-C", str(repo), "log", "--oneline"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+        ).stdout
         assert "weekly context measurement" in log, log
 
     def test_a_human_commit_during_the_measurement_does_not_lose_the_row(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """The whole push path, against a real remote, in the race it exists
         for. Without `merge=union` on the ledger the rebase halts on a conflict
         — two appends land on the same last line — and the week's row is lost
         with markers left in the file. Verified end to end rather than reasoned
         about, because the first version of this retry loop did not work."""
         origin = tmp_path / "o.git"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)],
-                       check=True, env=_clean_env())
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+            check=True,
+            env=_clean_env(),
+        )
 
         def clone(name: str) -> Path:
             d = tmp_path / name
-            subprocess.run(["git", "clone", "-q", str(origin), str(d)],
-                           check=True, env=_clean_env())
+            subprocess.run(
+                ["git", "clone", "-q", str(origin), str(d)],
+                check=True,
+                env=_clean_env(),
+            )
             _git(d, "config", "user.email", "t@t")
             _git(d, "config", "user.name", "t")
             return d
@@ -3712,12 +4770,14 @@ class TestCadenceShellActuallyRuns:
         seed = clone("seed")
         (seed / ".skills").mkdir()
         (seed / ".skills" / "context-metrics.jsonl").write_text(
-            _ledger_row(repo="r", ts="2026-08-01", tokens=100) + "\n")
+            _ledger_row(repo="r", ts="2026-08-01", tokens=100) + "\n"
+        )
         # The attribute has to be in the BASE commit: git resolves using the
         # attributes in the tree being replayed onto, so adding it after the
         # conflict does not rescue the conflict.
         (seed / ".gitattributes").write_text(
-            ".skills/context-metrics.jsonl merge=union\n")
+            ".skills/context-metrics.jsonl merge=union\n"
+        )
         _git(seed, "add", "-A")
         _git(seed, "commit", "-qm", "seed")
         _git(seed, "push", "-q", "origin", "HEAD:main")
@@ -3727,26 +4787,37 @@ class TestCadenceShellActuallyRuns:
 
         # The human lands first, while the bot is still measuring.
         led = human / ".skills" / "context-metrics.jsonl"
-        led.write_text(led.read_text() + _ledger_row(
-            repo="r", ts="2026-08-07", tokens=120) + "\n")
+        led.write_text(
+            led.read_text() + _ledger_row(repo="r", ts="2026-08-07", tokens=120) + "\n"
+        )
         _git(human, "commit", "-qam", "human edit")
         _git(human, "push", "-q", "origin", "HEAD:main")
 
         # The bot appends its weekly row on the now-stale checkout and runs the
         # rendered step verbatim.
         led = bot / ".skills" / "context-metrics.jsonl"
-        led.write_text(led.read_text() + _ledger_row(
-            repo="r", ts="2026-08-08", tokens=130) + "\n")
+        led.write_text(
+            led.read_text() + _ledger_row(repo="r", ts="2026-08-08", tokens=130) + "\n"
+        )
         env = {**_clean_env(), "GITHUB_REF_NAME": "main"}
         r = subprocess.run(
             ["bash", "-e", "-c", self._step(tmp_path, "Commit the row")],
-            capture_output=True, text=True, cwd=str(bot), env=env, timeout=60)
+            capture_output=True,
+            text=True,
+            cwd=str(bot),
+            env=env,
+            timeout=60,
+        )
         assert r.returncode == 0, (
-            "the retry did not recover the push:\n" + r.stdout + r.stderr)
+            "the retry did not recover the push:\n" + r.stdout + r.stderr
+        )
 
         final = subprocess.run(
             ["git", "-C", str(origin), "show", "main:.skills/context-metrics.jsonl"],
-            capture_output=True, text=True, env=_clean_env()).stdout
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+        ).stdout
         assert "<<<<<<<" not in final, "conflict markers reached the remote:\n" + final
         stamps = [json.loads(ln)["ts"] for ln in final.splitlines() if ln.strip()]
         # Both survive, in order. The human's row is not clobbered and the
@@ -3757,13 +4828,26 @@ class TestCadenceShellActuallyRuns:
         step = self._step(tmp_path, "Report drift")
         for tokens, expect in ((99_000, True), (100, False)):
             ctx = tmp_path / "ctx.json"
-            ctx.write_text(json.dumps({"policy": {
-                "path": "AGENTS.md", "tokens": tokens, "budget": 6000,
-                "over_budget": tokens > 6000}}))
+            ctx.write_text(
+                json.dumps(
+                    {
+                        "policy": {
+                            "path": "AGENTS.md",
+                            "tokens": tokens,
+                            "budget": 6000,
+                            "over_budget": tokens > 6000,
+                        }
+                    }
+                )
+            )
             r = subprocess.run(
                 ["bash", "-e", "-c", step.replace("/tmp/ctx.json", str(ctx))],
-                capture_output=True, text=True, cwd=str(tmp_path),
-                env={**_clean_env(), "SEAMS": "0"}, timeout=30)
+                capture_output=True,
+                text=True,
+                cwd=str(tmp_path),
+                env={**_clean_env(), "SEAMS": "0"},
+                timeout=30,
+            )
             assert r.returncode == 0, r.stderr
             assert ("::warning::AGENTS.md is" in r.stdout) is expect, r.stdout
 
@@ -3783,19 +4867,25 @@ class TestCadenceIsTwoArtifacts:
 
     def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+            ["bash", str(INSTALL_CADENCE), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
 
     def test_rerunning_retrofits_a_missing_attribute(self, tmp_path: Path):
         repo = self._repo(tmp_path)
         assert self._run(repo).returncode == 0
-        (repo / ".gitattributes").unlink()          # the pre-fix adopter
+        (repo / ".gitattributes").unlink()  # the pre-fix adopter
         r = self._run(repo)
         assert r.returncode == 0, r.stderr
         assert "unchanged" in r.stdout, "the workflow should not have churned"
         assert (repo / ".gitattributes").exists(), (
             "re-running did not restore the attribute — the remediation "
-            "--check advertises does nothing:\n" + r.stdout)
+            "--check advertises does nothing:\n" + r.stdout
+        )
         assert "merge=union" in (repo / ".gitattributes").read_text()
 
     def test_check_reports_both_independently(self, tmp_path: Path):
@@ -3826,16 +4916,17 @@ class TestCadenceIsTwoArtifacts:
         repo = self._repo(tmp_path)
         r = self._run(repo, "--ledger", "telemetry/ctx.jsonl")
         assert r.returncode == 0, r.stderr
-        assert "telemetry/ctx.jsonl merge=union" in (
-            repo / ".gitattributes").read_text()
+        assert (
+            "telemetry/ctx.jsonl merge=union" in (repo / ".gitattributes").read_text()
+        )
         wf = (repo / ".github" / "workflows" / "context-cadence.yml").read_text()
         assert 'git add -- "telemetry/ctx.jsonl"' in wf, wf
         assert '--ledger "telemetry/ctx.jsonl"' in wf, wf
         assert ".skills/context-metrics.jsonl" not in wf, (
-            "the default ledger leaked into a --ledger install:\n" + wf)
+            "the default ledger leaked into a --ledger install:\n" + wf
+        )
 
-    def test_an_existing_gitattributes_is_extended_not_replaced(
-            self, tmp_path: Path):
+    def test_an_existing_gitattributes_is_extended_not_replaced(self, tmp_path: Path):
         repo = self._repo(tmp_path)
         (repo / ".gitattributes").write_text("*.png binary\n")
         assert self._run(repo).returncode == 0
@@ -3862,11 +4953,15 @@ class TestCadenceDescribesTheRepoNotTheInvocation:
 
     def _run(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(INSTALL_CADENCE), *args], capture_output=True,
-            text=True, cwd=str(repo), env=_clean_env(), timeout=30)
+            ["bash", str(INSTALL_CADENCE), *args],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
 
-    def test_check_without_the_flag_reads_the_installed_ledger(
-            self, tmp_path: Path):
+    def test_check_without_the_flag_reads_the_installed_ledger(self, tmp_path: Path):
         repo = self._repo(tmp_path)
         self._run(repo, "--ledger", "telemetry/ctx.jsonl")
         r = self._run(repo, "--check")
@@ -3876,15 +4971,14 @@ class TestCadenceDescribesTheRepoNotTheInvocation:
     def test_a_bare_rerun_does_not_revert_a_custom_ledger(self, tmp_path: Path):
         repo = self._repo(tmp_path)
         self._run(repo, "--ledger", "telemetry/ctx.jsonl")
-        self._run(repo)                       # no flag — the advertised remedy
+        self._run(repo)  # no flag — the advertised remedy
         wf = (repo / ".github" / "workflows" / "context-cadence.yml").read_text()
         attrs = (repo / ".gitattributes").read_text()
         assert 'git add -- "telemetry/ctx.jsonl"' in wf, wf
         assert ".skills/context-metrics.jsonl" not in wf, wf
         assert attrs.count("merge=union") == 1, attrs
 
-    def test_changing_the_ledger_supersedes_the_old_attribute(
-            self, tmp_path: Path):
+    def test_changing_the_ledger_supersedes_the_old_attribute(self, tmp_path: Path):
         repo = self._repo(tmp_path)
         self._run(repo, "--ledger", "telemetry/ctx.jsonl")
         r = self._run(repo, "--ledger", "other/l.jsonl")
@@ -3899,13 +4993,13 @@ class TestCadenceDescribesTheRepoNotTheInvocation:
         grep called that 'yes' and asserted a guarantee that was switched off."""
         repo = self._repo(tmp_path)
         (repo / ".gitattributes").write_text(
-            "# .skills/context-metrics.jsonl merge=union\n")
+            "# .skills/context-metrics.jsonl merge=union\n"
+        )
         r = self._run(repo, "--check")
         assert "ledger union merge: MISSING" in r.stdout, r.stdout
         assert r.returncode == 3
 
-    def test_uninstall_does_not_claim_an_attribute_it_never_wrote(
-            self, tmp_path: Path):
+    def test_uninstall_does_not_claim_an_attribute_it_never_wrote(self, tmp_path: Path):
         r = self._run(self._repo(tmp_path), "--uninstall")
         assert r.returncode == 0
         assert "removed the .gitattributes entry" not in r.stdout
@@ -3927,7 +5021,8 @@ class TestCadenceDescribesTheRepoNotTheInvocation:
         assert r.stdout.count("removed the .gitattributes entry") == 3, r.stdout
         # The file was ours, so it goes with it.
         assert not (repo / ".gitattributes").exists(), (
-            repo / ".gitattributes").read_text()
+            repo / ".gitattributes"
+        ).read_text()
 
     def test_uninstall_leaves_unrelated_gitattributes_rules(self, tmp_path: Path):
         repo = self._repo(tmp_path)
@@ -3961,9 +5056,13 @@ class TestBudgetKnobIsOneAnswer:
 
     def _measured(self, repo: Path, *args: str, env: dict | None = None) -> dict:
         r = subprocess.run(
-            ["bash", str(MEASURE), "--no-write", *args], capture_output=True,
-            text=True, cwd=str(repo), env={**_clean_env(), **(env or {})},
-            timeout=60)
+            ["bash", str(MEASURE), "--no-write", *args],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env={**_clean_env(), **(env or {})},
+            timeout=60,
+        )
         assert r.returncode == 0, r.stderr
         return json.loads(r.stdout)["policy"]
 
@@ -3989,8 +5088,13 @@ class TestBudgetKnobIsOneAnswer:
         assert "200 budget" in guard, guard
 
         delta = subprocess.run(
-            ["bash", str(DELTA)], capture_output=True, text=True,
-            cwd=str(repo), env=_clean_env(), timeout=60).stdout
+            ["bash", str(DELTA)],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=60,
+        ).stdout
         # The delta prints a table; read the budget column off the AGENTS.md row
         # rather than substring-matching a number that appears in several.
         lines = delta.splitlines()
@@ -4002,13 +5106,17 @@ class TestBudgetKnobIsOneAnswer:
         assert row.split()[col] == "200", (header, row)
         assert "OVER" in row, row
 
-    @pytest.mark.parametrize("args,env,expected", [
-        ((), {}, 200),                                   # the knob file
-        ((), {"CONTEXT_BUDGET": "999"}, 999),            # env beats the file
-        (("--budget", "4242"), {"CONTEXT_BUDGET": "999"}, 4242),  # flag beats both
-    ])
+    @pytest.mark.parametrize(
+        "args,env,expected",
+        [
+            ((), {}, 200),  # the knob file
+            ((), {"CONTEXT_BUDGET": "999"}, 999),  # env beats the file
+            (("--budget", "4242"), {"CONTEXT_BUDGET": "999"}, 4242),  # flag beats both
+        ],
+    )
     def test_the_precedence_matches_the_other_surfaces(
-            self, repo: Path, args, env, expected):
+        self, repo: Path, args, env, expected
+    ):
         assert self._measured(repo, *args, env=env)["budget"] == expected
 
     def test_no_knob_still_defaults(self, tmp_path: Path):
@@ -4016,13 +5124,17 @@ class TestBudgetKnobIsOneAnswer:
         plain = _repo(tmp_path, policy_lines=100)
         assert self._measured(plain)["budget"] == 6000
 
-    @pytest.mark.parametrize("args,env,expected", [
-        ((), {}, 300),                                        # the knob file
-        ((), {"CONTEXT_DOC_BUDGET": "700"}, 700),              # env beats it
-        (("--doc-budget", "900"), {"CONTEXT_DOC_BUDGET": "700"}, 900),  # flag wins
-    ])
+    @pytest.mark.parametrize(
+        "args,env,expected",
+        [
+            ((), {}, 300),  # the knob file
+            ((), {"CONTEXT_DOC_BUDGET": "700"}, 700),  # env beats it
+            (("--doc-budget", "900"), {"CONTEXT_DOC_BUDGET": "700"}, 900),  # flag wins
+        ],
+    )
     def test_the_doc_budget_has_the_same_three_rungs(
-            self, tmp_path: Path, args, env, expected):
+        self, tmp_path: Path, args, env, expected
+    ):
         """The less-used half, parametrised like the policy budget. The
         asymmetry is where a copy-paste slip in the second ctx_read_num_knob
         call would have hidden."""
@@ -4032,8 +5144,13 @@ class TestBudgetKnobIsOneAnswer:
         (repo / "docs").mkdir()
         (repo / "docs" / "BIG.md").write_text(POLICY_LINE * 400)
         r = subprocess.run(
-            ["bash", str(MEASURE), "--no-write", *args], capture_output=True,
-            text=True, cwd=str(repo), env={**_clean_env(), **env}, timeout=60)
+            ["bash", str(MEASURE), "--no-write", *args],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env={**_clean_env(), **env},
+            timeout=60,
+        )
         assert r.returncode == 0, r.stderr
         out = json.loads(r.stdout)
         big = next(d for d in out["docs"] if d["path"].endswith("BIG.md"))
@@ -4047,8 +5164,12 @@ class TestBudgetKnobIsOneAnswer:
         measures against 6000 and records that."""
         r = subprocess.run(
             ["bash", str(MEASURE), "--no-write", flag, "4,000"],
-            capture_output=True, text=True, cwd=str(_repo(tmp_path)),
-            env=_clean_env(), timeout=60)
+            capture_output=True,
+            text=True,
+            cwd=str(_repo(tmp_path)),
+            env=_clean_env(),
+            timeout=60,
+        )
         assert r.returncode == 1, r.stdout
         assert f"{flag} must be a non-negative integer (got '4,000')" in r.stderr
 
@@ -4068,33 +5189,51 @@ class TestDeadAnchorsReachTheLedgerAndTheGate:
         links = {"dead": [], "orphans": []}
         if dead_anchors is not None:
             links["dead_anchors"] = dead_anchors
-        return json.dumps({
-            "policy": {"path": "AGENTS.md", "lines": 10, "bytes": 100,
-                       "tokens": 40, "tokens_exact": True, "bytes_per_token": 2.5,
-                       "budget": 6000, "over_budget": False},
-            "totals": {"tokens_live": 40, "files_docs": 0},
-            "docs": [], "links": links, "sections": [],
-        })
+        return json.dumps(
+            {
+                "policy": {
+                    "path": "AGENTS.md",
+                    "lines": 10,
+                    "bytes": 100,
+                    "tokens": 40,
+                    "tokens_exact": True,
+                    "bytes_per_token": 2.5,
+                    "budget": 6000,
+                    "over_budget": False,
+                },
+                "totals": {"tokens_live": 40, "files_docs": 0},
+                "docs": [],
+                "links": links,
+                "sections": [],
+            }
+        )
 
     def _row(self, tmp_path: Path, payload: str) -> dict:
         repo = _repo(tmp_path)
         r = subprocess.run(
-            ["bash", str(RECORD), "--dry-run"], input=payload,
-            capture_output=True, text=True, cwd=str(repo),
-            env=_clean_env(), timeout=30,
+            ["bash", str(RECORD), "--dry-run"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
         )
         assert r.returncode == 0, r.stdout + r.stderr
         line = [x for x in r.stdout.splitlines() if x.strip().startswith("{")][-1]
         return json.loads(line)
 
     def test_a_broken_anchor_lands_on_the_row(self, tmp_path: Path):
-        row = self._row(tmp_path, self._payload_with(
-            ["AGENTS.md -> docs/API.md#gone", "AGENTS.md -> docs/API.md#also-gone"]))
+        row = self._row(
+            tmp_path,
+            self._payload_with(
+                ["AGENTS.md -> docs/API.md#gone", "AGENTS.md -> docs/API.md#also-gone"]
+            ),
+        )
         assert row["links_dead"] == 0, "the files resolved; only the anchors are dead"
         assert row["links_dead_anchors"] == 2, row
 
-    def test_a_payload_predating_the_field_records_null_not_zero(
-            self, tmp_path: Path):
+    def test_a_payload_predating_the_field_records_null_not_zero(self, tmp_path: Path):
         """Null and 0 are different claims: a run that never measured anchors
         has not shown there are none. The ledger already draws this line for
         no_loss and seams."""

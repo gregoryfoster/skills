@@ -51,44 +51,73 @@ def _flat(text: str) -> str:
 
 def _row(**kw) -> str:
     row = {
-        "ts": "2026-08-05", "repo": "x", "file": "AGENTS.md",
-        "tokens": None, "tokens_exact": True, "skill_version": None,
-        "skill_commit": None, "budget": 6000, "docs_orphaned": 0,
-        "links_dead": 0, "no_loss": "ok", "actions": [],
+        "ts": "2026-08-05",
+        "repo": "x",
+        "file": "AGENTS.md",
+        "tokens": None,
+        "tokens_exact": True,
+        "skill_version": None,
+        "skill_commit": None,
+        "budget": 6000,
+        "docs_orphaned": 0,
+        "links_dead": 0,
+        "no_loss": "ok",
+        "actions": [],
     }
     row.update(kw)
     return json.dumps(row, sort_keys=True)
 
 
-def _member(root: Path, name: str, before: int, after: int, version: str,
-            later: str | None = None) -> None:
+def _member(
+    root: Path,
+    name: str,
+    before: int,
+    after: int,
+    version: str,
+    later: str | None = None,
+) -> None:
     """A member with a baseline, a scored curation, and optionally a LATER
     curation on a newer version — the shape every cohort repo now has."""
     d = root / name / ".skills"
     d.mkdir(parents=True, exist_ok=True)
     rows = [
         _row(repo=name, tokens=before, actions=["baseline:pre-curation"]),
-        _row(repo=name, tokens=after, actions=["demote:Big"], ts="2026-08-06",
-             skill_version=version, skill_commit="deadbee"),
+        _row(
+            repo=name,
+            tokens=after,
+            actions=["demote:Big"],
+            ts="2026-08-06",
+            skill_version=version,
+            skill_commit="deadbee",
+        ),
     ]
     if later is not None:
-        rows.append(_row(repo=name, tokens=after, actions=["prune:Small"],
-                         ts="2026-08-16", skill_version=later,
-                         skill_commit="cafebab"))
+        rows.append(
+            _row(
+                repo=name,
+                tokens=after,
+                actions=["prune:Small"],
+                ts="2026-08-16",
+                skill_version=later,
+                skill_commit="cafebab",
+            )
+        )
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
 
 
 def _roster(root: Path, spec) -> Path:
     path = root / "cohort"
-    path.write_text("".join(
-        f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec))
+    path.write_text(
+        "".join(f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec)
+    )
     return path
 
 
 def _two_pairs(root: Path, later: str | None = None) -> Path:
     spec = []
     for i, (cb, ca, tb, ta) in enumerate(
-            [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1):
+        [(52000, 20000, 49000, 12000), (28000, 12000, 26000, 9000)], 1
+    ):
         _member(root, f"ctl{i}", cb, ca, "1.2", later=later)
         _member(root, f"trt{i}", tb, ta, "1.3", later=later)
         spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
@@ -99,9 +128,21 @@ def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
     """The flags name VERSIONS (#194) — 1.3 over 1.2 here. The `wave:` values in
     the roster are rollout order and no longer decide anything."""
     return subprocess.run(
-        ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "1.3", "--control", "1.2", *args],
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        [
+            "bash",
+            str(SCORE),
+            "--cohort-file",
+            str(roster),
+            "--treatment",
+            "1.3",
+            "--control",
+            "1.2",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -122,8 +163,7 @@ class TestTheGateSaysWhenItsArmsAreHistorical:
         # the gap rather than being told there is one.
         assert "1.3" in r.stdout and "1.2" in r.stdout, r.stdout
 
-    def test_no_notice_when_the_scored_runs_are_the_newest_rows(
-            self, tmp_path: Path):
+    def test_no_notice_when_the_scored_runs_are_the_newest_rows(self, tmp_path: Path):
         """A live experiment must not carry the banner, or it stops meaning
         anything on the run where it would matter."""
         roster = _two_pairs(tmp_path)
@@ -137,8 +177,7 @@ class TestTheGateSaysWhenItsArmsAreHistorical:
         assert payload["arms_are_historical"] is True
         assert payload["newest_version_in_ledgers"] == "1.9"
 
-    def test_json_is_false_and_populated_on_a_live_comparison(
-            self, tmp_path: Path):
+    def test_json_is_false_and_populated_on_a_live_comparison(self, tmp_path: Path):
         """Not null: a reader distinguishing "no newer version" from "the field
         was not computed" needs the newest version either way."""
         roster = _two_pairs(tmp_path)
@@ -287,8 +326,11 @@ class TestTheRowSchemaSaysTheCovariateIsDerived:
         return text.split("### Action tags")[0]
 
     def _repo_commit_row(self) -> str:
-        rows = [ln for ln in self._schema().splitlines()
-                if ln.startswith("| `repo_commit` |")]
+        rows = [
+            ln
+            for ln in self._schema().splitlines()
+            if ln.startswith("| `repo_commit` |")
+        ]
         assert len(rows) == 1, (
             f"expected exactly one `repo_commit` schema row, found {len(rows)}"
         )
@@ -313,8 +355,11 @@ class TestTheRowSchemaSaysTheCovariateIsDerived:
     def test_no_commits_since_field_was_added_to_the_schema(self):
         """A field would have to be recorded going forward and would be null for
         every row already written. The derivation covers history."""
-        rows = [ln for ln in self._schema().splitlines()
-                if ln.startswith("| `commits_since`")]
+        rows = [
+            ln
+            for ln in self._schema().splitlines()
+            if ln.startswith("| `commits_since`")
+        ]
         assert rows == [], rows
 
 

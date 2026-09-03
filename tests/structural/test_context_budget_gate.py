@@ -41,11 +41,12 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MEASURE = (
-    REPO_ROOT / "skills" / "curating-context" / "scripts" / "measure-context.sh"
-)
+MEASURE = REPO_ROOT / "skills" / "curating-context" / "scripts" / "measure-context.sh"
 PLAYBOOK = (
-    REPO_ROOT / "skills" / "enforcing-architecture" / "references"
+    REPO_ROOT
+    / "skills"
+    / "enforcing-architecture"
+    / "references"
     / "fitness-functions.md"
 )
 PRE_COMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
@@ -62,8 +63,12 @@ def _env() -> dict:
     operator's environment cannot move the ceiling under test.
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("ANTHROPIC_API_KEY", "CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET",
-              "CONTEXT_DOCS_DIR"):
+    for k in (
+        "ANTHROPIC_API_KEY",
+        "CONTEXT_BUDGET",
+        "CONTEXT_DOC_BUDGET",
+        "CONTEXT_DOCS_DIR",
+    ):
         env.pop(k, None)
     return env
 
@@ -71,7 +76,11 @@ def _env() -> dict:
 def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(MEASURE), "--no-write", *args],
-        capture_output=True, text=True, cwd=str(cwd), env=_env(), timeout=120,
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=_env(),
+        timeout=120,
     )
 
 
@@ -81,9 +90,7 @@ def _over_budget_tree(tmp_path: Path) -> Path:
     Same construction as test_policy_surface_budget.py's failure proof —
     never by mutating the real AGENTS.md.
     """
-    (tmp_path / "AGENTS.md").write_text(
-        "# Policy\n\n" + ("filler " * 20_000) + "\n"
-    )
+    (tmp_path / "AGENTS.md").write_text("# Policy\n\n" + ("filler " * 20_000) + "\n")
     (tmp_path / "docs").mkdir()
     return tmp_path
 
@@ -109,8 +116,7 @@ class TestTheGateFlagFailsAnOverBudgetPolicyFile:
             f"stderr, and stdout is a JSON blob. Got:\n{result.stderr}"
         )
         assert "6000" in result.stderr.replace(",", ""), (
-            "the stderr verdict should name the budget it enforced:\n"
-            + result.stderr
+            "the stderr verdict should name the budget it enforced:\n" + result.stderr
         )
 
     def test_gate_exits_0_under_budget(self, tmp_path: Path):
@@ -121,9 +127,7 @@ class TestTheGateFlagFailsAnOverBudgetPolicyFile:
 
 
 class TestTheDefaultStaysAMeasurement:
-    def test_without_gate_an_over_budget_file_still_exits_0(
-        self, tmp_path: Path
-    ):
+    def test_without_gate_an_over_budget_file_still_exits_0(self, tmp_path: Path):
         """The contract every existing consumer was built on (issue #88: 'exits
         0 even when over budget (by design — it is a measurement, not a
         gate)')."""
@@ -137,9 +141,7 @@ class TestTheGateHonoursTheBudgetChain:
         """#126's fix, load-bearing for the gate: `.skills/context-budget` is
         what `install-guard.sh --budget` writes, so a gate that ignored it
         would enforce 6,000 regardless of what the repo configured."""
-        (tmp_path / "AGENTS.md").write_text(
-            "# Policy\n\n" + ("filler " * 300) + "\n"
-        )
+        (tmp_path / "AGENTS.md").write_text("# Policy\n\n" + ("filler " * 300) + "\n")
         (tmp_path / "docs").mkdir()
         (tmp_path / ".skills").mkdir()
         (tmp_path / ".skills" / "context-budget").write_text("100\n")
@@ -151,9 +153,7 @@ class TestTheGateHonoursTheBudgetChain:
         assert json.loads(result.stdout)["policy"]["budget"] == 100
 
     def test_gate_flag_override_wins(self, tmp_path: Path):
-        (tmp_path / "AGENTS.md").write_text(
-            "# Policy\n\n" + ("filler " * 300) + "\n"
-        )
+        (tmp_path / "AGENTS.md").write_text("# Policy\n\n" + ("filler " * 300) + "\n")
         (tmp_path / "docs").mkdir()
         result = _run(tmp_path, "--gate", "--budget", "50")
         assert result.returncode == GATE_EXIT, result.stderr
@@ -168,7 +168,8 @@ class TestTheGateIsWiredIntoThisReposCheckSurface:
         config = yaml.safe_load(PRE_COMMIT_CONFIG.read_text())
         hooks = [h for r in config["repos"] for h in r.get("hooks", [])]
         gates = [
-            h for h in hooks
+            h
+            for h in hooks
             if "measure-context.sh" in h.get("entry", "")
             and "--gate" in h.get("entry", "")
         ]

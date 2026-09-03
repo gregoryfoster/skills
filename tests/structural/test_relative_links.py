@@ -113,9 +113,7 @@ MEASURE_CONTEXT = SKILLS_DIR / "curating-context" / "scripts" / "measure-context
 # the match from running past its own closing bracket; the destination stops at
 # the first whitespace or paren so a CommonMark title (`[l](t "Title")`) is
 # excluded rather than glued onto the path.
-_LINK_RE = re.compile(
-    r"!?\[[^\]]*\]\(\s*(?P<target>[^()\s]+)(?:\s+\"[^\"]*\")?\s*\)"
-)
+_LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*(?P<target>[^()\s]+)(?:\s+\"[^\"]*\")?\s*\)")
 
 # A URI scheme (`https:`, `mailto:`, `tel:`, …) or a protocol-relative `//host`.
 _ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.\-]*:|//)")
@@ -202,9 +200,11 @@ def _mask_code(text: str) -> str:
     _blank_fenced_lines(lines)
     masked = "\n".join(lines)
     return _CODE_SPAN_RE.sub(
-        lambda m: m.group(1)
-        + "".join("\n" if c == "\n" else "x" for c in m.group(2))
-        + m.group(1),
+        lambda m: (
+            m.group(1)
+            + "".join("\n" if c == "\n" else "x" for c in m.group(2))
+            + m.group(1)
+        ),
         masked,
     )
 
@@ -375,7 +375,9 @@ def dead_anchors(root: Path, base: Path | None = None) -> list[tuple[str, int, s
 _SKILL_MARKDOWN = sorted(SKILLS_DIR.rglob("*.md"))
 
 
-@pytest.fixture(params=_SKILL_MARKDOWN, ids=lambda p: p.relative_to(SKILLS_DIR).as_posix())
+@pytest.fixture(
+    params=_SKILL_MARKDOWN, ids=lambda p: p.relative_to(SKILLS_DIR).as_posix()
+)
 def markdown(request) -> Path:
     return request.param
 
@@ -384,7 +386,9 @@ class TestRelativeLinks:
     """Rendered relative links in skills/**/*.md resolve from their own file."""
 
     def test_links_resolve(self, markdown: Path) -> None:
-        for relative, line, target in unexempted(dead_links_in(markdown, base=REPO_ROOT)):
+        for relative, line, target in unexempted(
+            dead_links_in(markdown, base=REPO_ROOT)
+        ):
             pytest.fail(
                 f"{relative}:{line} links to `{target}`, which does not resolve "
                 f"relative to {markdown.parent.relative_to(REPO_ROOT).as_posix()}/. "
@@ -418,9 +422,11 @@ class TestSkillAnchors:
     """
 
     def test_anchors_resolve(self, markdown: Path) -> None:
-        for relative, line, target in unexempted(dead_anchors_in(markdown, base=REPO_ROOT)):
+        for relative, line, target in unexempted(
+            dead_anchors_in(markdown, base=REPO_ROOT)
+        ):
             path_part, _, fragment = target.partition("#")
-            resolved = (markdown if not path_part else markdown.parent / path_part)
+            resolved = markdown if not path_part else markdown.parent / path_part
             pytest.fail(
                 f"{relative}:{line} links to `{target}`, whose file resolves but "
                 f"whose `#{fragment}` names no heading in "
@@ -508,7 +514,9 @@ class TestGateBehaviour:
         )
         assert [t for _, _, t in dead_links(tmp_path)] == ["docs/GONE.md"]
 
-    def test_a_code_span_wrapping_one_line_is_still_masked(self, tmp_path: Path) -> None:
+    def test_a_code_span_wrapping_one_line_is_still_masked(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "a.md").write_text(
             "The extractor sees `[l](docs/FOO.md)\nand [m](docs/BAR.md)` as code.\n"
         )
@@ -519,7 +527,9 @@ class TestGateBehaviour:
         (tmp_path / "a.md").write_text("See [`docs/GONE.md`](docs/GONE.md).\n")
         assert [t for _, _, t in dead_links(tmp_path)] == ["docs/GONE.md"]
 
-    def test_fence_inside_a_fence_does_not_reopen_the_block(self, tmp_path: Path) -> None:
+    def test_fence_inside_a_fence_does_not_reopen_the_block(
+        self, tmp_path: Path
+    ) -> None:
         """A longer outer fence wrapping a shorter inner one stays closed.
 
         `systemd-deploy.md` nests a ```bash block inside a ```markdown block;
@@ -577,7 +587,9 @@ class TestExemptionRegistry:
         """The survey behind #143 found no carve-out in rendered prose."""
         assert EXEMPT_LINKS == {}
 
-    def test_an_entry_silences_exactly_its_own_link(self, tmp_path, monkeypatch) -> None:
+    def test_an_entry_silences_exactly_its_own_link(
+        self, tmp_path, monkeypatch
+    ) -> None:
         TestGateBehaviour._skills_tree(tmp_path, self._DEAD)
         other = tmp_path / "using-git-worktrees" / "notes.md"
         other.write_text("[gone](../elsewhere/GONE.md)\n")
@@ -594,7 +606,9 @@ class TestExemptionRegistry:
         monkeypatch.setitem(EXEMPT_LINKS, ("some/other/file.md", self._DEAD), "fixture")
         assert [t for _, _, t in unexempted(dead_links(tmp_path))] == [self._DEAD]
 
-    def test_a_fixed_link_makes_its_exemption_stale(self, tmp_path, monkeypatch) -> None:
+    def test_a_fixed_link_makes_its_exemption_stale(
+        self, tmp_path, monkeypatch
+    ) -> None:
         TestGateBehaviour._skills_tree(tmp_path, "../../using-git-worktrees/SKILL.md")
         monkeypatch.setitem(EXEMPT_LINKS, (self._LOG, self._DEAD), "fixture")
         assert stale_exemptions(dead_links(tmp_path)) == [
@@ -608,14 +622,20 @@ class TestExemptionRegistry:
         monkeypatch.setitem(EXEMPT_LINKS, (self._LOG, self._DEAD), "fixture")
         assert stale_exemptions(dead_links(tmp_path)) == []
 
-    def test_an_anchor_entry_silences_its_own_anchor(self, tmp_path, monkeypatch) -> None:
+    def test_an_anchor_entry_silences_its_own_anchor(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """One registry serves both halves, so a dead anchor is exemptible too."""
         (tmp_path / "b.md").write_text("# B\n")
         (tmp_path / "a.md").write_text("[b](b.md#gone) [c](b.md#also-gone)\n")
         monkeypatch.setitem(EXEMPT_LINKS, ("a.md", "b.md#gone"), "fixture")
-        assert [t for _, _, t in unexempted(dead_anchors(tmp_path))] == ["b.md#also-gone"]
+        assert [t for _, _, t in unexempted(dead_anchors(tmp_path))] == [
+            "b.md#also-gone"
+        ]
 
-    def test_a_fixed_anchor_makes_its_exemption_stale(self, tmp_path, monkeypatch) -> None:
+    def test_a_fixed_anchor_makes_its_exemption_stale(
+        self, tmp_path, monkeypatch
+    ) -> None:
         (tmp_path / "b.md").write_text("# B\n\n## Gone\n")
         (tmp_path / "a.md").write_text("[b](b.md#gone)\n")
         monkeypatch.setitem(EXEMPT_LINKS, ("a.md", "b.md#gone"), "fixture")
@@ -677,7 +697,8 @@ class TestSlugRules:
         leaves two spaces, and one hyphen each is what GitHub emits.
         """
         assert (
-            slugify("Phase 5d — Provision PostgreSQL") == "phase-5d--provision-postgresql"
+            slugify("Phase 5d — Provision PostgreSQL")
+            == "phase-5d--provision-postgresql"
         )
 
     def test_a_run_of_spaces_is_not_collapsed(self) -> None:
@@ -685,7 +706,8 @@ class TestSlugRules:
 
     def test_case_is_folded_and_punctuation_dropped(self) -> None:
         assert (
-            slugify("The `count_tokens` fallback: why?") == "the-count_tokens-fallback-why"
+            slugify("The `count_tokens` fallback: why?")
+            == "the-count_tokens-fallback-why"
         )
 
     def test_underscores_and_hyphens_survive(self) -> None:
@@ -716,7 +738,9 @@ class TestHeadingSlugs:
         doc = self._doc(tmp_path, "## PHP layers\n\n## PHP layers\n\n## PHP layers\n")
         assert heading_slugs(doc) == ["php-layers", "php-layers-1", "php-layers-2"]
 
-    def test_a_closed_atx_heading_drops_its_trailing_hashes(self, tmp_path: Path) -> None:
+    def test_a_closed_atx_heading_drops_its_trailing_hashes(
+        self, tmp_path: Path
+    ) -> None:
         assert heading_slugs(self._doc(tmp_path, "## Heading ##\n")) == ["heading"]
 
     def test_a_heading_inside_a_fence_is_not_a_heading(self, tmp_path: Path) -> None:
@@ -822,7 +846,9 @@ class TestAnchorGateBehaviour:
         (tmp_path / "a.md").write_text("[s](script.sh#L10)\n")
         assert dead_anchors(tmp_path) == []
 
-    def test_a_link_with_no_fragment_is_not_anchor_checked(self, tmp_path: Path) -> None:
+    def test_a_link_with_no_fragment_is_not_anchor_checked(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "b.md").write_text("# B\n")
         (tmp_path / "a.md").write_text("[b](b.md) [c](b.md#)\n")
         assert dead_anchors(tmp_path) == []
@@ -892,38 +918,68 @@ class TestSlugifierAgreesWithMeasureContext:
         repo = tmp_path / "repo"
         repo.mkdir()
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        for key in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR",
-                    "ANTHROPIC_API_KEY"):
+        for key in (
+            "CONTEXT_BUDGET",
+            "CONTEXT_DOC_BUDGET",
+            "CONTEXT_DOCS_DIR",
+            "ANTHROPIC_API_KEY",
+        ):
             env.pop(key, None)
         for args in (
-            ("init", "-q"), ("config", "user.email", "t@t"), ("config", "user.name", "t"),
+            ("init", "-q"),
+            ("config", "user.email", "t@t"),
+            ("config", "user.name", "t"),
         ):
-            subprocess.run(["git", "-C", str(repo), *args], check=True,
-                           capture_output=True, env=env)
+            subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+                env=env,
+            )
         (repo / "docs").mkdir()
         (repo / "docs" / "GUIDE.md").write_text(doc)
         (repo / "AGENTS.md").write_text(links)
-        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
-                       capture_output=True, env=env)
-        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True,
-                       capture_output=True, env=env)
+        subprocess.run(
+            ["git", "-C", str(repo), "add", "-A"],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-qm", "init"],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
         result = subprocess.run(
             ["bash", str(MEASURE_CONTEXT), "--no-write"],
-            capture_output=True, text=True, cwd=str(repo), env=env, timeout=60,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)["links"]["dead_anchors"]
 
-    def test_the_shell_resolves_every_slug_this_module_mints(self, tmp_path: Path) -> None:
+    def test_the_shell_resolves_every_slug_this_module_mints(
+        self, tmp_path: Path
+    ) -> None:
         """One doc carrying the whole real-heading table, linked by our own ids."""
         doc = "# Guide\n\n" + "\n\n".join(h for h, _ in REAL_HEADINGS) + "\n"
-        links = "# P\n\n" + "\n\n".join(
-            f"[l{i}](docs/GUIDE.md#{slugify(re.sub(r'^#+ +', '', heading))})"
-            for i, (heading, _) in enumerate(REAL_HEADINGS)
-        ) + "\n"
+        links = (
+            "# P\n\n"
+            + "\n\n".join(
+                f"[l{i}](docs/GUIDE.md#{slugify(re.sub(r'^#+ +', '', heading))})"
+                for i, (heading, _) in enumerate(REAL_HEADINGS)
+            )
+            + "\n"
+        )
         assert self._dead_anchors(tmp_path, doc, links) == []
 
-    def test_the_shell_rejects_the_collapsed_whitespace_slug(self, tmp_path: Path) -> None:
+    def test_the_shell_rejects_the_collapsed_whitespace_slug(
+        self, tmp_path: Path
+    ) -> None:
         """The pin has teeth in the direction the trap runs.
 
         Were the shell tolerant of a single hyphen here, a restatement that

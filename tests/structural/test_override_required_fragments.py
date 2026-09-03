@@ -98,8 +98,7 @@ MARKER_RE = re.compile(
 # The line that identifies the #63 resolution block, shared with
 # test_content_invariants.py's RESOLUTION_LOOP.
 RESOLUTION_LOOP = (
-    'for d in scripts ".claude/skills/$N/scripts" '
-    '"$HOME/.claude/skills/$N/scripts"; do'
+    'for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do'
 )
 
 SKILLS_WITH_RESOLUTION = sorted(
@@ -124,12 +123,13 @@ class TestTheVendorMarksWhatIsNotOptional:
         )
 
     @pytest.mark.parametrize(
-        "skill_md", SKILLS_WITH_RESOLUTION,
+        "skill_md",
+        SKILLS_WITH_RESOLUTION,
         ids=lambda p: p.parent.name,
     )
     def test_the_resolution_block_is_marked_required(self, skill_md: Path) -> None:
         lines = skill_md.read_text().splitlines()
-        loop = next(i for i, l in enumerate(lines) if RESOLUTION_LOOP in l)
+        loop = next(i for i, line in enumerate(lines) if RESOLUTION_LOOP in line)
         opener = max(i for i in range(loop) if lines[i].startswith("```"))
         marked = MARKER_RE.match(lines[opener - 1].strip())
         assert marked, (
@@ -148,7 +148,8 @@ class TestTheVendorMarksWhatIsNotOptional:
         )
 
     @pytest.mark.parametrize(
-        "skill_md", sorted(SKILLS_DIR.glob("*/SKILL.md")),
+        "skill_md",
+        sorted(SKILLS_DIR.glob("*/SKILL.md")),
         ids=lambda p: p.parent.name,
     )
     def test_every_marker_arms_a_fenced_block(self, skill_md: Path) -> None:
@@ -158,7 +159,8 @@ class TestTheVendorMarksWhatIsNotOptional:
             if not MARKER_RE.match(line.strip()):
                 continue
             following = next(
-                (l for l in lines[i + 1:] if l.strip()), "",
+                (nxt for nxt in lines[i + 1 :] if nxt.strip()),
+                "",
             )
             assert following.startswith("```"), (
                 f"{skill_md.relative_to(SKILLS_DIR)}:{i + 1} arms nothing — "
@@ -169,7 +171,8 @@ class TestTheVendorMarksWhatIsNotOptional:
             )
 
     @pytest.mark.parametrize(
-        "skill_md", sorted(SKILLS_DIR.glob("*/SKILL.md")),
+        "skill_md",
+        sorted(SKILLS_DIR.glob("*/SKILL.md")),
         ids=lambda p: p.parent.name,
     )
     def test_every_marker_is_well_formed_and_named(self, skill_md: Path) -> None:
@@ -215,11 +218,15 @@ class _ConsumerFixture:
     disagree about what "an override" looks like.
     """
 
-    def _consumer(self, tmp_path: Path, override_body: str,
-                  vendor_body: str | None = None,
-                  override_version: str = "1.1",
-                  override_meta: str = "",
-                  project_files: tuple[str, ...] = ()) -> Path:
+    def _consumer(
+        self,
+        tmp_path: Path,
+        override_body: str,
+        vendor_body: str | None = None,
+        override_version: str = "1.1",
+        override_meta: str = "",
+        project_files: tuple[str, ...] = (),
+    ) -> Path:
         repo = tmp_path / "consumer"
         vendor = repo / "skills-vendor/acme-skills/skills/demo"
         vendor.mkdir(parents=True)
@@ -229,8 +236,13 @@ class _ConsumerFixture:
             path = repo / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("#!/usr/bin/env bash\necho project-owned\n")
-        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True,
-                       capture_output=True, env=_clean_env(), timeout=60)
+        subprocess.run(
+            ["git", "-C", str(repo), "init", "-q"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+            timeout=60,
+        )
 
         if vendor_body is None:
             vendor_body = (
@@ -253,14 +265,19 @@ class _ConsumerFixture:
             "  overrides: acme-skills/demo\n"
             "  override-reason: local paths\n"
             + override_meta
-            + "---\n\n" + override_body
+            + "---\n\n"
+            + override_body
         )
         return repo
 
     def _doctor(self, repo: Path) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["bash", str(DOCTOR), "--no-preflight"], cwd=str(repo),
-            capture_output=True, text=True, env=_clean_env(), timeout=120,
+            ["bash", str(DOCTOR), "--no-preflight"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=120,
         )
 
 
@@ -268,10 +285,13 @@ class TestTheDoctorReadsTheContent(_ConsumerFixture):
     """Fixtures reproducing the report, and the two states that must stay quiet."""
 
     def test_a_dropped_fragment_is_reported_at_a_matching_version(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The reported case: an honest stamp over content that lost the fix."""
-        repo = self._consumer(tmp_path, "# Demo\n\n```bash\nbash scripts/pre-ship.sh\n```\n")
+        repo = self._consumer(
+            tmp_path, "# Demo\n\n```bash\nbash scripts/pre-ship.sh\n```\n"
+        )
         result = self._doctor(repo)
         assert "fallen behind" not in result.stderr, (
             "the fixture is only interesting while the version check is quiet"
@@ -287,16 +307,19 @@ class TestTheDoctorReadsTheContent(_ConsumerFixture):
         An override that re-indents a block it kept verbatim has dropped
         nothing, and a check that says otherwise is one consumers switch off.
         """
-        repo = self._consumer(tmp_path, (
-            "# Demo override\n\n"
-            "```bash\n"
-            "N=demo    S=pre-ship.sh   SD=\n"
-            '  for d in scripts ".claude/skills/$N/scripts"; do\n'
-            '      [ -f "$d/$S" ] && { SD="$d"; break; }\n'
-            "  done\n"
-            "```\n\n"
-            "Local deltas below.\n"
-        ))
+        repo = self._consumer(
+            tmp_path,
+            (
+                "# Demo override\n\n"
+                "```bash\n"
+                "N=demo    S=pre-ship.sh   SD=\n"
+                '  for d in scripts ".claude/skills/$N/scripts"; do\n'
+                '      [ -f "$d/$S" ] && { SD="$d"; break; }\n'
+                "  done\n"
+                "```\n\n"
+                "Local deltas below.\n"
+            ),
+        )
         result = self._doctor(repo)
         assert "marks as required" not in result.stderr, result.stderr
 
@@ -313,7 +336,8 @@ class TestTheDoctorReadsTheContent(_ConsumerFixture):
         )
 
     def test_a_bare_script_path_is_reported_without_any_fence(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The detector that needs no vendor cooperation.
 
@@ -330,7 +354,8 @@ class TestTheDoctorReadsTheContent(_ConsumerFixture):
         assert "bash scripts/pre-ship.sh" in result.stderr
 
     def test_prose_warning_against_the_pattern_is_not_a_finding(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """CR round 1, finding 3.
 
@@ -358,8 +383,9 @@ class TestTheDoctorReadsTheContent(_ConsumerFixture):
             vendor_body="# Demo\n\nNo fences here.\n",
         )
         stderr = self._doctor(repo).stderr
-        assert re.search(r"skills/demo/SKILL\.md:\d+\s+bash scripts/pre-ship\.sh",
-                         stderr), stderr
+        assert re.search(
+            r"skills/demo/SKILL\.md:\d+\s+bash scripts/pre-ship\.sh", stderr
+        ), stderr
 
     def test_both_findings_stay_advisory(self, tmp_path: Path) -> None:
         """Same call as the drift and silent-fork checks beside them.
@@ -372,8 +398,11 @@ class TestTheDoctorReadsTheContent(_ConsumerFixture):
         assert self._doctor(repo).returncode == 0
         result = subprocess.run(
             ["bash", str(DOCTOR), "--no-preflight", "--check-only"],
-            cwd=str(repo), capture_output=True, text=True,
-            env=_clean_env(), timeout=120,
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=120,
         )
         assert result.returncode == 0, (
             "--check-only now fails on override content drift. That mode gates "
@@ -427,7 +456,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         assert "excuses nothing" not in result.stderr, result.stderr
 
     def test_a_declaration_covers_only_the_fragment_it_names(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The property that keeps a declaration from rotting into a blanket mute.
 
@@ -441,7 +471,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
             "```bash\nthe newly armed fragment\n```\n"
         )
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nNeither block is here.\n",
+            tmp_path,
+            "# Demo override\n\nNeither block is here.\n",
             vendor_body=vendor_body,
             override_meta='  omits-required: "skill-scripts: no scripts here"\n',
         )
@@ -457,7 +488,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         )
 
     def test_a_declaration_matching_no_armed_fragment_is_reported(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """A vendor that renames or drops a fragment voids the declaration.
 
@@ -465,7 +497,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         decision taken, while covering nothing at all.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             override_meta='  omits-required: "worktree-root: not used here"\n',
         )
         stderr = self._doctor(repo).stderr
@@ -477,7 +510,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         )
 
     def test_a_declaration_for_a_fragment_the_override_carries_is_reported(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Re-syncing the fragment leaves the mute behind."""
         repo = self._consumer(
@@ -490,11 +524,11 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
             override_meta='  omits-required: "skill-scripts: not used here"\n',
         )
         stderr = self._doctor(repo).stderr
-        assert "id=skill-scripts — already carried by the override" in stderr, \
-            stderr
+        assert "id=skill-scripts — already carried by the override" in stderr, stderr
 
     def test_a_declaration_without_a_reason_is_reported_and_still_excuses(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The ids are what the check needs; the warrant is what the reader needs.
 
@@ -504,7 +538,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         rots, so it is reported.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             override_meta='  omits-required: "skill-scripts"\n',
         )
         stderr = self._doctor(repo).stderr
@@ -514,7 +549,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
     def test_one_broken_declaration_is_one_finding(self, tmp_path: Path) -> None:
         """A declaration wrong in two ways is still one line in the file."""
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             override_meta='  omits-required: "worktree-root"\n',
         )
         stderr = self._doctor(repo).stderr
@@ -525,7 +561,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         assert "the vendor arms no such fragment" in stderr, stderr
 
     def test_a_declaration_written_as_prose_is_one_finding(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """CR round 1, finding 2.
 
@@ -535,12 +572,16 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         a reader to skim a report.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             override_meta='  omits-required: "we ship no scripts here at all"\n',
         )
         stderr = self._doctor(repo).stderr
-        lines = [l for l in stderr.splitlines()
-                 if "the vendor arms no such fragment" in l]
+        lines = [
+            line
+            for line in stderr.splitlines()
+            if "the vendor arms no such fragment" in line
+        ]
         assert len(lines) == 1, (
             f"one declaration produced {len(lines)} findings: {stderr}"
         )
@@ -552,7 +593,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
 
     def test_a_repeated_id_is_one_declaration(self, tmp_path: Path) -> None:
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             override_meta='  omits-required: "nope, nope: stale twice over"\n',
         )
         stderr = self._doctor(repo).stderr
@@ -567,7 +609,8 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         which side of the vendor boundary it lives on.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required -->\n"
                 "```bash\nan anonymous fragment\n```\n"
@@ -580,14 +623,18 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
 
     def test_the_declaration_findings_stay_advisory(self, tmp_path: Path) -> None:
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             override_meta='  omits-required: "worktree-root: stale"\n',
         )
         assert self._doctor(repo).returncode == 0
         result = subprocess.run(
             ["bash", str(DOCTOR), "--no-preflight", "--check-only"],
-            cwd=str(repo), capture_output=True, text=True,
-            env=_clean_env(), timeout=120,
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=120,
         )
         assert result.returncode == 0, (
             "--check-only now fails on a stale declaration. That mode gates "
@@ -640,7 +687,8 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         )
 
     def test_the_report_says_why_a_sibling_line_is_absent(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """A finding that lists one of two identical-looking lines must say so.
 
@@ -679,7 +727,8 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         )
 
     def test_a_line_whose_every_path_resolves_is_still_quiet(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         repo = self._consumer(
             tmp_path,
@@ -691,7 +740,8 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         assert "resolves from nowhere" not in self._doctor(repo).stderr
 
     def test_the_unresolved_path_is_named_when_a_line_has_several(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """CR round 2, finding 8.
 
@@ -721,7 +771,8 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         assert "unresolved:" not in self._doctor(repo).stderr
 
     def test_a_tilde_fence_is_scanned_like_a_backtick_one(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Both fence characters, and a block closes on the one it opened."""
         repo = self._consumer(
@@ -732,7 +783,8 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         assert "resolves from nowhere" in self._doctor(repo).stderr
 
     def test_prose_below_a_quoted_fence_is_not_a_finding(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """CR round 3, finding 11.
 
@@ -774,10 +826,12 @@ class TestAFileThatEndsInsideAFence(_ConsumerFixture):
     """
 
     def test_a_vendor_that_ends_inside_a_fence_is_reported(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
                 "```bash\nthe fragment\n```\n\n"
@@ -787,24 +841,27 @@ class TestAFileThatEndsInsideAFence(_ConsumerFixture):
         stderr = self._doctor(repo).stderr
         assert "ends inside a code fence" in stderr, stderr
         located = re.search(
-            r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)", stderr,
+            r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)",
+            stderr,
         )
         assert located, stderr
         vendor_lines = (
-            repo / "skills-vendor/acme-skills/skills/demo/SKILL.md"
-        ).read_text().splitlines()
+            (repo / "skills-vendor/acme-skills/skills/demo/SKILL.md")
+            .read_text()
+            .splitlines()
+        )
         assert vendor_lines[int(located.group(1)) - 1].startswith("```"), (
             f"the locator must point at the fence that never closed: {stderr}"
         )
 
     def test_an_override_that_ends_inside_a_fence_is_reported(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Either fence character, and the override side counts too."""
         repo = self._consumer(
             tmp_path,
-            "# Demo override\n\nTrailing prose that opens and never closes:"
-            "\n\n~~~\n",
+            "# Demo override\n\nTrailing prose that opens and never closes:\n\n~~~\n",
             vendor_body="# Demo\n\nNo fences here.\n",
         )
         stderr = self._doctor(repo).stderr
@@ -823,7 +880,8 @@ class TestAFileThatEndsInsideAFence(_ConsumerFixture):
 
     def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
         repo = self._consumer(
-            tmp_path, "# Demo override\n\n```bash\nunclosed\n",
+            tmp_path,
+            "# Demo override\n\n```bash\nunclosed\n",
             vendor_body="# Demo\n\nNo fences here.\n",
         )
         assert self._doctor(repo).returncode == 0
@@ -840,7 +898,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
 
     def test_a_marker_that_arms_nothing_is_reported(self, tmp_path: Path) -> None:
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required id= -->\n"
                 "```bash\nfragment one\n```\n\n"
@@ -851,12 +910,15 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         stderr = self._doctor(repo).stderr
         assert "in a form that arms" in stderr, stderr
         located = re.search(
-            r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)", stderr,
+            r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)",
+            stderr,
         )
         assert located, f"the finding must name the vendor file and line: {stderr}"
         vendor_lines = (
-            repo / "skills-vendor/acme-skills/skills/demo/SKILL.md"
-        ).read_text().splitlines()
+            (repo / "skills-vendor/acme-skills/skills/demo/SKILL.md")
+            .read_text()
+            .splitlines()
+        )
         assert "skill:required" in vendor_lines[int(located.group(1)) - 1], (
             "the locator points at a line that is not the marker — a report "
             f"nobody can follow: {stderr}"
@@ -868,7 +930,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         )
 
     def test_prose_about_the_convention_is_not_accused(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Only a line that opens with `<!--` is an attempt at a marker.
 
@@ -877,10 +940,10 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         landing on exactly that kind of file.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
-                "# Demo\n\nMark a block with `<!-- skill:required -->` to "
-                "require it.\n"
+                "# Demo\n\nMark a block with `<!-- skill:required -->` to require it.\n"
             ),
         )
         assert "arms nothing" not in self._doctor(repo).stderr
@@ -888,7 +951,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
     def test_a_tilde_armed_fragment_is_compared(self, tmp_path: Path) -> None:
         """A vendor arming a ~~~ block was making a claim nothing read."""
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
                 "~~~bash\nthe tilde fragment\n~~~\n"
@@ -898,11 +962,13 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         assert "the tilde fragment" in stderr, stderr
 
     def test_a_quoted_fence_does_not_close_the_block(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """A ``` block quoting a ~~~ line ends where it says it ends."""
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
                 "```markdown\nbefore\n~~~\nafter\n```\n"
@@ -914,7 +980,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         )
 
     def test_a_marker_inside_a_fenced_example_arms_nothing(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """CR round 2, finding 6.
 
@@ -925,7 +992,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         only inside a code example.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\nMark a required block like this:\n\n"
                 "````markdown\n"
@@ -941,7 +1009,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         assert "marks as required" not in stderr, stderr
 
     def test_a_malformed_marker_inside_a_fence_is_not_accused(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """CR round 2, finding 7 — the mirror of the case above.
 
@@ -950,7 +1019,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         fix.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\nNever write it like this:\n\n"
                 "```markdown\n<!-- skill:required id= -->\n```\n"
@@ -959,7 +1029,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         assert "arms" not in self._doctor(repo).stderr
 
     def test_a_valid_unidded_marker_is_not_called_malformed(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The boundary between the two scanners.
 
@@ -967,7 +1038,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         would tell a vendor to repair a marker that works.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required -->\n"
                 "```bash\nthe anonymous fragment\n```\n"
@@ -980,7 +1052,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         )
 
     def test_a_nested_fence_does_not_cut_the_block_short(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The fence is its full run, closed by a run at least as long.
 
@@ -988,7 +1061,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
         only rule under which a vendor can arm a block that contains a fence.
         """
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body=(
                 "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
                 "````markdown\nbefore\n```\nafter\n````\n"
@@ -1001,7 +1075,8 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
 
     def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
         repo = self._consumer(
-            tmp_path, "# Demo override\n\nnothing kept\n",
+            tmp_path,
+            "# Demo override\n\nnothing kept\n",
             vendor_body="# Demo\n\n<!-- skill:required id= -->\n```bash\nx\n```\n",
         )
         assert self._doctor(repo).returncode == 0

@@ -186,16 +186,24 @@ def _clean_env() -> dict:
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", *args], cwd=str(repo), check=True,
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
 def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(DOCTOR), "--no-preflight", *args],
-        cwd=str(repo), capture_output=True, text=True,
-        env=_clean_env(), timeout=120,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=120,
     )
 
 
@@ -260,11 +268,22 @@ class TestEveryInstalledHookIsChecked:
         """Per-hook granularity. A check that warned about all three whenever
         any one was missing would be as useless as one that warned about one."""
         installed = subprocess.run(
-            ["bash", str(consumer / VENDOR_REL / "managing-skills" / "scripts"
-                         / "install-hook.sh"),
-             *_manifest_args("socraticode-health.sh", "init-socraticode")],
-            cwd=str(consumer), capture_output=True, text=True,
-            env=_clean_env(), timeout=60,
+            [
+                "bash",
+                str(
+                    consumer
+                    / VENDOR_REL
+                    / "managing-skills"
+                    / "scripts"
+                    / "install-hook.sh"
+                ),
+                *_manifest_args("socraticode-health.sh", "init-socraticode"),
+            ],
+            cwd=str(consumer),
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
         )
         assert installed.returncode == 0, installed.stderr
         result = _doctor(consumer)
@@ -278,11 +297,15 @@ class TestEveryInstalledHookIsChecked:
         must not come back through the new loop. `permissions.allow` naming a
         hook is what the fewer-permission-prompts skill writes, and it runs
         nothing."""
-        (consumer / ".claude" / "settings.json").write_text(json.dumps({
-            "permissions": {
-                "allow": ["Bash(bash .claude/hooks/socraticode-health.sh)"]
-            }
-        }))
+        (consumer / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "allow": ["Bash(bash .claude/hooks/socraticode-health.sh)"]
+                    }
+                }
+            )
+        )
         result = _doctor(consumer)
         assert "socraticode-health.sh" in _warned_hooks(result.stderr), result.stderr
 
@@ -308,9 +331,7 @@ class TestCheckOnlyGatesOnTheWiringGap:
     clean-working-tree assertion — exits non-zero for the unregistered-hook
     state, and the default invocation keeps warn-and-exit-0."""
 
-    def test_check_only_exits_nonzero_when_a_hook_is_unregistered(
-        self, consumer: Path
-    ):
+    def test_check_only_exits_nonzero_when_a_hook_is_unregistered(self, consumer: Path):
         result = _doctor(consumer, "--check-only")
         assert result.returncode == 1, (
             f"--check-only exited {result.returncode} with three unregistered "
@@ -322,18 +343,20 @@ class TestCheckOnlyGatesOnTheWiringGap:
             f"the hook and its repair still has to print.\n{result.stderr}"
         )
 
-    def test_check_only_exits_zero_once_every_hook_is_registered(
-        self, consumer: Path
-    ):
+    def test_check_only_exits_zero_once_every_hook_is_registered(self, consumer: Path):
         """The gate clears when the wiring does — otherwise it is a tax on
         healthy consumers, not a probe."""
-        installer = (consumer / VENDOR_REL / "managing-skills" / "scripts"
-                     / "install-hook.sh")
+        installer = (
+            consumer / VENDOR_REL / "managing-skills" / "scripts" / "install-hook.sh"
+        )
         for hook, skill, _ in HOOKS:
             installed = subprocess.run(
                 ["bash", str(installer), *_manifest_args(hook, skill)],
-                cwd=str(consumer), capture_output=True, text=True,
-                env=_clean_env(), timeout=60,
+                cwd=str(consumer),
+                capture_output=True,
+                text=True,
+                env=_clean_env(),
+                timeout=60,
             )
             assert installed.returncode == 0, installed.stderr
         result = _doctor(consumer, "--check-only")
@@ -384,16 +407,18 @@ class TestTheRepairLineComesFromTheManifest:
         operator that the warning above it was noise."""
         for line in self._repair_lines(_doctor(consumer).stderr):
             repair = subprocess.run(
-                shlex.split(line), cwd=str(consumer), capture_output=True,
-                text=True, env=_clean_env(), timeout=60,
+                shlex.split(line),
+                cwd=str(consumer),
+                capture_output=True,
+                text=True,
+                env=_clean_env(),
+                timeout=60,
             )
             assert repair.returncode == 0, f"{line}\n{repair.stderr}"
         result = _doctor(consumer)
         assert _warned_hooks(result.stderr) == set(), result.stderr
 
-    def test_the_manifest_is_found_beside_an_extensionless_hook(
-        self, consumer: Path
-    ):
+    def test_the_manifest_is_found_beside_an_extensionless_hook(self, consumer: Path):
         """The manifest path strips the hook's extension, and the obvious
         `${target%.*}` strips from the last dot ANYWHERE in the path. That is
         indistinguishable from correct while every hook ends in `.sh` — the
@@ -404,15 +429,13 @@ class TestTheRepairLineComesFromTheManifest:
         nothing to say why."""
         vendor = consumer / "skills-vendor"
         (vendor / "acme-skills").rename(vendor / "acme.skills")
-        scripts = (vendor / "acme.skills" / "skills" / "managing-skills"
-                   / "scripts")
+        scripts = vendor / "acme.skills" / "skills" / "managing-skills" / "scripts"
         (scripts / "sessionprep").write_text("#!/usr/bin/env bash\nexit 0\n")
         (scripts / "sessionprep.install").write_text(
             "--hook sessionprep --skill managing-skills\n"
         )
         (consumer / ".claude" / "hooks" / "sessionprep").symlink_to(
-            "../../skills-vendor/acme.skills/skills/managing-skills/scripts"
-            "/sessionprep"
+            "../../skills-vendor/acme.skills/skills/managing-skills/scripts/sessionprep"
         )
         result = _doctor(consumer)
         assert any(
@@ -420,14 +443,17 @@ class TestTheRepairLineComesFromTheManifest:
             for line in self._repair_lines(result.stderr)
         ), result.stderr
 
-    def test_a_vendored_hook_with_no_manifest_still_gets_reported(
-        self, consumer: Path
-    ):
+    def test_a_vendored_hook_with_no_manifest_still_gets_reported(self, consumer: Path):
         """A skill that ships no manifest must not fall out of the check
         entirely — that is the failure mode #224 is about, reintroduced one
         level up. It loses the exact command, not the warning."""
-        (consumer / VENDOR_REL / "init-socraticode" / "scripts"
-         / "socraticode-health.install").unlink()
+        (
+            consumer
+            / VENDOR_REL
+            / "init-socraticode"
+            / "scripts"
+            / "socraticode-health.install"
+        ).unlink()
         result = _doctor(consumer)
         assert "socraticode-health.sh" in _warned_hooks(result.stderr), result.stderr
         assert not any(
@@ -443,10 +469,17 @@ class TestWhoIsNotWarnedAbout:
     def test_a_dangling_hook_is_left_to_the_symlink_scan(self, consumer: Path):
         """Two diagnoses for one file is worse than one. The dangling scan
         already names it, with the repair that actually applies."""
-        (consumer / VENDOR_REL / "init-socraticode" / "scripts"
-         / "socraticode-health.sh").unlink()
+        (
+            consumer
+            / VENDOR_REL
+            / "init-socraticode"
+            / "scripts"
+            / "socraticode-health.sh"
+        ).unlink()
         result = _doctor(consumer)
-        assert "socraticode-health.sh" not in _warned_hooks(result.stderr), result.stderr
+        assert "socraticode-health.sh" not in _warned_hooks(result.stderr), (
+            result.stderr
+        )
 
     def test_a_project_authored_hook_is_not_nagged(self, consumer: Path):
         """A regular file in .claude/hooks/ was written by the project, not
@@ -471,40 +504,61 @@ class TestWhoIsNotWarnedAbout:
         which is what #224's body proposed — would have warned about it on
         every doctor run, which is every Phase 1 preflight of every review here.
         """
-        (consumer / VENDOR_REL / "init-socraticode" / "scripts"
-         / "socraticode-health.install").unlink()
-        (consumer / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {
-                "PostToolUse": [{
-                    "matcher": "Edit",
-                    "hooks": [{
-                        "type": "command",
-                        "command": "bash .claude/hooks/socraticode-health.sh",
-                    }],
-                }]
-            }
-        }))
+        (
+            consumer
+            / VENDOR_REL
+            / "init-socraticode"
+            / "scripts"
+            / "socraticode-health.install"
+        ).unlink()
+        (consumer / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/socraticode-health.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
         result = _doctor(consumer)
-        assert "socraticode-health.sh" not in _warned_hooks(result.stderr), result.stderr
+        assert "socraticode-health.sh" not in _warned_hooks(result.stderr), (
+            result.stderr
+        )
 
-    def test_a_manifested_hook_registered_elsewhere_is_nagged(
-        self, consumer: Path
-    ):
+    def test_a_manifested_hook_registered_elsewhere_is_nagged(self, consumer: Path):
         """The other side of that line. A manifest says install-hook.sh
         installed this, and install-hook.sh writes SessionStart and nothing
         else — so an entry under another event is not the registration this
         hook needs, and reporting it as one would be the #167 lie."""
-        (consumer / ".claude" / "settings.json").write_text(json.dumps({
-            "hooks": {
-                "PostToolUse": [{
-                    "matcher": "Edit",
-                    "hooks": [{
-                        "type": "command",
-                        "command": "bash .claude/hooks/socraticode-health.sh",
-                    }],
-                }]
-            }
-        }))
+        (consumer / ".claude" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PostToolUse": [
+                            {
+                                "matcher": "Edit",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/socraticode-health.sh",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
         result = _doctor(consumer)
         assert "socraticode-health.sh" in _warned_hooks(result.stderr), result.stderr
 
@@ -533,7 +587,8 @@ class TestTheManifestsMatchTheDocumentedInstalls:
         )
 
     @pytest.mark.parametrize(
-        ("hook", "skill"), [(h, s) for h, s, _ in HOOKS],
+        ("hook", "skill"),
+        [(h, s) for h, s, _ in HOOKS],
         ids=[h for h, _, _ in HOOKS],
     )
     def test_every_manifest_flag_is_one_install_hook_accepts(
@@ -552,12 +607,11 @@ class TestTheManifestsMatchTheDocumentedInstalls:
                 )
 
     @pytest.mark.parametrize(
-        ("hook", "skill"), [(h, s) for h, s, _ in HOOKS],
+        ("hook", "skill"),
+        [(h, s) for h, s, _ in HOOKS],
         ids=[h for h, _, _ in HOOKS],
     )
-    def test_the_manifest_sits_beside_the_hook_it_installs(
-        self, hook: str, skill: str
-    ):
+    def test_the_manifest_sits_beside_the_hook_it_installs(self, hook: str, skill: str):
         """The manifest is found by name from the hook symlink's own target,
         so its location is load-bearing rather than conventional."""
         manifest = _manifest_path(hook, skill)

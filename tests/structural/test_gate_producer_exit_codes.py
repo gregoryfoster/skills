@@ -43,7 +43,9 @@ SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 VARIANTS = ["shipping-work-python-click", "reviewing-code-python-click"]
 
 # A resolver that cannot run, versus one that runs and answers nothing.
-UV_BROKEN = '#!/bin/sh\necho "error: no interpreter found for the project" >&2\nexit 2\n'
+UV_BROKEN = (
+    '#!/bin/sh\necho "error: no interpreter found for the project" >&2\nexit 2\n'
+)
 UV_SILENT = "#!/bin/sh\nexit 0\n"
 
 
@@ -61,7 +63,8 @@ def project(tmp_path: Path) -> Path:
     (root / "fakebin").mkdir(parents=True)
     subprocess.run(
         ["git", "-C", str(root), "init", "-q"],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
         env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     )
     (root / "pyproject.toml").write_text(
@@ -80,7 +83,10 @@ def _fake_uv(project: Path, body: str) -> None:
 def _run(variant: str, script: str, project: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(SKILLS_DIR / variant / "scripts" / script)],
-        cwd=str(project), capture_output=True, text=True, timeout=60,
+        cwd=str(project),
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(project),
     )
 
@@ -152,7 +158,7 @@ class TestDetectTestDirsResolution:
         exited 1 and pre-ship.sh reported "detect-test-dirs.sh failed", a
         tooling error where the truth was "that directory is not there".
         """
-        _fake_uv(project, '#!/bin/sh\necho integration\n')
+        _fake_uv(project, "#!/bin/sh\necho integration\n")
         r = _run(variant, "detect-test-dirs.sh", project)
         assert r.returncode == 0, (
             f"{variant}: a testpaths entry that is not on disk was reported as "
@@ -174,7 +180,10 @@ class TestTheExitCodeIsPublished:
     ) -> None:
         r = subprocess.run(
             ["bash", str(SKILLS_DIR / variant / "scripts" / script), "--help"],
-            cwd=str(project), capture_output=True, text=True, timeout=30,
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            timeout=30,
             env=_clean_env(project),
         )
         assert r.returncode == 0, r.stderr
@@ -212,9 +221,10 @@ def _git(repo: Path, *args: str) -> None:
     """`GIT_*` scrubbed, and the identity passed with `-c` — a fixture that
     inherits either reaches out of tmp_path and writes the real repo (#189)."""
     subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
-         *args],
-        check=True, capture_output=True, timeout=60,
+        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        check=True,
+        capture_output=True,
+        timeout=60,
         env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
     )
 
@@ -244,7 +254,10 @@ def _break_git_status(worktree: Path) -> None:
 def _check_status(variant: str, worktree: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(SKILLS_DIR / variant / "scripts" / "check-status.sh")],
-        cwd=str(worktree), capture_output=True, text=True, timeout=60,
+        cwd=str(worktree),
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(worktree),
     )
 
@@ -291,9 +304,15 @@ class TestAnUnknownTreeIsNotACleanTree:
     def test_help_publishes_the_infra_code(self, variant: str, worktree: Path) -> None:
         """Three exit codes now, and the caller branches on all three."""
         r = subprocess.run(
-            ["bash", str(SKILLS_DIR / variant / "scripts" / "check-status.sh"),
-             "--help"],
-            cwd=str(worktree), capture_output=True, text=True, timeout=30,
+            [
+                "bash",
+                str(SKILLS_DIR / variant / "scripts" / "check-status.sh"),
+                "--help",
+            ],
+            cwd=str(worktree),
+            capture_output=True,
+            text=True,
+            timeout=30,
             env=_clean_env(worktree),
         )
         assert r.returncode == 0, r.stderr

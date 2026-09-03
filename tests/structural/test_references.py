@@ -185,7 +185,9 @@ class TestReferences:
         if not nested:
             pytest.skip("no nested references")
         reachable = reachable_references(skill)
-        orphans = [p.relative_to(ref_dir).as_posix() for p in nested if p not in reachable]
+        orphans = [
+            p.relative_to(ref_dir).as_posix() for p in nested if p not in reachable
+        ]
         assert not orphans, (
             f"{skill.dir_name}: references/ holds nested files nothing links to: "
             f"{orphans}. A nested reference must be linked from a reference doc "
@@ -252,10 +254,12 @@ class TestNestedReachabilityGate:
         directory = root / "journalling-skill"
         (directory / "references" / "log" / "2026").mkdir(parents=True)
         (directory / "SKILL.md").write_text(
-            '---\nname: journalling-skill\ndescription: fixture\n---\n\n' + skill_body
+            "---\nname: journalling-skill\ndescription: fixture\n---\n\n" + skill_body
         )
         (directory / "references" / "log.md").write_text(index_body)
-        (directory / "references" / "log" / "2026" / "entry.md").write_text("## Session\n")
+        (directory / "references" / "log" / "2026" / "entry.md").write_text(
+            "## Session\n"
+        )
         return load_skill(directory)
 
     def test_an_entry_reached_through_the_index_counts(self, tmp_path) -> None:
@@ -290,7 +294,9 @@ class TestNestedReachabilityGate:
         )
         assert reachable_references(skill) == set()
 
-    def test_a_link_inside_a_code_fence_does_not_confer_reachability(self, tmp_path) -> None:
+    def test_a_link_inside_a_code_fence_does_not_confer_reachability(
+        self, tmp_path
+    ) -> None:
         """A link nobody can click cannot be how a reader found the entry."""
         skill = self._tree(
             tmp_path,

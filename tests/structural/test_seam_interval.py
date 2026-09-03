@@ -49,8 +49,13 @@ def _clean_env() -> dict:
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(repo), *args], check=True,
-                          capture_output=True, text=True, env=_clean_env())
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
 
 
 def _write(repo: Path, rel: str, text: str) -> None:
@@ -70,8 +75,7 @@ NOW_POLICY = (
 )
 
 TOPOLOGY_DOC = (
-    "# Topology\n\n## Deployment Topology\n\n"
-    "The workers connect to the bus directly.\n"
+    "# Topology\n\n## Deployment Topology\n\nThe workers connect to the bus directly.\n"
 )
 
 # The seam: prose still sending a reader to a section that left the policy file.
@@ -105,16 +109,27 @@ def _curated_repo(tmp_path: Path, name: str = "interval") -> tuple[Path, str]:
 
 
 def _ledger(repo: Path, **fields) -> None:
-    row = {"ts": "2026-08-10", "repo": "r", "file": "AGENTS.md", "tokens": 100,
-           "tokens_exact": True, "actions": ["baseline:scheduled"]}
+    row = {
+        "ts": "2026-08-10",
+        "repo": "r",
+        "file": "AGENTS.md",
+        "tokens": 100,
+        "tokens_exact": True,
+        "actions": ["baseline:scheduled"],
+    }
     row.update(fields)
     _write(repo, LEDGER_REL, json.dumps(row, sort_keys=True) + "\n")
 
 
 def _sweep(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", str(SEAMS), *args], cwd=repo,
-                          capture_output=True, text=True, env=_clean_env(),
-                          timeout=60)
+    return subprocess.run(
+        ["bash", str(SEAMS), *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
+    )
 
 
 class TestTheRowCarriesTheMeasuredRepoCommit:
@@ -123,10 +138,17 @@ class TestTheRowCarriesTheMeasuredRepoCommit:
 
     def _row(self, repo: Path) -> dict:
         out = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --dry-run'],
-            capture_output=True, text=True, env=_clean_env(), timeout=90)
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --dry-run',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=90,
+        )
         assert out.stdout.strip(), out.stderr
         return json.loads(out.stdout)
 
@@ -171,10 +193,17 @@ class TestTheWeeklyCycleRoundTrips:
 
         # Week 1: measure and record, exactly as the cadence does.
         rec = subprocess.run(
-            ["bash", "-c",
-             f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
-             f' | bash "{RECORD}" --baseline=scheduled'],
-            capture_output=True, text=True, env=_clean_env(), timeout=90)
+            [
+                "bash",
+                "-c",
+                f'cd "{repo}" && bash "{MEASURE}" --no-write 2>/dev/null'
+                f' | bash "{RECORD}" --baseline=scheduled',
+            ],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=90,
+        )
         assert rec.returncode == 0, rec.stderr
         assert (repo / LEDGER_REL).read_text().strip(), rec.stderr
 
@@ -194,8 +223,7 @@ class TestTheWeeklyCycleRoundTrips:
 
 
 class TestBaseLedgerResolvesTheInterval:
-    def test_it_sweeps_from_the_commit_the_last_row_recorded(
-            self, tmp_path: Path):
+    def test_it_sweeps_from_the_commit_the_last_row_recorded(self, tmp_path: Path):
         """The whole point. Against HEAD this repo shows no change at all."""
         repo, measured = _curated_repo(tmp_path, "resolve")
         _ledger(repo, repo_commit=measured)
@@ -257,10 +285,14 @@ class TestBaseLedgerResolvesTheInterval:
         """The interval starts at the LAST measurement, not the first one."""
         repo, measured = _curated_repo(tmp_path, "newest")
         rows = [
-            json.dumps({"ts": "2026-01-01", "file": "AGENTS.md",
-                        "repo_commit": "0000000"}, sort_keys=True),
-            json.dumps({"ts": "2026-08-10", "file": "AGENTS.md",
-                        "repo_commit": measured}, sort_keys=True),
+            json.dumps(
+                {"ts": "2026-01-01", "file": "AGENTS.md", "repo_commit": "0000000"},
+                sort_keys=True,
+            ),
+            json.dumps(
+                {"ts": "2026-08-10", "file": "AGENTS.md", "repo_commit": measured},
+                sort_keys=True,
+            ),
         ]
         _write(repo, LEDGER_REL, "\n".join(rows) + "\n")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
@@ -272,10 +304,11 @@ class TestBaseLedgerResolvesTheInterval:
         repo_commit cannot name an interval, so it is not a predecessor."""
         repo, measured = _curated_repo(tmp_path, "predating")
         rows = [
-            json.dumps({"ts": "2026-08-01", "file": "AGENTS.md",
-                        "repo_commit": measured}, sort_keys=True),
-            json.dumps({"ts": "2026-08-10", "file": "AGENTS.md"},
-                       sort_keys=True),
+            json.dumps(
+                {"ts": "2026-08-01", "file": "AGENTS.md", "repo_commit": measured},
+                sort_keys=True,
+            ),
+            json.dumps({"ts": "2026-08-10", "file": "AGENTS.md"}, sort_keys=True),
         ]
         _write(repo, LEDGER_REL, "\n".join(rows) + "\n")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
@@ -283,10 +316,16 @@ class TestBaseLedgerResolvesTheInterval:
 
     def test_a_malformed_line_does_not_stop_the_sweep(self, tmp_path: Path):
         repo, measured = _curated_repo(tmp_path, "malformed")
-        _write(repo, LEDGER_REL,
-               "{not json\n" + json.dumps(
-                   {"ts": "2026-08-10", "file": "AGENTS.md",
-                    "repo_commit": measured}, sort_keys=True) + "\n")
+        _write(
+            repo,
+            LEDGER_REL,
+            "{not json\n"
+            + json.dumps(
+                {"ts": "2026-08-10", "file": "AGENTS.md", "repo_commit": measured},
+                sort_keys=True,
+            )
+            + "\n",
+        )
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
         assert f"seam_base: {measured}" in r.stdout, r.stdout
 
@@ -298,7 +337,8 @@ class TestTheIntervalHalfIsAFlow:
     contribution rather than take the latest row's value."""
 
     def test_an_unfixed_moved_title_seam_is_gone_the_following_week(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         repo, measured = _curated_repo(tmp_path, "pulse")
         _ledger(repo, repo_commit=measured)
         first = _sweep(repo, "--base-ledger", LEDGER_REL)
@@ -309,12 +349,15 @@ class TestTheIntervalHalfIsAFlow:
         _write(repo, "ignore.txt", "the week's unrelated work\n")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-qm", "a week of other work")
-        _ledger(repo, repo_commit=_git(
-            repo, "rev-parse", "--short", "HEAD~1").stdout.strip())
+        _ledger(
+            repo,
+            repo_commit=_git(repo, "rev-parse", "--short", "HEAD~1").stdout.strip(),
+        )
         second = _sweep(repo, "--base-ledger", LEDGER_REL)
         assert "moved-title" not in second.stdout, (
             "the dangler is still in the tree — the point is that the CLASS "
-            "measures a flow, so it stops reporting it:\n" + second.stdout)
+            "measures a flow, so it stops reporting it:\n" + second.stdout
+        )
         assert (repo / "docs" / "API.md").read_text() == STALE_REF
 
 
@@ -324,7 +367,8 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
     on the base-dependent classes."""
 
     def test_no_ledger_at_all_sweeps_the_standing_classes_and_says_so(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         repo, _ = _curated_repo(tmp_path, "noledger")
         r = _sweep(repo, "--base-ledger", LEDGER_REL)
         assert r.returncode == 0, r.stdout
@@ -333,7 +377,8 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
         assert "seam_interval: empty" in r.stdout, r.stdout
 
     def test_an_empty_ledger_reports_the_OTHER_no_predecessor_reason(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """A missing ledger is a setup error to fix today; a ledger whose rows
         carry no repo_commit is the expected one-week transition that fixes
         itself. Same base, same empty interval, different operator response."""
@@ -344,8 +389,7 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
         assert "no ledger at" not in r.stdout, r.stdout
         assert "seam_interval: empty" in r.stdout, r.stdout
 
-    def test_the_standing_classes_still_fire_on_a_first_run(
-            self, tmp_path: Path):
+    def test_the_standing_classes_still_fire_on_a_first_run(self, tmp_path: Path):
         """The base-dependent classes are empty; the sweep is not."""
         repo, _ = _curated_repo(tmp_path, "standing")
         _write(repo, "docs/OPS.md", "# Ops\n\nSee AGENTS.md for the rest.\n")
@@ -354,7 +398,8 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
         assert "back-reference" in r.stdout, r.stdout
 
     def test_a_commit_that_is_not_in_this_history_falls_back_loudly(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """A rewrite, or a shallow clone. Falling back silently would zero the
         class for good in exactly the repo whose history moved."""
         repo, _ = _curated_repo(tmp_path, "unreachable")
@@ -365,7 +410,9 @@ class TestTheFirstRunIsDefinedRatherThanFallenInto:
         # The WARN LINE is on stderr; stdout keeps a pointer to it, so a reader
         # who only has stdout is told where to look rather than left with an
         # unexplained empty interval. Assert the line, not the word.
-        assert not [ln for ln in r.stdout.splitlines() if ln.startswith("WARN")], r.stdout
+        assert not [ln for ln in r.stdout.splitlines() if ln.startswith("WARN")], (
+            r.stdout
+        )
         assert "see the WARN on stderr" in r.stdout, r.stdout
         assert "seam_base: HEAD" in r.stdout, r.stdout
         assert "seam_interval: empty" in r.stdout, r.stdout
@@ -390,15 +437,24 @@ class TestTheCadenceUsesIt:
         render_repo.mkdir()
         _git(render_repo, "init", "-q")
         out = subprocess.run(
-            ["bash", str(INSTALL_CADENCE), "--print"], capture_output=True,
-            text=True, cwd=str(render_repo), env=_clean_env(), timeout=30)
+            ["bash", str(INSTALL_CADENCE), "--print"],
+            capture_output=True,
+            text=True,
+            cwd=str(render_repo),
+            env=_clean_env(),
+            timeout=30,
+        )
         assert out.returncode == 0, out.stderr
         doc = yaml.safe_load(out.stdout)
-        return next(s["run"] for s in doc["jobs"]["measure"]["steps"]
-                    if s.get("name") == "Sweep the seams and the counts")
+        return next(
+            s["run"]
+            for s in doc["jobs"]["measure"]["steps"]
+            if s.get("name") == "Sweep the seams and the counts"
+        )
 
-    def _run_step(self, tmp_path: Path, repo: Path) -> tuple[
-            subprocess.CompletedProcess, str]:
+    def _run_step(
+        self, tmp_path: Path, repo: Path
+    ) -> tuple[subprocess.CompletedProcess, str]:
         env = _clean_env()
         env["SKILL_SCRIPTS"] = str(SCRIPTS)
         gh_env = tmp_path / "gh_env"
@@ -406,11 +462,15 @@ class TestTheCadenceUsesIt:
         env["GITHUB_ENV"] = str(gh_env)
         r = subprocess.run(
             ["bash", "-e", "-c", self._sweep_step(tmp_path)],
-            capture_output=True, text=True, cwd=str(repo), env=env, timeout=90)
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env,
+            timeout=90,
+        )
         return r, gh_env.read_text()
 
-    def test_the_scheduled_sweep_reports_a_moved_title_seam(
-            self, tmp_path: Path):
+    def test_the_scheduled_sweep_reports_a_moved_title_seam(self, tmp_path: Path):
         """The defect, at the layer it actually shipped in. A curation that
         relocated a section and left a dangler behind produced NO moved-title
         contribution to any weekly row, because by the next run the relocation
@@ -422,8 +482,7 @@ class TestTheCadenceUsesIt:
         assert "moved-title" in r.stdout, r.stdout
         assert "SEAMS=1" in written, written
 
-    def test_the_first_scheduled_run_still_records_a_count(
-            self, tmp_path: Path):
+    def test_the_first_scheduled_run_still_records_a_count(self, tmp_path: Path):
         """No ledger yet is the state every adopting repo starts in, and the
         step must still hand a number to the recorder."""
         repo, _ = _curated_repo(tmp_path, "wffirst")

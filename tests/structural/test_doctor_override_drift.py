@@ -61,16 +61,24 @@ def _clean_env() -> dict:
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", *args], cwd=str(repo), check=True,
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
 def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(DOCTOR), "--no-preflight", *args],
-        cwd=str(repo), capture_output=True, text=True,
-        env=_clean_env(), timeout=120,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=120,
     )
 
 
@@ -129,8 +137,7 @@ def _override(
     skill = consumer / "skills" / name
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
-        _skill_md(name, version=version, overrides=overrides,
-                  synced_from=synced_from)
+        _skill_md(name, version=version, overrides=overrides, synced_from=synced_from)
     )
     return skill
 
@@ -225,30 +232,34 @@ class TestSyncedFromFallbackForUnversionedVendors:
         _git(vendor, "add", "-A")
         _git(vendor, "commit", "-qm", "vendor at sync time")
         sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=str(vendor),
-            capture_output=True, text=True, check=True, env=_clean_env(),
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(vendor),
+            capture_output=True,
+            text=True,
+            check=True,
+            env=_clean_env(),
             timeout=60,
         ).stdout.strip()
         return vendor, sha
 
     def test_unchanged_since_the_recorded_commit_is_silent(self, consumer: Path):
         _, sha = self._vendor_git(consumer, "brainstorming")
-        _override(consumer, "brainstorming", None,
-                  synced_from=f"{VENDOR_REPO} v6.3.0 ({sha})")
+        _override(
+            consumer, "brainstorming", None, synced_from=f"{VENDOR_REPO} v6.3.0 ({sha})"
+        )
         result = _doctor(consumer)
         assert DRIFT_MARKER not in result.stderr, result.stderr
         assert UNASSESSED_MARKER not in result.stderr, result.stderr
 
-    def test_an_upstream_change_to_the_skill_is_warned_about(
-        self, consumer: Path
-    ):
+    def test_an_upstream_change_to_the_skill_is_warned_about(self, consumer: Path):
         vendor, sha = self._vendor_git(consumer, "brainstorming")
         skill_md = vendor / "skills" / "brainstorming" / "SKILL.md"
         skill_md.write_text(skill_md.read_text() + "\nA restructure.\n")
         _git(vendor, "add", "-A")
         _git(vendor, "commit", "-qm", "restructure the skill")
-        _override(consumer, "brainstorming", None,
-                  synced_from=f"{VENDOR_REPO} v6.3.0 ({sha})")
+        _override(
+            consumer, "brainstorming", None, synced_from=f"{VENDOR_REPO} v6.3.0 ({sha})"
+        )
         result = _doctor(consumer)
         assert DRIFT_MARKER in result.stderr, result.stderr
         assert "skills/brainstorming" in result.stderr, result.stderr
@@ -261,8 +272,9 @@ class TestSyncedFromFallbackForUnversionedVendors:
         _vendor_skill(consumer, "unrelated", None)
         _git(vendor, "add", "-A")
         _git(vendor, "commit", "-qm", "an unrelated skill changes")
-        _override(consumer, "brainstorming", None,
-                  synced_from=f"{VENDOR_REPO} v6.3.0 ({sha})")
+        _override(
+            consumer, "brainstorming", None, synced_from=f"{VENDOR_REPO} v6.3.0 ({sha})"
+        )
         result = _doctor(consumer)
         assert DRIFT_MARKER not in result.stderr, result.stderr
 
@@ -285,8 +297,12 @@ class TestSyncedFromFallbackForUnversionedVendors:
         """A shallow vendor clone, or a hash typo: the comparison cannot run,
         and saying nothing would report the un-assessable override as clean."""
         self._vendor_git(consumer, "brainstorming")
-        _override(consumer, "brainstorming", None,
-                  synced_from=f"{VENDOR_REPO} v6.3.0 (feedface)")
+        _override(
+            consumer,
+            "brainstorming",
+            None,
+            synced_from=f"{VENDOR_REPO} v6.3.0 (feedface)",
+        )
         result = _doctor(consumer)
         assert UNASSESSED_MARKER in result.stderr, result.stderr
 

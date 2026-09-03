@@ -69,7 +69,10 @@ class TestVariantFamilyDeclaration:
         assert not undeclared, (
             "These skill directories look like `<baseline>-<stack>` variants but are "
             "not declared in tests/utils/skill_families.VARIANT_FAMILIES:\n"
-            + "\n".join(f"  {name} -> looks like a variant of {base}" for name, base in undeclared)
+            + "\n".join(
+                f"  {name} -> looks like a variant of {base}"
+                for name, base in undeclared
+            )
             + "\n\nDeclare each as (baseline, variant, stack_keyword) so it inherits the "
             "family's drift assertions and trigger xfails — or, if it is genuinely not a "
             "variant, add it to NOT_VARIANTS with the reason."

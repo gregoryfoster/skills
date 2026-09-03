@@ -26,7 +26,7 @@ is #242's job. A silent revert, though, now fails on every commit.
 import pytest
 
 from tests.utils.skill_families import BASELINES, VARIANT_FAMILIES
-from tests.utils.skill_loader import load_skill, SKILLS_DIR
+from tests.utils.skill_loader import SKILLS_DIR, load_skill
 
 # Substrings that constitute stating the fallback role. Matching on meaning-
 # bearing phrases rather than one exact sentence lets the wording be reworded

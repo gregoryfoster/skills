@@ -146,7 +146,16 @@ def filter_spec(spec: dict[str, Any], keep_prefix: str) -> dict[str, Any]:
             continue
         _collect_refs(path_body, initial_refs)
         for method_key, method_body in path_body.items():
-            if method_key in {"get", "post", "put", "delete", "patch", "options", "head", "trace"}:
+            if method_key in {
+                "get",
+                "post",
+                "put",
+                "delete",
+                "patch",
+                "options",
+                "head",
+                "trace",
+            }:
                 if isinstance(method_body, dict):
                     _collect_security_scheme_names(method_body, security_scheme_names)
 
@@ -163,7 +172,9 @@ def filter_spec(spec: dict[str, Any], keep_prefix: str) -> dict[str, Any]:
         section_body = components.get(section)
         if not isinstance(section_body, dict):
             continue
-        kept = {name: section_body[name] for name in sorted(names) if name in section_body}
+        kept = {
+            name: section_body[name] for name in sorted(names) if name in section_body
+        }
         if kept:
             new_components[section] = kept
 
@@ -179,7 +190,9 @@ def filter_spec(spec: dict[str, Any], keep_prefix: str) -> dict[str, Any]:
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("input", type=Path, help="path to raw OpenAPI spec JSON")
     parser.add_argument("output", type=Path, help="path to write filtered spec JSON")
     parser.add_argument(

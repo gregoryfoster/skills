@@ -59,7 +59,11 @@ def exact_env(tmp_path: Path) -> dict:
 def _run(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(MEASURE), *args],
-        capture_output=True, text=True, cwd=str(repo), env=env, timeout=120,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=env,
+        timeout=120,
     )
 
 
@@ -161,6 +165,7 @@ class TestAScopedRunDoesNotCalibrate:
         file prices from its anchor; one over an unanchored file prices from
         the repo ratio the scoped exact run left in place."""
         import json
+
         repo = _calibrated(tmp_path, exact_env)
         _ok(repo, exact_env, "--exact", *SCOPE)
         env = _clean_env()
@@ -187,9 +192,7 @@ class TestAScopedRunDoesNotCalibrate:
 
 
 class TestCalibrateIsTheDecision:
-    def test_it_persists_both_from_a_scoped_run(
-        self, tmp_path: Path, exact_env: dict
-    ):
+    def test_it_persists_both_from_a_scoped_run(self, tmp_path: Path, exact_env: dict):
         repo = _calibrated(tmp_path, exact_env)
         _ok(repo, exact_env, "--exact", "--calibrate", *SCOPE)
         assert (repo / RATIO).read_text().strip() == "2.00"
@@ -248,8 +251,9 @@ class TestCalibrateIsTheDecision:
         assert "--calibrate needs --exact" not in r.stderr
 
     def test_the_help_documents_it(self):
-        r = subprocess.run(["bash", str(MEASURE), "--help"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--help"], capture_output=True, text=True, timeout=30
+        )
         assert r.returncode == 0
         assert "--calibrate" in r.stdout
         assert "#263" in r.stdout
@@ -262,7 +266,10 @@ class TestAWholeSurfaceRunStillCalibratesAndSaysSo:
         assert (repo / RATIO).read_text().strip() == "3.00"
         assert set(_rows(repo)) == {"AGENTS.md", "docs/prose.md"}
         assert "wrote .skills/context-token-ratio: 3.00 (was (none))" in r.stderr
-        assert "wrote .skills/context-token-counts: 2 of 2 counted file(s) anchored" in r.stderr
+        assert (
+            "wrote .skills/context-token-counts: 2 of 2 counted file(s) anchored"
+            in r.stderr
+        )
 
     def test_a_rewrite_names_the_figure_it_replaced(
         self, tmp_path: Path, exact_env: dict

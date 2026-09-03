@@ -83,7 +83,9 @@ def _clean_env() -> dict:
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-C", str(repo), *args],
-        check=True, capture_output=True, env=_clean_env(),
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
     )
 
 
@@ -103,8 +105,11 @@ def _measure(repo: Path) -> subprocess.CompletedProcess:
     # --no-write, always: the real invocation rewrites .skills/context-token-*.
     return subprocess.run(
         ["bash", str(MEASURE), "--no-write"],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=60,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -129,7 +134,8 @@ def _stray_bash_lines(stderr: str) -> list[str]:
     the cause inside an ERROR/WARN. The #157 rule, applied to this file's
     sites."""
     return [
-        line for line in stderr.splitlines()
+        line
+        for line in stderr.splitlines()
         if re.search(r"measure-context\.sh: line \d+:", line)
         and not line.startswith(("ERROR", "WARN", "INFO"))
     ]
@@ -186,7 +192,8 @@ class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
     def test_awk_does_not_leak_its_own_error(self, tmp_path: Path):
         result = _measure(self._repo(tmp_path))
         leaked = [
-            line for line in result.stderr.splitlines()
+            line
+            for line in result.stderr.splitlines()
             if line.startswith("awk:") or line.startswith(" source line number")
         ]
         assert leaked == [], (
@@ -199,7 +206,8 @@ class TestSlugsOfDoesNotSpeakOverItsOwnDiagnosis:
         is quoted inside the diagnosis rather than dropped."""
         result = _measure(self._repo(tmp_path))
         warn = [
-            line for line in result.stderr.splitlines()
+            line
+            for line in result.stderr.splitlines()
             if line.startswith("WARN could not read headings from docs/D.md")
         ]
         assert len(warn) == 1, result.stderr

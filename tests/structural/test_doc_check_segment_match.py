@@ -123,7 +123,9 @@ class TestSegmentMatching:
         table honest here rather than discovering it the next time someone
         trusts a green parametrized case."""
         nested = NESTED_HITS[variant]
-        already = [e for e in _default_entries(variant) if _root_anchored_hit(nested, e)]
+        already = [
+            e for e in _default_entries(variant) if _root_anchored_hit(nested, e)
+        ]
         assert not already, (
             f"NESTED_HITS[{variant}] = {nested} is matched root-anchored by "
             f"{already}, so the case passes against the pre-#252 script and "
@@ -149,7 +151,9 @@ class TestSegmentMatching:
         """README.md is a filename entry in all four; a package README is still
         a README."""
         repo = make_repo(
-            tmp_path, ["README.md", "packages/co-core/README.md"], ["packages/co-core/README.md"]
+            tmp_path,
+            ["README.md", "packages/co-core/README.md"],
+            ["packages/co-core/README.md"],
         )
         result = run_doc_check(repo, variant)
         assert result.returncode == 1, (
@@ -231,7 +235,9 @@ class TestDeadEntryReporting:
         """Some entries live → the result is trustworthy, but say which entries
         could not have contributed to it."""
         repo = make_repo(
-            tmp_path, ["README.md", "pyproject.toml", "docs/notes.md"], ["docs/other.md"]
+            tmp_path,
+            ["README.md", "pyproject.toml", "docs/notes.md"],
+            ["docs/other.md"],
         )
         result = run_doc_check(repo)
         assert result.returncode == 0, (

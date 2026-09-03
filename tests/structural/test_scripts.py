@@ -28,11 +28,7 @@ from tests.utils.skill_loader import Skill, all_skills
 REPO_ROOT = Path(__file__).parent.parent.parent
 
 # Collect all (skill, script_path) pairs for parametrization
-_all_scripts = [
-    (skill, script)
-    for skill in all_skills()
-    for script in skill.scripts()
-]
+_all_scripts = [(skill, script) for skill in all_skills() for script in skill.scripts()]
 
 
 # --- shellcheck gate (#90) -------------------------------------------------
@@ -83,7 +79,9 @@ _SHELLCHECK_REQUIRED = os.environ.get("SHELLCHECK_REQUIRED", "") not in ("", "0"
 
 # `shellcheck --version` prints a `version: 0.8.0` line; the patch component is
 # optional so a hypothetical `0.9` still parses rather than reading as unknown.
-_SHELLCHECK_VERSION_RE = re.compile(r"^version:\s*v?(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE)
+_SHELLCHECK_VERSION_RE = re.compile(
+    r"^version:\s*v?(\d+)\.(\d+)(?:\.(\d+))?", re.MULTILINE
+)
 
 # A justified suppression pairs the directive with a reason on the line above.
 _DISABLE_RE = re.compile(r"^\s*#\s*shellcheck\s+disable=", re.IGNORECASE)
@@ -201,7 +199,9 @@ class TestShellcheck:
         if problem is not None:
             warnings.warn(problem, UserWarning, stacklevel=2)
         _require_shellcheck()
-        assert _all_shell_scripts_list, "no shell scripts discovered — check SHELL_SCRIPT_GLOBS"
+        assert _all_shell_scripts_list, (
+            "no shell scripts discovered — check SHELL_SCRIPT_GLOBS"
+        )
 
     def test_shellcheck_clean(self, shell_script):
         binary = _require_shellcheck()
@@ -301,7 +301,9 @@ class TestShellcheckVersionFloor:
 
     @pytest.mark.parametrize("version", ["0.7.0", "0.8.0", "0.10.1"])
     def test_at_or_above_floor_runs(self, tmp_path, monkeypatch, version):
-        binary = _shellcheck_stub(tmp_path, _FAKE_VERSION_OUTPUT.format(version=version))
+        binary = _shellcheck_stub(
+            tmp_path, _FAKE_VERSION_OUTPUT.format(version=version)
+        )
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_BIN", binary)
         monkeypatch.setattr(f"{__name__}._SHELLCHECK_REQUIRED", False)
         assert _require_shellcheck() == binary
@@ -325,7 +327,9 @@ class TestShellcheckVersionFloor:
         with pytest.raises(pytest.fail.Exception):
             _require_shellcheck()
 
-    def test_version_probe_that_errors_is_treated_as_unknown(self, tmp_path, monkeypatch):
+    def test_version_probe_that_errors_is_treated_as_unknown(
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.setattr(
             f"{__name__}._SHELLCHECK_BIN",
             _shellcheck_stub(tmp_path, "", exit_code=3),
@@ -391,9 +395,7 @@ def script_pair(request):
 class TestScriptProperties:
     def test_is_executable(self, script_pair):
         _, script = script_pair
-        assert os.access(script, os.X_OK), (
-            f"{script} must be executable (chmod +x)"
-        )
+        assert os.access(script, os.X_OK), f"{script} must be executable (chmod +x)"
 
     def test_has_pipefail(self, script_pair):
         _, script = script_pair

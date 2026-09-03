@@ -100,8 +100,14 @@ def _add_submodule(primary: Path, tmp_path: Path, name: str = "vendor") -> Path:
     _git(sub, "add", "s.txt")
     _git(sub, "commit", "-q", "-m", "sub initial")
     _git(
-        primary, "-c", "protocol.file.allow=always",
-        "submodule", "add", "-q", str(sub), name,
+        primary,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(sub),
+        name,
     )
     return primary / name
 
@@ -135,7 +141,9 @@ def linked(primary: Path) -> Path:
 class TestPlansDirDoesNotNest:
     """resolve-plans-dir.sh must name the project, not the current checkout."""
 
-    def test_resolve_from_linked_worktree_equals_primary(self, primary: Path, linked: Path):
+    def test_resolve_from_linked_worktree_equals_primary(
+        self, primary: Path, linked: Path
+    ):
         from_primary = _run(RESOLVE, cwd=primary)
         from_linked = _run(RESOLVE, cwd=linked)
         assert from_primary.returncode == 0 and from_linked.returncode == 0
@@ -177,7 +185,9 @@ class TestPlansDirDoesNotNest:
             f"before its parent is taken. Got {printed!r}"
         )
 
-    def test_config_file_is_read_from_the_primary_checkout(self, primary: Path, linked: Path):
+    def test_config_file_is_read_from_the_primary_checkout(
+        self, primary: Path, linked: Path
+    ):
         """`.skills/plans_dir` is a machine-local knob, so it is untracked.
 
         An untracked file in the primary checkout does not exist in a linked
@@ -201,13 +211,19 @@ class TestPlansDirDoesNotNest:
         env = _clean_env()
         env["PLANS_DIR"] = "/tmp/override-plans"
         r = subprocess.run(
-            ["bash", str(RESOLVE)], capture_output=True, text=True, cwd=str(linked), env=env
+            ["bash", str(RESOLVE)],
+            capture_output=True,
+            text=True,
+            cwd=str(linked),
+            env=env,
         )
         assert r.stdout.strip() == "/tmp/override-plans", (
             "PLANS_DIR is first in the resolution order and must stay first"
         )
 
-    def test_submodule_resolves_to_the_submodule_root(self, primary: Path, tmp_path: Path):
+    def test_submodule_resolves_to_the_submodule_root(
+        self, primary: Path, tmp_path: Path
+    ):
         """Trap two: --git-common-dir's parent is NOT a work tree in a submodule.
 
         There it is `<super>/.git/modules`, and taking it unconditionally would

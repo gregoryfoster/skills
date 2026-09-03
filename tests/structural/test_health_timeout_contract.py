@@ -57,8 +57,12 @@ requires_node = pytest.mark.skipif(
 
 def _clean_env(**extra: str) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("SOCRATICODE_DRIVER", "SOCRATICODE_PROBE_FILE",
-              "HEALTH_TIMEOUT_MS", "SOCRATICODE_HEALTH_FORCE"):
+    for k in (
+        "SOCRATICODE_DRIVER",
+        "SOCRATICODE_PROBE_FILE",
+        "HEALTH_TIMEOUT_MS",
+        "SOCRATICODE_HEALTH_FORCE",
+    ):
         env.pop(k, None)
     env.update(extra)
     return env
@@ -66,7 +70,10 @@ def _clean_env(**extra: str) -> dict:
 
 def _help(*cmd: str) -> str:
     result = subprocess.run(
-        [*cmd, "--help"], capture_output=True, text=True, timeout=60,
+        [*cmd, "--help"],
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(),
     )
     assert result.returncode == 0, f"{cmd} --help exited {result.returncode}"
@@ -80,7 +87,8 @@ class TestTheCodeMeansWhatTheHelpSays:
         src = HOOK.read_text()
         assert re.search(
             r'^export HEALTH_TIMEOUT_MS="\$\{HEALTH_TIMEOUT_MS:-%d\}"$' % HOOK_MS,
-            src, re.M,
+            src,
+            re.M,
         ), (
             f"socraticode-health.sh no longer exports {HOOK_MS} as the default "
             "ceiling. If that is deliberate, update HOOK_MS here and both usage "
@@ -91,7 +99,8 @@ class TestTheCodeMeansWhatTheHelpSays:
     def test_the_driver_falls_back_to_the_number_it_advertises(self) -> None:
         src = DRIVER.read_text()
         assert re.search(
-            r"process\.env\.HEALTH_TIMEOUT_MS \|\| %d\b" % DIRECT_MS, src,
+            r"process\.env\.HEALTH_TIMEOUT_MS \|\| %d\b" % DIRECT_MS,
+            src,
         ), (
             f"mcp-driver.mjs no longer falls back to {DIRECT_MS}. If that is "
             "deliberate, update DIRECT_MS here and both usage blocks."
@@ -146,13 +155,15 @@ class TestEachUsageBlockNamesBothNumbers:
         """
         text = _help("node", str(DRIVER))
         line = next(
-            (ln for ln in text.splitlines() if "HEALTH_TIMEOUT_MS" in ln), None,
+            (ln for ln in text.splitlines() if "HEALTH_TIMEOUT_MS" in ln),
+            None,
         )
         assert line is not None, "the driver's help no longer documents the knob"
-        para = text[text.index(line):]
-        para = para[:para.index("\n\n")] if "\n\n" in para else para
+        para = text[text.index(line) :]
+        para = para[: para.index("\n\n")] if "\n\n" in para else para
         assert not re.search(
-            r"It runs from a SessionStart hook, so it must not hang", para,
+            r"It runs from a SessionStart hook, so it must not hang",
+            para,
         ), (
             "the 120000 default is again justified by the SessionStart hook, "
             "which overrides it to 60000 and is no longer the only caller (#177)"
@@ -166,8 +177,12 @@ class TestTheOverrideActuallyReachesTheDriver:
     def test_hook_hands_the_driver_60000(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
         repo.mkdir()
-        subprocess.run(["git", "-C", str(repo), "init", "-q"],
-                       check=True, capture_output=True, env=_clean_env())
+        subprocess.run(
+            ["git", "-C", str(repo), "init", "-q"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
         (repo / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
 
         out = tmp_path / "seen.txt"
@@ -179,7 +194,10 @@ class TestTheOverrideActuallyReachesTheDriver:
             "process.exit(0);\n"
         )
         subprocess.run(
-            ["bash", str(HOOK)], cwd=str(repo), capture_output=True, text=True,
+            ["bash", str(HOOK)],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
             timeout=60,
             env=_clean_env(SOCRATICODE_DRIVER=str(stub), HEALTH_ENV_OUT=str(out)),
         )
@@ -190,8 +208,12 @@ class TestTheOverrideActuallyReachesTheDriver:
         """`:-` not `=`: the help promises an operator can widen the ceiling."""
         repo = tmp_path / "repo"
         repo.mkdir()
-        subprocess.run(["git", "-C", str(repo), "init", "-q"],
-                       check=True, capture_output=True, env=_clean_env())
+        subprocess.run(
+            ["git", "-C", str(repo), "init", "-q"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
         (repo / ".socraticodecontextartifacts.json").write_text('{"artifacts": []}')
 
         out = tmp_path / "seen.txt"
@@ -203,9 +225,15 @@ class TestTheOverrideActuallyReachesTheDriver:
             "process.exit(0);\n"
         )
         subprocess.run(
-            ["bash", str(HOOK)], cwd=str(repo), capture_output=True, text=True,
+            ["bash", str(HOOK)],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
             timeout=60,
-            env=_clean_env(SOCRATICODE_DRIVER=str(stub), HEALTH_ENV_OUT=str(out),
-                           HEALTH_TIMEOUT_MS="300000"),
+            env=_clean_env(
+                SOCRATICODE_DRIVER=str(stub),
+                HEALTH_ENV_OUT=str(out),
+                HEALTH_TIMEOUT_MS="300000",
+            ),
         )
         assert out.read_text() == "300000"

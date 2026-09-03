@@ -23,7 +23,9 @@ class TestRequiredTopLevelFields:
         assert "name" in skill.frontmatter, "Missing required field: name"
 
     def test_name_is_string(self, skill):
-        assert isinstance(skill.name, str) and skill.name, "name must be a non-empty string"
+        assert isinstance(skill.name, str) and skill.name, (
+            "name must be a non-empty string"
+        )
 
     def test_description_present(self, skill):
         assert "description" in skill.frontmatter, "Missing required field: description"
@@ -39,7 +41,9 @@ class TestRequiredTopLevelFields:
         )
 
     def test_compatibility_present(self, skill):
-        assert "compatibility" in skill.frontmatter, "Missing required field: compatibility"
+        assert "compatibility" in skill.frontmatter, (
+            "Missing required field: compatibility"
+        )
 
     def test_compatibility_is_string(self, skill):
         assert isinstance(skill.compatibility, str) and skill.compatibility, (
@@ -55,7 +59,9 @@ class TestMetadataBlock:
         assert isinstance(skill.skill_metadata, dict), "metadata must be a mapping"
 
     def test_author_present(self, skill):
-        assert skill.skill_metadata.get("author"), "metadata.author must be present and non-empty"
+        assert skill.skill_metadata.get("author"), (
+            "metadata.author must be present and non-empty"
+        )
 
     def test_version_present(self, skill):
         assert skill.skill_metadata.get("version") is not None, (

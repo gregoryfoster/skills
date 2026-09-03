@@ -132,7 +132,8 @@ class TestTheEvictionRule:
 
     def test_a_self_curation_row_never_carries_a_delete_tag(self):
         offenders = [
-            r for r in self_tagged(ledger_rows())
+            r
+            for r in self_tagged(ledger_rows())
             if any(a.startswith("delete:") for a in (r.get("actions") or []))
         ]
         assert not offenders, (
@@ -147,8 +148,7 @@ class TestTheEvictionRule:
 
     def test_the_tag_is_scoped_to_the_skills_own_surface(self):
         offenders = [
-            r for r in self_tagged(ledger_rows())
-            if r.get("file") != SELF_SURFACE
+            r for r in self_tagged(ledger_rows()) if r.get("file") != SELF_SURFACE
         ]
         assert not offenders, (
             f"{SELF_TAG} rows recorded against files other than "
@@ -171,18 +171,29 @@ class TestTheClockPredicate:
     """
 
     def test_a_curation_of_the_surface_resets_the_clock(self):
-        rows = [{"file": SELF_SURFACE, "actions": [SELF_TAG, "prune:Phase 1"],
-                 "ts": "2026-09-01"}]
+        rows = [
+            {
+                "file": SELF_SURFACE,
+                "actions": [SELF_TAG, "prune:Phase 1"],
+                "ts": "2026-09-01",
+            }
+        ]
         assert surface_curations(rows) == rows
 
     def test_an_untagged_curation_of_the_surface_also_resets_it(self):
-        rows = [{"file": SELF_SURFACE, "actions": ["demote:Phase 8"],
-                 "ts": "2026-09-01"}]
+        rows = [
+            {"file": SELF_SURFACE, "actions": ["demote:Phase 8"], "ts": "2026-09-01"}
+        ]
         assert surface_curations(rows) == rows
 
     def test_a_baseline_row_does_not(self):
-        rows = [{"file": SELF_SURFACE, "actions": ["baseline:pre-curation"],
-                 "ts": "2026-09-01"}]
+        rows = [
+            {
+                "file": SELF_SURFACE,
+                "actions": ["baseline:pre-curation"],
+                "ts": "2026-09-01",
+            }
+        ]
         assert surface_curations(rows) == []
 
     def test_an_untagged_row_does_not(self):
@@ -192,6 +203,5 @@ class TestTheClockPredicate:
         assert surface_curations(rows) == []
 
     def test_another_files_curation_does_not(self):
-        rows = [{"file": "AGENTS.md", "actions": ["demote:Layout"],
-                 "ts": "2026-09-01"}]
+        rows = [{"file": "AGENTS.md", "actions": ["demote:Layout"], "ts": "2026-09-01"}]
         assert surface_curations(rows) == []

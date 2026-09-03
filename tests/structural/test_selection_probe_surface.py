@@ -105,9 +105,7 @@ class TestTheMatrixCoversTheDeclaredFamilies:
     @pytest.mark.parametrize("baseline", BASELINES)
     def test_every_baseline_gets_a_no_context_scenario(self, baseline):
         """The bare trigger with no stack evidence must resolve to the baseline."""
-        matching = [
-            s for s in _SCENARIOS if s.family == baseline and s.stack == "none"
-        ]
+        matching = [s for s in _SCENARIOS if s.family == baseline and s.stack == "none"]
         assert len(matching) == 1
         assert matching[0].expected == baseline
         assert matching[0].context == ""
@@ -116,9 +114,7 @@ class TestTheMatrixCoversTheDeclaredFamilies:
     def test_every_baseline_gets_an_uncovered_stack_scenario(self, baseline):
         """#240's assertion: an uncovered stack falls back to the baseline."""
         matching = [
-            s
-            for s in _SCENARIOS
-            if s.family == baseline and s.stack == UNCOVERED_STACK
+            s for s in _SCENARIOS if s.family == baseline and s.stack == UNCOVERED_STACK
         ]
         assert len(matching) == 1, (
             f"{baseline} has no uncovered-stack scenario — the case #240 exists for"
@@ -176,11 +172,7 @@ class TestTheContextsDoNotGiveTheAnswerAway:
 
     @pytest.mark.parametrize(
         "scenario",
-        [
-            s
-            for s in _SCENARIOS
-            if s.context and s.stack != UNCOVERED_STACK
-        ],
+        [s for s in _SCENARIOS if s.context and s.stack != UNCOVERED_STACK],
         ids=lambda s: s.id,
     )
     def test_context_does_not_name_its_own_stack_undeclared(self, scenario):
@@ -210,10 +202,10 @@ class TestTheContextsDoNotGiveTheAnswerAway:
         nobody re-examined.
         """
         matching = [s for s in _SCENARIOS if s.stack == stack]
-        assert matching, f"{stack!r} is declared in LABEL_NAMING_CONTEXTS but has no scenario"
-        assert any(
-            stack.lower() in s.context.lower() for s in matching
-        ), (
+        assert matching, (
+            f"{stack!r} is declared in LABEL_NAMING_CONTEXTS but has no scenario"
+        )
+        assert any(stack.lower() in s.context.lower() for s in matching), (
             f"{stack!r} no longer names itself in its context, so its "
             "LABEL_NAMING_CONTEXTS exception is stale — remove it."
         )
@@ -226,11 +218,7 @@ class TestTheContextsDoNotGiveTheAnswerAway:
     def test_the_uncovered_context_names_no_covered_stack(self, scenario):
         """Any covered-stack keyword leaking in would hand the model a variant."""
         lowered = scenario.context.lower()
-        leaked = [
-            stack
-            for _, _, stack in VARIANT_FAMILIES
-            if stack.lower() in lowered
-        ]
+        leaked = [stack for _, _, stack in VARIANT_FAMILIES if stack.lower() in lowered]
         assert not leaked, (
             f"{scenario.id}'s uncovered-stack context mentions {leaked}, which a "
             "variant covers — the scenario would no longer be testing fallback."

@@ -51,16 +51,24 @@ def _clean_env() -> dict:
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", *args], cwd=str(repo), check=True,
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
 def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(DOCTOR), "--no-preflight", *args],
-        cwd=str(repo), capture_output=True, text=True,
-        env=_clean_env(), timeout=120,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=120,
     )
 
 
@@ -123,14 +131,11 @@ class TestHealthyNestedShapesAreSilent:
     def test_a_regular_nested_script_is_not_scanned(self, consumer: Path):
         """The #105 wrapper is a real file and stays one — it is the part of
         the override that is genuinely local."""
-        (consumer / "skills" / "shipping-work" / "scripts"
-         / "check-status.sh").unlink()
+        (consumer / "skills" / "shipping-work" / "scripts" / "check-status.sh").unlink()
         result = _doctor(consumer, "--check-only")
         assert result.returncode == 0, result.stdout + result.stderr
 
-    def test_the_scan_does_not_dive_through_a_symlinked_skill(
-        self, consumer: Path
-    ):
+    def test_the_scan_does_not_dive_through_a_symlinked_skill(self, consumer: Path):
         """A top-level symlinked skill is the healthy vendor chain; whatever
         its target holds internally is upstream's business, and reporting a
         vendor-internal path as consumer damage hands the operator a repair

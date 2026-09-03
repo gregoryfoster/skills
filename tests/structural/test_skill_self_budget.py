@@ -183,16 +183,12 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 MEASURE = SKILLS_DIR / "curating-context" / "scripts" / "measure-context.sh"
-INSTALL_CADENCE = (
-    SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
-)
+INSTALL_CADENCE = SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 CADENCE_WORKFLOW = WORKFLOWS / "context-cadence.yml"
 EXACT_WORKFLOW = WORKFLOWS / "skill-budget-exact.yml"
 
-SKILLS = sorted(
-    p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").is_file()
-)
+SKILLS = sorted(p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").is_file())
 
 # The knobs every surface reads. Named here so a failure message can say which
 # file to change if the answer is "raise the budget" rather than "cut the file".
@@ -217,14 +213,14 @@ def anchored_paths() -> set[str]:
     return {
         line.split()[2]
         for line in COUNTS_KNOB.read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-        and len(line.split()) >= 3
+        if line.strip() and not line.lstrip().startswith("#") and len(line.split()) >= 3
     }
 
 
 def skill_md_is_anchored(skill: str) -> bool:
     """Is this skill's SKILL.md priced from its own exact count offline?"""
     return f"skills/{skill}/SKILL.md" in anchored_paths()
+
 
 # The standard every SKILL.md is held to, under BOTH readings. Deliberately a
 # separate constant from `.skills/context-budget` even though both read 6,000:
@@ -402,6 +398,7 @@ def _doc_over(doc: dict, doc_budget: int) -> bool:
         return False
     return doc["tokens"] > ceiling
 
+
 # How far the offline estimate may stray from count_tokens before someone has to
 # look. TWO bands, because the surface is two populations and #159 found that one
 # number cannot honestly describe both.
@@ -467,10 +464,9 @@ def _stale_doc_exceptions(measured: dict[str, int], doc_budget: int) -> list[str
     """
     unambiguous = doc_budget * (1 + DOC_ESTIMATE_BAND[0])
     return [
-        path for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
-        if ceiling is not None
-        and path in measured
-        and measured[path] <= unambiguous
+        path
+        for path, ceiling in DOC_BUDGET_EXCEPTIONS.items()
+        if ceiling is not None and path in measured and measured[path] <= unambiguous
     ]
 
 
@@ -643,8 +639,7 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
         "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 6% high "
         "on SKILL.md files and 24% low to 13% high on reference docs, and the "
         "budget binds BOTH readings — so clearing this one is necessary, not "
-        "sufficient. The other:\n  "
-        + exact_cmd(skill)
+        "sufficient. The other:\n  " + exact_cmd(skill)
     )
     if anchored:
         caveat = (
@@ -671,8 +666,7 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
         "(15%), not from the 13% observed below: the band is what bounds the "
         "estimator's error, and the observed range is only what it has cost so "
         "far. Deriving headroom from the smaller figure is how a ratchet gets "
-        "breached past a green suite.\n\n"
-        + caveat
+        "breached past a green suite.\n\n" + caveat
     )
 
 
@@ -693,17 +687,25 @@ def _measure(skill: str, *, exact: bool) -> dict:
     observed ratio behind.
     """
     cmd = [
-        "bash", str(MEASURE),
+        "bash",
+        str(MEASURE),
         "--no-write",
-        "--budget", str(ratchet_for(skill)),
-        "--file", f"skills/{skill}/SKILL.md",
-        "--docs-dir", f"skills/{skill}/references",
+        "--budget",
+        str(ratchet_for(skill)),
+        "--file",
+        f"skills/{skill}/SKILL.md",
+        "--docs-dir",
+        f"skills/{skill}/references",
     ]
     if exact:
         cmd.insert(3, "--exact")
     result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(REPO_ROOT),
-        env=_env(exact=exact), timeout=300,
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=_env(exact=exact),
+        timeout=300,
     )
     assert result.returncode == 0, (
         f"measure-context.sh failed on skills/{skill}:\n{result.stderr}"
@@ -732,8 +734,11 @@ def _has_credential() -> bool:
     """
     result = subprocess.run(
         ["bash", str(MEASURE), "--check-credential"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
-        env=_env(exact=True), timeout=60,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=_env(exact=True),
+        timeout=60,
     )
     return result.returncode == 0
 
@@ -772,7 +777,8 @@ def exact_surfaces() -> dict:
         )
     measured = (
         {name: _measure(name, exact=True) for name in SKILLS}
-        if _has_credential() else {}
+        if _has_credential()
+        else {}
     )
 
     # `--check-credential` answers "is a key string reachable", NOT "does the
@@ -787,9 +793,7 @@ def exact_surfaces() -> dict:
     # only gate is pre-commit — the same absent-vs-unusable shape #140 removed
     # from the shellcheck gate. The warning is loud because silently skipping
     # a check that was explicitly REQUESTED is the other way to get this wrong.
-    if not measured or not all(
-        s["policy"]["tokens_exact"] for s in measured.values()
-    ):
+    if not measured or not all(s["policy"]["tokens_exact"] for s in measured.values()):
         warnings.warn(
             f"{EXACT_ENV} was set but the run could not reach count_tokens, so "
             "the exact contract WAS NOT VERIFIED — only the offline estimate "
@@ -800,8 +804,7 @@ def exact_surfaces() -> dict:
             stacklevel=2,
         )
         pytest.skip(
-            f"{EXACT_ENV} set but count_tokens was not reached; see the "
-            "warning above."
+            f"{EXACT_ENV} set but count_tokens was not reached; see the warning above."
         )
     return measured
 
@@ -826,7 +829,8 @@ class TestTheGateItself:
     def test_every_skill_is_measured(self, surfaces: dict):
         """A skill added without a ratchet must not silently escape the gate."""
         on_disk = sorted(
-            p.name for p in SKILLS_DIR.iterdir()
+            p.name
+            for p in SKILLS_DIR.iterdir()
             if p.is_dir() and not p.name.startswith(".")
         )
         assert on_disk == SKILLS, (
@@ -850,7 +854,8 @@ class TestTheGateItself:
         """
         unambiguous = SKILL_MD_STANDARD * (1 + POLICY_ESTIMATE_BAND[0])
         stale = [
-            s for s in SKILL_MD_RATCHETS
+            s
+            for s in SKILL_MD_RATCHETS
             if surfaces[s]["policy"]["tokens"] <= unambiguous
         ]
         assert not stale, (
@@ -870,8 +875,7 @@ class TestTheGateItself:
         """
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
         measured = {
-            d["path"]: d["tokens"]
-            for skill in SKILLS for d in surfaces[skill]["docs"]
+            d["path"]: d["tokens"] for skill in SKILLS for d in surfaces[skill]["docs"]
         }
         stale = _stale_doc_exceptions(measured, doc_budget)
         assert not stale, (
@@ -889,7 +893,8 @@ class TestTheGateItself:
         gate enforces.
         """
         bad = {
-            path: value for path, value in DOC_BUDGET_EXCEPTIONS.items()
+            path: value
+            for path, value in DOC_BUDGET_EXCEPTIONS.items()
             if not (value is None or (isinstance(value, int) and value > 0))
         }
         assert not bad, (
@@ -907,8 +912,7 @@ class TestTheGateItself:
             p for p in DOC_BUDGET_EXCEPTIONS if not (REPO_ROOT / p).is_file()
         ]
         assert not unknown_docs, (
-            f"DOC_BUDGET_EXCEPTIONS names files that do not exist: "
-            f"{unknown_docs}"
+            f"DOC_BUDGET_EXCEPTIONS names files that do not exist: {unknown_docs}"
         )
 
     def test_the_per_doc_budget_comes_from_the_repos_knob(self):
@@ -1029,8 +1033,8 @@ class TestEverySkillsOwnSurface:
             + (
                 "Raising this skill's entry in SKILL_MD_RATCHETS is not the "
                 "fix. It is a ratchet: it only ever comes down.\n\n"
-                if named else
-                "Adding an entry to SKILL_MD_RATCHETS is a last resort, not "
+                if named
+                else "Adding an entry to SKILL_MD_RATCHETS is a last resort, not "
                 "the first move: an exception has to argue in the diff why "
                 "this skill cannot meet the standard the other "
                 f"{len(SKILLS) - 1} are held to.\n\n"
@@ -1077,10 +1081,7 @@ class TestEverySkillsOwnSurface:
         self, skill: str, surfaces: dict
     ):
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
-        over = [
-            d for d in surfaces[skill]["docs"]
-            if _doc_over(d, doc_budget)
-        ]
+        over = [d for d in surfaces[skill]["docs"] if _doc_over(d, doc_budget)]
         assert not over, (
             f"skills/{skill} reference docs over the {doc_budget:,}-token "
             "per-doc budget:\n"
@@ -1088,8 +1089,7 @@ class TestEverySkillsOwnSurface:
             + "\n\nPast the per-doc budget, loading the doc stops costing less "
             "than carrying it inline — split it on its top-level headings. A "
             "demotion into an already-full doc moves the problem instead of "
-            "solving it.\n\n"
-            + estimate_caveat(skill)
+            "solving it.\n\n" + estimate_caveat(skill)
         )
 
 
@@ -1101,9 +1101,7 @@ class TestTheContractMeasuredExactly:
     """
 
     @pytest.mark.parametrize("skill", SKILLS)
-    def test_skill_md_is_within_its_ratchet(
-        self, skill: str, exact_surfaces: dict
-    ):
+    def test_skill_md_is_within_its_ratchet(self, skill: str, exact_surfaces: dict):
         policy = exact_surfaces[skill]["policy"]
         ratchet = ratchet_for(skill)
         assert policy["tokens_exact"] is True, (
@@ -1130,10 +1128,7 @@ class TestTheContractMeasuredExactly:
         estimate would have the widest blind spot in the file.
         """
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
-        over = [
-            d for d in exact_surfaces[skill]["docs"]
-            if _doc_over(d, doc_budget)
-        ]
+        over = [d for d in exact_surfaces[skill]["docs"] if _doc_over(d, doc_budget)]
         assert not over, (
             f"skills/{skill} reference docs over the {doc_budget:,}-token "
             "per-doc budget by EXACT count:\n"
@@ -1184,9 +1179,7 @@ class TestTheContractMeasuredExactly:
         either failing four docs that are behaving normally or loosening the
         SKILL.md band by 15 points to accommodate them.
         """
-        exact_rows = {
-            d["path"]: d["tokens"] for d in exact_surfaces[skill]["docs"]
-        }
+        exact_rows = {d["path"]: d["tokens"] for d in exact_surfaces[skill]["docs"]}
         low, high = DOC_ESTIMATE_BAND
         outside = []
         for d in surfaces[skill]["docs"]:
@@ -1245,7 +1238,7 @@ class TestCuratingContextsExtraProcedure:
         the ceiling invites exactly one wasted round.
         """
         body = self.SKILL_MD.read_text().lower()
-        window = body[body.index("edit budget"):body.index("edit budget") + 600]
+        window = body[body.index("edit budget") : body.index("edit budget") + 600]
         assert "ratchet" in window, (
             "the edit budget is stated without naming the ratchet, so nothing "
             "tells a contributor which of the two actually binds"
@@ -1257,7 +1250,7 @@ class TestCuratingContextsExtraProcedure:
 
     def test_the_cap_says_what_happens_when_it_binds(self):
         body = self.SKILL_MD.read_text().lower()
-        window = body[body.index("edit budget"):]
+        window = body[body.index("edit budget") :]
         assert "demote" in window or "tighten" in window, (
             "the edit budget states a cap but not the move it forces — a run "
             "that hits it needs to be told to displace something, not to stop"
@@ -1463,9 +1456,7 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
     SKILL = "init-project-fastapi"
 
     def _surfaces(self, **skills: int) -> dict:
-        return {
-            name: {"policy": {"tokens": est}} for name, est in skills.items()
-        }
+        return {name: {"policy": {"tokens": est}} for name, est in skills.items()}
 
     def test_a_worst_case_over_the_ratchet_is_reported(self):
         ratchet = ratchet_for(self.SKILL)
@@ -1499,11 +1490,11 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
             warn_about_the_blind_spot(self._surfaces(**{self.SKILL: estimate}))
         message = str(caught[0].message)
         for figure in (
-            f"{estimate:,}", f"{worst_case_exact(estimate):,}", f"{ratchet:,}"
+            f"{estimate:,}",
+            f"{worst_case_exact(estimate):,}",
+            f"{ratchet:,}",
         ):
-            assert figure in message, (
-                f"the always-on warning never quotes {figure}"
-            )
+            assert figure in message, f"the always-on warning never quotes {figure}"
         assert self.SKILL in message
         assert EXACT_ENV in message, (
             "the warning names a blind spot without naming the run that "
@@ -1555,8 +1546,10 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
     ):
         """The predicate against the real library, not a synthetic surface."""
         expected = sorted(
-            s for s in SKILLS
-            if surfaces[s]["policy"]["tokens"] <= ratchet_for(s)
+            s
+            for s in SKILLS
+            if surfaces[s]["policy"]["tokens"]
+            <= ratchet_for(s)
             < worst_case_exact(surfaces[s]["policy"]["tokens"])
         )
         assert [r[0] for r in blind_spot_rows(surfaces)] == expected
@@ -1603,11 +1596,7 @@ class TestTheScheduledExactGate:
 
     @staticmethod
     def _steps(workflow: dict) -> list[dict]:
-        return [
-            step
-            for job in workflow["jobs"].values()
-            for step in job["steps"]
-        ]
+        return [step for job in workflow["jobs"].values() for step in job["steps"]]
 
     def test_the_generated_cadence_workflow_was_not_hand_edited(self):
         """The reason the job lives in its own file, pinned rather than argued.
@@ -1617,12 +1606,13 @@ class TestTheScheduledExactGate:
         template moved and this repo was not re-installed. Re-run
         `install-cadence.sh` — do not reconcile by editing the workflow.
         """
-        env = {
-            k: v for k, v in os.environ.items() if not k.startswith("GIT_")
-        }
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         rendered = subprocess.run(
             ["bash", str(INSTALL_CADENCE), "--print"],
-            capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=env,
             timeout=60,
         )
         assert rendered.returncode == 0, rendered.stderr
@@ -1662,10 +1652,7 @@ class TestTheScheduledExactGate:
         cadence_days = {
             e["cron"].split()[4] for e in self._triggers(cadence)["schedule"]
         }
-        mine = {
-            e["cron"].split()[4]
-            for e in self._triggers(workflow)["schedule"]
-        }
+        mine = {e["cron"].split()[4] for e in self._triggers(workflow)["schedule"]}
         assert not (cadence_days & mine), (
             f"both weekly jobs fire on day-of-week {cadence_days & mine}. "
             "install-cadence.sh derives the cadence slot from the repo name, "
@@ -1708,7 +1695,8 @@ class TestTheScheduledExactGate:
             "test is now pinning a convention that moved"
         )
         wired = [
-            step for step in self._steps(workflow)
+            step
+            for step in self._steps(workflow)
             if step.get("env", {}).get("ANTHROPIC_API_KEY") == expression
         ]
         assert wired, (
@@ -1721,21 +1709,18 @@ class TestTheScheduledExactGate:
             "exact pass runs without a key"
         )
 
-    def test_the_credential_is_preflighted_before_the_measurement(
-        self, workflow: dict
-    ):
+    def test_the_credential_is_preflighted_before_the_measurement(self, workflow: dict):
         """The cadence workflow's own lesson, in its first step's comment:
         without a credential every later step does its work and the result is
         refused at the end.
         """
         steps = self._steps(workflow)
         preflight = [
-            i for i, s in enumerate(steps)
+            i
+            for i, s in enumerate(steps)
             if "--check-credential" in str(s.get("run", ""))
         ]
-        measure = [
-            i for i, s in enumerate(steps) if EXACT_ENV in s.get("env", {})
-        ]
+        measure = [i for i, s in enumerate(steps) if EXACT_ENV in s.get("env", {})]
         assert preflight, (
             "nothing runs measure-context.sh --check-credential, so a missing "
             "secret surfaces as nineteen skipped tests rather than a red step"
@@ -1755,10 +1740,10 @@ class TestTheScheduledExactGate:
         `--check-credential` cannot cover this; it answers "is a key string
         reachable", not "does the API accept it".
         """
-        commands = " ".join(
-            str(step.get("run", "")) for step in self._steps(workflow)
-        )
-        assert "-W 'error:" in commands and "could not reach count_tokens" in commands, (
+        commands = " ".join(str(step.get("run", "")) for step in self._steps(workflow))
+        assert (
+            "-W 'error:" in commands and "could not reach count_tokens" in commands
+        ), (
             "the exact pass runs without escalating the "
             "could-not-reach-count_tokens UserWarning, so a rotated or "
             "rate-limited key produces nineteen skips and a green job"
@@ -1771,9 +1756,7 @@ class TestTheScheduledExactGate:
         )
 
     def test_it_runs_the_gate_the_test_file_documents(self, workflow: dict):
-        commands = " ".join(
-            str(step.get("run", "")) for step in self._steps(workflow)
-        )
+        commands = " ".join(str(step.get("run", "")) for step in self._steps(workflow))
         assert "tests/structural/test_skill_self_budget.py" in commands, (
             "the job sets the env var but never runs the file that reads it"
         )
@@ -1796,7 +1779,10 @@ class TestTheScheduledExactGate:
             if not script:
                 continue
             result = subprocess.run(
-                ["bash", "-n"], input=script, capture_output=True, text=True,
+                ["bash", "-n"],
+                input=script,
+                capture_output=True,
+                text=True,
                 timeout=30,
             )
             assert result.returncode == 0, (

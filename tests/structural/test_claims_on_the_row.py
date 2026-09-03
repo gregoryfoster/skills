@@ -38,8 +38,8 @@ from pathlib import Path
 
 import pytest
 
-from .test_loss_warrants import _clean_env, _repo, _three_good_pairs_local
 from .test_context_surface import _score
+from .test_loss_warrants import _clean_env, _repo, _three_good_pairs_local
 
 SKILL_DIR = (
     Path(__file__).resolve().parent.parent.parent / "skills" / "curating-context"
@@ -50,21 +50,35 @@ RUBRIC = SKILL_DIR / "references" / "keep-cut-rubric.md"
 REJECTED = SKILL_DIR / "references" / "rejected-changes.md"
 TELEMETRY = SKILL_DIR / "references" / "telemetry.md"
 
-PAYLOAD = json.dumps({
-    "policy": {"path": "AGENTS.md", "lines": 10, "bytes": 100,
-               "tokens": 40, "tokens_exact": True, "bytes_per_token": 2.5,
-               "budget": 6000, "over_budget": False},
-    "totals": {"tokens_live": 40, "files_docs": 0},
-    "docs": [], "links": {"dead": [], "orphans": [], "dead_anchors": []},
-    "sections": [],
-})
+PAYLOAD = json.dumps(
+    {
+        "policy": {
+            "path": "AGENTS.md",
+            "lines": 10,
+            "bytes": 100,
+            "tokens": 40,
+            "tokens_exact": True,
+            "bytes_per_token": 2.5,
+            "budget": 6000,
+            "over_budget": False,
+        },
+        "totals": {"tokens_live": 40, "files_docs": 0},
+        "docs": [],
+        "links": {"dead": [], "orphans": [], "dead_anchors": []},
+        "sections": [],
+    }
+)
 
 
 def _record(tmp_path: Path, *flags: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(RECORD), "--dry-run", *flags], input=PAYLOAD,
-        capture_output=True, text=True,
-        cwd=str(_repo(tmp_path, "# P\n")), env=_clean_env(), timeout=30,
+        ["bash", str(RECORD), "--dry-run", *flags],
+        input=PAYLOAD,
+        capture_output=True,
+        text=True,
+        cwd=str(_repo(tmp_path, "# P\n")),
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -77,8 +91,15 @@ def _row(tmp_path: Path, *flags: str) -> dict:
 
 class TestTheCountsRideTheRow:
     def test_both_counts_land_on_the_row(self, tmp_path: Path):
-        row = _row(tmp_path, "--no-loss", "ok",
-                   "--claims-dropped", "0", "--claims-warranted", "2")
+        row = _row(
+            tmp_path,
+            "--no-loss",
+            "ok",
+            "--claims-dropped",
+            "0",
+            "--claims-warranted",
+            "2",
+        )
         assert row["claims_dropped"] == 0, row
         assert row["claims_warranted"] == 2, row
 
@@ -98,9 +119,21 @@ class TestTheCountsRideTheRow:
         assert row["claims_dropped"] == 0, row
 
     def test_they_do_not_disturb_the_neighbouring_fields(self, tmp_path: Path):
-        row = _row(tmp_path, "--no-loss", "ok", "--no-loss-warrants", "3",
-                   "--seams", "1", "--seams-acked", "2",
-                   "--claims-dropped", "0", "--claims-warranted", "5")
+        row = _row(
+            tmp_path,
+            "--no-loss",
+            "ok",
+            "--no-loss-warrants",
+            "3",
+            "--seams",
+            "1",
+            "--seams-acked",
+            "2",
+            "--claims-dropped",
+            "0",
+            "--claims-warranted",
+            "5",
+        )
         assert row["no_loss"] == "ok", row
         assert row["no_loss_warrants"] == 3, row
         assert row["seams"] == 1 and row["seams_acked"] == 2, row
@@ -125,8 +158,15 @@ class TestTheyAnswerToAVerdict:
         """Three dropped of which one was judged is a real and informative
         state — the same reason `--no-loss-warrants` is allowed against
         `failed`."""
-        row = _row(tmp_path, "--no-loss", "failed",
-                   "--claims-dropped", "3", "--claims-warranted", "1")
+        row = _row(
+            tmp_path,
+            "--no-loss",
+            "failed",
+            "--claims-dropped",
+            "3",
+            "--claims-warranted",
+            "1",
+        )
         assert (row["claims_dropped"], row["claims_warranted"]) == (3, 1), row
 
     def test_a_nonzero_drop_beside_ok_is_refused(self, tmp_path: Path):
@@ -154,9 +194,7 @@ class TestTheyAnswerToAVerdict:
         r = _record(tmp_path, "--no-loss", "ok", flag, bad)
         assert r.returncode == 1, f"{bad!r} was accepted: {r.stdout}{r.stderr}"
 
-    def test_a_typo_is_diagnosed_as_a_typo_not_as_a_contradiction(
-        self, tmp_path: Path
-    ):
+    def test_a_typo_is_diagnosed_as_a_typo_not_as_a_contradiction(self, tmp_path: Path):
         """Ordering, and it is load-bearing.
 
         With the digits check below the semantic ones, `--claims-dropped two
@@ -213,8 +251,9 @@ class TestTheScorerSurfacesThemWithoutGating:
         assert "verdict: ADOPT" in r.stdout, r.stdout
 
     def test_a_clean_claim_check_is_visible_and_adopts(self, tmp_path: Path):
-        r = _score(_three_good_pairs_local(
-            tmp_path, claims_dropped=0, claims_warranted=0))
+        r = _score(
+            _three_good_pairs_local(tmp_path, claims_dropped=0, claims_warranted=0)
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "verdict: ADOPT" in r.stdout, r.stdout
         assert "ok/c" in r.stdout, (
@@ -223,8 +262,9 @@ class TestTheScorerSurfacesThemWithoutGating:
         )
 
     def test_warranted_atoms_ride_the_marker_and_do_not_gate(self, tmp_path: Path):
-        r = _score(_three_good_pairs_local(
-            tmp_path, claims_dropped=0, claims_warranted=2))
+        r = _score(
+            _three_good_pairs_local(tmp_path, claims_dropped=0, claims_warranted=2)
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "ok/c2w" in r.stdout, r.stdout
 

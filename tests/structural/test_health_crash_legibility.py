@@ -33,7 +33,11 @@ from pathlib import Path
 # guard those tests pin changes, and this file would keep passing against a
 # repo shape the hook no longer recognises (#254 CR round 1).
 from .test_socraticode_graph_yield import (
-    DRIVER, HOOK, _clean_env, _repo, requires_node,
+    DRIVER,
+    HOOK,
+    _clean_env,
+    _repo,
+    requires_node,
 )
 
 # The two sentences that mean "measured, and here is the list". Neither may
@@ -55,8 +59,7 @@ def _stub(repo: Path, *, exit_code: int, stderr: str = "") -> Path:
     JSON verdict on stdout, and every case here turns on stderr alone."""
     stub = repo / "stub-driver.mjs"
     stub.write_text(
-        f"process.stderr.write({json.dumps(stderr)});\n"
-        f"process.exit({exit_code});\n"
+        f"process.stderr.write({json.dumps(stderr)});\nprocess.exit({exit_code});\n"
     )
     return stub
 
@@ -64,7 +67,10 @@ def _stub(repo: Path, *, exit_code: int, stderr: str = "") -> Path:
 def _run_hook(repo: Path, **env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(HOOK)],
-        cwd=str(repo), capture_output=True, text=True, timeout=60,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=60,
         env=_clean_env(SOCRATICODE_HEALTH_FORCE="1", **env),
     )
 
@@ -102,8 +108,7 @@ class TestCrashedCheckIsNotReportedAsClean:
         stub = _stub(repo, exit_code=1, stderr=CRASH_STDERR)
         result = _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
         assert "FAILED TO RUN" in result.stdout, (
-            "a crashed check must name itself as not-measured; got "
-            f"{result.stdout!r}"
+            f"a crashed check must name itself as not-measured; got {result.stdout!r}"
         )
         assert "not a clean result" in result.stdout, result.stdout
         assert "exited 1" in result.stdout, (
@@ -130,10 +135,14 @@ class TestCrashedCheckIsNotReportedAsClean:
         """The fix must not cost the reporting path. A crash branch that also
         eats real findings trades one silent failure for another."""
         repo = _repo(tmp_path)
-        stub = _stub(repo, exit_code=1, stderr=(
-            "[driver] SocratiCode health findings:\n"
-            "  - graph yield LOW — 3 edge(s) across 374 files\n"
-        ))
+        stub = _stub(
+            repo,
+            exit_code=1,
+            stderr=(
+                "[driver] SocratiCode health findings:\n"
+                "  - graph yield LOW — 3 edge(s) across 374 files\n"
+            ),
+        )
         result = _run_hook(repo, SOCRATICODE_DRIVER=str(stub))
         assert FINDINGS_HEADER in result.stdout, result.stdout
         assert "graph yield LOW" in result.stdout, result.stdout
@@ -186,9 +195,10 @@ class TestDriverReservesAnIncompleteExitCode:
         entry.write_text("process.exit(1);\n")
         result = subprocess.run(
             ["node", str(DRIVER), "health-check", str(tmp_path)],
-            capture_output=True, text=True, timeout=60,
-            env=_clean_env(SOCRATICODE_ENTRY=str(entry),
-                           HEALTH_TIMEOUT_MS="20000"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(SOCRATICODE_ENTRY=str(entry), HEALTH_TIMEOUT_MS="20000"),
         )
         assert result.returncode == 3, (
             "a health-check that could not run must not exit 1 — that is the "

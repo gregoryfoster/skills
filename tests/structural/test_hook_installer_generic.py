@@ -85,7 +85,10 @@ INSTALL_REFRESH = MS_SCRIPTS / "install-refresh.sh"
 MS_SKILL = REPO_ROOT / "skills" / "managing-skills" / "SKILL.md"
 SOC_SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
 POLICY_REF = (
-    REPO_ROOT / "skills" / "init-socraticode" / "references"
+    REPO_ROOT
+    / "skills"
+    / "init-socraticode"
+    / "references"
     / "code-exploration-policy.md"
 )
 
@@ -107,7 +110,9 @@ def _documented_args(step_marker: str, end_marker: str) -> tuple[str, ...]:
     they are the thing most worth binding to the document an agent will run.
     """
     body = POLICY_REF.read_text()
-    step = body[body.index(step_marker):body.index(end_marker, body.index(step_marker))]
+    step = body[
+        body.index(step_marker) : body.index(end_marker, body.index(step_marker))
+    ]
     block = re.search(r"```bash\n(.*?)```", step, re.DOTALL)
     assert block, f"{step_marker} carries no bash block to run"
     parts = shlex.split(block.group(1).replace("\\\n", " "))
@@ -137,7 +142,11 @@ def _clean_env() -> dict:
 def _run(repo: Path, *args: str, script: Path = INSTALL_HOOK):
     return subprocess.run(
         ["bash", str(script), *args],
-        cwd=repo, capture_output=True, text=True, env=_clean_env(), timeout=30,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -180,12 +189,18 @@ def _commands(repo: Path) -> list[str]:
 
 def _seed(repo: Path, *commands: str) -> None:
     (repo / ".claude").mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_REL).write_text(json.dumps({
-        "hooks": {"SessionStart": [
-            {"matcher": ".*", "hooks": [{"type": "command", "command": c}]}
-            for c in commands
-        ]}
-    }))
+    (repo / SETTINGS_REL).write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"matcher": ".*", "hooks": [{"type": "command", "command": c}]}
+                        for c in commands
+                    ]
+                }
+            }
+        )
+    )
 
 
 class TestItInstallsAHookItWasNotExtractedFrom:
@@ -259,9 +274,7 @@ class TestTwoHooksInOneDirectory:
         assert r.returncode == 3, r.stdout
         assert "SessionStart entry: MISSING" in r.stdout
 
-    def test_the_refresh_hook_is_not_confused_for_a_socraticode_one(
-        self, repo: Path
-    ):
+    def test_the_refresh_hook_is_not_confused_for_a_socraticode_one(self, repo: Path):
         """All three land in the same array. The refresh hook dedupes on its
         basename and the socraticode hooks on their own markers; a match across
         that boundary would make one install remove another."""
@@ -295,7 +308,7 @@ class TestMarkersDecideWhatCountsAsARegistration:
             'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/socraticode-reminder.sh"'
             " # socraticode-prefetch"
         )
-        _seed(repo, canonical, 'bash .claude/hooks/socraticode-reminder.sh')
+        _seed(repo, canonical, "bash .claude/hooks/socraticode-reminder.sh")
         _run(repo, *REMINDER_ARGS)
         assert len(_commands(repo)) == 1, _commands(repo)
 
@@ -303,23 +316,26 @@ class TestMarkersDecideWhatCountsAsARegistration:
         """The whole-file grep that made `--check` lie (#178 round 1) must stay
         fixed for every hook, not just the one it was found on."""
         (repo / ".claude").mkdir(parents=True, exist_ok=True)
-        (repo / SETTINGS_REL).write_text(json.dumps({
-            "permissions": {"allow": [
-                "Bash(bash .claude/hooks/socraticode-reminder.sh)"
-            ]}
-        }))
+        (repo / SETTINGS_REL).write_text(
+            json.dumps(
+                {
+                    "permissions": {
+                        "allow": ["Bash(bash .claude/hooks/socraticode-reminder.sh)"]
+                    }
+                }
+            )
+        )
         r = _run(repo, *REMINDER_ARGS, "--check")
         assert r.returncode == 3, r.stdout
         assert "SessionStart entry: MISSING" in r.stdout, r.stdout
 
-    def test_a_marker_with_shell_or_json_metacharacters_is_refused(
-        self, repo: Path
-    ):
+    def test_a_marker_with_shell_or_json_metacharacters_is_refused(self, repo: Path):
         """The markers reach a jq program as a constructed JSON array. Refusing
         anything outside the token charset is what keeps that construction from
         needing to be trusted."""
-        r = _run(repo, "--hook", REMINDER, "--skill", "init-socraticode",
-                 "--marker", 'a","b')
+        r = _run(
+            repo, "--hook", REMINDER, "--skill", "init-socraticode", "--marker", 'a","b'
+        )
         assert r.returncode == 1, r.stdout
         assert "marker" in r.stderr.lower(), r.stderr
 
@@ -341,9 +357,7 @@ class TestTheCopyFallback:
         assert "no vendored" in r.stderr, r.stderr
         assert not (bare / ".claude").exists()
 
-    def test_with_the_flag_it_copies_from_the_installers_own_tree(
-        self, bare: Path
-    ):
+    def test_with_the_flag_it_copies_from_the_installers_own_tree(self, bare: Path):
         r = _run(bare, *REMINDER_ARGS)
         assert r.returncode == 0, r.stdout + r.stderr
         hook = bare / ".claude" / "hooks" / REMINDER
@@ -402,7 +416,10 @@ class TestArgumentHandling:
     def test_help_exits_zero_without_a_hook(self):
         r = subprocess.run(
             ["bash", str(INSTALL_HOOK), "--help"],
-            capture_output=True, text=True, env=_clean_env(), timeout=30,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
         )
         assert r.returncode == 0, r.stderr
         assert "--hook" in r.stdout
@@ -448,12 +465,12 @@ def _ci_gate_window() -> str:
         f"the reference carries no {CI_GATE_START!r} section — the CI recipe "
         "#227 asks for has nowhere to live"
     )
-    window = body[body.index(CI_GATE_START):]
+    window = body[body.index(CI_GATE_START) :]
     assert CI_GATE_END in window, (
         f"{CI_GATE_START!r} is not followed by {CI_GATE_END!r}; the section "
         "moved and these tests are reading the wrong span"
     )
-    return window[:window.index(CI_GATE_END)]
+    return window[: window.index(CI_GATE_END)]
 
 
 def _ci_gate_args() -> tuple[str, ...]:
@@ -531,9 +548,7 @@ class TestCheckSeparatesShapeFromResolution:
         assert r.returncode == 3, r.stdout
         assert "skills-vendor" in r.stdout, r.stdout
 
-    def test_the_flag_does_not_accept_a_target_outside_the_vendor(
-        self, repo: Path
-    ):
+    def test_the_flag_does_not_accept_a_target_outside_the_vendor(self, repo: Path):
         _run(repo, *REMINDER_ARGS)
         link = repo / ".claude" / "hooks" / REMINDER
         link.unlink()
@@ -632,8 +647,13 @@ class TestCheckGatesShapeOnResolvingLinks:
         absolute-into-the-vendor is still absolute, so the `/*` arm must win
         over the `*skills-vendor/*` one."""
         target = (
-            repo / "skills-vendor" / "acme-skills" / "skills"
-            / "init-socraticode" / "scripts" / REMINDER
+            repo
+            / "skills-vendor"
+            / "acme-skills"
+            / "skills"
+            / "init-socraticode"
+            / "scripts"
+            / REMINDER
         )
         self._replace_link(repo, target)
         r = _run(repo, *REMINDER_ARGS, "--check")
@@ -644,8 +664,13 @@ class TestCheckGatesShapeOnResolvingLinks:
         """The flag relaxes resolution and nothing else. This link RESOLVES;
         its defect is shape, which the flag has nothing to say about."""
         target = (
-            repo / "skills-vendor" / "acme-skills" / "skills"
-            / "init-socraticode" / "scripts" / REMINDER
+            repo
+            / "skills-vendor"
+            / "acme-skills"
+            / "skills"
+            / "init-socraticode"
+            / "scripts"
+            / REMINDER
         )
         self._replace_link(repo, target)
         r = _run(repo, *REMINDER_ARGS, "--check", "--allow-unresolved")
@@ -655,17 +680,20 @@ class TestCheckGatesShapeOnResolvingLinks:
         """A gate that flips a formerly green check red owes the operator the
         reason (portability, not local breakage) and the repair command."""
         target = (
-            repo / "skills-vendor" / "acme-skills" / "skills"
-            / "init-socraticode" / "scripts" / REMINDER
+            repo
+            / "skills-vendor"
+            / "acme-skills"
+            / "skills"
+            / "init-socraticode"
+            / "scripts"
+            / REMINDER
         )
         self._replace_link(repo, target)
         r = _run(repo, *REMINDER_ARGS, "--check")
         assert "checkout" in r.stdout, r.stdout
         assert "install-hook.sh --hook" in r.stdout, r.stdout
 
-    def test_a_resolving_target_outside_the_vendor_fails_check(
-        self, repo: Path
-    ):
+    def test_a_resolving_target_outside_the_vendor_fails_check(self, repo: Path):
         """Relative and resolving, but at a non-vendor copy of the script:
         vendor refreshes never reach that file, so this is #179's frozen-copy
         drift wearing a symlink. The dangling branch already condemns this
@@ -678,9 +706,7 @@ class TestCheckGatesShapeOnResolvingLinks:
         assert r.returncode == 3, r.stdout
         assert "skills-vendor" in r.stdout, r.stdout
 
-    def test_indirection_that_lands_in_the_vendor_still_passes(
-        self, repo: Path
-    ):
+    def test_indirection_that_lands_in_the_vendor_still_passes(self, repo: Path):
         """The caveat class: the target never spells skills-vendor/, but the
         path passes through a skill symlink and lands in the vendor tree —
         the shape context-budget-guard.sh installs in. Condemning it on
@@ -688,18 +714,13 @@ class TestCheckGatesShapeOnResolvingLinks:
         not even manage."""
         (repo / "skills").mkdir()
         (repo / "skills" / "init-socraticode").symlink_to(
-            Path("..") / "skills-vendor" / "acme-skills" / "skills"
-            / "init-socraticode"
+            Path("..") / "skills-vendor" / "acme-skills" / "skills" / "init-socraticode"
         )
-        self._replace_link(
-            repo, f"../../skills/init-socraticode/scripts/{REMINDER}"
-        )
+        self._replace_link(repo, f"../../skills/init-socraticode/scripts/{REMINDER}")
         r = _run(repo, *REMINDER_ARGS, "--check")
         assert r.returncode == 0, r.stdout + r.stderr
 
-    def test_a_correct_relative_install_is_reported_as_before(
-        self, repo: Path
-    ):
+    def test_a_correct_relative_install_is_reported_as_before(self, repo: Path):
         """The gate must not disturb the healthy case: the report line other
         suites bind to is unchanged and the exit stays 0."""
         assert _run(repo, *REMINDER_ARGS).returncode == 0
@@ -743,9 +764,7 @@ class TestCheckReportsHowManyRegistrations:
         )
         _seed(repo, canonical, canonical)
         r = _run(repo, *REMINDER_ARGS, "--check")
-        assert "install-hook.sh --hook socraticode-reminder.sh" in r.stdout, (
-            r.stdout
-        )
+        assert "install-hook.sh --hook socraticode-reminder.sh" in r.stdout, r.stdout
 
 
 class TestTheReferenceDocumentsTheCiRecipe:
@@ -762,9 +781,7 @@ class TestTheReferenceDocumentsTheCiRecipe:
         assert "--check" in args, args
         assert "--allow-unresolved" in args, args
 
-    def test_the_documented_gate_passes_on_a_submodule_less_checkout(
-        self, repo: Path
-    ):
+    def test_the_documented_gate_passes_on_a_submodule_less_checkout(self, repo: Path):
         """The exact state `actions/checkout` produces, against an install this
         installer made minutes earlier."""
         args = _ci_gate_args()
@@ -844,9 +861,7 @@ class TestTheFirstSessionCostIsWrittenDown:
             "reader is still free to think reordering the array would help"
         )
 
-    @pytest.mark.parametrize(
-        "doc", [POLICY_REF, MS_SKILL], ids=lambda p: p.name
-    )
+    @pytest.mark.parametrize("doc", [POLICY_REF, MS_SKILL], ids=lambda p: p.name)
     def test_neither_skill_implies_that_ordering_helps(self, doc: Path):
         body = doc.read_text().lower()
         found = [m for m in self.ORDERING_MYTHS if m.lower() in body]

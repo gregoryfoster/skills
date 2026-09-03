@@ -121,7 +121,7 @@ def _tool_table(doc_text: str) -> str:
     """
     start = doc_text.index(TOOL_TABLE_HEADING)
     end = doc_text.find("\n## ", start + len(TOOL_TABLE_HEADING))
-    return doc_text[start:end if end != -1 else len(doc_text)]
+    return doc_text[start : end if end != -1 else len(doc_text)]
 
 
 GRAPH_HEALTH_HEADING = "## Graph health"
@@ -152,15 +152,15 @@ def _graph_health(doc_text: str) -> str:
     """The `## Graph health` section, heading to the next `##`."""
     start = doc_text.index(GRAPH_HEALTH_HEADING)
     end = doc_text.find("\n## ", start + len(GRAPH_HEALTH_HEADING))
-    return doc_text[start:end if end != -1 else len(doc_text)]
+    return doc_text[start : end if end != -1 else len(doc_text)]
 
 
 def _prefetched_tools(hook_text: str) -> set[str]:
     match = _PREFETCH_RE.search(hook_text)
     assert match, f"no `select:` prefetch query in scripts/{REMINDER_SCRIPT.name}"
     return {
-        entry[len(MCP_PREFIX):]
-        for entry in match.group(0)[len("select:"):].split(",")
+        entry[len(MCP_PREFIX) :]
+        for entry in match.group(0)[len("select:") :].split(",")
         if entry.startswith(MCP_PREFIX)
     }
 
@@ -273,10 +273,7 @@ class TestDegradedVariant:
         )
 
     def test_routes_dependency_questions_to_grep(self, degraded: str) -> None:
-        row = [
-            line for line in degraded.splitlines()
-            if "Imports/dependents" in line
-        ]
+        row = [line for line in degraded.splitlines() if "Imports/dependents" in line]
         assert row, "the degraded variant lost its imports/dependents row"
         assert "codebase_graph_query" not in row[0], (
             "the degraded variant still routes imports/dependents to "
@@ -332,8 +329,12 @@ class TestOverflowDocTemplate:
     def test_carries_the_full_tool_table(self, doc_text: str) -> None:
         """Every tool dropped from the block must be reachable from the doc."""
         for tool in (
-            "codebase_search", "codebase_impact", "codebase_flow",
-            "codebase_symbol", "codebase_graph_query", "codebase_context",
+            "codebase_search",
+            "codebase_impact",
+            "codebase_flow",
+            "codebase_symbol",
+            "codebase_graph_query",
+            "codebase_context",
             "codebase_context_search",
         ):
             assert tool in doc_text, (
@@ -403,9 +404,7 @@ class TestOverflowDocTemplate:
                 f"cover {concept!r} — {why} (#198).\n---\n{section}"
             )
 
-    def test_graph_health_names_the_metric_the_gate_uses(
-        self, doc_text: str
-    ) -> None:
+    def test_graph_health_names_the_metric_the_gate_uses(self, doc_text: str) -> None:
         """The distinguishing signal, without which the rest is just reassurance.
 
         A high `unresolvedPct` looks identical on a healthy framework-heavy
@@ -596,9 +595,7 @@ class TestOverflowDocHasARepoSpecificRegion:
                 "span in the header — bounds the wrong region."
             )
 
-    def test_it_no_longer_banishes_repo_notes_to_agents_md(
-        self, doc_text: str
-    ) -> None:
+    def test_it_no_longer_banishes_repo_notes_to_agents_md(self, doc_text: str) -> None:
         """The instruction #210 calls actively wrong.
 
         `AGENTS.md` is loaded on every invocation and `curating-context`
@@ -629,15 +626,13 @@ class TestOverflowDocHasARepoSpecificRegion:
             "part of the procedure (#210)"
         )
         idx = skill_md.index("**Detail doc**")
-        step = skill_md[idx:skill_md.index("\n3. ", idx)]
+        step = skill_md[idx : skill_md.index("\n3. ", idx)]
         assert "wholesale" not in step, (
             "SKILL.md Phase 3 still tells a re-run to overwrite "
             f"{OVERFLOW_DOC} wholesale.\n---\n{step}"
         )
 
-    def test_skill_md_rescues_an_unmarked_existing_file(
-        self, skill_md: str
-    ) -> None:
+    def test_skill_md_rescues_an_unmarked_existing_file(self, skill_md: str) -> None:
         """Every consumer's current file has no markers.
 
         The first re-run after this change is the one that would destroy the
@@ -645,7 +640,7 @@ class TestOverflowDocHasARepoSpecificRegion:
         down — the way Phase 3's `AGENTS.md` step already writes it down.
         """
         idx = skill_md.index("**Detail doc**")
-        step = skill_md[idx:skill_md.index("\n3. ", idx)]
+        step = skill_md[idx : skill_md.index("\n3. ", idx)]
         assert "rescue" in step.lower() or "preserve" in step.lower(), (
             "Phase 3's detail-doc step must say what happens to a consumer's "
             "existing, unmarked `docs/SOCRATICODE.md` — every repo installed "
@@ -655,7 +650,7 @@ class TestOverflowDocHasARepoSpecificRegion:
     def test_the_invariant_list_agrees(self, skill_md: str) -> None:
         """SKILL.md's own idempotency invariant said 'overwritten wholesale'."""
         idx = skill_md.index("**All file edits are idempotent.**")
-        invariant = skill_md[idx:skill_md.index("\n- **", idx)]
+        invariant = skill_md[idx : skill_md.index("\n- **", idx)]
         assert "wholesale" not in invariant, (
             "SKILL.md's idempotency invariant still describes "
             f"{OVERFLOW_DOC} as overwritten wholesale, which contradicts "

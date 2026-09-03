@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests.utils.api_harness import claude_with_skill, hard_gate_fired
-from tests.utils.skill_loader import load_skill, SKILLS_DIR
+from tests.utils.skill_loader import SKILLS_DIR, load_skill
 
 PROMPTS_DIR = Path(__file__).parent.parent / "fixtures" / "prompts"
 

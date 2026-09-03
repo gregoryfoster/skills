@@ -182,14 +182,17 @@ def assert_finding_subfields(text: str, review_type: str = "code") -> None:
 
     for i, match in enumerate(finding_matches):
         start = match.start()
-        end = finding_matches[i + 1].start() if i + 1 < len(finding_matches) else len(body)
+        end = (
+            finding_matches[i + 1].start()
+            if i + 1 < len(finding_matches)
+            else len(body)
+        )
         finding_text = body[start:end]
         finding_num = match.group(1)
 
         for label in labels:
             assert re.search(rf"\b{re.escape(label)}", finding_text, re.MULTILINE), (
-                f"{review_type} finding {finding_num} is missing the "
-                f"'{label}' subfield"
+                f"{review_type} finding {finding_num} is missing the '{label}' subfield"
             )
 
 

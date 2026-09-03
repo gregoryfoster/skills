@@ -27,7 +27,6 @@ No API calls. Self-contained: each test gets a fresh tmp repo via the
 """
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -63,7 +62,9 @@ def _run_git(repo: Path, *args: str, check: bool = True) -> subprocess.Completed
     )
 
 
-def _run_destroy(repo: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _run_destroy(
+    repo: Path, *args: str, cwd: Path | None = None
+) -> subprocess.CompletedProcess:
     """Run worktree-destroy.sh with cwd=repo so it picks up the right project root.
 
     `cwd` overrides that, for the case where the script is invoked from
@@ -147,7 +148,9 @@ def test_base_with_ref_branch_is_not_merged_into_refuses(tmp_repo: Path):
         f"expected Iron Law exit 1, got {result.returncode}\nstderr: {result.stderr}"
     )
     assert "not merged into 'batch/x'" in result.stderr
-    assert feature_wt.exists(), "worktree should NOT have been removed on Iron Law violation"
+    assert feature_wt.exists(), (
+        "worktree should NOT have been removed on Iron Law violation"
+    )
 
 
 def test_base_with_nonexistent_ref_errors(tmp_repo: Path):
@@ -174,8 +177,10 @@ def test_descoped_supersedes_base(tmp_repo: Path):
     result = _run_destroy(
         tmp_repo,
         "feature/y",
-        "--base", "this-ref-does-not-exist",
-        "--descoped", "testing precedence",
+        "--base",
+        "this-ref-does-not-exist",
+        "--descoped",
+        "testing precedence",
     )
     assert result.returncode == 0, (
         f"expected exit 0 (descoped wins), got {result.returncode}\nstderr: {result.stderr}"
@@ -192,7 +197,9 @@ def test_unknown_flag_errors(tmp_repo: Path):
 # --- #149: harness-provisioned worktrees ------------------------------------
 
 
-def _add_worktree(repo: Path, path: Path, branch: str, *, start: str | None = None) -> Path:
+def _add_worktree(
+    repo: Path, path: Path, branch: str, *, start: str | None = None
+) -> Path:
     """Register a worktree at an arbitrary path, decoupled from <root>/<slug>."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if start is not None:
@@ -230,7 +237,10 @@ class TestBranchFirstLookup:
         the directory check.
         """
         wt = _add_worktree(
-            tmp_repo, tmp_repo / "elsewhere" / "wt with space", "spaced", start="batch/x"
+            tmp_repo,
+            tmp_repo / "elsewhere" / "wt with space",
+            "spaced",
+            start="batch/x",
         )
         result = _run_destroy(tmp_repo, "spaced", "--base", "batch/x")
         assert result.returncode == 0, (
@@ -245,14 +255,18 @@ class TestBranchFirstLookup:
         literal and turns the program into a syntax error.
         """
         branch = 'quo"ted'
-        wt = _add_worktree(tmp_repo, tmp_repo / "elsewhere" / "quoted", branch, start="batch/x")
+        wt = _add_worktree(
+            tmp_repo, tmp_repo / "elsewhere" / "quoted", branch, start="batch/x"
+        )
         result = _run_destroy(tmp_repo, branch, "--base", "batch/x")
         assert result.returncode == 0, (
             f"expected exit 0, got {result.returncode}\nstderr: {result.stderr}"
         )
         assert not wt.exists()
 
-    def test_unregistered_branch_falls_back_to_constructed_path_error(self, tmp_repo: Path):
+    def test_unregistered_branch_falls_back_to_constructed_path_error(
+        self, tmp_repo: Path
+    ):
         """A genuine typo still produces the familiar constructed-path error."""
         _run_git(tmp_repo, "branch", "typo/branch", "batch/x")
         result = _run_destroy(tmp_repo, "typo/branch", "--base", "batch/x")
@@ -305,7 +319,9 @@ class TestLockedWorktrees:
             f"expected exit 2, got {result.returncode}\nstderr: {result.stderr}"
         )
         assert "locked" in result.stderr
-        assert "claude agent agent-x" in result.stderr, "the lock reason must be surfaced"
+        assert "claude agent agent-x" in result.stderr, (
+            "the lock reason must be surfaced"
+        )
         assert "--unlock" in result.stderr, "the remedy must be named"
         assert (locked_repo / ".worktrees" / "feature-y").exists()
 
@@ -329,7 +345,9 @@ class TestLockedWorktrees:
         This is the whole reason it is not spelled --force. Uncommitted work
         must still block removal.
         """
-        (locked_repo / ".worktrees" / "feature-y" / "uncommitted.txt").write_text("wip\n")
+        (locked_repo / ".worktrees" / "feature-y" / "uncommitted.txt").write_text(
+            "wip\n"
+        )
         result = _run_destroy(locked_repo, "feature/y", "--base", "batch/x", "--unlock")
         assert result.returncode == 2, (
             f"expected exit 2, got {result.returncode}\nstderr: {result.stderr}"
@@ -386,7 +404,9 @@ class TestDryRun:
         )
         assert "DRY RUN" in result.stdout
         assert str(tmp_repo / ".worktrees" / "feature-y") in result.stdout
-        assert (tmp_repo / ".worktrees" / "feature-y").exists(), "dry run must not remove"
+        assert (tmp_repo / ".worktrees" / "feature-y").exists(), (
+            "dry run must not remove"
+        )
 
     def test_dry_run_predicts_the_iron_law_exit_code(self, tmp_repo: Path):
         """A dry run that exits 0 while the real run would exit 1 is worthless."""
@@ -435,7 +455,11 @@ class TestDryRun:
         assert result.returncode == 0, (
             f"expected exit 0, got {result.returncode}\nstdout: {result.stdout}"
         )
-        assert (tmp_repo / ".worktrees" / "feature-y").exists(), "dry run must not remove"
+        assert (tmp_repo / ".worktrees" / "feature-y").exists(), (
+            "dry run must not remove"
+        )
         # The lock itself must survive a dry run.
         listing = _run_git(tmp_repo, "worktree", "list", "--porcelain").stdout
-        assert "locked claude agent agent-x" in listing, "dry run must not release the lock"
+        assert "locked claude agent agent-x" in listing, (
+            "dry run must not release the lock"
+        )

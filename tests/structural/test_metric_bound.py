@@ -57,17 +57,26 @@ def _flat(text: str) -> str:
 
 def _row(**kw) -> str:
     row = {
-        "ts": "2026-08-05", "repo": "x", "file": "AGENTS.md",
-        "tokens": None, "tokens_exact": True, "skill_version": None,
-        "skill_commit": None, "budget": 6000, "docs_orphaned": 0,
-        "links_dead": 0, "no_loss": "ok", "actions": [],
+        "ts": "2026-08-05",
+        "repo": "x",
+        "file": "AGENTS.md",
+        "tokens": None,
+        "tokens_exact": True,
+        "skill_version": None,
+        "skill_commit": None,
+        "budget": 6000,
+        "docs_orphaned": 0,
+        "links_dead": 0,
+        "no_loss": "ok",
+        "actions": [],
     }
     row.update(kw)
     return json.dumps(row, sort_keys=True)
 
 
-def _member(root: Path, name: str, before: int, after: int, version: str,
-            **extra) -> None:
+def _member(
+    root: Path, name: str, before: int, after: int, version: str, **extra
+) -> None:
     """A baseline row and one scored curation; `extra` lands on the scored row.
 
     On the scored row only, deliberately. A registered metric set on the
@@ -78,16 +87,24 @@ def _member(root: Path, name: str, before: int, after: int, version: str,
     d.mkdir(parents=True, exist_ok=True)
     rows = [
         _row(repo=name, tokens=before, actions=["baseline:pre-curation"]),
-        _row(repo=name, tokens=after, actions=["demote:Big"], ts="2026-08-06",
-             skill_version=version, skill_commit="deadbee", **extra),
+        _row(
+            repo=name,
+            tokens=after,
+            actions=["demote:Big"],
+            ts="2026-08-06",
+            skill_version=version,
+            skill_commit="deadbee",
+            **extra,
+        ),
     ]
     (d / "context-metrics.jsonl").write_text("\n".join(rows) + "\n")
 
 
 def _roster(root: Path, spec) -> Path:
     path = root / "cohort"
-    path.write_text("".join(
-        f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec))
+    path.write_text(
+        "".join(f"{root / name}  wave:{w} pair:{p}\n" for name, w, p in spec)
+    )
     return path
 
 
@@ -100,11 +117,9 @@ def _cohort(root: Path, values, *, sizes=None) -> Path:
     """
     spec = []
     for i, (tv, cv) in enumerate(values, 1):
-        cb, ca, tb, ta = (sizes or (28000, 12000, 26000, 9000))
-        _member(root, f"ctl{i}", cb, ca, "1.2", **({} if cv is None
-                                                   else {"truth": cv}))
-        _member(root, f"trt{i}", tb, ta, "1.3", **({} if tv is None
-                                                   else {"truth": tv}))
+        cb, ca, tb, ta = sizes or (28000, 12000, 26000, 9000)
+        _member(root, f"ctl{i}", cb, ca, "1.2", **({} if cv is None else {"truth": cv}))
+        _member(root, f"trt{i}", tb, ta, "1.3", **({} if tv is None else {"truth": tv}))
         spec += [(f"ctl{i}", "a", str(i)), (f"trt{i}", "b", str(i))]
     return _roster(root, spec)
 
@@ -134,15 +149,28 @@ def _register(root: Path, **over) -> Path:
     for k in [k for k, v in over.items() if v is None]:
         fields.pop(k, None)
     (d / "02-a-proposal.yml").write_text(
-        "".join(f"{k}: {v}\n" for k, v in fields.items()))
+        "".join(f"{k}: {v}\n" for k, v in fields.items())
+    )
     return d
 
 
 def _score(roster: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(SCORE), "--cohort-file", str(roster),
-         "--treatment", "1.3", "--control", "1.2", *args],
-        capture_output=True, text=True, env=_clean_env(), timeout=60,
+        [
+            "bash",
+            str(SCORE),
+            "--cohort-file",
+            str(roster),
+            "--treatment",
+            "1.3",
+            "--control",
+            "1.2",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
     )
 
 
@@ -150,8 +178,9 @@ def _scored(root: Path, values, **over) -> dict:
     """The JSON payload for a registered run over `values`."""
     roster = _cohort(root, values)
     d = _register(root, **over)
-    r = _score(roster, "--experiments-dir", str(d), "--experiment", "02",
-               "--format", "json")
+    r = _score(
+        roster, "--experiments-dir", str(d), "--experiment", "02", "--format", "json"
+    )
     assert r.stdout.startswith("{"), r.stdout + r.stderr
     return json.loads(r.stdout)
 
@@ -180,8 +209,7 @@ class TestATieAtTheBoundIsSaturatedNotTied:
         assert "-> tie" not in r.stdout, r.stdout
         assert "saturat" in r.stdout, r.stdout
 
-    def test_a_saturated_pair_does_not_count_toward_adoption(
-            self, tmp_path: Path):
+    def test_a_saturated_pair_does_not_count_toward_adoption(self, tmp_path: Path):
         """It leaves the informative set entirely rather than becoming a free
         win. A carve-out that turned an unwinnable pair into a WIN would be the
         adoption-easier failure in its most direct form."""
@@ -190,8 +218,7 @@ class TestATieAtTheBoundIsSaturatedNotTied:
         assert payload["treatment_wins"] == 0
         assert payload["verdict"] != "ADOPT", payload["verdict"]
 
-    def test_a_floor_saturates_for_a_lower_is_better_metric(
-            self, tmp_path: Path):
+    def test_a_floor_saturates_for_a_lower_is_better_metric(self, tmp_path: Path):
         """The half a single ceiling would have missed. `direction: lower` puts
         the good end at a floor — two arms both recording no seams are both
         perfect — and it is the same one number in the registration."""
@@ -233,15 +260,13 @@ class TestAnUnboundedMetricIsUnchanged:
     """The guarantee the issue is most insistent about. Everything above must
     cost the unbounded case nothing."""
 
-    def test_a_registration_naming_no_bound_scores_a_tie_as_a_tie(
-            self, tmp_path: Path):
+    def test_a_registration_naming_no_bound_scores_a_tie_as_a_tie(self, tmp_path: Path):
         payload = _scored(tmp_path, [(0.5, 0.5)], bound=None)
         assert payload["metric_bound"] is None
         assert payload["pairs"][0]["winner"] == "tie"
         assert payload["saturated_pairs"] == 0
 
-    def test_a_tie_at_a_value_that_would_have_saturated_is_a_tie(
-            self, tmp_path: Path):
+    def test_a_tie_at_a_value_that_would_have_saturated_is_a_tie(self, tmp_path: Path):
         """Same rows as the motivating case, minus the declaration. The
         difference between them is the registration and nothing else."""
         payload = _scored(tmp_path, [(1.0, 1.0)], bound=None)
@@ -263,15 +288,15 @@ class TestAnUnboundedMetricIsUnchanged:
         assert pair["informative"] is True and pair["saturated"] is False, pair
         assert payload["verdict"] != "ADOPT", payload
 
-    def test_closure_keeps_its_cap_without_any_registration(
-            self, tmp_path: Path):
+    def test_closure_keeps_its_cap_without_any_registration(self, tmp_path: Path):
         """The bound closure has always had, now read as a default rather than
         hardcoded in the pair loop. Both arms reaching budget still saturates."""
         _member(tmp_path, "ctl1", 12000, 3000, "1.2")
         _member(tmp_path, "trt1", 12000, 3000, "1.3")
         roster = _roster(tmp_path, [("ctl1", "a", "1"), ("trt1", "b", "1")])
         payload = json.loads(
-            _score(roster, "--min-pairs", "1", "--format", "json").stdout)
+            _score(roster, "--min-pairs", "1", "--format", "json").stdout
+        )
         assert payload["pairs"][0]["saturated"] is True, payload["pairs"][0]
         assert payload["metric_bound"] == 1.0
 
@@ -327,18 +352,15 @@ class TestTheBoundCheckIsScopedToTheArms:
             fh.write(f"{root / 'stray'}  wave:b pair:9\n")
         return roster, _register(root)
 
-    def test_an_out_of_arm_row_past_the_bound_does_not_refuse(
-            self, tmp_path: Path):
+    def test_an_out_of_arm_row_past_the_bound_does_not_refuse(self, tmp_path: Path):
         roster, d = self._with_stray(tmp_path, 1.4)
         r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
         assert r.returncode != 1, (
-            "a repo in neither arm must not be able to refuse the run:\n"
-            + r.stderr
+            "a repo in neither arm must not be able to refuse the run:\n" + r.stderr
         )
         assert "is not a bound" not in r.stderr, r.stderr
 
-    def test_it_is_reported_as_a_note_rather_than_swallowed(
-            self, tmp_path: Path):
+    def test_it_is_reported_as_a_note_rather_than_swallowed(self, tmp_path: Path):
         """Not fatal is not the same as not said. A bound is a claim about the
         metric, and a value past it anywhere is worth a look."""
         roster, d = self._with_stray(tmp_path, 1.4)
@@ -350,8 +372,15 @@ class TestTheBoundCheckIsScopedToTheArms:
 
     def test_the_json_carries_it_too(self, tmp_path: Path):
         roster, d = self._with_stray(tmp_path, 1.4)
-        r = _score(roster, "--experiments-dir", str(d), "--experiment", "02",
-                   "--format", "json")
+        r = _score(
+            roster,
+            "--experiments-dir",
+            str(d),
+            "--experiment",
+            "02",
+            "--format",
+            "json",
+        )
         payload = json.loads(r.stdout)
         assert payload["bound_exceeded_out_of_arm"] == [
             {"repo": "stray", "skill_version": "0.9", "truth": 1.4}
@@ -367,8 +396,7 @@ class TestTheBoundCheckIsScopedToTheArms:
         assert "is not a bound" in r.stderr, r.stderr
         assert "trt1" in r.stderr, r.stderr
 
-    def test_a_clean_run_says_nothing_about_bounds_out_of_arm(
-            self, tmp_path: Path):
+    def test_a_clean_run_says_nothing_about_bounds_out_of_arm(self, tmp_path: Path):
         """The note fires on the condition, not on the presence of a stray."""
         roster, d = self._with_stray(tmp_path, 0.8)
         r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
@@ -383,8 +411,7 @@ class TestTheBoundCheckIsScopedToTheArms:
         assert r.returncode == 1, r.stdout
         assert "trt1" in r.stderr, r.stderr
 
-    def test_a_non_numeric_bound_is_refused_before_any_fetch(
-            self, tmp_path: Path):
+    def test_a_non_numeric_bound_is_refused_before_any_fetch(self, tmp_path: Path):
         roster = _cohort(tmp_path, [(1.0, 1.0)])
         d = _register(tmp_path, bound="perfect")
         r = _score(roster, "--experiments-dir", str(d), "--experiment", "02")
@@ -412,7 +439,8 @@ class TestTheBoundCheckIsScopedToTheArms:
         assert payload["pairs"][0]["winner"] == "tie"
 
     def test_a_registered_bound_is_printed_whether_or_not_it_fires(
-            self, tmp_path: Path):
+        self, tmp_path: Path
+    ):
         """So an inert bound is visible as a declaration that was honoured and
         did not apply, rather than as one nobody read."""
         roster = _cohort(tmp_path, [(0.5, 0.5)])
@@ -444,8 +472,9 @@ class TestTheSchemaAndTheGateRecordTheRule:
         assert "optional" in flat, flat
 
     def test_the_help_names_the_bound(self):
-        r = subprocess.run(["bash", str(SCORE), "--help"],
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            ["bash", str(SCORE), "--help"], capture_output=True, text=True, timeout=30
+        )
         flat = _flat(r.stdout).lower()
         assert "bound" in flat, r.stdout
 

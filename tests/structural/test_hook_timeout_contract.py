@@ -116,24 +116,40 @@ def _consumer(tmp_path: Path) -> Path:
     (repo / "skills-vendor/acme-skills/skills/demo/scripts/demo-hook.sh").write_text(
         "#!/usr/bin/env bash\nexit 0\n"
     )
-    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True,
-                   capture_output=True, env=_clean_env(), timeout=60)
+    subprocess.run(
+        ["git", "-C", str(repo), "init", "-q"],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+        timeout=60,
+    )
     return repo
 
 
 def _install(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(INSTALL_HOOK), "--hook", "demo-hook.sh", "--skill", "demo",
-         "--marker", "demo-hook", *args],
-        cwd=str(repo), capture_output=True, text=True,
-        env=_clean_env(), timeout=120,
+        [
+            "bash",
+            str(INSTALL_HOOK),
+            "--hook",
+            "demo-hook.sh",
+            "--skill",
+            "demo",
+            "--marker",
+            "demo-hook",
+            *args,
+        ],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=120,
     )
 
 
 def _entries(repo: Path) -> list[dict]:
     settings = json.loads((repo / ".claude/settings.json").read_text())
-    return [h for group in settings["hooks"]["SessionStart"]
-            for h in group["hooks"]]
+    return [h for group in settings["hooks"]["SessionStart"] for h in group["hooks"]]
 
 
 def _entry(repo: Path, marker: str = "demo-hook") -> dict:
@@ -251,7 +267,9 @@ class TestTheInstallerWritesAndKeepsIt:
         assert _install(repo, "--timeout", "5", "-q").returncode == 0
         assert _entry(repo)["timeout"] == 5
 
-    def test_check_reports_a_missing_ceiling_as_repairable(self, tmp_path: Path) -> None:
+    def test_check_reports_a_missing_ceiling_as_repairable(
+        self, tmp_path: Path
+    ) -> None:
         repo = _consumer(tmp_path)
         assert _install(repo, "-q").returncode == 0
         result = _install(repo, "--timeout", "5", "--check")
@@ -261,7 +279,9 @@ class TestTheInstallerWritesAndKeepsIt:
         )
         assert "timeout" in result.stdout
 
-    def test_check_does_not_fail_on_a_deliberate_local_value(self, tmp_path: Path) -> None:
+    def test_check_does_not_fail_on_a_deliberate_local_value(
+        self, tmp_path: Path
+    ) -> None:
         """Reported, not red.
 
         There is nothing here for a re-run to repair — the installer preserves
@@ -274,7 +294,9 @@ class TestTheInstallerWritesAndKeepsIt:
         assert result.returncode == 0
         assert "300" in result.stdout and "120" in result.stdout
 
-    def test_a_siblings_timeout_survives_this_hooks_install(self, tmp_path: Path) -> None:
+    def test_a_siblings_timeout_survives_this_hooks_install(
+        self, tmp_path: Path
+    ) -> None:
         """#222's failure, asked about the new key.
 
         The strip removes matching HOOKS rather than whole matcher groups, so a
@@ -283,15 +305,32 @@ class TestTheInstallerWritesAndKeepsIt:
         """
         repo = _consumer(tmp_path)
         (repo / ".claude").mkdir(exist_ok=True)
-        (repo / ".claude/settings.json").write_text(json.dumps({"hooks": {
-            "SessionStart": [{"matcher": ".*", "hooks": [
-                {"type": "command", "command": "bash .claude/hooks/other.sh",
-                 "timeout": 60},
-                {"type": "command",
-                 "command": "bash .claude/hooks/demo-hook.sh # demo-hook",
-                 "timeout": 90},
-            ]}],
-        }}, indent=2))
+        (repo / ".claude/settings.json").write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {
+                                "matcher": ".*",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/other.sh",
+                                        "timeout": 60,
+                                    },
+                                    {
+                                        "type": "command",
+                                        "command": "bash .claude/hooks/demo-hook.sh # demo-hook",
+                                        "timeout": 90,
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                },
+                indent=2,
+            )
+        )
 
         assert _install(repo, "--timeout", "120", "-q").returncode == 0
         other = _entry(repo, "other.sh")

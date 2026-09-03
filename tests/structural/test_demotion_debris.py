@@ -60,7 +60,9 @@ from pathlib import Path
 
 import pytest
 
-SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "curating-context"
+SKILL_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "skills" / "curating-context"
+)
 REFERENCES = SKILL_DIR / "references"
 
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
@@ -197,7 +199,7 @@ class TestNoParagraphArrivedTruncated:
         ]
         assert not orphans, (
             "Paragraphs beginning mid-sentence — a demoted tail whose head was left "
-            f"behind in transit:\n  " + "\n  ".join(orphans) + "\n"
+            "behind in transit:\n  " + "\n  ".join(orphans) + "\n"
             "Recover the head from `git log` for the demoting commit and restore it, "
             "or remove the tail under a duplication warrant if the whole sentence "
             "already lives elsewhere. `prove-no-loss.sh` cannot see this: the line "
@@ -216,12 +218,14 @@ class TestNoBlockArrivedWithoutItsFrame:
 
     def test_no_ordered_list_starts_mid_sequence(self):
         stranded = [
-            line for path in sorted(REFERENCES.rglob("*.md"))
+            line
+            for path in sorted(REFERENCES.rglob("*.md"))
             for line in _orphaned_ordered_items(path)
         ]
         assert not stranded, (
             "Ordered-list items with no predecessor in their section:\n  "
-            + "\n  ".join(stranded) + "\n"
+            + "\n  ".join(stranded)
+            + "\n"
             "A numbered step demoted out of `SKILL.md`'s Phase list keeps its number "
             "and loses its siblings, so it renders as a list of one that begins at "
             "four. Give it a heading and a lead-in naming the phase and version it "
@@ -266,7 +270,8 @@ class TestNoProseRendersAsACodeBlock:
         ]
         assert not indented, (
             "Paragraphs indented far enough to render as a code block:\n  "
-            + "\n  ".join(indented) + "\n"
+            + "\n  ".join(indented)
+            + "\n"
             f"CommonMark turns {CODE_BLOCK_INDENT}+ leading spaces outside a list into "
             "an indented code block, so this prose is displayed as source — links in "
             "it do not resolve and `test_relative_links.py` cannot see them, exactly "
@@ -313,7 +318,7 @@ def _duplicate_runs() -> list[tuple[str, list[str]]]:
     windows: dict[str, list[tuple[str, int]]] = {}
     for name, lines in docs.items():
         for i in range(len(lines) - DUPLICATE_RUN + 1):
-            window = lines[i:i + DUPLICATE_RUN]
+            window = lines[i : i + DUPLICATE_RUN]
             if any(not line.strip() for line in window):
                 continue
             key = "\n".join(line.rstrip() for line in window)
@@ -322,7 +327,8 @@ def _duplicate_runs() -> list[tuple[str, list[str]]]:
             windows.setdefault(key, []).append((name, i + 1))
 
     shared = {
-        key: locs for key, locs in windows.items()
+        key: locs
+        for key, locs in windows.items()
         if len({name for name, _ in locs}) > 1
     }
     starts = {tuple(sorted(locs)) for locs in shared.values()}
@@ -336,7 +342,7 @@ def _duplicate_runs() -> list[tuple[str, list[str]]]:
         length = DUPLICATE_RUN
         while True:
             grown = {
-                "\n".join(x.rstrip() for x in docs[name][n - 1:n + length])
+                "\n".join(x.rstrip() for x in docs[name][n - 1 : n + length])
                 for name, n in locs
             }
             if len(grown) != 1 or any(
@@ -344,10 +350,12 @@ def _duplicate_runs() -> list[tuple[str, list[str]]]:
             ):
                 break
             length += 1
-        runs.append((
-            key.splitlines()[0],
-            [f"{name}:{n}-{n + length - 1}" for name, n in sorted(locs)],
-        ))
+        runs.append(
+            (
+                key.splitlines()[0],
+                [f"{name}:{n}-{n + length - 1}" for name, n in sorted(locs)],
+            )
+        )
     return runs
 
 
@@ -380,7 +388,8 @@ class TestNoBlockWasCopiedInsteadOfMoved:
         live = {first for first, _ in _duplicate_runs()}
         stale = sorted(DUPLICATION_EXEMPTIONS.keys() - live)
         assert not stale, (
-            "Exemptions with nothing left to exempt:\n  " + "\n  ".join(stale)
+            "Exemptions with nothing left to exempt:\n  "
+            + "\n  ".join(stale)
             + "\nThe duplicate was resolved. Drop the entry so the rule covers "
             "the whole tree again (#204)."
         )

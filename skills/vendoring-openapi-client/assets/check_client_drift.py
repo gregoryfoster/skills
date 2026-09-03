@@ -73,7 +73,7 @@ class Client:
     """A vendored generated client and the snapshot it must stay consistent with."""
 
     name: str
-    sdk_dir: Path  # SDK package root (holds pyproject.toml + uv.lock + scripts/regen.sh)
+    sdk_dir: Path  # SDK root: pyproject.toml + uv.lock + scripts/regen.sh
     generated_dir: Path  # committed generated tree, the diff target
     spec_path: Path  # committed OpenAPI snapshot the tree is regenerated from
     # When set (FILTER_SPEC=yes): spec_path is the RAW snapshot, filtered to

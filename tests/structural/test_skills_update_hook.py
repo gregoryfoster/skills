@@ -283,7 +283,7 @@ class TestCommitScopeIsNarrow:
             "log is unchanged it exited early and this test proves nothing"
         )
         assert _commit_count(repo) == settled, "no empty commit"
-        assert "commit skills update:" not in log_after[len(log_before):], (
+        assert "commit skills update:" not in log_after[len(log_before) :], (
             "the commit block should not even have been entered on a clean tree"
         )
 
@@ -581,7 +581,10 @@ class TestPinHoldsOneSubmodule:
 
         result = _run_hook(
             pinned_repo.path,
-            env_extra={**FILE_TRANSPORT, "SKILLS_PIN_FILE": ".skills/skills-pin.override"},
+            env_extra={
+                **FILE_TRANSPORT,
+                "SKILLS_PIN_FILE": ".skills/skills-pin.override",
+            },
         )
 
         assert result.returncode == 0, result.stderr
@@ -738,9 +741,7 @@ def _deinit(repo: Path) -> None:
 
 
 class TestUninitializedSubmodulesStillRefresh:
-    def test_deinitialized_submodules_are_initialized_and_refreshed(
-        self, pinned_repo
-    ):
+    def test_deinitialized_submodules_are_initialized_and_refreshed(self, pinned_repo):
         """The #176 case. Without `--init` git skips both submodules, says so
         on stdout, and exits 0 — so the hook reports success forever and never
         advances a pointer."""
@@ -791,12 +792,10 @@ class TestNothingRefreshedReadsAsAProblem:
         assert result.returncode == 0, result.stderr
         log = _log_text(repo)
         assert "no registered skills-vendor/ submodules" in log, (
-            f"nothing in the log distinguishes this from a successful "
-            f"refresh:\n{log}"
+            f"nothing in the log distinguishes this from a successful refresh:\n{log}"
         )
         assert "skills-vendor/" in result.stderr, (
-            f"the operator sees stderr, not .git/skills-update.log: "
-            f"{result.stderr!r}"
+            f"the operator sees stderr, not .git/skills-update.log: {result.stderr!r}"
         )
 
     def test_still_uninitialized_after_the_refresh_is_reported(self, repo):

@@ -37,8 +37,12 @@ MEASURE = CURATING / "scripts" / "measure-context.sh"
 
 def _clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for key in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR",
-                "ANTHROPIC_API_KEY"):
+    for key in (
+        "CONTEXT_BUDGET",
+        "CONTEXT_DOC_BUDGET",
+        "CONTEXT_DOCS_DIR",
+        "ANTHROPIC_API_KEY",
+    ):
         env.pop(key, None)
     return env
 
@@ -46,7 +50,9 @@ def _clean_env() -> dict:
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-C", str(repo), *args],
-        check=True, capture_output=True, env=_clean_env(),
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
     )
 
 
@@ -66,8 +72,11 @@ def _repo(tmp_path: Path, policy: str) -> Path:
 def _measure(repo: Path, *args: str) -> dict:
     result = subprocess.run(
         ["bash", str(MEASURE), "--no-write", *args],
-        capture_output=True, text=True, cwd=str(repo),
-        env=_clean_env(), timeout=60,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=60,
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -199,8 +208,11 @@ class TestTheExtractorDoesNotFailQuietly:
         try:
             result = subprocess.run(
                 ["bash", str(MEASURE), "--no-write"],
-                capture_output=True, text=True, cwd=str(repo),
-                env=_clean_env(), timeout=60,
+                capture_output=True,
+                text=True,
+                cwd=str(repo),
+                env=_clean_env(),
+                timeout=60,
             )
         finally:
             plan.chmod(0o644)
@@ -304,9 +316,7 @@ class TestCuratingContextSkillCanSatisfyItsOwnPhaseSix:
         assert "references/telemetry.md" in refs
         assert len(refs) >= 8, refs
 
-    def test_a_real_dead_link_in_that_file_would_still_be_caught(
-        self, tmp_path: Path
-    ):
+    def test_a_real_dead_link_in_that_file_would_still_be_caught(self, tmp_path: Path):
         """Mutation check: the file passes because it is clean, not because the
         extractor stopped looking at it."""
         repo = self._repo_from_skill(tmp_path)
@@ -351,9 +361,7 @@ class TestAnImageMayNestInsideALinkLabel:
         (repo / "docs" / "CI.md").write_text("# CI\n")
         assert _dead(repo) == ["AGENTS.md -> docs/b.png"]
 
-    def test_an_absolute_outer_target_still_yields_the_inner_one(
-        self, tmp_path: Path
-    ):
+    def test_an_absolute_outer_target_still_yields_the_inner_one(self, tmp_path: Path):
         """The common real shape: a badge linking out to a CI dashboard, with a
         locally-committed image. Only the image is checkable."""
         repo = _repo(

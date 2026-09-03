@@ -165,7 +165,7 @@ def _step_a() -> str:
     """
     body = POLICY_REF.read_text()
     start = body.index("**Step A —")
-    return body[start:body.index("**Step B —", start)]
+    return body[start : body.index("**Step B —", start)]
 
 
 class TestItIsInstalledLikeItsSibling:
@@ -223,7 +223,7 @@ class TestItIsInstalledLikeItsSibling:
         cohort repo end up with one hook of each kind in the same directory."""
         body = SKILL_MD.read_text()
         idx = body.index(".claude/hooks/socraticode-reminder.sh")
-        window = body[max(0, idx - 500):idx + 500]
+        window = body[max(0, idx - 500) : idx + 500]
         assert "symlink" in window.lower(), (
             "SKILL.md Phase 3 must describe the reminder hook as a symlink "
             f"install, matching the reference (#186).\n---\n{window}"
@@ -253,7 +253,7 @@ class TestItNeverBlocksASession:
         report and a zero exit, which is the contract for this hook class.
         """
         result = subprocess.run(
-            ["bash", "-c", f'bash "$1" 1>&-', "_", str(SCRIPT)],
+            ["bash", "-c", 'bash "$1" 1>&-', "_", str(SCRIPT)],
             capture_output=True,
             text=True,
             timeout=30,
@@ -277,8 +277,13 @@ def _git(repo: Path, *args: str) -> None:
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     subprocess.run(
-        ["git", *args], cwd=str(repo), check=True,
-        capture_output=True, text=True, env=env, timeout=60,
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
     )
 
 
@@ -286,7 +291,11 @@ def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return subprocess.run(
         ["bash", str(DOCTOR), "--no-preflight", *args],
-        cwd=str(repo), capture_output=True, text=True, env=env, timeout=120,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
     )
 
 
@@ -295,7 +304,14 @@ def consumer(tmp_path: Path) -> Path:
     """A consumer repo carrying a *resolving* reminder-hook symlink."""
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
-    vendor = repo / "skills-vendor" / "acme-skills" / "skills" / "init-socraticode" / "scripts"
+    vendor = (
+        repo
+        / "skills-vendor"
+        / "acme-skills"
+        / "skills"
+        / "init-socraticode"
+        / "scripts"
+    )
     vendor.mkdir(parents=True)
     (vendor / SCRIPT.name).write_text(SCRIPT.read_text())
     (repo / ".claude" / "hooks" / SCRIPT.name).symlink_to(

@@ -76,7 +76,9 @@ def _save_result(skill_name: str, rubric: str, scores: list[dict], avg: float) -
         f.write(json.dumps(record) + "\n")
 
 
-def _print_score_table(skill_name: str, rubric: str, scores: list[dict], avg: float, threshold: float) -> None:
+def _print_score_table(
+    skill_name: str, rubric: str, scores: list[dict], avg: float, threshold: float
+) -> None:
     """Print a formatted score table to pytest output."""
     print(f"\n{'=' * 60}")
     print(f"  Benchmark: {skill_name} — {rubric}")
@@ -135,14 +137,18 @@ class TestShippingWorkQuality:
     def test_procedure_adherence(self):
         scores = []
         for _ in range(_SUBJECT_RUNS):
-            response = claude_with_skill(self.skill, _SHIPPING_SCENARIO, max_tokens=1024)
+            response = claude_with_skill(
+                self.skill, _SHIPPING_SCENARIO, max_tokens=1024
+            )
             judge_prompt = _SHIPPING_JUDGE_TEMPLATE.format(response=response)
             score = _judge(judge_prompt)
             scores.append(score)
 
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
         _save_result("shipping-work", "procedure_adherence", scores, avg)
-        _print_score_table("shipping-work", "procedure_adherence", scores, avg, _SHIPPING_THRESHOLD)
+        _print_score_table(
+            "shipping-work", "procedure_adherence", scores, avg, _SHIPPING_THRESHOLD
+        )
 
         assert avg >= _SHIPPING_THRESHOLD, (
             f"shipping-work procedure adherence avg {avg:.2f} < threshold {_SHIPPING_THRESHOLD}. "
@@ -219,7 +225,9 @@ class TestReviewingCodeQuality:
     def test_findings_quality(self):
         scores = []
         for _ in range(_SUBJECT_RUNS):
-            response = claude_with_skill(self.skill, _CODE_REVIEW_SCENARIO, max_tokens=2048)
+            response = claude_with_skill(
+                self.skill, _CODE_REVIEW_SCENARIO, max_tokens=2048
+            )
             # Pre-validate structural compliance before sending to judge
             try:
                 assert_full_format_compliance(response, review_type="code")
@@ -232,7 +240,9 @@ class TestReviewingCodeQuality:
 
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
         _save_result("reviewing-code", "findings_quality", scores, avg)
-        _print_score_table("reviewing-code", "findings_quality", scores, avg, _CODE_REVIEW_THRESHOLD)
+        _print_score_table(
+            "reviewing-code", "findings_quality", scores, avg, _CODE_REVIEW_THRESHOLD
+        )
 
         assert avg >= _CODE_REVIEW_THRESHOLD, (
             f"reviewing-code findings quality avg {avg:.2f} < threshold {_CODE_REVIEW_THRESHOLD}. "
@@ -281,7 +291,9 @@ class TestInitProjectFastapiQuality:
     def test_parameter_gate_adherence(self):
         scores = []
         for _ in range(_SUBJECT_RUNS):
-            response = claude_with_skill(self.skill, _FASTAPI_INCOMPLETE_SCENARIO, max_tokens=1024)
+            response = claude_with_skill(
+                self.skill, _FASTAPI_INCOMPLETE_SCENARIO, max_tokens=1024
+            )
             judge_prompt = _FASTAPI_JUDGE_TEMPLATE.format(response=response)
             score = _judge(judge_prompt)
             scores.append(score)
@@ -289,7 +301,11 @@ class TestInitProjectFastapiQuality:
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
         _save_result("init-project-fastapi", "parameter_gate_adherence", scores, avg)
         _print_score_table(
-            "init-project-fastapi", "parameter_gate_adherence", scores, avg, _FASTAPI_THRESHOLD
+            "init-project-fastapi",
+            "parameter_gate_adherence",
+            scores,
+            avg,
+            _FASTAPI_THRESHOLD,
         )
 
         assert avg >= _FASTAPI_THRESHOLD, (
@@ -371,7 +387,9 @@ class TestReviewingArchitectureQuality:
     def test_architectural_coverage(self):
         scores = []
         for _ in range(_SUBJECT_RUNS):
-            response = claude_with_skill(self.skill, _ARCH_REVIEW_SCENARIO, max_tokens=2048)
+            response = claude_with_skill(
+                self.skill, _ARCH_REVIEW_SCENARIO, max_tokens=2048
+            )
             judge_prompt = _ARCH_REVIEW_JUDGE_TEMPLATE.format(response=response)
             score = _judge(judge_prompt)
             scores.append(score)
@@ -379,7 +397,11 @@ class TestReviewingArchitectureQuality:
         avg = sum(s.get("total", 0) for s in scores) / len(scores)
         _save_result("reviewing-architecture", "architectural_coverage", scores, avg)
         _print_score_table(
-            "reviewing-architecture", "architectural_coverage", scores, avg, _ARCH_REVIEW_THRESHOLD
+            "reviewing-architecture",
+            "architectural_coverage",
+            scores,
+            avg,
+            _ARCH_REVIEW_THRESHOLD,
         )
 
         assert avg >= _ARCH_REVIEW_THRESHOLD, (

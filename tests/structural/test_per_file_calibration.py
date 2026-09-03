@@ -80,8 +80,13 @@ DEFAULT_RATIO_X100 = 270
 
 def _clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR",
-              "CTX_BPT_X100", "ANTHROPIC_API_KEY"):
+    for k in (
+        "CONTEXT_BUDGET",
+        "CONTEXT_DOC_BUDGET",
+        "CONTEXT_DOCS_DIR",
+        "CTX_BPT_X100",
+        "ANTHROPIC_API_KEY",
+    ):
         env.pop(k, None)
     return env
 
@@ -89,9 +94,19 @@ def _clean_env() -> dict:
 def _call(func: str, *args: str) -> subprocess.CompletedProcess:
     """Source the library and call one function — the #132 test's shape."""
     return subprocess.run(
-        ["bash", "-c", '. "$1"; shift; fn="$1"; shift; "$fn" "$@"',
-         "lib", str(LIB), func, *args],
-        capture_output=True, text=True, env=_clean_env(), timeout=30,
+        [
+            "bash",
+            "-c",
+            '. "$1"; shift; fn="$1"; shift; "$fn" "$@"',
+            "lib",
+            str(LIB),
+            func,
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=30,
     )
 
 
@@ -109,8 +124,12 @@ def _write_counts(root: Path, body: str) -> None:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True,
-                   capture_output=True, env=_clean_env())
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
 
 
 def _sized(path: Path, byte_count: int) -> None:
@@ -225,13 +244,13 @@ class TestAMalformedRowProducesNoNumberRatherThanADifferentOne:
     """
 
     MALFORMED = [
-        "20000 docs/D.md",            # two fields, no token count
-        "20000 v2 docs/D.md",         # token count is not an integer
-        "2e4 8000 docs/D.md",         # byte count is not an integer
-        "20000 8000",                 # no path at all
-        "-20000 8000 docs/D.md",      # negative byte count
-        "20000 0 docs/D.md",          # would divide by zero
-        "0 8000 docs/D.md",           # would divide by zero the other way
+        "20000 docs/D.md",  # two fields, no token count
+        "20000 v2 docs/D.md",  # token count is not an integer
+        "2e4 8000 docs/D.md",  # byte count is not an integer
+        "20000 8000",  # no path at all
+        "-20000 8000 docs/D.md",  # negative byte count
+        "20000 0 docs/D.md",  # would divide by zero
+        "0 8000 docs/D.md",  # would divide by zero the other way
     ]
 
     @pytest.mark.parametrize("row", MALFORMED)
@@ -250,15 +269,13 @@ class TestAMalformedRowProducesNoNumberRatherThanADifferentOne:
         assert r.returncode == 0, r.stderr
         assert "WARN" in r.stderr and COUNTS in r.stderr, r.stderr
 
-    def test_a_truncated_final_row_is_not_the_one_that_escapes(
-        self, tmp_path: Path
-    ):
+    def test_a_truncated_final_row_is_not_the_one_that_escapes(self, tmp_path: Path):
         """CR finding 27. The loop guard tested `p` — the very field a truncated
         row lacks — so a path-less row written without a trailing newline was
         dropped in silence. A truncated write is exactly how a file ends up
         without a trailing newline, so the check was bypassed in its motivating
         case."""
-        _write_counts(tmp_path, "20000 8000")   # deliberately no "\n"
+        _write_counts(tmp_path, "20000 8000")  # deliberately no "\n"
         r = _call("ctx_validate_counts", str(tmp_path))
         assert r.returncode == 0, r.stderr
         assert "names no path" in r.stderr, r.stderr
@@ -273,19 +290,20 @@ class TestAMalformedRowProducesNoNumberRatherThanADifferentOne:
             assert r.returncode == 0, r.stderr
             assert r.stderr == "", f"{rel} warned from the hot path: {r.stderr!r}"
 
-    def test_a_valid_row_after_a_broken_one_is_still_found(
-        self, tmp_path: Path
-    ):
+    def test_a_valid_row_after_a_broken_one_is_still_found(self, tmp_path: Path):
         """Skipping quietly must not mean skipping the rest of the file."""
         _write_counts(tmp_path, "GARBAGE\n15600 5873 AGENTS.md\n")
         tokens, source = _est(tmp_path, "AGENTS.md", 15_600)
         assert source == "file"
         assert tokens == 5_873
 
-    @pytest.mark.parametrize("row,ratio", [
-        ("20000 20000 docs/D.md", "1.00"),
-        ("70000 10000 docs/D.md", "7.00"),
-    ])
+    @pytest.mark.parametrize(
+        "row,ratio",
+        [
+            ("20000 20000 docs/D.md", "1.00"),
+            ("70000 10000 docs/D.md", "7.00"),
+        ],
+    )
     def test_an_implausible_ratio_is_refused(
         self, tmp_path: Path, row: str, ratio: str
     ):
@@ -307,10 +325,33 @@ class TestAMalformedRowProducesNoNumberRatherThanADifferentOne:
 
 def _bin_with_real_tools(bin_dir: Path) -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for tool in ("git", "python3", "bash", "awk", "sed", "grep", "wc", "sort",
-                 "find", "head", "tr", "dirname", "basename", "mktemp", "date",
-                 "cat", "rm", "mkdir", "printf", "ls", "cut", "tail", "uniq",
-                 "mv", "sh"):
+    for tool in (
+        "git",
+        "python3",
+        "bash",
+        "awk",
+        "sed",
+        "grep",
+        "wc",
+        "sort",
+        "find",
+        "head",
+        "tr",
+        "dirname",
+        "basename",
+        "mktemp",
+        "date",
+        "cat",
+        "rm",
+        "mkdir",
+        "printf",
+        "ls",
+        "cut",
+        "tail",
+        "uniq",
+        "mv",
+        "sh",
+    ):
         real = shutil.which(tool)
         if real and not (bin_dir / tool).exists():
             (bin_dir / tool).symlink_to(real)
@@ -356,8 +397,12 @@ def _measured_repo(tmp_path: Path) -> Path:
 
 def _measure(repo: Path, env: dict, *args: str) -> dict:
     result = subprocess.run(
-        ["bash", str(MEASURE), *args], capture_output=True, text=True,
-        cwd=str(repo), env=env, timeout=120,
+        ["bash", str(MEASURE), *args],
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=env,
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -395,9 +440,7 @@ class TestTheExactRunWritesTheCalibration:
         assert _est(repo, "docs/dense-notes.md", 6_000) == (3_000, "file")
         assert _est(repo, "docs/prose.md", 3_000) == (1_000, "file")
 
-    def test_an_estimate_only_run_writes_nothing(
-        self, tmp_path: Path, exact_env: dict
-    ):
+    def test_an_estimate_only_run_writes_nothing(self, tmp_path: Path, exact_env: dict):
         """The self-confirmation guard the global ratio already has: a
         calibration derived from the divisor it was computed with re-records the
         default and freezes whatever error it carries."""
@@ -410,9 +453,7 @@ class TestTheExactRunWritesTheCalibration:
         _measure(repo, exact_env, "--exact", "--no-write")
         assert not (repo / COUNTS).exists()
 
-    def test_a_credential_that_could_not_count_writes_nothing(
-        self, tmp_path: Path
-    ):
+    def test_a_credential_that_could_not_count_writes_nothing(self, tmp_path: Path):
         bin_dir = _bin_with_real_tools(tmp_path / "bin")
         (bin_dir / "python3").unlink()
         (bin_dir / "python3").write_text("#!/bin/sh\necho boom >&2\nexit 1\n")
@@ -438,8 +479,16 @@ class TestTheExactRunWritesTheCalibration:
         repo = _measured_repo(tmp_path)
         _measure(repo, exact_env, "--exact")
         _sized(repo / "other" / "SOLO.md", 4_000)
-        _measure(repo, exact_env, "--exact", "--calibrate",
-                 "--file", "other/SOLO.md", "--docs-dir", "other")
+        _measure(
+            repo,
+            exact_env,
+            "--exact",
+            "--calibrate",
+            "--file",
+            "other/SOLO.md",
+            "--docs-dir",
+            "other",
+        )
         rows = _rows(repo)
         assert "other/SOLO.md" in rows
         assert rows["AGENTS.md"] == (9_000, 3_000), (
@@ -470,8 +519,8 @@ class TestTheExactRunWritesTheCalibration:
         (repo / "docs" / "degenerate.md").write_text("a" * 9_000)
         bin_dir = Path(exact_env["PATH"])
         (bin_dir / "python3").write_text(
-            "#!/bin/sh\nf=\"$2\"\nb=$(wc -c <\"$f\" | tr -d ' ')\n"
-            "case \"$f\" in *degenerate*) echo $(( b / 9 )) ;;"
+            '#!/bin/sh\nf="$2"\nb=$(wc -c <"$f" | tr -d \' \')\n'
+            'case "$f" in *degenerate*) echo $(( b / 9 )) ;;'
             " *) echo $(( b * 100 / 300 )) ;; esac\n"
         )
         _measure(repo, exact_env, "--exact")
@@ -526,10 +575,9 @@ class TestTheMeasurementSaysWhereItsNumbersCameFrom:
         exact = _measure(repo, exact_env, "--exact")
         estimate = _measure(repo, _clean_env())
         assert estimate["policy"]["tokens"] == exact["policy"]["tokens"]
-        assert (
-            {d["path"]: d["tokens"] for d in estimate["docs"]}
-            == {d["path"]: d["tokens"] for d in exact["docs"]}
-        )
+        assert {d["path"]: d["tokens"] for d in estimate["docs"]} == {
+            d["path"]: d["tokens"] for d in exact["docs"]
+        }
 
 
 def _run_guard(repo: Path, file_path: Path) -> str | None:
@@ -537,8 +585,13 @@ def _run_guard(repo: Path, file_path: Path) -> str | None:
         {"tool_name": "Edit", "tool_input": {"file_path": str(file_path)}}
     )
     result = subprocess.run(
-        ["bash", str(GUARD)], input=payload, capture_output=True, text=True,
-        cwd=str(repo), env=_clean_env(), timeout=30,
+        ["bash", str(GUARD)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     if not result.stdout.strip():
@@ -625,13 +678,12 @@ class TestTheGuardActsOnTheCalibration:
         Both sides drop to the repo ratio instead — a slightly worse pair of
         numbers, but a difference that means something.
         """
-        _sized(repo / "AGENTS.md", 17_000)         # committed size is 2,000
+        _sized(repo / "AGENTS.md", 17_000)  # committed size is 2,000
         _write_counts(repo, "17000 6400 AGENTS.md\n")
         msg = _run_guard(repo, repo / "AGENTS.md")
         assert msg is not None
         assert "6296 tokens" in msg, (
-            "one side was priced by the anchor and the other by the repo "
-            f"ratio: {msg}"
+            f"one side was priced by the anchor and the other by the repo ratio: {msg}"
         )
         log = (repo / ".git" / "context-budget.log").read_text()
         assert "est=repo" in log, log

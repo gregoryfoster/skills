@@ -38,9 +38,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MEASURE = (
-    REPO_ROOT / "skills" / "curating-context" / "scripts" / "measure-context.sh"
-)
+MEASURE = REPO_ROOT / "skills" / "curating-context" / "scripts" / "measure-context.sh"
 
 # The two numbers this repo enforces on the cohort, applied to itself. They are
 # the skill's own defaults, restated rather than imported because a change to
@@ -80,16 +78,23 @@ def _measure(*, exact: bool) -> dict:
     ratchet from a verification run that was supposed to be read-only.
     """
     cmd = [
-        "bash", str(MEASURE),
+        "bash",
+        str(MEASURE),
         "--no-write",
-        "--budget", str(POLICY_BUDGET),
-        "--doc-budget", str(DOC_BUDGET),
+        "--budget",
+        str(POLICY_BUDGET),
+        "--doc-budget",
+        str(DOC_BUDGET),
     ]
     if exact:
         cmd.insert(3, "--exact")
     result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(REPO_ROOT),
-        env=_env(exact=exact), timeout=300,
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=_env(exact=exact),
+        timeout=300,
     )
     assert result.returncode == 0, (
         f"measure-context.sh failed on this repo's own surface:\n{result.stderr}"
@@ -184,19 +189,22 @@ class TestEveryLiveDocIsWithinThePerDocBudget:
     def test_offline(self, surface: dict):
         over = [
             f"  {d['path']}: {d['tokens']:,} / {d['budget']:,}"
-            for d in surface["docs"] if d["over_budget"]
+            for d in surface["docs"]
+            if d["over_budget"]
         ]
         assert not over, (
-            "reference doc(s) over the per-doc budget:\n" + "\n".join(over)
+            "reference doc(s) over the per-doc budget:\n"
+            + "\n".join(over)
             + "\n\nSplit the doc, or demote the part that is not pulling its "
-              "weight. Phase 5's rule applies: split BEFORE anything points "
-              "into what moves."
+            "weight. Phase 5's rule applies: split BEFORE anything points "
+            "into what moves."
         )
 
     def test_exact(self, exact_surface: dict):
         over = [
             f"  {d['path']}: {d['tokens']:,} / {d['budget']:,}"
-            for d in exact_surface["docs"] if d["over_budget"]
+            for d in exact_surface["docs"]
+            if d["over_budget"]
         ]
         assert not over, (
             "reference doc(s) over the per-doc budget when counted exactly:\n"
@@ -222,10 +230,20 @@ class TestTheGateCanActuallyFail:
         )
         (tmp_path / "docs").mkdir()
         result = subprocess.run(
-            ["bash", str(MEASURE), "--no-write",
-             "--budget", str(POLICY_BUDGET), "--doc-budget", str(DOC_BUDGET)],
-            capture_output=True, text=True, cwd=str(tmp_path),
-            env=_env(exact=False), timeout=120,
+            [
+                "bash",
+                str(MEASURE),
+                "--no-write",
+                "--budget",
+                str(POLICY_BUDGET),
+                "--doc-budget",
+                str(DOC_BUDGET),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=_env(exact=False),
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
         policy = json.loads(result.stdout)["policy"]
@@ -241,10 +259,20 @@ class TestTheGateCanActuallyFail:
             "# Big\n\n" + ("filler " * 30_000) + "\n"
         )
         result = subprocess.run(
-            ["bash", str(MEASURE), "--no-write",
-             "--budget", str(POLICY_BUDGET), "--doc-budget", str(DOC_BUDGET)],
-            capture_output=True, text=True, cwd=str(tmp_path),
-            env=_env(exact=False), timeout=120,
+            [
+                "bash",
+                str(MEASURE),
+                "--no-write",
+                "--budget",
+                str(POLICY_BUDGET),
+                "--doc-budget",
+                str(DOC_BUDGET),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=_env(exact=False),
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
         docs = json.loads(result.stdout)["docs"]
