@@ -224,7 +224,8 @@ fi
 # --- measure --------------------------------------------------------------
 # Offline by design: a hook must be fast, so it never calls count_tokens. The
 # estimate only decides whether to speak; the authoritative count is
-# measure-context.sh --exact, which also recalibrates the ratio for this repo.
+# measure-context.sh --exact, which — run over the whole surface, or scoped
+# with --calibrate (#263) — also recalibrates the ratio for this repo.
 # Read by ctx_est_from_bytes in _context-lib.sh (and by the repo-ratio fallback
 # in ctx_est_tokens_for), which shellcheck cannot see across `source` — dropping
 # this assignment silently discards the repo's measured calibration and prices

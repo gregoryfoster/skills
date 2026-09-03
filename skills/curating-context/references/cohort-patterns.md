@@ -113,11 +113,13 @@ Phase 5's step 4 carried this inline until v1.7 demoted it here:
 
 Two mechanics enforce this:
 
-- `measure-context.sh --no-write` suppresses the one side effect an `--exact` run
-  has — persisting the observed token ratio to `.skills/context-token-ratio`.
+- `measure-context.sh --no-write` suppresses the side effects an `--exact` run
+  has — persisting the observed token ratio to `.skills/context-token-ratio`
+  and the per-file anchors to `.skills/context-token-counts`.
   **Always pass it when surveying a repo you are not curating.** Without it, a
-  read-only-looking survey leaves an untracked file behind in every repo it
-  touched.
+  read-only-looking survey leaves untracked files behind in every repo it
+  touched. (A run scoped by `--file`/`--docs-dir` writes neither since #263,
+  but a survey measures the whole surface, which does.)
 - `cohort-report.sh` and `score-cohort.sh` read ledgers over `gh api` and never
   clone or write.
 

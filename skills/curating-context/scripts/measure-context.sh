@@ -75,6 +75,17 @@ Options:
                      Required when measuring a repo you are only surveying —
                      cohort remediation is filed as issues, never written across
                      repos.
+  --calibrate        Persist the calibration from a SCOPED --exact run — one
+                     that passed --file or --docs-dir. Without it a scoped run
+                     reads both calibration files and writes neither (#263):
+                     the ratio is repo-wide, so fitting it to one corner
+                     re-prices every file the run never looked at; and a
+                     per-file row anchors that file's offline estimate to its
+                     own count, which changes what any gate reading the
+                     estimate measures. Both are decisions, and this flag is
+                     how they are made. A whole-surface --exact run (no --file,
+                     no --docs-dir) persists both without it, and says so.
+                     Refused with --no-write, and without --exact.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
@@ -136,6 +147,7 @@ GATE=0
 EXACT=0
 CHECK_CRED=0
 NO_WRITE=0
+CALIBRATE=0
 NO_ENV_FILE=0
 ENV_FILES=".env env"
 MODEL="claude-opus-5"
@@ -159,6 +171,7 @@ while [ $# -gt 0 ]; do
     --exact) EXACT=1; shift ;;
     --check-credential) CHECK_CRED=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
+    --calibrate) CALIBRATE=1; shift ;;
     --no-env-file) NO_ENV_FILE=1; shift ;;
     --env-file) need_arg "$#" --env-file 'space-separated names, relative to the repo root'
                 ENV_FILES="$2"; shift 2 ;;
@@ -184,6 +197,25 @@ for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE"; do
       exit 1 ;;
   esac
 done
+
+# A run is SCOPED when a FLAG narrowed its surface. The knobs (CONTEXT_DOCS_DIR,
+# .skills/context-docs-dir) configure what the repo's surface IS and do not
+# scope a run over it, so a knob-configured whole-surface run still calibrates.
+#
+# What a scoped run may persist (#263). Curating one skill ran --exact --file
+# over that skill and rewrote BOTH repo-wide calibration files: the ratio went
+# 2.68 -> 2.63 — the one file's rate, applied by every offline estimate in the
+# repo, which put two untouched skills over their budgets — and the file gained
+# an anchor row, which quietly changed what the self-budget gate measures for
+# it. Phase 7's `git add -A` then shipped both inside a commit about one file.
+# Neither is wrong to do; both are wrong to do by accident. So a scoped run
+# reads the calibration and writes it only on --calibrate.
+SCOPED=0
+if [ -n "$POLICY" ] || [ -n "$DOCS_DIR" ]; then SCOPED=1; fi
+PERSIST=0
+if [ "$NO_WRITE" -eq 0 ] && { [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ]; }; then
+  PERSIST=1
+fi
 
 # --- shared library -------------------------------------------------------
 # Resolve through a symlink chain first: this script may be reached through a
@@ -267,6 +299,18 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2
   echo "    .env — resolve this BEFORE starting the run; in autonomous mode, abort." >&2
   exit 3
+fi
+
+# After the preflight, deliberately: --check-credential measures nothing, so a
+# flag that only matters to a measurement must not make it refuse to answer.
+# --calibrate asks to write, so it contradicts --no-write; and it persists a
+# MEASUREMENT, so without --exact there is nothing to persist — the offline
+# estimate is derived from the very files it would write.
+if [ "$CALIBRATE" -eq 1 ] && [ "$NO_WRITE" -eq 1 ]; then
+  echo "ERROR --calibrate and --no-write contradict each other" >&2; exit 1
+fi
+if [ "$CALIBRATE" -eq 1 ] && [ "$EXACT" -eq 0 ]; then
+  echo "ERROR --calibrate needs --exact: an estimate cannot calibrate the estimator" >&2; exit 1
 fi
 
 # Which version of the skill is producing this measurement — carried into the
@@ -1210,13 +1254,37 @@ else
   RATIO_PERSISTABLE=1
 fi
 
-if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$NO_WRITE" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+SURFACE_RATIO_FMT="$(( SURFACE_RATIO_X100 / 100 )).$(printf '%02d' $(( SURFACE_RATIO_X100 % 100 )))"
+POLICY_RATIO_FMT="$(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 )))"
+RATIO_FILE="$ROOT/.skills/context-token-ratio"
+# The figure every offline estimate in the repo currently prices from, quoted
+# beside whatever this run does about it: a write names what it replaced, and a
+# scoped refusal names what it left standing (#263).
+PREV_RATIO="(none)"
+[ -f "$RATIO_FILE" ] && PREV_RATIO="$(tr -d '[:space:]' <"$RATIO_FILE" 2>/dev/null || echo unreadable)"
+if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   mkdir -p "$ROOT/.skills" 2>/dev/null || true
-  printf '%d.%02d\n' $(( SURFACE_RATIO_X100 / 100 )) $(( SURFACE_RATIO_X100 % 100 )) \
-    >"$ROOT/.skills/context-token-ratio" 2>/dev/null \
-    || echo "WARN could not write .skills/context-token-ratio" >&2
+  if printf '%s\n' "$SURFACE_RATIO_FMT" >"$RATIO_FILE" 2>/dev/null; then
+    # Said out loud because this is the write that re-prices every offline
+    # estimate in the repo, and a commit that sweeps it up should be able to say
+    # so — Phase 7's `git add -A` shipped a 2.68 -> 2.63 re-pricing inside a
+    # commit about one file before anything printed this line.
+    echo "INFO wrote .skills/context-token-ratio: $SURFACE_RATIO_FMT (was $PREV_RATIO); every offline estimate in this repo now prices from it" >&2
+  else
+    echo "WARN could not write .skills/context-token-ratio" >&2
+  fi
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
-  echo "INFO --no-write: not persisting the observed surface ratio ($(( SURFACE_RATIO_X100 / 100 )).$(printf '%02d' $(( SURFACE_RATIO_X100 % 100 ))), policy-only was $(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 ))))" >&2
+  echo "INFO --no-write: not persisting the observed surface ratio ($SURFACE_RATIO_FMT, policy-only was $POLICY_RATIO_FMT)" >&2
+elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+  # What the repo prices from is the point of the line, and it is least obvious
+  # exactly when there is no usable figure to quote — so say that, not "(none)".
+  DEFAULT_RATIO_FMT="$(( CTX_BPT_DEFAULT_X100 / 100 )).$(printf '%02d' $(( CTX_BPT_DEFAULT_X100 % 100 )))"
+  case "$PREV_RATIO" in
+    '(none)') standing="no .skills/context-token-ratio exists, so offline estimates keep pricing at the $DEFAULT_RATIO_FMT library default" ;;
+    ''|unreadable) standing=".skills/context-token-ratio is empty or unreadable, so offline estimates keep pricing at the $DEFAULT_RATIO_FMT library default" ;;
+    *) standing=".skills/context-token-ratio stays $PREV_RATIO, the repo-wide figure" ;;
+  esac
+  echo "INFO scoped run (--file/--docs-dir): measured $SURFACE_RATIO_FMT bytes/token over this corner; $standing" >&2
 fi
 
 # --- per-file calibration (#145) ------------------------------------------
@@ -1249,7 +1317,9 @@ emit_count_row() {
 }
 
 COUNTS_FILE="$ROOT/.skills/$CTX_COUNTS_BASENAME"
-if [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 0 ]; then
+# How many files this run counted exactly — the rows it would anchor.
+COUNTED=$(( 1 + $(awk 'NF { n++ } END { print n + 0 }' "$TMP/docs.tsv") ))
+if [ "$exact_flag" = true ] && [ "$PERSIST" -eq 1 ]; then
   : >"$TMP/counts.new"
   : >"$TMP/counts.measured"
   emit_count_row "$P_BYTES" "$P_TOKENS" "$POLICY"
@@ -1290,11 +1360,18 @@ if [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 0 ]; then
       } | LC_ALL=C sort -k3
     } >"$TMP/counts.out"
     mkdir -p "$ROOT/.skills" 2>/dev/null || true
-    mv -f "$TMP/counts.out" "$COUNTS_FILE" 2>/dev/null \
-      || echo "WARN could not write $COUNTS_FILE" >&2
+    if mv -f "$TMP/counts.out" "$COUNTS_FILE" 2>/dev/null; then
+      # An anchor row changes how its file is priced offline from here on, so
+      # the count of files this run anchored is worth one line (#263).
+      echo "INFO wrote .skills/$CTX_COUNTS_BASENAME: $(wc -l <"$TMP/counts.new" | tr -d ' ') of $COUNTED counted file(s) anchored; rows outside this run's scope kept" >&2
+    else
+      echo "WARN could not write $COUNTS_FILE" >&2
+    fi
   fi
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the per-file calibration" >&2
+elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ]; then
+  echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263)" >&2
 fi
 
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \

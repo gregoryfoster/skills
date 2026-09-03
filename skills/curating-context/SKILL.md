@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.15"
+  version: "1.16"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -129,17 +129,17 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
 ```
 
 `--exact` counts via the Anthropic `count_tokens` endpoint — the only accurate
-tokenizer for Claude models, and **free to call**. Run it always; without a
-credential it degrades to a calibrated offline estimate with a WARN. Never
-`tiktoken`: OpenAI's tokenizer, and it undercounts Claude badly.
+tokenizer for Claude models, and **free to call**. Never `tiktoken`: OpenAI's
+tokenizer undercounts Claude badly.
 
 **Be on a branch before you run this.** It is the run's first write, to a
 tracked file; an aborted run otherwise leaves a modified ledger on the branch
-you started from.
+you started from. A `--file`/`--docs-dir` run never writes the calibration
+files; `--calibrate` does (#263).
 
-`--baseline` appends a measurement-only row for the surface **as found**, before
-any edit. Without it the scored run is precisely the run that can never be scored,
-and the `docs_orphaned` gate has nothing to compare against. Phase 7 appends the
+`--baseline` appends a measurement-only row for the surface **as found**.
+Without it the scored run is the one that can never be scored, and the
+`docs_orphaned` gate has nothing to compare against. Phase 7 appends the
 after-row; **never rewrite the baseline row to match it**.
 
 A credential is not optional even interactively, and a WARN means the row is an
@@ -147,7 +147,7 @@ estimate whatever credential was accepted
 ([both](references/budget-and-metrics.md#measuring-tokens),
 [the baseline pair](references/telemetry.md#the-baseline-row-is-not-optional-either)).
 
-Read the baseline before touching anything. Four numbers drive the whole run:
+Read the baseline before touching anything; four numbers drive the run:
 
 - `policy.tokens` vs `policy.budget` — is the file over budget, and by how much?
 - `sections[0]` — the largest section and its `share`. A single section over ~30%
@@ -228,8 +228,8 @@ Order matters — mechanical work first, so semantic edits land on a clean file:
    canonical section order and `docs/` filenames to align with:
    [references/cohort-patterns.md](references/cohort-patterns.md).
 4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text; do
-   not paraphrase it in transit — a paraphrase during a move is an unreviewable
-   content change wearing a refactor's clothes. Before extending an existing
+   not paraphrase it in transit — that is an unreviewable content change
+   wearing a refactor's clothes. Before extending an existing
    doc, read its `##` headings and merge into the canonical section rather
    than appending a near-duplicate beside it, and keep provenance out of
    headings. Phase 6.5 checks both.
@@ -289,7 +289,6 @@ bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
 
 Then **once per doc you split**: `--file <that doc>`, as in Phase 6 — without it
 a doc→doc split reports `seams: 0`. **Sum both** counts.
-
 
 `prove-no-loss.sh` proves moved content arrived; this proves the surface still
 **describes where it went**. Tracked **source** outside the docs tree is swept

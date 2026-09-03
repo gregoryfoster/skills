@@ -431,11 +431,14 @@ class TestTheExactRunWritesTheCalibration:
         whole artifact from that corner would silently delete the calibration
         for every file the run never looked at — and the caller with the
         narrowest scope would win.
+
+        Since #263 a scoped run writes only on `--calibrate`; the merge is what
+        that opt-in then does. `test_scoped_calibration.py` owns the refusal.
         """
         repo = _measured_repo(tmp_path)
         _measure(repo, exact_env, "--exact")
         _sized(repo / "other" / "SOLO.md", 4_000)
-        _measure(repo, exact_env, "--exact",
+        _measure(repo, exact_env, "--exact", "--calibrate",
                  "--file", "other/SOLO.md", "--docs-dir", "other")
         rows = _rows(repo)
         assert "other/SOLO.md" in rows
