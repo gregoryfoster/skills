@@ -9,7 +9,8 @@
 # need updates too.
 #
 # Python/Click defaults below. Projects tailor them by committing
-# `.skills/doc-sensitive-paths` at the repo root — no fork required. Exits 0
+# `.skills/doc-sensitive-paths` (what to watch) and `.skills/doc-sections`
+# (what to spot-check on a hit) at the repo root — no fork required. Exits 0
 # if no sensitive paths changed, 1 if any did, or 2 on an infra/tooling
 # failure that prevented the check from running.
 #
@@ -41,7 +42,13 @@ SENSITIVE_PATHS=(
   "src/"
   ".env.example"
 )
-# Sections in AGENTS.md / README.md to spot-check when drift is detected.
+# Advice printed on a hit: the doc sections to spot-check. Projects tailor it
+# by committing `.skills/doc-sections` at the repo root — one section per
+# line, same grammar as `.skills/doc-sensitive-paths`, and it too REPLACES
+# the defaults below. The path list says what the gate watches; this says
+# what to do about a hit. A repo that tailors one and not the other gets
+# advice that is wrong for the repo it was tailored to — a section it does
+# not keep, or silence about the directory whose docs actually drift (#261).
 DOC_SECTIONS=(
   "AGENTS.md: project structure, conventions, skill inventory, command inventory"
   "README.md: orientation + curated links into canonical docs; only the README-owned bits (e.g. top-level CLI list, two-line quick start) should change here"
@@ -60,16 +67,24 @@ usage() {
   echo "path per line), otherwise the built-in defaults. Entries match path"
   echo "segments, so src/ also matches packages/<pkg>/src/."
   echo ""
+  echo "Advice on a hit: .skills/doc-sections at the repo root when present (one"
+  echo "doc section per line — prose, not patterns), otherwise the built-in"
+  echo "defaults. Both files ignore blank lines and #-comments, and each REPLACES"
+  echo "its defaults rather than extending them."
+  echo ""
   echo "Exit codes:"
   echo "  0  no sensitive paths changed (or no changes at all)"
   echo "  1  one or more sensitive paths changed"
   echo "  2  infra/tooling failure — the gate did not run. Covers: an unknown"
   echo "     or incomplete argument, a base ref auto-detection failure, a git"
-  echo "     diff or git ls-files failure, an empty .skills/doc-sensitive-paths,"
-  echo "     or a path list where no entry matches any tracked file (a list that"
-  echo "     cannot hit anything is not a pass). Other unexpected failures"
-  echo "     (e.g., running outside a git repo) may surface git's own exit code"
-  echo "     instead; check stderr in either case."
+  echo "     diff or git ls-files failure, a .skills/doc-sensitive-paths or"
+  echo "     .skills/doc-sections that is empty or unusable (unreadable, a"
+  echo "     broken symlink, not a regular file), a .skills that is not a"
+  echo "     resolvable searchable directory, or a path list where no entry"
+  echo "     matches any tracked file (a list that cannot hit anything is not"
+  echo "     a pass). Other unexpected failures (e.g., running outside a git"
+  echo "     repo) may surface git's own exit code instead; check stderr in"
+  echo "     either case."
 }
 
 BASE_REF=""
@@ -100,25 +115,121 @@ done
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
-# Project override: .skills/doc-sensitive-paths replaces the defaults wholesale.
-LIST_SOURCE="built-in defaults"
-if [[ -f .skills/doc-sensitive-paths ]]; then
-  OVERRIDE=()
+# Read a .skills/ list file into PARSED: one entry per line, blank lines and
+# `#`-comment lines dropped, surrounding whitespace trimmed. A `#` later in a
+# line is content, not a comment — advice cites issues. `|| [[ -n "$line" ]]`
+# keeps a final line the editor left without a trailing newline; without it a
+# one-line file resolves to nothing and the override silently becomes the
+# default it existed to replace. One reader serves both files, so a guard
+# fixed here is fixed for both (#261).
+#
+# Everything below classifies a file the project HAS committed. Its callers
+# test `-e || -L`, not `-f`, so a path present in any shape arrives here to be
+# named rather than skipped: `-f` alone reads false for a dangling symlink, a
+# symlink loop and a directory, and each of those silently restored the
+# built-in defaults on a repo that had tailored the file — the #261 complaint
+# one layer down, since a committed tailoring vanished without an error.
+#
+# The open is CHECKED rather than guarded by an `-r` precondition, which is
+# the pattern measure-context.sh settled for the same class of bug (#184): a
+# precondition narrows the window instead of closing it, cannot see a
+# non-permission failure, and infers a diagnosis where the kernel already
+# supplies one. Bash's own message reaches stderr first and names the real
+# errno; ours adds the interpretation. Verified on bash 3.2.57 (the floor
+# these scripts target): a failed `exec` inside `if !` returns rather than
+# exiting, so `set -e` does not pre-empt this branch.
+# Present in ANY shape, which is the point: `-f` follows symlinks and reads
+# false for a dangling link, a loop and a directory, so it skipped exactly the
+# files this reader exists to name. Named rather than inlined so the next
+# simplification has to argue with the name (#261).
+override_present() {
+  [[ -e "$1" || -L "$1" ]]
+}
+
+read_list_file() {
+  local path="$1" line
+  if [[ -L "$path" && ! -e "$path" ]]; then
+    echo "ERROR: $path is a symlink whose target does not resolve." >&2
+    echo "Repoint or remove it: a broken link is not an empty list." >&2
+    exit 2
+  fi
+  if [[ ! -f "$path" ]]; then
+    echo "ERROR: $path exists but is not a regular file." >&2
+    echo "Replace it with a list file, or remove it to fall back to the defaults." >&2
+    exit 2
+  fi
+  if ! exec 3<"$path"; then
+    echo "ERROR: $path exists but could not be opened — permissions, or it" >&2
+    echo "changed between the checks above and this read. Bash prints the exact" >&2
+    echo "errno on the line before this one when stderr is shown." >&2
+    exit 2
+  fi
+  PARSED=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     # Pure-bash trim of leading/trailing whitespace (no fork+pipe per line).
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    OVERRIDE+=("$line")
-  done < .skills/doc-sensitive-paths
-  if [[ ${#OVERRIDE[@]} -eq 0 ]]; then
+    PARSED+=("$line")
+  done <&3
+  exec 3<&-
+}
+
+# Project overrides. Each file replaces its defaults wholesale — a project that
+# could only widen a list could never drop an inventory it does not keep.
+# Present-but-empty is exit 2 for both: a path list that yields nothing would
+# pass everything, and advice that says nothing sends the reader nowhere. Both
+# are checked up front rather than on the branch that uses them, so a
+# misconfigured file fails on the first run instead of the first hit.
+# A .skills/ that exists but cannot be reached hides both override files from
+# every test below — `-e` and `-L` alike have to stat inside it — so both lists
+# would quietly fall back to defaults. No widening of the per-file test can see
+# any of these shapes; they have to be asked here, and through the same
+# `override_present` the files use: gating this on `-e` alone repeated the
+# defect one level up, since `-e` follows symlinks and reads false for a
+# dangling .skills or a loop, which then went silently untailored. A missing
+# .skills/ is the ordinary no-tailoring case and is not an error.
+if override_present .skills; then
+  if [[ ! -e .skills ]]; then
+    echo "ERROR: .skills is a symlink whose target does not resolve, so no" >&2
+    echo "override file under it can be seen. Repoint or remove it." >&2
+    exit 2
+  fi
+  if [[ ! -d .skills ]]; then
+    echo "ERROR: .skills exists but is not a directory, so no override file" >&2
+    echo "under it can be seen. .skills/ is a reserved directory name." >&2
+    exit 2
+  fi
+  if [[ ! -x .skills ]]; then
+    echo "ERROR: .skills/ exists but is not searchable; its override files" >&2
+    echo "cannot be seen. Fix its permissions (chmod +x .skills)." >&2
+    exit 2
+  fi
+fi
+
+LIST_SOURCE="built-in defaults"
+if override_present .skills/doc-sensitive-paths; then
+  read_list_file .skills/doc-sensitive-paths
+  if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sensitive-paths exists but lists no paths." >&2
     echo "Remove the file to fall back to the built-in defaults." >&2
     exit 2
   fi
-  SENSITIVE_PATHS=("${OVERRIDE[@]}")
+  SENSITIVE_PATHS=("${PARSED[@]}")
   LIST_SOURCE=".skills/doc-sensitive-paths"
+fi
+
+SECTIONS_SOURCE="built-in defaults"
+if override_present .skills/doc-sections; then
+  read_list_file .skills/doc-sections
+  if [[ ${#PARSED[@]} -eq 0 ]]; then
+    echo "ERROR: .skills/doc-sections exists but lists no sections." >&2
+    echo "Remove the file to fall back to the built-in defaults." >&2
+    exit 2
+  fi
+  DOC_SECTIONS=("${PARSED[@]}")
+  SECTIONS_SOURCE=".skills/doc-sections"
 fi
 
 # Segment match. Entries match whole path components at any depth. A
@@ -246,6 +357,8 @@ fi
 echo "Sensitive paths changed vs $BASE_REF (list: $LIST_SOURCE):"
 printf '  - %s\n' "${HITS[@]}"
 echo ""
-echo "Spot-check these doc sections before shipping:"
+# Name the advice's source the way the verdict names the list's. "Route table"
+# printed under "built-in defaults" tells the reader exactly which file to add.
+echo "Spot-check these doc sections before shipping (advice: $SECTIONS_SOURCE):"
 printf '  - %s\n' "${DOC_SECTIONS[@]}"
 exit 1
