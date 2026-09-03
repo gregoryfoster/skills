@@ -28,9 +28,11 @@ Pinned here:
   defaults. There is deliberately no dead-entry probe for advice: it is prose,
   not patterns, so its reader is the simpler of the two.
 - **A present-but-unusable file is exit 2, not a silent fallback.** Unreadable,
-  a dangling symlink, a symlink loop, a directory in its place, or an
-  unsearchable `.skills/` — each one had restored the built-in defaults with no
-  error, or exited 1 in bash's own words. The callers test `-e || -L` so any
+  a dangling symlink, a symlink loop, a directory or a FIFO in its place, or a
+  `.skills` that is not a searchable directory — each one had restored the
+  built-in defaults with no error, or exited 1 in bash's own words. The FIFO is
+  the sharp one: the classification runs before the open, and without it the
+  gate blocks forever on a file it was asked to read. The callers test `-e || -L` so any
   shape reaches the reader, and the open is checked rather than guarded by an
   `-r` precondition, which is the pattern measure-context.sh settled for this
   class of bug (#184). A symlink that resolves still reads normally.
@@ -273,7 +275,7 @@ class TestUnusableOverride:
         and the target later moves."""
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
         rel = f".skills/{name}"
-        write_file(repo, ".skills/.keep", "")
+        (repo / ".skills").mkdir(parents=True, exist_ok=True)
         (repo / rel).symlink_to("../shared/gone")
         result = run_doc_check(repo)
         assert result.returncode == 2, (
@@ -291,7 +293,7 @@ class TestUnusableOverride:
         """A loop stats as ELOOP, which is `-L` true and `-e` false — the same
         branch as a dangling link, and the same silent fallback before it."""
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
-        write_file(repo, ".skills/.keep", "")
+        (repo / ".skills").mkdir(parents=True, exist_ok=True)
         (repo / ".skills/doc-sections").symlink_to("doc-sections")
         result = run_doc_check(repo)
         assert result.returncode == 2, (
@@ -316,12 +318,51 @@ class TestUnusableOverride:
             f"{result.stderr}"
         )
 
+    @pytest.mark.parametrize("name", BOTH_FILES)
+    def test_a_fifo_is_refused_without_blocking(self, name: str, tmp_path: Path):
+        """Opening a FIFO for reading blocks until a writer appears, so the
+        not-a-regular-file branch is the only thing between a committed FIFO
+        and a ship gate that hangs forever — no exit code, no message, nothing
+        to report. Verified by removing that branch: the run had to be killed
+        by a timeout. Every run in this suite is bounded (see
+        RUN_TIMEOUT_S), so without the branch this fails loudly instead of
+        wedging the suite."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        (repo / ".skills").mkdir(parents=True, exist_ok=True)
+        os.mkfifo(repo / ".skills" / name)
+        result = run_doc_check(repo)
+        assert result.returncode == 2, (
+            f"a FIFO at .skills/{name} must be refused; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "not a regular file" in result.stderr
+
+    def test_a_skills_that_is_not_a_directory_is_exit_two(self, tmp_path: Path):
+        """The last silent-fallback shape: a regular file at .skills makes
+        every lookup under it fail with ENOTDIR, and the searchability check
+        asks `-d` so it passed straight over this one. .skills/ is a reserved
+        directory name in this ecosystem, so a file there is a
+        misconfiguration, not an unrelated file to tiptoe around."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        (repo / ".skills").write_text("not a directory\n")
+        result = run_doc_check(repo)
+        assert result.returncode == 2, (
+            f"a regular file at .skills is a did-not-run; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "not a directory" in result.stderr, (
+            f"the message must name the shape:\n{result.stderr}"
+        )
+        assert "built-in defaults" not in result.stdout, (
+            f"it must not print as an untailored run:\n{result.stdout}"
+        )
+
     def test_a_valid_symlink_still_resolves(self, tmp_path: Path):
         """The reason the presence test cannot simply refuse symlinks: pointing
         the file at a shared config is a use case, and it has to keep working."""
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
         write_file(repo, "shared/sections", "docs/contracts/: the shared charter\n")
-        write_file(repo, ".skills/.keep", "")
+        (repo / ".skills").mkdir(parents=True, exist_ok=True)
         (repo / ".skills/doc-sections").symlink_to("../shared/sections")
         result = run_doc_check(repo)
         assert result.returncode == 1, (

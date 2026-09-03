@@ -85,11 +85,11 @@ usage() {
   echo "     or incomplete argument, a base ref auto-detection failure, a git"
   echo "     diff or git ls-files failure, a .skills/doc-sensitive-paths or"
   echo "     .skills/doc-sections that is empty or unusable (unreadable, a"
-  echo "     broken symlink, not a regular file), an unsearchable .skills/, or"
-  echo "     a path list where no entry matches any tracked file (a list that"
-  echo "     cannot hit anything is not a pass). Other unexpected failures"
-  echo "     (e.g., running outside a git repo) may surface git's own exit code"
-  echo "     instead; check stderr in either case."
+  echo "     broken symlink, not a regular file), a .skills that is not a"
+  echo "     searchable directory, or a path list where no entry matches any"
+  echo "     tracked file (a list that cannot hit anything is not a pass)."
+  echo "     Other unexpected failures (e.g., running outside a git repo) may"
+  echo "     surface git's own exit code instead; check stderr in either case."
 }
 
 BASE_REF=""
@@ -143,6 +143,14 @@ cd "$PROJECT_ROOT"
 # errno; ours adds the interpretation. Verified on bash 3.2.57 (the floor
 # these scripts target): a failed `exec` inside `if !` returns rather than
 # exiting, so `set -e` does not pre-empt this branch.
+# Present in ANY shape, which is the point: `-f` follows symlinks and reads
+# false for a dangling link, a loop and a directory, so it skipped exactly the
+# files this reader exists to name. Named rather than inlined so the next
+# simplification has to argue with the name (#261).
+override_present() {
+  [[ -e "$1" || -L "$1" ]]
+}
+
 read_list_file() {
   local path="$1" line
   if [[ -L "$path" && ! -e "$path" ]]; then
@@ -156,8 +164,9 @@ read_list_file() {
     exit 2
   fi
   if ! exec 3<"$path"; then
-    echo "ERROR: $path exists but could not be opened (see the error above)." >&2
-    echo "Fix it, or remove it to fall back to the built-in defaults." >&2
+    echo "ERROR: $path exists but could not be opened — permissions, or it" >&2
+    echo "changed between the checks above and this read. Bash prints the exact" >&2
+    echo "errno on the line before this one when stderr is shown." >&2
     exit 2
   fi
   PARSED=()
@@ -178,11 +187,16 @@ read_list_file() {
 # pass everything, and advice that says nothing sends the reader nowhere. Both
 # are checked up front rather than on the branch that uses them, so a
 # misconfigured file fails on the first run instead of the first hit.
-# A .skills/ that exists but cannot be SEARCHED hides both override files from
+# A .skills/ that exists but cannot be reached hides both override files from
 # every test below — `-e` and `-L` alike have to stat inside it — so both lists
 # would quietly fall back to defaults. No widening of the per-file test can see
-# this one; it has to be asked here. A missing .skills/ is the ordinary
+# either shape; both have to be asked here. A missing .skills/ is the ordinary
 # no-tailoring case and is not an error.
+if [[ -e .skills && ! -d .skills ]]; then
+  echo "ERROR: .skills exists but is not a directory, so no override file" >&2
+  echo "under it can be seen. .skills/ is a reserved directory name." >&2
+  exit 2
+fi
 if [[ -d .skills && ! -x .skills ]]; then
   echo "ERROR: .skills/ exists but is not searchable; its override files" >&2
   echo "cannot be seen. Fix its permissions (chmod +x .skills)." >&2
@@ -190,7 +204,7 @@ if [[ -d .skills && ! -x .skills ]]; then
 fi
 
 LIST_SOURCE="built-in defaults"
-if [[ -e .skills/doc-sensitive-paths || -L .skills/doc-sensitive-paths ]]; then
+if override_present .skills/doc-sensitive-paths; then
   read_list_file .skills/doc-sensitive-paths
   if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sensitive-paths exists but lists no paths." >&2
@@ -202,7 +216,7 @@ if [[ -e .skills/doc-sensitive-paths || -L .skills/doc-sensitive-paths ]]; then
 fi
 
 SECTIONS_SOURCE="built-in defaults"
-if [[ -e .skills/doc-sections || -L .skills/doc-sections ]]; then
+if override_present .skills/doc-sections; then
   read_list_file .skills/doc-sections
   if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sections exists but lists no sections." >&2

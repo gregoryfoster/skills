@@ -68,8 +68,20 @@ def write_file(repo: Path, rel: str, body: str = "x\n") -> None:
     path.write_text(body)
 
 
+# Every run is bounded. These invocations finish in well under a second, so the
+# only way to reach this ceiling is a script that blocked — which doc-check.sh
+# can be made to do by handing it a FIFO, if a refactor ever moves the open
+# ahead of the not-a-regular-file classification. A hang has no exit code and
+# no message; TimeoutExpired turns it into a loud failure that names the test
+# instead of wedging the suite.
+RUN_TIMEOUT_S = 60
+
+
 def run_doc_check(
-    repo: Path, variant: str = "shipping-work-python-click", *args: str
+    repo: Path,
+    variant: str = "shipping-work-python-click",
+    *args: str,
+    timeout: float = RUN_TIMEOUT_S,
 ) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(script_path(variant)), *args],
@@ -77,6 +89,7 @@ def run_doc_check(
         text=True,
         cwd=str(repo),
         env=clean_env(),
+        timeout=timeout,
     )
 
 
