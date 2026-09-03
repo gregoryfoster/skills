@@ -227,7 +227,8 @@ and stay silent the whole way there.
 Three mechanisms fix it:
 
 - **Default 2.7 bytes/token**, from the measurement above.
-- **Per-repo calibration.** Every `--exact` run writes the observed ratio to
+- **Per-repo calibration.** Every whole-surface `--exact` run writes the
+  observed ratio to
   `.skills/context-token-ratio`, and the offline estimators (the write guard,
   `context-delta.sh`, and `measure-context.sh` without `--exact`) read it. An
   estimate-only run never writes the file — deriving a calibration from an
@@ -244,9 +245,10 @@ Three mechanisms fix it:
   just the spread. What the run *reports* as `policy.bytes_per_token` is still
   the policy file's own ratio, and the section figures still divide by it so the
   parts sum to the whole; only the persisted value is surface-wide.
+
 - **Per-file calibration** ([#145](https://github.com/gregoryfoster/skills/issues/145)).
   The repo ratio still describes a whole surface rather than any one file in it,
-  so an `--exact` run also
+  so a whole-surface `--exact` run also
   writes `<bytes> <tokens> <path>` per measured file to
   `.skills/context-token-counts`, and the estimators prefer a file's own last
   exact measurement, falling back to the repo ratio for a file never counted or
@@ -280,6 +282,21 @@ Every row of the measurement JSON carries `tokens_source` — `exact`, `file` or
 `repo` — so a number can be weighed by whoever quotes it. #145's cost was not an
 estimate being wrong but an unattributed one being copied into a plan document,
 an issue comment and several status reports before anyone re-derived it.
+
+### A scoped run does not calibrate
+
+A run that passed `--file` or `--docs-dir` reads both calibration files and
+writes neither ([#263](https://github.com/gregoryfoster/skills/issues/263)).
+Curating one skill ran `--exact --file skills/X/SKILL.md` and the ratio went
+2.68 → 2.63 — that one file's rate, applied by every offline estimate in the
+repo, which put two untouched skills over their budgets — and the file gained
+an anchor row, which changed what the self-budget gate measures for it. Phase
+7's `git add -A` then shipped both inside a commit about one file. Neither write
+is wrong; both were made by accident. So the scoped run says what it measured
+and what it left standing, and `--calibrate` is how the decision is made when
+it is one: it persists both files from the scoped run, merged as before. The
+docs-dir *knob* configures the surface rather than scoping a run, so the
+flagless weekly cadence still calibrates.
 
 ### Keeping a ledger single-method
 
