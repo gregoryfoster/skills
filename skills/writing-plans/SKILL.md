@@ -38,7 +38,7 @@ Trigger phrases may include the plan topic inline — e.g., `write a plan for au
 
 The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve it once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
-<!-- skill:required -->
+<!-- skill:required id=skill-scripts -->
 ```bash
 N=writing-plans S=resolve-plans-dir.sh SD=
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do

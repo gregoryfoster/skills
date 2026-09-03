@@ -68,7 +68,9 @@ Consequences:
 An override **must** declare `overrides: <vendor>/<upstream-skill-name>` and
 `override-reason:` in its `metadata` block — the vendor prefix is what
 disambiguates which parent is being replaced when two vendored sources ship the
-same skill name. Authoring detail, the legacy unqualified form, and the H1 suffix:
+same skill name. A fragment the vendor marks `<!-- skill:required id=<slug> -->`
+that genuinely cannot apply is declared, not dropped, in `omits-required:`
+(#265). Authoring detail, the legacy unqualified form, and the H1 suffix:
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## Spec compliance

@@ -69,7 +69,7 @@ survived two completed audits before anyone checked. Phase 1 names all three.
 
 Resolve once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears:
 
-<!-- skill:required -->
+<!-- skill:required id=skill-scripts -->
 ```bash
 N=auditing-ci-cost S=measure-ci-cost.sh SD=
 

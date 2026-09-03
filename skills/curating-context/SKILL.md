@@ -92,7 +92,7 @@ The skill's `scripts/` directory is not at the project root — it ships inside 
 skill. Resolve it once, then substitute the printed path wherever
 `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
-<!-- skill:required -->
+<!-- skill:required id=skill-scripts -->
 ```bash
 N=curating-context S=measure-context.sh SD=
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
