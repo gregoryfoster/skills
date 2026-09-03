@@ -14,6 +14,16 @@ docs/CONVENTIONS.md :: is in AGENTS.md. What follows
 # docs/SKILLS.md describes what AGENTS.md links directly.
 docs/SKILLS.md :: which AGENTS.md points at directly
 
+# docs/KNOBS.md points back at the policy file three times, and each claim was
+# verified 2026-09-03 against AGENTS.md as it then stood: it does state the
+# three-step lookup shape under ## Resolution knobs; six .skills/ paths were
+# documented in AGENTS.md or docs/ before #264; and AGENTS.md is in the
+# completeness test's scan set, so naming it there is a statement about what
+# the test reads, not a pointer that can rot on its own.
+docs/KNOBS.md :: [AGENTS.md](../AGENTS.md) states the resolution
+docs/KNOBS.md :: Six paths were documented in AGENTS.md or
+docs/KNOBS.md :: `docs/` or `AGENTS.md` with no row here fails the suite.
+
 # docs/STYLE.md's header claim is true: AGENTS.md still carries ## Scripts.
 docs/STYLE.md :: script live inline in [AGENTS.md](../AGENTS.md) under
 

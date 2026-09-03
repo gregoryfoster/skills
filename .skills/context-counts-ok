@@ -24,9 +24,11 @@ AGENTS.md :: stable :: when two vendored sources ship the same skill name
 # turns that test red rather than leaving this sentence quietly stale. Form 3.
 AGENTS.md :: gated :: across all four variants (#105)
 
-# The three are named in the two sentences that follow: WORKTREE_ROOT,
-# PLANS_DIR and SKILLS_PIN_FILE.
-AGENTS.md :: enumerated :: Three skills resolve a path through the same three-step lookup
+# The three are named in the sentence that follows: WORKTREE_ROOT, PLANS_DIR
+# and SKILLS_PIN_FILE. Re-judged 2026-09-03: #264 reworded the sentence to
+# say these three share a lookup SHAPE rather than reading as the inventory,
+# which expired the previous entry. The count and its warrant are unchanged.
+AGENTS.md :: enumerated :: Three of those resolve through the same three-step lookup
 
 # Followed immediately by exactly two bullets.
 AGENTS.md :: enumerated :: Two rules are enforced by the structural suite
