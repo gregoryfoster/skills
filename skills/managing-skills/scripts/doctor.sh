@@ -600,7 +600,10 @@ AWK_FENCE='
       }
       return 1
     }
-    if (length(run) >= 3) { incode = 1; openfence = run; return 3 }
+    if (length(run) >= 3) {
+      incode = 1; openfence = run; openline = NR; opentext = line
+      return 3
+    }
     return 0
   }
 '
@@ -660,6 +663,26 @@ malformed_markers() {
   ' "$1"
 }
 
+# #265 CR round 3 — a fence with no closing line runs to EOF, which is
+# CommonMark's rule and therefore the right parse of a wrong file. What is not
+# right is losing what that swallows in silence: in a vendor, every
+# <!-- skill:required --> below the open fence is inert, so a guarantee is gone
+# to a missing line and nothing says so; in an override, the mirror — prose
+# below it is read as an instruction to execute.
+#
+# The END of the file is the only place this is DECIDABLE, and the check claims
+# no more than that. A marker sitting inside a fence is textually identical
+# whether it was quoted as an example (which #265 CR round 2 made deliberately
+# inert) or swallowed by a fence someone failed to close mid-file; nothing can
+# separate the two, and guessing would either re-arm every documented sample or
+# accuse every honest one. A file that ENDS inside a fence is not ambiguous.
+unclosed_fence() {
+  awk "$AWK_FENCE"'
+    { fence_scan($0) }
+    END { if (incode) printf "%d\t%s\n", openline, opentext }
+  ' "$1"
+}
+
 # The whole file as one whitespace-collapsed line, so a fragment match is
 # insensitive to line wrapping and indentation and nothing else.
 #
@@ -688,6 +711,7 @@ declare -a BARE_SCRIPT_PATH=()
 declare -a BARE_SCRIPT_UNRESOLVED=()
 declare -a STALE_DECLARATION=()
 declare -a MALFORMED_MARKER=()
+declare -a UNCLOSED_FENCE=()
 # Vendor files already scanned, so two overrides of one target report its
 # markers once. Space-delimited, matched whole, like FORK_EXEMPT_NAMES.
 MALFORMED_SEEN=" "
@@ -752,6 +776,22 @@ report_malformed_markers() {
   echo "doctor: nothing, and nothing said so until now. The file is the" >&2
   echo "doctor: VENDOR'S — fix it upstream, or report it there; a consumer" >&2
   echo "doctor: cannot repair a claim it does not own. Advisory." >&2
+}
+
+report_unclosed_fences() {
+  local i
+  echo "doctor: a file ends inside a code fence, so everything below the" >&2
+  echo "doctor: fence is read as code:" >&2
+  for i in "${!UNCLOSED_FENCE[@]}"; do
+    echo "  ${UNCLOSED_FENCE[$i]}" >&2
+  done
+  echo "doctor: in a vendor that makes every <!-- skill:required --> marker" >&2
+  echo "doctor: below it inert — a guarantee lost to a missing line, and no" >&2
+  echo "doctor: override is checked against it. In an override it is the" >&2
+  echo "doctor: mirror: prose below the fence reads as an instruction to" >&2
+  echo "doctor: execute. An unclosed fence runs to the end of the file, so" >&2
+  echo "doctor: the parse is right and the file is wrong (#265): close the" >&2
+  echo "doctor: fence. Advisory: nothing is changed for you." >&2
 }
 
 report_bare_script_paths() {
@@ -966,15 +1006,16 @@ EOF
       BARE_SCRIPT_UNRESOLVED+=("")
     fi
   done <<EOF
-$(awk '
-    # Both fence characters, and a block closes on the one it opened with.
-    !infence && /^[[:space:]]*(```|~~~)/ {
-      infence = 1
-      f = $0; sub(/^[[:space:]]*/, "", f); fence = substr(f, 1, 3)
-      next
-    }
-    infence && $0 ~ ("^[[:space:]]*" fence) { infence = 0; next }
-    infence {
+$(awk "$AWK_FENCE"'
+    {
+      # state 1 is INSIDE a fence — not its opening or closing line, and not
+      # the prose around it. #265 CR round 3: this scanner kept a fence model
+      # of its own, keyed on three characters, and a ```` block quoting an odd
+      # number of ``` lines inverted the state for the rest of the file. That
+      # reported prose WARNING against the pattern as committing it, which is
+      # the false positive #260 CR round 1 removed, reachable again through the
+      # one scanner round 2 did not convert. One model, three callers.
+      if (fence_scan($0) != 1) next
       rest = $0; paths = ""
       while (match(rest, /bash[[:space:]]+scripts\/[^[:space:]]+\.sh/)) {
         p = substr(rest, RSTART, RLENGTH)
@@ -1003,8 +1044,23 @@ EOF
       done <<EOF
 $(malformed_markers "$vendor_md")
 EOF
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        UNCLOSED_FENCE+=("$vendor_md:${line%%$'\t'*}  ${line#*$'\t'}")
+      done <<EOF
+$(unclosed_fence "$vendor_md")
+EOF
       ;;
   esac
+
+  # The override too: an unclosed fence there is what makes the scan above read
+  # the tail of the file as code.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    UNCLOSED_FENCE+=("$md:${line%%$'\t'*}  ${line#*$'\t'}")
+  done <<EOF
+$(unclosed_fence "$md")
+EOF
 }
 
 # #238 — a local override is the one file the drift mitigations cannot reach.
@@ -1043,6 +1099,7 @@ check_override_drift() {
   STALE_DECLARATION=()
   MALFORMED_MARKER=()
   MALFORMED_SEEN=" "
+  UNCLOSED_FENCE=()
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
@@ -1119,6 +1176,7 @@ check_override_drift() {
   [ "${#MISSING_FRAGMENT[@]}" -eq 0 ] || report_missing_fragments
   [ "${#STALE_DECLARATION[@]}" -eq 0 ] || report_stale_declarations
   [ "${#MALFORMED_MARKER[@]}" -eq 0 ] || report_malformed_markers
+  [ "${#UNCLOSED_FENCE[@]}" -eq 0 ] || report_unclosed_fences
   [ "${#BARE_SCRIPT_PATH[@]}" -eq 0 ] || report_bare_script_paths
   return 0
 }

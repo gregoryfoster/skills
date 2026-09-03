@@ -731,10 +731,99 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         )
         assert "resolves from nowhere" in self._doctor(repo).stderr
 
+    def test_prose_below_a_quoted_fence_is_not_a_finding(
+        self, tmp_path: Path,
+    ) -> None:
+        """CR round 3, finding 11.
+
+        This scanner kept a fence model of its own, keyed on three characters,
+        so a ```` block quoting an odd number of ``` lines inverted the in-fence
+        state for the rest of the file. Prose *warning against* the pattern was
+        then reported as committing it — the false positive #260 CR round 1
+        removed, reachable again through the one scanner round 2 had not
+        converted.
+        """
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\nOpen a bash fence like this:\n\n"
+            "````markdown\n```bash\n````\n\n"
+            "Never write `bash scripts/prose.sh` — the agent's cwd is the "
+            "project root (#63).\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert "resolves from nowhere" not in self._doctor(repo).stderr
+
     def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
         repo = self._consumer(
             tmp_path,
             "# Demo override\n\n```bash\nbash scripts/pre-ship.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert self._doctor(repo).returncode == 0
+
+
+class TestAFileThatEndsInsideAFence(_ConsumerFixture):
+    """CR round 3, finding 12 — what an unclosed fence swallows, and the silence.
+
+    An unclosed fence runs to the end of the file, so the parse is right and the
+    file is wrong. In a vendor that makes every marker below it inert; in an
+    override it makes prose below it read as an instruction to execute. The end
+    of the file is the only place this is decidable — a marker inside a fence is
+    textually identical whether it was quoted as an example or swallowed by a
+    typo — and the check claims no more than that.
+    """
+
+    def test_a_vendor_that_ends_inside_a_fence_is_reported(
+        self, tmp_path: Path,
+    ) -> None:
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
+                "```bash\nthe fragment\n```\n\n"
+                "## Setup\n\n```bash\na sample whose closing line was lost\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "ends inside a code fence" in stderr, stderr
+        located = re.search(
+            r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)", stderr,
+        )
+        assert located, stderr
+        vendor_lines = (
+            repo / "skills-vendor/acme-skills/skills/demo/SKILL.md"
+        ).read_text().splitlines()
+        assert vendor_lines[int(located.group(1)) - 1].startswith("```"), (
+            f"the locator must point at the fence that never closed: {stderr}"
+        )
+
+    def test_an_override_that_ends_inside_a_fence_is_reported(
+        self, tmp_path: Path,
+    ) -> None:
+        """Either fence character, and the override side counts too."""
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\nTrailing prose that opens and never closes:"
+            "\n\n~~~\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        stderr = self._doctor(repo).stderr
+        assert "ends inside a code fence" in stderr, stderr
+        assert "skills/demo/SKILL.md:" in stderr, stderr
+
+    def test_a_balanced_example_is_not_reported(self, tmp_path: Path) -> None:
+        """The check is about the end of the file, not about nesting."""
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n````markdown\n```bash\nx\n```\n````\n\n"
+            "Closing prose.\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert "ends inside a code fence" not in self._doctor(repo).stderr
+
+    def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\n```bash\nunclosed\n",
             vendor_body="# Demo\n\nNo fences here.\n",
         )
         assert self._doctor(repo).returncode == 0

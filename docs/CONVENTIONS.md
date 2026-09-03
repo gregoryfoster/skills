@@ -63,7 +63,7 @@ The marker arms **the fenced block that follows it**, and only a fenced block �
 
 `id=<slug>` **names** the fragment so a consumer can declare it inapplicable (below). Every marker in this repo carries one, and [tests/structural/test_override_required_fragments.py](../tests/structural/test_override_required_fragments.py) holds that: an un-idded fragment cannot be declared, so a vendor that arms one leaves its consumers no move but to paste it back or to fork away from it. Ids are unique within a file — a declaration that resolved to two fragments would excuse the wrong one — and stable across releases, because renaming one silently voids every declaration naming it.
 
-Write the marker exactly: a near miss (`id=` with nothing after it, `id=two words`, a stray attribute) arms **nothing**, which turns the strongest claim a vendor makes about its own file into a comment. The doctor reports one against the vendor file it found it in, since a consumer cannot repair a claim it does not own. Either fence character may be armed, and the block ends on the one it opened with.
+Write the marker exactly: a near miss (`id=` with nothing after it, `id=two words`, a stray attribute) arms **nothing**, which turns the strongest claim a vendor makes about its own file into a comment. The doctor reports one against the vendor file it found it in, since a consumer cannot repair a claim it does not own. Either fence character may be armed, and the block ends on a run of that same character at least as long as the opening one, alone on its line — so a ````-fenced block may quote ``` without ending there. A file that *ends* inside an unclosed fence is reported: everything below that fence is code, so every marker under it is inert.
 
 Three rules for an override author:
 
