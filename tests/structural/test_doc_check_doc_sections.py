@@ -27,10 +27,13 @@ Pinned here:
 - **The two files are independent.** Tailoring one leaves the other at its
   defaults. There is deliberately no dead-entry probe for advice: it is prose,
   not patterns, so its reader is the simpler of the two.
-- **Unreadable is exit 2, not 1.** Left to the redirection, `set -e` surfaces
-  bash's own "Permission denied" at exit 1 — the code that asks the reader to
-  act on a list of hits that was never printed. One guard in the shared reader
-  covers both files.
+- **A present-but-unusable file is exit 2, not a silent fallback.** Unreadable,
+  a dangling symlink, a symlink loop, a directory in its place, or an
+  unsearchable `.skills/` — each one had restored the built-in defaults with no
+  error, or exited 1 in bash's own words. The callers test `-e || -L` so any
+  shape reaches the reader, and the open is checked rather than guarded by an
+  `-r` precondition, which is the pattern measure-context.sh settled for this
+  class of bug (#184). A symlink that resolves still reads normally.
 
 Body parity across the four copies is `TestBodyParity`'s job in
 test_doc_check_segment_match.py. The repo builder and runner come from
@@ -249,18 +252,104 @@ class TestHelp:
         )
 
 
-class TestUnreadableFile:
-    @pytest.mark.parametrize("name", ["doc-sensitive-paths", "doc-sections"])
+BOTH_FILES = ["doc-sensitive-paths", "doc-sections"]
+
+
+class TestUnusableOverride:
+    """A file the project committed but the script cannot use.
+
+    The presence test was `-f`, which follows symlinks and so reads false for
+    a dangling link, a symlink loop and a directory. Each of those restored
+    the built-in defaults with no error — a committed tailoring vanishing
+    silently, which is the #261 complaint one layer down. The callers now test
+    `-e || -L` so a path present in any shape reaches the reader and is named.
+
+    Nothing here depends on file modes, so none of it skips under root.
+    """
+
+    @pytest.mark.parametrize("name", BOTH_FILES)
+    def test_a_dangling_symlink_is_exit_two(self, name: str, tmp_path: Path):
+        """The realistic case: a monorepo points the file at a shared config
+        and the target later moves."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        rel = f".skills/{name}"
+        write_file(repo, ".skills/.keep", "")
+        (repo / rel).symlink_to("../shared/gone")
+        result = run_doc_check(repo)
+        assert result.returncode == 2, (
+            f"a dangling {rel} must not silently restore the defaults; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "does not resolve" in result.stderr, (
+            f"the message must name the broken link:\n{result.stderr}"
+        )
+        assert "built-in defaults" not in result.stdout, (
+            f"a broken link must not print as an untailored run:\n{result.stdout}"
+        )
+
+    def test_a_symlink_loop_is_exit_two(self, tmp_path: Path):
+        """A loop stats as ELOOP, which is `-L` true and `-e` false — the same
+        branch as a dangling link, and the same silent fallback before it."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        write_file(repo, ".skills/.keep", "")
+        (repo / ".skills/doc-sections").symlink_to("doc-sections")
+        result = run_doc_check(repo)
+        assert result.returncode == 2, (
+            f"a symlink loop is not an empty list; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "does not resolve" in result.stderr
+
+    @pytest.mark.parametrize("name", BOTH_FILES)
+    def test_a_directory_in_its_place_is_exit_two(self, name: str, tmp_path: Path):
+        """A directory opens and reads as zero lines, so a checked open alone
+        would call it an empty list. It is classified before the open."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        (repo / ".skills" / name).mkdir(parents=True)
+        result = run_doc_check(repo)
+        assert result.returncode == 2, (
+            f"a directory at .skills/{name} is a did-not-run; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "not a regular file" in result.stderr, (
+            f"the message must name the shape, not blame an empty list:\n"
+            f"{result.stderr}"
+        )
+
+    def test_a_valid_symlink_still_resolves(self, tmp_path: Path):
+        """The reason the presence test cannot simply refuse symlinks: pointing
+        the file at a shared config is a use case, and it has to keep working."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        write_file(repo, "shared/sections", "docs/contracts/: the shared charter\n")
+        write_file(repo, ".skills/.keep", "")
+        (repo / ".skills/doc-sections").symlink_to("../shared/sections")
+        result = run_doc_check(repo)
+        assert result.returncode == 1, (
+            f"a resolving symlink must be read normally; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "the shared charter" in _advice(result.stdout), (
+            f"the symlinked advice must print:\n{result.stdout}"
+        )
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="chmod 000 does not restrict root, so the file stays readable",
+)
+class TestPermissionDeniedOverride:
+    """The permission half, split out so the mode-dependent cases are the only
+    ones that go quiet under root — and visibly so, at the class level, which
+    is where this suite's two existing precedents put it."""
+
+    @pytest.mark.parametrize("name", BOTH_FILES)
     def test_an_unreadable_override_is_exit_two_not_one(
         self, name: str, tmp_path: Path
     ):
-        """A file that exists but cannot be read is a did-not-run. Without the
-        guard, the failed redirection under `set -e` exits 1 with bash's own
-        message — and exit 1 is the code that tells the agent to act on a list
-        of hits that was never printed. Both files, because the guard lives in
-        the one reader they share."""
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            pytest.skip("root ignores file modes, so the file stays readable")
+        """A file that exists but cannot be read is a did-not-run. Left to the
+        redirection, `set -e` exits 1 with bash's own message — and exit 1 is
+        the code that tells the agent to act on a list of hits that was never
+        printed. Both files, because the open lives in the reader they share."""
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
         rel = f".skills/{name}"
         write_file(repo, rel, "README.md\n")
@@ -274,11 +363,34 @@ class TestUnreadableFile:
             f"an unreadable {rel} is a did-not-run; got exit {result.returncode}\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
-        assert "cannot be read" in result.stderr, (
-            f"the message must name the fault, not bash's redirection error:\n"
-            f"{result.stderr}"
+        assert "could not be opened" in result.stderr, (
+            f"the message must interpret the failure:\n{result.stderr}"
+        )
+        assert "Permission denied" in result.stderr, (
+            "bash's own diagnostic names the real errno and must reach stderr "
+            f"rather than being swallowed by a precondition test:\n{result.stderr}"
         )
         assert rel in result.stderr
         assert "Spot-check" not in result.stdout, (
             "no advice may print alongside a did-not-run verdict"
+        )
+
+    def test_an_unsearchable_skills_dir_is_exit_two(self, tmp_path: Path):
+        """No per-file test can see this: `-e` and `-L` both have to stat
+        inside .skills/, so an unsearchable directory hides both overrides and
+        both lists quietly revert."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        write_file(repo, ".skills/doc-sections", "AGENTS.md: tailored\n")
+        skills_dir = repo / ".skills"
+        skills_dir.chmod(0)
+        try:
+            result = run_doc_check(repo)
+        finally:
+            skills_dir.chmod(0o755)
+        assert result.returncode == 2, (
+            f"an unsearchable .skills/ is a did-not-run; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "not searchable" in result.stderr, (
+            f"the message must name the directory, not a file:\n{result.stderr}"
         )

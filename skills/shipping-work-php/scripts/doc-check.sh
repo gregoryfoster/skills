@@ -80,12 +80,13 @@ usage() {
   echo "  1  one or more sensitive paths changed"
   echo "  2  infra/tooling failure — the gate did not run. Covers: an unknown"
   echo "     or incomplete argument, a base ref auto-detection failure, a git"
-  echo "     diff or git ls-files failure, an empty or unreadable"
-  echo "     .skills/doc-sensitive-paths or .skills/doc-sections, or a path list"
-  echo "     where no entry matches any tracked file (a list that cannot hit"
-  echo "     anything is not a pass). Other unexpected failures (e.g., running"
-  echo "     outside a git repo) may surface git's own exit code instead; check"
-  echo "     stderr in either case."
+  echo "     diff or git ls-files failure, a .skills/doc-sensitive-paths or"
+  echo "     .skills/doc-sections that is empty or unusable (unreadable, a"
+  echo "     broken symlink, not a regular file), an unsearchable .skills/, or"
+  echo "     a path list where no entry matches any tracked file (a list that"
+  echo "     cannot hit anything is not a pass). Other unexpected failures"
+  echo "     (e.g., running outside a git repo) may surface git's own exit code"
+  echo "     instead; check stderr in either case."
 }
 
 BASE_REF=""
@@ -121,16 +122,39 @@ cd "$PROJECT_ROOT"
 # line is content, not a comment — advice cites issues. `|| [[ -n "$line" ]]`
 # keeps a final line the editor left without a trailing newline; without it a
 # one-line file resolves to nothing and the override silently becomes the
-# default it existed to replace. A file that exists but cannot be read is a
-# did-not-run, exit 2: left to the redirection, `set -e` would surface bash's
-# own "Permission denied" at exit 1 — the code that asks the reader to act on
-# a list of hits that was never printed. One reader serves both files, so a
-# guard fixed here is fixed for both (#261).
+# default it existed to replace. One reader serves both files, so a guard
+# fixed here is fixed for both (#261).
+#
+# Everything below classifies a file the project HAS committed. Its callers
+# test `-e || -L`, not `-f`, so a path present in any shape arrives here to be
+# named rather than skipped: `-f` alone reads false for a dangling symlink, a
+# symlink loop and a directory, and each of those silently restored the
+# built-in defaults on a repo that had tailored the file — the #261 complaint
+# one layer down, since a committed tailoring vanished without an error.
+#
+# The open is CHECKED rather than guarded by an `-r` precondition, which is
+# the pattern measure-context.sh settled for the same class of bug (#184): a
+# precondition narrows the window instead of closing it, cannot see a
+# non-permission failure, and infers a diagnosis where the kernel already
+# supplies one. Bash's own message reaches stderr first and names the real
+# errno; ours adds the interpretation. Verified on bash 3.2.57 (the floor
+# these scripts target): a failed `exec` inside `if !` returns rather than
+# exiting, so `set -e` does not pre-empt this branch.
 read_list_file() {
   local path="$1" line
-  if [[ ! -r "$path" ]]; then
-    echo "ERROR: $path exists but cannot be read." >&2
-    echo "Fix its permissions, or remove it to fall back to the built-in defaults." >&2
+  if [[ -L "$path" && ! -e "$path" ]]; then
+    echo "ERROR: $path is a symlink whose target does not resolve." >&2
+    echo "Repoint or remove it: a broken link is not an empty list." >&2
+    exit 2
+  fi
+  if [[ ! -f "$path" ]]; then
+    echo "ERROR: $path exists but is not a regular file." >&2
+    echo "Replace it with a list file, or remove it to fall back to the defaults." >&2
+    exit 2
+  fi
+  if ! exec 3<"$path"; then
+    echo "ERROR: $path exists but could not be opened (see the error above)." >&2
+    echo "Fix it, or remove it to fall back to the built-in defaults." >&2
     exit 2
   fi
   PARSED=()
@@ -141,7 +165,8 @@ read_list_file() {
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
     PARSED+=("$line")
-  done < "$path"
+  done <&3
+  exec 3<&-
 }
 
 # Project overrides. Each file replaces its defaults wholesale — a project that
@@ -150,8 +175,19 @@ read_list_file() {
 # pass everything, and advice that says nothing sends the reader nowhere. Both
 # are checked up front rather than on the branch that uses them, so a
 # misconfigured file fails on the first run instead of the first hit.
+# A .skills/ that exists but cannot be SEARCHED hides both override files from
+# every test below — `-e` and `-L` alike have to stat inside it — so both lists
+# would quietly fall back to defaults. No widening of the per-file test can see
+# this one; it has to be asked here. A missing .skills/ is the ordinary
+# no-tailoring case and is not an error.
+if [[ -d .skills && ! -x .skills ]]; then
+  echo "ERROR: .skills/ exists but is not searchable; its override files" >&2
+  echo "cannot be seen. Fix its permissions (chmod +x .skills)." >&2
+  exit 2
+fi
+
 LIST_SOURCE="built-in defaults"
-if [[ -f .skills/doc-sensitive-paths ]]; then
+if [[ -e .skills/doc-sensitive-paths || -L .skills/doc-sensitive-paths ]]; then
   read_list_file .skills/doc-sensitive-paths
   if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sensitive-paths exists but lists no paths." >&2
@@ -163,7 +199,7 @@ if [[ -f .skills/doc-sensitive-paths ]]; then
 fi
 
 SECTIONS_SOURCE="built-in defaults"
-if [[ -f .skills/doc-sections ]]; then
+if [[ -e .skills/doc-sections || -L .skills/doc-sections ]]; then
   read_list_file .skills/doc-sections
   if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sections exists but lists no sections." >&2
