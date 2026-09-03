@@ -562,10 +562,14 @@ report_override_unassessed() {
 # marker cannot be declared at all — its vendor adds an id first. Each line is
 # "<id>\t<fragment>", tab-delimited because the fragment is whitespace-collapsed
 # and so can contain no tab of its own.
+# The one arming form, shared with malformed_markers below so the two cannot
+# drift into disagreeing about what a marker is.
+MARKER_RE='^[[:space:]]*<!--[[:space:]]*skill:required([[:space:]]+id=[A-Za-z0-9][A-Za-z0-9._-]*)?[[:space:]]*-->[[:space:]]*$'
+
 required_fragments() {
-  awk '
+  awk -v marker="$MARKER_RE" '
     # The marker arms; a second one before any fence just re-arms.
-    /^[[:space:]]*<!--[[:space:]]*skill:required([[:space:]]+id=[A-Za-z0-9][A-Za-z0-9._-]*)?[[:space:]]*-->[[:space:]]*$/ {
+    $0 ~ marker {
       armed = 1
       fid = ""
       if (match($0, /id=[A-Za-z0-9][A-Za-z0-9._-]*/)) {
@@ -573,8 +577,16 @@ required_fragments() {
       }
       next
     }
-    armed && !infence && /^[[:space:]]*```/ { infence = 1; buf = ""; next }
-    infence && /^[[:space:]]*```/ {
+    # Either fence character, and the block closes on the one it opened with —
+    # a ``` block quoting a ~~~ line does not end there. #265 CR round 1: the
+    # scanner beside this one had always taken both, so a vendor arming a ~~~
+    # block was making a claim nothing read.
+    armed && !infence && /^[[:space:]]*(```|~~~)/ {
+      infence = 1; buf = ""
+      f = $0; sub(/^[[:space:]]*/, "", f); fence = substr(f, 1, 3)
+      next
+    }
+    infence && $0 ~ ("^[[:space:]]*" fence) {
       infence = 0; armed = 0
       gsub(/[[:space:]]+/, " ", buf)
       sub(/^ /, "", buf); sub(/ $/, "", buf)
@@ -586,6 +598,24 @@ required_fragments() {
     # An armed marker followed by prose rather than a fence is a malformed
     # mark, not a licence to claim the next fence further down the file.
     armed && $0 !~ /^[[:space:]]*$/ { armed = 0; fid = "" }
+  ' "$1"
+}
+
+# #265 CR round 1 — a marker that misses the arming form arms NOTHING, and the
+# silence is total: the vendor's strongest claim about its own file degrades
+# into a comment, and neither side is told. `id=` with no slug after it,
+# `id=two words`, a stray attribute — the id syntax #265 added is the reason
+# there are now more ways to write one wrong, and this repo's suite can only
+# hold its OWN markers.
+#
+# Only a line that OPENS with `<!--` counts as an attempt, so a SKILL.md
+# discussing the convention in prose — `<!-- skill:required -->` mid-sentence,
+# inside backticks — is not accused of malforming one.
+malformed_markers() {
+  awk -v marker="$MARKER_RE" '
+    /^[[:space:]]*<!--/ && /skill:required/ && $0 !~ marker {
+      printf "%d\t%s\n", NR, $0
+    }
   ' "$1"
 }
 
@@ -615,6 +645,10 @@ declare -a MISSING_FRAGMENT_ID=()
 declare -a MISSING_FRAGMENT_TEXT=()
 declare -a BARE_SCRIPT_PATH=()
 declare -a STALE_DECLARATION=()
+declare -a MALFORMED_MARKER=()
+# Vendor files already scanned, so two overrides of one target report its
+# markers once. Space-delimited, matched whole, like FORK_EXEMPT_NAMES.
+MALFORMED_SEEN=" "
 
 report_missing_fragments() {
   local i
@@ -660,6 +694,22 @@ report_stale_declarations() {
   echo "doctor: or drop the line. Advisory: nothing is changed for you." >&2
 }
 
+report_malformed_markers() {
+  local i
+  echo "doctor: a vendor marks a fragment required in a form that arms" >&2
+  echo "doctor: nothing:" >&2
+  for i in "${!MALFORMED_MARKER[@]}"; do
+    echo "  ${MALFORMED_MARKER[$i]}" >&2
+  done
+  echo "doctor: the exact form is <!-- skill:required --> or, naming the" >&2
+  echo "doctor: fragment so a consumer can declare it inapplicable," >&2
+  echo "doctor: <!-- skill:required id=<slug> -->. Anything else is a comment:" >&2
+  echo "doctor: the block it meant to arm is not compared against any" >&2
+  echo "doctor: override, and nothing said so until now (#265). The file is" >&2
+  echo "doctor: the VENDOR'S — fix it upstream, or report it there; a" >&2
+  echo "doctor: consumer cannot repair a claim it does not own. Advisory." >&2
+}
+
 report_bare_script_paths() {
   local i
   echo "doctor: an override tells an agent to run a script by a path that" >&2
@@ -686,8 +736,10 @@ report_bare_script_paths() {
 check_override_content() {
   local dir="$1" target="$2" vendor_md="$3" md="$4"
   local flat line fid frag label decl ids reason declared armed excused tok
-  local n rest path text
+  local n rest paths text unresolved
+  local invalid unknown unknown_n carried seen declared_n
   local -a toks=()
+  local -a plist=()
   # Findings already on the channel from earlier overrides. A declaration that
   # is broken in more than one way is one finding, not a pile: the missing
   # warrant is only worth saying when the ids themselves are sound.
@@ -707,19 +759,26 @@ check_override_content() {
     [ "$ids" != "$decl" ] && reason="${decl#*:}"
     reason="${reason#"${reason%%[![:space:]]*}"}"
     IFS=', ' read -r -a toks <<<"$ids"
+    invalid=""
     for tok in ${toks[@]+"${toks[@]}"}; do
       [ -n "$tok" ] || continue
       # A fragment id is a slug. Validating rejects the shapes that would
       # otherwise be matched as one — a stray quote, a glob, half a sentence.
       case "$tok" in
         *[!A-Za-z0-9._-]*)
-          STALE_DECLARATION+=("$dir/SKILL.md: omits-required: names \"$tok\", which is not a fragment id")
+          invalid="${invalid:+$invalid, }$tok"
           continue
           ;;
       esac
       declared="$declared$tok "
     done
-    if [ "$declared" = " " ]; then
+    # One line for the whole value, not one per token: a declaration written as
+    # prose splits into a word per finding, and the reader learns to skim
+    # (#265 CR round 1).
+    if [ -n "$invalid" ]; then
+      STALE_DECLARATION+=("$dir/SKILL.md: omits-required: names what is not a fragment id: $invalid")
+    fi
+    if [ "$declared" = " " ] && [ -z "$invalid" ]; then
       STALE_DECLARATION+=("$dir/SKILL.md: omits-required: \"$decl\" names no id before its colon")
     fi
   fi
@@ -753,19 +812,39 @@ EOF
   # A declared id that excused nothing — see report_stale_declarations. Checked
   # after the fragments rather than during, because "the override carries that
   # fragment" is only knowable once every armed block has been looked for.
+  unknown=""
+  unknown_n=0
+  carried=""
+  declared_n=0
+  seen=" "
   for tok in ${toks[@]+"${toks[@]}"}; do
     [ -n "$tok" ] || continue
     case "$declared" in *" $tok "*) ;; *) continue ;; esac
+    # A repeated id is one declaration, however many times it is written.
+    case "$seen" in *" $tok "*) continue ;; esac
+    seen="$seen$tok "
+    declared_n=$((declared_n + 1))
     case "$armed" in
       *" $tok "*)
         case "$excused" in
           *" $tok "*) ;;
-          *) STALE_DECLARATION+=("$dir/SKILL.md: id=$tok — the override carries that fragment") ;;
+          *) carried="${carried:+$carried, }$tok" ;;
         esac
         ;;
-      *) STALE_DECLARATION+=("$dir/SKILL.md: id=$tok — the vendor arms no fragment with that id") ;;
+      *) unknown="${unknown:+$unknown, }$tok"; unknown_n=$((unknown_n + 1)) ;;
     esac
   done
+  if [ -n "$unknown" ]; then
+    STALE_DECLARATION+=("$dir/SKILL.md: id=$unknown — the vendor arms no such fragment")
+    # Nothing matched, and there is more than one token: the likeliest cause is
+    # a reason written where the ids go, which splits into a word per id.
+    if [ "$unknown_n" -eq "$declared_n" ] && [ "$unknown_n" -gt 1 ]; then
+      STALE_DECLARATION+=("      (a reason written before the colon parses as ids — the grammar is \"<id>[, <id>…]: <why>\")")
+    fi
+  fi
+  if [ -n "$carried" ]; then
+    STALE_DECLARATION+=("$dir/SKILL.md: id=$carried — already carried by the override")
+  fi
   if [ -n "$decl" ] && [ -z "$reason" ] && [ "$declared" != " " ] \
     && [ "${#STALE_DECLARATION[@]}" -eq "$before" ]; then
     STALE_DECLARATION+=("$dir/SKILL.md: omits-required: \"$decl\" carries no reason after the id")
@@ -804,27 +883,72 @@ EOF
   # instruction really did break, and a declared exemption would have gone on
   # asserting a file that is no longer there.
   #
-  # `N:path:text` from awk, split here rather than glued into one string: the
+  # `N\tpaths\ttext` from awk, split here rather than glued into one string: the
   # fork and seam reports print copy-pasteable `path:line` locators, and
   # `path: N:` was neither.
+  #
+  # EVERY invocation on the line, not just the first (#265 CR round 1). A single
+  # match per line meant the exemption was line-scoped where the instruction is
+  # what it judges: `bash scripts/present.sh && bash scripts/absent.sh` was
+  # decided entirely by `present.sh`, so a project-owned script at the head of a
+  # line silently laundered a broken one behind it — a false negative this
+  # exemption INTRODUCED, since the line reported unconditionally before it.
+  # The line is reported once if any of its paths resolves nowhere.
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     n="${line%%$'\t'*}"
     rest="${line#*$'\t'}"
-    path="${rest%%$'\t'*}"
+    paths="${rest%%$'\t'*}"
     text="${rest#*$'\t'}"
-    [ -f "$path" ] && continue
+    # read -a rather than word splitting: a path is unquoted here and a fenced
+    # `scripts/*.sh` would otherwise be expanded against the project tree.
+    IFS=' ' read -r -a plist <<<"$paths"
+    unresolved=0
+    for path in ${plist[@]+"${plist[@]}"}; do
+      [ -f "$path" ] || { unresolved=1; break; }
+    done
+    [ "$unresolved" -eq 1 ] || continue
     BARE_SCRIPT_PATH+=("$dir/SKILL.md:$n  $text")
   done <<EOF
 $(awk '
-    /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
-    infence && match($0, /bash[[:space:]]+scripts\/[^[:space:]]+\.sh/) {
-      p = substr($0, RSTART, RLENGTH)
-      sub(/^bash[[:space:]]+/, "", p)
-      printf "%d\t%s\t%s\n", NR, p, $0
+    # Both fence characters, and a block closes on the one it opened with.
+    !infence && /^[[:space:]]*(```|~~~)/ {
+      infence = 1
+      f = $0; sub(/^[[:space:]]*/, "", f); fence = substr(f, 1, 3)
+      next
+    }
+    infence && $0 ~ ("^[[:space:]]*" fence) { infence = 0; next }
+    infence {
+      rest = $0; paths = ""
+      while (match(rest, /bash[[:space:]]+scripts\/[^[:space:]]+\.sh/)) {
+        p = substr(rest, RSTART, RLENGTH)
+        sub(/^bash[[:space:]]+/, "", p)
+        paths = paths " " p
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      if (paths != "") {
+        sub(/^ /, "", paths)
+        printf "%d\t%s\t%s\n", NR, paths, $0
+      }
     }
   ' "$md")
 EOF
+
+  # The vendor's own markers, reported against the vendor file because that is
+  # where the repair belongs. Once per vendor file, however many overrides
+  # target it.
+  case "$MALFORMED_SEEN" in
+    *" $vendor_md "*) ;;
+    *)
+      MALFORMED_SEEN="$MALFORMED_SEEN$vendor_md "
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        MALFORMED_MARKER+=("$vendor_md:${line%%$'\t'*}  ${line#*$'\t'}")
+      done <<EOF
+$(malformed_markers "$vendor_md")
+EOF
+      ;;
+  esac
 }
 
 # #238 — a local override is the one file the drift mitigations cannot reach.
@@ -860,6 +984,8 @@ check_override_drift() {
   MISSING_FRAGMENT_TEXT=()
   BARE_SCRIPT_PATH=()
   STALE_DECLARATION=()
+  MALFORMED_MARKER=()
+  MALFORMED_SEEN=" "
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
@@ -935,6 +1061,7 @@ check_override_drift() {
   # class rather than one per file — the shape check_silent_forks settled on.
   [ "${#MISSING_FRAGMENT[@]}" -eq 0 ] || report_missing_fragments
   [ "${#STALE_DECLARATION[@]}" -eq 0 ] || report_stale_declarations
+  [ "${#MALFORMED_MARKER[@]}" -eq 0 ] || report_malformed_markers
   [ "${#BARE_SCRIPT_PATH[@]}" -eq 0 ] || report_bare_script_paths
   return 0
 }

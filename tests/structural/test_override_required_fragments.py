@@ -470,7 +470,7 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
         )
         stderr = self._doctor(repo).stderr
         assert "excuses nothing" in stderr, stderr
-        assert "id=worktree-root — the vendor arms no fragment" in stderr, stderr
+        assert "id=worktree-root — the vendor arms no such fragment" in stderr, stderr
         assert "missing (id=skill-scripts)" in stderr, (
             "the fragment the declaration failed to name is still omitted, and "
             f"must still be reported: {stderr}"
@@ -490,7 +490,7 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
             override_meta='  omits-required: "skill-scripts: not used here"\n',
         )
         stderr = self._doctor(repo).stderr
-        assert "id=skill-scripts — the override carries that fragment" in stderr, \
+        assert "id=skill-scripts — already carried by the override" in stderr, \
             stderr
 
     def test_a_declaration_without_a_reason_is_reported_and_still_excuses(
@@ -522,7 +522,42 @@ class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
             "the missing warrant is only worth saying when the ids are sound; "
             f"here the id names nothing, which is the finding: {stderr}"
         )
-        assert "the vendor arms no fragment with that id" in stderr, stderr
+        assert "the vendor arms no such fragment" in stderr, stderr
+
+    def test_a_declaration_written_as_prose_is_one_finding(
+        self, tmp_path: Path,
+    ) -> None:
+        """CR round 1, finding 2.
+
+        The grammar puts the ids first, so a value written as plain English —
+        the likeliest first mistake with a new key — parses as a word per id.
+        One line per word was seven findings for one line, which is what teaches
+        a reader to skim a report.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            override_meta='  omits-required: "we ship no scripts here at all"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        lines = [l for l in stderr.splitlines()
+                 if "the vendor arms no such fragment" in l]
+        assert len(lines) == 1, (
+            f"one declaration produced {len(lines)} findings: {stderr}"
+        )
+        assert "id=we, ship, no, scripts, here, at, all" in lines[0], lines[0]
+        assert "a reason written before the colon parses as ids" in stderr, (
+            "nothing matched and there were several tokens, which is the shape "
+            f"of a reason written where the ids go — say so: {stderr}"
+        )
+
+    def test_a_repeated_id_is_one_declaration(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            override_meta='  omits-required: "nope, nope: stale twice over"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert stderr.count("the vendor arms no such fragment") == 1, stderr
+        assert "id=nope —" in stderr, stderr
 
     def test_an_unidded_fragment_cannot_be_declared(self, tmp_path: Path) -> None:
         """A vendor that arms an anonymous block leaves no move but to carry it.
@@ -622,11 +657,147 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         stderr = self._doctor(repo).stderr
         assert "EXISTS at the project root" in stderr, stderr
 
+    def test_every_invocation_on_a_line_is_judged(self, tmp_path: Path) -> None:
+        """CR round 1, finding 1.
+
+        The exemption is about an instruction, and a line can carry two. Judging
+        only the first made a project-owned script at the head of a line launder
+        a broken one behind it — a false negative the exemption introduced,
+        since the line reported unconditionally before it.
+        """
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\n"
+            "bash scripts/present.sh && bash scripts/absent.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+            project_files=("scripts/present.sh",),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "resolves from nowhere" in stderr, (
+            "the second invocation resolves nowhere and the line was exempted "
+            f"by the first: {stderr}"
+        )
+
+    def test_a_line_whose_every_path_resolves_is_still_quiet(
+        self, tmp_path: Path,
+    ) -> None:
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\n"
+            "bash scripts/present.sh && bash scripts/second.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+            project_files=("scripts/present.sh", "scripts/second.sh"),
+        )
+        assert "resolves from nowhere" not in self._doctor(repo).stderr
+
+    def test_a_tilde_fence_is_scanned_like_a_backtick_one(
+        self, tmp_path: Path,
+    ) -> None:
+        """Both fence characters, and a block closes on the one it opened."""
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n~~~bash\nbash scripts/pre-ship.sh\n~~~\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert "resolves from nowhere" in self._doctor(repo).stderr
+
     def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
         repo = self._consumer(
             tmp_path,
             "# Demo override\n\n```bash\nbash scripts/pre-ship.sh\n```\n",
             vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert self._doctor(repo).returncode == 0
+
+
+class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
+    """CR round 1, finding 3 — the id syntax widened the ways to write it wrong.
+
+    A marker that misses the arming form arms nothing, and the silence used to
+    be total: the vendor's strongest claim about its own file degraded into a
+    comment, with neither side told. This repo's suite can only hold its own
+    markers; the doctor is what reads everyone else's.
+    """
+
+    def test_a_marker_that_arms_nothing_is_reported(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required id= -->\n"
+                "```bash\nfragment one\n```\n\n"
+                "<!-- skill:required id=skill scripts -->\n"
+                "```bash\nfragment two\n```\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "arms" in stderr and "nothing" in stderr, stderr
+        located = re.search(
+            r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)", stderr,
+        )
+        assert located, f"the finding must name the vendor file and line: {stderr}"
+        vendor_lines = (
+            repo / "skills-vendor/acme-skills/skills/demo/SKILL.md"
+        ).read_text().splitlines()
+        assert "skill:required" in vendor_lines[int(located.group(1)) - 1], (
+            "the locator points at a line that is not the marker — a report "
+            f"nobody can follow: {stderr}"
+        )
+        assert "id=skill scripts" in stderr, stderr
+        assert "fix it upstream" in stderr, (
+            "the file belongs to the vendor; a consumer cannot repair a claim "
+            f"it does not own: {stderr}"
+        )
+
+    def test_prose_about_the_convention_is_not_accused(
+        self, tmp_path: Path,
+    ) -> None:
+        """Only a line that opens with `<!--` is an attempt at a marker.
+
+        A skill documenting the convention mid-sentence is the most careful
+        vendor there is, and #260 CR round 1 already spent one false positive
+        landing on exactly that kind of file.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\nMark a block with `<!-- skill:required -->` to "
+                "require it.\n"
+            ),
+        )
+        assert "arms nothing" not in self._doctor(repo).stderr
+
+    def test_a_tilde_armed_fragment_is_compared(self, tmp_path: Path) -> None:
+        """A vendor arming a ~~~ block was making a claim nothing read."""
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
+                "~~~bash\nthe tilde fragment\n~~~\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "the tilde fragment" in stderr, stderr
+
+    def test_a_quoted_fence_does_not_close_the_block(
+        self, tmp_path: Path,
+    ) -> None:
+        """A ``` block quoting a ~~~ line ends where it says it ends."""
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
+                "```markdown\nbefore\n~~~\nafter\n```\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "before ~~~ after" in stderr, (
+            f"the armed block was cut short at a quoted fence: {stderr}"
+        )
+
+    def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body="# Demo\n\n<!-- skill:required id= -->\n```bash\nx\n```\n",
         )
         assert self._doctor(repo).returncode == 0
 

@@ -203,7 +203,7 @@ To override a symlinked skill with project-specific behavior:
 
 1. Remove the symlink: `rm skills/<skill-name>` (this removes only the symlink, not the target)
 2. Copy the global skill as a starting point: `cp -r skills-vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>`
-3. Edit `skills/<skill-name>/SKILL.md` — add `overrides` and `override-reason` to metadata; keep `version` as the vendor's (in an override it records the vendor version last synced from)
+3. Edit `skills/<skill-name>/SKILL.md` — add `overrides`, `override-reason`, and `omits-required` to metadata; keep `version` as the vendor's (the vendor version last synced from)
 4. Keep real files only for what actually differs — re-symlink each unchanged script into the submodule so it tracks upstream ([references/local-overrides.md](references/local-overrides.md))
 5. Commit the new directory
 

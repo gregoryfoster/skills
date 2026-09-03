@@ -40,7 +40,7 @@ If the same upstream repo is vendored from two forks, the submodule directory na
 
 These keys make it possible to audit divergence across downstream repos (e.g. "which overrides have drifted from upstream") without inspecting every SKILL.md by hand. Upstream skills in this repo do not carry these keys — they aren't overrides.
 
-### Fragments an override may not drop
+### Fragments an override may not silently drop
 
 `version:` in an override records **the vendor version last synced from**, and comparing it to the vendor's catches an override that has fallen *behind* ([#238](https://github.com/gregoryfoster/skills/issues/238)). It cannot catch divergence at the *same* version — an override synced honestly from v1.1 whose text replaced upstream v1.1 with something worse — and [#63](https://github.com/gregoryfoster/skills/issues/63) was reintroduced a second time through exactly that opening ([#260](https://github.com/gregoryfoster/skills/issues/260)): a `shipping-work-php` override at a matching `1.1` had swapped `bash "<SKILL_SCRIPTS>/pre-ship.sh"` for `bash scripts/pre-ship.sh`, with a note explaining that the scripts `cd "$(git rev-parse --show-toplevel)"` so the path was safe. True, and beside the point — that resolves the root the scripts *operate on*, not the path `bash` uses to *open the file*.
 
@@ -62,6 +62,8 @@ done
 The marker arms **the fenced block that follows it**, and only a fenced block — prose gets legitimately reworded, so a fragment check over prose would flag every honest edit. `.skills/doctor.sh` reads each override's `overrides:` target, extracts the vendor's armed blocks, and warns when the override does not carry one, compared insensitive to whitespace. It runs whatever the version stamps say, because a matching stamp is the state being reported.
 
 `id=<slug>` **names** the fragment so a consumer can declare it inapplicable (below). Every marker in this repo carries one, and [tests/structural/test_override_required_fragments.py](../tests/structural/test_override_required_fragments.py) holds that: an un-idded fragment cannot be declared, so a vendor that arms one leaves its consumers no move but to paste it back or to fork away from it. Ids are unique within a file — a declaration that resolved to two fragments would excuse the wrong one — and stable across releases, because renaming one silently voids every declaration naming it.
+
+Write the marker exactly: a near miss (`id=` with nothing after it, `id=two words`, a stray attribute) arms **nothing**, which turns the strongest claim a vendor makes about its own file into a comment. The doctor reports one against the vendor file it found it in, since a consumer cannot repair a claim it does not own. Either fence character may be armed, and the block ends on the one it opened with.
 
 Three rules for an override author:
 
