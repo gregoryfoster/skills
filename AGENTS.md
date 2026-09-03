@@ -145,13 +145,19 @@ These carry a full template and a rationale in
 
 ## Resolution knobs
 
-Three skills resolve a path through the same three-step lookup — `<NAME>` env var,
-then a `.skills/<name>` file, then a built-in default — so a project configures
-them with a knob instead of forking the skill: `WORKTREE_ROOT` /
+A project configures a skill by committing a file under `.skills/` instead of
+forking it. Three of those resolve through the same three-step lookup —
+`<NAME>` env var, then the file, then a built-in default: `WORKTREE_ROOT` /
 `.skills/worktree_root` and `PLANS_DIR` / `.skills/plans_dir` (each a single-line
 path), and `SKILLS_PIN_FILE` / `.skills/skills-pin` (one `<submodule-path>
-<commit-ish>` per line). The per-skill defaults, resolver helpers and what each
-one retires: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
+<commit-ish>` per line). That is the shared *shape*, not the inventory — the
+rest use their own, and reading this section as the list is how
+[#261](https://github.com/gregoryfoster/skills/issues/261) reached a repo that
+could tailor a gate's watch list but not its advice. Every `.skills/` file a
+project may commit, what replaces or extends a default, and what each absence
+means: [docs/KNOBS.md](docs/KNOBS.md), held complete by
+[tests/structural/test_skills_knob_inventory.py](tests/structural/test_skills_knob_inventory.py).
+The per-skill defaults and resolver helpers: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## References convention
 
@@ -273,5 +279,6 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 ## Detail Docs
 
 - [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` template, the gate-script rules and the scripts they bind, the `GIT_DIR` scrub, and the refused `extensions.worktreeConfig`
-- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the three `.skills/` resolution knobs
+- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the resolver helpers behind the three env-var knobs
+- [docs/KNOBS.md](docs/KNOBS.md) — every `.skills/` file a project may commit: grammar, reader, replaces-or-extends, and what absence means
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery
