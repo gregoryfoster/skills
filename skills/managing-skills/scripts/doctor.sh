@@ -566,38 +566,76 @@ report_override_unassessed() {
 # drift into disagreeing about what a marker is.
 MARKER_RE='^[[:space:]]*<!--[[:space:]]*skill:required([[:space:]]+id=[A-Za-z0-9][A-Za-z0-9._-]*)?[[:space:]]*-->[[:space:]]*$'
 
-required_fragments() {
-  awk -v marker="$MARKER_RE" '
-    # The marker arms; a second one before any fence just re-arms.
-    $0 ~ marker {
-      armed = 1
-      fid = ""
-      if (match($0, /id=[A-Za-z0-9][A-Za-z0-9._-]*/)) {
-        fid = substr($0, RSTART + 3, RLENGTH - 3)
+# #265 CR round 2 — code-fence bookkeeping, shared by both scanners for the
+# same reason MARKER_RE is: they answer the same question about the same file.
+#
+# Each tracked fences only far enough for its own job, and a marker inside a
+# FENCED EXAMPLE was live text to both. A vendor SKILL.md documenting this very
+# convention therefore armed a fragment nobody claimed — every override of it
+# was told it had dropped the sample — and a "never write this" note showing the
+# malformed form was reported as committing it. Both are the shape #260 CR round
+# 1 already paid for once: the false positive landing on the most careful file
+# there is.
+#
+# The fence is keyed on its FULL RUN, and closes on a run of the same character
+# at least as long, alone on its line — CommonMark's rule, and the only one
+# under which a ```` block quoting ``` is not cut short at the quote.
+AWK_FENCE='
+  function fence_run(line,   t) {
+    t = line
+    sub(/^[[:space:]]*/, "", t)
+    if (match(t, /^`+/) || match(t, /^~+/)) return substr(t, RSTART, RLENGTH)
+    return ""
+  }
+  # 3 = this line opened a fence, 2 = closed one, 1 = inside one, 0 = outside.
+  function fence_scan(line,   run) {
+    run = fence_run(line)
+    if (incode) {
+      if (run != "" \
+          && substr(run, 1, 1) == substr(openfence, 1, 1) \
+          && length(run) >= length(openfence) \
+          && line ~ ("^[[:space:]]*" run "[[:space:]]*$")) {
+        incode = 0
+        return 2
       }
-      next
+      return 1
     }
-    # Either fence character, and the block closes on the one it opened with —
-    # a ``` block quoting a ~~~ line does not end there. #265 CR round 1: the
-    # scanner beside this one had always taken both, so a vendor arming a ~~~
-    # block was making a claim nothing read.
-    armed && !infence && /^[[:space:]]*(```|~~~)/ {
-      infence = 1; buf = ""
-      f = $0; sub(/^[[:space:]]*/, "", f); fence = substr(f, 1, 3)
-      next
+    if (length(run) >= 3) { incode = 1; openfence = run; return 3 }
+    return 0
+  }
+'
+
+required_fragments() {
+  awk -v marker="$MARKER_RE" "$AWK_FENCE"'
+    {
+      state = fence_scan($0)
+      # A fence opens: it is the armed block only if a marker armed before it.
+      if (state == 3) { if (armed) { infence = 1; buf = "" } next }
+      if (state == 2) {
+        if (infence) {
+          infence = 0; armed = 0
+          gsub(/[[:space:]]+/, " ", buf)
+          sub(/^ /, "", buf); sub(/ $/, "", buf)
+          if (buf != "") printf "%s\t%s\n", fid, buf
+          fid = ""
+        }
+        next
+      }
+      if (state == 1) { if (infence) buf = buf " " $0; next }
+      # Outside every fence, which is the only place a marker is a claim rather
+      # than an example. A second marker before any fence just re-arms.
+      if ($0 ~ marker) {
+        armed = 1
+        fid = ""
+        if (match($0, /id=[A-Za-z0-9][A-Za-z0-9._-]*/)) {
+          fid = substr($0, RSTART + 3, RLENGTH - 3)
+        }
+        next
+      }
+      # An armed marker followed by prose rather than a fence is a malformed
+      # mark, not a licence to claim the next fence further down the file.
+      if (armed && $0 !~ /^[[:space:]]*$/) { armed = 0; fid = "" }
     }
-    infence && $0 ~ ("^[[:space:]]*" fence) {
-      infence = 0; armed = 0
-      gsub(/[[:space:]]+/, " ", buf)
-      sub(/^ /, "", buf); sub(/ $/, "", buf)
-      if (buf != "") printf "%s\t%s\n", fid, buf
-      fid = ""
-      next
-    }
-    infence { buf = buf " " $0; next }
-    # An armed marker followed by prose rather than a fence is a malformed
-    # mark, not a licence to claim the next fence further down the file.
-    armed && $0 !~ /^[[:space:]]*$/ { armed = 0; fid = "" }
   ' "$1"
 }
 
@@ -608,13 +646,16 @@ required_fragments() {
 # there are now more ways to write one wrong, and this repo's suite can only
 # hold its OWN markers.
 #
-# Only a line that OPENS with `<!--` counts as an attempt, so a SKILL.md
-# discussing the convention in prose — `<!-- skill:required -->` mid-sentence,
-# inside backticks — is not accused of malforming one.
+# Only a line OUTSIDE every code fence that OPENS with `<!--` counts as an
+# attempt, so neither a SKILL.md discussing the convention mid-sentence nor one
+# showing the wrong form inside a fenced example is accused of malforming one.
 malformed_markers() {
-  awk -v marker="$MARKER_RE" '
-    /^[[:space:]]*<!--/ && /skill:required/ && $0 !~ marker {
-      printf "%d\t%s\n", NR, $0
+  awk -v marker="$MARKER_RE" "$AWK_FENCE"'
+    {
+      if (fence_scan($0) != 0) next
+      if ($0 ~ /^[[:space:]]*<!--/ && $0 ~ /skill:required/ && $0 !~ marker) {
+        printf "%d\t%s\n", NR, $0
+      }
     }
   ' "$1"
 }
@@ -644,6 +685,7 @@ declare -a MISSING_FRAGMENT=()
 declare -a MISSING_FRAGMENT_ID=()
 declare -a MISSING_FRAGMENT_TEXT=()
 declare -a BARE_SCRIPT_PATH=()
+declare -a BARE_SCRIPT_UNRESOLVED=()
 declare -a STALE_DECLARATION=()
 declare -a MALFORMED_MARKER=()
 # Vendor files already scanned, so two overrides of one target report its
@@ -697,17 +739,19 @@ report_stale_declarations() {
 report_malformed_markers() {
   local i
   echo "doctor: a vendor marks a fragment required in a form that arms" >&2
-  echo "doctor: nothing:" >&2
+  echo "doctor: nothing, so the claim is not checked against any override:" >&2
   for i in "${!MALFORMED_MARKER[@]}"; do
     echo "  ${MALFORMED_MARKER[$i]}" >&2
   done
-  echo "doctor: the exact form is <!-- skill:required --> or, naming the" >&2
-  echo "doctor: fragment so a consumer can declare it inapplicable," >&2
-  echo "doctor: <!-- skill:required id=<slug> -->. Anything else is a comment:" >&2
-  echo "doctor: the block it meant to arm is not compared against any" >&2
-  echo "doctor: override, and nothing said so until now (#265). The file is" >&2
-  echo "doctor: the VENDOR'S — fix it upstream, or report it there; a" >&2
-  echo "doctor: consumer cannot repair a claim it does not own. Advisory." >&2
+  echo "doctor: write it exactly, naming the fragment:" >&2
+  echo "doctor:   <!-- skill:required id=<slug> -->" >&2
+  echo "doctor: The bare <!-- skill:required --> also arms, but a consumer for" >&2
+  echo "doctor: whom that fragment cannot apply then has no way to declare it" >&2
+  echo "doctor: — the id is what a declaration names (#265). Anything else is" >&2
+  echo "doctor: a comment: the block it meant to arm is compared against" >&2
+  echo "doctor: nothing, and nothing said so until now. The file is the" >&2
+  echo "doctor: VENDOR'S — fix it upstream, or report it there; a consumer" >&2
+  echo "doctor: cannot repair a claim it does not own. Advisory." >&2
 }
 
 report_bare_script_paths() {
@@ -716,6 +760,11 @@ report_bare_script_paths() {
   echo "doctor: resolves from nowhere:" >&2
   for i in "${!BARE_SCRIPT_PATH[@]}"; do
     echo "  ${BARE_SCRIPT_PATH[$i]}" >&2
+    # Only when the line carries more than one invocation: there the finding is
+    # about a path the reader cannot pick out, and the exemption below reads as
+    # if it had covered the whole line (#265 CR round 2).
+    [ -z "${BARE_SCRIPT_UNRESOLVED[$i]}" ] ||
+      echo "      unresolved: ${BARE_SCRIPT_UNRESOLVED[$i]}" >&2
   done
   echo "doctor: the agent's cwd is the PROJECT root, and a skill's scripts/" >&2
   echo "doctor: ships inside the skill — so 'bash scripts/X.sh' fails with" >&2
@@ -903,12 +952,19 @@ EOF
     # read -a rather than word splitting: a path is unquoted here and a fenced
     # `scripts/*.sh` would otherwise be expanded against the project tree.
     IFS=' ' read -r -a plist <<<"$paths"
-    unresolved=0
+    unresolved=""
     for path in ${plist[@]+"${plist[@]}"}; do
-      [ -f "$path" ] || { unresolved=1; break; }
+      [ -f "$path" ] || unresolved="${unresolved:+$unresolved, }$path"
     done
-    [ "$unresolved" -eq 1 ] || continue
+    [ -n "$unresolved" ] || continue
     BARE_SCRIPT_PATH+=("$dir/SKILL.md:$n  $text")
+    # One invocation on the line is its own locator; naming it again would be
+    # the same string twice.
+    if [ "${#plist[@]}" -gt 1 ]; then
+      BARE_SCRIPT_UNRESOLVED+=("$unresolved")
+    else
+      BARE_SCRIPT_UNRESOLVED+=("")
+    fi
   done <<EOF
 $(awk '
     # Both fence characters, and a block closes on the one it opened with.
@@ -983,6 +1039,7 @@ check_override_drift() {
   MISSING_FRAGMENT_ID=()
   MISSING_FRAGMENT_TEXT=()
   BARE_SCRIPT_PATH=()
+  BARE_SCRIPT_UNRESOLVED=()
   STALE_DECLARATION=()
   MALFORMED_MARKER=()
   MALFORMED_SEEN=" "

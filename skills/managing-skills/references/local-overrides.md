@@ -119,6 +119,13 @@ Three properties worth knowing before relying on it:
   an `id=`, the only honest move is an upstream issue asking for one — which is
   the case #265 opened.
 
+One report in this family is not about your file at all: a marker written in any
+other form — `id=` with nothing after it, `id=two words`, a stray attribute —
+arms **nothing**, so the vendor's claim is compared against no override. The
+doctor names the vendor file and line, because that is where the repair belongs;
+a consumer cannot fix a claim it does not own. A marker inside a fenced example
+is an example, not a claim, and is neither armed nor accused.
+
 ## A project's own `scripts/` is not the skill's
 
 The companion check reports a fenced `bash` invocation of a bare `scripts/…`

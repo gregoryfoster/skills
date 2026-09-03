@@ -690,6 +690,36 @@ class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
         )
         assert "resolves from nowhere" not in self._doctor(repo).stderr
 
+    def test_the_unresolved_path_is_named_when_a_line_has_several(
+        self, tmp_path: Path,
+    ) -> None:
+        """CR round 2, finding 8.
+
+        Round 1 made the check per-occurrence and left the report per-line, so
+        a finding could show a line containing a path the reader knows exists,
+        beside a remedy block saying such paths are exempt. The most available
+        reading of that is "the detector is wrong".
+        """
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\n"
+            "bash scripts/present.sh && bash scripts/absent.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+            project_files=("scripts/present.sh",),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "unresolved: scripts/absent.sh" in stderr, stderr
+        assert "unresolved: scripts/present.sh" not in stderr, stderr
+
+    def test_a_single_invocation_is_its_own_locator(self, tmp_path: Path) -> None:
+        """Naming it again would print the same string twice."""
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\nbash scripts/pre-ship.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert "unresolved:" not in self._doctor(repo).stderr
+
     def test_a_tilde_fence_is_scanned_like_a_backtick_one(
         self, tmp_path: Path,
     ) -> None:
@@ -730,7 +760,7 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
             ),
         )
         stderr = self._doctor(repo).stderr
-        assert "arms" in stderr and "nothing" in stderr, stderr
+        assert "in a form that arms" in stderr, stderr
         located = re.search(
             r"skills-vendor/acme-skills/skills/demo/SKILL\.md:(\d+)", stderr,
         )
@@ -794,6 +824,92 @@ class TestAMalformedMarkerIsNotSilent(_ConsumerFixture):
             f"the armed block was cut short at a quoted fence: {stderr}"
         )
 
+    def test_a_marker_inside_a_fenced_example_arms_nothing(
+        self, tmp_path: Path,
+    ) -> None:
+        """CR round 2, finding 6.
+
+        A vendor SKILL.md that documents this convention shows the marker inside
+        a fence. Read as live text it armed the sample block, and every override
+        of that skill was told it had dropped documentation — with the only
+        remedies being to paste the sample in or to declare an id that exists
+        only inside a code example.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\nMark a required block like this:\n\n"
+                "````markdown\n"
+                "<!-- skill:required id=example -->\n"
+                "```bash\nthe example fragment\n```\n"
+                "````\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "the example fragment" not in stderr, (
+            f"a fenced example was read as a vendor's claim: {stderr}"
+        )
+        assert "marks as required" not in stderr, stderr
+
+    def test_a_malformed_marker_inside_a_fence_is_not_accused(
+        self, tmp_path: Path,
+    ) -> None:
+        """CR round 2, finding 7 — the mirror of the case above.
+
+        A "never write this" note showing the wrong form was reported as
+        committing it, with a remedy ("fix it upstream") that had nothing to
+        fix.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\nNever write it like this:\n\n"
+                "```markdown\n<!-- skill:required id= -->\n```\n"
+            ),
+        )
+        assert "arms" not in self._doctor(repo).stderr
+
+    def test_a_valid_unidded_marker_is_not_called_malformed(
+        self, tmp_path: Path,
+    ) -> None:
+        """The boundary between the two scanners.
+
+        The bare form arms — it is only undeclarable — so reporting it here
+        would tell a vendor to repair a marker that works.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required -->\n"
+                "```bash\nthe anonymous fragment\n```\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "in a form that arms" not in stderr, stderr
+        assert "missing (no id)" in stderr, (
+            f"the bare form must still arm its fragment: {stderr}"
+        )
+
+    def test_a_nested_fence_does_not_cut_the_block_short(
+        self, tmp_path: Path,
+    ) -> None:
+        """The fence is its full run, closed by a run at least as long.
+
+        A ```` block quoting ``` ends at the ```` line, not at the quote — the
+        only rule under which a vendor can arm a block that contains a fence.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required id=skill-scripts -->\n"
+                "````markdown\nbefore\n```\nafter\n````\n"
+            ),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "before ``` after" in stderr, (
+            f"the armed block was cut short at the quoted fence: {stderr}"
+        )
+
     def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
         repo = self._consumer(
             tmp_path, "# Demo override\n\nnothing kept\n",
@@ -851,4 +967,10 @@ class TestTheConventionIsWrittenDown:
             "the same file should say that a project-owned scripts/ path is "
             "exempt from the bare-script check, since that is the other half "
             "of what an override author writes into a fenced block (#266)"
+        )
+        assert "arms **nothing**" in text, (
+            "the one report in this family whose subject is the VENDOR's file "
+            "— a marker written in a form that arms nothing — is the one a "
+            "consumer cannot act on locally, so it is the one most needing a "
+            "line about whose repair it is"
         )
