@@ -29,7 +29,7 @@ Pinned here:
   not patterns, so its reader is the simpler of the two.
 - **A present-but-unusable file is exit 2, not a silent fallback.** Unreadable,
   a dangling symlink, a symlink loop, a directory or a FIFO in its place, or a
-  `.skills` that is not a searchable directory — each one had restored the
+  `.skills` that is not a resolvable, searchable directory — each one had restored the
   built-in defaults with no error, or exited 1 in bash's own words. The FIFO is
   the sharp one: the classification runs before the open, and without it the
   gate blocks forever on a file it was asked to read. The callers test `-e || -L` so any
@@ -51,6 +51,7 @@ import pytest
 
 from tests.structural.doc_check_fixtures import (
     CLICK_LIVE_TREE,
+    HANG_TIMEOUT_S,
     VARIANTS,
     make_repo,
     run_doc_check,
@@ -330,12 +331,51 @@ class TestUnusableOverride:
         repo = make_repo(tmp_path, ["README.md"], ["README.md"])
         (repo / ".skills").mkdir(parents=True, exist_ok=True)
         os.mkfifo(repo / ".skills" / name)
-        result = run_doc_check(repo)
+        # Tighter than RUN_TIMEOUT_S: the default is the ceiling for an unknown
+        # hang, and this test knows exactly which one it provokes, in a script
+        # that otherwise finishes in about a tenth of a second.
+        result = run_doc_check(repo, timeout=HANG_TIMEOUT_S)
         assert result.returncode == 2, (
             f"a FIFO at .skills/{name} must be refused; got exit "
             f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
         assert "not a regular file" in result.stderr
+
+    @pytest.mark.parametrize("shape", ["dangling", "loop"])
+    def test_a_skills_symlink_that_does_not_resolve_is_exit_two(
+        self, shape: str, tmp_path: Path
+    ):
+        """The same defect as a dangling override FILE, one level up and
+        missed for a round: the directory guard asked `-e`, which follows
+        symlinks and reads false for both of these, so every lookup beneath
+        failed and the built-in defaults came back with no error. Both go
+        through `override_present` now, so the file and directory halves
+        cannot drift apart again."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        target = "/nonexistent-target-dir" if shape == "dangling" else ".skills"
+        (repo / ".skills").symlink_to(target)
+        result = run_doc_check(repo)
+        assert result.returncode == 2, (
+            f"a {shape} .skills symlink must not silently untailor the run; got "
+            f"exit {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "does not resolve" in result.stderr, (
+            f"the message must name the broken link:\n{result.stderr}"
+        )
+        assert "built-in defaults" not in result.stdout
+
+    def test_a_skills_symlink_to_a_real_directory_still_works(self, tmp_path: Path):
+        """The reason the guard classifies rather than refusing symlinks: a
+        shared .skills/ reached by link is a legitimate layout."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        write_file(repo, "shared/doc-sections", "AGENTS.md: via a symlinked dir\n")
+        (repo / ".skills").symlink_to("shared")
+        result = run_doc_check(repo)
+        assert result.returncode == 1, (
+            f"a resolving .skills symlink must be read normally; got exit "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "via a symlinked dir" in _advice(result.stdout)
 
     def test_a_skills_that_is_not_a_directory_is_exit_two(self, tmp_path: Path):
         """The last silent-fallback shape: a regular file at .skills makes

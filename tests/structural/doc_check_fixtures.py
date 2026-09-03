@@ -76,6 +76,10 @@ def write_file(repo: Path, rel: str, body: str = "x\n") -> None:
 # instead of wedging the suite.
 RUN_TIMEOUT_S = 60
 
+# For a test that provokes a KNOWN hang, where the ceiling above is only
+# costing wall-clock on the way to a failure that is already certain.
+HANG_TIMEOUT_S = 15
+
 
 def run_doc_check(
     repo: Path,

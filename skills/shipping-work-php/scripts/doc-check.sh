@@ -83,10 +83,11 @@ usage() {
   echo "     diff or git ls-files failure, a .skills/doc-sensitive-paths or"
   echo "     .skills/doc-sections that is empty or unusable (unreadable, a"
   echo "     broken symlink, not a regular file), a .skills that is not a"
-  echo "     searchable directory, or a path list where no entry matches any"
-  echo "     tracked file (a list that cannot hit anything is not a pass)."
-  echo "     Other unexpected failures (e.g., running outside a git repo) may"
-  echo "     surface git's own exit code instead; check stderr in either case."
+  echo "     resolvable searchable directory, or a path list where no entry"
+  echo "     matches any tracked file (a list that cannot hit anything is not"
+  echo "     a pass). Other unexpected failures (e.g., running outside a git"
+  echo "     repo) may surface git's own exit code instead; check stderr in"
+  echo "     either case."
 }
 
 BASE_REF=""
@@ -187,17 +188,27 @@ read_list_file() {
 # A .skills/ that exists but cannot be reached hides both override files from
 # every test below — `-e` and `-L` alike have to stat inside it — so both lists
 # would quietly fall back to defaults. No widening of the per-file test can see
-# either shape; both have to be asked here. A missing .skills/ is the ordinary
-# no-tailoring case and is not an error.
-if [[ -e .skills && ! -d .skills ]]; then
-  echo "ERROR: .skills exists but is not a directory, so no override file" >&2
-  echo "under it can be seen. .skills/ is a reserved directory name." >&2
-  exit 2
-fi
-if [[ -d .skills && ! -x .skills ]]; then
-  echo "ERROR: .skills/ exists but is not searchable; its override files" >&2
-  echo "cannot be seen. Fix its permissions (chmod +x .skills)." >&2
-  exit 2
+# any of these shapes; they have to be asked here, and through the same
+# `override_present` the files use: gating this on `-e` alone repeated the
+# defect one level up, since `-e` follows symlinks and reads false for a
+# dangling .skills or a loop, which then went silently untailored. A missing
+# .skills/ is the ordinary no-tailoring case and is not an error.
+if override_present .skills; then
+  if [[ ! -e .skills ]]; then
+    echo "ERROR: .skills is a symlink whose target does not resolve, so no" >&2
+    echo "override file under it can be seen. Repoint or remove it." >&2
+    exit 2
+  fi
+  if [[ ! -d .skills ]]; then
+    echo "ERROR: .skills exists but is not a directory, so no override file" >&2
+    echo "under it can be seen. .skills/ is a reserved directory name." >&2
+    exit 2
+  fi
+  if [[ ! -x .skills ]]; then
+    echo "ERROR: .skills/ exists but is not searchable; its override files" >&2
+    echo "cannot be seen. Fix its permissions (chmod +x .skills)." >&2
+    exit 2
+  fi
 fi
 
 LIST_SOURCE="built-in defaults"
