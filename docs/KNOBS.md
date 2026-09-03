@@ -31,12 +31,12 @@ forking a skill.
 | Path | Grammar | Read by | Replaces or extends | Absent means |
 |---|---|---|---|---|
 | `doctor.sh` | executable script | every `reviewing-*` / `shipping-*` preflight, `init-*` | n/a — it *is* the implementation | no preflight; the calling step is a no-op |
-| `worktree_root` | single-line path | `using-git-worktrees`, `managing-skills` | replaces the built-in default | sibling `../<repo>-worktrees/` |
+| `worktree_root` | single-line path | `using-git-worktrees`, `managing-skills` | env `WORKTREE_ROOT` wins, then this file | `<repo-root>/.worktrees/` |
 | `worktree_venv` | single word: `link` or `none` | `using-git-worktrees` | replaces the default | `link` — the primary checkout's `.venv` is symlinked in |
 | `default_branch` | single-line ref name | `using-git-worktrees` | first step of a 3-step resolution | falls to `origin/HEAD`, then `main` |
-| `plans_dir` | single-line path | `writing-plans`, `orchestrating-issue-backlog`, `init-project-fastapi` | replaces the built-in default | `docs/plans/` |
-| `skills-pin` | one `<submodule-path> <commit-ish>` per line | `managing-skills` | replaces the default | submodules track their remote's default branch |
-| `forked-ok` | one repo-relative path per line, `#`-comments | `managing-skills`' doctor | replaces the default (empty) | no fork is declared, so every divergence is reported |
+| `plans_dir` | single-line path | `writing-plans`, `orchestrating-issue-backlog`, `init-project-fastapi` | env `PLANS_DIR` wins, then this file | `<repo-root>/docs/plans/` |
+| `skills-pin` | one `<submodule-path> <commit-ish>` per line, `#`-comments | `managing-skills` | env `SKILLS_PIN_FILE` wins, then this file | no pins — every submodule is refreshed |
+| `forked-ok` | one repo-relative path per line, `#`-comments | `managing-skills`' doctor | declares rather than configures — there is no default to replace | nothing is declared, so every divergence is reported (advisory in every mode, never healed) |
 | `doc-sensitive-paths` | one path per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `SENSITIVE_PATHS` wholesale | the variant's built-in path list |
 | `doc-sections` | one section per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `DOC_SECTIONS` wholesale | the variant's built-in advice |
 | `import-targets` | one package name per line, `#`-comments | `shipping-work-python-click`, `reviewing-code-python-click` | replaces the pyproject-derived default | the `[project] name` from `pyproject.toml` |
