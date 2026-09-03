@@ -56,6 +56,23 @@ What this file pins:
   silent-fork check beside them (#238, #256): re-syncing an override is debt an
   operator pays down on a schedule, and a probe that failed on it would push
   consumers toward deleting overrides rather than repairing them.
+
+Two follow-ups from the first consumer the pair ran against, `CannObserv/cli`,
+where both fired on the same override in the same run:
+
+- **#265 — an omission can be deliberate.** That override ships no `scripts/`
+  directory at all, so the `<SKILL_SCRIPTS>` block resolves nothing there.
+  Re-syncing it would put a runnable-looking fence into a file where running it
+  fails, which is #63 arriving through the remedy, and the whole delta is
+  `SKILL.md`, so there is nothing to reduce to per-file symlinks. A marker now
+  carries `id=<slug>` and an override declares one by id in
+  `metadata.omits-required` — a declaration that names a fragment rather than
+  muting the check, so a block armed in a later release still reports.
+- **#266 — `scripts/` at the project root belongs to the project.** The
+  bare-script check read a consumer's own `scripts/setup-worktree.sh` as the
+  skill's, and offered a `<SKILL_SCRIPTS>` substitution with nothing to
+  substitute. The doctor's cwd is the project root, so the report is skipped
+  when the named path exists there.
 """
 
 import os
@@ -69,7 +86,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 DOCTOR = SKILLS_DIR / "managing-skills" / "scripts" / "doctor.sh"
 
-MARKER = "<!-- skill:required -->"
+# The idded form every marker in this repo carries since #265. The id is what a
+# consumer names to declare one fragment deliberately inapplicable, so a vendor
+# that arms an un-idded block leaves its consumers no move but to paste it back
+# or fork away from it.
+MARKER = "<!-- skill:required id=skill-scripts -->"
+MARKER_RE = re.compile(
+    r"^<!--\s*skill:required(?:\s+id=(?P<id>[A-Za-z0-9][A-Za-z0-9._-]*))?\s*-->$"
+)
 
 # The line that identifies the #63 resolution block, shared with
 # test_content_invariants.py's RESOLUTION_LOOP.
@@ -107,12 +131,20 @@ class TestTheVendorMarksWhatIsNotOptional:
         lines = skill_md.read_text().splitlines()
         loop = next(i for i, l in enumerate(lines) if RESOLUTION_LOOP in l)
         opener = max(i for i in range(loop) if lines[i].startswith("```"))
-        assert lines[opener - 1].strip() == MARKER, (
+        marked = MARKER_RE.match(lines[opener - 1].strip())
+        assert marked, (
             f"{skill_md.relative_to(SKILLS_DIR)}'s <SKILL_SCRIPTS> resolution "
             f"block is not preceded by {MARKER}. An override that drops it "
             "reintroduces #63, and a version: stamp cannot see that — which is "
             "how #63 came back a second time under a version that matched "
             "exactly (#260)."
+        )
+        assert marked.group("id"), (
+            f"{skill_md.relative_to(SKILLS_DIR)} arms the resolution block "
+            "without an id=. A consumer that cannot run it — an override "
+            "shipping no scripts/ at all — can then only paste back a fence "
+            "that fails or fork away from the skill, because a declaration "
+            "names a fragment by its id (#265)."
         )
 
     @pytest.mark.parametrize(
@@ -123,7 +155,7 @@ class TestTheVendorMarksWhatIsNotOptional:
         """A marker followed by prose claims nothing and reads as if it does."""
         lines = skill_md.read_text().splitlines()
         for i, line in enumerate(lines):
-            if line.strip() != MARKER:
+            if not MARKER_RE.match(line.strip()):
                 continue
             following = next(
                 (l for l in lines[i + 1:] if l.strip()), "",
@@ -136,18 +168,67 @@ class TestTheVendorMarksWhatIsNotOptional:
                 "dropped."
             )
 
+    @pytest.mark.parametrize(
+        "skill_md", sorted(SKILLS_DIR.glob("*/SKILL.md")),
+        ids=lambda p: p.parent.name,
+    )
+    def test_every_marker_is_well_formed_and_named(self, skill_md: Path) -> None:
+        """A near-miss marker arms nothing, and says nothing about that.
 
-class TestTheDoctorReadsTheContent:
-    """Fixtures reproducing the report, and the two states that must stay quiet."""
+        The doctor matches the marker exactly; `<!-- skill:required id= -->` or
+        a stray attribute simply fails to arm, so a vendor's strongest claim
+        about its own file becomes a comment. And a marker with no id cannot be
+        declared inapplicable by a consumer at all (#265), which is what the
+        second assertion is for.
+        """
+        seen: dict[str, int] = {}
+        for i, line in enumerate(skill_md.read_text().splitlines()):
+            if "skill:required" not in line:
+                continue
+            marked = MARKER_RE.match(line.strip())
+            assert marked, (
+                f"{skill_md.relative_to(SKILLS_DIR)}:{i + 1} looks like a "
+                f"required-fragment marker and is not one: {line.strip()!r}. "
+                f"The exact form is {MARKER}; anything else arms nothing and "
+                "reads as if it armed something."
+            )
+            fid = marked.group("id")
+            assert fid, (
+                f"{skill_md.relative_to(SKILLS_DIR)}:{i + 1} arms a fragment "
+                "with no id=. A consumer for whom the fragment cannot apply "
+                "has no way to say so (#265)."
+            )
+            assert fid not in seen, (
+                f"{skill_md.relative_to(SKILLS_DIR)}:{i + 1} reuses id="
+                f"{fid}, already armed at line {seen[fid]}. A declaration "
+                "naming it would resolve to two fragments and excuse whichever "
+                "the doctor reached first."
+            )
+            seen[fid] = i + 1
+
+
+class _ConsumerFixture:
+    """A consumer repo with one vendored skill and one override of it.
+
+    Not named Test*, so pytest does not collect it — three classes below build
+    the same shape and a second copy of it would be a place for them to
+    disagree about what "an override" looks like.
+    """
 
     def _consumer(self, tmp_path: Path, override_body: str,
                   vendor_body: str | None = None,
-                  override_version: str = "1.1") -> Path:
+                  override_version: str = "1.1",
+                  override_meta: str = "",
+                  project_files: tuple[str, ...] = ()) -> Path:
         repo = tmp_path / "consumer"
         vendor = repo / "skills-vendor/acme-skills/skills/demo"
         vendor.mkdir(parents=True)
         local = repo / "skills/demo"
         local.mkdir(parents=True)
+        for rel in project_files:
+            path = repo / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/usr/bin/env bash\necho project-owned\n")
         subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True,
                        capture_output=True, env=_clean_env(), timeout=60)
 
@@ -170,7 +251,9 @@ class TestTheDoctorReadsTheContent:
             "---\nname: demo\ndescription: d\nmetadata:\n"
             f'  version: "{override_version}"\n'
             "  overrides: acme-skills/demo\n"
-            "  override-reason: local paths\n---\n\n" + override_body
+            "  override-reason: local paths\n"
+            + override_meta
+            + "---\n\n" + override_body
         )
         return repo
 
@@ -179,6 +262,10 @@ class TestTheDoctorReadsTheContent:
             ["bash", str(DOCTOR), "--no-preflight"], cwd=str(repo),
             capture_output=True, text=True, env=_clean_env(), timeout=120,
         )
+
+
+class TestTheDoctorReadsTheContent(_ConsumerFixture):
+    """Fixtures reproducing the report, and the two states that must stay quiet."""
 
     def test_a_dropped_fragment_is_reported_at_a_matching_version(
         self, tmp_path: Path,
@@ -304,6 +391,246 @@ class TestTheDoctorReadsTheContent:
         )
 
 
+class TestADeliberateOmissionCanBeDeclared(_ConsumerFixture):
+    """#265 — a fragment can be inapplicable, and the check could not hear it.
+
+    `CannObserv/cli` overrides `using-git-worktrees` and ships **no `scripts/`
+    directory at all**: it fixes the worktree root at `.worktrees/<branch-slug>/`
+    and enforces it from a project-owned script that refuses any other path. The
+    `<SKILL_SCRIPTS>` resolution loop resolves nothing there, so the omission is
+    deliberate and both offered remedies made the file worse — pasting the
+    fragment back puts a fence that cannot succeed into a skill file, which is
+    #63 arriving through the remedy, and "drop the override for per-file
+    symlinks" has nothing to apply to when the whole delta *is* `SKILL.md`.
+
+    The check was already satisfiable by dead text: it is a whole-file substring
+    search, so pasting the block under a "not used here" heading silenced it.
+    The declaration is the honest version of that move, and it is the escape
+    hatch `check_silent_forks` already offers one check away (`.skills/forked-ok`).
+
+    What makes it a declaration rather than a mute is the **id**: it names one
+    fragment, so a block armed in a later release still reports against a file
+    that already carries a declaration.
+    """
+
+    def test_a_declared_fragment_is_not_reported(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\nThis project ships none of those scripts.\n",
+            override_meta=(
+                '  omits-required: "skill-scripts: this project ships no '
+                'scripts/ at all"\n'
+            ),
+        )
+        result = self._doctor(repo)
+        assert "marks as required" not in result.stderr, result.stderr
+        assert "excuses nothing" not in result.stderr, result.stderr
+
+    def test_a_declaration_covers_only_the_fragment_it_names(
+        self, tmp_path: Path,
+    ) -> None:
+        """The property that keeps a declaration from rotting into a blanket mute.
+
+        A vendor arming a second fragment in a later release must still be heard
+        by a file that already declares the first.
+        """
+        vendor_body = (
+            "# Demo\n\n"
+            f"{MARKER}\n```bash\nthe first fragment\n```\n\n"
+            "<!-- skill:required id=env-load -->\n"
+            "```bash\nthe newly armed fragment\n```\n"
+        )
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nNeither block is here.\n",
+            vendor_body=vendor_body,
+            override_meta='  omits-required: "skill-scripts: no scripts here"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert "the newly armed fragment" in stderr, (
+            "a declaration naming skill-scripts excused a fragment it does not "
+            "name — that is a blanket mute, which is how the check rots (#265)"
+        )
+        assert "the first fragment" not in stderr, stderr
+        assert "missing (id=env-load)" in stderr, (
+            "the finding must print the id to declare, or the remedy cannot be "
+            f"followed: {stderr}"
+        )
+
+    def test_a_declaration_matching_no_armed_fragment_is_reported(
+        self, tmp_path: Path,
+    ) -> None:
+        """A vendor that renames or drops a fragment voids the declaration.
+
+        Left unreported, the line goes on reading — to the next person — as a
+        decision taken, while covering nothing at all.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            override_meta='  omits-required: "worktree-root: not used here"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert "excuses nothing" in stderr, stderr
+        assert "id=worktree-root — the vendor arms no fragment" in stderr, stderr
+        assert "missing (id=skill-scripts)" in stderr, (
+            "the fragment the declaration failed to name is still omitted, and "
+            f"must still be reported: {stderr}"
+        )
+
+    def test_a_declaration_for_a_fragment_the_override_carries_is_reported(
+        self, tmp_path: Path,
+    ) -> None:
+        """Re-syncing the fragment leaves the mute behind."""
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\n"
+            "N=demo S=pre-ship.sh SD=\n"
+            'for d in scripts ".claude/skills/$N/scripts"; do\n'
+            '  [ -f "$d/$S" ] && { SD="$d"; break; }\n'
+            "done\n```\n",
+            override_meta='  omits-required: "skill-scripts: not used here"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert "id=skill-scripts — the override carries that fragment" in stderr, \
+            stderr
+
+    def test_a_declaration_without_a_reason_is_reported_and_still_excuses(
+        self, tmp_path: Path,
+    ) -> None:
+        """The ids are what the check needs; the warrant is what the reader needs.
+
+        Refusing to honour an unexplained declaration would leave the operator
+        with two findings for one line and no way to clear either in one edit,
+        so it is honoured — and an unexplained mute is exactly the thing that
+        rots, so it is reported.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            override_meta='  omits-required: "skill-scripts"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert "carries no reason after the id" in stderr, stderr
+        assert "marks as required" not in stderr, stderr
+
+    def test_one_broken_declaration_is_one_finding(self, tmp_path: Path) -> None:
+        """A declaration wrong in two ways is still one line in the file."""
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            override_meta='  omits-required: "worktree-root"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert "carries no reason after the id" not in stderr, (
+            "the missing warrant is only worth saying when the ids are sound; "
+            f"here the id names nothing, which is the finding: {stderr}"
+        )
+        assert "the vendor arms no fragment with that id" in stderr, stderr
+
+    def test_an_unidded_fragment_cannot_be_declared(self, tmp_path: Path) -> None:
+        """A vendor that arms an anonymous block leaves no move but to carry it.
+
+        Reported as `no id` rather than silently un-declarable, because the
+        remedy is upstream's — add an `id=` — and the operator has to be told
+        which side of the vendor boundary it lives on.
+        """
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            vendor_body=(
+                "# Demo\n\n<!-- skill:required -->\n"
+                "```bash\nan anonymous fragment\n```\n"
+            ),
+            override_meta='  omits-required: "skill-scripts: no scripts here"\n',
+        )
+        stderr = self._doctor(repo).stderr
+        assert "missing (no id)" in stderr, stderr
+        assert "cannot be declared until its vendor names it" in stderr, stderr
+
+    def test_the_declaration_findings_stay_advisory(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path, "# Demo override\n\nnothing kept\n",
+            override_meta='  omits-required: "worktree-root: stale"\n',
+        )
+        assert self._doctor(repo).returncode == 0
+        result = subprocess.run(
+            ["bash", str(DOCTOR), "--no-preflight", "--check-only"],
+            cwd=str(repo), capture_output=True, text=True,
+            env=_clean_env(), timeout=120,
+        )
+        assert result.returncode == 0, (
+            "--check-only now fails on a stale declaration. That mode gates "
+            "damage and wiring gaps (#231); a declaration is doc-sync debt."
+        )
+
+
+class TestAProjectOwnedScriptIsNotTheSkills(_ConsumerFixture):
+    """#266 — `scripts/` at the project root belongs to the project.
+
+    The bare-script check reads any fenced `bash scripts/X.sh` as the #63 shape,
+    and could not tell the skill's `scripts/` from the consumer's own. It
+    reported `CannObserv/cli`'s `bash scripts/setup-worktree.sh` — a
+    project-owned script, run from a step that has just `cd`'d into the worktree
+    — with a remedy (`bash "<SKILL_SCRIPTS>/setup-worktree.sh"`) that has no
+    correct substitution to make: that placeholder resolves to a skill directory
+    and the override ships no `scripts/` at all.
+
+    The doctor's cwd is the project root, so the distinguishing fact is directly
+    testable, and precise in both directions. It also covers the copy the vendor
+    already blesses — `using-git-worktrees` says "a project-local `scripts/` copy
+    wins if one exists", which this check would have flagged the moment anyone
+    spelled it out.
+    """
+
+    def test_a_project_owned_script_is_not_reported(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n`cd` into the worktree and run:\n\n"
+            "```bash\nbash scripts/setup-worktree.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+            project_files=("scripts/setup-worktree.sh",),
+        )
+        assert "resolves from nowhere" not in self._doctor(repo).stderr
+
+    def test_a_path_that_exists_nowhere_still_reports(self, tmp_path: Path) -> None:
+        """#63's own shape is unchanged: a skill's scripts/ is not at the root."""
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\nbash scripts/pre-ship.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+            project_files=("scripts/setup-worktree.sh",),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "resolves from nowhere" in stderr, stderr
+        assert "bash scripts/pre-ship.sh" in stderr, stderr
+        assert "setup-worktree" not in stderr, (
+            "one project-owned script does not exempt the file it appears in; "
+            f"the two lines are judged separately: {stderr}"
+        )
+
+    def test_the_report_says_why_a_sibling_line_is_absent(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finding that lists one of two identical-looking lines must say so.
+
+        Otherwise the reader's next move is to grep the file, find the other
+        one, and conclude the detector is unreliable.
+        """
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\nbash scripts/setup-worktree.sh\n"
+            "bash scripts/pre-ship.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+            project_files=("scripts/setup-worktree.sh",),
+        )
+        stderr = self._doctor(repo).stderr
+        assert "EXISTS at the project root" in stderr, stderr
+
+    def test_the_finding_stays_advisory(self, tmp_path: Path) -> None:
+        repo = self._consumer(
+            tmp_path,
+            "# Demo override\n\n```bash\nbash scripts/pre-ship.sh\n```\n",
+            vendor_body="# Demo\n\nNo fences here.\n",
+        )
+        assert self._doctor(repo).returncode == 0
+
+
 class TestTheConventionIsWrittenDown:
     """An override author needs to be told the fence exists before diverging."""
 
@@ -318,4 +645,39 @@ class TestTheConventionIsWrittenDown:
         assert re.search(r"#260|issues/260", text), (
             "the convention should carry the issue that produced it, as its "
             "neighbours in that file do"
+        )
+
+    def test_conventions_documents_the_declaration(self) -> None:
+        """An author meeting the check needs the escape hatch in the same place.
+
+        Without it the only documented remedies are "re-sync" and "drop the
+        override", and for an override that ships none of the scripts a block
+        resolves, the first pastes back a fence that fails and the second has
+        nothing to apply to (#265).
+        """
+        text = (REPO_ROOT / "docs" / "CONVENTIONS.md").read_text()
+        assert "omits-required:" in text, (
+            "docs/CONVENTIONS.md documents the required-fragment check without "
+            "the one remedy that fits a deliberately inapplicable fragment"
+        )
+        assert re.search(r"#265|issues/265", text)
+
+    def test_the_override_reference_covers_a_deliberate_omission(self) -> None:
+        """`references/local-overrides.md` is where the doctor sends an operator.
+
+        It covered falling behind and re-syncing, and said nothing about an
+        override that is *supposed* to omit something.
+        """
+        text = (
+            SKILLS_DIR / "managing-skills" / "references" / "local-overrides.md"
+        ).read_text()
+        assert "omits-required:" in text, (
+            "the reference on override mechanics does not mention the "
+            "declaration, so an operator meets it for the first time as a "
+            "doctor finding (#265)"
+        )
+        assert re.search(r"#266|issues/266", text), (
+            "the same file should say that a project-owned scripts/ path is "
+            "exempt from the bare-script check, since that is the other half "
+            "of what an override author writes into a fenced block (#266)"
         )

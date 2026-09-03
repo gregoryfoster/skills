@@ -73,6 +73,72 @@ a versioned vendor, no `synced-from:` against an unversioned one, a commit not
 in the vendor's history) is warned about too, never silently skipped — an
 override nothing can compare is the same failure as not detecting drift at all.
 
+## When an override is *supposed* to omit something
+
+Everything above is about an override falling behind. The opposite case is an
+override that omits upstream text **on purpose**, and until
+[#265](https://github.com/gregoryfoster/skills/issues/265) the doctor could not
+tell the two apart.
+
+A vendor marks the fragments it considers non-optional with
+`<!-- skill:required id=<slug> -->` (see
+[docs/CONVENTIONS.md](https://github.com/gregoryfoster/skills/blob/main/docs/CONVENTIONS.md)),
+and the doctor warns when an override does not carry one. Sometimes it cannot:
+`CannObserv/cli` overrides `using-git-worktrees` and ships **no `scripts/`
+directory at all** — the project fixes the worktree root at
+`.worktrees/<branch-slug>/` and enforces it from its own script — so the
+`<SKILL_SCRIPTS>` resolution loop resolves nothing there. Neither offered remedy
+fit. Pasting the fragment back puts a runnable-looking fence into a skill file
+where running it fails, which is #63 arriving through the remedy; and "drop the
+override in favour of per-file symlinks" has nothing to apply to when the whole
+delta *is* `SKILL.md`, the one file no symlink can reach.
+
+Declare it instead, in the frontmatter that already explains the override:
+
+```yaml
+metadata:
+  overrides: <owner>-<repo>/using-git-worktrees
+  override-reason: "cli fixes the worktree root and enforces it locally"
+  omits-required: "skill-scripts: cli ships none of the vendor's worktree
+    scripts, so <SKILL_SCRIPTS> resolution resolves nothing here"
+```
+
+`"<id>[, <id>…]: <why>"` — **ids first**, because the doctor reads one
+frontmatter line and a reason worth writing gets folded across two.
+
+Three properties worth knowing before relying on it:
+
+- **A declaration names one fragment, not the check.** A fragment armed in a
+  later release carries a different id and still reports, which is what stops
+  this from becoming a blanket mute that quietly rots.
+- **A declaration that excuses nothing is reported.** A renamed id upstream, or
+  a fragment the override has since re-synced, leaves a line that reads to the
+  next reader as a decision taken while covering nothing. Correct the id or drop
+  the line.
+- **An un-idded fragment cannot be declared.** If a vendor arms a block without
+  an `id=`, the only honest move is an upstream issue asking for one — which is
+  the case #265 opened.
+
+## A project's own `scripts/` is not the skill's
+
+The companion check reports a fenced `bash` invocation of a bare `scripts/…`
+path in an override, because the agent's cwd is the project root and a skill's
+`scripts/` ships inside the skill (#63). But `scripts/` at the project root is
+also where a consumer keeps its **own** scripts, and the check read both as the
+skill's — flagging `CannObserv/cli`'s correct `scripts/setup-worktree.sh` step
+with a remedy (`bash "<SKILL_SCRIPTS>/setup-worktree.sh"`) that has no correct
+substitution to make.
+
+Since [#266](https://github.com/gregoryfoster/skills/issues/266) the doctor
+skips the report when the named path **exists under the project root**. That is
+precise in both directions — a skill's `scripts/X.sh` does not exist there, so
+#63's shape still reports — and it covers the copy `using-git-worktrees` already
+blesses ("a project-local `scripts/` copy wins if one exists"). Nothing to
+configure, and nothing to write differently: keep the instruction as it reads
+best, and let the file on disk settle it. The check is state-dependent by
+design — delete the project script later and the line starts reporting, because
+the instruction really did break.
+
 ## Re-syncing a drifted override
 
 The doctor's warning is advisory in every mode — exit 0 even under

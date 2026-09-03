@@ -53,7 +53,7 @@ Determine what to review (priority order):
 
 ### Phase 1 — Gather context
 
-<!-- skill:required -->
+<!-- skill:required id=skill-scripts -->
 ```bash
 N=reviewing-code-python-fastapi S=gather-context.sh SD=
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1

@@ -50,7 +50,7 @@ Shown four-backticked so the inner fence survives; a zero-width space would
 have hidden an invisible character in text people copy.
 
 ````markdown
-<!-- skill:required -->
+<!-- skill:required id=skill-scripts -->
 ```bash
 N=<skill-name> S=<script>.sh SD=
 for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
@@ -61,12 +61,24 @@ done
 
 The marker arms **the fenced block that follows it**, and only a fenced block — prose gets legitimately reworded, so a fragment check over prose would flag every honest edit. `.skills/doctor.sh` reads each override's `overrides:` target, extracts the vendor's armed blocks, and warns when the override does not carry one, compared insensitive to whitespace. It runs whatever the version stamps say, because a matching stamp is the state being reported.
 
-Two rules for an override author:
+`id=<slug>` **names** the fragment so a consumer can declare it inapplicable (below). Every marker in this repo carries one, and [tests/structural/test_override_required_fragments.py](../tests/structural/test_override_required_fragments.py) holds that: an un-idded fragment cannot be declared, so a vendor that arms one leaves its consumers no move but to paste it back or to fork away from it. Ids are unique within a file — a declaration that resolved to two fragments would excuse the wrong one — and stable across releases, because renaming one silently voids every declaration naming it.
 
-- **Carry every armed block verbatim.** Re-indent it if you must; do not rewrite it. If a fragment genuinely cannot survive in your project, that is a case for an upstream issue, not a local deletion.
-- **Never write a bare `bash scripts/X.sh`.** The doctor reports that shape in an override regardless of any fence, because it needs no vendor cooperation and it is what the two occurrences of #63 had in common. Use the resolved `<SKILL_SCRIPTS>` placeholder.
+Three rules for an override author:
 
-Both findings are advisory in every mode, like the drift check beside them: re-syncing an override is debt paid down on a schedule, and a probe that failed on it would push consumers toward deleting overrides rather than repairing them. The most durable fix is to need less override — per-file symlinks for everything not genuinely local, leaving `SKILL.md` as the one file no symlink can reach.
+- **Carry every armed block verbatim.** Re-indent it if you must; do not rewrite it.
+- **Never write a bare `bash scripts/X.sh`.** The doctor reports that shape in an override regardless of any fence, because it needs no vendor cooperation and it is what the two occurrences of #63 had in common. Use the resolved `<SKILL_SCRIPTS>` placeholder. A path that *exists at the project root* is exempt — that is the project's own `scripts/`, not the skill's ([#266](https://github.com/gregoryfoster/skills/issues/266)).
+- **Declare a fragment that genuinely cannot apply; do not paste it back dead** ([#265](https://github.com/gregoryfoster/skills/issues/265)). An override that ships none of the scripts a block resolves cannot satisfy it by carrying it — the fence would be a runnable-looking instruction that fails, which is the #63 shape arriving through the remedy. Say so in the frontmatter instead:
+
+  ```yaml
+  metadata:
+    overrides: <owner>-<repo>/using-git-worktrees
+    omits-required: "skill-scripts: this project ships none of the vendor's
+      worktree scripts, so <SKILL_SCRIPTS> resolution resolves nothing here"
+  ```
+
+  The grammar is `"<id>[, <id>…]: <why>"`, ids **first** because the doctor reads one line and a reason worth writing gets folded across two. A declaration excuses the fragment it names and nothing else, so a fragment armed in a later release still reports against a file that already carries one — the property that keeps this from becoming a blanket mute. A declaration that matches no armed fragment (a renamed id, a fragment the override has since re-synced) is itself reported: a mute with nothing under it reads to the next reader as a decision taken.
+
+All three findings are advisory in every mode, like the drift check beside them: re-syncing an override is debt paid down on a schedule, and a probe that failed on it would push consumers toward deleting overrides rather than repairing them. The most durable fix is to need less override — per-file symlinks for everything not genuinely local, leaving `SKILL.md` as the one file no symlink can reach.
 
 #### Legacy unqualified form
 
