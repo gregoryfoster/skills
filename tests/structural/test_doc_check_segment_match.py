@@ -29,12 +29,15 @@ Three properties are pinned here, and they are load-bearing together:
   reusing the grammar `.skills/import-targets` already established, so a
   project tailors the list without forking a script that lives in four copies.
 
-`TestBodyParity` is what keeps this true in all four copies at once.
+`TestBodyParity` is what keeps this true in all four copies at once, and it
+covers the whole body below the configuration block — including the advice
+override added by [#261](https://github.com/gregoryfoster/skills/issues/261),
+whose own behaviour is pinned in test_doc_check_doc_sections.py. The repo
+builder and runner both files use live in doc_check_fixtures.py.
 
 No API calls. Self-contained: each test builds a throwaway git repo.
 """
 
-import os
 import re
 import shlex
 import shutil
@@ -43,14 +46,17 @@ from pathlib import Path
 
 import pytest
 
-SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
-
-VARIANTS = [
-    "shipping-work",
-    "shipping-work-php",
-    "shipping-work-python-click",
-    "shipping-work-python-fastapi",
-]
+from tests.structural.doc_check_fixtures import (
+    CLICK_LIVE_TREE,
+    SKILLS_DIR,
+    VARIANTS,
+    clean_env,
+    make_repo,
+    run_doc_check,
+    run_git,
+    script_path,
+    write_file,
+)
 
 # A nested path that each variant's own defaults must flag. Every row must MISS
 # under the pre-#252 root-anchored matcher, or the case proves nothing — a
@@ -65,14 +71,10 @@ NESTED_HITS = {
 }
 
 
-def _script(variant: str) -> Path:
-    return SKILLS_DIR / variant / "scripts" / "doc-check.sh"
-
-
 def _default_entries(variant: str) -> list[str]:
     """The variant's built-in SENSITIVE_PATHS, read out of the script."""
     block = re.search(
-        r"^SENSITIVE_PATHS=\(\n(.*?)^\)", _script(variant).read_text(), re.S | re.M
+        r"^SENSITIVE_PATHS=\(\n(.*?)^\)", script_path(variant).read_text(), re.S | re.M
     )
     assert block, f"{variant}/scripts/doc-check.sh must declare SENSITIVE_PATHS=(…)"
     entries = re.findall(r'"([^"]+)"', block.group(1))
@@ -85,89 +87,15 @@ def _root_anchored_hit(file: str, entry: str) -> bool:
     return file.startswith(entry)
 
 
-def _clean_env() -> dict:
-    """Env without inherited GIT_* vars.
-
-    Pre-commit and other tooling set GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE,
-    which would otherwise leak into the throwaway repo and point git at the
-    parent checkout.
-    """
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-
-
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=_clean_env(),
-    )
-
-
-def _write(repo: Path, rel: str, body: str = "x\n") -> None:
-    path = repo / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body)
-
-
-def _run(
-    repo: Path, variant: str = "shipping-work-python-click", *args: str
-) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["bash", str(_script(variant)), *args],
-        capture_output=True,
-        text=True,
-        cwd=str(repo),
-        env=_clean_env(),
-    )
-
-
-def _repo(tmp_path: Path, base_files: list[str], branch_files: list[str]) -> Path:
-    """A repo with `base_files` committed on main and `branch_files` added on a
-    feature branch. doc-check.sh auto-detects `main` as the base ref when no
-    remote exists.
-    """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "user.name", "test")
-    for rel in base_files:
-        _write(repo, rel)
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "initial")
-
-    _git(repo, "checkout", "-b", "feature")
-    for rel in branch_files:
-        _write(repo, rel, "changed\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "work")
-    return repo
-
-
-# A tree where every click default is live, so the dead-entry probe stays quiet
-# and each test's assertion is about the thing it names.
-CLICK_LIVE_TREE = [
-    "AGENTS.md",
-    "README.md",
-    "pyproject.toml",
-    "uv.lock",
-    "src/co/__init__.py",
-    ".env.example",
-    "docs/notes.md",
-]
-
-
 class TestSegmentMatching:
     def test_nested_src_is_flagged(self, tmp_path: Path):
         """The #252 repro: a library source file under packages/*/src/."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             CLICK_LIVE_TREE + ["packages/co-core/pyproject.toml"],
             ["packages/co-core/src/co_core/api.py"],
         )
-        result = _run(repo)
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             "a change under packages/co-core/src/ must be flagged; got exit "
             f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -177,12 +105,12 @@ class TestSegmentMatching:
     def test_nested_pyproject_is_flagged(self, tmp_path: Path):
         """In a workspace, pyproject.toml exists once per package and is exactly
         the file a version bump touches."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             CLICK_LIVE_TREE + ["packages/co-core/pyproject.toml"],
             ["packages/co-core/pyproject.toml"],
         )
-        result = _run(repo)
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             f"a nested pyproject.toml must be flagged; got exit {result.returncode}\n"
             f"stdout: {result.stdout}"
@@ -208,8 +136,8 @@ class TestSegmentMatching:
     ):
         """The bug shipped in four copies; the fix has to hold in four copies."""
         nested = NESTED_HITS[variant]
-        repo = _repo(tmp_path, ["README.md", nested], [nested])
-        result = _run(repo, variant)
+        repo = make_repo(tmp_path, ["README.md", nested], [nested])
+        result = run_doc_check(repo, variant)
         assert result.returncode == 1, (
             f"{variant} must flag {nested}; got exit {result.returncode}\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -220,10 +148,10 @@ class TestSegmentMatching:
     def test_every_variant_matches_a_nested_readme(self, variant: str, tmp_path: Path):
         """README.md is a filename entry in all four; a package README is still
         a README."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path, ["README.md", "packages/co-core/README.md"], ["packages/co-core/README.md"]
         )
-        result = _run(repo, variant)
+        result = run_doc_check(repo, variant)
         assert result.returncode == 1, (
             f"{variant} must flag a nested README.md; got exit {result.returncode}\n"
             f"stdout: {result.stdout}"
@@ -237,8 +165,8 @@ class TestSegmentMatching:
     ):
         """Segment matching must not degrade into prefix matching on filenames —
         `pyproject.toml*` would swallow backups and near-misses."""
-        repo = _repo(tmp_path, CLICK_LIVE_TREE + [suffixed], [suffixed])
-        result = _run(repo)
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE + [suffixed], [suffixed])
+        result = run_doc_check(repo)
         assert result.returncode == 0, (
             f"{suffixed} is not pyproject.toml and must not be flagged; got exit "
             f"{result.returncode}\nstdout: {result.stdout}"
@@ -246,8 +174,8 @@ class TestSegmentMatching:
 
     def test_root_anchored_matches_still_work(self, tmp_path: Path):
         """Segment matching is a superset — the root case must not regress."""
-        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["src/co/cli.py"])
-        result = _run(repo)
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["src/co/cli.py"])
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             f"a change under root src/ must still be flagged; got exit {result.returncode}"
         )
@@ -257,11 +185,11 @@ class TestSegmentMatching:
         whatever the header said about trailing slashes. Projects wrote lists
         against the behavior, so segment matching has to keep honoring it or a
         tailored list quietly loses coverage on upgrade."""
-        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
-        _write(repo, ".skills/doc-sensitive-paths", "docs\nsrc\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "slash-less list")
-        result = _run(repo)
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
+        write_file(repo, ".skills/doc-sensitive-paths", "docs\nsrc\n")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-m", "slash-less list")
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             "`docs` without a trailing slash must still cover docs/other.md; got "
             f"exit {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -272,8 +200,8 @@ class TestSegmentMatching:
         """git C-quotes paths with non-ASCII bytes unless core.quotePath is off,
         and the leading quote defeats the anchored half of the matcher — the
         #252 miss-as-pass, reached by a filename instead of by nesting."""
-        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["src/co/café.py"])
-        result = _run(repo)
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["src/co/café.py"])
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             "a non-ASCII filename under src/ must be flagged; got exit "
             f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -287,8 +215,8 @@ class TestDeadEntryReporting:
     def test_wholly_dead_list_exits_two(self, tmp_path: Path):
         """No entry can match anything tracked → the gate did not run. Reporting
         that as exit 0 is the #252 failure mode one layer up."""
-        repo = _repo(tmp_path, ["docs/notes.md", "Makefile"], ["docs/other.md"])
-        result = _run(repo)
+        repo = make_repo(tmp_path, ["docs/notes.md", "Makefile"], ["docs/other.md"])
+        result = run_doc_check(repo)
         assert result.returncode == 2, (
             "a list that cannot match any tracked file is not a pass; got exit "
             f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -302,10 +230,10 @@ class TestDeadEntryReporting:
     def test_partially_dead_list_passes_with_a_note(self, tmp_path: Path):
         """Some entries live → the result is trustworthy, but say which entries
         could not have contributed to it."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path, ["README.md", "pyproject.toml", "docs/notes.md"], ["docs/other.md"]
         )
-        result = _run(repo)
+        result = run_doc_check(repo)
         assert result.returncode == 0, (
             f"expected a pass; got exit {result.returncode}\nstderr: {result.stderr}"
         )
@@ -320,8 +248,8 @@ class TestDeadEntryReporting:
     def test_fully_live_list_passes_without_a_note(self, tmp_path: Path):
         """The note is a signal, not decoration — a correctly tailored list must
         ship a clean green with nothing appended."""
-        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
-        result = _run(repo)
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
+        result = run_doc_check(repo)
         assert result.returncode == 0, (
             f"expected a pass; got exit {result.returncode}\nstderr: {result.stderr}"
         )
@@ -335,7 +263,7 @@ class TestDeadEntryReporting:
         against root-anchored pathspecs it would call `src/` dead in exactly the
         workspace layout #252 is about — a false 'misconfigured' on a correctly
         tailored repo, which is the same defect pointed the other way."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             [
                 "AGENTS.md",
@@ -348,7 +276,7 @@ class TestDeadEntryReporting:
             ],
             ["docs/other.md"],
         )
-        result = _run(repo)
+        result = run_doc_check(repo)
         assert result.returncode == 0, (
             f"expected a pass; got exit {result.returncode}\nstderr: {result.stderr}"
         )
@@ -359,7 +287,7 @@ class TestDeadEntryReporting:
 
     def test_non_ascii_paths_do_not_look_dead(self, tmp_path: Path):
         """The probe reads git output too, so it needs the same quoting fix."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             [
                 "AGENTS.md",
@@ -372,7 +300,7 @@ class TestDeadEntryReporting:
             ],
             ["docs/other.md"],
         )
-        result = _run(repo)
+        result = run_doc_check(repo)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Note:" not in result.stdout, (
             "src/ is live — its only instance just has a non-ASCII ancestor:\n"
@@ -397,11 +325,11 @@ class TestDeadEntryReporting:
             f'exec {shlex.quote(real_git)} "$@"\n'
         )
         (shim / "git").chmod(0o755)
-        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
-        env = _clean_env()
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
+        env = clean_env()
         env["PATH"] = f"{shim}:{env['PATH']}"
         result = subprocess.run(
-            ["bash", str(_script("shipping-work-python-click"))],
+            ["bash", str(script_path("shipping-work-python-click"))],
             capture_output=True,
             text=True,
             cwd=str(repo),
@@ -422,8 +350,8 @@ class TestDeadEntryReporting:
     def test_no_dead_probe_on_the_hit_path(self, tmp_path: Path):
         """When the list has hit, a dead-entry census is noise: the answer is
         already actionable."""
-        repo = _repo(tmp_path, ["README.md", "docs/notes.md"], ["README.md"])
-        result = _run(repo)
+        repo = make_repo(tmp_path, ["README.md", "docs/notes.md"], ["README.md"])
+        result = run_doc_check(repo)
         assert result.returncode == 1
         assert "match no tracked file" not in result.stdout, (
             f"exit-1 output must stay focused on the hits:\n{result.stdout}"
@@ -432,15 +360,15 @@ class TestDeadEntryReporting:
 
 class TestOverrideFile:
     def test_override_replaces_defaults_and_flags_its_own_paths(self, tmp_path: Path):
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             CLICK_LIVE_TREE + [".skills/doc-sensitive-paths"],
             ["docs/other.md"],
         )
-        _write(repo, ".skills/doc-sensitive-paths", "docs/\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "tailor list")
-        result = _run(repo)
+        write_file(repo, ".skills/doc-sensitive-paths", "docs/\n")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-m", "tailor list")
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             f"docs/ is in the override list and changed; got exit {result.returncode}\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -450,15 +378,15 @@ class TestOverrideFile:
     def test_override_replaces_rather_than_extends(self, tmp_path: Path):
         """A default that the override drops must stop firing — otherwise a
         project cannot narrow the list, only widen it."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             CLICK_LIVE_TREE + [".skills/doc-sensitive-paths"],
             ["src/co/cli.py"],
         )
-        _write(repo, ".skills/doc-sensitive-paths", "docs/\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "tailor list")
-        result = _run(repo)
+        write_file(repo, ".skills/doc-sensitive-paths", "docs/\n")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-m", "tailor list")
+        result = run_doc_check(repo)
         assert result.returncode == 0, (
             "src/ is not in the override list, so it must not fire; got exit "
             f"{result.returncode}\nstdout: {result.stdout}"
@@ -468,19 +396,19 @@ class TestOverrideFile:
         )
 
     def test_override_ignores_comments_and_blank_lines(self, tmp_path: Path):
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             CLICK_LIVE_TREE + [".skills/doc-sensitive-paths"],
             ["docs/other.md"],
         )
-        _write(
+        write_file(
             repo,
             ".skills/doc-sensitive-paths",
             "# tailored for this workspace\n\n   docs/   \n\n",
         )
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "tailor list")
-        result = _run(repo)
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-m", "tailor list")
+        result = run_doc_check(repo)
         assert result.returncode == 1, (
             "a commented, whitespace-padded entry is still an entry; got exit "
             f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -489,15 +417,15 @@ class TestOverrideFile:
     def test_empty_override_exits_two(self, tmp_path: Path):
         """An override file that yields no entries would otherwise pass
         everything — the same silent green, deliberately committed."""
-        repo = _repo(
+        repo = make_repo(
             tmp_path,
             CLICK_LIVE_TREE + [".skills/doc-sensitive-paths"],
             ["src/co/cli.py"],
         )
-        _write(repo, ".skills/doc-sensitive-paths", "# nothing yet\n\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "empty list")
-        result = _run(repo)
+        write_file(repo, ".skills/doc-sensitive-paths", "# nothing yet\n\n")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-m", "empty list")
+        result = run_doc_check(repo)
         assert result.returncode == 2, (
             f"an empty override list is a did-not-run; got exit {result.returncode}\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -506,11 +434,11 @@ class TestOverrideFile:
 
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_every_variant_reads_the_override(self, variant: str, tmp_path: Path):
-        repo = _repo(tmp_path, ["docs/notes.md"], ["docs/other.md"])
-        _write(repo, ".skills/doc-sensitive-paths", "docs/\n")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-m", "tailor list")
-        result = _run(repo, variant)
+        repo = make_repo(tmp_path, ["docs/notes.md"], ["docs/other.md"])
+        write_file(repo, ".skills/doc-sensitive-paths", "docs/\n")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-m", "tailor list")
+        result = run_doc_check(repo, variant)
         assert result.returncode == 1, (
             f"{variant} must honor .skills/doc-sensitive-paths; got exit "
             f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -525,8 +453,8 @@ class TestArgumentParsing:
 
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_unknown_argument_exits_two(self, variant: str, tmp_path: Path):
-        repo = _repo(tmp_path, ["README.md"], ["README.md"])
-        result = _run(repo, variant, "--bases", "main")
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        result = run_doc_check(repo, variant, "--bases", "main")
         assert result.returncode == 2, (
             f"{variant} must refuse an unknown argument rather than diff against "
             f"the wrong base; got exit {result.returncode}\nstdout: {result.stdout}"
@@ -534,16 +462,16 @@ class TestArgumentParsing:
         assert "unknown argument: --bases" in result.stderr
 
     def test_base_without_a_ref_exits_two(self, tmp_path: Path):
-        repo = _repo(tmp_path, ["README.md"], ["README.md"])
-        result = _run(repo, "shipping-work-python-click", "--base")
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        result = run_doc_check(repo, "shipping-work-python-click", "--base")
         assert result.returncode == 2
         assert "--base requires a ref" in result.stderr
 
     def test_base_is_honored_and_not_positional(self, tmp_path: Path):
         """--base must work wherever it appears in the argument list."""
-        repo = _repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
-        _git(repo, "branch", "other", "main")
-        result = _run(repo, "shipping-work-python-click", "--base", "other")
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["docs/other.md"])
+        run_git(repo, "branch", "other", "main")
+        result = run_doc_check(repo, "shipping-work-python-click", "--base", "other")
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "vs other" in result.stdout, (
             f"--base must select the compared ref:\n{result.stdout}"
@@ -553,8 +481,8 @@ class TestArgumentParsing:
     def test_help_exits_zero_and_documents_the_override(
         self, variant: str, tmp_path: Path
     ):
-        repo = _repo(tmp_path, ["README.md"], ["README.md"])
-        result = _run(repo, variant, "--help")
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        result = run_doc_check(repo, variant, "--help")
         assert result.returncode == 0
         assert ".skills/doc-sensitive-paths" in result.stdout
         assert "segments" in result.stdout
@@ -569,7 +497,7 @@ class TestBodyParity:
     MARKER = re.compile(r"^# -{10,}$")
 
     def _body(self, variant: str) -> str:
-        lines = _script(variant).read_text().splitlines()
+        lines = script_path(variant).read_text().splitlines()
         ends = [i for i, ln in enumerate(lines) if self.MARKER.match(ln)]
         assert len(ends) == 1, (
             f"{variant}/scripts/doc-check.sh must contain exactly one `# ---…` "

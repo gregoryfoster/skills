@@ -53,9 +53,8 @@ SENSITIVE_PATHS=(
 # line, same grammar as `.skills/doc-sensitive-paths`, and it too REPLACES
 # the defaults below. The path list says what the gate watches; this says
 # what to do about a hit. A repo that tailors one and not the other gets
-# advice that is wrong for the repo it was tailored to — a route table it
-# does not have, or silence about the contracts directory whose charters are
-# the thing that actually drifts (#261).
+# advice that is wrong for the repo it was tailored to — a section it does
+# not keep, or silence about the directory whose docs actually drift (#261).
 DOC_SECTIONS=(
   "AGENTS.md: project structure, conventions, skill inventory, route table"
   "README.md: orientation + curated links into canonical docs; only the README-owned bits (e.g. top-level CLI list, two-line quick start) should change here"
@@ -84,11 +83,12 @@ usage() {
   echo "  1  one or more sensitive paths changed"
   echo "  2  infra/tooling failure — the gate did not run. Covers: an unknown"
   echo "     or incomplete argument, a base ref auto-detection failure, a git"
-  echo "     diff or git ls-files failure, an empty .skills/doc-sensitive-paths"
-  echo "     or .skills/doc-sections, or a path list where no entry matches any"
-  echo "     tracked file (a list that cannot hit anything is not a pass). Other"
-  echo "     unexpected failures (e.g., running outside a git repo) may surface"
-  echo "     git's own exit code instead; check stderr in either case."
+  echo "     diff or git ls-files failure, an empty or unreadable"
+  echo "     .skills/doc-sensitive-paths or .skills/doc-sections, or a path list"
+  echo "     where no entry matches any tracked file (a list that cannot hit"
+  echo "     anything is not a pass). Other unexpected failures (e.g., running"
+  echo "     outside a git repo) may surface git's own exit code instead; check"
+  echo "     stderr in either case."
 }
 
 BASE_REF=""
@@ -119,28 +119,36 @@ done
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
-# Read a .skills/ list file into OVERRIDE: one entry per line, blank lines and
+# Read a .skills/ list file into PARSED: one entry per line, blank lines and
 # `#`-comment lines dropped, surrounding whitespace trimmed. A `#` later in a
 # line is content, not a comment — advice cites issues. `|| [[ -n "$line" ]]`
 # keeps a final line the editor left without a trailing newline; without it a
 # one-line file resolves to nothing and the override silently becomes the
-# default it existed to replace. One reader serves both files, so a guard
-# fixed here is fixed for both (#261).
+# default it existed to replace. A file that exists but cannot be read is a
+# did-not-run, exit 2: left to the redirection, `set -e` would surface bash's
+# own "Permission denied" at exit 1 — the code that asks the reader to act on
+# a list of hits that was never printed. One reader serves both files, so a
+# guard fixed here is fixed for both (#261).
 read_list_file() {
   local path="$1" line
-  OVERRIDE=()
+  if [[ ! -r "$path" ]]; then
+    echo "ERROR: $path exists but cannot be read." >&2
+    echo "Fix its permissions, or remove it to fall back to the built-in defaults." >&2
+    exit 2
+  fi
+  PARSED=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     # Pure-bash trim of leading/trailing whitespace (no fork+pipe per line).
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    OVERRIDE+=("$line")
+    PARSED+=("$line")
   done < "$path"
 }
 
 # Project overrides. Each file replaces its defaults wholesale — a project that
-# could only widen a list could never drop the route table it does not have.
+# could only widen a list could never drop an inventory it does not keep.
 # Present-but-empty is exit 2 for both: a path list that yields nothing would
 # pass everything, and advice that says nothing sends the reader nowhere. Both
 # are checked up front rather than on the branch that uses them, so a
@@ -148,24 +156,24 @@ read_list_file() {
 LIST_SOURCE="built-in defaults"
 if [[ -f .skills/doc-sensitive-paths ]]; then
   read_list_file .skills/doc-sensitive-paths
-  if [[ ${#OVERRIDE[@]} -eq 0 ]]; then
+  if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sensitive-paths exists but lists no paths." >&2
     echo "Remove the file to fall back to the built-in defaults." >&2
     exit 2
   fi
-  SENSITIVE_PATHS=("${OVERRIDE[@]}")
+  SENSITIVE_PATHS=("${PARSED[@]}")
   LIST_SOURCE=".skills/doc-sensitive-paths"
 fi
 
 SECTIONS_SOURCE="built-in defaults"
 if [[ -f .skills/doc-sections ]]; then
   read_list_file .skills/doc-sections
-  if [[ ${#OVERRIDE[@]} -eq 0 ]]; then
+  if [[ ${#PARSED[@]} -eq 0 ]]; then
     echo "ERROR: .skills/doc-sections exists but lists no sections." >&2
     echo "Remove the file to fall back to the built-in defaults." >&2
     exit 2
   fi
-  DOC_SECTIONS=("${OVERRIDE[@]}")
+  DOC_SECTIONS=("${PARSED[@]}")
   SECTIONS_SOURCE=".skills/doc-sections"
 fi
 
