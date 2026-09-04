@@ -31,17 +31,21 @@ extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 # Deliberately near-minimal. E4/E7/E9/F is ruff's own historical default and
-# was already clean here modulo seven findings; `I` is the one addition,
-# because `ruff format` does not sort imports and import order is exactly the
-# kind of thing every future review would otherwise re-litigate — which is the
-# cost #246 was raised to stop paying. Broader families (ANN, S, PL) were
-# considered and refused: 266 of ruff's newer defaults are PLW1510 on test
-# subprocess calls that read `returncode` on purpose.
+# was already clean here modulo seven findings. Two additions:
+#
+# `I`, because `ruff format` does not sort imports and import order is exactly
+# the kind of thing every future review would otherwise re-litigate — which is
+# the cost #246 was raised to stop paying.
+#
+# `W`, because a docstring quoting a regex shipped an invalid escape sequence
+# past E4/E7/E9/F — a real SyntaxWarning at import, in this gate's own test
+# file. It is free: no W rule fires on this tree, and the formatter's own
+# output rules out the whitespace ones by construction.
+#
+# Broader families (ANN, S, PL) were considered and refused: 266 of ruff's
+# newer defaults are PLW1510 on test subprocess calls that read `returncode`
+# on purpose.
 select = ["E4", "E7", "E9", "F", "I", "W"]
-# `W` was added after a docstring quoting a regex shipped `\[` and `\.` as
-# invalid escape sequences — a real SyntaxWarning at import, in the gate's own
-# test file, that E4/E7/E9/F did not see. It costs nothing: W605 is the only
-# W rule this tree triggers, and only on that one defect.
 
 [tool.ruff.lint.per-file-ignores]
 # `skills/*/assets/*.py` are templates copied into OTHER repos. Import grouping

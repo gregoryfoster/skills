@@ -5,9 +5,12 @@
 # Runs the repo's Python gate — `ruff check` then `ruff format --check` over
 # the whole tree, configured by `[tool.ruff]` in pyproject.toml.
 #
-# It exists as a hook of its own, ahead of the structural suite, for the same
-# reason the context-budget gate does: a formatting breach should fail in
-# ~1s rather than after the ~4 min suite. The suite still carries the gate
+# It exists as a hook of its own, ahead of the structural suite and marked
+# fail_fast, for the same reason the context-budget gate is: measured at ~0.1s,
+# so a formatting breach ENDS the pre-commit run there. Ordering alone bought
+# nothing — pre-commit runs every hook unless a failing one sets fail_fast, so
+# before that flag a breach was merely reported first and the ~4 min suite ran
+# anyway. The suite still carries the gate
 # (`tests/structural/test_python_lint.py`) so that a run outside pre-commit —
 # CI, a bare `pytest` — is gated too; this script is the fast, surface-level
 # spelling of the same check, not a second source of truth.
@@ -142,8 +145,17 @@ fi
 # unconditionally it fired on tracked-file failures too, telling an author to
 # .gitignore a file they have to fix — a gate handing out wrong advice on its
 # most-read output is worse than one that says nothing.
-UNTRACKED=$(git ls-files --others --exclude-standard -- '*.py')
-if [[ $status -ne 0 && -n "$UNTRACKED" ]]; then
+if [[ $status -ne 0 ]]; then
+  # Inside the branch, and guarded. Unconditional and bare, this ran on the
+  # SUCCESS path too and would abort a green gate with git's exit 128 and no
+  # message — the same shape as the version probe above, which is guarded for
+  # exactly that reason.
+  UNTRACKED=$(git ls-files --others --exclude-standard -- '*.py') || {
+    echo "ERROR: could not list untracked files (git exit $?)." >&2
+    exit 2
+  }
+fi
+if [[ $status -ne 0 && -n "${UNTRACKED:-}" ]]; then
   echo >&2
   echo "NOTE: this gate reads the whole working tree, and these Python files are" >&2
   echo "  untracked:" >&2

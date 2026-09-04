@@ -5,8 +5,12 @@ repos:
       # the budget in .skills/context-budget (6,000). The offline estimate
       # reading — no credential on the commit path — with the JSON discarded
       # because the GATE lines on stderr are the signal pre-commit shows.
-      # First, so a budget breach fails in ~2s instead of after the ~3 min
-      # suite. test_policy_surface_budget.py enforces the same ceiling inside
+      # First, and fail_fast, so a budget breach ENDS the run in ~2s instead of
+      # merely being reported first and then waiting out the ~3 min suite
+      # anyway: pre-commit runs every hook unless a failing one sets fail_fast
+      # (commands/run.py — `if current_retval and fail_fast: break`), so
+      # ordering alone bought no time at all.
+      # test_policy_surface_budget.py enforces the same ceiling inside
       # that suite; this hook is the named, surface-level spelling of it that
       # enforcing-architecture wires for cohort repos too.
       - id: context-budget-gate
@@ -16,11 +20,16 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: true
 
       # The Python gate (#246): ruff check + ruff format --check over the tree,
       # configured in [tool.ruff] and pinned exactly in requirements-test.txt.
-      # Ahead of the suite for the same reason the budget gate is — a format
-      # breach fails in ~1s instead of after the ~4 min suite. The suite still
+      # Ahead of the suite AND fail_fast, for the same reason the budget gate
+      # is: measured at ~0.1s, so a format breach ends the run there instead of
+      # being reported first and then waiting out the ~4 min suite regardless,
+      # which is what "ahead of" alone bought. The trade is deliberate — a
+      # breach here hides suite failures until the next run, and the gate it
+      # hides them behind takes a tenth of a second to satisfy. The suite still
       # carries it (tests/structural/test_python_lint.py) so a run outside
       # pre-commit is gated too; this hook is the fast spelling, not a second
       # source of truth. The script delegates venv resolution to
@@ -32,6 +41,7 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: true
 
       - id: structural-tests
         name: Structural Tests

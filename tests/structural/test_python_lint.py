@@ -277,6 +277,19 @@ class TestRuff:
         )
 
 
+@pytest.fixture(scope="module")
+def format_coverage() -> tuple[list[str], subprocess.CompletedProcess]:
+    """One `ruff format --check --force-exclude` over the tracked list.
+
+    Module-scoped so the measurement and the guard that vouches for it read the
+    SAME run. Parsed from two separate invocations, the guard would be
+    confirming that *a* summary line was printed, not that the count the
+    assertion relied on came from anywhere in particular.
+    """
+    tracked = _tracked_python_files()
+    return tracked, _run_ruff("format", "--check", "--force-exclude", *tracked)
+
+
 class TestTheFormatterReadsTheSameTree:
     """The other half of coverage, measured rather than inferred.
 
@@ -294,10 +307,9 @@ class TestTheFormatterReadsTheSameTree:
     any exclude, in any spelling, goes missing from the summary count.
     """
 
-    def test_every_tracked_file_reaches_the_formatter(self):
-        tracked = _tracked_python_files()
+    def test_every_tracked_file_reaches_the_formatter(self, format_coverage):
+        tracked, result = format_coverage
         assert tracked, "`git ls-files '*.py'` listed nothing to measure"
-        result = _run_ruff("format", "--check", "--force-exclude", *tracked)
         counted = sum(int(n) for n in _FORMAT_COUNT_RE.findall(result.stdout))
         assert counted == len(tracked), (
             f"the formatter read {counted} of {len(tracked)} tracked Python "
@@ -307,11 +319,9 @@ class TestTheFormatterReadsTheSameTree:
             f"this suite green.\n{result.stdout}{result.stderr}"
         )
 
-    def test_the_count_is_actually_being_parsed(self):
+    def test_the_count_is_actually_being_parsed(self, format_coverage):
         """A summary ruff stopped printing would make the sum 0 == 0 someday."""
-        result = _run_ruff(
-            "format", "--check", "--force-exclude", *_tracked_python_files()
-        )
+        _, result = format_coverage
         assert _FORMAT_COUNT_RE.findall(result.stdout), (
             "no file count parsed out of `ruff format --check`. Its summary "
             f"line changed shape, and the test above is comparing 0 to 0:\n"
@@ -504,8 +514,26 @@ class TestTheHookIsWired:
         assert ids.index("python-lint") < ids.index("structural-tests"), (
             "python-lint must come before structural-tests. Behind it the hook "
             "is pure duplication: the suite already carries the same gate, and "
-            "the only thing the separate hook buys is failing before the four "
-            "minutes rather than after."
+            "what the separate hook buys is ending the run before the four "
+            "minutes rather than after them."
+        )
+
+    def test_the_hook_stops_the_run(self):
+        """Ordering without fail_fast bought ordering, and no time at all.
+
+        pre-commit runs EVERY hook and breaks early only when a failing one
+        sets fail_fast (`commands/run.py`: `if current_retval and fail_fast:
+        break`), which defaults to False. Until this flag was set, a format
+        breach was reported in ~0.1s and then the ~4 min suite ran anyway — so
+        the hook's entire stated justification, repeated in three places, was
+        false. Nothing but this assertion holds it true.
+        """
+        hooks = {hook["id"]: hook for hook in self._hooks()}
+        assert hooks["python-lint"].get("fail_fast") is True, (
+            "the python-lint hook does not set fail_fast, so a format breach "
+            "no longer ends the pre-commit run — it is merely reported before "
+            "the structural suite runs for four minutes regardless. That makes "
+            "the hook pure duplication of the same gate inside the suite."
         )
 
 
