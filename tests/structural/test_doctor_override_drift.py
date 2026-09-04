@@ -24,6 +24,8 @@ What this file pins:
 - **The warning teaches the direction AND the check.** Reapplying upstream
   onto the old fork is the easy inversion; verifying the merge by presence is
   the easy false pass (#267), and neither is visible from the fact of drift.
+- **One remedy block for the whole list.** The per-override lines are the only
+  ones that differ; repeating the remedy under each buries them.
 - **Warn only, in every mode.** Never auto-merge — the whole point of an
   override is that upstream text cannot be applied blindly — and never a
   non-zero exit, including under `--check-only`: drift is doc-sync debt, not
@@ -42,6 +44,7 @@ Keep this list current — it is the file's index.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -187,10 +190,38 @@ class TestVersionDriftIsWarnedAbout:
             "the drift warning should tell the operator to account for every "
             f"removed line (#267), not only how to merge:\n{result.stderr}"
         )
-        assert "aside" in result.stderr, (
-            "the check needs the pre-merge override, which step 2 destroys, so "
-            f"the warning has to ask for the copy up front:\n{result.stderr}"
+        # The idea, not one word: a copy taken before the merge. Matching
+        # "aside" alone would fail on a faithful rewording and, worse, could be
+        # repaired by re-inserting the word without the instruction.
+        assert re.search(r"cop(y|ies)[^.]*(aside|before|first)", result.stderr), (
+            "the check needs the pre-merge override, which the merge destroys, "
+            f"so the warning has to ask for the copy up front:\n{result.stderr}"
         )
+
+    def test_several_drifted_overrides_share_one_remedy(self, consumer: Path):
+        """One remedy block for the whole list, not one per file.
+
+        The remedy is the long half of this message and identical every time,
+        so printing it per override buries the only lines that differ: three
+        drifted overrides read as 27 lines of which 24 were the same
+        paragraph. This is the shape `check_silent_forks` and the content
+        checks already settled on, and drift was the one class outside it.
+        """
+        for name in ("shipping-work", "reviewing-code"):
+            _vendor_skill(consumer, name, "1.4")
+            _override(consumer, name, "1.2")
+        result = _doctor(consumer)
+        assert result.stderr.count(DRIFT_MARKER) == 1, (
+            f"two drifted overrides produced {result.stderr.count(DRIFT_MARKER)} "
+            f"headers; the list is one report:\n{result.stderr}"
+        )
+        assert result.stderr.count("local deltas onto") == 1, (
+            f"the remedy is repeated per override:\n{result.stderr}"
+        )
+        for name in ("shipping-work", "reviewing-code"):
+            assert f"skills/{name}" in result.stderr, (
+                f"{name} drifted but is not named in the list:\n{result.stderr}"
+            )
 
     def test_a_current_override_is_silent(self, consumer: Path):
         _vendor_skill(consumer, "shipping-work", "1.4")

@@ -165,12 +165,12 @@ manual, and the **direction matters and is easy to get backwards**:
 4. Restore the override frontmatter: `overrides:`, `override-reason:`, and
    `version:` (or `synced-from:`) bumped to what was just synced.
 5. **Account for every removed line.** Diff the ORIGINAL override against the
-   merged result — `diff /tmp/<name>.orig skills/<name>/SKILL.md` — and
-   classify every removed line as superseded by upstream, deliberately
+   merged result: `diff /tmp/<name>.orig skills/<name>/SKILL.md`. Classify
+   every removed line (the `<` side) as superseded by upstream, deliberately
    dropped, or reworded with its substance intact elsewhere. A line fitting
    none of those is a local delta the merge lost.
 6. Re-check any real script files (a wrapper still `exec`s a script that
-   exists?) and commit.
+   exists?), delete the step 2 copy, and commit.
 
 Step 5 is not step 1's diff run again. Step 1 asks what the override *added*
 to the old vendor text; step 5 asks what the merge *took away*, and only the

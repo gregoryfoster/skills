@@ -48,6 +48,10 @@ def _section(path: Path, heading: str) -> str:
     anchored on a heading, and a rename would otherwise surface as a bare
     `ValueError: substring not found` — a traceback that names neither the
     contract that broke nor the anchor that needs updating.
+
+    Fenced blocks are skipped when looking for the terminator. A `#` comment
+    inside a ```bash example is not a heading, and treating one as the end of
+    the section would silently hand every assertion a truncated slice.
     """
     text = path.read_text()
     start = text.find(heading)
@@ -57,9 +61,15 @@ def _section(path: Path, heading: str) -> str:
         "itself is gone, #267's check went with it."
     )
     depth = len(heading) - len(heading.lstrip("#"))
-    body = text[start + len(heading) :]
-    end = re.search(rf"^#{{1,{depth}}} ", body, re.M)
-    return heading + (body[: end.start()] if end else body)
+    lines = text[start:].splitlines(keepends=True)
+    kept, fenced = lines[:1], False
+    for line in lines[1:]:
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and re.match(rf"#{{1,{depth}}} ", line):
+            break
+        kept.append(line)
+    return "".join(kept)
 
 
 def _resync_section() -> str:
