@@ -28,6 +28,8 @@ What this file pins:
   already failed.
 - **The SKILL.md pointer carries it too** — an agent that never opens the
   reference still gets told that grepping for what it expected is not a check.
+- **The slicer these assertions run through skips fenced blocks at both ends**,
+  so none of them can silently be measuring a quoted example.
 
 Keep this list current — it is the file's index.
 """
@@ -44,31 +46,38 @@ _SKILL = SKILLS_DIR / "managing-skills" / "SKILL.md"
 def _section(path: Path, heading: str) -> str:
     """The text from `heading` to the next heading of the same or higher level.
 
-    A guarded lookup rather than `str.index`: every assertion in this file is
+    A guarded scan rather than `str.index`: every assertion in this file is
     anchored on a heading, and a rename would otherwise surface as a bare
     `ValueError: substring not found` — a traceback that names neither the
     contract that broke nor the anchor that needs updating.
 
-    Fenced blocks are skipped when looking for the terminator. A `#` comment
-    inside a ```bash example is not a heading, and treating one as the end of
-    the section would silently hand every assertion a truncated slice.
+    Fenced blocks are skipped at BOTH ends. A `#` comment inside a ```bash
+    example is not the section's end, and a heading quoted inside a fenced
+    example — plausible in files that document how to write a SKILL.md — is
+    not its start. The second is the one that fails silently: assertions would
+    then run against illustrative text and could pass on it.
     """
-    text = path.read_text()
-    start = text.find(heading)
-    assert start != -1, (
-        f"{path.name} no longer contains the heading {heading!r}, which this "
-        "file anchors on. Update the anchor if it was renamed; if the section "
-        "itself is gone, #267's check went with it."
-    )
     depth = len(heading) - len(heading.lstrip("#"))
-    lines = text[start:].splitlines(keepends=True)
-    kept, fenced = lines[:1], False
-    for line in lines[1:]:
-        if line.lstrip().startswith("```"):
+    kept: list[str] = []
+    fenced = False
+    for line in path.read_text().splitlines(keepends=True):
+        is_fence = line.lstrip().startswith("```")
+        if not kept:
+            if is_fence:
+                fenced = not fenced
+            elif not fenced and line.rstrip("\n") == heading:
+                kept.append(line)
+            continue
+        if is_fence:
             fenced = not fenced
         elif not fenced and re.match(rf"#{{1,{depth}}} ", line):
             break
         kept.append(line)
+    assert kept, (
+        f"{path.name} has no line reading exactly {heading!r} outside a code "
+        "fence, and this file anchors on it. Update the anchor if the heading "
+        "was renamed; if the section itself is gone, #267's check went with it."
+    )
     return "".join(kept)
 
 
@@ -169,3 +178,32 @@ def test_the_skill_pointer_carries_the_check():
         "agent that never loads references/local-overrides.md otherwise "
         "verifies by presence and passes over a dropped delta"
     )
+
+
+def test_the_section_slicer_ignores_fenced_headings(tmp_path: Path):
+    """The slicer's one SILENT failure mode, pinned.
+
+    A wrong terminator truncates and fails loudly. A wrong anchor is worse: it
+    slices a quoted example, and every assertion above then runs — possibly
+    green — against illustrative text rather than the live section. Both ends
+    skip fences, and a file documenting how to write a SKILL.md is exactly
+    where a fenced heading shows up.
+    """
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "# Top\n\n"
+        "```markdown\n## Target\n\nfenced example, not the section\n```\n\n"
+        "## Target\n\nreal body\n\n"
+        "```bash\n# not a heading\n```\n\n"
+        "still the section\n\n"
+        "## Next\n\nafter\n"
+    )
+    section = _section(doc, "## Target")
+    assert "fenced example" not in section, (
+        "the anchor matched a heading quoted inside a fence, so every "
+        "assertion in this file would be measuring an example"
+    )
+    assert "real body" in section and "still the section" in section, (
+        "a `#` comment inside a fenced block ended the section early"
+    )
+    assert "after" not in section, "the slice ran past the next heading"

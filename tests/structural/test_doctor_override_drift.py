@@ -24,8 +24,10 @@ What this file pins:
 - **The warning teaches the direction AND the check.** Reapplying upstream
   onto the old fork is the easy inversion; verifying the merge by presence is
   the easy false pass (#267), and neither is visible from the fact of drift.
-- **One remedy block for the whole list.** The per-override lines are the only
-  ones that differ; repeating the remedy under each buries them.
+- **One remedy block for the whole list, in BOTH voices.** The per-override
+  lines are the only ones that differ; repeating the remedy under each buries
+  them, and un-assessable multiplies by the whole override set because one
+  uninitialized submodule makes every override unassessable at once.
 - **Warn only, in every mode.** Never auto-merge — the whole point of an
   override is that upstream text cannot be applied blindly — and never a
   non-zero exit, including under `--check-only`: drift is doc-sync debt, not
@@ -240,6 +242,30 @@ class TestVersionDriftIsWarnedAbout:
         result = _doctor(consumer)
         assert UNASSESSED_MARKER in result.stderr, result.stderr
         assert "skills/shipping-work" in result.stderr, result.stderr
+
+    def test_several_unassessable_overrides_share_one_remedy(self, consumer: Path):
+        """The same batching, for the voice with the worse multiplier.
+
+        Un-assessable's likeliest cause is an uninitialized submodule, which
+        makes EVERY override unassessable at once — so the repeated tail is
+        proportional to the whole override set rather than to the few that
+        drifted.
+        """
+        for name in ("shipping-work", "reviewing-code"):
+            _override(consumer, name, "1.2")
+        result = _doctor(consumer)
+        assert result.stderr.count(UNASSESSED_MARKER) == 1, (
+            "two unassessable overrides produced "
+            f"{result.stderr.count(UNASSESSED_MARKER)} headers; the list is "
+            f"one report:\n{result.stderr}"
+        )
+        assert result.stderr.count("same failure as not") == 1, (
+            f"the remedy is repeated per override:\n{result.stderr}"
+        )
+        for name in ("shipping-work", "reviewing-code"):
+            assert f"skills/{name}" in result.stderr, (
+                f"{name} is unassessable but is not named:\n{result.stderr}"
+            )
 
     def test_a_missing_vendor_copy_is_not_silently_skipped(self, consumer: Path):
         """An `overrides:` target with nothing on disk — moved upstream,
