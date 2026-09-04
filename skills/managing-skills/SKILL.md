@@ -212,9 +212,10 @@ To override a symlinked skill with project-specific behavior:
 `.skills/doctor.sh` warns when an override's recorded version falls behind its
 `overrides:` target. Re-sync by **reapplying the local deltas onto the newer
 upstream text** — never upstream changes onto the old fork — then bump
-`version` and account for every line the merge removed — grepping for what you
-expected cannot see a dropped delta (#267). Procedure, that check, and the
-`synced-from:` fallback for unversioned vendors:
+`version`. Copy the override aside before merging: the last step diffs it
+against the result for every removed line, which a grep cannot see (#267).
+Procedure, that check, and the `synced-from:` fallback for unversioned
+vendors:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

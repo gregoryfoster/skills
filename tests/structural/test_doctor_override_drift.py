@@ -90,6 +90,23 @@ def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _flat(stderr: str) -> str:
+    """The doctor's stderr as prose: `doctor: ` prefixes stripped, wrap undone.
+
+    Its messages are hand-wrapped across `echo` lines, so a match against raw
+    stderr can only ever bind a fragment of a sentence — and a re-wrap, which
+    changes no contract, breaks such a test. Flattening lets an assertion name
+    the whole sentence it means.
+    """
+    out = []
+    for line in stderr.splitlines():
+        line = line.strip()
+        out.append(
+            line[len("doctor:") :].strip() if line.startswith("doctor:") else line
+        )
+    return " ".join(out)
+
+
 def _skill_md(
     name: str,
     version: str | None = None,
@@ -188,14 +205,15 @@ class TestVersionDriftIsWarnedAbout:
         _vendor_skill(consumer, "shipping-work", "1.4")
         _override(consumer, "shipping-work", "1.2")
         result = _doctor(consumer)
-        assert "removed line" in result.stderr, (
+        flat = _flat(result.stderr)
+        assert "account for every removed line" in flat, (
             "the drift warning should tell the operator to account for every "
             f"removed line (#267), not only how to merge:\n{result.stderr}"
         )
         # The idea, not one word: a copy taken before the merge. Matching
         # "aside" alone would fail on a faithful rewording and, worse, could be
         # repaired by re-inserting the word without the instruction.
-        assert re.search(r"cop(y|ies)[^.]*(aside|before|first)", result.stderr), (
+        assert re.search(r"cop(y|ies)[^.]*(aside|before|first)", flat), (
             "the check needs the pre-merge override, which the merge destroys, "
             f"so the warning has to ask for the copy up front:\n{result.stderr}"
         )
@@ -217,7 +235,8 @@ class TestVersionDriftIsWarnedAbout:
             f"two drifted overrides produced {result.stderr.count(DRIFT_MARKER)} "
             f"headers; the list is one report:\n{result.stderr}"
         )
-        assert result.stderr.count("local deltas onto") == 1, (
+        remedy = "never upstream changes onto the old fork"
+        assert _flat(result.stderr).count(remedy) == 1, (
             f"the remedy is repeated per override:\n{result.stderr}"
         )
         for name in ("shipping-work", "reviewing-code"):
@@ -259,7 +278,11 @@ class TestVersionDriftIsWarnedAbout:
             f"{result.stderr.count(UNASSESSED_MARKER)} headers; the list is "
             f"one report:\n{result.stderr}"
         )
-        assert result.stderr.count("same failure as not") == 1, (
+        remedy = (
+            "an override nothing can compare is the same failure as not "
+            "detecting drift at all (#238)."
+        )
+        assert _flat(result.stderr).count(remedy) == 1, (
             f"the remedy is repeated per override:\n{result.stderr}"
         )
         for name in ("shipping-work", "reviewing-code"):

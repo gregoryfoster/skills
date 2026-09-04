@@ -168,7 +168,10 @@ manual, and the **direction matters and is easy to get backwards**:
    merged result: `diff /tmp/<name>.orig skills/<name>/SKILL.md`. Classify
    every removed line (the `<` side) as superseded by upstream, deliberately
    dropped, or reworded with its substance intact elsewhere. A line fitting
-   none of those is a local delta the merge lost.
+   none of those is a local delta the merge lost. Only `SKILL.md` is named
+   above: a forked reference doc or script loses a line the same way, so run
+   steps 2 and 5 for each of those the override carries — the accounting
+   needs a copy taken before the merge, which is what step 2 is for.
 6. Re-check any real script files (a wrapper still `exec`s a script that
    exists?), delete the step 2 copy, and commit.
 
