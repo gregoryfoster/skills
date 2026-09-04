@@ -139,7 +139,7 @@ git commit -m "chore: update skill submodules"
 
 `--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
-No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the hook re-installs it on session start, as above. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
+No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
 
 ```bash
 bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh

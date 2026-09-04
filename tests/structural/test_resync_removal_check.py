@@ -23,11 +23,17 @@ What this file pins:
   the classify-each-removed-line instruction that makes it actionable.
 - **It says the two diffs differ.** A reader who thinks step 5 is step 1 rerun
   will skip it.
+- **It names presence-only verification as insufficient.** #267's operator DID
+  verify; a step that only says "check the merge" leaves them doing what
+  already failed.
 - **The SKILL.md pointer carries it too** — an agent that never opens the
   reference still gets told that grepping for what it expected is not a check.
+
+Keep this list current — it is the file's index.
 """
 
 import re
+from pathlib import Path
 
 from tests.utils.skill_loader import SKILLS_DIR
 
@@ -35,10 +41,47 @@ _REFERENCE = SKILLS_DIR / "managing-skills" / "references" / "local-overrides.md
 _SKILL = SKILLS_DIR / "managing-skills" / "SKILL.md"
 
 
+def _section(path: Path, heading: str) -> str:
+    """The text from `heading` to the next heading of the same or higher level.
+
+    A guarded lookup rather than `str.index`: every assertion in this file is
+    anchored on a heading, and a rename would otherwise surface as a bare
+    `ValueError: substring not found` — a traceback that names neither the
+    contract that broke nor the anchor that needs updating.
+    """
+    text = path.read_text()
+    start = text.find(heading)
+    assert start != -1, (
+        f"{path.name} no longer contains the heading {heading!r}, which this "
+        "file anchors on. Update the anchor if it was renamed; if the section "
+        "itself is gone, #267's check went with it."
+    )
+    depth = len(heading) - len(heading.lstrip("#"))
+    body = text[start + len(heading) :]
+    end = re.search(rf"^#{{1,{depth}}} ", body, re.M)
+    return heading + (body[: end.start()] if end else body)
+
+
 def _resync_section() -> str:
-    text = _REFERENCE.read_text()
-    start = text.index("## Re-syncing a drifted override")
-    return text[start:]
+    return _section(_REFERENCE, "## Re-syncing a drifted override")
+
+
+def _removal_step() -> str:
+    """Step 5 alone — from its number to the next numbered step.
+
+    Scoped, because a test named for the step must fail when the step's own
+    text loses the instruction, not pass because the surrounding prose still
+    happens to carry the words.
+    """
+    section = _resync_section()
+    start = re.search(r"^\d+\. \*\*Account for every removed line", section, re.M)
+    assert start, (
+        "the removal step is gone — test_the_procedure_has_a_numbered_removal_"
+        "step is the finding, this helper just cannot slice what is not there"
+    )
+    rest = section[start.end() :]
+    end = re.search(r"^\d+\. ", rest, re.M)
+    return rest[: end.start()] if end else rest
 
 
 def test_the_procedure_has_a_numbered_removal_step():
@@ -58,9 +101,9 @@ def test_the_removal_step_says_what_to_do_with_each_removed_line():
     three-way classification the step produces a diff nobody can act on, and a
     reader who cannot act on it stops running it.
     """
-    section = _resync_section()
+    step = _removal_step()
     for phrase in ("superseded by upstream", "deliberately", "substance"):
-        assert phrase in section, (
+        assert phrase in step, (
             f"the removal step should tell the reader how to classify a removed "
             f"line (missing: {phrase!r}) — superseded, deliberately dropped, or "
             "reworded with its substance intact. #267's noise is real and an "
@@ -109,9 +152,7 @@ def test_the_skill_pointer_carries_the_check():
     since this paragraph is written against a 6,000-token ratchet with no
     headroom and gets reworded for tokens.
     """
-    text = _SKILL.read_text()
-    start = text.index("### Updating a local override")
-    section = text[start : text.index("###", start + 3)]
+    section = _section(_SKILL, "### Updating a local override")
     assert re.search(r"remov|dropp", section) and "#267" in section, (
         "managing-skills/SKILL.md's 'Updating a local override' section should "
         "state the removal check alongside the re-sync direction (#267) — an "

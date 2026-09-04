@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-03-1"
+VERSION="2026-09-04-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -483,20 +483,27 @@ frontmatter_value() {
 }
 
 # The two voices of the drift check (#238), shared so every case below agrees
-# about the diagnosis. Drift names both sides and the re-sync DIRECTION —
-# reapplying upstream changes onto the old fork instead of local deltas onto
-# the new upstream text is the easy inversion, and it quietly discards every
-# release between the two. Un-assessable is its own warning rather than a
-# silent skip: an override nothing can compare is the same failure as not
-# detecting drift at all.
+# about the diagnosis. Drift names both sides, the re-sync DIRECTION and the
+# CHECK. Reapplying upstream changes onto the old fork instead of local deltas
+# onto the new upstream text is the easy inversion, and it quietly discards
+# every release between the two. The check is named here because this message
+# is where an operator meets the re-sync at all, and the obvious verification
+# — grep the merged file for what you expected — cannot see a local delta the
+# merge dropped (#267); only a diff of the pre-merge override can, which is
+# why the copy has to be taken before the merge overwrites it. Un-assessable
+# is its own warning rather than a silent skip: an override nothing can
+# compare is the same failure as not detecting drift at all.
 report_override_drift() {
   local dir="$1" target="$2" have="$3" now="$4"
   echo "doctor: $dir overrides $target and has fallen behind: last synced" >&2
-  echo "doctor: at $have, vendor now at $now. Re-sync by reapplying the" >&2
-  echo "doctor: local deltas onto the newer upstream text — never upstream" >&2
-  echo "doctor: changes onto the old fork — then bump the override's" >&2
-  echo "doctor: version:/synced-from: to what was just synced. Advisory:" >&2
-  echo "doctor: nothing is auto-merged." >&2
+  echo "doctor: at $have, vendor now at $now. Copy the override aside first," >&2
+  echo "doctor: then re-sync by reapplying the local deltas onto the newer" >&2
+  echo "doctor: upstream text — never upstream changes onto the old fork —" >&2
+  echo "doctor: and bump the override's version:/synced-from: to what was" >&2
+  echo "doctor: just synced. Last, diff that copy against the merged file and" >&2
+  echo "doctor: account for every removed line: a presence-only check cannot" >&2
+  echo "doctor: see a local delta the merge dropped. Advisory: nothing is" >&2
+  echo "doctor: auto-merged." >&2
 }
 
 report_override_unassessed() {

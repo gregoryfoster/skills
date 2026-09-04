@@ -21,6 +21,9 @@ What this file pins:
 
 - **Drift is warned about, with both versions named.** The data sat unused;
   comparing it is a grep and a string compare.
+- **The warning teaches the direction AND the check.** Reapplying upstream
+  onto the old fork is the easy inversion; verifying the merge by presence is
+  the easy false pass (#267), and neither is visible from the fact of drift.
 - **Warn only, in every mode.** Never auto-merge — the whole point of an
   override is that upstream text cannot be applied blindly — and never a
   non-zero exit, including under `--check-only`: drift is doc-sync debt, not
@@ -166,6 +169,28 @@ class TestVersionDriftIsWarnedAbout:
         _override(consumer, "shipping-work", "1.2")
         result = _doctor(consumer)
         assert "local deltas onto" in result.stderr, result.stderr
+
+    def test_the_warning_states_the_removal_check(self, consumer: Path):
+        """Direction is only half of what a re-sync gets wrong.
+
+        #267's operator got the direction right and then verified by presence
+        — grepping the merged file for what they expected to find — which is
+        green by construction over a local delta the merge dropped. The
+        message that already teaches the direction is where an operator meets
+        the re-sync at all, so it teaches the check too, and names the copy
+        that has to be taken before the merge overwrites the original.
+        """
+        _vendor_skill(consumer, "shipping-work", "1.4")
+        _override(consumer, "shipping-work", "1.2")
+        result = _doctor(consumer)
+        assert "removed line" in result.stderr, (
+            "the drift warning should tell the operator to account for every "
+            f"removed line (#267), not only how to merge:\n{result.stderr}"
+        )
+        assert "aside" in result.stderr, (
+            "the check needs the pre-merge override, which step 2 destroys, so "
+            f"the warning has to ask for the copy up front:\n{result.stderr}"
+        )
 
     def test_a_current_override_is_silent(self, consumer: Path):
         _vendor_skill(consumer, "shipping-work", "1.4")
