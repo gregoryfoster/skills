@@ -132,16 +132,25 @@ else
   "$RUFF" format --check . || status=1
 fi
 
-if [[ $status -ne 0 ]]; then
-  # The scope is the whole repo, untracked files included, and on the commit
-  # path that surprises people: a scratch .py nobody staged blocks a commit
-  # that never touched it, and the only obvious escape is --no-verify — the
-  # gesture this gate exists to make unnecessary. ruff honours .gitignore, so
-  # there is a real remedy; it just has to be said at the moment it is needed.
-  # (The COMMITTED surface is what test_python_lint.py asserts coverage over.)
-  echo "" >&2
-  echo "NOTE: this gate reads the whole working tree, untracked files included." >&2
-  echo "  ruff honours .gitignore — if a file above is scratch work, add it there" >&2
+# The scope is the whole repo, untracked files included, and on the commit path
+# that surprises people: a scratch .py nobody staged blocks a commit that never
+# touched it, and the only obvious escape is --no-verify — the gesture this gate
+# exists to make unnecessary. ruff honours .gitignore, so there is a real
+# remedy; it just has to be said at the moment it is needed.
+#
+# Gated on untracked Python actually existing, not merely on failure. Printed
+# unconditionally it fired on tracked-file failures too, telling an author to
+# .gitignore a file they have to fix — a gate handing out wrong advice on its
+# most-read output is worse than one that says nothing.
+UNTRACKED=$(git ls-files --others --exclude-standard -- '*.py')
+if [[ $status -ne 0 && -n "$UNTRACKED" ]]; then
+  echo >&2
+  echo "NOTE: this gate reads the whole working tree, and these Python files are" >&2
+  echo "  untracked:" >&2
+  # Parameter expansion rather than a sed pipe (SC2001): indent the first line,
+  # then every newline inside the list.
+  echo "    ${UNTRACKED//$'\n'/$'\n'    }" >&2
+  echo "  ruff honours .gitignore — if they are scratch work, add them there" >&2
   echo "  rather than reaching for 'git commit --no-verify'." >&2
 fi
 exit "$status"

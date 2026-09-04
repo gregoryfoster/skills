@@ -37,7 +37,11 @@ extend-exclude = ["*.md"]
 # cost #246 was raised to stop paying. Broader families (ANN, S, PL) were
 # considered and refused: 266 of ruff's newer defaults are PLW1510 on test
 # subprocess calls that read `returncode` on purpose.
-select = ["E4", "E7", "E9", "F", "I"]
+select = ["E4", "E7", "E9", "F", "I", "W"]
+# `W` was added after a docstring quoting a regex shipped `\[` and `\.` as
+# invalid escape sequences — a real SyntaxWarning at import, in the gate's own
+# test file, that E4/E7/E9/F did not see. It costs nothing: W605 is the only
+# W rule this tree triggers, and only on that one defect.
 
 [tool.ruff.lint.per-file-ignores]
 # `skills/*/assets/*.py` are templates copied into OTHER repos. Import grouping

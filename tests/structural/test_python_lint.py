@@ -45,7 +45,6 @@ import yaml
 # something to report.
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PRE_COMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
-PYPROJECT = REPO_ROOT / "pyproject.toml"
 LINT_SCRIPT = REPO_ROOT / "scripts" / "python-lint.sh"
 
 # The gate, named once. `TestTheScriptAndTheSuiteAgree` holds python-lint.sh to
@@ -62,8 +61,18 @@ FIX_COMMANDS = {("check", "--fix", "."), ("format", ".")}
 # Matches `"$RUFF" check .` / `"$RUFF" format --check . || status=1`, and
 # deliberately not `"$RUFF" --version | awk ...` — that is the version probe,
 # not the gate, and it is asserted by its own behaviour in the script.
+# `#` is excluded alongside `|` so a trailing comment cannot land inside the
+# captured invocation: it would fail closed, but the failure would accuse the
+# script of running a command it does not run.
 _SCRIPT_RUFF_RE = re.compile(
-    r'"\$RUFF" ((?:check|format)[^|\n]*?)\s*(?:\|\|.*)?$', re.MULTILINE
+    r'"\$RUFF" ((?:check|format)[^|#\n]*?)\s*(?:(?:\|\||#).*)?$', re.MULTILINE
+)
+
+# ruff's format summary: "1 file would be reformatted, 94 files already
+# formatted". Both halves count as files the formatter READ, which is what
+# test_the_formatter_reads_the_same_tree measures.
+_FORMAT_COUNT_RE = re.compile(
+    r"(\d+) files? (?:would be reformatted|already formatted)"
 )
 
 # The one pin. `test_the_pin_matches_requirements` holds it equal to the
@@ -71,7 +80,7 @@ _SCRIPT_RUFF_RE = re.compile(
 # and the version a fresh `.venv` installs cannot drift apart silently.
 RUFF_PIN = (0, 16, 6)
 REQUIREMENTS = REPO_ROOT / "requirements-test.txt"
-_REQUIREMENTS_PIN_RE = re.compile(r"^ruff==(\d+)\.(\d+)\.(\d+)\s*$", re.MULTILINE)
+_REQUIREMENTS_PIN_RE = re.compile(r"^ruff==(\d+)\.(\d+)\.(\d+)\s*$")
 
 # `ruff --version` prints `ruff 0.16.6`. The patch component is optional so a
 # hypothetical `0.17` parses rather than reading as unknown.
@@ -180,6 +189,19 @@ def _require_ruff() -> str:
     return _RUFF_BIN  # non-None whenever there is no problem
 
 
+def _tracked_python_files() -> list[str]:
+    """Every Python file the repo actually ships, by git's reckoning."""
+    result = subprocess.run(
+        ["git", "ls-files", "*.py"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
 def _run_ruff(*args: str) -> subprocess.CompletedProcess:
     """Invoke the pinned ruff from the repo root, so `[tool.ruff]` is discovered."""
     binary = _require_ruff()
@@ -238,19 +260,7 @@ class TestRuff:
         seen = {
             Path(line).resolve() for line in result.stdout.splitlines() if line.strip()
         }
-        tracked = subprocess.run(
-            ["git", "ls-files", "*.py"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=REPO_ROOT,
-            check=True,
-        )
-        expected = {
-            (REPO_ROOT / line).resolve()
-            for line in tracked.stdout.splitlines()
-            if line.strip()
-        }
+        expected = {(REPO_ROOT / line).resolve() for line in _tracked_python_files()}
         # Without this the test carries the very defect it was written against:
         # a git that returned nothing makes `expected` empty, `missed` empty,
         # and the assertion below pass while proving nothing at all.
@@ -264,6 +274,48 @@ class TestRuff:
             + "\n  ".join(missed)
             + "\nAn exclude in [tool.ruff] has grown past what it was meant to "
             "cover, and the gate reports green on a tree it never read."
+        )
+
+
+class TestTheFormatterReadsTheSameTree:
+    """The other half of coverage, measured rather than inferred.
+
+    `check --show-files` proves what the LINTER reads; nothing there speaks for
+    the formatter, and `[tool.ruff.format]` accepts its own `exclude`. The
+    first attempt at this guard matched the `[tool.ruff.format]` section header
+    in the file text, and was walked straight past by TOML's other spelling for
+    the same table — a `format.exclude` dotted key under `[tool.ruff]`, which
+    drops six files from the formatter with the whole suite still green.
+
+    Recognising every way a config can shrink the formatter's input is the
+    wrong problem. This asks the formatter what it read: `--force-exclude`
+    makes ruff apply excludes to explicitly-named paths (without it, naming a
+    file bypasses them and the count is trivially right), so a file dropped by
+    any exclude, in any spelling, goes missing from the summary count.
+    """
+
+    def test_every_tracked_file_reaches_the_formatter(self):
+        tracked = _tracked_python_files()
+        assert tracked, "`git ls-files '*.py'` listed nothing to measure"
+        result = _run_ruff("format", "--check", "--force-exclude", *tracked)
+        counted = sum(int(n) for n in _FORMAT_COUNT_RE.findall(result.stdout))
+        assert counted == len(tracked), (
+            f"the formatter read {counted} of {len(tracked)} tracked Python "
+            "files. An exclude reachable from [tool.ruff.format] — either "
+            "spelling — is hiding files from `ruff format` that "
+            "`ruff check` still sees, so the tree can go unformatted with "
+            f"this suite green.\n{result.stdout}{result.stderr}"
+        )
+
+    def test_the_count_is_actually_being_parsed(self):
+        """A summary ruff stopped printing would make the sum 0 == 0 someday."""
+        result = _run_ruff(
+            "format", "--check", "--force-exclude", *_tracked_python_files()
+        )
+        assert _FORMAT_COUNT_RE.findall(result.stdout), (
+            "no file count parsed out of `ruff format --check`. Its summary "
+            f"line changed shape, and the test above is comparing 0 to 0:\n"
+            f"{result.stdout}{result.stderr}"
         )
 
 
@@ -304,28 +356,6 @@ class TestTheScriptAndTheSuiteAgree:
         )
 
 
-class TestTheFormatterHasNoExcludesOfItsOwn:
-    """Coverage is measured with `check --show-files`, which is lint-side only.
-
-    `[tool.ruff.format]` accepts its own `exclude`, and a file excluded there
-    would still appear in `--show-files` — so it would go unformatted with
-    `test_the_tree_is_actually_covered` still green, which is that test's own
-    blind spot one subcommand over. The repo has no such section; adding one
-    has to be a deliberate act that teaches the coverage test about it.
-    """
-
-    def test_no_format_section(self):
-        assert not re.search(
-            r"^\[tool\.ruff\.format\]", PYPROJECT.read_text(), re.MULTILINE
-        ), (
-            "pyproject.toml grew a [tool.ruff.format] section. If it carries "
-            "`exclude` or `extend-exclude`, test_the_tree_is_actually_covered "
-            "can no longer prove the formatter reads every file the linter "
-            "does — extend that test to measure the format side before "
-            "allowing this."
-        )
-
-
 class TestThePinIsSingleSourced:
     """The gate's pin and the venv's pin are one decision, in two files.
 
@@ -337,11 +367,28 @@ class TestThePinIsSingleSourced:
     """
 
     def test_the_pin_matches_requirements(self):
-        match = _REQUIREMENTS_PIN_RE.search(REQUIREMENTS.read_text())
+        # The script takes the FIRST line beginning `ruff==` and fails if it is
+        # malformed, rather than scanning past it for a well-formed one. A
+        # `re.search` here did scan past: with `ruff==0.16` above `ruff==0.16.6`
+        # the script exited 3 while this class — the one whose name is the
+        # claim — passed. Requiring exactly one such line makes the two agree
+        # by construction instead of by matching selection rules.
+        lines = [
+            line
+            for line in REQUIREMENTS.read_text().splitlines()
+            if line.startswith("ruff==")
+        ]
+        assert len(lines) == 1, (
+            f"requirements-test.txt has {len(lines)} `ruff==` lines; the gate "
+            "needs exactly one. python-lint.sh reads the first and does not "
+            "look past it, so any other is either dead or contradicting it."
+        )
+        match = _REQUIREMENTS_PIN_RE.match(lines[0])
         assert match is not None, (
-            "requirements-test.txt has no exact `ruff==X.Y.Z` line. The gate in "
-            "this file needs one specific build (see its module docstring); a "
-            "floor or a missing entry makes the pin unenforceable."
+            f"requirements-test.txt pins ruff as {lines[0]!r}, which is not the "
+            "exact `ruff==X.Y.Z` form. The gate in this file needs one specific "
+            "build (see its module docstring); a floor makes it unenforceable, "
+            "and python-lint.sh rejects the same line with exit 3."
         )
         found = tuple(int(part) for part in match.groups())
         assert found == RUFF_PIN, (

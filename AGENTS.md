@@ -243,7 +243,8 @@ re-create: `ln -s <main>/.venv .venv`.
 
 Python is gated by ruff, pinned exactly in `requirements-test.txt`. `bash
 scripts/python-lint.sh` runs `check` + `format --check` (`--fix` applies both)
-as a pre-commit hook ahead of the suite; `test_python_lint.py` runs it inside.
+as a pre-commit hook ahead of the suite; `test_python_lint.py` runs the same
+checks inside.
 On a missing or mismatched ruff the suite skips loudly (`RUFF_REQUIRED=1` to
 fail) and the hook refuses to run
 ([#246](https://github.com/gregoryfoster/skills/issues/246)).
