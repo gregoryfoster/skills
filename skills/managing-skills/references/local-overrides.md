@@ -163,8 +163,32 @@ manual, and the **direction matters and is easy to get backwards**:
    silently discards every release between the two.
 4. Restore the override frontmatter: `overrides:`, `override-reason:`, and
    `version:` (or `synced-from:`) bumped to what was just synced.
-5. Re-check any real script files (a wrapper still `exec`s a script that
+5. **Account for every removed line.** Diff the ORIGINAL override against the
+   merged result — `git show HEAD:skills/<name>/SKILL.md` is the pre-step-2
+   text, since step 2 overwrote it — and classify every removed line as
+   superseded by upstream, deliberately dropped, or reworded with its
+   substance intact elsewhere. A line fitting none of those is a local delta
+   the merge lost.
+6. Re-check any real script files (a wrapper still `exec`s a script that
    exists?) and commit.
+
+Step 5 is not step 1's diff run again. Step 1 asks what the override *added* to
+the old vendor text; step 5 asks what the merge *took away*, and only the second
+question can catch a dropped convention. Verifying by grepping the merged file
+for the strings you expected — upstream's new material present, local
+conventions present, deliberate omissions absent — is presence-only: it asks "is
+what I expect here?", never "what did I take out?", so it passes green over a
+delta that is gone. That is [#267](https://github.com/gregoryfoster/skills/issues/267),
+where a re-sync's own verification missed a line and the diff-the-original pass
+found it.
+
+Judge per **substance**, not per line — most removed lines are reflowed prose,
+and a per-line reading drowns in that noise. The miss to look for is a
+*substitution*: #267's override told an agent "use `.worktrees/` as the local
+directory (verify it is gitignored first)", and the reapplied text carried a
+different, equally true worktree line in its place. Both lines were correct, but
+one replaced the other instead of joining it, and the re-synced skill silently
+stopped saying where worktrees go.
 
 In the #238 consumer this was six small edits and five minutes — once someone
 knew to look, which is what the doctor's warning is for.
