@@ -131,4 +131,17 @@ else
   "$RUFF" check . || status=1
   "$RUFF" format --check . || status=1
 fi
+
+if [[ $status -ne 0 ]]; then
+  # The scope is the whole repo, untracked files included, and on the commit
+  # path that surprises people: a scratch .py nobody staged blocks a commit
+  # that never touched it, and the only obvious escape is --no-verify — the
+  # gesture this gate exists to make unnecessary. ruff honours .gitignore, so
+  # there is a real remedy; it just has to be said at the moment it is needed.
+  # (The COMMITTED surface is what test_python_lint.py asserts coverage over.)
+  echo "" >&2
+  echo "NOTE: this gate reads the whole working tree, untracked files included." >&2
+  echo "  ruff honours .gitignore — if a file above is scratch work, add it there" >&2
+  echo "  rather than reaching for 'git commit --no-verify'." >&2
+fi
 exit "$status"

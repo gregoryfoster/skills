@@ -241,11 +241,11 @@ pre-commit install                       # structural tests run on every commit
 Hooks use `.venv/` at the repo root. A worktree has none; link it, never
 re-create: `ln -s <main>/.venv .venv`.
 
-Python is gated by ruff, pinned exactly in `requirements-test.txt` (`ruff
-format`'s output is version-defined). `bash scripts/python-lint.sh` runs
-`check` + `format --check`, `--fix` applies both; it is a pre-commit hook ahead
-of the suite and `test_python_lint.py` inside it. A missing or mismatched ruff
-skips loudly; `RUFF_REQUIRED=1` fails
+Python is gated by ruff, pinned exactly in `requirements-test.txt`. `bash
+scripts/python-lint.sh` runs `check` + `format --check` (`--fix` applies both)
+as a pre-commit hook ahead of the suite; `test_python_lint.py` runs it inside.
+On a missing or mismatched ruff the suite skips loudly (`RUFF_REQUIRED=1` to
+fail) and the hook refuses to run
 ([#246](https://github.com/gregoryfoster/skills/issues/246)).
 
 Structural tests are the only pytest gate; integration tests are never wired to

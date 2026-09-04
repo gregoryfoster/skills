@@ -37,9 +37,34 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).parent.parent.parent
+# .resolve(), because test_the_tree_is_actually_covered subtracts two sets of
+# resolved paths and then renders the difference with relative_to(REPO_ROOT).
+# An unresolved root under a symlinked checkout — WORKTREE_ROOT can point at
+# one, and macOS /tmp always is — makes that last step raise ValueError instead
+# of listing the unlinted files, i.e. the reporter crashes exactly when it has
+# something to report.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PRE_COMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 LINT_SCRIPT = REPO_ROOT / "scripts" / "python-lint.sh"
+
+# The gate, named once. `TestTheScriptAndTheSuiteAgree` holds python-lint.sh to
+# these same two invocations, so the hook really is the fast spelling of this
+# file rather than a second, drifting definition of what "clean" means.
+GATE_COMMANDS = {
+    "check": ("check", "."),
+    "format": ("format", "--check", "."),
+}
+# The two the script additionally runs under --fix. Both branches are pinned:
+# a pass added to one mode and forgotten in the other is the drift this guards.
+FIX_COMMANDS = {("check", "--fix", "."), ("format", ".")}
+
+# Matches `"$RUFF" check .` / `"$RUFF" format --check . || status=1`, and
+# deliberately not `"$RUFF" --version | awk ...` — that is the version probe,
+# not the gate, and it is asserted by its own behaviour in the script.
+_SCRIPT_RUFF_RE = re.compile(
+    r'"\$RUFF" ((?:check|format)[^|\n]*?)\s*(?:\|\|.*)?$', re.MULTILINE
+)
 
 # The one pin. `test_the_pin_matches_requirements` holds it equal to the
 # `ruff==` line in requirements-test.txt, so the version the gate documents
@@ -82,7 +107,7 @@ def _version_str(version: tuple[int, int, int]) -> str:
 
 _HOW_TO_INSTALL = (
     "Install it into the repo venv — `source .venv/bin/activate && pip install "
-    f"-r requirements-test.txt` — or run the gate's own build with `uvx "
+    "-r requirements-test.txt` — or run the gate's own build with `uvx "
     f"ruff@{_version_str(RUFF_PIN)}`. Set RUFF_REQUIRED=1 to make this a "
     "failure instead of a skip."
 )
@@ -183,7 +208,7 @@ class TestRuff:
         _require_ruff()
 
     def test_check_is_clean(self):
-        result = _run_ruff("check", ".")
+        result = _run_ruff(*GATE_COMMANDS["check"])
         assert result.returncode == 0, (
             "`ruff check .` findings:\n"
             f"{result.stdout}{result.stderr}\n"
@@ -193,7 +218,7 @@ class TestRuff:
         )
 
     def test_format_is_clean(self):
-        result = _run_ruff("format", "--check", ".")
+        result = _run_ruff(*GATE_COMMANDS["format"])
         assert result.returncode == 0, (
             "`ruff format --check .` would reformat:\n"
             f"{result.stdout}{result.stderr}\n"
@@ -239,6 +264,65 @@ class TestRuff:
             + "\n  ".join(missed)
             + "\nAn exclude in [tool.ruff] has grown past what it was meant to "
             "cover, and the gate reports green on a tree it never read."
+        )
+
+
+class TestTheScriptAndTheSuiteAgree:
+    """One definition of "the gate", read by both surfaces.
+
+    The hook comment in .pre-commit-config.yaml calls the script "the fast
+    spelling, not a second source of truth" — that claim is the entire reason
+    two surfaces are allowed to exist, and until now nothing held it. A third
+    check added to one side would leave the other quietly behind while the
+    comment kept asserting they agree, which is the shape this repo already
+    guards against in TestGateScriptHardening and TestThePinIsSingleSourced.
+    """
+
+    def _script_invocations(self) -> set[str]:
+        return {
+            match.group(1)
+            for match in _SCRIPT_RUFF_RE.finditer(LINT_SCRIPT.read_text())
+        }
+
+    def test_the_script_runs_exactly_the_suite_s_two_commands(self):
+        expected = {" ".join(command) for command in GATE_COMMANDS.values()}
+        expected |= {" ".join(command) for command in FIX_COMMANDS}
+        assert self._script_invocations() == expected, (
+            f"{LINT_SCRIPT.name} invokes ruff as "
+            f"{sorted(self._script_invocations())}, but the suite's gate is "
+            f"{sorted(expected)}. The hook and this file must run the same "
+            "checks — a pass in one and not the other means a commit can pass "
+            "a gate the suite would fail, or the reverse."
+        )
+
+    def test_the_probe_finds_something(self):
+        """A regex that matched nothing would make the test above pass empty."""
+        assert self._script_invocations(), (
+            f"no ruff invocations parsed out of {LINT_SCRIPT.name}. The script "
+            "changed shape and _SCRIPT_RUFF_RE no longer sees it, so the "
+            "agreement test above is comparing two empty sets."
+        )
+
+
+class TestTheFormatterHasNoExcludesOfItsOwn:
+    """Coverage is measured with `check --show-files`, which is lint-side only.
+
+    `[tool.ruff.format]` accepts its own `exclude`, and a file excluded there
+    would still appear in `--show-files` — so it would go unformatted with
+    `test_the_tree_is_actually_covered` still green, which is that test's own
+    blind spot one subcommand over. The repo has no such section; adding one
+    has to be a deliberate act that teaches the coverage test about it.
+    """
+
+    def test_no_format_section(self):
+        assert not re.search(
+            r"^\[tool\.ruff\.format\]", PYPROJECT.read_text(), re.MULTILINE
+        ), (
+            "pyproject.toml grew a [tool.ruff.format] section. If it carries "
+            "`exclude` or `extend-exclude`, test_the_tree_is_actually_covered "
+            "can no longer prove the formatter reads every file the linter "
+            "does — extend that test to measure the format side before "
+            "allowing this."
         )
 
 
