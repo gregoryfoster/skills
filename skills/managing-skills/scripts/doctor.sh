@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-03-1"
+VERSION="2026-09-04-3"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -483,27 +483,65 @@ frontmatter_value() {
 }
 
 # The two voices of the drift check (#238), shared so every case below agrees
-# about the diagnosis. Drift names both sides and the re-sync DIRECTION —
-# reapplying upstream changes onto the old fork instead of local deltas onto
-# the new upstream text is the easy inversion, and it quietly discards every
-# release between the two. Un-assessable is its own warning rather than a
-# silent skip: an override nothing can compare is the same failure as not
-# detecting drift at all.
-report_override_drift() {
+# about the diagnosis. Drift names both sides, the re-sync DIRECTION and the
+# CHECK. Reapplying upstream changes onto the old fork instead of local deltas
+# onto the new upstream text is the easy inversion, and it quietly discards
+# every release between the two. The check is named here because this message
+# is where an operator meets the re-sync at all, and the obvious verification
+# — grep the merged file for what you expected — cannot see a local delta the
+# merge dropped (#267); only a diff of the pre-merge override can, which is
+# why the copy has to be taken before the merge overwrites it. Un-assessable
+# is its own warning rather than a silent skip: an override nothing can
+# compare is the same failure as not detecting drift at all.
+#
+# Both voices collect and report after the loop, for the reason FORKED and the
+# content checks do: one remedy for the whole list, not one per finding. The
+# remedy is the long half of each message and identical every time, so per-file
+# printing buries the only lines that differ: three drifted overrides printed
+# 27 lines of which 24 were the same paragraph. Un-assessable is the worse of
+# the two to repeat — its likeliest cause is an uninitialized submodule, which
+# makes EVERY override unassessable at once — and the per-case "why" carries
+# the interpolated path, so it belongs on its own entry line rather than
+# spliced into a hand-wrapped sentence.
+declare -a DRIFTED=()
+declare -a UNASSESSED=()
+
+# One formatter per class, so the call sites cannot word the same fact
+# differently: drift is recorded from the version comparison and from the
+# synced-from commit comparison, un-assessable from six distinct causes.
+record_override_drift() {
   local dir="$1" target="$2" have="$3" now="$4"
-  echo "doctor: $dir overrides $target and has fallen behind: last synced" >&2
-  echo "doctor: at $have, vendor now at $now. Re-sync by reapplying the" >&2
-  echo "doctor: local deltas onto the newer upstream text — never upstream" >&2
-  echo "doctor: changes onto the old fork — then bump the override's" >&2
-  echo "doctor: version:/synced-from: to what was just synced. Advisory:" >&2
-  echo "doctor: nothing is auto-merged." >&2
+  DRIFTED+=("$dir overrides $target: last synced at $have, vendor now at $now")
 }
 
-report_override_unassessed() {
+record_override_unassessed() {
   local dir="$1" target="$2" why="$3"
-  echo "doctor: $dir overrides $target but its drift cannot be assessed:" >&2
-  echo "doctor: $why. An override nothing can compare is the same failure" >&2
-  echo "doctor: as not detecting drift at all (#238)." >&2
+  UNASSESSED+=("$dir overrides $target: $why")
+}
+
+report_drifted_overrides() {
+  local i
+  echo "doctor: an override has fallen behind its vendor:" >&2
+  for i in "${!DRIFTED[@]}"; do
+    echo "  ${DRIFTED[$i]}" >&2
+  done
+  echo "doctor: copy each override aside BEFORE merging, then re-sync by" >&2
+  echo "doctor: reapplying the local deltas onto the newer upstream text —" >&2
+  echo "doctor: never upstream changes onto the old fork — and bump the" >&2
+  echo "doctor: override's version:/synced-from: to what was just synced." >&2
+  echo "doctor: Last, diff that copy against the merged file and account for" >&2
+  echo "doctor: every removed line: a presence-only check cannot see a local" >&2
+  echo "doctor: delta the merge dropped. Advisory: nothing is auto-merged." >&2
+}
+
+report_unassessed_overrides() {
+  local i
+  echo "doctor: an override's drift cannot be assessed:" >&2
+  for i in "${!UNASSESSED[@]}"; do
+    echo "  ${UNASSESSED[$i]}" >&2
+  done
+  echo "doctor: an override nothing can compare is the same failure as not" >&2
+  echo "doctor: detecting drift at all (#238)." >&2
 }
 
 # #260 — version equality is a check on the STAMP, not on the content.
@@ -703,7 +741,9 @@ flatten_md() {
 }
 
 # Output channels for the three content checks, at top scope for the same reason
-# FORKED is: one remedy block for the whole list, not one per finding.
+# FORKED is: one remedy block for the whole list, not one per finding. The two
+# drift voices have their own channels — DRIFTED and UNASSESSED, declared beside
+# the reporters that drain them — so this block is three of five, not the list.
 declare -a MISSING_FRAGMENT=()
 declare -a MISSING_FRAGMENT_ID=()
 declare -a MISSING_FRAGMENT_TEXT=()
@@ -1091,6 +1131,8 @@ EOF
 # an auto-merge — upstream text cannot be applied to a fork blindly.
 check_override_drift() {
   [ -d skills ] || return 0
+  DRIFTED=()
+  UNASSESSED=()
   MISSING_FRAGMENT=()
   MISSING_FRAGMENT_ID=()
   MISSING_FRAGMENT_TEXT=()
@@ -1117,7 +1159,7 @@ check_override_drift() {
     skill_rel="skills/${target#*/}"
     vendor_md="$repo_dir/$skill_rel/SKILL.md"
     if [ ! -f "$vendor_md" ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "no vendor copy at $vendor_md (uninitialized submodule, or the skill moved upstream)"
       continue
     fi
@@ -1133,10 +1175,10 @@ check_override_drift() {
     o_ver="$(frontmatter_value "$md" version)"
     if [ -n "$v_ver" ]; then
       if [ -z "$o_ver" ]; then
-        report_override_unassessed "$dir" "$target" \
+        record_override_unassessed "$dir" "$target" \
           "the vendor is at version $v_ver and the override records no version: (the vendor version last synced from)"
       elif [ "$o_ver" != "$v_ver" ]; then
-        report_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+        record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
       fi
       continue
     fi
@@ -1144,19 +1186,19 @@ check_override_drift() {
     # Unversioned upstream: the synced-from fallback.
     synced="$(frontmatter_value "$md" synced-from)"
     if [ -z "$synced" ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "the vendor ships no version: and the override records no synced-from: (\"<repo> <tag> (<commit>)\")"
       continue
     fi
     rec="${synced##*(}"
     rec="${rec%%)*}"
     if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "synced-from: \"$synced\" carries no (commit) to compare against"
       continue
     fi
     if ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "the recorded commit $rec is not in the vendor's history (shallow clone?)"
       continue
     fi
@@ -1165,14 +1207,16 @@ check_override_drift() {
     rc=0
     git -C "$repo_dir" diff --quiet "$rec" HEAD -- "$skill_rel" 2>/dev/null || rc=$?
     if [ "$rc" -eq 1 ]; then
-      report_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
+      record_override_drift "$dir" "$target" "commit $rec" "a vendor tree that has since changed $skill_rel"
     elif [ "$rc" -ne 0 ]; then
-      report_override_unassessed "$dir" "$target" \
+      record_override_unassessed "$dir" "$target" \
         "'git diff $rec HEAD -- $skill_rel' failed in $repo_dir"
     fi
   done
   # After the loop, so a repo with several overrides gets one remedy block per
   # class rather than one per file — the shape check_silent_forks settled on.
+  [ "${#DRIFTED[@]}" -eq 0 ] || report_drifted_overrides
+  [ "${#UNASSESSED[@]}" -eq 0 ] || report_unassessed_overrides
   [ "${#MISSING_FRAGMENT[@]}" -eq 0 ] || report_missing_fragments
   [ "${#STALE_DECLARATION[@]}" -eq 0 ] || report_stale_declarations
   [ "${#MALFORMED_MARKER[@]}" -eq 0 ] || report_malformed_markers

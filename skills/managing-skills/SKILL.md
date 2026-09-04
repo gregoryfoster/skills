@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.10"
+  version: "1.11"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -56,7 +56,7 @@ The `../` prefix is required because the symlink target is resolved relative to 
 
 #### Step 2b — Wire to Claude Code's skill discovery path
 
-Claude Code discovers project skills from `.claude/skills/`, not from the project root `skills/`. Create a second symlink pointing through `skills/` rather than directly to vendor — this ensures local overrides in `skills/` automatically shadow vendor skills in both discovery systems without duplication:
+Claude Code discovers project skills from `.claude/skills/`, not from the project root `skills/`. Create a second symlink pointing through `skills/` rather than directly to vendor, so an override shadows the vendor skill in both systems (as above):
 
 ```bash
 mkdir -p .claude/skills
@@ -139,7 +139,7 @@ git commit -m "chore: update skill submodules"
 
 `--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
-No follow-up step is needed to refresh `.skills/doctor.sh` — the doctor re-syncs itself from the vendored source on its next run, and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
+No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
 
 ```bash
 bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh
@@ -212,7 +212,10 @@ To override a symlinked skill with project-specific behavior:
 `.skills/doctor.sh` warns when an override's recorded version falls behind its
 `overrides:` target. Re-sync by **reapplying the local deltas onto the newer
 upstream text** — never upstream changes onto the old fork — then bump
-`version`. Procedure and the `synced-from:` fallback for unversioned vendors:
+`version`. Copy the override aside before merging: the last step diffs it
+against the result for every removed line, which a grep cannot see (#267).
+Procedure, that check, and the `synced-from:` fallback for unversioned
+vendors:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

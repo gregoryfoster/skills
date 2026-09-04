@@ -21,6 +21,13 @@ What this file pins:
 
 - **Drift is warned about, with both versions named.** The data sat unused;
   comparing it is a grep and a string compare.
+- **The warning teaches the direction AND the check.** Reapplying upstream
+  onto the old fork is the easy inversion; verifying the merge by presence is
+  the easy false pass (#267), and neither is visible from the fact of drift.
+- **One remedy block for the whole list, in BOTH voices.** The per-override
+  lines are the only ones that differ; repeating the remedy under each buries
+  them, and un-assessable multiplies by the whole override set because one
+  uninitialized submodule makes every override unassessable at once.
 - **Warn only, in every mode.** Never auto-merge — the whole point of an
   override is that upstream text cannot be applied blindly — and never a
   non-zero exit, including under `--check-only`: drift is doc-sync debt, not
@@ -39,6 +46,7 @@ Keep this list current — it is the file's index.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -80,6 +88,23 @@ def _doctor(repo: Path, *args: str) -> subprocess.CompletedProcess:
         env=_clean_env(),
         timeout=120,
     )
+
+
+def _flat(stderr: str) -> str:
+    """The doctor's stderr as prose: `doctor: ` prefixes stripped, wrap undone.
+
+    Its messages are hand-wrapped across `echo` lines, so a match against raw
+    stderr can only ever bind a fragment of a sentence — and a re-wrap, which
+    changes no contract, breaks such a test. Flattening lets an assertion name
+    the whole sentence it means.
+    """
+    out = []
+    for line in stderr.splitlines():
+        line = line.strip()
+        out.append(
+            line[len("doctor:") :].strip() if line.startswith("doctor:") else line
+        )
+    return " ".join(out)
 
 
 def _skill_md(
@@ -167,6 +192,58 @@ class TestVersionDriftIsWarnedAbout:
         result = _doctor(consumer)
         assert "local deltas onto" in result.stderr, result.stderr
 
+    def test_the_warning_states_the_removal_check(self, consumer: Path):
+        """Direction is only half of what a re-sync gets wrong.
+
+        #267's operator got the direction right and then verified by presence
+        — grepping the merged file for what they expected to find — which is
+        green by construction over a local delta the merge dropped. The
+        message that already teaches the direction is where an operator meets
+        the re-sync at all, so it teaches the check too, and names the copy
+        that has to be taken before the merge overwrites the original.
+        """
+        _vendor_skill(consumer, "shipping-work", "1.4")
+        _override(consumer, "shipping-work", "1.2")
+        result = _doctor(consumer)
+        flat = _flat(result.stderr)
+        assert "account for every removed line" in flat, (
+            "the drift warning should tell the operator to account for every "
+            f"removed line (#267), not only how to merge:\n{result.stderr}"
+        )
+        # The idea, not one word: a copy taken before the merge. Matching
+        # "aside" alone would fail on a faithful rewording and, worse, could be
+        # repaired by re-inserting the word without the instruction.
+        assert re.search(r"cop(y|ies)[^.]*(aside|before|first)", flat), (
+            "the check needs the pre-merge override, which the merge destroys, "
+            f"so the warning has to ask for the copy up front:\n{result.stderr}"
+        )
+
+    def test_several_drifted_overrides_share_one_remedy(self, consumer: Path):
+        """One remedy block for the whole list, not one per file.
+
+        The remedy is the long half of this message and identical every time,
+        so printing it per override buries the only lines that differ: three
+        drifted overrides read as 27 lines of which 24 were the same
+        paragraph. This is the shape `check_silent_forks` and the content
+        checks already settled on, and drift was the one class outside it.
+        """
+        for name in ("shipping-work", "reviewing-code"):
+            _vendor_skill(consumer, name, "1.4")
+            _override(consumer, name, "1.2")
+        result = _doctor(consumer)
+        assert result.stderr.count(DRIFT_MARKER) == 1, (
+            f"two drifted overrides produced {result.stderr.count(DRIFT_MARKER)} "
+            f"headers; the list is one report:\n{result.stderr}"
+        )
+        remedy = "never upstream changes onto the old fork"
+        assert _flat(result.stderr).count(remedy) == 1, (
+            f"the remedy is repeated per override:\n{result.stderr}"
+        )
+        for name in ("shipping-work", "reviewing-code"):
+            assert f"skills/{name}" in result.stderr, (
+                f"{name} drifted but is not named in the list:\n{result.stderr}"
+            )
+
     def test_a_current_override_is_silent(self, consumer: Path):
         _vendor_skill(consumer, "shipping-work", "1.4")
         _override(consumer, "shipping-work", "1.4")
@@ -184,6 +261,34 @@ class TestVersionDriftIsWarnedAbout:
         result = _doctor(consumer)
         assert UNASSESSED_MARKER in result.stderr, result.stderr
         assert "skills/shipping-work" in result.stderr, result.stderr
+
+    def test_several_unassessable_overrides_share_one_remedy(self, consumer: Path):
+        """The same batching, for the voice with the worse multiplier.
+
+        Un-assessable's likeliest cause is an uninitialized submodule, which
+        makes EVERY override unassessable at once — so the repeated tail is
+        proportional to the whole override set rather than to the few that
+        drifted.
+        """
+        for name in ("shipping-work", "reviewing-code"):
+            _override(consumer, name, "1.2")
+        result = _doctor(consumer)
+        assert result.stderr.count(UNASSESSED_MARKER) == 1, (
+            "two unassessable overrides produced "
+            f"{result.stderr.count(UNASSESSED_MARKER)} headers; the list is "
+            f"one report:\n{result.stderr}"
+        )
+        remedy = (
+            "an override nothing can compare is the same failure as not "
+            "detecting drift at all (#238)."
+        )
+        assert _flat(result.stderr).count(remedy) == 1, (
+            f"the remedy is repeated per override:\n{result.stderr}"
+        )
+        for name in ("shipping-work", "reviewing-code"):
+            assert f"skills/{name}" in result.stderr, (
+                f"{name} is unassessable but is not named:\n{result.stderr}"
+            )
 
     def test_a_missing_vendor_copy_is_not_silently_skipped(self, consumer: Path):
         """An `overrides:` target with nothing on disk — moved upstream,
