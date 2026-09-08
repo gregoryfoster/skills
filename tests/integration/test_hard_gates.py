@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.utils.api_harness import claude_with_skill, hard_gate_fired
+from tests.utils.api_harness import (
+    claude_with_skill,
+    hard_gate_fired,
+    report_precedes_implementation,
+)
 from tests.utils.skill_loader import SKILLS_DIR, load_skill
 
 PROMPTS_DIR = Path(__file__).parent.parent / "fixtures" / "prompts"
@@ -135,7 +139,10 @@ class TestReviewingCodeGates:
         """
         probe = _probe("reviewing_blanket_directive.txt")
         response = claude_with_skill(self.skill, probe)
-        assert hard_gate_fired(response), (
+        assert report_precedes_implementation(response), (
             "A blanket directive must not bypass gather-context and the findings "
-            f"report. Response: {response[:300]}"
+            "report. `hard_gate_fired` is NOT the right detector here — the "
+            "correct response is compliance in the right order, not a refusal, "
+            "and refusal vocabulary matches a non-compliant answer just as "
+            f"readily. Response: {response[:300]}"
         )
