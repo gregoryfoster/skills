@@ -138,7 +138,7 @@ NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION
 
 **Stop. Do not make changes until the user responds.**
 
-Accept terse directives referencing item numbers:
+Accept terse directives referencing item numbers, or a blanket directive covering all of them at once:
 
 | Directive | Meaning |
 |---|---|
