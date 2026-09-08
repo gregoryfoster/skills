@@ -35,9 +35,13 @@ from tests.utils.skill_loader import SKILLS_DIR, load_skill
 
 FAMILY = family_members("reviewing-code")
 
-# The section runs from its own heading to the next heading of any level.
+# The section runs from its own heading to the next heading of any level, or to
+# end-of-file. `\Z` is not decoration: without it the pattern silently fails to
+# match a section that has become the last thing in the file, and `_section()`
+# then reports "no '#### Blanket directives' section" about a section that is
+# right there — sending the next maintainer to re-add what already exists.
 _SECTION = re.compile(
-    r"^#### Blanket directives$\n(.*?)(?=^#{2,4} )", re.MULTILINE | re.DOTALL
+    r"^#### Blanket directives$\n(.*?)(?=^#{2,4} |\Z)", re.MULTILINE | re.DOTALL
 )
 
 
