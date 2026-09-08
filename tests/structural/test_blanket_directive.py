@@ -98,24 +98,34 @@ class TestTheRailsAreNamed:
     naming the invariant beats a character-position diff.
     """
 
+    # rail -> (marker, scope). Scope is data rather than an `if rail == ...`
+    # inside the test: the Iron Law rail lives outside the section and the rest
+    # inside it, and encoding that as a comparison against one magic key means
+    # the next body-scoped rail is checked against the wrong haystack unless
+    # someone remembers to edit the conditional too.
+    BODY, SECTION = "body", "section"
     RAILS = {
-        "report_is_never_skipped": "NO BLANKET DIRECTIVE SKIPS THE FINDINGS REPORT",
-        "report_precedes_the_first_edit": (
-            "Present the report as its own message before the first edit"
+        "report_is_never_skipped": (
+            "NO BLANKET DIRECTIVE SKIPS THE FINDINGS REPORT",
+            BODY,
         ),
-        "held_findings": "**Hold, do not apply.**",
-        "red_baseline": "**Never fire on a red baseline.**",
-        "one_commit_per_finding": "**One commit per finding**",
+        "report_precedes_the_first_edit": (
+            "Present the report as its own message before the first edit",
+            SECTION,
+        ),
+        "held_findings": ("**Hold, do not apply.**", SECTION),
+        "red_baseline": ("**Never fire on a red baseline.**", SECTION),
+        "one_commit_per_finding": ("**One commit per finding**", SECTION),
     }
 
     @pytest.mark.parametrize("name", FAMILY)
     @pytest.mark.parametrize("rail", sorted(RAILS))
     def test_rail_present(self, name, rail):
-        marker = self.RAILS[rail]
-        haystack = _body(name) if rail == "report_is_never_skipped" else _section(name)
+        marker, scope = self.RAILS[rail]
+        haystack = _body(name) if scope == self.BODY else _section(name)
         assert marker in haystack, (
             f"{name}: the {rail.replace('_', ' ')} rail is missing. Autonomy in "
-            "this cohort is bounded by these five and nothing else."
+            f"this cohort is bounded by these {len(self.RAILS)} and nothing else."
         )
 
 
