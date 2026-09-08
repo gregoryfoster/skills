@@ -284,6 +284,151 @@ def _flowed(text: str) -> str:
     return " ".join(text.split())
 
 
+class TestTheServerStatementRules:
+    """#207: the server states the yield since 1.13.0, and it outranks ours.
+
+    The gate reads three things, not one. `graphYield` is still our own
+    edges-per-file arithmetic; `parseImportResolution` reads the advisory the
+    server prints when resolution collapses; `parseGraphBuilder` reads the
+    `Built by:` stamp that says whether the advisory's SILENCE can be trusted.
+
+    That third one is the whole point of this class. Advisory-absence has three
+    causes — server too old, graph too old, or genuinely fine — and only the
+    stamp separates them. Reading absence as "fall back to local" in all three
+    is what produced the live regression pinned below.
+    """
+
+    @staticmethod
+    def _verdict(graph_status: str) -> dict:
+        script = (
+            f"import {{ graphVerdict }} from {json.dumps(str(DRIVER))};"
+            f"process.stdout.write(JSON.stringify(graphVerdict({json.dumps(graph_status)})));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    # Transcribed from a live socraticode 1.13.1 rather than synthesized.
+    STALE = (
+        "Status: READY\nFiles (nodes): 621\nDependencies (edges): 37\n"
+        "Last built: 2026-08-31T03:42:35.508Z (761060s ago)\n"
+        "Built by: unknown (persisted before the builder version was recorded)\n"
+        "  Run codebase_graph_build to rebuild with v1.13.1 and confirm this "
+        "graph reflects the current resolvers.\nUnresolved: 79.3%"
+    )
+    REBUILT = (
+        "Status: READY\nFiles (nodes): 627\nDependencies (edges): 2156\n"
+        "Built by: v1.13.1\nUnresolved: 51.1%"
+    )
+    ADVISORY = (
+        "Status: READY\nFiles (nodes): 618\nDependencies (edges): 35\n"
+        "Import resolution: 35 of 2959 captured imports resolved to project "
+        "files (1.2%)\n"
+        "  Most imports did not resolve, so codebase_graph_query, "
+        "codebase_graph_stats and codebase_impact will under-report "
+        "dependencies — an empty answer there means unresolved, not "
+        "independent.\nBuilt by: v1.13.1"
+    )
+
+    @requires_node
+    def test_the_advisory_rules_when_the_server_states_it(self) -> None:
+        v = self._verdict(self.ADVISORY)
+        assert v["verdict"] == "low", v
+        assert v["source"] == "server", v
+
+    @requires_node
+    def test_a_certified_graph_is_ok_on_the_servers_authority(self) -> None:
+        v = self._verdict(self.REBUILT)
+        assert (v["verdict"], v["source"]) == ("ok", "server"), v
+
+    @requires_node
+    def test_an_unstamped_graph_falls_back_to_our_arithmetic(self) -> None:
+        """Cases 1 and 2: the silence carries no information."""
+        v = self._verdict(self.STALE)
+        assert v["source"] == "local", v
+        assert v["verdict"] == "low", v
+
+    @requires_node
+    def test_the_stale_regression_is_pinned(self) -> None:
+        """The live miss this issue exists for.
+
+        cannobserv served a graph at 37 edges across 621 files for 8.8 days and
+        the gate called it LOW throughout. It was STALE, not broken — rebuilt on
+        1.13.1 the same repo yields 2156 edges across 627 files. The fix is not
+        that the first now reads `ok`; it is that a rebuild changes the answer
+        and that the staleness is reported as its own repairable defect.
+        """
+        assert self._verdict(self.STALE)["verdict"] == "low"
+        assert self._verdict(self.REBUILT)["verdict"] == "ok"
+
+        script = (
+            f"import {{ parseGraphBuilder, builderFinding }} from {json.dumps(str(DRIVER))};"
+            f"process.stdout.write(builderFinding(parseGraphBuilder({json.dumps(self.STALE)})) || '');"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "codebase_graph_build" in result.stdout, (
+            "a stale or unstamped builder must name the command that repairs "
+            "it — that is what makes it a defect rather than a note (#220)"
+        )
+
+    @requires_node
+    def test_the_server_is_not_overruled_by_our_floor(self) -> None:
+        """The hazard the composed gate exists to prevent.
+
+        The two thresholds do not nest: ours is edges-per-file, the server's is
+        resolved-over-captured. An orphan-heavy repo can clear the server's bar
+        and trip ours. Letting it write the degraded policy there rewrites
+        AGENTS.md to route every dependency question to grep, on a graph the
+        server just certified.
+        """
+        orphan_heavy = (
+            "Status: READY\nFiles (nodes): 400\nDependencies (edges): 12\n"
+            "Built by: v1.13.1"
+        )
+        v = self._verdict(orphan_heavy)
+        assert v["verdict"] == "ok", v
+        assert v["local"]["verdict"] == "low", (
+            "the fixture must actually trip the local floor, or this asserts nothing"
+        )
+        assert v["disagreement"], (
+            "the server suppresses its advisory below 20 captured imports, so "
+            "silence still means 'fine OR too little signal'. The disagreement "
+            "must be recorded rather than discarded"
+        )
+
+    @requires_node
+    def test_a_pre_advisory_server_behaves_exactly_as_before(self) -> None:
+        """#107's gate must survive untouched where there is no server signal."""
+        old_low = "Status: READY\nFiles (nodes): 374\nDependencies (edges): 3"
+        v = self._verdict(old_low)
+        assert (v["verdict"], v["source"]) == ("low", "local"), v
+        assert v["builder"]["state"] == "absent", v
+
+    def test_the_doc_explains_the_advisory(self) -> None:
+        """#207 acceptance: the generated doc has to say what the line means."""
+        doc = DOC_REF.read_text()
+        assert "Import resolution:" in doc, (
+            "socraticode-doc.md must show the advisory it now tells readers to believe"
+        )
+        assert "Built by:" in doc, (
+            "the advisory's silence is only readable beside the builder stamp — "
+            "a doc that explains one without the other teaches the misread"
+        )
+
+
 class TestUnresolvedFindingIsVerdictAware:
     """#216: the corroboration wording, standing alone, reads as an accusation.
 

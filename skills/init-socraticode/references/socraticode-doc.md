@@ -184,9 +184,43 @@ the result against an `rg` sweep over every spelling that import could be
 written as. If the two sets match, the import graph is exact and
 `unresolvedPct` is telling you about call edges, not about imports. Prefer
 that differential to any figure written into this file, which is repo- and
-day-specific. Upstream is adding a server-stated import-resolution advisory
-(<https://github.com/giancarloerra/SocratiCode/issues/112>); once a release
-carries it, that becomes the signal to read — until then, measure.
+day-specific.
+
+**Since SocratiCode 1.13.0 the server states the yield itself, and that is the
+signal to read.** When resolution collapses, `codebase_graph_status` prints an
+advisory beneath the edge count:
+
+```
+Import resolution: 35 of 2959 captured imports resolved to project files (1.2%)
+  Most imports did not resolve, so codebase_graph_query, codebase_graph_stats
+  and codebase_impact will under-report dependencies — an empty answer there
+  means unresolved, not independent.
+```
+
+That ratio is **resolved-over-captured**, which is a better measure than the
+edges/file floor this skill computes locally: it does not move with repo size,
+and it does not read as broken on a repo that is merely orphan-heavy. It is
+also not `unresolvedPct`, which is a call-graph statistic (see above). When the
+advisory is present, believe it.
+
+**Its silence, though, is only meaningful if the graph is new enough to
+produce it** — which is what the `Built by:` line beside the build time tells
+you:
+
+| `Built by:` | what a missing advisory means |
+|---|---|
+| `v<current server>` | the server measured and found nothing wrong — trust it |
+| `v<older> — STALE` | the graph predates the running resolvers; **rebuild before judging** |
+| `unknown (persisted before…)` | same, from a graph cut before the stamp existed |
+| *(line absent)* | server older than 1.13.0; fall back to edges/file |
+
+The middle two are the trap, and it is not hypothetical: a graph sitting at 37
+edges across 621 files looked like a resolver collapse for over a week and was
+merely stale — rebuilt on 1.13.1 the same repo yields **2156 edges across 627
+files**. Run `codebase_graph_build` before concluding anything from a graph
+whose builder is stale or unstamped. `health-check` reports this as its own
+defect, and reports which measure ruled (`source: "server"` or `"local"`) in
+its JSON.
 
 ## Index scope
 

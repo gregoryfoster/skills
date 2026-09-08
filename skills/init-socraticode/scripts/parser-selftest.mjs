@@ -36,6 +36,7 @@ import {
   contextIndexComplete, indexedZeroChunks,
   searchHasHits, listHasProjects,
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
+  parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
@@ -293,6 +294,121 @@ eq('the threshold is edges/node, and it is stated once',
 eq('unresolved% is parsed for corroboration',
   graphYield(GRAPH_LOW).unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT, true);
 eq('a small graph is not judged by node count alone', GRAPH_YIELD_MIN_NODES, 20);
+
+console.log('— the server-stated advisory and the builder stamp (#207) —');
+// Transcribed from a live socraticode 1.13.1, not synthesized: the two below
+// are `cannobserv` before and after a rebuild on that server, and the third is
+// its sibling `cannabis.observer-wordpress`. That matters — the whole failure
+// this gate prevents was reading one of these shapes as another.
+const GRAPH_STALE_BUILDER = `Code Graph Status for: /repo
+
+Status: READY
+Files (nodes): 621
+Dependencies (edges): 37
+Last built: 2026-08-31T03:42:35.508Z (761060s ago)
+Built by: unknown (persisted before the builder version was recorded)
+  Run codebase_graph_build to rebuild with v1.13.1 and confirm this graph reflects the current resolvers.
+In-memory cache: no (will load from storage on next query)
+
+Symbol graph (Impact Analysis):
+  Files: 621
+  Symbols: 6298
+  Call edges: 23448
+  Unresolved: 79.3%`;
+const GRAPH_REBUILT = `Code Graph Status for: /repo
+
+Status: READY
+Files (nodes): 627
+Dependencies (edges): 2156
+Last built: 2026-09-08T23:28:49.837Z (6s ago)
+Built by: v1.13.1
+In-memory cache: yes
+
+Symbol graph (Impact Analysis):
+  Files: 627
+  Symbols: 6725
+  Call edges: 24996
+  Unresolved: 51.1%`;
+// The advisory as the server renders it (src/tools/graph-tools.ts), on the
+// pre-fix uv workspace measured in upstream #112.
+const GRAPH_ADVISORY = `Code Graph Status for: /repo
+
+Status: READY
+Files (nodes): 618
+Dependencies (edges): 35
+Import resolution: 35 of 2959 captured imports resolved to project files (1.2%)
+  Most imports did not resolve, so codebase_graph_query, codebase_graph_stats and codebase_impact will under-report dependencies — an empty answer there means unresolved, not independent.
+  Expected when a project's imports are mostly external (stdlib, third-party); otherwise the resolver may not support this project's layout.
+Last built: 2026-09-08T12:00:00.000Z (6s ago)
+Built by: v1.13.1
+In-memory cache: yes`;
+const GRAPH_STALE_VERSION = GRAPH_REBUILT.replace(
+  'Built by: v1.13.1',
+  'Built by: v1.12.0 — STALE, this server is v1.13.1',
+);
+
+eq('the advisory parses to its three figures', parseImportResolution(GRAPH_ADVISORY),
+  { resolved: 35, captured: 2959, pct: 1.2 });
+eq('a status with no advisory yields null, not a zero',
+  parseImportResolution(GRAPH_REBUILT), null);
+// A zero here would assert a collapse the server never stated — the same
+// degrade-to-false-verdict error parseGraphCounts exists to avoid.
+eq('a truncated advisory yields null, never resolved:0',
+  parseImportResolution('Import resolution: 35 of'), null);
+
+eq('a current builder is recognised', parseGraphBuilder(GRAPH_REBUILT),
+  { state: 'current', builtBy: '1.13.1' });
+eq('an unstamped graph is `unknown`', parseGraphBuilder(GRAPH_STALE_BUILDER),
+  { state: 'unknown', builtBy: null });
+eq('a stale builder keeps the version that cut the graph',
+  parseGraphBuilder(GRAPH_STALE_VERSION), { state: 'stale', builtBy: '1.12.0' });
+eq('a pre-1.13.0 server prints no line at all', parseGraphBuilder(GRAPH_OK),
+  { state: 'absent', builtBy: null });
+
+// The gate. Each branch is one of the three ways the advisory can be silent,
+// plus the case where it speaks.
+eq('the advisory rules when present', graphVerdict(GRAPH_ADVISORY).verdict, 'low');
+eq('…and it is the server that ruled', graphVerdict(GRAPH_ADVISORY).source, 'server');
+// The live regression this issue exists for: 37 edges across 621 files reads
+// LOW to our arithmetic, and the graph was merely STALE. Rebuilt: 2156 edges.
+eq('an unstamped graph falls back to local arithmetic',
+  graphVerdict(GRAPH_STALE_BUILDER).source, 'local');
+eq('…and our arithmetic still calls that one LOW',
+  graphVerdict(GRAPH_STALE_BUILDER).verdict, 'low');
+eq('…while naming the staleness as why there was no advisory to read',
+  /builder-version stamp/.test(graphVerdict(GRAPH_STALE_BUILDER).reason), true);
+eq('a stale VERSION falls back too', graphVerdict(GRAPH_STALE_VERSION).source, 'local');
+eq('a current builder with no advisory is OK, per the server',
+  [graphVerdict(GRAPH_REBUILT).verdict, graphVerdict(GRAPH_REBUILT).source], ['ok', 'server']);
+// The R1 hazard: the two thresholds do not nest, so a repo the server certified
+// can still trip our edges/file floor. It must not write the degraded policy.
+const ORPHAN_HEAVY = `Status: READY
+Files (nodes): 400
+Dependencies (edges): 12
+Built by: v1.13.1`;
+eq('an orphan-heavy repo the server certified is NOT called low',
+  graphVerdict(ORPHAN_HEAVY).verdict, 'ok');
+eq('…but the disagreement is recorded rather than discarded',
+  graphVerdict(ORPHAN_HEAVY).disagreement != null, true);
+eq('…and a repo with nothing to disagree about records nothing',
+  graphVerdict(GRAPH_REBUILT).disagreement, null);
+// A pre-1.13.0 server: no advisory, no stamp, so the local gate is all there is
+// and must behave exactly as it did before #207.
+eq('an old server still gets the #107 verdict unchanged',
+  [graphVerdict(GRAPH_LOW).verdict, graphVerdict(GRAPH_LOW).source], ['low', 'local']);
+eq('…and a resolving graph on an old server is still ok',
+  graphVerdict(GRAPH_OK).verdict, 'ok');
+
+// The builder stamp is a defect in its own right — it names codebase_graph_build,
+// which is the #220 test for defect rather than note.
+eq('an unstamped graph earns a rebuild finding',
+  /codebase_graph_build/.test(builderFinding(parseGraphBuilder(GRAPH_STALE_BUILDER))), true);
+eq('a stale builder names the version that cut it',
+  /v1\.12\.0/.test(builderFinding(parseGraphBuilder(GRAPH_STALE_VERSION))), true);
+eq('a current builder earns no finding',
+  builderFinding(parseGraphBuilder(GRAPH_REBUILT)), null);
+eq('…and neither does a server too old to stamp',
+  builderFinding(parseGraphBuilder(GRAPH_OK)), null);
 // `Call edges` is a different statistic and is three orders of magnitude larger
 // on exactly the broken graph this gate exists to catch. If a relabelled build
 // let it satisfy the dependency-edge matcher, the verdict would flip from `low`

@@ -304,9 +304,7 @@ Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PAT
 
 **Graph yield — READY is a status, not a result.** READY is reachable with a
 graph that resolved almost nothing: usa-wa reported READY over **3 dependency
-edges across 374 files, 81.8% unresolved**, because the resolver cannot follow
-the standard `uv`/hatch src layout (dashed distribution dir → `src/` →
-underscored module). Measure the yield:
+edges across 374 files** — a src-layout resolver defect, fixed upstream in 1.13.0. Measure the yield:
 
 ```bash
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
@@ -315,16 +313,17 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 
 | Verdict | Meaning | Do |
 |---|---|---|
-| `ok` | ≥ 0.1 edges per file | nothing; keep policy **variant A** |
-| `low` | < 0.1 edges per file (the probe confirms `codebase_graph_query` returns *empty*, not an error) | **return to Phase 3 and write policy variant B** — route imports/dependents/blast-radius to `grep`, warn that empty graph output is tool failure, not absence. Do **not** fail the install |
+| `ok` | no server advisory, or ≥ 0.1 edges per file | nothing; keep policy **variant A** |
+| `low` | server advisory fired, or (absent one) < 0.1 edges per file; the probe returns *empty*, not an error | **return to Phase 3 and write policy variant B** — route imports/dependents/blast-radius to `grep`; empty graph output is tool failure, not absence. Do **not** fail the install |
 | `unknown` | < 20 files, or the status string did not parse | report it; leave variant A |
 
-A low-yield graph is an upstream SocratiCode defect this skill cannot repair, so
-it must not fail the install — a repo left with *no* policy is worse off than one
-with a policy that routes around the broken tool. What it must never do is stay
-silent: `codebase_graph_query` answers a low-yield graph with the ordinary
-sentence "No dependency information found for this file", which an agent reads
-as a fact about the code rather than about the tool.
+**A `STALE` or `unknown` `Built by:` line is its own defect** — since 1.13.0 the
+server states the yield itself and `health-check` prefers it (`source` says which
+ruled), but only for a graph *it* built. Rebuild before writing variant B ([#207](https://github.com/gregoryfoster/skills/issues/207)).
+
+A low-yield graph is an upstream defect this skill cannot repair: route around it
+but never fail the install: a repo with *no* policy is worse off than one whose
+policy avoids the broken tool.
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 

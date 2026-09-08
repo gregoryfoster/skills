@@ -613,6 +613,159 @@ function graphYield(text) {
   return out;
 }
 
+// ── the server's own import-resolution advisory (#207) ───────────────────────
+// SocratiCode 1.13.0 (upstream #112, shipped 2026-09-07) states the yield
+// itself, below a 2%-of-captured ratio with a 20-captured-import floor:
+//
+//   Import resolution: 37 of 2959 captured imports resolved to project files (1.2%)
+//     Most imports did not resolve, so codebase_graph_query, ...
+//
+// This is the better signal and it is why the gate below prefers it: it is
+// resolved-over-captured, so it does not move with repo size and does not read
+// as broken on a repo that is merely orphan-heavy — the two failure modes of
+// our own edges/file heuristic.
+//
+// Anchored to the line start and to the server's own noun phrase. A partial
+// match returns null rather than a zero: an advisory we could not read must not
+// become `resolved: 0`, which would assert a collapse the server never stated.
+function parseImportResolution(text) {
+  const m = text.match(
+    /^[ \t]*Import resolution\s*:\s*([\d,]+)\s+of\s+([\d,]+)\s+captured imports resolved[^(\n]*\(\s*([\d.]+)\s*%\s*\)/im,
+  );
+  if (!m) return null;
+  const n = (s) => Number(s.replace(/,/g, ''));
+  const resolved = n(m[1]);
+  const captured = n(m[2]);
+  if (!Number.isFinite(resolved) || !Number.isFinite(captured)) return null;
+  return { resolved, captured, pct: Number(m[3]) };
+}
+
+// ── which build produced the graph being served (#207, upstream #120) ────────
+// 1.13.0 stamps the builder version beside the build time, in three shapes:
+//
+//   Built by: v1.13.1
+//   Built by: v1.12.0 — STALE, this server is v1.13.1
+//   Built by: unknown (persisted before the builder version was recorded)
+//
+// Parsed here because the advisory above is only meaningful when the graph was
+// cut by a builder that records `importCount` — see the gate for why absence is
+// otherwise unreadable. Keyed on the STALE token rather than on the em-dash,
+// which is punctuation and will drift.
+//
+// `absent` (no line at all) is a server older than 1.13.0, and is deliberately
+// distinct from `unknown` (a 1.13+ server serving a graph older than itself):
+// the first says the signal was never available, the second says a rebuild
+// would produce it.
+function parseGraphBuilder(text) {
+  const m = text.match(/^[ \t]*Built by\s*:\s*(\S.*)$/im);
+  if (!m) return { state: 'absent', builtBy: null };
+  const rest = m[1].trim();
+  if (/^unknown\b/i.test(rest)) return { state: 'unknown', builtBy: null };
+  const ver = rest.match(/^v(\S+?)[\s,]*(?:$|—|--)/) || rest.match(/^v(\S+)/);
+  const builtBy = ver ? ver[1] : null;
+  if (!builtBy) return { state: 'unknown', builtBy: null };
+  return { state: /\bSTALE\b/.test(rest) ? 'stale' : 'current', builtBy };
+}
+
+// ── the composed gate (#207) ─────────────────────────────────────────────────
+// Which of the two yield measures decides, and when.
+//
+// The naive reading of #207 — "gate on the advisory when present, fall back to
+// our arithmetic when it is not" — treats advisory-absence as one case. It is
+// three, and they do not want the same answer:
+//
+//   1. the server is older than 1.13.0 and never emits the line;
+//   2. the server is current but the GRAPH predates `importCount`, so there is
+//      nothing to compute the ratio from;
+//   3. the server measured and found the resolution fine.
+//
+// Only `Built by:` separates them, which is why this reads both. In case 3 the
+// server has ruled, and our edges/file floor must NOT overrule it: the two
+// thresholds do not nest — ours is edges-per-file, the server's is
+// resolved-over-captured — so a legitimately orphan-heavy repo can clear the
+// server's bar and trip ours. Letting it write the degraded policy there is the
+// same false accusation #216 and #220 spent two issues removing from
+// `unresolvedPct`, but with a much larger blast radius: it rewrites AGENTS.md
+// to route every dependency question to grep.
+//
+// This is not hypothetical. cannobserv served a graph at 37 edges across 621
+// files for 8.8 days; our gate called it LOW throughout. It was not broken, it
+// was STALE — rebuilt on 1.13.1 the same repo yields 2156 edges across 627
+// files. Case 2, misread as a defect.
+//
+// The residual ambiguity, stated because it is the one thing this cannot
+// resolve: the server suppresses the advisory below 20 captured imports, so in
+// case 3 "silent" still means "fine OR too little signal to say". The counts
+// are only printed when the advisory fires, so we cannot tell. That is why a
+// local `low` under a current builder becomes a NOTE rather than being
+// discarded — the disagreement is recorded without acting on it.
+//
+// → { verdict, source: 'server'|'local', reason, disagreement, local, advisory, builder }
+function graphVerdict(text) {
+  const local = graphYield(text);
+  const advisory = parseImportResolution(text);
+  const builder = parseGraphBuilder(text);
+  const out = { local, advisory, builder, disagreement: null };
+
+  if (advisory) {
+    return {
+      ...out,
+      verdict: 'low',
+      source: 'server',
+      reason: `server states import resolution collapsed — ${advisory.resolved} of `
+        + `${advisory.captured} captured imports resolved (${advisory.pct}%)`,
+    };
+  }
+
+  if (builder.state === 'current') {
+    // The server measured this graph and said nothing, so it is the authority.
+    if (local.verdict === 'low') {
+      out.disagreement = `local edges/file reads LOW (${local.reason}) but the server, `
+        + `which built this graph at v${builder.builtBy}, reported no import-resolution `
+        + 'problem — expected on an orphan-heavy repo; the server\'s ratio is the better measure';
+    }
+    return {
+      ...out,
+      verdict: 'ok',
+      source: 'server',
+      reason: `no import-resolution advisory from the v${builder.builtBy} builder that cut this graph`,
+    };
+  }
+
+  // Cases 1 and 2: the advisory's silence carries no information, so fall back
+  // to our own arithmetic and say out loud that that is what happened.
+  const why = builder.state === 'absent'
+    ? 'server predates the import-resolution advisory'
+    : builder.state === 'stale'
+      ? `graph was cut by v${builder.builtBy}, older than this server`
+      : 'graph predates the builder-version stamp';
+  return {
+    ...out,
+    verdict: local.verdict,
+    source: 'local',
+    reason: `${local.reason} (${why}, so no server advisory to read)`,
+  };
+}
+
+// A stale or unstamped builder is its own defect, independent of yield (#207).
+//
+// It names an action that repairs it — `codebase_graph_build` — which is the
+// #220 test for `defect` rather than `note`. Reported even when the verdict is
+// `ok`, because "ok" from a graph an older resolver cut is a weaker claim than
+// "ok" from the current one, and because it is the standing explanation for a
+// yield finding the caller would otherwise read as a code problem.
+function builderFinding(builder) {
+  if (builder.state === 'stale') {
+    return `graph was built by v${builder.builtBy}, older than the running server — `
+      + 'any resolver fix since then is absent from it; run codebase_graph_build';
+  }
+  if (builder.state === 'unknown') {
+    return 'graph was persisted before the builder version was recorded, so its edges '
+      + 'may predate the current resolvers; run codebase_graph_build';
+  }
+  return null;
+}
+
 // The unresolvedPct finding, worded from the verdict (#216).
 //
 // The line itself is unconditional — it is reported whenever the figure clears
@@ -1312,11 +1465,27 @@ async function cmdHealthCheck(projectPath, probePath) {
     if (graph.error) {
       defect(`codebase_graph_status failed: ${graph.error}`);
     } else {
-      const y = graphYield(graph.text);
-      report.graph = { ready: graphReady(graph.text), ...y };
+      const v = graphVerdict(graph.text);
+      const y = v.local;
+      report.graph = {
+        ready: graphReady(graph.text),
+        ...y,
+        // The composed gate's answer, kept beside the local arithmetic rather
+        // than replacing it: a caller reading this JSON has to be able to see
+        // WHICH measure ruled, and what the other one said (#207).
+        verdict: v.verdict,
+        source: v.source,
+        reason: v.reason,
+        localVerdict: y.verdict,
+        builder: v.builder,
+        importResolution: v.advisory,
+      };
       if (!report.graph.ready) defect('graph is not READY');
-      if (y.verdict === 'low') {
-        defect(`graph yield LOW — ${y.reason}; install the degraded Code Exploration Policy (variant B)`);
+      const stamped = builderFinding(v.builder);
+      if (stamped) defect(stamped);
+      if (v.disagreement) note(v.disagreement);
+      if (v.verdict === 'low') {
+        defect(`graph yield LOW — ${v.reason}; install the degraded Code Exploration Policy (variant B)`);
         // Confirmatory probe, as #107 asks: one graph query against a file the
         // caller knows has first-party imports. Its value is the *shape* of the
         // failure — an ordinary sentence, no error — which is what makes the
@@ -1333,11 +1502,16 @@ async function cmdHealthCheck(projectPath, probePath) {
             defect(`probe confirms: codebase_graph_query on ${probePath} returned "No dependency information found" — empty, not an error`);
           }
         }
-      } else if (y.verdict === 'unknown') {
-        defect(`graph yield UNKNOWN — ${y.reason}`);
+      } else if (v.verdict === 'unknown') {
+        defect(`graph yield UNKNOWN — ${v.reason}`);
       }
+      // Worded from the COMPOSED verdict, not the local one: the gloss turns on
+      // whether a yield finding is on the list for this to corroborate, and
+      // since #207 that is what `graphVerdict` decides. Reading `y.verdict`
+      // here would call the figure a corroborating symptom on exactly the repo
+      // the server just certified — the accusation #216 removed.
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
-        note(unresolvedFinding(y.unresolvedPct, y.verdict));
+        note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
     }
   });
@@ -1433,9 +1607,15 @@ async function cmdVerify(projectPath) {
     // is a policy that routes around the broken tool. Phase 6 reads this line
     // and writes variant B (#107).
     if (okGraph) {
-      const y = graphYield(graph);
-      console.error(`[driver] graph yield: ${y.verdict.toUpperCase()} — ${y.reason}`);
-      if (y.verdict === 'low') {
+      const v = graphVerdict(graph);
+      console.error(`[driver] graph yield: ${v.verdict.toUpperCase()} (per ${v.source}) — ${v.reason}`);
+      const stamped = builderFinding(v.builder);
+      // Printed here too, and before the policy line: a fresh install reading
+      // STALE knows to rebuild rather than to accept variant B for a graph that
+      // only needs recutting (#207).
+      if (stamped) console.error(`[driver] graph builder: ${stamped}`);
+      if (v.disagreement) console.error(`[driver] note: ${v.disagreement}`);
+      if (v.verdict === 'low') {
         console.error('[driver] → write the DEGRADED Code Exploration Policy (variant B): route imports/dependents/blast-radius to grep, and warn that empty graph output is tool failure, not absence.');
       }
     }
@@ -1657,6 +1837,9 @@ export {
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   unresolvedFinding,
+  // the server's advisory, the builder stamp, and the gate that composes them
+  // with the local arithmetic (#207)
+  parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
   // finding severity (#220)
   SEVERITY, NOTE_PREFIX, renderFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
