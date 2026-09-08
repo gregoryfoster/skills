@@ -155,7 +155,7 @@ After directives, implement all requested changes. Before committing, run the te
 
 `address the findings` answers every finding at once, in all three severity tiers. It may arrive **after** the report or **up front** in the trigger phrase (`CR --fix`, `CR, address the findings, emphasizing technical correctness`); the up-front form is the same explicit directive, simply arrived early. Present the report as its own message before the first edit — the chance to interrupt it is the only review these fixes get.
 
-**Emphasis is not decoration.** Echo it in the report header so a mistyped one cannot silently no-op, then spend it twice: in Phase 2 it reweights which dimensions get scrutiny and can promote severity within the one named; at implementation it breaks ties between viable fixes — `emphasizing technical correctness` takes the fix that provably removes the failure mode over the one that is smaller or tidier.
+**Emphasis is not decoration.** Echo it on the Phase 3 title line, after the scope, so a mistyped one cannot silently no-op, then spend it twice: in Phase 2 it reweights which dimensions get scrutiny and can promote severity within the one named; at implementation it breaks ties between viable fixes — `emphasizing technical correctness` takes the fix that provably removes the failure mode over the one that is smaller or tidier.
 
 **Hold, do not apply.** However broad the directive, it reaches only findings whose fix you can *name*:
 - `Suggested fix:` is speculative — "consider whether…", "investigate"
