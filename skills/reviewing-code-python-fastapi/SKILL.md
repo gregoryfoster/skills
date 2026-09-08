@@ -172,7 +172,7 @@ After directives, implement all requested changes. Before committing, run the te
 
 Report each held finding with its reason; a following `4: fix` overrides one.
 
-**Never fire on a red baseline.** If Phase 3.5 finds the branch already failing its tests or lint as received, present the report and stop: a fix committed on top of a broken baseline cannot be told apart from what broke it.
+**Never fire on a red baseline.** A blanket directive makes Phase 3.5's test run **unconditional** — its "if any implementation happened in this conversation" clause does not apply, because the highest-value case for a blanket directive is a branch you did not write, and that is exactly the case where the clause would skip the run and leave this rail consulting nothing. If the branch is already failing its tests or lint as received, present the report and stop: a fix committed on top of a broken baseline cannot be told apart from what broke it.
 
 **One commit per finding**, its number in the message (`fix: CR 3 — bounds check on parse offset`). Nobody reviewed these before they landed, so per-finding commits are what let one bad auto-fix be reverted without unpicking the rest. Run the full gate once after the last fix; if it goes red, that granularity names the offending commit — revert it, re-run, and report the finding as `Reverted`.
 
