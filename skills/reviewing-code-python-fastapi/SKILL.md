@@ -1,10 +1,10 @@
 ---
 name: reviewing-code-python-fastapi
-description: "For Python/FastAPI projects (uv + ruff + pytest + Pydantic v2; async route handlers, Alembic migration safety, OpenAPI contract drift): performs a structured code and documentation review using a severity-tiered findings format. Use when the user says \"CR\", \"code review\", or \"perform a review\" and the project is a FastAPI service. Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes."
+description: "For Python/FastAPI projects (uv + ruff + pytest + Pydantic v2; async route handlers, Alembic migration safety, OpenAPI contract drift): performs a structured code and documentation review using a severity-tiered findings format. Use when the user says \"CR\", \"code review\", or \"perform a review\" and the project is a FastAPI service. Produces a numbered findings report, waits for terse directives (fix/stet/GH), then implements and commits approved changes. Also accepts a blanket \"address the findings\" directive that applies them all in one pass."
 compatibility: Designed for Python FastAPI projects using uv, ruff, pytest, Pydantic v2. Requires git, gh, uv.
 metadata:
   author: gregoryfoster
-  version: "1.2"
+  version: "1.3"
   triggers: CR, code review, perform a review
 ---
 
@@ -19,10 +19,12 @@ A systematic review workflow for Python FastAPI projects (uv + ruff + pytest + P
 ```
 NO FINDINGS REPORT WITHOUT RUNNING GATHER-CONTEXT FIRST
 NO CHANGES WITHOUT A FINDINGS REPORT AND EXPLICIT USER DIRECTIVES
+NO BLANKET DIRECTIVE SKIPS THE FINDINGS REPORT
 ```
 
 If you haven't run `gather-context.sh` and confirmed ruff and tests pass, you have not completed Phase 1.
 If the user hasn't responded with directives, you cannot implement anything.
+A directive given up front is a response that arrived early: it satisfies the wait, it never excuses the report.
 
 ## Rationalization prevention
 
@@ -33,6 +35,8 @@ If the user hasn't responded with directives, you cannot implement anything.
 | "Tests are passing, that's the review" | Tests verify behavior, not convention compliance or docs. |
 | "The user seems in a hurry" | A fast broken change is slower than a thorough correct one. |
 | "I'll fix things as I find them" | Phase 4 exists. Present first, implement after directives. |
+| "They pre-authorized the fixes, so the report is a formality" | The report is the audit trail for changes nobody reviewed before they landed. Present it in full, then implement. |
+| "They said address everything, so this migration is in scope too" | A blanket directive covers findings whose fix you can name. Hold the rest and say why. |
 | "This file wasn't in the diff" | Related files need review too. Check call sites, tests, AGENTS.md. |
 | "Pydantic model is internal, breaking changes are fine" | API contract leaks through OpenAPI and consumers. Flag breaking changes explicitly. |
 | "Naive datetime is close enough" | ISO 8601 UTC only. Naive datetimes cause silent timezone drift in production. |
@@ -40,6 +44,8 @@ If the user hasn't responded with directives, you cannot implement anything.
 ## Parameterized invocation
 
 Trigger phrases may include scope inline — e.g., `CR #14`, `code review src/api/routes/v1.py`, `CR <commit-range>`. Apply the appended context as the explicit scope (step 1 of Scope detection); skip the conversation-context and uncommitted-work fallbacks.
+
+Trailing text may also carry a **blanket directive** that pre-authorizes Phase 4 — `CR --fix`, `CR, address the findings`, `code review src/, address the findings, emphasizing technical correctness`. Parse that as a directive, not as scope, and follow **Blanket directives** in Phase 4. The report is still produced in full; only the wait is satisfied in advance.
 
 ## Scope detection
 
@@ -142,6 +148,8 @@ Accept terse directives referencing item numbers:
 | `2: document as TODO` | Add a code comment or AGENTS.md note instead of fixing |
 | `7: investigate further` | Gather more information before deciding |
 | `10: GH` | Create or update a corresponding GitHub issue |
+| `address the findings` | Blanket: apply every finding — see below |
+| `address the findings, emphasizing X` | Blanket, with `X` as the tie-breaker |
 
 After directives, implement all requested changes. Before committing, run the test suite and confirm it passes — report any failures before committing. Then commit and present a summary table:
 
@@ -150,6 +158,30 @@ After directives, implement all requested changes. Before committing, run the te
 | 1 | Fixed | `src/api/routes/items.py:42 — added bounds check` |
 | 3 | Stet | — |
 | 10 | GH | Issue #22 created |
+
+#### Blanket directives
+
+`address the findings` answers every finding at once, in all three severity tiers. It may arrive **after** the report or **up front** in the trigger phrase (`CR --fix`, `CR, address the findings, emphasizing technical correctness`); the up-front form is the same explicit directive, simply arrived early. Present the report as its own message before the first edit — the chance to interrupt it is the only review these fixes get.
+
+**Emphasis is not decoration.** Echo it in the report header so a mistyped one cannot silently no-op, then spend it twice: in Phase 2 it reweights which dimensions get scrutiny and can promote severity within the one named; at implementation it breaks ties between viable fixes — `emphasizing technical correctness` takes the fix that provably removes the failure mode over the one that is smaller or tidier.
+
+**Hold, do not apply.** However broad the directive, it reaches only findings whose fix you can *name*:
+- `Suggested fix:` is speculative — "consider whether…", "investigate"
+- the fix needs a schema migration or a data backfill
+- the fix changes a contract that callers outside the reviewed scope depend on
+
+Report each held finding with its reason; a following `4: fix` overrides one.
+
+**Never fire on a red baseline.** If Phase 3.5 finds the branch already failing its tests or lint as received, present the report and stop: a fix committed on top of a broken baseline cannot be told apart from what broke it.
+
+**One commit per finding**, its number in the message (`fix: CR 3 — bounds check on parse offset`). Nobody reviewed these before they landed, so per-finding commits are what let one bad auto-fix be reverted without unpicking the rest. Run the full gate once after the last fix; if it goes red, that granularity names the offending commit — revert it, re-run, and report the finding as `Reverted`.
+
+Two outcomes only a blanket run produces:
+
+| Item | Action | Result |
+|---|---|---|
+| 6 | Held | Fix needs a schema migration — outside a blanket directive |
+| 9 | Reverted | Gate red after the fix; commit `a1b2c3d` reverted |
 
 ## Second review rounds
 

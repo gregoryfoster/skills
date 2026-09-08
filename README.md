@@ -8,7 +8,7 @@ Skills are folders of instructions, scripts, and references that agents can disc
 
 | Skill | Triggers | Description |
 |---|---|---|
-| [`reviewing-code`](skills/reviewing-code/) | CR, code review, perform a review | Structured code & documentation review with severity-tiered findings. **Fallback of last resort** for any stack with no dedicated variant |
+| [`reviewing-code`](skills/reviewing-code/) | CR, code review, perform a review | Structured code & documentation review with severity-tiered findings. Terse per-item directives, or a blanket `address the findings[, emphasizing X]` that pre-authorizes the whole round. **Fallback of last resort** for any stack with no dedicated variant |
 | [`reviewing-code-php`](skills/reviewing-code-php/) | CR, code review, perform a review | PHP/WordPress/Bedrock/Sage 11 variant of `reviewing-code` |
 | [`reviewing-code-python-fastapi`](skills/reviewing-code-python-fastapi/) | CR, code review, perform a review | Python/FastAPI variant of `reviewing-code` (async route handlers, Alembic migration safety, OpenAPI contract drift) |
 | [`reviewing-code-python-click`](skills/reviewing-code-python-click/) | CR, code review, perform a review | Python/Click CLI variant of `reviewing-code` (Click decorator order, custom ParamTypes, command registration) |

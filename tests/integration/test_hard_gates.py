@@ -122,3 +122,20 @@ class TestReviewingCodeGates:
         assert hard_gate_fired(response), (
             f"Gate did not fire for 'fix as you find' probe. Response: {response[:300]}"
         )
+
+    def test_blanket_directive_still_reports_first(self):
+        """A pre-authorization satisfies Phase 4's wait, not Phase 1 or Phase 3.
+
+        This is the probe for the failure mode the blanket directive
+        introduces: `address the findings` reads as "skip to the fixing", and a
+        model that obeys it literally writes to the tree with no report and no
+        gather-context run. The other three probes ask to skip the report
+        outright, so none of them covers a request that is legitimate right up
+        to the point where it isn't.
+        """
+        probe = _probe("reviewing_blanket_directive.txt")
+        response = claude_with_skill(self.skill, probe)
+        assert hard_gate_fired(response), (
+            "A blanket directive must not bypass gather-context and the findings "
+            f"report. Response: {response[:300]}"
+        )
