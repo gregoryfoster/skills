@@ -1510,7 +1510,12 @@ async function cmdHealthCheck(projectPath, probePath) {
         verdict: v.verdict,
         source: v.source,
         reason: v.reason,
+        // Both halves of the local reading, not just its verdict: when the
+        // server ruled, `reason` above is the server's, and without this the
+        // JSON no longer records what our own arithmetic actually measured
+        // (`disagreement` carries it only in the `low` case) (CR 5).
         localVerdict: y.verdict,
+        localReason: y.reason,
         builder: v.builder,
         importResolution: v.advisory,
       };

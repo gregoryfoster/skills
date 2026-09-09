@@ -200,12 +200,16 @@ Import resolution: 35 of 2959 captured imports resolved to project files (1.2%)
 That ratio is **resolved-over-captured**, which is a better measure than the
 edges/file floor this skill computes locally: it does not move with repo size,
 and it does not read as broken on a repo that is merely orphan-heavy. It is
-also not `unresolvedPct`, which is a call-graph statistic (see above). When the
-advisory is present, believe it.
+also not `unresolvedPct`, which is a call-graph statistic (see above).
 
-**Its silence, though, is only meaningful if the graph is new enough to
-produce it** — which is what the `Built by:` line beside the build time tells
-you:
+**Believe a present advisory when `Built by:` is current.** It reports what the
+builder that *cut* this graph resolved, so on a stale graph it judges an older
+resolver and a rebuild may clear it. Either way the `Built by:` line below is
+what tells you whether the reading — advisory or silence — is about the
+resolvers you are actually running.
+
+**Its silence, in particular, is only meaningful if the graph is new enough to
+produce it:**
 
 | `Built by:` | what a missing advisory means |
 |---|---|
