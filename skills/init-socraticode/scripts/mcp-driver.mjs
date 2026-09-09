@@ -513,8 +513,14 @@ function artifactIndexed(status) {
   return /✓|\bindexed\b/i.test(status);
 }
 
+// Anchored to the status line, not a bare substring. `/READY/i` also matches
+// the "ready" inside "already", so any future wording along the lines of
+// "graph already built" would have read as READY. Harmless while nothing said
+// that — but #207 gave this a second job, deciding whether an absent
+// `Built by:` line means an old server or simply no graph, so a false READY
+// now also puts a false claim about the server into a health finding.
 function graphReady(text) {
-  return /READY/i.test(text);
+  return /^[ \t]*Status\s*:\s*READY\b/im.test(text);
 }
 
 // ── graph YIELD (#107) ──────────────────────────────────────────────────────
@@ -768,8 +774,19 @@ function graphVerdict(text) {
 
   // Cases 1 and 2: the advisory's silence carries no information, so fall back
   // to our own arithmetic and say out loud that that is what happened.
+  //
+  // `absent` has TWO causes and must not be reported as one. A pre-1.13.0
+  // server never prints the line — but neither does a status with no graph in
+  // it to stamp: "No code graph found", or a build still in progress. Blaming
+  // the server version there states a falsehood about the user's install, on
+  // the most current server there is, and it fires on every un-indexed repo —
+  // which is the first status a new user ever sees. Reading a fact out of an
+  // absent line whose absence has several causes is the very error this gate
+  // was written to remove, so it does not get to live inside it (#207).
   const why = builder.state === 'absent'
-    ? 'server predates the import-resolution advisory'
+    ? (graphReady(text)
+      ? 'server predates the import-resolution advisory'
+      : 'no built graph here to carry an advisory or a builder stamp')
     : builder.state === 'stale'
       ? `graph was cut by v${builder.builtBy}, older than this server`
       : 'graph predates the builder-version stamp';

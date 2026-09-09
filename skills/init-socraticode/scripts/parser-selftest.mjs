@@ -219,8 +219,14 @@ console.log('— the READY token comes only from graph_status, never from status
 // "drift insurance": the token is absent from a healthy status (asserted
 // above), while an unrelated path substring satisfies it.
 eq('status text of a healthy index yields no READY token', graphReady(COMPLETED), false);
-eq('…yet a path containing "already" would have matched — the false positive that retired the fallback',
-  graphReady('Project: /srv/already-migrated/api\nCode graph: 120 files, 430 edges'), true);
+// The second reason the fallback was retired was that a bare `/READY/i` matched
+// the "ready" inside a path like `/srv/already-migrated/…`. Anchoring graphReady
+// to the status line (#207) closes that at the source, so the substring no
+// longer matches and this now pins the hole SHUT rather than open. The fallback
+// stays retired on the first reason alone, which was always the stronger one:
+// the token is simply absent from a healthy status.
+eq('…and the path substring that once retired the fallback no longer matches',
+  graphReady('Project: /srv/already-migrated/api\nCode graph: 120 files, 430 edges'), false);
 
 console.log('— tool replies that report failure by returning a string (gotcha M) —');
 eq('index start confirmed', indexStarted('Indexing started in the background for: /repo\n\nIMPORTANT: …'), true);
@@ -428,6 +434,23 @@ eq('…and it is not attributed to the server, which certified nothing',
 // and a current builder that saw no resolution problem is the better authority.
 eq('a repo too small to judge still defers to a current builder',
   graphVerdict(`${GRAPH_TINY}\nBuilt by: v1.13.1`).verdict, 'ok');
+
+// An absent `Built by:` line has two causes, and only one of them is about the
+// server's version (#207). Blaming the version for the other states a falsehood
+// about the user's install on every un-indexed repo.
+const NO_GRAPH = 'No code graph found for: /repo\nRun codebase_graph_build or codebase_index to create one.';
+eq('an un-indexed repo does not get blamed on the server version',
+  /predates/.test(graphVerdict(NO_GRAPH).reason), false);
+eq('…it is reported as having no graph to stamp',
+  /no built graph/.test(graphVerdict(NO_GRAPH).reason), true);
+eq('…and a build in progress reads the same way',
+  /no built graph/.test(graphVerdict('Status: BUILDING\nProgress: 40%').reason), true);
+eq('…while a READY graph from an old server IS the version case',
+  /predates/.test(graphVerdict(GRAPH_LOW).reason), true);
+// READY is read off the status line, not found anywhere in the text: `/READY/i`
+// also matches the "ready" inside "already".
+eq('"already" is not READY', graphReady('Graph already built'), false);
+eq('…and the status line still is', graphReady('Status: READY'), true);
 
 // A pre-1.13.0 server: no advisory, no stamp, so the local gate is all there is
 // and must behave exactly as it did before #207.
