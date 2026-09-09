@@ -108,9 +108,10 @@ jobs:
       # (#140's absent-vs-unusable lesson). In THIS job it would make the one
       # run whose entire purpose is to measure exactly report green having
       # measured nothing — the silent success #217 is filed about, rebuilt
-      # inside its own fix. The preflight above cannot cover it:
-      # --check-credential answers "is a key string reachable", not "does the
-      # API accept it".
+      # inside its own fix. The preflight above narrows it but cannot close
+      # it: since #271 --check-credential does ask whether the API accepts the
+      # credential, but it asks once, before the job — a key rotated, drained
+      # or rate-limited during the run still degrades every count after it.
       #
       # BudgetBlindSpotWarning is deliberately outside the UserWarning
       # hierarchy so this filter does not also escalate the always-on WARN

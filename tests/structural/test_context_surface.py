@@ -3332,78 +3332,10 @@ class TestCheckSeams:
         assert "moved-title" not in r.stdout, r.stdout
 
 
-class TestCredentialPreflight:
-    def test_env_var_answers(self, tmp_path: Path):
-        repo = _repo(tmp_path, policy_lines=5)
-        env = _clean_env()
-        env["ANTHROPIC_API_KEY"] = "sk-test"
-        r = subprocess.run(
-            ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=30,
-        )
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert "environment" in r.stdout
-        assert "sk-test" not in r.stdout + r.stderr  # never the value
-
-    def test_secrets_file_answers(self, tmp_path: Path):
-        repo = _repo(tmp_path, policy_lines=5)
-        (repo / ".env").write_text("ANTHROPIC_API_KEY=sk-file-test\n")
-        env = _clean_env()
-        env.pop("ANTHROPIC_API_KEY", None)
-        r = subprocess.run(
-            ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=30,
-        )
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert "secrets file" in r.stdout
-        assert "sk-file-test" not in r.stdout + r.stderr
-
-    def test_no_credential_is_exit_3_with_the_fix(self, tmp_path: Path):
-        repo = _repo(tmp_path, policy_lines=5)
-        env = _clean_env()
-        env.pop("ANTHROPIC_API_KEY", None)
-        r = subprocess.run(
-            ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=30,
-        )
-        assert r.returncode == 3, r.stdout + r.stderr
-        assert "BEFORE starting the run" in r.stderr
-
-    def test_jwt_only_profile_is_still_exit_3(self, tmp_path: Path):
-        """A credential that resolves but will 401 on count_tokens is a 'no':
-        the question is whether the LEDGER ROW will be exact, not whether
-        something authenticated."""
-        repo = _repo(tmp_path, policy_lines=5)
-        stub = tmp_path / "bin"
-        stub.mkdir()
-        (stub / "ant").write_text("#!/bin/sh\necho fake-jwt-token\n")
-        (stub / "ant").chmod(0o755)
-        env = _clean_env()
-        env.pop("ANTHROPIC_API_KEY", None)
-        env["PATH"] = f"{stub}:{env['PATH']}"
-        r = subprocess.run(
-            ["bash", str(MEASURE), "--check-credential"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=30,
-        )
-        assert r.returncode == 3, r.stdout + r.stderr
-        assert "JWT" in r.stderr
-        assert "fake-jwt-token" not in r.stdout + r.stderr
+# The credential preflight moved to test_credential_preflight.py when it
+# started making a real count_tokens call (#271). It no longer belongs in a file
+# whose contract is "no API calls": its cases now need a stub endpoint, and the
+# rule is easier to find under its own name.
 
 
 class TestRepoIdentity:

@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.16"
+  version: "1.17"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -115,10 +115,11 @@ individual files ([why](references/budget-and-metrics.md#the-library-the-chain-l
 bash "<SKILL_SCRIPTS>/measure-context.sh" --check-credential
 ```
 
-One command, before anything else. Exit 0 means `--exact` will work; exit 3 means
-resolve a credential **now** — interactively, ask; autonomously, **abort the
-run**. Found later, it costs eight phases of work toward a ledger row that
-`record-telemetry.sh` refuses at the very end.
+One command, before anything else. Exit 0 means `--exact` will work — it asks
+the endpoint, not the environment; exit 3 means resolve a credential **now** —
+interactively, ask; autonomously, **abort the run**. Exit 2 is an unreachable
+endpoint, not a bad key. Found later, it costs eight phases of work toward a
+ledger row that `record-telemetry.sh` refuses at the very end.
 
 ## Phase 1 — Measure
 
@@ -132,9 +133,8 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
 tokenizer for Claude models, and **free to call**. Never `tiktoken`: OpenAI's
 tokenizer undercounts Claude badly.
 
-**Be on a branch before you run this.** It is the run's first write, to a
-tracked file; an aborted run otherwise leaves a modified ledger on the branch
-you started from. A `--file`/`--docs-dir` run never writes the calibration
+**Be on a branch before you run this.** It is the run's first write to a tracked
+file; an aborted run leaves a modified ledger on the branch you started from. A `--file`/`--docs-dir` run never writes the calibration
 files; `--calibrate` does (#263).
 
 `--baseline` appends a measurement-only row for the surface **as found**.
@@ -191,8 +191,8 @@ Assign each section from the Phase 1 census exactly one class, using
 - **D — delete.** Restates a trained default, duplicates another part of the
   surface, or was disproven in Phase 2. Delete with the warrant named.
 
-Classification is where the value is: compressing class B is wasted work,
-deleting class A is damage. Classify before writing a single edit.
+Classify before writing a single edit: compressing class B is wasted work,
+deleting class A is damage.
 
 **Most large sections split A+B rather than taking one class.** Classify at `##`
 level first, then check `subsections[]` for any child over ~5% of the file; a
@@ -204,8 +204,8 @@ parent's class does not descend to its children
 Sum the projected tokens. If the plan does not reach `policy.budget`, keep
 demoting class-B sections in descending size order — never by reclassifying
 class A as class D. If it still cannot be reached without touching
-class A, **stop and report that**: an irreducible file is a real finding, and a
-budget that cannot be met honestly is the wrong budget.
+class A, **stop and report that**: a budget that cannot be met honestly is the
+wrong budget.
 
 Check the destination: a demotion that pushes `docs/API.md` past its per-doc
 budget has moved the problem — split it or pick another.

@@ -131,16 +131,27 @@ than earlier ones, so a mixed-model ledger is as incomparable as a mixed-method 
 rate-limited per usage tier (2,000–8,000 RPM), with limits independent of message
 creation. So `--exact` has no cost argument against it — run it always. A zero
 credit balance blocks the whole API including free endpoints, which surfaces as a
-400 whose body names the reason — the script prints that body rather than just the
-status line.
+400 whose body names the reason — the script prints the API's own
+`error.message` from that body ("Your credit balance is too low to access the
+Anthropic API") rather than just the status line, falling back to the raw body
+when the shape is unfamiliar.
 
 ### The Phase 0 preflight, in full
 
-One command, before anything else. Exit 0 means `--exact` will work; exit 3
-means resolve a credential **now** — interactively, ask while the human still
-has context; autonomously, **abort the run**. Discovered any later, this failure
-costs eight phases of work toward a ledger row that `record-telemetry.sh`
-refuses at the very end.
+One command, before anything else. Exit 0 means `--exact` will work — it asks
+the endpoint, not the environment: one free `count_tokens` call on a
+one-character body, the same request `--exact` will make, for the same model.
+Presence was the old test, and it passed a key that authenticated and could not
+spend — the run did every phase and lost the row to exit 4, over a remediation
+line advising the preflight that had just gone green (#271). Exit 3 means
+resolve a credential **now** — interactively, ask while the human still has
+context; autonomously, **abort the run**. The endpoint's own words are quoted,
+because "Your credit balance is too low" is more actionable than anything this
+script could infer from a 400. Exit 2 is an unreachable endpoint, not a bad key:
+an offline or sandboxed runner reaches it with a perfectly good credential, and
+telling that operator their billing lapsed sends them the wrong way. Discovered
+any later, this failure costs eight phases of work toward a ledger row that
+`record-telemetry.sh` refuses at the very end.
 
 ### Credential order, and why it is not the obvious one
 

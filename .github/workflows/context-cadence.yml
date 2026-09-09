@@ -66,7 +66,9 @@ jobs:
           echo "SKILL_SCRIPTS=${SD:?curating-context scripts not found}" >>"$GITHUB_ENV"
 
       # FIRST, not last: without a credential every later step does its work and
-      # the append is refused at the end.
+      # the append is refused at the end. This asks the endpoint whether it
+      # accepts the secret, so a key that authenticates but cannot spend reddens
+      # here rather than at the last step (#271).
       - name: Preflight the credential
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

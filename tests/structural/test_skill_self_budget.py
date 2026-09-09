@@ -729,8 +729,10 @@ def surfaces() -> dict:
 def _has_credential() -> bool:
     """Ask the script itself, so the test and the tool agree on what counts.
 
-    `--check-credential` exits 3 when nothing usable answers — including when
-    only an `ant auth login` JWT profile does, which count_tokens rejects.
+    `--check-credential` spends one free count_tokens call asking the endpoint
+    whether it accepts the credential that resolved, and exits 3 when the answer
+    is no — nothing resolved, or what resolved was refused (#271). Exit 2 means
+    the endpoint was unreachable, which is not a credential we can use either.
     """
     result = subprocess.run(
         ["bash", str(MEASURE), "--check-credential"],
@@ -781,12 +783,14 @@ def exact_surfaces() -> dict:
         else {}
     )
 
-    # `--check-credential` answers "is a key string reachable", NOT "does the
-    # API accept it" — it exits 0 on any non-empty value in `.env`. So the
-    # honest test of usability is whether the run actually reached
-    # count_tokens, which is only knowable after measuring. Detect the
-    # fallback HERE and skip the class once, rather than letting eighteen
-    # per-skill assertions each fail on the same infrastructure condition.
+    # The preflight now asks the endpoint (#271), so a green `_has_credential`
+    # is real evidence — but it is evidence about ONE request at ONE moment. A
+    # key can be rotated, rate-limited or drained between the probe and the
+    # nineteenth surface, and a per-file failure degrades that row silently. So
+    # the honest test of usability remains whether the run actually reached
+    # count_tokens, which is only knowable after measuring. Detect the fallback
+    # HERE and skip the class once, rather than letting eighteen per-skill
+    # assertions each fail on the same infrastructure condition.
     #
     # Skip, do not fail. An expired key, a rate limit or a plane is not a
     # budget violation, and failing here blocks every commit in a repo whose
@@ -1737,8 +1741,9 @@ class TestTheScheduledExactGate:
         commit. Here it would make the one job whose entire purpose is to
         measure exactly report green having measured nothing: the silent
         success #217 is filed about, rebuilt inside its own fix.
-        `--check-credential` cannot cover this; it answers "is a key string
-        reachable", not "does the API accept it".
+        `--check-credential` narrows this but cannot close it: it proves the
+        endpoint accepted one probe before the job started, not that every
+        count in the job succeeded.
         """
         commands = " ".join(str(step.get("run", "")) for step in self._steps(workflow))
         assert (

@@ -57,7 +57,10 @@ an exact count are not comparable. A scheduled job without the secret produces
 *nothing*, every week, silently, until somebody opens the Actions tab.
 
 The workflow below runs `--check-credential` as its first step for exactly this
-reason: fail loudly at second zero rather than at the last step of the job.
+reason: fail loudly at second zero rather than at the last step of the job. That
+step spends one free `count_tokens` call rather than checking the secret is
+non-empty — a key that authenticates but cannot spend produced exactly the
+silent-until-the-end failure this step exists to prevent (#271).
 
 ## The ledger needs a union merge, and it needs it first
 
@@ -255,7 +258,9 @@ jobs:
           echo "SKILL_SCRIPTS=${SD:?curating-context scripts not found}" >>"$GITHUB_ENV"
 
       # FIRST, not last: without a credential every later step does its work and
-      # the append is refused at the end.
+      # the append is refused at the end. This asks the endpoint whether it
+      # accepts the secret, so a key that authenticates but cannot spend reddens
+      # here rather than at the last step (#271).
       - name: Preflight the credential
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

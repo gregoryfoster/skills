@@ -52,16 +52,25 @@ Options:
                      (see --env-file / --no-env-file), then an `ant auth login`
                      profile — last, because count_tokens rejects JWT auth
                      today. Falls back to the estimate with a WARN on any
-                     failure.
+                     failure. Honours ANTHROPIC_BASE_URL, the SDK's own knob,
+                     for a gateway or proxy deployment.
   --check-credential Preflight only: resolve a credential through the same three
-                     sources, say which one answered (never the value), and exit
-                     without measuring anything. 0 = a usable credential exists;
-                     3 = none does, or only the JWT profile does. Run this
-                     BEFORE starting a curation: the credential is otherwise
-                     first checked mid-Phase-1, which interactively is a stall
-                     at the worst moment and autonomously is eight phases of
-                     work toward a ledger row that exit-4s at the end.
-  --model ID         Model for --exact token counting. Default: claude-opus-5
+                     sources, spend one free count_tokens call on a
+                     one-character body to ask the endpoint whether it ACCEPTS
+                     that credential for --model, say which source answered
+                     (never the value), and exit without measuring anything.
+                     0 = the endpoint accepted it; 3 = nothing resolved, or what
+                     resolved was refused (the endpoint's own words are quoted);
+                     2 = the endpoint could not be reached, which is a verdict
+                     on the network and not on the credential. Run this BEFORE
+                     starting a curation: the credential is otherwise first
+                     checked mid-Phase-1, which interactively is a stall at the
+                     worst moment and autonomously is eight phases of work
+                     toward a ledger row that exit-4s at the end.
+  --model ID         Model for --exact token counting, and the model
+                     --check-credential probes with — entitlement is per model,
+                     so the preflight answers for the one the run will use.
+                     Default: claude-opus-5
   --no-env-file      Never read a credential from a repo-root secrets file. Use
                      when the key must come only from the environment.
   --env-file NAMES   Space-separated secrets-file names to search, relative to
@@ -127,10 +136,12 @@ Output (stdout, JSON):
 
 Exit codes:
   0  measurement completed (with or without budget violations), or
-     --check-credential found a usable credential
+     --check-credential got a credential accepted by count_tokens
   1  usage error, or no policy file found
-  2  infrastructure failure (unreadable file, awk/find failure)
-  3  --check-credential only: no credential that count_tokens will accept
+  2  infrastructure failure (unreadable file, awk/find failure, or
+     --check-credential could not reach the endpoint at all)
+  3  --check-credential only: no credential that count_tokens will accept —
+     none resolved, or the one that did was refused
   4  --gate only: the policy file is over budget
 USAGE
 }
@@ -265,40 +276,180 @@ BUDGET="$(ctx_read_num_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" \
 DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" \
   "$ROOT/.skills/context-doc-budget" 10000)"
 
+# --- one credential, one request ------------------------------------------
+# The preflight and the measurement resolve the same credential through these
+# two definitions and send the same request from them. While they were separate
+# the preflight tested PRESENCE and the run tested ACCEPTANCE, so a key that
+# authenticated but could not spend — lapsed credit balance, exhausted quota,
+# an entitlement that does not cover --model — passed Phase 0 green and the run
+# exit-4d eight phases later on a row it could no longer record (#271).
+
+# Resolve a credential and export it in the form its transport needs. Sets
+# CRED_SOURCE (a short id the caller switches on) and CRED_DESC (the phrase a
+# message can quote). Prints nothing, and never handles the value beyond
+# exporting it. Returns 1 when nothing resolves.
+#
+# The order is load-bearing, and it is not the obvious one. An API key is first.
+# A repo-root secrets file is SECOND, ahead of `ant auth`, because the OAuth path
+# is currently non-functional against this endpoint: it authenticates fine and
+# then count_tokens answers HTTP 401 "jwt auth is not yet supported on
+# count_tokens", so trying it first meant that on a machine with the `ant` CLI
+# installed the broken credential won and a perfectly good key in .env was never
+# reached. It is kept, last, because the endpoint may support JWT later.
+#
+# Only the FIRST source that resolves is used, and there is no falling through
+# to the next when it is refused. The preflight therefore probes exactly the
+# credential the measurement would use, rather than the best one available.
+ctx_resolve_credential() {
+  CRED_SOURCE=""
+  CRED_DESC=""
+  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    export ANTHROPIC_API_KEY
+    CRED_SOURCE="env"
+    CRED_DESC="ANTHROPIC_API_KEY from the environment"
+    return 0
+  fi
+  if [ "$NO_ENV_FILE" -eq 0 ]; then
+    # Unquoted $ENV_FILES is deliberate: it is a space-separated list of names,
+    # passed as one argument each.
+    # shellcheck disable=SC2086
+    if ANTHROPIC_API_KEY="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" \
+      && [ -n "$ANTHROPIC_API_KEY" ]; then
+      export ANTHROPIC_API_KEY
+      CRED_SOURCE="env-file"
+      CRED_DESC="ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES)"
+      return 0
+    fi
+    # A failed lookup leaves the name set to the empty string. The request
+    # builder treats empty as absent, so nothing breaks today — but an exported
+    # empty credential is a trap for the next reader of this environment, and
+    # unsetting keeps "resolved" and "present" the same thing here too.
+    unset ANTHROPIC_API_KEY
+  fi
+  if command -v ant >/dev/null 2>&1 \
+    && ANTHROPIC_OAUTH_TOKEN="$(ant auth print-credentials --access-token 2>/dev/null)" \
+    && [ -n "$ANTHROPIC_OAUTH_TOKEN" ]; then
+    export ANTHROPIC_OAUTH_TOKEN
+    CRED_SOURCE="oauth"
+    CRED_DESC="the \`ant auth\` profile"
+    return 0
+  fi
+  return 1
+}
+
+# Write the count_tokens request to <path>. ONE definition: the preflight probe
+# and every per-file count must send byte-identical requests — same headers,
+# same auth, same host — or the preflight answers for a request the run never
+# makes, which is the whole of #271.
+#
+# Exit status is part of its contract, because the two failures need different
+# responses: 1 = the endpoint answered and refused, 2 = the endpoint was never
+# reached (or answered unintelligibly). count_tokens() treats both as one
+# per-file fallback; --check-credential does not.
+ctx_write_count_py() {
+  cat >"$1" <<'PY'
+import json, os, sys, urllib.error, urllib.request
+
+path, model = sys.argv[1], sys.argv[2]
+body = json.dumps({
+    "model": model,
+    "messages": [
+        {"role": "user", "content": open(path, encoding="utf-8", errors="replace").read()}
+    ],
+}).encode()
+headers = {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+}
+if os.environ.get("ANTHROPIC_API_KEY"):
+    headers["x-api-key"] = os.environ["ANTHROPIC_API_KEY"]
+else:
+    # An OAuth profile token authenticates on Authorization: Bearer and needs the
+    # oauth beta header; /v1/messages* rejects it without one.
+    headers["authorization"] = "Bearer " + os.environ["ANTHROPIC_OAUTH_TOKEN"]
+    headers["anthropic-beta"] = "oauth-2025-04-20"
+
+# The SDK's own knob, honoured so a gateway deployment counts against the
+# endpoint it actually has — and so the preflight can be exercised against a
+# stub, which is the only way to test "the API said no" without a bad key.
+base = (os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/")
+req = urllib.request.Request(
+    base + "/v1/messages/count_tokens",
+    data=body,
+    headers=headers,
+)
+try:
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        tokens = json.load(resp)["input_tokens"]
+except urllib.error.HTTPError as exc:
+    # The response body carries the actionable reason (bad model id, expired
+    # key, exhausted credit); the status line alone does not. Prefer the API's
+    # own error.message — "Your credit balance is too low to access the
+    # Anthropic API" is a sentence an operator can act on, and nothing this
+    # script could infer from a 400 comes close.
+    raw = exc.read().decode("utf-8", "replace")
+    try:
+        detail = json.loads(raw)["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        detail = raw
+    print(f"HTTP {exc.code}: {detail[:300]}".replace("\n", " "), file=sys.stderr)
+    sys.exit(1)
+except (urllib.error.URLError, OSError) as exc:
+    print(f"count_tokens unreachable: {exc}", file=sys.stderr)
+    sys.exit(2)
+except (KeyError, ValueError, TypeError) as exc:
+    print(f"count_tokens answered without a token count: {exc}", file=sys.stderr)
+    sys.exit(2)
+print(tokens)
+PY
+}
+
 # --check-credential: answer "will --exact succeed?" BEFORE a run commits to
-# eight phases of work. Same three sources as the real resolution below, same
-# order, and the same honesty about the JWT profile: a credential that resolves
-# but will 401 on count_tokens is reported and still exits 3, because the
-# question is whether the LEDGER ROW will be exact, not whether something
-# authenticated. Prints the source that answered, never the value.
+# eight phases of work — by ASKING, because the endpoint is the only thing that
+# knows. Presence is not acceptance, and the failure this preflight exists to
+# prevent is not a property of the credential's shape but of the account behind
+# it at that moment, so no list of known-bad cases can enumerate it (#271). One
+# count_tokens call on a one-character body: free, and the same request the run
+# will make, for the same --model. The question stays whether the LEDGER ROW
+# will be exact, not whether something authenticated. Prints the source that
+# answered and the endpoint's own words on refusal, never the value.
 if [ "$CHECK_CRED" -eq 1 ]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "no: python3 is missing, so --exact cannot call the endpoint at all" >&2
     exit 3
   fi
-  if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "ok: ANTHROPIC_API_KEY is in the environment"
-    exit 0
-  fi
-  if [ "$NO_ENV_FILE" -eq 0 ]; then
-    # Unquoted $ENV_FILES is deliberate: it is a space-separated list of names.
-    # shellcheck disable=SC2086
-    _k="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" || _k=""
-    if [ -n "$_k" ]; then
-      echo "ok: ANTHROPIC_API_KEY is in a repo-root secrets file ($ENV_FILES)"
-      exit 0
-    fi
-  fi
-  if command -v ant >/dev/null 2>&1 \
-    && [ -n "$(ant auth print-credentials --access-token 2>/dev/null)" ]; then
-    echo "no: only an \`ant auth\` profile resolves, and count_tokens rejects JWT" >&2
-    echo "    auth today — the run would degrade to an estimate row. Set" >&2
-    echo "    ANTHROPIC_API_KEY or put it in a repo-root .env first." >&2
+  if ! ctx_resolve_credential; then
+    echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2
+    echo "    .env — resolve this BEFORE starting the run; in autonomous mode, abort." >&2
     exit 3
   fi
-  echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2
-  echo "    .env — resolve this BEFORE starting the run; in autonomous mode, abort." >&2
-  exit 3
+  _probe="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
+  trap 'rm -rf "$_probe"' EXIT
+  ctx_write_count_py "$_probe/count.py"
+  printf 'x' >"$_probe/probe.txt"
+  _rc=0
+  python3 "$_probe/count.py" "$_probe/probe.txt" "$MODEL" >/dev/null 2>"$_probe/err" || _rc=$?
+  # Newlines flattened so a multi-line body stays one quotable sentence; the
+  # trailing space that leaves would otherwise sit between the message and the
+  # period a reader expects.
+  _why="$(tr '\n' ' ' <"$_probe/err" | sed 's/ *$//')"
+  if [ "$_rc" -eq 0 ]; then
+    echo "ok: $CRED_DESC, accepted by count_tokens for $MODEL"
+    exit 0
+  fi
+  if [ "$_rc" -eq 1 ]; then
+    echo "no: $CRED_DESC resolved, and count_tokens REFUSED it for $MODEL." >&2
+    echo "    The endpoint said: $_why" >&2
+    echo "    Resolve this BEFORE starting the run; in autonomous mode, abort." >&2
+    echo "    Every later phase would otherwise do its work and record-telemetry.sh" >&2
+    echo "    would refuse the row at the end." >&2
+    exit 3
+  fi
+  echo "ERROR could not reach count_tokens to test $CRED_DESC: $_why" >&2
+  echo "      That is a verdict on the network, not on the credential — an offline" >&2
+  echo "      or sandboxed runner reaches this line with a perfectly good key, so" >&2
+  echo "      it exits 2 (infrastructure) rather than 3 (fix your credential)." >&2
+  exit 2
 fi
 
 # After the preflight, deliberately: --check-credential measures nothing, so a
@@ -354,48 +505,30 @@ TAB="$(printf '\t')"
 # messages/count_tokens, the only accurate tokenizer for Claude models (tiktoken
 # is OpenAI's and undercounts Claude text by 15-20%, more on code).
 # Counting is free, so --exact costs nothing but a credential. An unset API key
-# does NOT mean there are no credentials.
-#
-# Order matters, and it is not the obvious one. An API key is first. A repo-root
-# secrets file is SECOND, ahead of `ant auth`, because the OAuth path is
-# currently non-functional against this endpoint: it authenticates fine and then
-# count_tokens answers
-#   HTTP 401 "jwt auth is not yet supported on count_tokens"
-# so trying it first meant that on a machine with the `ant` CLI installed the
-# broken credential won and a perfectly good key in .env was never reached. It is
-# kept, last, because the endpoint may support JWT later — and it announces the
-# known limitation rather than looking like a working choice.
+# does NOT mean there are no credentials — ctx_resolve_credential above tries
+# three sources, in an order whose reasoning lives with it, and this branch only
+# says out loud which one answered.
 EXACT_OK=0
 if [ "$EXACT" -eq 1 ]; then
-  # Unquoted $ENV_FILES in the third branch is deliberate: it is a
-  # space-separated list of names, passed as one argument each (same as the
-  # --check path above). The directive sits here because shellcheck only
-  # accepts one in front of a whole compound command, never an elif (SC1123).
-  # shellcheck disable=SC2086
   if ! command -v python3 >/dev/null 2>&1; then
     echo "WARN --exact requires python3; using offline estimate" >&2
-  elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  elif ctx_resolve_credential; then
     EXACT_OK=1
-  elif [ "$NO_ENV_FILE" -eq 0 ] \
-    && ANTHROPIC_API_KEY="$(ctx_api_key_from_env_file "$ROOT" $ENV_FILES)" \
-    && [ -n "$ANTHROPIC_API_KEY" ]; then
-    # The source that makes an interactive run match a scheduled one: a Claude
-    # Code session exports no key and usually has no `ant` CLI, so without this
-    # the interactive path writes an estimate row into a ledger of exact rows and
-    # every delta afterwards is null.
-    export ANTHROPIC_API_KEY
-    EXACT_OK=1
-    echo "INFO --exact read ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES); pass --no-env-file to refuse" >&2
-  elif command -v ant >/dev/null 2>&1 \
-    && ANTHROPIC_OAUTH_TOKEN="$(ant auth print-credentials --access-token 2>/dev/null)" \
-    && [ -n "$ANTHROPIC_OAUTH_TOKEN" ]; then
-    # OAuth tokens go on `Authorization: Bearer`, not `x-api-key`, and need the
-    # oauth beta header — converting from a key is a header change, not a swap.
-    export ANTHROPIC_OAUTH_TOKEN
-    EXACT_OK=1
-    echo "WARN --exact falling back to the \`ant auth\` profile; count_tokens does not" >&2
-    echo "     yet accept JWT auth, so this will very likely 401 and degrade to the" >&2
-    echo "     offline estimate. Set ANTHROPIC_API_KEY or put it in .env instead." >&2
+    case "$CRED_SOURCE" in
+      env-file)
+        # The source that makes an interactive run match a scheduled one: a
+        # Claude Code session exports no key and usually has no `ant` CLI, so
+        # without this the interactive path writes an estimate row into a ledger
+        # of exact rows and every delta afterwards is null.
+        echo "INFO --exact read ANTHROPIC_API_KEY from a repo-root secrets file ($ENV_FILES); pass --no-env-file to refuse" >&2 ;;
+      oauth)
+        # Announced rather than presented as a working choice: OAuth tokens go
+        # on `Authorization: Bearer` with the oauth beta header, and the endpoint
+        # rejects JWT auth today.
+        echo "WARN --exact falling back to the \`ant auth\` profile; count_tokens does not" >&2
+        echo "     yet accept JWT auth, so this will very likely 401 and degrade to the" >&2
+        echo "     offline estimate. Set ANTHROPIC_API_KEY or put it in .env instead." >&2 ;;
+    esac
   else
     echo "WARN --exact needs ANTHROPIC_API_KEY, the key in a repo-root .env, or an \`ant auth login\` profile; using offline estimate" >&2
     echo "WARN the resulting row records tokens_exact=false, which suppresses every delta against an exact row" >&2
@@ -403,46 +536,7 @@ if [ "$EXACT" -eq 1 ]; then
 fi
 
 if [ "$EXACT_OK" -eq 1 ]; then
-  cat >"$TMP/count.py" <<'PY'
-import json, os, sys, urllib.error, urllib.request
-
-path, model = sys.argv[1], sys.argv[2]
-body = json.dumps({
-    "model": model,
-    "messages": [
-        {"role": "user", "content": open(path, encoding="utf-8", errors="replace").read()}
-    ],
-}).encode()
-headers = {
-    "anthropic-version": "2023-06-01",
-    "content-type": "application/json",
-}
-if os.environ.get("ANTHROPIC_API_KEY"):
-    headers["x-api-key"] = os.environ["ANTHROPIC_API_KEY"]
-else:
-    # An OAuth profile token authenticates on Authorization: Bearer and needs the
-    # oauth beta header; /v1/messages* rejects it without one.
-    headers["authorization"] = "Bearer " + os.environ["ANTHROPIC_OAUTH_TOKEN"]
-    headers["anthropic-beta"] = "oauth-2025-04-20"
-
-req = urllib.request.Request(
-    "https://api.anthropic.com/v1/messages/count_tokens",
-    data=body,
-    headers=headers,
-)
-try:
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        print(json.load(resp)["input_tokens"])
-except urllib.error.HTTPError as exc:
-    # The response body carries the actionable reason (bad model id, expired
-    # key, exhausted credit); the status line alone does not.
-    detail = exc.read().decode("utf-8", "replace")[:300].replace("\n", " ")
-    print(f"HTTP {exc.code}: {detail}", file=sys.stderr)
-    sys.exit(1)
-except (urllib.error.URLError, KeyError, ValueError, OSError) as exc:
-    print(f"count_tokens failed: {exc}", file=sys.stderr)
-    sys.exit(1)
-PY
+  ctx_write_count_py "$TMP/count.py"
 fi
 
 # Offline token estimate, used unless --exact supplies a real count. The ratio

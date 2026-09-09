@@ -219,8 +219,10 @@ REGISTRY: dict[tuple[str, str], dict] = {
         "pins": (
             "One command, before anything else",
             "Exit 0 means `--exact` will work",
-            "exit 3 means resolve a credential **now**",
+            "it asks the endpoint, not the environment",
+            "resolve a credential **now**",
             "autonomously, **abort the run**",
+            "an unreachable endpoint, not a bad key",
             "eight phases of work toward a ledger row that `record-telemetry.sh` refuses",
         ),
     },
