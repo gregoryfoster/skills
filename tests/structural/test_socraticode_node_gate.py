@@ -44,6 +44,13 @@ def _stub_toolchain(tmp_path: Path, node_version: str, npm_reply: str | None) ->
 
     `npm_reply=None` stands for a registry that did not answer — the case the
     gate must warn about rather than refuse.
+
+    `docker` is stubbed too, and that is not incidental. The exit-code
+    assertions below are the point of several of these tests — the warn branch
+    must NOT set `FAIL` — and the exit code is the whole script's, so an
+    unstubbed Gate 1 would make them assert "this host runs Docker" instead.
+    They would pass on a developer laptop and fail in CI and pre-commit, which
+    is where this suite actually runs.
     """
     binv = tmp_path / "bin"
     binv.mkdir(exist_ok=True)
@@ -56,7 +63,9 @@ def _stub_toolchain(tmp_path: Path, node_version: str, npm_reply: str | None) ->
         (binv / "npm").write_text(f'#!/bin/sh\necho "{npm_reply}"\n')
     # npx only has to exist; its own gate is not under test here.
     (binv / "npx").write_text("#!/bin/sh\nexit 0\n")
-    for name in ("node", "npm", "npx"):
+    # `docker info` succeeding is all Gate 1 asks for.
+    (binv / "docker").write_text("#!/bin/sh\nexit 0\n")
+    for name in ("node", "npm", "npx", "docker"):
         (binv / name).chmod(0o755)
     return binv
 
@@ -127,6 +136,37 @@ class TestNode26KeysOnTheServerBuild:
         assert "✗" not in line, line
         assert "•" in line, f"expected the advisory marker, got: {line}"
         assert result.returncode == 0, result.stdout
+
+
+class TestTheExitCodeAssertionsAreHermetic:
+    """Why `docker` is stubbed: Gate 1 really is in the exit code.
+
+    Without this, the `returncode == 0` assertions above would be reading the
+    developer's Docker daemon rather than the Node gate, and would fail wherever
+    this suite is actually enforced.
+    """
+
+    @requires_bash
+    def test_a_broken_docker_would_have_failed_the_run(self, tmp_path: Path) -> None:
+        binv = _stub_toolchain(tmp_path, "v26.0.0", "1.13.1")
+        (binv / "docker").write_text("#!/bin/sh\nexit 1\n")
+        (binv / "docker").chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+        result = subprocess.run(
+            ["bash", str(PREFLIGHT)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        assert result.returncode == 1, (
+            "Gate 1 is not reaching the exit code, so stubbing docker in "
+            "_stub_toolchain is load-bearing for the assertions above"
+        )
+        assert "✓" in _node_line(result.stdout), (
+            "…while the Node gate itself still passes — the two are independent"
+        )
 
 
 class TestTheDocsAgreeWithTheGate:
