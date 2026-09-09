@@ -364,6 +364,14 @@ eq('a stale builder keeps the version that cut the graph',
   parseGraphBuilder(GRAPH_STALE_VERSION), { state: 'stale', builtBy: '1.12.0' });
 eq('a pre-1.13.0 server prints no line at all', parseGraphBuilder(GRAPH_OK),
   { state: 'absent', builtBy: null });
+// CR 2: the `v` must not be load-bearing. Dropping it is a cosmetic reformat;
+// reading it as `unknown` would nag a current graph to rebuild every day.
+eq('a version with no `v` prefix is still a version',
+  parseGraphBuilder('Built by: 1.13.1'), { state: 'current', builtBy: '1.13.1' });
+eq('…and a prerelease keeps its identifier',
+  parseGraphBuilder('Built by: v1.14.0-rc.2').builtBy, '1.14.0-rc.2');
+eq('…while genuinely unreadable text is still unknown',
+  parseGraphBuilder('Built by: some future wording').state, 'unknown');
 
 // The gate. Each branch is one of the three ways the advisory can be silent,
 // plus the case where it speaks.

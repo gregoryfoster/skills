@@ -661,8 +661,15 @@ function parseGraphBuilder(text) {
   if (!m) return { state: 'absent', builtBy: null };
   const rest = m[1].trim();
   if (/^unknown\b/i.test(rest)) return { state: 'unknown', builtBy: null };
-  const ver = rest.match(/^v(\S+?)[\s,]*(?:$|—|--)/) || rest.match(/^v(\S+)/);
-  const builtBy = ver ? ver[1] : null;
+  // The first delimited token, with an OPTIONAL `v`. Optional because a hard
+  // `^v` turns a cosmetic reformat into a false daily "run codebase_graph_build"
+  // against a current graph — the accusation-on-a-healthy-repo failure #216 and
+  // #220 removed from `unresolvedPct`, re-entering through a different door.
+  // Token-then-validate rather than one clever regex: the STALE line continues
+  // `— STALE, this server is v…`, and a pattern that has to stop before that
+  // prose is where the `v` got load-bearing in the first place.
+  const token = rest.split(/[\s,]/)[0];
+  const builtBy = /^v?\d+\.\d+/.test(token) ? token.replace(/^v/, '') : null;
   if (!builtBy) return { state: 'unknown', builtBy: null };
   return { state: /\bSTALE\b/.test(rest) ? 'stale' : 'current', builtBy };
 }
