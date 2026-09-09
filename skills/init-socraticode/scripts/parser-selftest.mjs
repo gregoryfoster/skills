@@ -392,6 +392,23 @@ eq('…but the disagreement is recorded rather than discarded',
   graphVerdict(ORPHAN_HEAVY).disagreement != null, true);
 eq('…and a repo with nothing to disagree about records nothing',
   graphVerdict(GRAPH_REBUILT).disagreement, null);
+// CR 1: the tripwire must survive the composed gate. Every assertion above about
+// an unreadable status tests `graphYield`, which is exactly why the regression
+// this pins was invisible — the composed verdict is what health-check reports.
+const GRAPH_RELABELLED = `Status: READY
+Files (nodes): 374
+Call edges: 23237
+Built by: v1.13.1`;
+eq('a status whose counts did not parse is UNKNOWN, never a server `ok`',
+  graphVerdict(GRAPH_RELABELLED).verdict, 'unknown');
+eq('…and it is not attributed to the server, which certified nothing',
+  graphVerdict(GRAPH_RELABELLED).source, 'local');
+// The small-repo `unknown` is a DIFFERENT case and does defer to the server: the
+// counts parsed, there are simply too few files for our ratio to mean anything,
+// and a current builder that saw no resolution problem is the better authority.
+eq('a repo too small to judge still defers to a current builder',
+  graphVerdict(`${GRAPH_TINY}\nBuilt by: v1.13.1`).verdict, 'ok');
+
 // A pre-1.13.0 server: no advisory, no stamp, so the local gate is all there is
 // and must behave exactly as it did before #207.
 eq('an old server still gets the #107 verdict unchanged',

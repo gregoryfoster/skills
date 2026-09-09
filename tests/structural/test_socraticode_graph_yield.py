@@ -410,6 +410,36 @@ class TestTheServerStatementRules:
         )
 
     @requires_node
+    def test_an_unreadable_status_is_never_a_server_ok(self) -> None:
+        """CR 1: the server certifies resolution, not our ability to read it.
+
+        Every other assertion about an unparseable status exercises
+        `graphYield`. That is precisely why this regression hid: health-check
+        reports the COMPOSED verdict, and a relabelled `Dependencies (edges):`
+        line plus a current builder arrived here as a confident `ok` — silently
+        disarming the parser-drift tripwire (gotcha H, #85) that this file and
+        `parser-selftest.mjs` exist to keep loud.
+        """
+        relabelled = (
+            "Status: READY\nFiles (nodes): 374\nCall edges: 23237\nBuilt by: v1.13.1"
+        )
+        v = self._verdict(relabelled)
+        assert v["verdict"] == "unknown", v
+        assert v["source"] == "local", (
+            "an unreadable status must not be attributed to the server, which "
+            "certified nothing about it"
+        )
+
+    @requires_node
+    def test_a_repo_too_small_to_judge_still_defers_to_the_server(self) -> None:
+        """The other `unknown`, which is not a parse failure and does defer."""
+        tiny = (
+            "Status: READY\nFiles (nodes): 6\nDependencies (edges): 0\n"
+            "Built by: v1.13.1"
+        )
+        assert self._verdict(tiny)["verdict"] == "ok"
+
+    @requires_node
     def test_a_pre_advisory_server_behaves_exactly_as_before(self) -> None:
         """#107's gate must survive untouched where there is no server signal."""
         old_low = "Status: READY\nFiles (nodes): 374\nDependencies (edges): 3"

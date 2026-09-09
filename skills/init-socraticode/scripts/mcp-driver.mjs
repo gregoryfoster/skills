@@ -718,6 +718,22 @@ function graphVerdict(text) {
   }
 
   if (builder.state === 'current') {
+    // The server certifies RESOLUTION; it does not certify that we could read
+    // the status it printed. When the counts did not parse, that IS the
+    // parser-drift tripwire firing (gotcha H, #85) — the one `parseGraphCounts`
+    // anchors its patterns for and `parser-selftest.mjs` exists to pull. A
+    // relabelled `Dependencies (edges):` line would otherwise arrive here as a
+    // confident `ok`, silently disarming the alarm, which is the same
+    // assert-from-a-string-we-could-not-read error `graphYield` refuses to make.
+    if (local.nodes == null || local.edges == null) {
+      return {
+        ...out,
+        verdict: 'unknown',
+        source: 'local',
+        reason: `${local.reason} — the v${builder.builtBy} builder reported no advisory, `
+          + 'but an unreadable status is not a certificate of health',
+      };
+    }
     // The server measured this graph and said nothing, so it is the authority.
     if (local.verdict === 'low') {
       out.disagreement = `local edges/file reads LOW (${local.reason}) but the server, `
