@@ -377,6 +377,18 @@ eq('…while genuinely unreadable text is still unknown',
 // plus the case where it speaks.
 eq('the advisory rules when present', graphVerdict(GRAPH_ADVISORY).verdict, 'low');
 eq('…and it is the server that ruled', graphVerdict(GRAPH_ADVISORY).source, 'server');
+// CR 3: an advisory on a STALE graph judges the resolver that cut it, not the
+// running one. Still `low` — the measurement is real — but a rebuild may clear
+// it, so the reason must say so before the caller rewrites AGENTS.md.
+const ADVISORY_STALE = GRAPH_ADVISORY.replace(
+  'Built by: v1.13.1',
+  'Built by: v1.13.1 — STALE, this server is v1.14.0',
+);
+eq('a stale graph’s advisory is still low', graphVerdict(ADVISORY_STALE).verdict, 'low');
+eq('…but names the rebuild before variant B',
+  /codebase_graph_build/.test(graphVerdict(ADVISORY_STALE).reason), true);
+eq('…and a current graph’s advisory says no such thing',
+  /codebase_graph_build/.test(graphVerdict(GRAPH_ADVISORY).reason), false);
 // The live regression this issue exists for: 37 edges across 621 files reads
 // LOW to our arithmetic, and the graph was merely STALE. Rebuilt: 2156 edges.
 eq('an unstamped graph falls back to local arithmetic',

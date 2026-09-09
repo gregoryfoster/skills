@@ -715,12 +715,23 @@ function graphVerdict(text) {
   const out = { local, advisory, builder, disagreement: null };
 
   if (advisory) {
+    // An advisory measures what the builder that CUT this graph managed to
+    // resolve. On a stale graph that is a verdict on an older resolver, and a
+    // rebuild may clear it — so the finding must not send the caller straight
+    // to variant B, which rewrites AGENTS.md to route every dependency question
+    // to grep. That is the same mistake as trusting our floor over the server,
+    // arriving from the advisory side instead (CR 3).
+    const predatesServer = builder.state === 'stale' || builder.state === 'unknown';
     return {
       ...out,
       verdict: 'low',
       source: 'server',
       reason: `server states import resolution collapsed — ${advisory.resolved} of `
-        + `${advisory.captured} captured imports resolved (${advisory.pct}%)`,
+        + `${advisory.captured} captured imports resolved (${advisory.pct}%)`
+        + (predatesServer
+          ? ', but this graph predates the running resolvers — run codebase_graph_build '
+            + 'and re-measure before installing variant B'
+          : ''),
     };
   }
 
