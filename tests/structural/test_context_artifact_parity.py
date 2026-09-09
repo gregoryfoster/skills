@@ -31,11 +31,17 @@ server's own count cannot tell "nothing declared" from "nothing indexed yet".
 The driver is exercised end to end against a stub MCP server — plain
 newline-delimited JSON-RPC on stdio, scripted per tool — because the property
 under test is a *finding and an exit code*, not a parse. No Docker, no network,
-no real server.
+no real server, with one deliberate exception:
+`TestTheTranscriptionAgainstARunningServer` imports the artifact walk out of
+whatever socraticode is already in the npx cache and runs it against the
+driver's. That is a module read off local disk, not a server launch — still no
+Docker and no network — and it is there because #270 was a claim about the
+server's internals that nothing in this file could check.
 """
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -1087,15 +1093,16 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
             )
 
     @requires_node
-    def test_the_transcribed_defaults_match_the_servers_list(self) -> None:
-        """The transcription is the whole fix, so pin its shape.
+    def test_the_transcribed_defaults_keep_their_shape(self) -> None:
+        """A count and one of each form — NOT a comparison with the server.
 
-        Not a copy of the server's array — that would only restate this file's
-        own guess. What is pinned is that the list is present, complete enough
-        to cover every form the server uses, and parsed into the three buckets
-        the walk consults. The list's agreement with a running 1.13.2 server
-        was established by differential test (see the class docstring); this
-        keeps an editor from quietly dropping entries from it afterwards.
+        Named for what it asserts. A second copy of the server's 48 strings
+        here would only restate this file's own guess and would go stale in
+        lockstep with the driver's copy, so the agreement with a running server
+        is established by `TestTheTranscriptionAgainstARunningServer` below,
+        which reads the real list. What this one buys is always-on: it fails
+        offline, in CI, on any machine, the moment an entry is dropped by hand
+        from a list whose three derived buckets are the whole prune.
         """
         script = (
             f"import {{ SERVER_DEFAULT_IGNORE_PATTERNS as p }} from "
@@ -1434,3 +1441,280 @@ class TestGeneratedDocExplainsTheSymptom:
             "of date. Three of observo's fourteen artifacts were in that state "
             "while the check reported 14/14 (#225)."
         )
+
+
+# The one test in this file that reads a real socraticode build. It needs no
+# network and no Docker — the package is already on disk in the npx cache the
+# plugin itself launches from — but it is the exception to the module
+# docstring's "no real server", and it is why that paragraph names it.
+def _installed_server_dist() -> tuple[Path, str] | None:
+    """The newest socraticode `dist/` in the npx cache, with its version.
+
+    `SOCRATICODE_DIST` overrides, for a checkout or a global install. Returns
+    None when nothing is found — the caller decides skip vs. fail, because
+    "absent" and "unusable" are different answers (#140's shape).
+    """
+    override = os.environ.get("SOCRATICODE_DIST")
+    if override:
+        dist = Path(override)
+        pkg = dist.parent / "package.json"
+        if not pkg.is_file():
+            return None
+        return dist, json.loads(pkg.read_text()).get("version", "0.0.0")
+
+    candidates: list[tuple[tuple[int, ...], Path, str]] = []
+    for pkg in Path.home().glob(".npm/_npx/*/node_modules/socraticode/package.json"):
+        try:
+            version = json.loads(pkg.read_text()).get("version", "0.0.0")
+        except (OSError, ValueError):
+            continue
+        dist = pkg.parent / "dist"
+        if not (dist / "services" / "context-artifacts.js").is_file():
+            continue
+        parts = tuple(int(n) for n in re.findall(r"\d+", version)[:3])
+        candidates.append((parts, dist, version))
+    if not candidates:
+        return None
+    _, dist, version = max(candidates)
+    return dist, version
+
+
+# Every pattern form in DEFAULT_IGNORE_PATTERNS, each at the artifact root and
+# nested, plus the decoys a substring-matching prune would swallow. The tree is
+# built identically on both sides; what is compared is which files each side
+# says belong to the artifact.
+PARITY_TREE = [
+    "keep.md",
+    "sub/keep.py",
+    "sub/deep/keep.txt",
+    "dist/a.js",
+    "sub/dist/a.js",
+    "build/a.txt",
+    "sub/build/a.txt",
+    "out/a.txt",
+    "target/a.txt",
+    "_build/a.txt",
+    "deps/a.txt",
+    "obj/a.txt",
+    "coverage/a.txt",
+    "sub/coverage/a.txt",
+    "vendor/a.txt",
+    "node_modules/p/i.js",
+    "__pycache__/a.pyc",
+    "sub/__pycache__/a.pyc",
+    "sub/a.pyc",
+    "venv/lib/a.py",
+    "sub/venv/lib/a.py",
+    "env/lib/a.py",
+    "sub/env/lib/a.py",
+    "bin/Debug/a.dll",
+    "bin/Release/a.dll",
+    "sub/bin/Debug/a.dll",
+    "a.min.js",
+    "sub/a.min.css",
+    "sub/a.map",
+    "a.lock",
+    "poetry.lock",
+    "package-lock.json",
+    "sub/yarn.lock",
+    "a.log",
+    "sub/b.tmp",
+    "c.swp",
+    "d.swo",
+    "Thumbs.db",
+    "sub/.DS_Store",
+    "sub/Thumbs.db",
+    ".hidden/a.txt",
+    ".dotfile.md",
+    # Decoys: whole-segment and whole-suffix matching keeps every one of these.
+    "outside.md",
+    "buildish/a.txt",
+    "distant.md",
+    "sitemap.xml",
+]
+
+# Runs both sides in one process: the server's own `readArtifactContent` for
+# what is embedded, and the driver's `newestMtimeMs` probed once per file for
+# what moves the clock. Probing is the only way to ask the walk "did you count
+# THIS file" — it answers with a single number, so each file is made the newest
+# in turn against an otherwise uniformly-old tree.
+PARITY_HARNESS = """
+import { readdirSync, utimesSync } from 'node:fs';
+const [serverDist, driver, root] = process.argv.slice(2);
+const { readArtifactContent } = await import(`${serverDist}/services/context-artifacts.js`);
+const { newestMtimeMs } = await import(driver);
+
+const embedded = [...(await readArtifactContent(root, root)).content.matchAll(
+  /^# \\u2500\\u2500 (.*) \\u2500\\u2500$/gm)].map((m) => m[1]);
+
+const all = [];
+(function walk(dir, rel) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const next = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) walk(`${dir}/${e.name}`, next);
+    else if (e.isFile()) all.push(next);
+  }
+})(root, '');
+
+const OLD = new Date('2020-01-01T00:00:00Z');
+const NEW = new Date('2030-01-01T00:00:00Z');
+const resetOld = () => {
+  for (const f of all) utimesSync(`${root}/${f}`, OLD, OLD);
+  (function stamp(dir) {
+    for (const e of readdirSync(dir, { withFileTypes: true }))
+      if (e.isDirectory()) stamp(`${dir}/${e.name}`);
+    utimesSync(dir, OLD, OLD);
+  })(root);
+};
+
+const counted = [];
+for (const f of all) {
+  resetOld();
+  utimesSync(`${root}/${f}`, NEW, NEW);
+  if (newestMtimeMs(root) === NEW.getTime()) counted.push(f);
+}
+process.stdout.write(JSON.stringify({ embedded, counted, all }));
+"""
+
+
+class TestTheTranscriptionAgainstARunningServer:
+    """#270's own verification, made repeatable instead of remembered.
+
+    The transcribed `DEFAULT_IGNORE_PATTERNS` is a claim about another
+    project's internals, and #270 is what happens when such a claim is checked
+    once and then trusted: the driver's comment pinned `socraticode 1.12.0`
+    exactly, stayed accurate about the file it named, and went stale anyway
+    when the filter moved into a file it did not. The fix for that is not a
+    better comment. It is a test that reads the server actually installed and
+    fails when the two sides disagree.
+
+    So this runs BOTH walks over one tree covering every pattern form and its
+    decoys, and asserts set equality in both directions:
+
+    - **counted but not embedded** is #235 — the freshness clock moved by
+      content the artifact cannot contain, producing a `stale` finding that no
+      re-index can clear. This is the direction that invents work.
+    - **embedded but not counted** is the opposite failure and the reason the
+      prune cannot simply be made greedy: a real edit to a real artifact file
+      that never reports stale, silently serving superseded chunks.
+
+    Skips loudly when no socraticode is installed, and again when the one
+    installed predates 1.13 — where the driver deliberately does NOT match,
+    because the ignore chain was not behind the walk yet. `SOCRATICODE_PARITY_REQUIRED=1`
+    turns either skip into a failure, which is the `SHELLCHECK_REQUIRED` /
+    `RUFF_REQUIRED` idiom this repo already uses for a gate whose tool may be
+    absent (#140, #246).
+    """
+
+    @staticmethod
+    def _require_or_skip(reason: str):
+        if os.environ.get("SOCRATICODE_PARITY_REQUIRED") == "1":
+            pytest.fail(f"{reason} (SOCRATICODE_PARITY_REQUIRED=1)")
+        pytest.skip(reason)
+
+    @pytest.fixture(scope="class")
+    def server(self) -> tuple[Path, str]:
+        found = _installed_server_dist()
+        if found is None:
+            self._require_or_skip(
+                "no socraticode build found in the npx cache "
+                "(~/.npm/_npx/*/node_modules/socraticode); set SOCRATICODE_DIST "
+                "to a checkout's dist/ to run the artifact-walk parity check"
+            )
+        dist, version = found
+        parts = tuple(int(n) for n in re.findall(r"\d+", version)[:2])
+        if parts < (1, 13):
+            self._require_or_skip(
+                f"socraticode {version} predates 1.13, where the artifact walk "
+                "gained the ignore chain (SocratiCode#117). The driver mirrors "
+                "the 1.13+ behaviour on purpose, so disagreement here would be "
+                "correct, not a defect (#270)"
+            )
+        return dist, version
+
+    @requires_node
+    def test_the_two_walks_agree_in_both_directions(
+        self, tmp_path: Path, server: tuple[Path, str]
+    ) -> None:
+        dist, version = server
+        root = tmp_path / "artifact"
+        for relative in PARITY_TREE:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x\n")
+
+        harness = tmp_path / "parity.mjs"
+        harness.write_text(PARITY_HARNESS)
+        result = subprocess.run(
+            ["node", str(harness), str(dist), str(DRIVER), str(root)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        embedded, counted = set(report["embedded"]), set(report["counted"])
+
+        assert embedded, (
+            "the server embedded nothing from a tree with plain .md files in "
+            f"it — the harness is measuring the wrong thing (socraticode {version})"
+        )
+        false_stale = sorted(counted - embedded)
+        assert not false_stale, (
+            f"socraticode {version}: newestMtimeMs counts files the artifact "
+            f"never embeds: {false_stale}. Each one moves the freshness clock "
+            "for content the artifact cannot contain, so health-check reports "
+            "a byte-identical artifact `stale` and re-indexing cannot clear it "
+            "(#235, #270). Re-transcribe DEFAULT_IGNORE_PATTERNS from "
+            f"{dist}/services/ignore.js into mcp-driver.mjs"
+        )
+        missed = sorted(embedded - counted)
+        assert not missed, (
+            f"socraticode {version}: newestMtimeMs prunes files the artifact "
+            f"DOES embed: {missed}. This is the opposite failure and the "
+            "quieter one — a real edit to real artifact content never reports "
+            "stale, and codebase_context_search keeps answering from "
+            "superseded chunks with no signal at all (#270)"
+        )
+
+    @requires_node
+    def test_the_decoys_survive_both_walks(
+        self, tmp_path: Path, server: tuple[Path, str]
+    ) -> None:
+        """Equality is satisfiable by pruning everything; this is the floor.
+
+        A driver that pruned every entry and a server that embedded nothing
+        would agree perfectly. These four are ordinary files whose names merely
+        start with, or contain, a default pattern — they must reach the
+        artifact on both sides for the test above to mean anything.
+        """
+        dist, version = server
+        root = tmp_path / "artifact"
+        for relative in PARITY_TREE:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x\n")
+
+        harness = tmp_path / "parity.mjs"
+        harness.write_text(PARITY_HARNESS)
+        result = subprocess.run(
+            ["node", str(harness), str(dist), str(DRIVER), str(root)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        for decoy in ("keep.md", "buildish/a.txt", "distant.md", "sitemap.xml"):
+            assert decoy in report["embedded"], (
+                f"socraticode {version} did not embed {decoy!r}; the ignore "
+                "defaults match whole path segments and whole suffixes, so a "
+                "decoy that vanishes means the harness or the server changed "
+                "shape and the equality assertions above are vacuous (#270)"
+            )
+            assert decoy in report["counted"], (
+                f"newestMtimeMs did not count {decoy!r} — a substring prune "
+                "would pass the equality test by hiding real staleness (#270)"
+            )
