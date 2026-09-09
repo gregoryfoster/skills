@@ -1,7 +1,7 @@
 ---
 name: init-socraticode
 description: Installs, configures, and indexes SocratiCode semantic code search on a project — Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + docs/SOCRATICODE.md, SessionStart prefetch and once-per-day health hooks, a context-artifacts manifest, and a full blocking index verified by edge yield rather than graph status. Use when adding semantic code search to a repo.
-compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18 <26, and npx. Run from the target repo's root.
+compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18.17, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
   version: "1.5"
@@ -73,10 +73,11 @@ each Bash call runs in a fresh shell, so they are not inherited. Clean up
 bash "<SKILL_DIR>/scripts/preflight.sh"
 ```
 
-Gates: Docker installed + daemon running; Node `>=18 <26` (**26+ hard-refused** —
-undici v6 vs Node 26 bundled undici makes the server exit on start); `npx`
-reachable; and advisory checks that Docker starts at boot, the `socraticode`
-marketplace is registered, and the plugin MCP server is Connected.
+Gates: Docker installed + daemon running; Node `>=18.17` (26+ is checked against
+the resolved `socraticode@latest`, not refused, and warns if the registry is
+unreachable — [#269](https://github.com/gregoryfoster/skills/issues/269));
+`npx` reachable; and advisory checks that Docker starts at boot, the
+`socraticode` marketplace is registered, and the plugin MCP server is Connected.
 
 The boot-persistence advisory is the one whose absence bites later rather than
 now: on a systemd host where `systemctl is-enabled docker` is `disabled`, the
@@ -84,10 +85,9 @@ index works today and vanishes after the next reboot — the daemon never comes
 back, so Qdrant never starts and `codebase_search` quietly returns nothing
 (gotcha L).
 
-**Detect-and-instruct only.** On any ✗ the script prints the exact fix command
-(`nvm install 22`, start Docker, …) and exits non-zero. Do **not** auto-install
-Node/npm or auto-start Docker — relay the fix to the user and wait. Re-run
-preflight until it exits 0.
+**Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
+non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix
+and wait. Re-run preflight until it exits 0.
 
 > `bash "<SKILL_DIR>/scripts/preflight.sh" --check` is the same gates with no
 > mutation — the fast smoke test (use it as the skill's dry-run).
@@ -331,7 +331,7 @@ Present a completion table:
 
 | Component | Status |
 |---|---|
-| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) · Node `<version>` (>=18 <26) ✓ · npx ✓ |
+| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) · Node `<version>` (>=18.17) ✓ · npx ✓ |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |
@@ -368,8 +368,8 @@ by Phases 5–6 and recorded under *Invariants a phase already enforces* in
 - **The health hook reports; it never repairs.** No re-index, no Docker start,
   no file edit from a SessionStart hook — it runs before an agent has context
   and must cost a bounded, silent-when-clean moment.
-- **Never mutate the host toolchain.** Preflight detects and instructs; it does
-  not install Node/Docker. Node 26+ is a hard refusal, not a "try anyway."
+- **Never mutate the host toolchain.** Preflight detects and instructs; its one
+  network read resolves the published server version, and warns when it fails.
 - **The policy block pays rent on every invocation.** It is the one section
   `curating-context` will not edit, so whatever lands in `AGENTS.md` is a fixed
   cost the repo cannot curate away — 1,247 tokens and 15% of watcher's whole

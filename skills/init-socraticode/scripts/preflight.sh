@@ -38,7 +38,32 @@ esac
 FAIL=0
 pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31m✗\033[0m %s\n' "$1"; FAIL=1; }
+warn() { printf '  \033[33m•\033[0m %s\n' "$1"; }
 hint() { printf '      → %s\n' "$1"; }
+
+# True when $1 >= $2, comparing dotted numeric versions field by field.
+#
+# Field-by-field rather than a string compare, which puts 1.9.0 above 1.13.0 —
+# the exact pair this script has to get right. `sort -V` would do it on GNU
+# coreutils but is not dependable on a stock macOS host, which is half the
+# target platform.
+#
+# A prerelease tag is truncated, so 1.13.0-rc.1 counts as 1.13.0. Deliberate and
+# stated: the only comparison here asks whether a build carries a fix, and an rc
+# of the release that carries it does.
+version_ge() {
+  local a="${1%%-*}" b="${2%%-*}" ai bi i
+  local -a A B
+  IFS=. read -r -a A <<<"$a"
+  IFS=. read -r -a B <<<"$b"
+  for i in 0 1 2; do
+    ai="${A[i]:-0}"; ai="${ai//[!0-9]/}"; ai="${ai:-0}"
+    bi="${B[i]:-0}"; bi="${bi//[!0-9]/}"; bi="${bi:-0}"
+    [ "$((10#$ai))" -gt "$((10#$bi))" ] && return 0
+    [ "$((10#$ai))" -lt "$((10#$bi))" ] && return 1
+  done
+  return 0
+}
 
 echo "SocratiCode preflight — host readiness"
 echo
@@ -79,24 +104,58 @@ else
   fi
 fi
 
-# ── Gate 2: Node present and in the supported range >=18 <26 ─────────────────
-# Node 26+ is a HARD REFUSAL: qdrant-js pins undici v6, which is incompatible
-# with Node 26's bundled undici — the SocratiCode server process.exit(1)s on
-# start. 18 / 20 / 22 / 24 are fine.
+# ── Gate 2: Node present and supported by the server that will run ──────────
+# The floor is upstream's own `engines` (>=18.17.0), not a bare major: 18.0–18.16
+# satisfy ">=18" and fail the package's constraint.
+#
+# The ceiling is NOT a Node version. Node 26 shipped undici 8 as its built-in
+# fetch, and @qdrant/js-client-rest < 1.19 hands its undici-6 Agent to that
+# fetch, which used to kill the server on start. SocratiCode 1.13.0 fixed it on
+# purpose — `src/services/qdrant-client-compat.ts` pairs the client's Agent with
+# a matching undici — so the question is which BUILD will launch, not which Node
+# is installed (#269). The plugin's mcp.json runs `npx -y --prefer-online
+# socraticode@latest`, so that is what gets resolved here.
+NODE_MIN=18.17.0          # upstream package.json `engines.node`
+NODE26_SERVER_MIN=1.13.0  # release carrying the Node 26 transport bridge
 if ! command -v node >/dev/null 2>&1; then
   fail "Node not installed"
-  hint "Install Node 18–24 (nvm: 'nvm install 22', or https://nodejs.org). Do NOT install Node 26+."
+  hint "Install Node >=$NODE_MIN (nvm: 'nvm install 22', or https://nodejs.org)"
 else
   NODE_RAW="$(node --version)"            # e.g. v22.11.0
-  NODE_MAJOR="${NODE_RAW#v}"; NODE_MAJOR="${NODE_MAJOR%%.*}"
-  if [ "$NODE_MAJOR" -ge 26 ]; then
-    fail "Node $NODE_RAW is too new — 26+ is hard-refused (undici v6 incompatibility, server exits on start)"
-    hint "Install and select Node 18–24: 'nvm install 22 && nvm use 22'"
-  elif [ "$NODE_MAJOR" -lt 18 ]; then
-    fail "Node $NODE_RAW is too old — need >=18"
+  NODE_VER="${NODE_RAW#v}"
+  NODE_MAJOR="${NODE_VER%%.*}"
+  if ! version_ge "$NODE_VER" "$NODE_MIN"; then
+    fail "Node $NODE_RAW is too old — SocratiCode's engines require >=$NODE_MIN"
     hint "Upgrade: 'nvm install 22 && nvm use 22'"
+  elif [ "$NODE_MAJOR" -lt 26 ]; then
+    pass "Node $NODE_RAW (>=$NODE_MIN)"
   else
-    pass "Node $NODE_RAW in range (>=18 <26)"
+    # Node 26+: resolve the build that will actually launch. Network read, never
+    # a mutation, and its failure is not this gate's business to escalate.
+    # Bounded: an offline host must reach the warn branch in seconds, not sit on
+    # npm's default retry ladder. `timeout(1)` is not on a stock macOS, so the
+    # budget is handed to npm itself.
+    SC_LATEST="$(npm view socraticode version --silent \
+      --fetch-timeout=5000 --fetch-retries=1 2>/dev/null || true)"
+    SC_LATEST="$(printf '%s' "$SC_LATEST" | tr -d '[:space:]')"
+    case "$SC_LATEST" in
+      [0-9]*.[0-9]*.[0-9]*)
+        if version_ge "$SC_LATEST" "$NODE26_SERVER_MIN"; then
+          pass "Node $NODE_RAW with socraticode $SC_LATEST (>=$NODE26_SERVER_MIN carries the Node 26 Qdrant transport bridge)"
+        else
+          fail "Node $NODE_RAW needs socraticode >=$NODE26_SERVER_MIN, but $SC_LATEST is what resolves — the server exits on start (undici 6 vs Node 26's undici 8)"
+          hint "Use Node 22 instead: 'nvm install 22 && nvm use 22'"
+        fi
+        ;;
+      *)
+        # Undeterminable, so unprovable either way. A warning, not a refusal:
+        # every published build since 1.13.0 supports Node 26, and the residual
+        # failure is loud at startup rather than silent — refusing here would
+        # block a working host because a registry lookup did not answer.
+        warn "Node $NODE_RAW: could not resolve the socraticode version from npm, so Node 26 support is unconfirmed"
+        hint "Needs socraticode >=$NODE26_SERVER_MIN; if the server exits on start, use Node 22: 'nvm install 22 && nvm use 22'"
+        ;;
+    esac
   fi
 fi
 
