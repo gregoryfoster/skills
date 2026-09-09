@@ -1026,6 +1026,62 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
             "the server ignores both (#235)"
         )
 
+    @requires_node
+    def test_each_pattern_form_matches_only_its_own_shape(self) -> None:
+        """The four gitignore forms, asserted directly on the matcher.
+
+        Every other test here goes through a tmp_path tree, which is the right
+        shape for "does the walk behave" but a costly and indirect way to ask
+        "does `/venv` anchor". The matcher is exported so the forms can be
+        stated as a table — and the table is where a substring-matching
+        regression shows up as five failures instead of one.
+        """
+        cases = [
+            # (basename, path relative to the artifact root, ignored?)
+            ("build", "build", True),  # bare name, at the root
+            ("build", "sub/build", True),  # bare name, at depth
+            ("buildish", "buildish", False),  # not a whole segment
+            ("a.log", "a.log", True),  # suffix form
+            # A suffix must be a real SUFFIX. These three carry a default
+            # pattern as an interior substring and are embedded by the server
+            # (verified on 1.13.2) — `sitemap.xml` used to stand here and
+            # discriminated nothing, because it contains "map." and not ".map".
+            ("run.log.1", "run.log.1", False),  # rotated log
+            ("data.mapping.json", "data.mapping.json", False),
+            ("archive.lock.json", "archive.lock.json", False),
+            ("venv", "venv", True),  # `/venv` anchored at the root
+            ("venv", "sub/venv", False),  # ...and NOT at depth
+            ("Debug", "bin/Debug", True),  # embedded slash, anchored
+            ("Debug", "sub/bin/Debug", False),  # ...and NOT at depth
+        ]
+        script = (
+            f"import {{ serverIgnoresEntry }} from {json.dumps(str(DRIVER))};"
+            f"const cases = {json.dumps([[c[0], c[1]] for c in cases])};"
+            f"process.stdout.write(JSON.stringify("
+            f"cases.map(([n, r]) => serverIgnoresEntry(n, r))));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        got = json.loads(result.stdout)
+        wrong = [
+            f"{relative!r} expected {want}, got {actual}"
+            for (_, relative, want), actual in zip(cases, got)
+            if want != actual
+        ]
+        assert not wrong, (
+            "the transcribed ignore defaults are not matching by whole segment "
+            "and whole suffix: " + "; ".join(wrong) + ". Anchoring is "
+            "load-bearing in both directions — `/venv` must not match a nested "
+            "`sub/venv/` the server still embeds, and `build` must match at "
+            "every depth (#270)"
+        )
+
     def test_the_prune_site_names_the_server_walker(self) -> None:
         """The list is a claim about two server files, and must say so.
 
@@ -1531,6 +1587,12 @@ PARITY_TREE = [
     "buildish/a.txt",
     "distant.md",
     "sitemap.xml",
+    # Interior substrings of `*.log`, `*.map` and `*.lock`. A suffix test
+    # written with `includes` passes every other case in this tree and fails
+    # only these.
+    "run.log.1",
+    "sub/data.mapping.json",
+    "archive.lock.json",
 ]
 
 # Runs both sides in one process: the server's own `readArtifactContent` for
@@ -1707,7 +1769,15 @@ class TestTheTranscriptionAgainstARunningServer:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
-        for decoy in ("keep.md", "buildish/a.txt", "distant.md", "sitemap.xml"):
+        for decoy in (
+            "keep.md",
+            "buildish/a.txt",
+            "distant.md",
+            "sitemap.xml",
+            "run.log.1",
+            "sub/data.mapping.json",
+            "archive.lock.json",
+        ):
             assert decoy in report["embedded"], (
                 f"socraticode {version} did not embed {decoy!r}; the ignore "
                 "defaults match whole path segments and whole suffixes, so a "

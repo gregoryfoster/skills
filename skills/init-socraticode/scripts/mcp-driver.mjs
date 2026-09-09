@@ -495,6 +495,14 @@ const SERVER_DEFAULT_IGNORE_PATTERNS = [
 //   `a/b`       embedded slash: anchored to the artifact root, as gitignore
 // Pruning the directory covers everything beneath it, so an anchored path
 // pattern needs no separate prefix test.
+//
+// Seventeen of the 48 are dot-named (`.git`, `.venv`, `.idea`, `.DS_Store`…)
+// and so are unreachable here: the walk's `dot: false` rule fires first and
+// skips them by name. They stay in the list anyway — it is a transcription,
+// and one that has been edited to remove "redundant" entries can no longer be
+// diffed against the server's array, which is the only thing keeping it
+// honest. The overlap is the server's too: `dot: false` and the chain's
+// defaults both cover them there.
 const IGNORE_BASENAMES = new Set();
 const IGNORE_SUFFIXES = [];
 const IGNORE_ANCHORED = new Set();
@@ -1984,8 +1992,10 @@ export {
   parseEmbedPercent, parseArtifacts, graphReady,
   // declared ≠ indexed (#214), indexed ≠ fresh (#225)
   parseContextArtifacts, artifactIndexed, parseIndexedAt, newestMtimeMs,
-  // the transcribed half of the artifact-walk parity claim (#270)
-  SERVER_DEFAULT_IGNORE_PATTERNS,
+  // the transcribed half of the artifact-walk parity claim, and the matcher
+  // over it — exported so the four pattern forms can be asserted directly
+  // rather than only through a tmp_path tree per case (#270)
+  SERVER_DEFAULT_IGNORE_PATTERNS, serverIgnoresEntry,
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   unresolvedFinding,
