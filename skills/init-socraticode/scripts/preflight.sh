@@ -12,6 +12,12 @@
 #                                # (no mutation happens in either mode)
 #   bash preflight.sh --help     # show usage
 #
+# One network read, and only on Node 26+: `npm view socraticode version`, to
+# learn whether the build that will launch carries the Node 26 Qdrant transport
+# bridge. Bounded to a few seconds and degraded to a warning when it does not
+# answer, so an air-gapped host is slowed rather than blocked. Nothing else here
+# touches the network, and nothing here mutates anything in either mode.
+#
 # Exit codes: 0 = all gates green; 1 = at least one gate failed (see messages).
 # <<< usage
 
@@ -129,6 +135,14 @@ else
     hint "Upgrade: 'nvm install 22 && nvm use 22'"
   elif [ "$NODE_MAJOR" -lt 26 ]; then
     pass "Node $NODE_RAW (>=$NODE_MIN)"
+  elif [ -n "${SOCRATICODE_ENTRY:-}" ]; then
+    # The registry is not the authority here. `resolveServerLaunch` in
+    # mcp-driver.mjs takes SOCRATICODE_ENTRY ahead of the plugin's recorded
+    # command, so on such a host the published version describes a build that
+    # will never launch — and reporting it would be a confident answer about the
+    # wrong artifact, on the one gate whose job is predicting a startup failure.
+    warn "Node $NODE_RAW with SOCRATICODE_ENTRY set — that build is what launches, so the published version says nothing about it"
+    hint "It must be socraticode >=$NODE26_SERVER_MIN to run on Node 26+; otherwise use Node 22"
   else
     # Node 26+: resolve the build that will actually launch. Network read, never
     # a mutation, and its failure is not this gate's business to escalate.
@@ -137,7 +151,11 @@ else
     # budget is handed to npm itself.
     SC_LATEST="$(npm view socraticode version --silent \
       --fetch-timeout=5000 --fetch-retries=1 2>/dev/null || true)"
-    SC_LATEST="$(printf '%s' "$SC_LATEST" | tr -d '[:space:]')"
+    # Last line, not `tr -d` over the whole reply: deleting newlines CONCATENATES
+    # a multi-line answer, so `1.13.1\n1.13.2` would become `1.13.11.13.2` and
+    # parse as a plausible 1.13.11. Every other reader in this skill degrades to
+    # a stated unknown rather than to a wrong number.
+    SC_LATEST="$(printf '%s' "$SC_LATEST" | tail -n 1 | tr -d '[:space:]')"
     case "$SC_LATEST" in
       [0-9]*.[0-9]*.[0-9]*)
         if version_ge "$SC_LATEST" "$NODE26_SERVER_MIN"; then

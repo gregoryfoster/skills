@@ -138,6 +138,39 @@ class TestNode26KeysOnTheServerBuild:
         assert result.returncode == 0, result.stdout
 
 
+class TestTheRegistryIsNotAlwaysTheAuthority:
+    """`socraticode@latest` is only what launches on a stock install (#269).
+
+    `resolveServerLaunch` in mcp-driver.mjs takes `SOCRATICODE_ENTRY` ahead of
+    the plugin's recorded command, so on such a host the published version
+    describes a build that will never run.
+    """
+
+    @requires_bash
+    def test_socraticode_entry_is_not_answered_from_the_registry(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _stub_toolchain(tmp_path, "v26.0.0", "1.13.1")
+        env = dict(os.environ)
+        env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+        env["SOCRATICODE_ENTRY"] = str(tmp_path / "some-local-build" / "index.js")
+        result = subprocess.run(
+            ["bash", str(PREFLIGHT)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        line = _node_line(result.stdout)
+        assert "1.13.1" not in line, (
+            "the registry version must not be reported as though it described "
+            f"the SOCRATICODE_ENTRY build: {line}"
+        )
+        assert "•" in line, f"expected the advisory marker, got: {line}"
+        # Unprovable, not broken — it must not block the host either.
+        assert result.returncode == 0, result.stdout
+
+
 class TestTheExitCodeAssertionsAreHermetic:
     """Why `docker` is stubbed: Gate 1 really is in the exit code.
 
