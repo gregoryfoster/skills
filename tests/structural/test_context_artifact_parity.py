@@ -665,27 +665,45 @@ class TestHealthCheckReportsStaleArtifacts:
 
 
 class TestFreshnessWalkMatchesTheArtifactWalk:
-    """#235: the freshness clock must only be moved by content the artifact can contain.
+    """#235/#270: the freshness clock must only be moved by content the artifact can contain.
 
     `newestMtimeMs` judges a directory artifact by its newest descendant, and
-    until #235 it pruned exactly `node_modules` and `.git`. The server's
-    artifact walk prunes more: `dist/services/context-artifacts.js`
-    (socraticode 1.12.0) globs `**/*` with `dot: false` and
-    `ignore: ["**/node_modules/**", "**/.git/**"]`, so no dot-named file or
-    directory at any depth is ever embedded in a directory artifact. A
-    `.pytest_cache/` rewritten by every test run moved the driver's clock, the
-    artifact's `lastIndexed` did not move, and health-check reported a
-    byte-identical artifact stale — a finding the named remedy cannot clear,
-    which is #220's shape one feature over. Worse than neutral: the remedy,
-    `codebase_context_index`, re-embeds `__pycache__` (#229), so the false
-    finding pushes the operator toward making a real problem worse.
+    until #235 it pruned exactly `node_modules` and `.git`. A `.pytest_cache/`
+    rewritten by every test run moved the driver's clock, the artifact's
+    `lastIndexed` did not, and health-check reported a byte-identical artifact
+    stale — a finding the named remedy cannot clear, which is #220's shape one
+    feature over.
+
+    The server's walk is `dist/services/context-artifacts.js`, and what it
+    excludes moved underneath us. Through **1.12.x** it globbed `**/*` with
+    `dot: false` and `ignore: ["**/node_modules/**", "**/.git/**"]`, and that
+    was the whole filter. Since **1.13.0** (`SocratiCode#117`) every surviving
+    file also goes through `createIgnoreFilter`/`shouldIgnore`, so the walk
+    additionally drops all 48 of `dist/services/ignore.js`'s
+    `DEFAULT_IGNORE_PATTERNS` — `build`, `dist`, `vendor`, `coverage`,
+    `*.lock`, `__pycache__` and the rest. The two surviving glob ignores are
+    now a subtree-pruning optimisation over two of those defaults, which the
+    server's own source says.
+
+    That inverted the one entry #235 deliberately EXEMPTED from the prune list.
+    `__pycache__` was counted on purpose, because on 1.12.x it really was
+    embedded (#229 measured 32 of an artifact's 86 chunks as bytecode). On
+    1.13.x it is not, so the exemption re-opened #235 through the single hole
+    cut for it: a `.pyc` rewrite — a Python version bump, an edited migration —
+    reports `stale`, and re-indexing cannot clear it, because the re-indexed
+    content does not contain the file whose mtime moved (#270).
 
     The prune list is therefore a CLAIM about the server's walker, not a local
     convenience, and this class is where the two sides are pinned together.
-    Every semantic here was verified against the server's own glob (11.1.0):
-    dot exclusion applies to files as well as directories (`.coverage`), at
-    every depth, but NOT to the artifact root itself — glob matches paths
-    under `cwd`, so a dot-rooted artifact still embeds its plain contents.
+    Every semantic here was verified against the installed server, not read off
+    its source: `readArtifactContent` and `newestMtimeMs` were run over one
+    46-file tree covering every pattern form and its decoys (`buildish/`,
+    `distant.md`, `sitemap.xml`, a nested `sub/venv/` against the anchored
+    `/venv`), and the embedded set and the counted set were identical in both
+    directions. Dot exclusion applies to files as well as directories
+    (`.coverage`), at every depth, but NOT to the artifact root itself — glob
+    matches paths under `cwd`, so a dot-rooted artifact still embeds its plain
+    contents, and the ignore chain is rooted the same way.
     """
 
     @staticmethod
@@ -767,14 +785,21 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         )
 
     @requires_node
-    def test_pycache_is_deliberately_still_counted(self, tmp_path: Path) -> None:
-        """`__pycache__` is not a dotfile, and `dot: false` does NOT exclude it.
+    def test_pycache_is_no_longer_counted(self, tmp_path: Path) -> None:
+        """The inversion #270 is about, and the reason it needed a code change.
 
-        Verified against the server's own glob: `__pycache__/m.pyc` is
-        embedded. It really moves both the clock and the artifact's content,
-        and #229's measured case depends on that staying true. An
-        over-eager prune list that treated it like the dot entries would
-        un-measure #229.
+        `__pycache__` is not a dotfile, so `dot: false` never excluded it, and
+        through 1.12.x the glob's two ignores did not name it either — it was
+        embedded, and #235 exempted it from the prune list on purpose. Since
+        1.13.0 the walk runs the full ignore chain and `__pycache__`/`*.pyc`
+        are both in its built-in defaults, so the server embeds neither.
+
+        Counting it now is the #235 failure re-entering through the one hole
+        cut for it, and it is the strictly worse half of that failure: CPython
+        rewrites a `.pyc` only when the source or magic number changes, so this
+        stays quiet until a Python version bump or an edited migration, then
+        reports `stale` on an artifact whose embedded content did not change —
+        with a remedy that cannot clear it.
         """
         tree = tmp_path / "tree"
         (tree / "__pycache__").mkdir(parents=True)
@@ -786,10 +811,158 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         _stamp(tree / "__pycache__")
         _stamp(tree)
         newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            f"a __pycache__ rewrite moved the freshness clock (got {newest}); "
+            "since socraticode 1.13.0 the artifact walk runs the ignore chain "
+            "and `__pycache__`/`*.pyc` are built-in defaults, so the server "
+            "embeds neither and this is a stale finding no re-index can clear "
+            "(#270)"
+        )
+
+    @requires_node
+    def test_a_loose_pyc_outside_pycache_is_not_counted_either(
+        self, tmp_path: Path
+    ) -> None:
+        """`*.pyc` is its own default pattern, not a consequence of the dirname.
+
+        Pinned separately because the one-line fix this finding invited — add
+        `__pycache__` to the prune list — passes the test above and fails this
+        one. The suffix patterns are half the list.
+        """
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "a.py").write_text("pass\n")
+        loose = tree / "a.cpython-312.pyc"
+        loose.write_bytes(b"\x00")
+        _stamp(tree / "a.py")
+        _stamp(loose, EDITED_AFTER_INDEXING)
+        _stamp(tree)
+        newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            f"a loose .pyc moved the freshness clock (got {newest}); `*.pyc` "
+            "is a default ignore pattern in its own right (#270)"
+        )
+
+    @requires_node
+    def test_a_build_directory_is_not_counted(self, tmp_path: Path) -> None:
+        """The class #270 opens beyond the bytecode case.
+
+        `build` is a default ignore pattern at any depth, so a `./docs/`
+        artifact over a Sphinx `docs/build/` is the same false `stale` with a
+        different name — and there are a dozen more (`dist`, `out`, `target`,
+        `coverage`, `vendor`, `_build`, `deps`, `obj`, `.tox`). Fixing only the
+        measured case would have left every one of them open.
+        """
+        tree = tmp_path / "tree"
+        (tree / "build" / "html").mkdir(parents=True)
+        (tree / "index.rst").write_text("doc\n")
+        generated = tree / "build" / "html" / "index.html"
+        generated.write_text("<html>\n")
+        _stamp(tree / "index.rst")
+        _stamp(generated, EDITED_AFTER_INDEXING)
+        for directory in (tree / "build" / "html", tree / "build", tree):
+            _stamp(directory)
+        newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            f"a build/ rewrite moved the freshness clock (got {newest}); "
+            "`build` is one of the server's built-in ignore defaults and is "
+            "never embedded (#270)"
+        )
+
+    @requires_node
+    def test_a_log_file_is_not_counted(self, tmp_path: Path) -> None:
+        """A suffix pattern with no directory to prune — the other match form."""
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "a.md").write_text("a\n")
+        churned = tree / "run.log"
+        churned.write_text("line\n")
+        _stamp(tree / "a.md")
+        _stamp(churned, EDITED_AFTER_INDEXING)
+        _stamp(tree)
+        newest = self._newest(tree)
+        assert newest == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            f"a *.log rewrite moved the freshness clock (got {newest}); "
+            "`*.log` is a built-in ignore default (#270)"
+        )
+
+    @requires_node
+    def test_venv_is_anchored_to_the_artifact_root(self, tmp_path: Path) -> None:
+        """`/venv` is anchored, and the anchoring is load-bearing both ways.
+
+        The server anchors `venv` and `env` deliberately: unanchored they match
+        ordinary module names and delete real source (`clap_complete/src/env/`,
+        per `ignore.js`'s own comment). So a nested `sub/venv/` IS embedded and
+        MUST still be counted — an over-eager prune that treated the name as
+        any-depth would under-report real staleness. Verified against the
+        server: it embeds `sub/venv/lib/a.py` and not `venv/lib/a.py`.
+        """
+        tree = tmp_path / "tree"
+        (tree / "venv" / "lib").mkdir(parents=True)
+        (tree / "sub" / "venv" / "lib").mkdir(parents=True)
+        (tree / "a.py").write_text("pass\n")
+        rooted = tree / "venv" / "lib" / "dep.py"
+        rooted.write_text("dep\n")
+        _stamp(tree / "a.py")
+        _stamp(rooted, EDITED_AFTER_INDEXING)
+        # Every directory, deepest first — `sub/` and `sub/venv/` are counted
+        # (that is the second half of this test), so leaving them at their
+        # creation time would measure the fixture instead of the walk.
+        directories = (
+            tree / "venv" / "lib",
+            tree / "venv",
+            tree / "sub" / "venv" / "lib",
+            tree / "sub" / "venv",
+            tree / "sub",
+            tree,
+        )
+        for directory in directories:
+            _stamp(directory)
+        assert self._newest(tree) == pytest.approx(self._ms(SOURCE_MTIME), abs=10), (
+            "a root-level venv/ moved the freshness clock; `/venv` is an "
+            "anchored ignore default (#270)"
+        )
+
+        nested = tree / "sub" / "venv" / "lib" / "mod.py"
+        nested.write_text("mod\n")
+        _stamp(nested, EDITED_AFTER_INDEXING)
+        for directory in directories:
+            _stamp(directory)
+        assert self._newest(tree) == pytest.approx(
+            self._ms(EDITED_AFTER_INDEXING), abs=10
+        ), (
+            "a NESTED venv/ stopped moving the freshness clock; `/venv` is "
+            "anchored to the artifact root, so the server still embeds "
+            "sub/venv/ and a prune that matched the bare name at any depth "
+            "would hide real staleness (#270)"
+        )
+
+    @requires_node
+    def test_an_ordinary_name_that_merely_starts_with_one_is_kept(
+        self, tmp_path: Path
+    ) -> None:
+        """The decoys: `buildish/`, `distant.md`, `sitemap.xml`.
+
+        A prune written with `startsWith`/`includes` rather than whole-segment
+        and whole-suffix matching passes every test above and silently stops
+        reporting staleness for ordinary files. Verified against the server:
+        all three are embedded.
+        """
+        tree = tmp_path / "tree"
+        (tree / "buildish").mkdir(parents=True)
+        for name in ("distant.md", "sitemap.xml"):
+            (tree / name).write_text("x\n")
+        (tree / "buildish" / "real.md").write_text("x\n")
+        _stamp(tree / "distant.md")
+        _stamp(tree / "sitemap.xml")
+        _stamp(tree / "buildish" / "real.md", EDITED_AFTER_INDEXING)
+        for directory in (tree / "buildish", tree):
+            _stamp(directory)
+        newest = self._newest(tree)
         assert newest == pytest.approx(self._ms(EDITED_AFTER_INDEXING), abs=10), (
-            f"__pycache__ stopped moving the freshness clock (got {newest}); "
-            "it is embedded by the server and #229's measured case depends on "
-            "it being counted (#235)"
+            f"`buildish/` was pruned as if it were `build` (got {newest}); the "
+            "ignore defaults match whole path segments and whole suffixes, and "
+            "a substring prune hides real staleness (#270)"
         )
 
     @requires_node
@@ -848,21 +1021,110 @@ class TestFreshnessWalkMatchesTheArtifactWalk:
         )
 
     def test_the_prune_site_names_the_server_walker(self) -> None:
-        """The list is a claim about `context-artifacts.js`, and must say so.
+        """The list is a claim about two server files, and must say so.
 
         The next editor of either side needs to know the walk is not a local
-        style choice: it mirrors `dot: false` plus the ignore list in the
-        server's artifact walk, and drifting from it re-opens #235. A source
-        pin, not a behavior — the behavior is the five tests above.
+        style choice: it mirrors `dot: false` from the artifact walk plus the
+        default patterns from the ignore chain, and drifting from it re-opens
+        #235. A source pin, not a behavior — the behaviors are the tests above.
+
+        `ignore.js` is named as well as `context-artifacts.js` because #270 is
+        what happens when only one of the two is watched: the driver's comment
+        pinned the glob call exactly, stayed accurate about it, and went stale
+        anyway when the filter moved into the file it did not mention.
         """
         source = DRIVER.read_text()
-        walk = source[source.index("function newestMtimeMs") :]
-        walk = walk[: walk.index("\nfunction ")]
-        assert "context-artifacts.js" in walk and "dot: false" in walk, (
-            "newestMtimeMs's prune list no longer says which server walker it "
-            "mirrors; without the pointer, the parity looks like a style "
-            "choice and drifts (#235)"
+        region = source[source.index("// PARITY, not preference") :]
+        region = region[: region.index("\n// Asymmetric on purpose")]
+        for pointer in ("context-artifacts.js", "ignore.js", "dot: false"):
+            assert pointer in region, (
+                f"newestMtimeMs's prune list no longer names {pointer!r}; "
+                "without the pointer, the parity looks like a style choice and "
+                "drifts (#235, #270)"
+            )
+
+    def test_the_prune_site_pins_the_server_version(self) -> None:
+        """The habit that made #270 findable, kept.
+
+        The old comment said "socraticode 1.12.0" against a behaviour that
+        changed in 1.13.0, which is the only reason the drift could be spotted
+        by reading rather than by a user hitting it. An unversioned claim about
+        another project's internals cannot be audited.
+        """
+        source = DRIVER.read_text()
+        region = source[source.index("// PARITY, not preference") :]
+        region = region[: region.index("\n// Asymmetric on purpose")]
+        assert "1.13" in region, (
+            "newestMtimeMs's prune list no longer pins the socraticode version "
+            "it was transcribed from. That pin is what let #270 be found by "
+            "reading the server's source instead of by a false stale finding "
+            "in the field (#270)"
         )
+
+    def test_the_residual_layers_are_named_not_left_to_be_rediscovered(
+        self,
+    ) -> None:
+        """What the driver deliberately does NOT mirror, said out loud.
+
+        Mirroring the defaults was a judgement call: the chain's other two
+        layers — artifact-local `.gitignore`/`.socraticodeignore`, and
+        virtualenvs found by marker — need a gitignore engine and a marker
+        scan, and this driver has no dependencies. That is a defensible trade
+        and an indefensible silence. A reader who hits the residual false
+        `stale` and finds no acknowledgement of it will either re-derive the
+        whole chain or distrust the check.
+        """
+        source = DRIVER.read_text()
+        region = source[source.index("// THE RESIDUAL") :]
+        region = region[: region.index("function newestMtimeMs")]
+        lowered = region.lower()
+        for token in (".gitignore", ".socraticodeignore", "pyvenv.cfg"):
+            assert token in lowered, (
+                f"the prune site no longer names {token!r} as a layer of the "
+                "server's ignore chain that this walk does not mirror; the "
+                "residual false `stale` it can still produce then looks like a "
+                "bug rather than a stated limit (#270)"
+            )
+
+    @requires_node
+    def test_the_transcribed_defaults_match_the_servers_list(self) -> None:
+        """The transcription is the whole fix, so pin its shape.
+
+        Not a copy of the server's array — that would only restate this file's
+        own guess. What is pinned is that the list is present, complete enough
+        to cover every form the server uses, and parsed into the three buckets
+        the walk consults. The list's agreement with a running 1.13.2 server
+        was established by differential test (see the class docstring); this
+        keeps an editor from quietly dropping entries from it afterwards.
+        """
+        script = (
+            f"import {{ SERVER_DEFAULT_IGNORE_PATTERNS as p }} from "
+            f"{json.dumps(str(DRIVER))};"
+            f"process.stdout.write(JSON.stringify(p));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        patterns = json.loads(result.stdout)
+        assert len(patterns) == 48, (
+            f"the transcribed default-ignore list has {len(patterns)} entries, "
+            "not the 48 in socraticode 1.13.2's DEFAULT_IGNORE_PATTERNS. If the "
+            "server's list changed, re-transcribe it and re-run the "
+            "differential check; if an entry was dropped by hand, #235 is open "
+            "again for that name (#270)"
+        )
+        # One representative of each pattern form the walk has to handle.
+        for pattern in ("__pycache__", "*.pyc", "build", "/venv", "bin/Debug"):
+            assert pattern in patterns, (
+                f"{pattern!r} is missing from the transcribed defaults; the "
+                "walk's three buckets are derived from this list, so a dropped "
+                "entry silently stops pruning (#270)"
+            )
 
 
 class TestParsesTheIndexTimestamp:
@@ -904,32 +1166,38 @@ class TestParsesTheIndexTimestamp:
         ], parsed
 
 
-class TestArtifactsRefExplainsTheBytecodeHazard:
-    """#229: the walk's binary guard is present and CANNOT FIRE.
+class TestArtifactsRefExplainsTheIgnoreChain:
+    """#229 then #270: the same bullets, once the server grew the filter.
 
-    `references/context-artifacts.md` already said a directory artifact honours
-    no ignore file. What it did not say is what that costs when the directory is
-    one a toolchain writes into. On CannObserv/observo an `./alembic/versions/`
-    artifact absorbed the `__pycache__/` every test run drops there — 32 of 86
-    chunks compiled bytecode, and `codebase_context_search` for the migration
-    head answering with decompiled bytecode as its top hit.
+    `references/context-artifacts.md` used to say a directory artifact honours
+    no ignore file, that its binary guard was present but could not fire, and
+    that adding `__pycache__` to `.socraticodeignore` changed nothing. All
+    three were measured and true on `socraticode@1.12.0`, and all three are
+    false on 1.13.x: `SocratiCode#117` — the upstream fix for the bug #229
+    filed — put `createIgnoreFilter`/`shouldIgnore` and a real `isBinaryContent`
+    sniff behind the artifact walk.
 
-    The mechanism is the durable half, and it is why "skip files that are not
-    text" is the wrong advice to leave a reader with. The server already
-    believes it has that filter:
+    So this class is the same shape it was, aimed at the corrected claims. Two
+    things it now insists on that the old version could not:
 
-        try { const content = await fsp.readFile(filePath, "utf-8"); … }
-        catch { // skip unreadable files (binary, permissions, etc.) }
+    The **rooting** is the non-obvious half and the half a reader gets wrong.
+    The chain is built with the ARTIFACT path, not the project path, so the
+    repo-root `.socraticodeignore` that Phase 4 writes does not reach a subtree
+    artifact at all. "Directory artifacts honour `.socraticodeignore` now" is
+    the natural summary of #117 and is wrong in exactly the case the docs are
+    about; measured on 1.13.2, `*.sql` in a repo-root `.socraticodeignore` left
+    a `versions/` artifact still embedding its `.sql`.
 
-    `readFile(…, "utf-8")` does not throw on binary — it returns U+FFFD
-    replacement characters — so every `.pyc` takes the *success* branch, nothing
-    is logged, and the chunk count goes **up**. Verified against
-    `socraticode@1.12.0`. A reader who is told only "it honours no ignore file"
-    goes looking for a filter to configure; there isn't one.
+    The **cost direction reverses**. Every earlier finding here was about an
+    artifact absorbing content it should not. The defaults now apply inside an
+    artifact, so the new failure is content going MISSING — a `./docs/`
+    artifact silently losing a Sphinx `docs/build/` — and it fails just as
+    quietly, with a chunk count that is merely lower than expected.
 
     Scoped to **Field notes** rather than to the whole document, for the reason
-    `test_the_note_covers_the_third_diagnosis` learned one file over: a doc-wide
-    keyword sweep can be green before the prose it requires is written.
+    `test_the_note_covers_the_third_diagnosis` learned one file over: a
+    doc-wide keyword sweep can be green before the prose it requires is
+    written.
     """
 
     @staticmethod
@@ -962,7 +1230,7 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         away the caller's message, which is the part that explains what the
         bullet has to say (#230 CR round 3).
         """
-        notes = TestArtifactsRefExplainsTheBytecodeHazard._field_notes()
+        notes = TestArtifactsRefExplainsTheIgnoreChain._field_notes()
         assert opening in notes, (
             f"references/{ARTIFACTS_REF.name}'s **Field notes** has no bullet "
             f"opening {opening!r}. If the bullet was reworded, re-aim this "
@@ -973,67 +1241,125 @@ class TestArtifactsRefExplainsTheBytecodeHazard:
         end = notes.find("\n- ", start + len(opening))
         return notes[start : end if end != -1 else len(notes)]
 
-    def test_the_ignore_exception_is_still_stated(self) -> None:
-        """The bullet the two new ones are written as continuations of.
+    def test_the_chain_is_stated_with_its_version_boundary(self) -> None:
+        """Both halves, because consumers run both server versions.
 
-        Green before #229 and pinned anyway: the hazard bullet opens with "…and"
-        and refers back to "the bullet above", so deleting this one leaves the
-        replacement dangling rather than merely shorter.
+        A flat "artifacts honour the ignore chain" is as wrong for a 1.12.x
+        reader as the old text is for a 1.13.x one, and this doc is vendored
+        into repos that pin different servers. The boundary is the fact.
+
+        Scoped to the bullet, not the section, and the section-wide version was
+        VACUOUS on arrival exactly as `_bullet` warns: other bullets cite
+        `1.13.2` and `1.12.x` for their own measurements, so deleting the
+        boundary from the bullet that states the rule left the suite green.
+        Proved by mutation, not by reading.
+        """
+        bullet = self._bullet("- **A directory artifact runs the ignore chain")
+        assert "1.13" in bullet and "1.12" in bullet, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** states the "
+            "artifact walk's ignore behaviour without the version boundary. "
+            "It changed in socraticode 1.13.0 (SocratiCode#117); a reader on "
+            "either side of that needs to know which half applies (#270)"
+        )
+        lowered = bullet.lower()
+        assert "createignorefilter" in lowered or "ignore chain" in lowered, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** no longer says "
+            "a directory artifact runs the ignore chain at all — the correction "
+            "#270 is about (#270)"
+        )
+
+    def test_the_chain_is_rooted_at_the_artifact_not_the_repo(self) -> None:
+        """The correction inside the correction.
+
+        Phase 4 writes `.socraticodeignore` at the repo root, and this document
+        is where an author looks to find out whether it governs their artifact.
+        For a subtree artifact it does not — `createIgnoreFilter` is called with
+        the artifact path. Saying only "artifacts honour `.socraticodeignore`
+        now" would send a reader to edit the one file that cannot help them.
+        """
+        notes = self._field_notes().lower()
+        assert "rooted at the artifact" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** does not say "
+            "the ignore chain is rooted at the ARTIFACT directory rather than "
+            "the repo. Without it, the natural reading of SocratiCode#117 is "
+            "that the repo-root `.socraticodeignore` now filters artifacts — "
+            "which is false for every artifact that is not the repo root, and "
+            "is the case this doc's own example uses (#270)"
+        )
+        assert "repo-root" in notes or "repo root" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** states the "
+            "rooting rule abstractly but never says what it means for the "
+            "repo-root `.socraticodeignore` Phase 4 writes (#270)"
+        )
+
+    def test_the_defaults_can_now_drop_content_you_wanted(self) -> None:
+        """The new hazard, which points the opposite way from the old one.
+
+        Everything this class pinned before #270 was about an artifact
+        absorbing junk. The defaults applying inside an artifact is the mirror
+        image — `docs/build/`, a directory of `*.lock` fixtures — and it is
+        just as silent. A doc that only announces the good news leaves the
+        reader with no account of a chunk count lower than they expected.
         """
         notes = self._field_notes()
-        assert ".socraticodeignore" in notes and "node_modules" in notes, (
-            f"references/{ARTIFACTS_REF.name}'s **Field notes** no longer says a "
-            "directory artifact is pruned only of node_modules/.git and honours "
-            "neither ignore file — the premise the bytecode bullet builds on"
+        assert "DEFAULT_IGNORE_PATTERNS" in notes or "built-in defaults" in notes, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** does not name "
+            "the built-in default patterns that now apply INSIDE an artifact "
+            "(#270)"
+        )
+        bullet = self._bullet("- **The built-in defaults now apply INSIDE").lower()
+        assert "check the artifact subtree" in bullet, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** names the "
+            "defaults without telling the reader to check their artifact "
+            "subtree for names the defaults drop. The failure is silent — no "
+            "error, nothing above debug, only a chunk count lower than "
+            "expected — so the instruction to go look IS the mitigation (#270)"
         )
 
-    def test_the_guard_that_cannot_fire_is_named(self) -> None:
-        notes = self._field_notes().lower()
-        assert "u+fffd" in notes and "readfile" in notes, (
+    def test_the_binary_guard_history_is_kept_with_its_resolution(self) -> None:
+        """Retire the claim, keep the mechanism.
+
+        The `readFile(…, "utf-8")` trap is why the bug existed and is a real
+        hazard in anyone's own code, so the paragraph is worth keeping — but a
+        reader must not leave believing it still describes the running server.
+        Deleting it outright would also strand #229's measured numbers, which
+        are the evidence for the 1.12.x half of the version boundary above.
+        """
+        bullet = self._bullet("- **The binary guard works now").lower()
+        assert "u+fffd" in bullet and "readfile" in bullet, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** dropped the "
+            "mechanism behind the old bytecode hazard. It is why a guard that "
+            "looks present could not fire, and it is a trap a reader can "
+            "reproduce in their own code (#229)"
+        )
+        assert "isbinarycontent" in bullet, (
             f"references/{ARTIFACTS_REF.name}'s **Field notes** describes the "
-            "missing ignore chain but not the mechanism underneath it: the "
-            "binary guard is already written and cannot fire, because "
-            '`fsp.readFile(path, "utf-8")` returns U+FFFD replacement '
-            "characters rather than throwing. Without that, a reader hunts for "
-            "a text filter the server already believes it has (#229)."
+            "guard that could not fire without naming the one that replaced "
+            "it. `isBinaryContent` over a Buffer is what makes the 1.13.x half "
+            "of the claim checkable (#270)"
         )
 
-    def test_a_local_mitigation_is_named(self) -> None:
-        """Naming the hazard without a fix leaves the reader where they started.
+    def test_the_freshness_parity_and_its_residual_are_covered(self) -> None:
+        """#225's walk had to move with the server, and did not move all the way.
 
-        Nothing downstream filters an artifact, so the only lever is the tree
-        itself: divert the bytecode, or narrow the artifact path.
+        The old bullet's advice was an ORDERING — clear the build output, then
+        re-index — because re-indexing re-embedded the bytecode. That is gone:
+        the server excludes it, and the driver no longer counts it (#270). What
+        replaces it is narrower and must be stated, because it is the one case
+        where a `stale` finding should be dismissed rather than acted on.
         """
-        notes = self._field_notes().lower()
-        assert "pythonpycacheprefix" in notes, (
-            f"references/{ARTIFACTS_REF.name}'s **Field notes** names the "
-            "bytecode hazard without the durable local fix — "
-            "`PYTHONPYCACHEPREFIX` puts compiled output in one out-of-tree "
-            "cache instead of beside every source file (#229)."
+        bullet = self._bullet("- **Staleness parity").lower()
+        assert "#270" in bullet or "transcribed" in bullet, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** no longer says "
+            "the driver's freshness walk mirrors the server's exclusions. That "
+            "parity is the reason a stale finding can be trusted at all (#235)"
         )
-
-    def test_the_freshness_interaction_is_covered(self) -> None:
-        """#225 now nags on exactly the directory #229 is about.
-
-        health-check judges a directory artifact by its newest descendant and
-        skips only `node_modules`/`.git` — the walk's blind spot exactly. So a
-        `__pycache__/` rewritten by every test run reports the artifact stale,
-        and the finding's named remedy, `codebase_context_index`, re-embeds the
-        bytecode. The two features point opposite ways unless the doc says which
-        comes first.
-
-        So THE ORDERING is what this pins, not the word "stale". Asserting the
-        keyword against the whole section was vacuous — see `_bullet`.
-        """
-        bullet = self._bullet("- **A build-output directory also makes").lower()
-        assert "clear the build output" in bullet and "then re-index" in bullet, (
-            f"references/{ARTIFACTS_REF.name}'s **Field notes** names the "
-            "freshness interaction without saying which repair comes FIRST. "
-            "That ordering is the whole finding: #225 reports the artifact "
-            "stale, and its named remedy — re-run `codebase_context_index` — "
-            "re-embeds the bytecode #229 is about. A reader who re-indexes "
-            "before clearing the build output makes the artifact worse while "
-            "clearing the finding that told them to."
+        assert "residual" in bullet or "does **not** mirror" in bullet, (
+            f"references/{ARTIFACTS_REF.name}'s **Field notes** claims the "
+            "freshness walk matches the server without naming what it does "
+            "not mirror — artifact-local ignore files and marker-found "
+            "virtualenvs. A reader who hits that false `stale` has no way to "
+            "know it is a stated limit rather than a bug (#270)"
         )
 
 

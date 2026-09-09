@@ -230,10 +230,15 @@ its JSON.
 
 `.socraticodeignore` (repo root, gitignore syntax, layered on the built-in
 defaults and `.gitignore`) controls what gets embedded **by the code index.
-Directory context artifacts are walked separately and honour none of it —
-scope each artifact path to the subtree you actually want embedded.** Editing
-it affects **subsequent** scans only — re-index to apply it. Vendored trees
-dominate the index if left in, and vendored prose outranks first-party code in
-`codebase_search` results.
+Since socraticode 1.13 directory context artifacts run that same chain, but
+rooted at the ARTIFACT directory, not the repo: a repo-root
+`.socraticodeignore` never reaches a subtree artifact — only ignore files
+inside the artifact path do — while the built-in defaults (`build`, `dist`,
+`vendor`, `coverage`, `*.lock`, `__pycache__`…) DO apply inside one and drop
+those names silently. Scope each artifact path to the subtree you actually
+want embedded, and check that subtree for default-ignored names you meant to
+keep.** Editing it affects **subsequent** scans only — re-index to apply it.
+Vendored trees dominate the index if left in, and vendored prose outranks
+first-party code in `codebase_search` results.
 <!-- END socraticode-doc -->
 ````

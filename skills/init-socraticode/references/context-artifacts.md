@@ -123,43 +123,73 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
   walks it recursively. Prefer a specific subtree (`./alembic/versions/`) over a
   broad top-level dir — a directory artifact pulls *every* file under it,
   including any vendored deps that live there, and inflates index time.
-- **A directory artifact is pruned only of `node_modules`/`.git`.** The artifact
-  walk uses its own hardcoded ignore — it does **not** honor `.socraticodeignore`
-  or `.gitignore` (those govern the *code* index, not artifacts). So the
-  `.socraticodeignore` you add in Phase 4 won't shrink an over-broad artifact
-  dir; keep each artifact path scoped to the subtree you actually want embedded.
-- **…and the walk's binary guard is present but cannot fire, so build output is
-  embedded as mojibake.** The server reads each file with
-  `fsp.readFile(filePath, "utf-8")` inside a `try/catch` commented *"skip
-  unreadable files (binary, permissions, etc.)"*. That call does **not** throw
-  on binary input — it returns a string of U+FFFD replacement characters — so
-  every compiled file takes the *success* branch (`socraticode@1.12.0`,
-  `dist/services/context-artifacts.js`; filed upstream as
-  `giancarloerra/SocratiCode#116` — check it before assuming this still holds).
-  On CannObserv/observo, an artifact pointed at `./alembic/versions/` picked up
-  the `__pycache__/` that every test run and every `alembic` invocation drops
+- **A directory artifact runs the ignore chain — rooted at the ARTIFACT
+  directory, not the repo.** Since socraticode **1.13** (`SocratiCode#117`) the
+  walk in `dist/services/context-artifacts.js` puts every file through
+  `createIgnoreFilter`/`shouldIgnore`: built-in defaults, then `.gitignore`
+  (root + nested), then `.socraticodeignore`. The surviving
+  `ignore: ["**/node_modules/**", "**/.git/**"]` in the glob is now only a
+  subtree-pruning optimisation over two of the chain's own defaults, and the
+  source says so. Through **1.12.x** none of this was true — the walk honoured
+  no ignore file at all — so which half applies is a version question, and the
+  boundary is 1.13.0.
+- **Rooted at the artifact directory is the part that surprises.**
+  `createIgnoreFilter` is called with the *artifact* path, so it reads
+  `<artifact>/.gitignore` and `<artifact>/.socraticodeignore` — **the
+  `.socraticodeignore` you add in Phase 4 at the repo root does not reach an
+  artifact at `./alembic/versions/`.** Measured on 1.13.2: with `*.sql` in a
+  repo-root `.socraticodeignore`, a `versions/` artifact still embedded
+  `002_b.sql`; moving the same line into `versions/.socraticodeignore` dropped
+  it, and a nested `versions/sub/.gitignore` dropped a file under `sub/` too.
+  Rooting it there is deliberate — it also keeps an artifact declared at
+  `./build/openapi/` from ignoring *itself*, since the relative paths no longer
+  start with `build/`.
+- **The built-in defaults now apply INSIDE an artifact, which can drop content
+  you wanted.** `__pycache__`, `*.pyc`, `dist`, `build`, `out`, `target`,
+  `_build`, `deps`, `obj`, `coverage`, `vendor`, `.tox`, `*.lock`, `*.log`,
+  `*.map`, `*.min.js` and the rest of `DEFAULT_IGNORE_PATTERNS`
+  (`dist/services/ignore.js`) match at any depth below the artifact root;
+  `/venv`, `/env`, `bin/Debug` and `bin/Release` are anchored to it. So an
+  artifact pointed at `./docs/` silently loses a Sphinx `docs/build/`, and one
+  pointed at a directory of generated `*.lock` fixtures embeds none of them.
+  Nothing errors and nothing is logged above debug — the only visible trace is
+  a chunk count lower than you expected. **Check the artifact subtree for
+  default-ignored names you meant to keep.** To rescue one, negate the
+  **directory itself** in an ignore file inside the artifact path — measured on
+  1.13.2, `!build` re-includes `build/keep.md`, while `!build/keep.md` and
+  `!build/**` do not: gitignore cannot re-include a file whose parent directory
+  is excluded, and the `ignore` package enforces that. `node_modules` and
+  `.git` cannot be rescued at all — the glob prunes those subtrees before the
+  chain ever sees them.
+- **The binary guard works now, and the bytecode hazard is gone with it.**
+  Through 1.12.x the guard was present but could not fire: the server read each
+  file with `fsp.readFile(filePath, "utf-8")` inside a `try/catch` commented
+  *"skip unreadable files (binary, permissions, etc.)"*, and that call does not
+  throw on binary input — it returns U+FFFD replacement characters — so every
+  compiled file took the *success* branch. On CannObserv/observo an artifact at
+  `./alembic/versions/` picked up the `__pycache__/` every test run drops
   there: **70 `.pyc` files, 32 of the artifact's 86 chunks compiled bytecode**,
-  and a `codebase_context_search` for the current migration head returned
-  decompiled bytecode as its top hit.
-  Deleting `__pycache__/` and re-indexing took the artifact to 54 chunks and the
-  top-hit score from 0.5417 to 0.6111; adding `__pycache__/` and `*.pyc` to
-  `.socraticodeignore` changed nothing, per the bullet above. It fails
-  **upward** — nothing errors, nothing is logged (the `catch` never runs), and
-  both the chunk count and `codebase_status`'s artifact count *rise*. Every
-  signal reads healthier as the artifact gets worse. Two local fixes, in order:
-  (1) keep the build output out of the tree in the first place — for Python, set
-  `PYTHONPYCACHEPREFIX` so bytecode lands in one out-of-tree cache instead of
-  beside every source file; (2) point each artifact at the **narrowest subtree
-  containing only what you want embedded**, because nothing downstream filters
-  it — not `.gitignore`, not `.socraticodeignore`, not the guard above.
-- **A build-output directory also makes the health-check say `stale`, and
-  re-indexing is the wrong fix.** `mcp-driver.mjs health-check` judges a
-  directory artifact by its **newest descendant** mtime (#225), skipping only
-  `node_modules`/`.git` — the same blind spot as the walk. So a toolchain
-  rewriting `__pycache__/` under an artifact path reports that artifact stale
-  after every test run, and the finding's named remedy — *re-run
-  `codebase_context_index`* — re-embeds the bytecode. Clear the build output
-  first, then re-index.
+  and a `codebase_context_search` for the migration head answered with
+  decompiled bytecode as its top hit (filed as `giancarloerra/SocratiCode#116`,
+  fixed in #117). On 1.13.x the file is read as a `Buffer` and sniffed with
+  `isBinaryContent` before decoding, and `__pycache__`/`*.pyc` are in the
+  default ignore list besides — so bytecode is excluded twice over. Measured on
+  observo at 1.13.2: 72 `.pyc` under `./alembic/versions/` and the artifact
+  indexes **57 chunks** — the without-bytecode figure plus the migrations added
+  since, not the 86 that bytecode produced.
+  `PYTHONPYCACHEPREFIX` is still worth setting for the *code index* and for a
+  tidy tree, but it is no longer load-bearing for artifacts.
+- **Staleness parity, and the residual that is left.** `mcp-driver.mjs
+  health-check` judges a directory artifact by its **newest descendant** mtime
+  (#225). Its walk mirrors the server's exclusions — `dot: false` plus the
+  transcribed `DEFAULT_IGNORE_PATTERNS` (#270) — because anything counted that
+  the server never embeds reports a byte-identical artifact `stale` with a
+  remedy that cannot clear it: re-indexing does not bring in the file whose
+  mtime moved (#235). What the driver does **not** mirror is the chain's other
+  two layers — artifact-local `.gitignore`/`.socraticodeignore`, and
+  virtualenvs found by marker. A file excluded by one of those, inside an
+  artifact, can still produce a false `stale`; it is rare, and it is the one
+  case where the right response to the finding is to dismiss it.
 - **Each `name` must be unique** (case-insensitive) — the server rejects
   duplicates at parse time, aborting the whole run. When you split one category
   into multiple entries, give each a distinct name (as the template's
@@ -246,8 +276,11 @@ exclude `skills-vendor/` (and `.claude/skills/`) only** — don't drop the proje
 own skills from the index. Otherwise adapt to the project's own vendored trees;
 add any large generated/data dirs that aren't already in `.gitignore`.
 
-Note this governs the **code index only**. A directory context artifact honours
-none of it — see the Field notes above.
+Note this file governs the **code index**, and reaches a directory context
+artifact only when the artifact path *is* the repo root: since 1.13 the artifact
+walk runs the same chain, but rooted at the artifact directory, so a subtree
+artifact reads ignore files inside itself and never this one. The built-in
+defaults apply to both. See the Field notes above.
 
 ## Migrating a legacy top-level array
 

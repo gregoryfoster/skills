@@ -454,10 +454,84 @@ function parseIndexedAt(status) {
 // unchanged, the artifact "indexed", and the directory's mtime untouched — the
 // CannObserv/power-map#454 shape one level down.
 const FRESHNESS_WALK_BUDGET = 20000;
+
+// PARITY, not preference: the server's own exclusions, transcribed.
+//
+// `dist/services/context-artifacts.js` (socraticode 1.13.2) builds a directory
+// artifact by globbing `**/*` with `dot: false` and
+// `ignore: ["**/node_modules/**", "**/.git/**"]`, then running every surviving
+// file through `createIgnoreFilter`/`shouldIgnore` (`dist/services/ignore.js`).
+// Since SocratiCode#117 those two glob ignores are NO LONGER the filter — the
+// server's own comment calls them a subtree-pruning optimisation over two of
+// the chain's default patterns, "kept for what they cost the walk rather than
+// what they match". Mirroring only them, as this walk did through 1.12.x,
+// under-prunes by the whole list below.
+//
+// Transcribed verbatim from that file's DEFAULT_IGNORE_PATTERNS, in its order,
+// against 1.13.2. Kept as the server's literal strings rather than a
+// hand-classified list so the next reader can diff the two by eye; the three
+// buckets below are derived from them at load.
+const SERVER_DEFAULT_IGNORE_PATTERNS = [
+  'node_modules', '.git', '.svn', '.hg',
+  'dist', 'build', 'out', '.next', '.nuxt',
+  '__pycache__', '*.pyc', '.venv', '/venv', '/env', '.tox',
+  'target', '_build', 'deps', 'bin/Debug', 'bin/Release', 'obj',
+  '.gradle', '.idea', '.vscode', '.vs',
+  '*.min.js', '*.min.css', '*.map', '*.lock',
+  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+  'Cargo.lock', 'Gemfile.lock', 'poetry.lock',
+  '*.log', '*.tmp', '*.swp', '*.swo',
+  '.DS_Store', 'Thumbs.db',
+  'coverage', '.nyc_output', '.cache', '.parcel-cache', '.turbo',
+  'vendor', '.dart_tool',
+];
+
+// The defaults use exactly four gitignore forms, and only these are
+// implemented — deliberately, because anything more would be inventing
+// semantics the list does not exercise:
+//   `name`      bare, no slash: matches that basename at ANY depth
+//   `*.ext`     matches that suffix at ANY depth
+//   `/name`     leading slash: anchored, root's own child only
+//   `a/b`       embedded slash: anchored to the artifact root, as gitignore
+// Pruning the directory covers everything beneath it, so an anchored path
+// pattern needs no separate prefix test.
+const IGNORE_BASENAMES = new Set();
+const IGNORE_SUFFIXES = [];
+const IGNORE_ANCHORED = new Set();
+for (const pattern of SERVER_DEFAULT_IGNORE_PATTERNS) {
+  if (pattern.startsWith('/')) IGNORE_ANCHORED.add(pattern.slice(1));
+  else if (pattern.includes('/')) IGNORE_ANCHORED.add(pattern);
+  else if (pattern.startsWith('*.')) IGNORE_SUFFIXES.push(pattern.slice(1));
+  else IGNORE_BASENAMES.add(pattern);
+}
+
+// THE RESIDUAL, named rather than left to be rediscovered. The server's chain
+// has three layers and this mirrors one:
+//   1. DEFAULT_IGNORE_PATTERNS — above.
+//   2. `.gitignore` (root + nested) and `.socraticodeignore`, ROOTED AT THE
+//      ARTIFACT DIRECTORY, not the project. A repo-root `.socraticodeignore`
+//      does not reach a subtree artifact at all; only ignore files INSIDE the
+//      artifact path do. Measured on 1.13.2, not inferred.
+//   3. Virtualenv directories found by marker (`pyvenv.cfg`, `conda-meta/`).
+// Layers 2 and 3 need a gitignore engine and a marker scan; this driver has no
+// dependencies and is not the place for either. That trade errs in the UNSAFE
+// direction — under-pruning invents findings, over-pruning only misses them —
+// so it is worth stating plainly rather than leaving to be rediscovered: a file
+// excluded by an artifact-local ignore file, or living in a virtualenv nested
+// inside an artifact, is still counted here and can still report a false
+// `stale`. That is the #235 shape, now confined to a case far rarer than the
+// build output layer 1 covers, and it is the one `stale` a reader should
+// dismiss rather than act on.
+function serverIgnoresEntry(name, relativePath) {
+  if (IGNORE_BASENAMES.has(name)) return true;
+  if (IGNORE_ANCHORED.has(relativePath)) return true;
+  return IGNORE_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
 function newestMtimeMs(target) {
   let newest = null;
   let budget = FRESHNESS_WALK_BUDGET;
-  const visit = (p, isDirectory) => {
+  const visit = (p, isDirectory, relativePath) => {
     let st;
     try { st = statSync(p); } catch { return; }
     if (newest === null || st.mtimeMs > newest) newest = st.mtimeMs;
@@ -470,35 +544,48 @@ function newestMtimeMs(target) {
       // replaces, which is the safe direction — a walk that gave up must not
       // manufacture a finding.
       if (budget-- <= 0) return;
-      // PARITY, not preference: this prune list mirrors the server's artifact
-      // walk — dist/services/context-artifacts.js (socraticode 1.12.0) globs
-      // `**/*` with `dot: false`, ignore ["**/node_modules/**", "**/.git/**"].
-      // Anything counted here that the server never embeds moves the
-      // freshness clock for content the artifact cannot contain: a
-      // `.pytest_cache/` rewritten by every test run reported a byte-identical
-      // artifact stale, with a named remedy that changes nothing (#235).
+      // PARITY with dist/services/context-artifacts.js: anything counted here
+      // that the server never embeds moves the freshness clock for content the
+      // artifact cannot contain — a `.pytest_cache/` rewritten by every test
+      // run reported a byte-identical artifact stale, with a named remedy that
+      // changes nothing (#235).
+      //
       // `dot: false` excludes dot-named entries at every depth — files too
       // (`.coverage`) — but NOT the artifact root: glob filters paths under
       // cwd, never cwd itself, so a dot-rooted artifact still embeds its plain
       // contents, and `visit(target, …)` below this closure stays unconditional
-      // to match. `__pycache__` is not a dotfile and is deliberately still
-      // counted — it really is embedded, and #229's measured case depends on
-      // that. Known residual: creating or deleting a dot entry still bumps its
+      // to match. The ignore chain is rooted the same way, so `relativePath`
+      // is measured from the artifact root and starts empty there.
+      //
+      // `__pycache__` used to be the one entry deliberately EXEMPT from this
+      // prune: it is not a dotfile, the glob's ignore list never named it, and
+      // through 1.12.x it really was embedded — #229 measured 32 of an
+      // artifact's 86 chunks as compiled bytecode. SocratiCode#117 put the
+      // full ignore chain behind the walk and `__pycache__`/`*.pyc` are in its
+      // defaults, so on 1.13.x the server embeds neither. Keeping the old
+      // exemption re-opened #235 through the single hole cut for it: a
+      // bytecode rewrite (a Python version bump, an edited migration) reports
+      // `stale`, and re-indexing cannot clear it, because the re-indexed
+      // content does not contain the file whose mtime moved (#270).
+      //
+      // Known residual: creating or deleting a pruned entry still bumps its
       // parent directory's own mtime, which stays counted because it is the
-      // only trace a deleted embedded file leaves. Pinned, both directions, in
+      // only trace a deleted embedded file leaves. See serverIgnoresEntry for
+      // the two chain layers this does not mirror. Pinned, both directions, in
       // tests/structural/test_context_artifact_parity.py.
-      if (e.name === 'node_modules' || e.name === '.git') continue;
       if (e.name.startsWith('.')) continue;
+      const childRelative = relativePath ? `${relativePath}/${e.name}` : e.name;
+      if (serverIgnoresEntry(e.name, childRelative)) continue;
       // Dirent flags come from lstat, so a symlink to a directory is a symlink
       // here and is never descended: no cycles, and no wandering out of the
       // artifact through a link into a tree nobody declared.
-      if (e.isDirectory()) visit(joinPath(p, e.name), true);
-      else if (e.isFile()) visit(joinPath(p, e.name), false);
+      if (e.isDirectory()) visit(joinPath(p, e.name), true, childRelative);
+      else if (e.isFile()) visit(joinPath(p, e.name), false, childRelative);
     }
   };
   let root;
   try { root = statSync(target); } catch { return null; }
-  visit(target, root.isDirectory());
+  visit(target, root.isDirectory(), '');
   return newest;
 }
 
@@ -1897,6 +1984,8 @@ export {
   parseEmbedPercent, parseArtifacts, graphReady,
   // declared ≠ indexed (#214), indexed ≠ fresh (#225)
   parseContextArtifacts, artifactIndexed, parseIndexedAt, newestMtimeMs,
+  // the transcribed half of the artifact-walk parity claim (#270)
+  SERVER_DEFAULT_IGNORE_PATTERNS,
   // graph yield (#107)
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   unresolvedFinding,
