@@ -216,7 +216,7 @@ produce it:**
 | `v<current server>` | the server measured and found nothing wrong — trust it |
 | `v<older> — STALE` | the graph predates the running resolvers; **rebuild before judging** |
 | `unknown (persisted before…)` | same, from a graph cut before the stamp existed |
-| *(line absent)* | server older than 1.13.0; fall back to edges/file |
+| *(line absent)* | server older than 1.13.0 — **or no built graph here at all**; fall back to edges/file |
 
 The middle two are the trap, and it is not hypothetical: a graph sitting at 37
 edges across 621 files looked like a resolver collapse for over a week and was

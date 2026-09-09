@@ -370,7 +370,7 @@ eq('a stale builder keeps the version that cut the graph',
   parseGraphBuilder(GRAPH_STALE_VERSION), { state: 'stale', builtBy: '1.12.0' });
 eq('a pre-1.13.0 server prints no line at all', parseGraphBuilder(GRAPH_OK),
   { state: 'absent', builtBy: null });
-// CR 2: the `v` must not be load-bearing. Dropping it is a cosmetic reformat;
+// #207: the `v` must not be load-bearing. Dropping it is a cosmetic reformat;
 // reading it as `unknown` would nag a current graph to rebuild every day.
 eq('a version with no `v` prefix is still a version',
   parseGraphBuilder('Built by: 1.13.1'), { state: 'current', builtBy: '1.13.1' });
@@ -383,7 +383,7 @@ eq('…while genuinely unreadable text is still unknown',
 // plus the case where it speaks.
 eq('the advisory rules when present', graphVerdict(GRAPH_ADVISORY).verdict, 'low');
 eq('…and it is the server that ruled', graphVerdict(GRAPH_ADVISORY).source, 'server');
-// CR 3: an advisory on a STALE graph judges the resolver that cut it, not the
+// #207: an advisory on a STALE graph judges the resolver that cut it, not the
 // running one. Still `low` — the measurement is real — but a rebuild may clear
 // it, so the reason must say so before the caller rewrites AGENTS.md.
 const ADVISORY_STALE = GRAPH_ADVISORY.replace(
@@ -418,7 +418,7 @@ eq('…but the disagreement is recorded rather than discarded',
   graphVerdict(ORPHAN_HEAVY).disagreement != null, true);
 eq('…and a repo with nothing to disagree about records nothing',
   graphVerdict(GRAPH_REBUILT).disagreement, null);
-// CR 1: the tripwire must survive the composed gate. Every assertion above about
+// #207: the tripwire must survive the composed gate. Every assertion above about
 // an unreadable status tests `graphYield`, which is exactly why the regression
 // this pins was invisible — the composed verdict is what health-check reports.
 const GRAPH_RELABELLED = `Status: READY

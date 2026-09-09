@@ -726,7 +726,7 @@ function graphVerdict(text) {
     // rebuild may clear it — so the finding must not send the caller straight
     // to variant B, which rewrites AGENTS.md to route every dependency question
     // to grep. That is the same mistake as trusting our floor over the server,
-    // arriving from the advisory side instead (CR 3).
+    // arriving from the advisory side instead (#207).
     const predatesServer = builder.state === 'stale' || builder.state === 'unknown';
     return {
       ...out,
@@ -764,11 +764,18 @@ function graphVerdict(text) {
         + `which built this graph at v${builder.builtBy}, reported no import-resolution `
         + 'problem — expected on an orphan-heavy repo; the server\'s ratio is the better measure';
     }
+    // Worded as an absence of reported trouble, never as a positive
+    // certificate. The server suppresses its advisory below 20 captured
+    // imports, so on a small repo — exactly where `local.verdict` is already
+    // `unknown` for too-few-files — its silence proves nothing, and "the
+    // builder found no problem" would claim more than it said (#207).
     return {
       ...out,
       verdict: 'ok',
       source: 'server',
-      reason: `no import-resolution advisory from the v${builder.builtBy} builder that cut this graph`,
+      reason: `the v${builder.builtBy} builder that cut this graph reported no `
+        + 'import-resolution problem'
+        + (local.verdict === 'unknown' ? `, though ${local.reason}` : ''),
     };
   }
 
@@ -1530,7 +1537,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         // Both halves of the local reading, not just its verdict: when the
         // server ruled, `reason` above is the server's, and without this the
         // JSON no longer records what our own arithmetic actually measured
-        // (`disagreement` carries it only in the `low` case) (CR 5).
+        // (`disagreement` carries it only in the `low` case) (#207).
         localVerdict: y.verdict,
         localReason: y.reason,
         builder: v.builder,
