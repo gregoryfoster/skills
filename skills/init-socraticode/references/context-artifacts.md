@@ -43,9 +43,11 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest "<PROJECT_PATH>"
 - **`path` must be a literal file or directory that exists.** The server
   `stat()`s it; **globs do not work** — `docs/plans/**/*.md` is `stat()`'d
   verbatim and errors with *"path is neither a file nor a directory."*
-- **A directory path indexes every file under it, recursively** (dotfiles,
-  `node_modules`, and `.git` skipped). This is how one artifact covers a
-  multi-file category — point at `./docs/plans/`, not a glob.
+- **A directory path indexes the files under it, recursively** — minus what the
+  ignore chain drops, which since 1.13 is far more than the dotfiles and
+  `node_modules`/`.git` this bullet used to name; see **Field notes**. This is
+  how one artifact covers a multi-file category — point at `./docs/plans/`, not
+  a glob.
 - **One file per artifact otherwise.** To cover two unrelated files (e.g.
   `.env.example` and `pyproject.toml`), write two entries — each then carries a
   description specific to that file instead of a blended one.
@@ -121,8 +123,11 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 - **`path` is one literal file or directory — never a glob or array.** Point a
   category with many files at its **directory** (`./docs/plans/`); the server
   walks it recursively. Prefer a specific subtree (`./alembic/versions/`) over a
-  broad top-level dir — a directory artifact pulls *every* file under it,
-  including any vendored deps that live there, and inflates index time.
+  broad top-level dir — a directory artifact pulls in everything under it the
+  ignore chain does not drop, and inflates index time. The chain's defaults
+  cover `node_modules/` and `vendor/`, but not a tree named anything else
+  (`third_party/`, `external/`, a checked-in SDK), so scoping is still the
+  lever that does not depend on guessing the name right.
 - **A directory artifact runs the ignore chain — rooted at the ARTIFACT
   directory, not the repo.** Since socraticode **1.13** (`SocratiCode#117`) the
   walk in `dist/services/context-artifacts.js` puts every file through
