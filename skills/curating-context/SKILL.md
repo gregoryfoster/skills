@@ -134,8 +134,9 @@ tokenizer for Claude models, and **free to call**. Never `tiktoken`: OpenAI's
 tokenizer undercounts Claude badly.
 
 **Be on a branch before you run this.** It is the run's first write to a tracked
-file; an aborted run leaves a modified ledger on the branch you started from. A `--file`/`--docs-dir` run never writes the calibration
-files; `--calibrate` does (#263).
+file; an aborted run leaves a modified ledger on the branch you started from. A
+`--file`/`--docs-dir` run never writes the calibration files; `--calibrate` does
+(#263).
 
 `--baseline` appends a measurement-only row for the surface **as found**.
 Without it the scored run is the one that can never be scored, and the
