@@ -657,11 +657,15 @@ ANY_HEADING = re.compile(r"^#{1,6}\s")
 # surface writes `](references/X.md)` against a `--docs-dir skills/x/references`.
 # They are the same string in the canonical shape, so nothing widens there.
 #
-# The TARGET is what is erased, so the residual is a line whose link TEXT also
-# spells the path — `- [docs/KNOBS.md](docs/KNOBS.md)`, which a demotion rewrites
-# on both sides. That line still does not compare equal, here or in
-# prove-no-loss.sh, and whole-line matching is what both are paid for; a
-# relocation carrying one is found through the other lines in its block.
+# The same prefix is erased in the link TEXT, not only in the target, because a
+# link whose text spells the path — `- [docs/KNOBS.md](docs/KNOBS.md)` — has it
+# rewritten on BOTH sides by a demotion. Erasing one half was the CR 2 residual,
+# accepted on the reasoning that other lines in the block would carry the
+# relocation; this repo's own Detail Docs convention falsifies that, since every
+# line of the list has that shape and the whole block is invisible (CR 11).
+# Narrower than it looks: only the docs root is erasable, so `[the knob
+# inventory]` and `[lib/KNOBS.md]` are both untouched, and two different link
+# TEXTS pointing at one target still differ.
 def _erasable_prefixes(docs, pol):
     seen = []
     for cand in (docs, os.path.relpath(docs, os.path.dirname(pol) or ".")):
@@ -674,9 +678,10 @@ def _erasable_prefixes(docs, pol):
 
 
 _reloc_roots = _erasable_prefixes(docs_dir, policy_rel) if docs_dir else []
-LINK_ROOT = (re.compile(r"\]\((?:"
-                        + "|".join(re.escape(r) for r in _reloc_roots) + r")/")
-             if _reloc_roots else None)
+_roots_alt = "|".join(re.escape(r) for r in _reloc_roots)
+LINK_ROOT = re.compile(r"\]\((?:" + _roots_alt + r")/") if _reloc_roots else None
+LINK_TEXT_ROOT = (re.compile(r"\[(?:" + _roots_alt + r")/")
+                  if _reloc_roots else None)
 
 
 def body_keys(lines):
@@ -694,6 +699,7 @@ def body_keys(lines):
         k = LINK_DEPTH.sub("](", s)
         if LINK_ROOT is not None:
             k = LINK_ROOT.sub("](", k)
+            k = LINK_TEXT_ROOT.sub("[", k)
         floor = RELOC_MIN_CHARS_FENCED if fenced else RELOC_MIN_CHARS
         if len(k) >= floor:
             out.setdefault(k, s)

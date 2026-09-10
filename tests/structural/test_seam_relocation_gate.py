@@ -457,6 +457,60 @@ class TestADemotedLinkIsContentToo:
         assert "source-back-reference" in r.stdout, r.stdout
         assert "src/knobs.py:1" in r.stdout, r.stdout
 
+    def test_a_link_whose_text_spells_the_path_is_erased_too(self, tmp_path: Path):
+        """CR 11: the prefix a demotion strips appears in BOTH brackets when the
+        link text is the path — `- [docs/KNOBS.md](docs/KNOBS.md)` — which is
+        this repo's own Detail Docs convention.
+
+        CR 2 erased the target half and accepted the rest on the reasoning that
+        other lines in the block would carry the relocation. Every line of a link
+        list has this shape, so the whole block was invisible.
+        """
+        repo = tmp_path / "pathastext"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Detail Docs\n\nThe surface is indexed here.\n\n"
+            "- [docs/KNOBS.md](docs/KNOBS.md) — every .skills/ file\n"
+            "- [docs/STYLE.md](docs/STYLE.md) — the gate-script rules\n",
+        )
+        _write(repo, "src/knobs.py", '"""The inventory is in AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Detail Docs\n\nIndexed in [docs/INDEX.md](docs/INDEX.md).\n",
+        )
+        _write(
+            repo,
+            "docs/INDEX.md",
+            "# Index\n\n- [KNOBS.md](KNOBS.md) — every .skills/ file\n"
+            "- [STYLE.md](STYLE.md) — the gate-script rules\n",
+        )
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "src/knobs.py:1" in r.stdout, r.stdout
+
+    def test_two_link_texts_to_one_target_still_differ(self, tmp_path: Path):
+        """Only the ROOT is erasable, in either bracket. A rewritten link text is
+        a real difference and the predicate must keep seeing it, or the erasure
+        becomes a blanket that calls any two links equal."""
+        repo = self._repo(tmp_path, "textrewritten")
+        _write(
+            repo,
+            "docs/INDEX.md",
+            "# Index\n\n- [knobs](KNOBS.md) — every .skills/ file\n"
+            "- [style](STYLE.md) — the gate-script rules\n",
+        )
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+        assert "not swept" in r.stdout, r.stdout
+
     def test_a_repointed_link_is_still_a_difference(self, tmp_path: Path):
         """Only the docs ROOT is erasable. `](lib/KNOBS.md)` is a repoint, not
         the prefix a sanctioned move removes, so the line does not compare equal
