@@ -612,15 +612,47 @@ class TestTheCadenceReportsEveryRowItMeasured:
         )
         assert out.strip() == "", out
 
-    def test_a_row_with_no_budget_is_reported_rather_than_raised(self, tmp_path: Path):
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {"path": "AGENTS.md", "tokens": 9, "over_budget": False},
+            {"path": "AGENTS.md", "budget": 6000, "over_budget": True},
+        ],
+        ids=["no budget", "no token count"],
+    )
+    def test_a_row_missing_a_number_is_reported_rather_than_raised(
+        self, tmp_path: Path, row: dict
+    ):
         """A rolled-back .skills/skills-pin leaves scripts older than the
         workflow they render. An exception here would take the seam and count
-        warnings below it down with the step."""
-        out = _run_drift(
-            tmp_path,
-            {"policy": {"path": "AGENTS.md", "tokens": 9, "over_budget": False}},
+        warnings below it down with the step — so the filter has to cover EVERY
+        key the loops go on to read, not one of the three. Guarding `budget`
+        alone left `r["tokens"]` to raise `KeyError` and exit the step 1, which
+        is the failure the guard was written to prevent (CR 2)."""
+        out = _run_drift(tmp_path, {"policy": row})
+        assert "carry no budget or token count" in out, out
+        assert "install-cadence.sh" in out, out
+
+    def test_the_warnings_below_the_report_survive_a_malformed_row(
+        self, tmp_path: Path
+    ):
+        """The blast radius, not just the row. The seam and count warnings are
+        printed by shell AFTER the python, so a raise inside it takes them with
+        it — and those are the two findings a scheduled run most often has."""
+        step = _drift_step(tmp_path)
+        ctx = tmp_path / "ctx.json"
+        ctx.write_text(json.dumps({"policy": {"path": "AGENTS.md", "budget": 6000}}))
+        r = subprocess.run(
+            ["bash", "-e", "-c", step.replace("/tmp/ctx.json", str(ctx))],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env={**_clean_env(), "SEAMS": "2", "COUNTS": "1"},
+            timeout=30,
         )
-        assert "carry no budget" in out and "install-cadence.sh" in out, out
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "2 unacknowledged cross-reference seam(s)" in r.stdout, r.stdout
+        assert "1 unjudged count(s)" in r.stdout, r.stdout
 
     def test_the_report_survives_a_measurement_with_no_docs_key(self, tmp_path: Path):
         out = _run_drift(tmp_path, {"policy": self._row("AGENTS.md", 7000, 6000)})

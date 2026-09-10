@@ -926,15 +926,16 @@ jobs:
           import json, sys
 
           d = json.load(open(sys.argv[1]))
-          # Every live doc as well as the policy file — the tiers, and why the
-          # second is quieter, are in cadence.md (#273).
+          # Every live doc, not the policy file alone. Both tiers, and why the
+          # second is quieter: cadence.md (#273).
           rows = [r for r in [d["policy"], *(d.get("docs") or [])]
-                  if isinstance(r, dict) and r.get("budget")]
+                  if isinstance(r, dict) and r.get("budget")
+                  and isinstance(r.get("tokens"), int)]
 
 
           def num(r):
-              # A precise count is a claim a row this run only ESTIMATED cannot
-              # make; the number is marked, not the row dropped (#123).
+              # A precise count is a claim an ESTIMATED row cannot make; the
+              # number is marked, not the row dropped (#123).
               s = r.get("tokens_source")
               if s == "exact":
                   return str(r["tokens"]), ""
@@ -953,12 +954,13 @@ jobs:
                   print(f"::notice::{r['path']} is approaching its budget: {n} tokens of "
                         f"{r['budget']}, {r['budget'] - r['tokens']} left{est}. Not over — "
                         f"the cheap moment to decide where the next section goes.")
-          # No budget on a row means older scripts than this workflow.
+          # Older scripts than this workflow; every key read below the filter
+          # is filtered on, so no row can raise past it.
           skipped = 1 + len(d.get("docs") or []) - len(rows)
           if skipped:
-              print(f"::warning::{skipped} measured row(s) carry no budget — the scripts "
-                    f"that measured are older than this workflow, so their budget "
-                    f"position went unreported. Re-run install-cadence.sh.")
+              print(f"::warning::{skipped} measured row(s) carry no budget or token count, "
+                    f"so their budget position went unreported — the measuring scripts are "
+                    f"older than this workflow. Re-run install-cadence.sh.")
           PY
           if [ "\${COUNTS:-0}" -gt 0 ]; then
             echo "::warning::\$COUNTS unjudged count(s) or over-long index line(s). Run \\\`curate context\\\`."
