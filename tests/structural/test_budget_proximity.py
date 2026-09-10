@@ -388,7 +388,17 @@ class TestMeasureReportsBothTiersOnEveryRow:
         (repo / KNOB).write_text("80\n")
         assert _measure(repo)["policy"]["near_budget"] is True
 
-    @pytest.mark.parametrize("value", ["0", "101", "9x"])
+    def test_the_flag_moves_the_band(self, tmp_path: Path):
+        """The knob file was pinned and the flag only ever tested for refusal,
+        so the flag's EFFECT was unpinned: a resolution line wired to the wrong
+        variable — the likeliest slip in the block this added — passed the whole
+        suite (CR 5)."""
+        repo = _repo(tmp_path)
+        _tokens(repo / "AGENTS.md", 5000)
+        assert _measure(repo)["policy"]["near_budget"] is False
+        assert _measure(repo, "--proximity-pct", "80")["policy"]["near_budget"] is True
+
+    @pytest.mark.parametrize("value", ["0", "101", "9x", "99999999999999999999"])
     def test_a_malformed_flag_is_refused_outright(self, tmp_path: Path, value: str):
         """The other half of #126's rule: a knob FILE degrades, because a repo
         should not fail to measure over an annotation, but a FLAG is a typo and
@@ -508,6 +518,31 @@ class TestTheReviewDeltaMarksTheBand:
         _git(repo, "commit", "-qm", "init")
         _tokens(repo / "AGENTS.md", 7000)
         assert _delta_rows(repo)["AGENTS.md"] == "OVER by 1000"
+
+    def test_the_flag_moves_the_band(self, tmp_path: Path):
+        """The delta's --proximity-pct had no coverage of any kind (CR 5). It
+        degrades rather than refusing an out-of-range value, unlike
+        measure-context.sh's: this script is called from four gather-context.sh
+        files and must never fail a review."""
+        repo = _repo(tmp_path)
+        _tokens(repo / "AGENTS.md", 1000)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _tokens(repo / "AGENTS.md", 4200)  # 70% of the 6000 budget
+        assert _delta_rows(repo)["AGENTS.md"] == "ok (1800 headroom)"
+        rows = _delta_rows(repo, "--proximity-pct", "70")
+        assert rows["AGENTS.md"] == "NEAR (1800 headroom)", rows
+
+    def test_an_out_of_range_flag_never_fails_the_review(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        _tokens(repo / "AGENTS.md", 1000)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+        _tokens(repo / "AGENTS.md", 5500)
+        # Degraded to the 90 default, and the row still printed.
+        assert _delta_rows(repo, "--proximity-pct", "101")["AGENTS.md"] == (
+            "NEAR (500 headroom)"
+        )
 
     def test_quiet_mode_speaks_for_a_parked_near_file(self, tmp_path: Path):
         """--quiet used to mean "over budget or growing". A doc parked at 99%
