@@ -138,7 +138,9 @@ What it reports, in four classes:
                    unconditionally buries the class in hundreds of those. Two
                    things count as content leaving: a section title that is gone,
                    and a body line that is gone from the policy file and present
-                   under --docs-dir. The second is a DEMOTION out of a section
+                   under --docs-dir — counted at 24+ characters, 8+ inside a
+                   fence, so a coincidence between two short lines cannot open
+                   the sweep. The second is a DEMOTION out of a section
                    that survives — the commonest shape there is, and invisible to
                    a title check, which skipped 157 source files while reporting
                    that nothing had left (#272). It turns on the filename half
@@ -909,8 +911,10 @@ else:
     # the policy file" — was the thing that talked a run out of checking by
     # hand on a curation that had relocated a diagram (#272).
     print(f"note: {len(src)} tracked source file(s) not swept — no section "
-          "title left the policy file since --base and no body line relocated "
-          "into the docs tree, so a mention there is not fallout from this run.")
+          "title left the policy file since --base, and no body line of "
+          f"{RELOC_MIN_CHARS}+ characters ({RELOC_MIN_CHARS_FENCED}+ inside a "
+          "fence) relocated into the docs tree, so a mention there is not "
+          "fallout from this run.")
 if new:
     print(f"{len(new)} seam(s) to review — each needs a decision, not "
           "necessarily a fix:\n")
