@@ -623,6 +623,13 @@ def doc_lines(path):
 # a real demotion; wrong low, it opens on a coincidence and a tooling repo
 # answers with ~500 hits. Only the first failure is silent — which is why the
 # fenced floor is the lower one, and why this one is not lower still (CR 3).
+# Frontmatter is NOT stripped, where prove-no-loss.sh strips it on both sides
+# (#136: Phase 7 requires bumping `version`, whose old value then exists
+# nowhere). Safe here and only here, because this predicate asks whether a line
+# reached the DOCS TREE and a metadata key has no referent there to reach: a
+# changed `version:` lands in no reference doc, so it can neither open the sweep
+# nor keep it shut. Said out loud because two implementations of one predicate
+# are how the next reader fixes the wrong one (CR 8).
 RELOC_MIN_CHARS = 24
 RELOC_MIN_CHARS_FENCED = 8
 FENCE = re.compile(r"^\s*(?:```|~~~)")
