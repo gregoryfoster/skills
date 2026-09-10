@@ -608,6 +608,19 @@ def doc_lines(path):
 # thing, where sixteen characters of a sentence name nothing. 8 is borrowed from
 # prove-no-loss.sh's WARRANT_MIN_CHARS, which draws the same line for the same
 # reason — short enough that matching one line today is luck.
+#
+# 24 is a JUDGEMENT, and what measurement there is says so rather than the
+# reverse. Replayed over this repo's own history at floors 0, 8, 16, 24 and 40,
+# every floor returns the same ANSWER: 0 relocations across four intervals that
+# curated nothing (HEAD~5, HEAD~10, HEAD~30, 4e6904b~1) and 82-88 across the real
+# curation at 88d3a98, where even floor 0 raised no coincidence. So no value in
+# that range is distinguishable on the data available, and the number is stated
+# as a direction instead of a threshold: above it a prose line carries a whole
+# claim, below it sit the fragments a prune deletes outright and the short
+# commands two files may legitimately share. Wrong high, the sweep stays shut on
+# a real demotion; wrong low, it opens on a coincidence and a tooling repo
+# answers with ~500 hits. Only the first failure is silent — which is why the
+# fenced floor is the lower one, and why this one is not lower still (CR 3).
 RELOC_MIN_CHARS = 24
 RELOC_MIN_CHARS_FENCED = 8
 FENCE = re.compile(r"^\s*(?:```|~~~)")
