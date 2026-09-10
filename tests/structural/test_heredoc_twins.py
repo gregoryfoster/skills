@@ -1,7 +1,7 @@
 """Python shared by copying between heredocs must stay one definition (#275).
 
 Every line of Python in `skills/curating-context/scripts/` lives inline in a
-`python3 - <<'PY'` heredoc — eleven blocks across eight scripts — so there is no
+`python3 - <<'PY'` heredoc — twelve blocks across eight scripts — so there is no
 module to import and a helper two scripts both need is copied between them.
 The copies drift. `_erasable_prefixes` was copied under #272 and had diverged
 textually before the day was out; `FENCE` existed three times in two spellings
