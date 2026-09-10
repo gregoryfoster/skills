@@ -143,8 +143,11 @@ endpoint it has. Environment only: the secrets file is parsed for
 `ANTHROPIC_API_KEY` and nothing else. Treat it as part of the credential, since
 it decides where the credential is **sent** — a stale value returns `invalid
 x-api-key` from a proxy that never saw your account, which reads exactly like an
-expired key. `--check-credential` names the host in all three answers when it is
-set, and says nothing when it is not.
+expired key. Both surfaces name the host when it is set and stay silent when it
+is not — `--check-credential` in all three of its answers, `--exact` in the WARN
+of any count that fails — and both print scheme, host and port only, so a token
+in the URL does not reach a log. A value that cannot be parsed is exit 2, not a
+credential verdict.
 
 ### The Phase 0 preflight, in full
 
