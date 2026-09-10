@@ -329,21 +329,27 @@ class TestARefusedCredentialIsNotOk:
 
 
 class TestUnreachableIsNotRefused:
-    def test_a_closed_endpoint_is_exit_2(self, repo: Path, tmp_path: Path):
+    def test_a_refused_connection_is_exit_2(self, repo: Path, tmp_path: Path):
         """An offline or sandboxed runner must not be told its billing lapsed.
         The operator's next action differs, so the exit code does too: 2 is this
         script's infrastructure failure, 3 is 'fix your credential'."""
         env = _no_ant(tmp_path, _clean_env())
         env["ANTHROPIC_API_KEY"] = KEY
-        with _Stub() as stub:
-            closed = stub.url  # bound, then released on exit — nothing listens
-        env["ANTHROPIC_BASE_URL"] = closed
+        # A privileged port nothing listens on. Taking a port from a
+        # started-then-stopped stub leaves a window in which another listener
+        # can claim it and answer, failing this as a refusal rather than as
+        # unreachable — rarely, and never reproducibly. Binding one without
+        # listening closes that window but costs ~8s on macOS, where the SYN is
+        # dropped rather than reset. Port 1 needs root to bind, so no test
+        # process can occupy it, and the connect is refused in ~10ms.
+        refused = "http://127.0.0.1:1"
+        env["ANTHROPIC_BASE_URL"] = refused
         r = _run(repo, env)
         assert r.returncode == 2, r.stdout + r.stderr
         assert "could not reach" in r.stderr
         assert "REFUSED" not in r.stderr
         assert KEY not in r.stdout + r.stderr
-        assert closed in r.stderr, "the failure does not say what could not be reached"
+        assert refused in r.stderr, "the failure does not say what could not be reached"
 
 
 class TestTheJwtProfile:
