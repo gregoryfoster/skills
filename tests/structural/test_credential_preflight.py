@@ -95,7 +95,17 @@ def _without_python3(tmp_path: Path, env: dict) -> dict:
         d = Path(directory)
         if not d.is_dir():
             continue
-        for entry in d.iterdir():
+        try:
+            entries = list(d.iterdir())
+        except OSError:
+            # An unreadable PATH entry raises PermissionError here rather than
+            # yielding nothing, which errored this case instead of failing it
+            # — on a machine whose PATH happens to include one restricted
+            # directory, over a helper whose whole point is indifference to
+            # what PATH contains. The symlink below was already guarded; the
+            # scan that reaches it was not.
+            continue
+        for entry in entries:
             if entry.name.startswith("python"):
                 continue
             link = stub / entry.name
