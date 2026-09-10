@@ -439,19 +439,25 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   # trailing space that leaves would otherwise sit between the message and the
   # period a reader expects.
   _why="$(tr '\n' ' ' <"$_probe/err" | sed 's/ *$//')"
+  # Name the host whenever it is not the API's own. ANTHROPIC_BASE_URL redirects
+  # where the credential is SENT, so a stale one turns into "invalid x-api-key"
+  # from a proxy — a credential verdict about a host the reader did not know was
+  # in play. Silent on the default, so the ordinary line stays short.
+  _at=""
+  [ -n "${ANTHROPIC_BASE_URL:-}" ] && _at=" at $ANTHROPIC_BASE_URL"
   if [ "$_rc" -eq 0 ]; then
-    echo "ok: $CRED_DESC, accepted by count_tokens for $MODEL"
+    echo "ok: $CRED_DESC, accepted by count_tokens for $MODEL$_at"
     exit 0
   fi
   if [ "$_rc" -eq 1 ]; then
-    echo "no: $CRED_DESC resolved, and count_tokens REFUSED it for $MODEL." >&2
+    echo "no: $CRED_DESC resolved, and count_tokens$_at REFUSED it for $MODEL." >&2
     echo "    The endpoint said: $_why" >&2
     echo "    Resolve this BEFORE starting the run; in autonomous mode, abort." >&2
     echo "    Every later phase would otherwise do its work and record-telemetry.sh" >&2
     echo "    would refuse the row at the end." >&2
     exit 3
   fi
-  echo "ERROR could not reach count_tokens to test $CRED_DESC: $_why" >&2
+  echo "ERROR could not reach count_tokens$_at to test $CRED_DESC: $_why" >&2
   echo "      That is a verdict on the network, not on the credential — an offline" >&2
   echo "      or sandboxed runner reaches this line with a perfectly good key, so" >&2
   echo "      it exits 2 (infrastructure) rather than 3 (fix your credential)." >&2

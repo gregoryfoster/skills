@@ -210,6 +210,10 @@ class TestTheProbeIsMade:
         assert "environment" in r.stdout
         assert KEY not in r.stdout + r.stderr  # never the value
         assert len(stub.requests) == 1, "the preflight did not call the endpoint"
+        # ANTHROPIC_BASE_URL decides where the credential is SENT, so a verdict
+        # that does not name the host is a verdict about something the reader
+        # cannot see.
+        assert stub.url in r.stdout
 
     def test_the_probe_costs_one_character_at_the_run_s_model(
         self, repo: Path, tmp_path: Path
@@ -266,6 +270,7 @@ class TestARefusedCredentialIsNotOk:
         assert not r.stdout.startswith("ok")
         assert "credit balance is too low" in r.stderr
         assert KEY not in r.stdout + r.stderr
+        assert stub.url in r.stderr, "the refusal does not say which host refused"
 
     def test_the_endpoint_s_own_words_are_quoted(self, repo: Path, tmp_path: Path):
         """`error.message` is more actionable than anything this script could
@@ -332,6 +337,7 @@ class TestUnreachableIsNotRefused:
         assert "could not reach" in r.stderr
         assert "REFUSED" not in r.stderr
         assert KEY not in r.stdout + r.stderr
+        assert closed in r.stderr, "the failure does not say what could not be reached"
 
 
 class TestTheJwtProfile:

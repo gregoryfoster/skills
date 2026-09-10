@@ -136,6 +136,20 @@ credit balance blocks the whole API including free endpoints, which surfaces as 
 Anthropic API") rather than just the status line, falling back to the raw body
 when the shape is unfamiliar.
 
+### Pointing the count somewhere else
+
+`ANTHROPIC_BASE_URL` — the Anthropic SDK's own knob — replaces
+`https://api.anthropic.com` for every `count_tokens` call the scripts make,
+which is what lets a repo behind a gateway or proxy count against the endpoint
+it actually has. It is read from the environment only; the repo-root secrets
+file is parsed for `ANTHROPIC_API_KEY` and nothing else.
+
+Treat it as part of the credential, because it decides where the credential is
+**sent**: a stale value returns `invalid x-api-key` from a proxy that never saw
+your account, which reads exactly like an expired key. `--check-credential`
+therefore names the host in all three of its answers whenever this is set, and
+stays silent about it when it is not.
+
 ### The Phase 0 preflight, in full
 
 One command, before anything else. Exit 0 means `--exact` will work — it asks
