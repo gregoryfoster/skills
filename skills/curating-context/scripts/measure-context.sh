@@ -516,13 +516,24 @@ if [ "$CHECK_CRED" -eq 1 ]; then
     # Split the status this script rendered from the words the endpoint chose.
     # "The endpoint said: HTTP 400: ..." attributed the prefix to the endpoint,
     # and the whole argument for quoting error.message is that its wording is
-    # what to trust. `#*: ` takes the SHORTEST match, so a message containing
-    # ": " survives intact; an unrecognised shape falls through with _said as
+    # what to trust. `#*:` takes the SHORTEST match, so a message containing a
+    # colon survives intact; an unrecognised shape falls through with _said as
     # the entire line, which loses precision rather than content.
+    #
+    # Matching on ":" and trimming, rather than on ": ", is what handles an
+    # EMPTY error.message. `HTTP 401:` with nothing after it failed the ": "
+    # pattern, so the whole line fell through and was quoted as the endpoint's
+    # words — the misattribution above, rebuilt for one input inside its own
+    # fix. An endpoint that said nothing is now reported as having said nothing.
     _code=""
     _said="$_why"
     case "$_why" in
-      "HTTP "*": "*) _code="${_why%%:*}"; _said="${_why#*: }" ;;
+      "HTTP "*":"*)
+        _code="${_why%%:*}"
+        _said="${_why#*:}"
+        _said="${_said# }"
+        [ -n "$_said" ] || _said="(no message in the response body)"
+        ;;
     esac
     echo "no: $CRED_DESC resolved, and count_tokens$_at REFUSED it for $MODEL${_code:+ ($_code)}." >&2
     echo "    The endpoint said: $_said" >&2

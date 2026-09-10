@@ -309,6 +309,38 @@ class TestARefusedCredentialIsNotOk:
         assert "The endpoint said: invalid x-api-key" in r.stderr
         assert "The endpoint said: HTTP" not in r.stderr
 
+    def test_an_empty_error_message_is_reported_as_empty(
+        self, repo: Path, tmp_path: Path
+    ):
+        """The status still lands; the quotation says the body carried nothing.
+
+        `HTTP 401:` with nothing after it used to fail the split and be quoted
+        whole, putting the status back inside the endpoint's words for exactly
+        the input the split was added to handle.
+        """
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        with _Stub(status=401, payload=_refusal("")) as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _run(repo, env)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "(HTTP 401)" in r.stderr
+        assert "The endpoint said: HTTP" not in r.stderr
+        assert "no message in the response body" in r.stderr
+
+    def test_a_message_containing_a_colon_survives_the_split(
+        self, repo: Path, tmp_path: Path
+    ):
+        """The shortest match, so the split cannot eat half the message."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        message = "model: claude-nope-9: not found"
+        with _Stub(status=404, payload=_refusal(message)) as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _run(repo, env)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert f"The endpoint said: {message}" in r.stderr
+
     def test_a_key_from_the_secrets_file_is_probed_too(
         self, repo: Path, tmp_path: Path
     ):
