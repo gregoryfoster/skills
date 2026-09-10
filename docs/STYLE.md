@@ -153,3 +153,16 @@ back, so it shows up as state that never changed rather than as an error
 ([#193](https://github.com/gregoryfoster/skills/issues/193)). Both are gated by
 `test_checked_temp_writes.py`; a deliberate one is allowed but must say so, with
 `# unchecked-write-ok: <reason>` on the line or just above it
+
+## Inline Python shared by copying must stay one definition
+
+Every line of Python in `skills/curating-context/scripts/` lives inline in a `python3 - <<'PY'` heredoc — eleven blocks across eight scripts — so there is no module to import, and a helper two scripts both need is **copied** between them. The copies drift. `_erasable_prefixes` was copied under [#272](https://github.com/gregoryfoster/skills/issues/272) and had diverged textually before the day was out; `FENCE` existed three times in two spellings with two behaviours, `HEADING` three times in three. Three of those scripts gate one phase chain over the same file and each puts a count on the same telemetry row, and two of them disagreed about where a fenced block ends ([#275](https://github.com/gregoryfoster/skills/issues/275)).
+
+Two pins, chosen by what can be exercised:
+
+- **By behaviour**, where the rule has an end-to-end observable — `TestCurationRuleIsOneRule` feeds one mixed ledger through `is_curation_row` in two scripts and `classify_run` in a third and requires one answer; `test_fence_close.py` and `test_seam_relocation_gate.py` do the same for a stray `~~~` inside a ``` block. This is the stronger pin and the one to add when a twin's behaviour can be driven from outside.
+- **By syntax**, for everything — [tests/structural/test_heredoc_twins.py](../tests/structural/test_heredoc_twins.py) discovers every top-level function and `re.compile` constant defined in more than one heredoc and requires each set to be one definition. Compared as an AST with docstrings dropped, so a comment or a docstring written for its own file is not drift, and a renamed parameter or a respelled condition is.
+
+A difference that is **deliberate** goes in that file's `DELIBERATE` table with its reason — the one entry today is `check-seams.sh`'s `HEADING`, which starts at `##` because a document title is not a section — and the table is itself checked: an entry whose twin no longer differs fails, so it cannot go stale the way an acknowledgement file would. The discovery has a vacuity guard naming the twins known to exist, because a parser that quietly matched nothing would pass every other assertion, which is the failure #272's own review met twice.
+
+What this does **not** do is deduplicate anything. Extracting a shared `_context_py.py` beside `_context-lib.sh` is the thorough fix and a convention change for every script in the family; it is written up as option 3 on #275 and stays open. Until then, a helper needed in a second script is copied verbatim, the copy names its twin in a comment, and the suite holds them together.
