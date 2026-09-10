@@ -235,8 +235,16 @@ done
 # degrades a knob FILE outside that range to the default with a WARN, because a
 # repo should not fail to measure over an annotation; a flag is a typo and is
 # refused, so the run never measures against a tier nobody asked for (#126).
+# Four digits or more is caught by the PATTERN, ahead of the comparison: `[`
+# evaluates as a 64-bit integer, so past that range it does not compare but
+# fails — bash's own "integer expression expected", twice, and then the `if`
+# falls through to the else branch and the run continues against a percentage
+# it just declined to check. A flag out of range exited 0 (CR 1).
 case "$PROXIMITY_OVERRIDE" in
   '') ;;
+  [0-9][0-9][0-9][0-9]*)
+    echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY_OVERRIDE')" >&2
+    exit 1 ;;
   *) if [ "$PROXIMITY_OVERRIDE" -lt 1 ] || [ "$PROXIMITY_OVERRIDE" -gt 100 ]; then
        echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY_OVERRIDE')" >&2
        exit 1

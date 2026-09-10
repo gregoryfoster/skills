@@ -306,12 +306,23 @@ ctx_proximity_pct() {
   # failure #273 exists to remove; at 0 every file on the surface is "near" and
   # the tier is noise nobody reads. Either way the run says which value it
   # declined rather than behaving as though nobody configured anything.
-  local root="$1" override="${2-}" v
+  local root="$1" override="${2-}" v raw
   v="$(ctx_read_num_knob "$override" "${CONTEXT_PROXIMITY_PCT-}" \
     "$root/.skills/context-proximity-pct" "$CTX_PROXIMITY_DEFAULT_PCT")"
-  if [ "$v" -lt 1 ] || [ "$v" -gt 100 ]; then
-    printf 'WARN proximity percentage %s is outside the 1-100 band (CONTEXT_PROXIMITY_PCT, %s) — using %s\n' \
-      "$v" "$root/.skills/context-proximity-pct" "$CTX_PROXIMITY_DEFAULT_PCT" >&2
+  # Kept for the message. A warning that quotes "" instead of the value someone
+  # actually wrote sends them looking for an empty file.
+  raw="$v"
+  # Four digits or more is rejected as GRAMMAR, before any arithmetic. A
+  # percentage never has them, and `[` evaluates its operands as 64-bit
+  # integers: past that range it does not compare, it fails — printing bash's
+  # own "integer expression expected" twice, taking the else branch, and
+  # leaving the unusable value in place with the warning below unreached. The
+  # check written to stop the tier turning itself off was the way to turn it
+  # off (CR 1).
+  case "$v" in [0-9][0-9][0-9][0-9]*) v="" ;; esac
+  if [ -z "$v" ] || [ "$v" -lt 1 ] || [ "$v" -gt 100 ]; then
+    printf 'WARN proximity percentage "%s" is outside the 1-100 band (CONTEXT_PROXIMITY_PCT, %s) — using %s\n' \
+      "$raw" "$root/.skills/context-proximity-pct" "$CTX_PROXIMITY_DEFAULT_PCT" >&2
     v="$CTX_PROXIMITY_DEFAULT_PCT"
   fi
   printf '%s' "$v"

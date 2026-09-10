@@ -77,9 +77,16 @@ done
 # silently: above 100 the proximity band is empty and the tier turns itself off,
 # at 0 every file is in it. Writing either into the knob file would install a
 # guard that looks configured and reports nothing new (#273).
+# The four-digit arm is not redundant with the range test below it: `[` compares
+# as a 64-bit integer and FAILS past that range rather than answering, so the
+# `if` fell through and this script wrote 99999999999999999999 into the knob
+# file — a repo left permanently without the tier, exit 0, and bash's own error
+# as the only trace (CR 1).
 case "$PROXIMITY" in
   '') ;;
   *[!0-9]*) echo "ERROR --proximity-pct must be an integer (got '$PROXIMITY')" >&2; exit 1 ;;
+  [0-9][0-9][0-9][0-9]*)
+    echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY')" >&2; exit 1 ;;
   *) if [ "$PROXIMITY" -lt 1 ] || [ "$PROXIMITY" -gt 100 ]; then
        echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY')" >&2; exit 1
      fi ;;
