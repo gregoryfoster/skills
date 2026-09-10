@@ -12,10 +12,13 @@ the_fence`). That left the three gates in one phase chain disagreeing about
 where a fenced block ends. The two cases here bring the other two scripts to
 the same answer, one in each direction the old toggle got wrong:
 
-  prove-no-loss  a span in prose AFTER a stray-tilde block was read as fenced
-                 in the destination, so its whole line became the atom and the
-                 span `make check` was reported DROPPED — a false claim loss on
-                 a verbatim relocation.
+  prove-no-loss  a span in prose AFTER a stray-tilde block was read as fenced.
+                 In the DESTINATION its whole line became the atom and the span
+                 `make check` was reported DROPPED — a false claim loss on a
+                 verbatim relocation. In the BASE the same line was skipped
+                 (`skip_fenced`), so its span was never demanded and a real
+                 drop went unreported — the silent direction, and the one this
+                 file did not pin until CR 18.
   check-counts   a count in prose after the block was skipped as fenced and
                  never judged; a count INSIDE the fence after the tilde was
                  judged as prose.
@@ -103,6 +106,47 @@ class TestProveNoLoss:
         assert r.returncode == 0, (
             f"a verbatim relocation reported a dropped claim:\n{r.stdout}{r.stderr}"
         )
+
+    def test_a_span_dropped_after_a_stray_tilde_block_is_reported(self, tmp_path: Path):
+        """The mirror, on the BASE side — the silent one (CR 18).
+
+        With the old toggle the prose line after the block was fenced, and
+        `atoms_of(before)` runs with `skip_fenced=True`, so `make check` was
+        never a base atom: dropping it reported nothing. The whole-line loss
+        the rewording also causes is warranted away with `tighten`, which the
+        run may claim because `--claims` is on — leaving the dropped atom as the
+        only thing the gate can object to. It must.
+        """
+        repo = tmp_path / "silent"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# P\n\n## Ship\n\n"
+            + TILDE_BLOCK
+            + "\nRun `make check` before shipping.\n",
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# P\n\n## Ship\n\n" + TILDE_BLOCK + "\nRun the checks before shipping.\n",
+        )
+        _write(
+            repo,
+            ".skills/context-loss-ok",
+            "tighten :: Run `make check` before shipping.\n",
+        )
+        r = _run(PROVE, repo, "--base", "HEAD", "--claims")
+        assert r.returncode == 3, (
+            f"a dropped span after a stray-tilde block went unreported:\n"
+            f"{r.stdout}{r.stderr}"
+        )
+        assert "make check" in r.stdout, r.stdout
 
 
 class TestCheckCounts:
