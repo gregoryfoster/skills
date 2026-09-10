@@ -42,6 +42,7 @@ forking a skill.
 | `import-targets` | one package name per line, `#`-comments | `shipping-work-python-click`, `reviewing-code-python-click` | replaces the pyproject-derived default | the `[project] name` from `pyproject.toml` |
 | `context-budget` | a single number | `curating-context`, the context-budget hook | env `CONTEXT_BUDGET` wins, then this file | 6,000 tokens |
 | `context-doc-budget` | a single number | `curating-context` | env `CONTEXT_DOC_BUDGET` wins, then this file | 10,000 tokens per doc |
+| `context-proximity-pct` | a single number, 1-100 | `curating-context`, the context-budget hook | env `CONTEXT_PROXIMITY_PCT` wins, then this file | 90 — a file is reported as approaching its budget from 90% of it |
 | `context-docs-dir` | single-line path | `curating-context` | replaces the default | `docs` |
 | `cohort` | one repo per line, `#`-comment header carrying `wave:` / `pair:` | `curating-context`'s cohort scoring | no default — the file *is* the cohort | scoring has nothing to score |
 

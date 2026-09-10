@@ -22,6 +22,11 @@ Options:
   --budget N       Write N to .skills/context-budget (policy-file budget).
                    Omit to leave the existing value, or the 6000 default.
   --doc-budget N   Write N to .skills/context-doc-budget (per-reference-doc).
+  --proximity-pct N
+                   Write N to .skills/context-proximity-pct — the percentage of
+                   a budget at which the guard reports a file as APPROACHING it
+                   rather than staying silent. 1-100, default 90. The weekly
+                   cadence and the review delta read the same knob.
   --uninstall      Remove the settings.json entry and the hook symlink.
   --check          Report whether the hook is installed; change nothing.
                    Exit 0 installed, 3 not installed.
@@ -48,12 +53,14 @@ USAGE
 
 BUDGET=""
 DOC_BUDGET=""
+PROXIMITY=""
 MODE="install"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --budget) BUDGET="${2:?--budget needs a number}"; shift 2 ;;
     --doc-budget) DOC_BUDGET="${2:?--doc-budget needs a number}"; shift 2 ;;
+    --proximity-pct) PROXIMITY="${2:?--proximity-pct needs a number}"; shift 2 ;;
     --uninstall) MODE="uninstall"; shift ;;
     --check) MODE="check"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -66,6 +73,17 @@ for v in $BUDGET $DOC_BUDGET; do
     ''|*[!0-9]*) echo "ERROR budgets must be positive integers (got '$v')" >&2; exit 1 ;;
   esac
 done
+# Range-checked, unlike the budgets, because this one has ends that fail
+# silently: above 100 the proximity band is empty and the tier turns itself off,
+# at 0 every file is in it. Writing either into the knob file would install a
+# guard that looks configured and reports nothing new (#273).
+case "$PROXIMITY" in
+  '') ;;
+  *[!0-9]*) echo "ERROR --proximity-pct must be an integer (got '$PROXIMITY')" >&2; exit 1 ;;
+  *) if [ "$PROXIMITY" -lt 1 ] || [ "$PROXIMITY" -gt 100 ]; then
+       echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY')" >&2; exit 1
+     fi ;;
+esac
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "ERROR not inside a git repository" >&2; exit 1; }
@@ -267,6 +285,10 @@ fi
 if [ -n "$DOC_BUDGET" ]; then
   echo "$DOC_BUDGET" >"$ROOT/.skills/context-doc-budget"
   echo "wrote .skills/context-doc-budget = $DOC_BUDGET"
+fi
+if [ -n "$PROXIMITY" ]; then
+  echo "$PROXIMITY" >"$ROOT/.skills/context-proximity-pct"
+  echo "wrote .skills/context-proximity-pct = $PROXIMITY"
 fi
 
 # Print the RESOLVED log path, not a hardcoded `.git/context-budget.log`. In a

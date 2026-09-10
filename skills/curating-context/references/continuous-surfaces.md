@@ -20,8 +20,9 @@ bash "<SKILL_SCRIPTS>/install-cadence.sh"
 What goes on the clock is a **measurement, not a curation** — regrowth, budget
 adherence and seam accrual all come from measuring, and judgement on a timer is
 what this skill avoids everywhere else. The weekly job records a `baseline` row
-and warns when the surface drifts; a human or an agent curates on that evidence.
-It never runs on `pull_request`.
+and warns when the surface drifts — over budget on the policy file *or any live
+reference doc*, and a quieter notice for each file approaching its budget; a
+human or an agent curates on that evidence. It never runs on `pull_request`.
 
 **It needs the `ANTHROPIC_API_KEY` repository secret.** Without it the job
 records *nothing*, silently, every week — `record-telemetry.sh` refuses an
@@ -62,8 +63,9 @@ As Phase 8 summarised it inline until v1.14:
 ### Write guard
 
 > Install the context-budget write guard? It is a `PostToolUse` hook that flags an
-> edit which pushes `AGENTS.md` or a live reference doc further over budget. It
-> never blocks, and it stays silent when an edit *reduces* the count.
+> edit which pushes `AGENTS.md` or a live reference doc further over budget, or
+> into the last stretch before one. It never blocks, and it stays silent when an
+> edit *reduces* the count.
 
 On yes:
 
@@ -71,11 +73,15 @@ On yes:
 bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
 ```
 
+Add `--proximity-pct N` only to move the approach band off its 90% default; all
+three surfaces read the one knob
+([write-guard-hook.md § What it watches](write-guard-hook.md#what-it-watches)).
+
 The guard and the weekly run are two halves of one ratchet: the guard stops
 regrowth cheaply, in the turn that caused it, on the common path; the run and the
 review-time delta recover ground and catch what the matcher never saw. A repo with
 the run but no guard sawtooths, and no curation fixes a file something else keeps
-appending to. Semantics, the speak-only-on-both-conditions rule, the uncovered
+appending to. Semantics, the growth-plus-tier rule, the uncovered
 write paths, and uninstall:
 [references/write-guard-hook.md](write-guard-hook.md).
 

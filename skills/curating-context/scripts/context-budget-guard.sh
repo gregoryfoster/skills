@@ -7,6 +7,9 @@
 # sawtooths forever. This catches the growth at the moment it happens, which is
 # the only moment it is cheap to fix.
 #
+# Two tiers, both requiring growth: an edit that carries a file PAST its budget,
+# and an edit that carries it into the last stretch before one (#273).
+#
 # Contract (PostToolUse): the tool has already run, so nothing here can block.
 # Always exits 0 and emits the advisory as JSON on stdout — `additionalContext`
 # so the agent can act on it in the same turn, `systemMessage` so the human sees
@@ -38,6 +41,10 @@ Budget resolution (first match wins, matching the repo's other knobs):
   2. .skills/context-budget  (single line, token count)
   3. 6000
 
+Proximity resolution, the same three steps: CONTEXT_PROXIMITY_PCT, then
+.skills/context-proximity-pct, then 90 — the percentage of a budget at which an
+edit is reported as approaching it rather than left in silence.
+
 Watched files:
   - the policy file: AGENTS.md or CLAUDE.md at the repo root. A symlinked
     CLAUDE.md is followed to its target, which is the cohort norm.
@@ -51,9 +58,15 @@ Reference docs are measured against a 10k budget (CONTEXT_DOC_BUDGET, or
 .skills/context-doc-budget), since their cost is paid on load rather than on
 every invocation.
 
+When it speaks, and how loudly (the same two labels the log carries):
+  - WARN    the edit puts the file past its budget
+  - NEAR    the edit puts it at or past <proximity>% of its budget
+  Both need the edit to have GROWN the file, so neither fires on a file nobody
+  is adding to.
+
 When it stays quiet:
   - the edited file is not part of the context surface
-  - the file is under budget
+  - the file is below the proximity band
   - the edit REDUCED the token count — someone curating is never nagged
 
 Tokens are estimated offline at ~2.7 bytes/token, refined per repo by
@@ -220,6 +233,9 @@ if [ "$KIND" = "policy" ]; then
 else
   BUDGET="$(ctx_read_num_knob "" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
 fi
+# The library resolves and range-checks it, so the hook and the weekly report
+# draw the proximity band in the same place. No flag here: a hook has no argv.
+PROXIMITY_PCT="$(ctx_proximity_pct "$ROOT")"
 
 # --- measure --------------------------------------------------------------
 # Offline by design: a hook must be fast, so it never calls count_tokens. The
@@ -274,29 +290,58 @@ EST_SRC="${EST#*"$CTX_TAB"}"
 [ "$NOW" -gt 0 ] || exit 0
 
 # --- decide ---------------------------------------------------------------
-# Two conditions must both hold. Over-budget alone would fire on every edit to a
-# file that is already over, which trains the reader to ignore the hook; and an
-# increase alone would fire on healthy growth inside budget. Notably an edit that
-# REDUCES the count is never flagged, so curating is never nagged.
-if [ "$NOW" -le "$BUDGET" ] || [ "$NOW" -le "$PREV" ]; then
+# GROWTH is the condition both tiers share, and it is checked first because it is
+# the one that must never be overridden. An edit that REDUCES the count is never
+# flagged, whatever tier the file sits in, so curating is never nagged.
+#
+# Requiring it is also what lets a second tier exist at all. Over-budget alone
+# would fire on every edit to a file that is already over — the state ten of the
+# twelve cohort repos are in — and a hook that fires on every edit is one
+# everybody turns off. Paired with growth, each tier speaks only when someone is
+# making a number worse, so adding one below the budget adds no nagging.
+if [ "$NOW" -le "$PREV" ]; then
   log "ok: $REL now=${NOW} prev=${PREV} budget=${BUDGET} ($KIND, est=${EST_SRC})"
   exit 0
 fi
 
 DELTA=$(( NOW - PREV ))
-OVER=$(( NOW - BUDGET ))
-log "WARN: $REL now=${NOW} prev=${PREV} (+${DELTA}) budget=${BUDGET} over=${OVER} ($KIND, est=${EST_SRC})"
 
-if [ "$KIND" = "policy" ]; then
-  ADVICE="This file is loaded on every invocation, so the cost is paid on every task. Move the addition to a docs/ reference doc and link it from the Detail Docs index, or run the curating-context skill to rebalance."
-else
-  ADVICE="A reference doc past its budget costs more to load than it saves. Split it on its top-level headings, or run the curating-context skill."
+# Which tier — over, near, or neither. Disjoint by construction, and asked of the
+# library so the hook and the weekly report cannot draw the band in two places
+# (#273).
+TIER=""
+if [ "$NOW" -gt "$BUDGET" ]; then
+  TIER=over
+elif ctx_near_budget "$NOW" "$BUDGET" "$PROXIMITY_PCT"; then
+  TIER=near
+fi
+if [ -z "$TIER" ]; then
+  log "ok: $REL now=${NOW} prev=${PREV} (+${DELTA}) budget=${BUDGET} ($KIND, est=${EST_SRC})"
+  exit 0
 fi
 
 # "since HEAD", not "this edit": the comparison point is the committed version, so
 # the number covers every uncommitted change to the file. Saying "this edit" would
 # overstate a single edit's contribution once several have accumulated.
-MSG="context budget: $REL is now ~${NOW} tokens, ${OVER} over the ${BUDGET} budget (+${DELTA} since HEAD)."
+if [ "$TIER" = over ]; then
+  OVER=$(( NOW - BUDGET ))
+  log "WARN: $REL now=${NOW} prev=${PREV} (+${DELTA}) budget=${BUDGET} over=${OVER} ($KIND, est=${EST_SRC})"
+  MSG="context budget: $REL is now ~${NOW} tokens, ${OVER} over the ${BUDGET} budget (+${DELTA} since HEAD)."
+  if [ "$KIND" = "policy" ]; then
+    ADVICE="This file is loaded on every invocation, so the cost is paid on every task. Move the addition to a docs/ reference doc and link it from the Detail Docs index, or run the curating-context skill to rebalance."
+  else
+    ADVICE="A reference doc past its budget costs more to load than it saves. Split it on its top-level headings, or run the curating-context skill."
+  fi
+else
+  # Deliberately NOT the word "over", and it leads with the headroom rather than
+  # the overage — the two messages are read at a glance, and a proximity notice
+  # mistaken for a breach is a proximity tier that has cost the breach warning
+  # its meaning. "approaching" is the whole distinction.
+  LEFT=$(( BUDGET - NOW ))
+  log "NEAR: $REL now=${NOW} prev=${PREV} (+${DELTA}) budget=${BUDGET} headroom=${LEFT} ($KIND, est=${EST_SRC})"
+  MSG="context budget: $REL is approaching its budget — ~${NOW} tokens of ${BUDGET}, ${LEFT} left (+${DELTA} since HEAD)."
+  ADVICE="Not over yet, and this is not a reason to stop. It is the cheap moment to decide where the next section goes: the alternative is finding out at the edit that crosses the line, under whatever deadline that edit was made for. curating-context classifies the file if you want the decision made properly."
+fi
 
 # Emit the advisory. additionalContext reaches the agent so it can act in this
 # same turn; systemMessage reaches the human. Exit 0 keeps it an advisory.

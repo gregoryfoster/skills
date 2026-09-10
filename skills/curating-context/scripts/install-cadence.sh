@@ -34,14 +34,15 @@ Options:
                    the workflow's `git add`, and its error message — because a
                    cadence that measures correctly and stages the wrong path
                    records nothing.
-  --check          Report what is installed; change nothing. Six guarantees
+  --check          Report what is installed; change nothing. Seven guarantees
                    are reported independently — the workflow, the driver setup
-                   inside it, the ledger's union merge, the calibration files'
-                   merge attributes, the `ours` driver the ratio attribute
-                   needs to exist at all, and the newest-wins driver behind the
-                   counts attribute — because each is its own way to lose a
-                   row, and one combined "ok" would have read green through
-                   all of #173, #192 and #237.
+                   inside it, the drift report's coverage, the ledger's union
+                   merge, the calibration files' merge attributes, the `ours`
+                   driver the ratio attribute needs to exist at all, and the
+                   newest-wins driver behind the counts attribute — because
+                   each is its own way to lose a row or a warning, and one
+                   combined "ok" would have read green through all of #173,
+                   #192, #237 and #273.
                    Exit 0 all present, 3 any missing.
   --uninstall      Remove the workflow file AND every merge attribute it
                    installed, leaving .gitattributes as it found it (the file
@@ -79,8 +80,9 @@ What it does:
     2. preflights the credential FIRST,
     3. sweeps seams, measures once with --exact, records a `baseline` row,
     4. commits that one JSONL line to the default branch,
-    5. emits ::warning:: when the surface is over budget, seams accrued, or
-       a rot-prone count went unjudged.
+    5. emits ::warning:: when the POLICY FILE OR ANY LIVE REFERENCE DOC is over
+       budget, when seams accrued, or when a rot-prone count went unjudged, and
+       ::notice:: for each file approaching its budget (#273).
 
   It never runs on pull_request and never blocks a merge. Turning the budget
   into a merge gate is a different job (#88), with its own sequencing rule.
@@ -412,6 +414,20 @@ if [ "$MODE" = "check" ]; then
       echo "                    per-row counts merge (#237); its rebase would"
       echo "                    conflict on $COUNTS_PATH."
       echo "                    Re-run install-cadence.sh to re-render it."
+      rc=3
+    fi
+    # The report is the other half a re-render carries, and a workflow can be
+    # current on the drivers and stale on this — so it gets its own line, for
+    # the reason every line here does. A pre-#273 step reads ["policy"] alone:
+    # a reference doc over its budget is measured, judged, and never mentioned,
+    # and nothing warns any file approaching one. Silence is what that looks
+    # like from the Actions tab, which is why it needs saying here.
+    if grep -qF 'near_budget' "$WF"; then
+      echo "drift report:       yes (every live doc, and the approach tier)"
+    else
+      echo "drift report:       STALE — the installed workflow reports the policy"
+      echo "                    file only, and only once it is already over"
+      echo "                    budget (#273). Re-run install-cadence.sh."
       rc=3
     fi
   else
@@ -908,10 +924,41 @@ jobs:
           fi
           python3 - /tmp/ctx.json <<'PY'
           import json, sys
-          p = json.load(open(sys.argv[1]))["policy"]
-          if p["over_budget"]:
-              print(f"::warning::{p['path']} is {p['tokens']} tokens against a "
-                    f"{p['budget']} budget. Run \`curate context\` in this repo.")
+
+          d = json.load(open(sys.argv[1]))
+          # Every live doc as well as the policy file — the tiers, and why the
+          # second is quieter, are in cadence.md (#273).
+          rows = [r for r in [d["policy"], *(d.get("docs") or [])]
+                  if isinstance(r, dict) and r.get("budget")]
+
+
+          def num(r):
+              # A precise count is a claim a row this run only ESTIMATED cannot
+              # make; the number is marked, not the row dropped (#123).
+              s = r.get("tokens_source")
+              if s == "exact":
+                  return str(r["tokens"]), ""
+              return "~%s" % r["tokens"], f" — an estimate ({s or 'source unstated'}), not a count"
+
+
+          # Breaches first, then approaches, at different levels on purpose.
+          for r in rows:
+              if r.get("over_budget"):
+                  n, est = num(r)
+                  print(f"::warning::{r['path']} is {n} tokens against a {r['budget']} "
+                        f"budget{est}. Run \`curate context\` in this repo.")
+          for r in rows:
+              if r.get("near_budget"):
+                  n, est = num(r)
+                  print(f"::notice::{r['path']} is approaching its budget: {n} tokens of "
+                        f"{r['budget']}, {r['budget'] - r['tokens']} left{est}. Not over — "
+                        f"the cheap moment to decide where the next section goes.")
+          # No budget on a row means older scripts than this workflow.
+          skipped = 1 + len(d.get("docs") or []) - len(rows)
+          if skipped:
+              print(f"::warning::{skipped} measured row(s) carry no budget — the scripts "
+                    f"that measured are older than this workflow, so their budget "
+                    f"position went unreported. Re-run install-cadence.sh.")
           PY
           if [ "\${COUNTS:-0}" -gt 0 ]; then
             echo "::warning::\$COUNTS unjudged count(s) or over-long index line(s). Run \\\`curate context\\\`."

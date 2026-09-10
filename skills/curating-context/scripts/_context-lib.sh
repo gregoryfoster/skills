@@ -46,6 +46,18 @@ Provides:
       Reference-doc root: override, then CONTEXT_DOCS_DIR, then
       <root>/.skills/context-docs-dir, then "docs".
 
+  ctx_proximity_pct <root> [override]
+      The percentage of a budget at which a file is reported as APPROACHING it:
+      override, then CONTEXT_PROXIMITY_PCT, then
+      <root>/.skills/context-proximity-pct, then 90. A value outside 1-100
+      warns on stderr and uses the default.
+
+  ctx_near_budget <tokens> <budget> <pct>
+      True when <tokens> is at or past <pct>% of <budget> and NOT over it. The
+      three states are exhaustive and disjoint: under, near, over. Every surface
+      that reports a budget asks this, so one file at 99% cannot be a warning in
+      one of them and silence in another.
+
   ctx_bytes_per_token_x100 <root>
       Bytes per token times 100. Default 270; a plausible ratio in
       <root>/.skills/context-token-ratio wins. Assign the result to
@@ -191,6 +203,24 @@ CTX_COUNTS_BASENAME="context-token-counts"
 # so the anchor has stopped earning its keep well before then.
 CTX_DRIFT_PCT=25
 
+# The fraction of a budget at which a file stops being comfortable and becomes a
+# deadline. Below this it is reported as under budget and nothing is said; from
+# here to the budget it is reported as approaching one; past the budget it is a
+# breach.
+#
+# Without this tier a budget is a cliff rather than a gradient: 9999/10000 was
+# exactly as silent as 3000/10000, so the first signal a repo ever got was a file
+# already over — at which point the fix is made under time pressure by whoever
+# happens to be holding the branch. That is what #273 was filed on, on two files
+# at once (3 and 1 token of headroom, both silent).
+#
+# 90 rather than 95: at a 10000 doc budget the band is 1000 tokens wide, which is
+# roughly one section — enough warning that the next demotion can be planned
+# rather than rushed. It is a knob because the right width depends on how fast a
+# repo's surface grows, and a repo that finds the band noisy should be able to
+# narrow it rather than learn to ignore it.
+CTX_PROXIMITY_DEFAULT_PCT=90
+
 ctx_read_num_knob() {
   local override="${1-}" envval="${2-}" file="${3-}" fallback="${4-}" v=""
   if [ -n "$override" ]; then v="$override"
@@ -265,6 +295,48 @@ ctx_docs_dir() {
   local root="$1" override="${2-}"
   ctx_read_str_knob "$override" "${CONTEXT_DOCS_DIR-}" \
     "$root/.skills/context-docs-dir" docs
+}
+
+ctx_proximity_pct() {
+  # Range-checked here rather than left to ctx_read_num_knob, which validates
+  # the GRAMMAR (a bare integer) and cannot know what the number means. Both
+  # ends matter and they fail in opposite directions: above 100 the band is
+  # empty — no token count can be both at or past the threshold and at or under
+  # the budget — so the tier silently turns itself off, which is the exact
+  # failure #273 exists to remove; at 0 every file on the surface is "near" and
+  # the tier is noise nobody reads. Either way the run says which value it
+  # declined rather than behaving as though nobody configured anything.
+  local root="$1" override="${2-}" v
+  v="$(ctx_read_num_knob "$override" "${CONTEXT_PROXIMITY_PCT-}" \
+    "$root/.skills/context-proximity-pct" "$CTX_PROXIMITY_DEFAULT_PCT")"
+  if [ "$v" -lt 1 ] || [ "$v" -gt 100 ]; then
+    printf 'WARN proximity percentage %s is outside the 1-100 band (CONTEXT_PROXIMITY_PCT, %s) — using %s\n' \
+      "$v" "$root/.skills/context-proximity-pct" "$CTX_PROXIMITY_DEFAULT_PCT" >&2
+    v="$CTX_PROXIMITY_DEFAULT_PCT"
+  fi
+  printf '%s' "$v"
+}
+
+ctx_near_budget() {
+  # The middle tier, as a predicate rather than as three inequalities copied
+  # into three surfaces. Disjoint from over-budget by construction: a file past
+  # its budget is a breach and is never also reported as approaching one, so a
+  # caller can branch on the two in either order and get the same answer.
+  #
+  # Integer floor on the threshold, which rounds the band OUTWARD (90% of 6001
+  # is 5400, not 5401). The one direction worth erring in: a token early is an
+  # advisory, a token late is the silence this tier exists to end.
+  local tokens="$1" budget="$2" pct="$3"
+  # A predicate, so it answers rather than aborting. `[ x -gt 0 ]` on a value
+  # that is not an integer is a fatal error under `set -e`, and this is called
+  # from inside measure-context.sh's JSON emission — a caller that died there
+  # would leave a half-written object on stdout, which is the shape the empty
+  # policy file used to produce and the reason that path exits 2 instead.
+  case "$tokens$budget$pct" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$budget" -gt 0 ] || return 1
+  [ "$tokens" -le "$budget" ] || return 1
+  [ "$tokens" -ge $(( budget * pct / 100 )) ] || return 1
+  return 0
 }
 
 ctx_bytes_per_token_x100() {

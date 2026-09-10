@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.19"
+  version: "1.20"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -150,11 +150,11 @@ estimate whatever credential was accepted
 
 Read the baseline before touching anything; four numbers drive the run:
 
-- `policy.tokens` vs `policy.budget` — is the file over budget, and by how much?
-- `sections[0]` — the largest section and its `share`. A single section over ~30%
-  of the file is the finding, not a symptom of one.
+- `policy.tokens` vs `policy.budget` — over budget, and by how much?
+- `sections[0]` — the largest section and its `share`. A section over ~30% of
+  the file is the finding, not a symptom.
 - `links.orphans` — live docs nothing points at. **The most common cohort defect.**
-- `docs[].over_budget` — reference docs too large to be worth loading.
+- `docs[].over_budget`, `near_budget` — docs too large to load, or nearly.
 
 `totals.tokens_live` is watched, not optimised — a good demotion *raises* it — and
 archival subtrees are excluded
