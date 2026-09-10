@@ -134,8 +134,8 @@ Output (stdout, JSON):
               to know which of two budgets applies to it.
               `over_budget` and `near_budget` are DISJOINT — under, near, over —
               so a breach is never also reported as approaching one, and a
-              consumer may branch on them in either order. The band is
-              --proximity-pct wide (#273).
+              consumer may branch on them in either order. The band runs from
+              --proximity-pct of the budget up to it (#273).
   links     { refs, dead, dead_anchors, orphans }
               `dead` is a link whose FILE does not exist. `dead_anchors` is a
               link whose file exists and whose #fragment names no heading in it
