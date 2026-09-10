@@ -623,6 +623,7 @@ def doc_lines(path):
 # a real demotion; wrong low, it opens on a coincidence and a tooling repo
 # answers with ~500 hits. Only the first failure is silent — which is why the
 # fenced floor is the lower one, and why this one is not lower still (CR 3).
+#
 # Frontmatter is NOT stripped, where prove-no-loss.sh strips it on both sides
 # (#136: Phase 7 requires bumping `version`, whose old value then exists
 # nowhere). Safe here and only here, because this predicate asks whether a line
