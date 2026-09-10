@@ -124,7 +124,10 @@ def _tokens(path: Path, tokens: int) -> None:
 
 def _repo(tmp_path: Path, name: str = "repo") -> Path:
     repo = tmp_path / name
-    repo.mkdir()
+    # exist_ok, because _drift_step builds its render repo on every call: the
+    # second call in one test raised FileExistsError, which fails as a directory
+    # error rather than as the assertion the test is about (CR 7).
+    repo.mkdir(exist_ok=True)
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@t")
     _git(repo, "config", "user.name", "t")
