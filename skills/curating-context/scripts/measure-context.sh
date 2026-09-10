@@ -546,7 +546,9 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   # that redaction lives, and an `if` rather than `[ … ] && …` so the statement
   # cannot become a block's exit status if it is ever moved (docs/STYLE.md).
   _at=""
-  _shown="$(python3 "$_probe/count.py" --endpoint 2>/dev/null)" || _shown=""
+  # Stderr not discarded: a --endpoint that breaks should say why. The `||`
+  # keeps it non-fatal, which is all the redirect was buying.
+  _shown="$(python3 "$_probe/count.py" --endpoint)" || _shown=""
   if [ -n "$_shown" ]; then
     _at=" at $_shown"
   fi
