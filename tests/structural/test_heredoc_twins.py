@@ -82,7 +82,14 @@ def _strip_docstring(node: ast.AST) -> ast.AST:
 
 
 def _definitions(block: str) -> dict[str, str]:
-    """Top-level `def NAME(...)` and `NAME = re.compile(...)`, as syntax."""
+    """Top-level `def NAME(...)` and `NAME = re.compile(...)`, as syntax.
+
+    A constant is seen only as a bare assignment of the `re.compile` call. One
+    written as a conditional — `X = re.compile(...) if roots else None`, the
+    LINK_ROOT shape in check-seams.sh — is not, so a twin in that shape would
+    sit outside the pin; the vacuity guard names known twins only and would
+    not notice. Stated so the limit is read here rather than discovered (CR 20).
+    """
     out = {}
     tree = ast.parse(block)
     for node in tree.body:
