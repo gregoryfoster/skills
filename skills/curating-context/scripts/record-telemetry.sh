@@ -538,7 +538,7 @@ import tempfile
  mode, claims_dropped, claims_warranted, counts, counts_acked) = sys.argv[1:20]
 
 
-def is_curation_row(r):
+def is_curation_row(row):
     """Whether a row records a RUN rather than a state.
 
     THIS RULE IS SHARED WITH cohort-report.sh's is_curation_row() and
@@ -551,7 +551,7 @@ def is_curation_row(r):
     disagreed with the append about what a curation row is would rewrite a row
     the append never wrote.
     """
-    acts = r.get("actions") or []
+    acts = row.get("actions") or []
     return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
 
 

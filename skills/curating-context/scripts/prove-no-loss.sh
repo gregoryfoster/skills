@@ -450,7 +450,11 @@ DUP_MIN_CHARS = 40
 # count cannot catch — an entry so short that matching one line today is luck.
 WARRANT_MIN_CHARS = 8
 
-HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+# Two groups — the hashes and the title — as check-counts.sh has it, so the two
+# copies are one definition (#275). Only the title is read here; the level is
+# erased by normalise() on purpose, since a `###` promoted to its own doc's `##`
+# is the same heading.
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 # Every leading `../` on a link target, not just the first. `.replace("](../",
 # "](")` erased exactly one level: str.replace scans the ORIGINAL string and
 # resumes past each replacement, so `](../../plugins/x)` matched at index 0 and
@@ -495,7 +499,7 @@ def _erasable_prefixes(docs, pol):
         cand = os.path.normpath(cand).strip("/")
         while cand.startswith("../"):
             cand = cand[3:]
-        if cand and cand != ".." and cand != "." and cand not in seen:
+        if cand and cand not in ("..", ".") and cand not in seen:
             seen.append(cand)
     return sorted(seen, key=len, reverse=True)
 
@@ -664,7 +668,7 @@ def normalise(raw):
         return ""
     line = delink(line)
     m = HEADING.match(line)
-    return "H:" + m.group(1).strip() if m else line
+    return "H:" + m.group(2).strip() if m else line
 
 try:
     before = open(before_path, encoding="utf-8", errors="replace").read().splitlines()
