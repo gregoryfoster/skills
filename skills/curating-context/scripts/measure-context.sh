@@ -139,7 +139,8 @@ Exit codes:
      --check-credential got a credential accepted by count_tokens
   1  usage error, or no policy file found
   2  infrastructure failure (unreadable file, awk/find failure, or
-     --check-credential could not reach the endpoint at all)
+     --check-credential could not reach the endpoint at all — including no
+     python3 to address it with; neither is a verdict on a credential)
   3  --check-credential only: no credential that count_tokens will accept —
      none resolved, or the one that did was refused
   4  --gate only: the policy file is over budget
@@ -414,9 +415,14 @@ PY
 # will be exact, not whether something authenticated. Prints the source that
 # answered and the endpoint's own words on refusal, never the value.
 if [ "$CHECK_CRED" -eq 1 ]; then
+  # Exit 2, not 3: a missing interpreter is neither an absent credential nor a
+  # refused one, and 3 sends the reader to the one thing that is not wrong. It
+  # is the same distinction the unreachable branch below draws — the endpoint
+  # cannot be reached, and here it cannot even be addressed.
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "no: python3 is missing, so --exact cannot call the endpoint at all" >&2
-    exit 3
+    echo "ERROR python3 is missing, so --exact cannot call the endpoint at all." >&2
+    echo "      Nothing here is a verdict on a credential: install python3." >&2
+    exit 2
   fi
   if ! ctx_resolve_credential; then
     echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2

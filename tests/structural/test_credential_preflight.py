@@ -80,6 +80,35 @@ def _no_ant(tmp_path: Path, env: dict) -> dict:
     return env
 
 
+def _without_python3(tmp_path: Path, env: dict) -> dict:
+    """A PATH carrying every tool the script needs except python3.
+
+    Mirroring PATH minus one name, rather than hand-listing the tools the
+    preflight happens to shell out to, is what keeps this case about the
+    missing interpreter: a guessed-short list fails for whichever utility the
+    script grows next, and the assertion would still be green for the wrong
+    reason.
+    """
+    stub = tmp_path / "no-python-bin"
+    stub.mkdir(exist_ok=True)
+    for directory in env.get("PATH", "").split(os.pathsep):
+        d = Path(directory)
+        if not d.is_dir():
+            continue
+        for entry in d.iterdir():
+            if entry.name.startswith("python"):
+                continue
+            link = stub / entry.name
+            if link.exists() or link.is_symlink():
+                continue
+            try:
+                link.symlink_to(entry)
+            except OSError:
+                pass
+    env["PATH"] = str(stub)
+    return env
+
+
 def _with_ant(tmp_path: Path, env: dict, token: str = "fake-jwt-token") -> dict:
     stub = tmp_path / "ant-bin"
     stub.mkdir(exist_ok=True)
@@ -196,6 +225,21 @@ class TestTheProbeIsMade:
         assert r.returncode == 3, r.stdout + r.stderr
         assert "BEFORE starting the run" in r.stderr
         assert stub.requests == []
+
+
+class TestWhatIsNotACredentialVerdict:
+    """Exit 3 is "fix your credential". Nothing else may borrow it — SKILL.md's
+    Phase 0 turns a 3 into "resolve a credential now; autonomously, abort", and
+    an agent that reads that over a missing interpreter goes to work on the one
+    thing that is not wrong."""
+
+    def test_a_missing_python3_is_exit_2(self, repo: Path, tmp_path: Path):
+        env = _without_python3(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        r = _run(repo, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "python3 is missing" in r.stderr
+        assert "is a verdict on a credential" in r.stderr
 
 
 class TestARefusedCredentialIsNotOk:
