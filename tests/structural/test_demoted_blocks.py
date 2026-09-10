@@ -219,7 +219,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
         "pins": (
             "One command, before anything else",
             "Exit 0 means `--exact` will work",
-            "it asks the endpoint, not the environment",
+            "it asks the endpoint, not just the environment",
             "resolve a credential **now**",
             "autonomously, **abort the run**",
             "an unreachable endpoint, not a bad key",

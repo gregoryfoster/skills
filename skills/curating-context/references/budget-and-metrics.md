@@ -153,8 +153,10 @@ stays silent about it when it is not.
 ### The Phase 0 preflight, in full
 
 One command, before anything else. Exit 0 means `--exact` will work — it asks
-the endpoint, not the environment: one free `count_tokens` call on a
-one-character body, the same request `--exact` will make, for the same model.
+the endpoint, not just the environment: the credential still comes from the
+three sources below, and only the verdict moved. One free `count_tokens` call
+on a one-character body, the same request `--exact` will make, for the same
+model.
 Presence was the old test, and it passed a key that authenticated and could not
 spend — the run did every phase and lost the row to exit 4, over a remediation
 line advising the preflight that had just gone green (#271). Exit 3 means

@@ -116,10 +116,10 @@ bash "<SKILL_SCRIPTS>/measure-context.sh" --check-credential
 ```
 
 One command, before anything else. Exit 0 means `--exact` will work — it asks
-the endpoint, not the environment; exit 3 means resolve a credential **now** —
-interactively, ask; autonomously, **abort the run**. Exit 2 is an unreachable
-endpoint, not a bad key. Found later, it costs eight phases of work toward a
-ledger row that `record-telemetry.sh` refuses at the very end.
+the endpoint, not just the environment; exit 3 means resolve a credential
+**now** — interactively, ask; autonomously, **abort the run**. Exit 2 is an
+unreachable endpoint, not a bad key. Found later, it costs eight phases of work
+toward a ledger row that `record-telemetry.sh` refuses at the very end.
 
 ## Phase 1 — Measure
 
