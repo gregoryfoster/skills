@@ -516,3 +516,82 @@ class TestADemotedLinkIsContentToo:
         assert r.returncode == 3, r.stdout + r.stderr
         assert "source-back-reference" in r.stdout, r.stdout
         assert "src/app.py:1" in r.stdout, r.stdout
+
+
+class TestRelocationOnADocSplit:
+    """CR 6: `--file <doc>` is the documented other half of Phase 6.5, and the
+    relocation predicate had no case there.
+
+    #191 exists because a doc-to-doc split was structurally unreachable once
+    already — it moves nothing out of the policy file, so the title class is
+    empty in a policy-file run. The same split with the HEADING left behind is
+    empty in BOTH classes unless relocation is measured against the target the
+    run was given, and on this invocation the target's own docs tree is both the
+    place a line left and the pool it may have landed in.
+    """
+
+    @staticmethod
+    def _repo(tmp_path: Path, name: str) -> Path:
+        repo = tmp_path / name
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(repo, "AGENTS.md", "# Guide\n\nNothing moved from here.\n")
+        _write(
+            repo,
+            "docs/API.md",
+            "# API\n\n## Pagination\n\nEvery list endpoint is cursor "
+            "paginated.\n\nA cursor is opaque and expires after one hour.\n",
+        )
+        _write(
+            repo,
+            "src/paging.py",
+            '"""Cursor helpers. The expiry rule is in docs/API.md."""\n',
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        return repo
+
+    def test_a_line_leaving_a_doc_for_a_sibling_opens_the_sweep(self, tmp_path: Path):
+        """`## Pagination` keeps its heading and its first line; only the expiry
+        rule moves to docs/PAGING.md."""
+        repo = self._repo(tmp_path, "docsplit")
+        _write(
+            repo,
+            "docs/API.md",
+            "# API\n\n## Pagination\n\nEvery list endpoint is cursor "
+            "paginated.\n\nCursor rules: [PAGING.md](PAGING.md).\n",
+        )
+        _write(
+            repo,
+            "docs/PAGING.md",
+            "# Paging\n\nA cursor is opaque and expires after one hour.\n",
+        )
+        r = _run(repo, "--file", "docs/API.md")
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "source-back-reference" in r.stdout, r.stdout
+        assert "src/paging.py:1" in r.stdout, r.stdout
+
+    def test_a_line_still_inline_in_the_target_is_not_a_relocation(
+        self, tmp_path: Path
+    ):
+        """The target is in its own docs tree, so every line it still carries is
+        also "present under the docs root" — the pool has to be searched for
+        lines the target no longer has, or a doc-split run would sweep on every
+        line it kept."""
+        repo = self._repo(tmp_path, "stillinline")
+        # Both base lines stay; the run only ADDS a sentence. Every line the
+        # target kept is reachable in the destination pool — it is the target —
+        # so a predicate that did not subtract what is still inline would call
+        # this a relocation and sweep.
+        _write(
+            repo,
+            "docs/API.md",
+            "# API\n\n## Pagination\n\nEvery list endpoint is cursor "
+            "paginated.\n\nA cursor is opaque and expires after one "
+            "hour.\n\nThe default page size is fifty items.\n",
+        )
+        r = _run(repo, "--file", "docs/API.md")
+        assert r.returncode == 0, r.stdout
+        assert "not swept" in r.stdout, r.stdout
