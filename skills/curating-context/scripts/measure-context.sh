@@ -450,8 +450,19 @@ if [ "$CHECK_CRED" -eq 1 ]; then
     exit 0
   fi
   if [ "$_rc" -eq 1 ]; then
-    echo "no: $CRED_DESC resolved, and count_tokens$_at REFUSED it for $MODEL." >&2
-    echo "    The endpoint said: $_why" >&2
+    # Split the status this script rendered from the words the endpoint chose.
+    # "The endpoint said: HTTP 400: ..." attributed the prefix to the endpoint,
+    # and the whole argument for quoting error.message is that its wording is
+    # what to trust. `#*: ` takes the SHORTEST match, so a message containing
+    # ": " survives intact; an unrecognised shape falls through with _said as
+    # the entire line, which loses precision rather than content.
+    _code=""
+    _said="$_why"
+    case "$_why" in
+      "HTTP "*": "*) _code="${_why%%:*}"; _said="${_why#*: }" ;;
+    esac
+    echo "no: $CRED_DESC resolved, and count_tokens$_at REFUSED it for $MODEL${_code:+ ($_code)}." >&2
+    echo "    The endpoint said: $_said" >&2
     echo "    Resolve this BEFORE starting the run; in autonomous mode, abort." >&2
     echo "    Every later phase would otherwise do its work and record-telemetry.sh" >&2
     echo "    would refuse the row at the end." >&2

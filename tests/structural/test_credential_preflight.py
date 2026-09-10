@@ -286,6 +286,12 @@ class TestARefusedCredentialIsNotOk:
         assert r.returncode == 3, r.stdout + r.stderr
         assert "invalid x-api-key" in r.stderr
         assert '{"type"' not in r.stderr, "the raw envelope was dumped, not the message"
+        # The status is this script's rendering of the response; the message is
+        # the endpoint's own words. Quoting them as one sentence attributed the
+        # first to the second.
+        assert "(HTTP 401)" in r.stderr
+        assert "The endpoint said: invalid x-api-key" in r.stderr
+        assert "The endpoint said: HTTP" not in r.stderr
 
     def test_a_key_from_the_secrets_file_is_probed_too(
         self, repo: Path, tmp_path: Path
