@@ -422,8 +422,9 @@ class TestBackReferencesFollowTheNamedPolicyFile:
         )
 
     def test_the_source_class_follows_the_target_too(self, tmp_path: Path):
-        """The second call site, added by #113. Its guard is `src and moved`,
-        so it needs a moved title present to run at all."""
+        """The second call site, added by #113. Its guard is `src and (moved or
+        relocated)`, and this fixture satisfies both halves — the section moved
+        heading and all — so the class runs and its target is what is at issue."""
         repo = _skill_repo(tmp_path)
         _write(
             repo,

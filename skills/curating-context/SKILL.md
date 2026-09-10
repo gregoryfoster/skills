@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.17"
+  version: "1.18"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -293,7 +293,7 @@ a doc→doc split reports `seams: 0`. **Sum both** counts.
 
 `prove-no-loss.sh` proves moved content arrived; this proves the surface still
 **describes where it went**. Tracked **source** outside the docs tree is swept
-once a section leaves the policy file. Never repoint one at a bare
+once content leaves the policy file. Never repoint one at a bare
 `docs/X.md` — no installed wheel resolves it; qualify or inline it.
 
 The count is a standing half plus an interval half

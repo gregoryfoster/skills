@@ -242,11 +242,13 @@ class TestBaseLedgerResolvesTheInterval:
 
     def test_the_source_classes_were_unreachable_too(self, tmp_path: Path):
         """#169 counted the source classes among the three that "still fire"
-        under `--base HEAD`. They do not. The source sweep is gated on
-        `src and moved`, so an empty `moved` set skips every tracked file and
-        the report says "not swept" — which means TWO classes were structurally
-        unreachable in a scheduled run, not one, and the second is the class
-        #113 added after 16 real misses across 13 shipped files."""
+        under `--base HEAD`. They do not. The source sweep is gated on what left
+        the policy file since the base — `src and (moved or relocated)` since
+        #272 — and under `--base HEAD` on a committed curation BOTH halves are
+        empty, so every tracked file is skipped and the report says "not swept".
+        Which means TWO classes were structurally unreachable in a scheduled
+        run, not one, and the second is the class #113 added after 16 real
+        misses across 13 shipped files."""
         repo, measured = _curated_repo(tmp_path, "sourcegate")
         _write(repo, "src/app.py", '"""Bounds live in AGENTS.md."""\n')
         _git(repo, "add", "-A")

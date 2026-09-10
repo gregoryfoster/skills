@@ -132,11 +132,19 @@ What it reports, in four classes:
                    silently resolve to a different repo's file in a sibling
                    checkout. Qualify it — `<distribution> docs/<FILE>.md`.
 
-                   Swept only when a section actually LEFT the policy file since
-                   --base, because that is what makes a source mention stale; a
-                   script that reads the policy file names it legitimately, and
-                   sweeping unconditionally buries the class in hundreds of
-                   those. The report states its coverage either way. Tracked
+                   Swept only when CONTENT left the policy file since --base,
+                   because that is what makes a source mention stale; a script
+                   that reads the policy file names it legitimately, and sweeping
+                   unconditionally buries the class in hundreds of those. Two
+                   things count as content leaving: a section title that is gone,
+                   and a body line that is gone from the policy file and present
+                   under --docs-dir. The second is a DEMOTION out of a section
+                   that survives — the commonest shape there is, and invisible to
+                   a title check, which skipped 157 source files while reporting
+                   that nothing had left (#272). It turns on the filename half
+                   only: a title that never moved has nothing pointing at a home
+                   that no longer exists. The report states its coverage either
+                   way, and names which of the two triggered it. Tracked
                    files only (git ls-files, so the repo's ignore rules apply),
                    skipping *.md, the docs tree, .skills, archival subtrees, and
                    anything binary or over 500 KB.
@@ -145,8 +153,8 @@ Sections whose titles still exist in the policy file are not reported as moved.
 
 WHAT THE BASE CHANGES, and what it does not: back-references and the heading
 defects are read off the live surface and are a STANDING count, the same under
-any base. moved-title, and the source classes it gates, are scoped to what left
-the policy file since --base — an INTERVAL count. `seams` is the sum, so it is
+any base. moved-title, and the source classes, are scoped to what left the
+policy file since --base — an INTERVAL count. `seams` is the sum, so it is
 never purely an accrual, and widening the base widens only half of it.
 
 The report goes to stdout in full. The last four lines are machine-readable:
@@ -559,6 +567,82 @@ def doc_lines(path):
         return []
 
 
+# --- did CONTENT leave the policy file, heading or no heading? -------------
+# `moved` answers "did a section TITLE leave", and the source sweep below read
+# it as "did content leave". The two come apart on the most ordinary curation
+# shape there is: a demotion OUT of a section that survives. Phase 3's class B
+# moves a block to docs/<TOPIC>.md and nothing in the rubric says the heading
+# goes with it — for a Project Overview or a Bus Conventions it usually must
+# NOT, because part of the section is class A. On the run that filed #272 a flow
+# diagram and the paragraph above it left `## Project Overview`, the heading
+# stayed with the identity line, and the report said "nothing left the policy
+# file since --base" while skipping 157 tracked source files on the strength of
+# it. A docstring reading "the command -> fact flow is in AGENTS.md § Project
+# Overview" is stale the moment that diagram lands in docs/ARCHITECTURE.md, and
+# this sweep never looked.
+#
+# So the gate is RELOCATION, the predicate prove-no-loss.sh already implements:
+# a body line present at --base, absent from the policy file now, and present
+# under the docs root. Deliberately coarser than that script's, because the
+# answer wanted here is one boolean rather than a per-line verdict. Headings and
+# fence markers are skipped — a heading leaving is exactly what `moved` measures,
+# and a bare ``` matches almost anything — and only the `../` half of its link
+# normalisation is applied, so a demoted link-carrying line may not match. That
+# costs nothing while some other line in the same block does.
+#
+# The length floor is what keeps the coarseness honest in the direction that
+# matters. A short line reappearing in a doc by coincidence would turn the sweep
+# on for nothing, and an unconditional source sweep is the outcome the gate
+# exists to avoid: this repo alone would report ~180 legitimate mentions. A
+# TIGHTENED line whose old wording still stands in a doc does trip it — content
+# did leave the policy file, so the sweep running is the defensible call.
+RELOC_MIN_CHARS = 24
+FENCE = re.compile(r"^\s*(?:```|~~~)")
+LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
+# Any ATX heading, where the module's HEADING deliberately starts at `##` — a
+# document title is not a section. Here the range has to be the full one: an H1
+# is not body text either, and letting one through would compare a title against
+# a destination's title on the one axis this predicate is not about.
+ANY_HEADING = re.compile(r"^#{1,6}\s")
+
+
+def body_key(line):
+    """A body line's comparable form, or "" when it is not evidence of a move."""
+    s = line.strip()
+    if not s or FENCE.match(s) or ANY_HEADING.match(s):
+        return ""
+    s = LINK_DEPTH.sub("](", s)
+    return s if len(s) >= RELOC_MIN_CHARS else ""
+
+
+def relocated_lines():
+    """Base body lines that left the policy file for the live docs tree."""
+    left = {}
+    for raw in base_lines:
+        k = body_key(raw)
+        if k:
+            left.setdefault(k, raw.strip())
+    for raw in now_lines:
+        # `body_key` returns "" for a line that is not comparable, and "" is
+        # never a key, so no guard is needed here.
+        left.pop(body_key(raw), None)
+    if not left:
+        return []
+    dest = set()
+    for d in docs:
+        for raw in doc_lines(d):
+            k = body_key(raw)
+            if k:
+                dest.add(k)
+    return [v for k, v in left.items() if k in dest]
+
+
+# Computed only when it can change what happens. A moved title already turns the
+# sweep on, and --no-source turns it off; reading every doc a second time to
+# refine a note nobody can act on is a cost a gate script should not pay.
+relocated = [] if moved or sweep_source != "1" else relocated_lines()
+
+
 # -- class 1: back-references — the policy file named inside a reference doc.
 for d in docs:
     for i, line in enumerate(doc_lines(d), 1):
@@ -627,10 +711,13 @@ for path in [policy_rel] + docs:
 #    home — 16 of them across 13 files on one adoption run, under a clean exit.
 #    These ship inside wheels, where the reader has no policy file at all.
 #
-#    Only when something MOVED. A source file naming the policy file is usually
+#    Only when something LEFT the policy file. A source file naming it is usually
 #    correct (a script that reads it must name it), and an unconditional sweep
-#    buries the class: the skill's own repo would report ~180. What makes a
-#    mention stale is content having LEFT, which is what `moved` measures.
+#    buries the class: the skill's own repo would report ~180. `moved` was read as
+#    that signal on its own, which skipped every source file whenever a demotion
+#    left the section's heading behind — the ordinary case, and the one #272
+#    measured at 157 files skipped. `relocated` is the other half: content gone
+#    from the policy file and present under the docs root. Either one is staleness.
 #
 #    One hit per line, filename first: a docstring citing both the file and the
 #    section is one judgement, not two.
@@ -652,7 +739,7 @@ def source_lines(path):
     return data.decode("utf-8", "replace").splitlines()
 
 
-if src and moved:
+if src and (moved or relocated):
     # The SAME anchoring as the docs class above, via the same helper. These
     # were two independent copies of `re.escape(orig)` under IGNORECASE, and
     # anchoring only the docs one would have relocated the `Fix`-matches-`prefix`
@@ -738,13 +825,25 @@ if generic:
 if sweep_source != "1":
     print("note: source not swept (--no-source) — mentions of the policy file "
           "in tracked source outside the docs tree were not looked at.")
-elif not moved:
-    print(f"note: {len(src)} tracked source file(s) not swept — nothing left "
-          "the policy file since --base, so a mention there is not fallout "
-          "from this run.")
-else:
+elif moved:
     print(f"note: swept {len(src)} tracked source file(s) outside the docs "
           f"tree for the policy filename and {len(moved)} moved title(s).")
+elif relocated:
+    # The #272 run, reported honestly. There is no moved title to sweep for —
+    # nothing can reference a title that never left — but the FILENAME class is
+    # live, and it is the one that catches "see AGENTS.md § Project Overview"
+    # for a diagram that now lives in docs/ARCHITECTURE.md.
+    print(f"note: swept {len(src)} tracked source file(s) outside the docs "
+          "tree for the policy filename. No section title left the policy "
+          f"file, but {len(relocated)} body line(s) did — a demotion out of a "
+          "section that survived — so there is no moved title to sweep for.")
+else:
+    # Both halves of the claim, because the old single sentence — "nothing left
+    # the policy file" — was the thing that talked a run out of checking by
+    # hand on a curation that had relocated a diagram (#272).
+    print(f"note: {len(src)} tracked source file(s) not swept — no section "
+          "title left the policy file since --base and no body line relocated "
+          "into the docs tree, so a mention there is not fallout from this run.")
 if new:
     print(f"{len(new)} seam(s) to review — each needs a decision, not "
           "necessarily a fix:\n")

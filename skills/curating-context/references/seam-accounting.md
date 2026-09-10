@@ -23,7 +23,7 @@ curation row's `repo_commit` is backfilled to the commit that ships it, so the
 next interval starts *after* that work — deliberately, because Phase 6.5 already
 judged it. The class's live scope is relocations made outside a `curating-context` run.
 
-**Two classes, not one.** The source sweep is gated on the same set — `if src
+**Two classes, not one.** The source sweep was gated on the same set — `if src
 and moved:` — so an empty `moved` skipped every tracked file outside the docs
 tree, printing *"N tracked source file(s) not swept"*. The scheduled run had
 never opened a source file in any repo, which takes `source-back-reference` with
@@ -35,6 +35,15 @@ ledger row carrying a `repo_commit`** — the state of the tree at the last
 recorded measurement. So each week's sweep spans the interval since the week
 before.
 
+Since v1.18 the gate is `moved` **or** relocation — a body line gone from the
+policy file and present under the docs root — because a demotion out of a
+section that *survives* moves no title at all, and the title-only gate skipped
+157 source files while reporting that nothing had left
+([#272](https://github.com/gregoryfoster/skills/issues/272)). That widens the
+interval half of the class, not the standing half: on an EMPTY interval both
+halves of the gate are empty, so a first scheduled run still opens no source
+file, and the report now names which of the two turned the sweep on.
+
 **`seams` is a sum of two different quantities, and always was.** Widening the
 base widens only half of it:
 
@@ -43,7 +52,7 @@ base widens only half of it:
 | back-references — the policy file named in a live reference doc | **standing**: read off the live surface, identical under any base |
 | duplicate headings, provenance baked into a heading | **standing**, likewise |
 | moved-title — a reference to a title that left the policy file | **interval**: since the previous measurement |
-| source refs in tracked source outside the docs tree | **interval**: gated on the same "something moved" set |
+| source refs in tracked source outside the docs tree | **interval**: gated on what LEFT the policy file — a moved title, or a relocated body line |
 
 So a scheduled row reads *"seams standing on the surface, plus seams accrued
 since the last measurement"* — neither a pure accrual nor a pure state.
