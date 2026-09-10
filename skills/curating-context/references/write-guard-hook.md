@@ -146,10 +146,15 @@ The percentage of either budget at which the `NEAR` tier begins is a knob of its
 own: `CONTEXT_PROXIMITY_PCT`, then `.skills/context-proximity-pct`, then **90**.
 It is a knob because the right width depends on how fast a repo's surface grows
 — at a 10,000 doc budget the default band is about one section wide, which is
-enough warning to plan a demotion rather than rush one. A value outside 1-100 is
-refused with a warning and the default used: above 100 the band is empty and the
-tier silently turns itself off, and at 0 every file is in it. `install-guard.sh
+enough warning to plan a demotion rather than rush one. `install-guard.sh
 --proximity-pct N` writes it, the same way `--budget` writes its own.
+
+Outside 1-100 the two sources part ways, as they do for the budgets: the knob
+file and the env var **degrade** to the default with a warning, because a repo
+should not stop measuring over an annotation, and a **flag is refused** —
+`install-guard.sh` and `measure-context.sh` exit 1 rather than write or measure
+against it. Both ends are out of range for a reason: above 100 the band is
+empty and the tier silently turns itself off, and at 0 every file is in it.
 
 `measure-context.sh` puts the same verdict on every row it emits, as
 `near_budget` beside `over_budget` — disjoint, so a breach is never also
