@@ -421,13 +421,13 @@ fi
 
 RC=0
 python3 - "$TMP/base_policy" "$REL" "$TMP/docs" "$ACK_FILE" "$TMP/src" \
-  "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" <<'PY' || RC=$?
+  "$SWEEP_SOURCE" "$BASE" "$SEAM_INTERVAL" "$DOCS_DIR" <<'PY' || RC=$?
 import os
 import re
 import sys
 
 (base_policy_path, policy_rel, docs_list, ack_file, src_list,
- sweep_source, base_ref, seam_interval) = sys.argv[1:9]
+ sweep_source, base_ref, seam_interval, docs_dir) = sys.argv[1:10]
 
 with open(base_policy_path, encoding="utf-8", errors="replace") as fh:
     base_lines = fh.read().splitlines()
@@ -585,9 +585,7 @@ def doc_lines(path):
 # a body line present at --base, absent from the policy file now, and present
 # under the docs root. Deliberately coarser than that script's, because the
 # answer wanted here is one boolean rather than a per-line verdict. Headings and
-# fence markers are skipped, and only the `../` half of its link normalisation is
-# applied, so a demoted link-carrying line may not match. That costs nothing
-# while some other line in the same block does.
+# fence markers are skipped, because a bare ``` matches almost anything.
 #
 # A heading is skipped OUTSIDE a fence and nowhere else, which is the asymmetry
 # prove-no-loss.sh draws and for the same reason: inside a fence the whole line
@@ -621,6 +619,44 @@ LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 ANY_HEADING = re.compile(r"^#{1,6}\s")
 
 
+# Both directions a move re-aims a link, the pair prove-no-loss.sh carries for
+# the same predicate. `../` alone was not enough, and the half that was missing
+# is the one a DEMOTION needs: it removes a directory prefix rather than adding
+# one, because the target is already inside the directory the content moved into
+# — `](docs/KNOBS.md)` in a root policy file becomes `](KNOBS.md)` once the
+# bullet lives in docs/INDEX.md. So a demoted LINK LIST was invisible here, every
+# line differing by exactly that prefix, which is the shape #137 measured as the
+# commonest one (12 `retarget` warrants on one run and nothing else) — and a
+# Detail Docs list is what a curation demotes when it runs out of budget (CR 2).
+#
+# Two prefixes are erasable, not one, for the reason that script gives: the docs
+# root as the policy file sees it and as the repo root does, because content
+# moves between exactly those two vantage points and a skill curating its own
+# surface writes `](references/X.md)` against a `--docs-dir skills/x/references`.
+# They are the same string in the canonical shape, so nothing widens there.
+#
+# The TARGET is what is erased, so the residual is a line whose link TEXT also
+# spells the path — `- [docs/KNOBS.md](docs/KNOBS.md)`, which a demotion rewrites
+# on both sides. That line still does not compare equal, here or in
+# prove-no-loss.sh, and whole-line matching is what both are paid for; a
+# relocation carrying one is found through the other lines in its block.
+def _erasable_prefixes(docs, pol):
+    seen = []
+    for cand in (docs, os.path.relpath(docs, os.path.dirname(pol) or ".")):
+        cand = os.path.normpath(cand).strip("/")
+        while cand.startswith("../"):
+            cand = cand[3:]
+        if cand and cand not in ("..", ".") and cand not in seen:
+            seen.append(cand)
+    return sorted(seen, key=len, reverse=True)
+
+
+_reloc_roots = _erasable_prefixes(docs_dir, policy_rel) if docs_dir else []
+LINK_ROOT = (re.compile(r"\]\((?:"
+                        + "|".join(re.escape(r) for r in _reloc_roots) + r")/")
+             if _reloc_roots else None)
+
+
 def body_keys(lines):
     """Comparable form -> first raw line, for every line that is evidence of a
     move. Fence state is tracked across the walk, so the caller cannot ask for
@@ -634,6 +670,8 @@ def body_keys(lines):
         if not s or (not fenced and ANY_HEADING.match(s)):
             continue
         k = LINK_DEPTH.sub("](", s)
+        if LINK_ROOT is not None:
+            k = LINK_ROOT.sub("](", k)
         floor = RELOC_MIN_CHARS_FENCED if fenced else RELOC_MIN_CHARS
         if len(k) >= floor:
             out.setdefault(k, s)

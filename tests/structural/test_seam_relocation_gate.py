@@ -391,3 +391,115 @@ class TestAFencedBlockIsContentToo:
         r = _run(repo)
         assert r.returncode == 0, r.stdout
         assert "not swept" in r.stdout, r.stdout
+
+
+class TestADemotedLinkIsContentToo:
+    """CR 2: a demotion does not add `../` — it REMOVES a directory prefix,
+    because the target is already inside the directory the content moved into.
+    `](docs/KNOBS.md)` in a root policy file becomes `](KNOBS.md)` once the
+    bullet lives in docs/INDEX.md.
+
+    Erasing only the `../` half left every line of a demoted link list
+    unmatched, which is the shape #137 measured as the commonest one — 12
+    `retarget` warrants on one run and nothing else — and a Detail Docs list is
+    what a curation demotes when it runs out of budget.
+    """
+
+    @staticmethod
+    def _repo(tmp_path: Path, name: str) -> Path:
+        repo = tmp_path / name
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Detail Docs\n\nThe surface is indexed here.\n\n"
+            "- [the knob inventory](docs/KNOBS.md) — every .skills/ file\n"
+            "- [the style guide](docs/STYLE.md) — the gate-script rules\n",
+        )
+        _write(
+            repo, "src/knobs.py", '"""Knob reader. The inventory is in AGENTS.md."""\n'
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Detail Docs\n\nIndexed in [docs/INDEX.md](docs/INDEX.md).\n",
+        )
+        return repo
+
+    def test_a_demoted_link_list_opens_the_sweep(self, tmp_path: Path):
+        repo = self._repo(tmp_path, "linklist")
+        _write(
+            repo,
+            "docs/INDEX.md",
+            "# Index\n\n- [the knob inventory](KNOBS.md) — every .skills/ file\n"
+            "- [the style guide](STYLE.md) — the gate-script rules\n",
+        )
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "source-back-reference" in r.stdout, r.stdout
+        assert "src/knobs.py:1" in r.stdout, r.stdout
+
+    def test_a_repointed_link_is_still_a_difference(self, tmp_path: Path):
+        """Only the docs ROOT is erasable. `](lib/KNOBS.md)` is a repoint, not
+        the prefix a sanctioned move removes, so the line does not compare equal
+        — the same line this draws in prove-no-loss.sh."""
+        repo = self._repo(tmp_path, "repointed")
+        _write(
+            repo,
+            "docs/INDEX.md",
+            "# Index\n\n- [the knob inventory](lib/KNOBS.md) — every .skills/ file\n"
+            "- [the style guide](lib/STYLE.md) — the gate-script rules\n",
+        )
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+        assert "not swept" in r.stdout, r.stdout
+
+    def test_the_docs_root_as_the_policy_file_sees_it_is_erasable_too(
+        self, tmp_path: Path
+    ):
+        """A skill curating its own surface passes `--docs-dir
+        skills/demo/references` and writes `](references/X.md)`, so the
+        repo-relative string alone is a no-op on every link that needs it — the
+        reason prove-no-loss.sh erases two prefixes rather than one."""
+        repo = tmp_path / "ownsurface"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(repo, "AGENTS.md", "# Repo policy\n\nnothing moved from here.\n")
+        _write(
+            repo,
+            "skills/demo/SKILL.md",
+            "# Demo\n\n## Detail Docs\n\nThe surface is indexed here.\n\n"
+            "- [the topology](references/TOPOLOGY.md) — how the workers connect\n",
+        )
+        _write(repo, "src/app.py", '"""Bounds live in skills/demo/SKILL.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(
+            repo,
+            "skills/demo/SKILL.md",
+            "# Demo\n\n## Detail Docs\n\nIndexed in "
+            "[references/INDEX.md](references/INDEX.md).\n",
+        )
+        _write(
+            repo,
+            "skills/demo/references/INDEX.md",
+            "# Index\n\n- [the topology](TOPOLOGY.md) — how the workers connect\n",
+        )
+        _git(repo, "add", "-A")
+        r = _run(
+            repo,
+            "--file",
+            "skills/demo/SKILL.md",
+            "--docs-dir",
+            "skills/demo/references",
+        )
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "source-back-reference" in r.stdout, r.stdout
+        assert "src/app.py:1" in r.stdout, r.stdout
