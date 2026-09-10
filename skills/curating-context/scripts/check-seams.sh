@@ -586,8 +586,8 @@ def doc_lines(path):
 # So the gate is RELOCATION, the predicate prove-no-loss.sh already implements:
 # a body line present at --base, absent from the policy file now, and present
 # under the docs root. Deliberately coarser than that script's, because the
-# answer wanted here is one boolean rather than a per-line verdict. Headings and
-# fence markers are skipped, because a bare ``` matches almost anything.
+# answer wanted here is one boolean rather than a per-line verdict. A fence
+# MARKER is never evidence, because a bare ``` matches almost anything.
 #
 # A heading is skipped OUTSIDE a fence and nowhere else, which is the asymmetry
 # prove-no-loss.sh draws and for the same reason: inside a fence the whole line
