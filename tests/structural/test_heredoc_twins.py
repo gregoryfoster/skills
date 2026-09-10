@@ -49,9 +49,11 @@ HEREDOC = re.compile(r"<<'PY'[^\n]*\n(.*?)\nPY\n", re.S)
 DELIBERATE: dict[str, dict[str, str]] = {
     "HEADING": {
         "check-seams.sh": (
-            "starts at `##`: a document title is not a section, and the "
+            "starts at `##`: a document title is not a section, so the "
             "moved-title class must not count an H1 leaving as a section "
-            "leaving (#272)"
+            "leaving — the comment beside the regex in check-seams.sh states "
+            "it, and predates #272, which added the separate full-range "
+            "ANY_HEADING for the relocation walk"
         ),
     },
 }
