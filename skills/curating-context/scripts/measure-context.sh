@@ -386,7 +386,7 @@ def note_endpoint():
     """A SEPARATE stderr line, never folded into the message.
 
     Putting the host inside "HTTP 400: <message>" would break the preflight's
-    split on the first ": " — a URL carries one of its own — and appending it
+    split at the first colon — a URL carries one of its own — and appending it
     to the message would put it inside the quotation attributed to the
     endpoint, which is the misattribution CR 7 removed.
     """
