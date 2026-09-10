@@ -576,7 +576,9 @@ if [ "$CHECK_CRED" -eq 1 ]; then
         _code="${_why%%:*}"
         _said="${_why#*:}"
         _said="${_said# }"
-        [ -n "$_said" ] || _said="(no message in the response body)"
+        if [ -z "$_said" ]; then
+          _said="(no message in the response body)"
+        fi
         ;;
     esac
     echo "no: $CRED_DESC resolved, and count_tokens$_at REFUSED it for $MODEL${_code:+ ($_code)}." >&2
