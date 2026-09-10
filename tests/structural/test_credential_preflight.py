@@ -13,8 +13,14 @@ account at that moment, not of the credential's shape. So the preflight makes
 one real `count_tokens` call — free, one character of input, the same request
 the run will make for the same `--model`.
 
-These tests run against a stub on `ANTHROPIC_BASE_URL`, so "the API said no" is
-exercised without a bad key and without a network.
+The file owns three groups, all reachable without a network and without a bad
+key, because a stub on `ANTHROPIC_BASE_URL` answers for the endpoint:
+
+- the preflight's verdicts — accepted, refused, unreachable, nothing resolved,
+  and what is not a credential verdict at all (a missing `python3`);
+- how a redirected host is named, and why it is parsed rather than trimmed;
+- `--exact`'s per-source announcements, which are the other half of
+  `ctx_resolve_credential`'s contract and share its resolution order.
 """
 
 import json
