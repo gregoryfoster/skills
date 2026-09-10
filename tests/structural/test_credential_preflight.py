@@ -352,6 +352,64 @@ class TestUnreachableIsNotRefused:
         assert refused in r.stderr, "the failure does not say what could not be reached"
 
 
+class TestTheRedirectedHostIsNamedSafely:
+    """Naming the host earns its place — a stale gateway answers `invalid
+    x-api-key` and reads exactly like an expired key — but ANTHROPIC_BASE_URL
+    may carry credentials in its userinfo, and echoing the variable verbatim
+    put a secret into every log the line reached, in a script whose stated
+    discipline two lines above is that it never prints one.
+    """
+
+    SECRET = "svc-token-s3cr3t"
+    UNREACHABLE = "127.0.0.1:1"  # privileged, unbindable without root
+
+    def test_userinfo_never_reaches_the_output(self, repo: Path, tmp_path: Path):
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        env["ANTHROPIC_BASE_URL"] = f"http://{self.SECRET}@{self.UNREACHABLE}"
+        r = _run(repo, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert self.SECRET not in r.stdout + r.stderr
+        assert f"http://{self.UNREACHABLE}" in r.stderr
+
+    def test_an_at_sign_in_the_path_does_not_mis_split(
+        self, repo: Path, tmp_path: Path
+    ):
+        """Why the host is parsed rather than trimmed: cutting at the first
+        "@" turns this URL into the host `v1`."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        env["ANTHROPIC_BASE_URL"] = f"http://{self.UNREACHABLE}/proxy@v1"
+        r = _run(repo, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert f"http://{self.UNREACHABLE}" in r.stderr
+        assert "v1" not in r.stderr
+
+    def test_exact_names_the_host_it_could_not_reach(self, repo: Path, tmp_path: Path):
+        """The WARN a scheduled run actually meets when a gateway URL goes
+        stale — the surface the first version of this fix did not reach."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        env["ANTHROPIC_BASE_URL"] = f"http://{self.SECRET}@{self.UNREACHABLE}"
+        r = _run_exact(repo, env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "exact count failed" in r.stderr
+        assert f"endpoint: http://{self.UNREACHABLE}" in r.stderr
+        assert self.SECRET not in r.stdout + r.stderr
+
+    def test_the_verdict_names_the_host_once(self, repo: Path, tmp_path: Path):
+        """The builder reports the host and so does the preflight; printing
+        both reads as two different hosts."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        with _Stub(status=400, payload=_refusal(CREDIT_MESSAGE)) as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _run(repo, env)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert r.stderr.count(stub.url) == 1, r.stderr
+        assert "endpoint:" not in r.stderr
+
+
 class TestTheJwtProfile:
     """The hand-maintained JWT branch is now the general case: the endpoint is
     asked, and its answer is quoted. The profile is still last, and still loses

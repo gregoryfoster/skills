@@ -349,7 +349,54 @@ ctx_resolve_credential() {
 # per-file fallback; --check-credential does not.
 ctx_write_count_py() {
   cat >"$1" <<'PY'
-import json, os, sys, urllib.error, urllib.request
+import json, os, sys, urllib.error, urllib.parse, urllib.request
+
+# The SDK's own knob, honoured so a gateway deployment counts against the
+# endpoint it actually has — and so the preflight can be exercised against a
+# stub, which is the only way to test "the API said no" without a bad key.
+BASE = (os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/")
+
+
+def where():
+    """The endpoint, named safely — empty when it is the API's own.
+
+    PARSED, not trimmed. ANTHROPIC_BASE_URL may carry credentials in its
+    userinfo, and this script's discipline is that it never prints one; only
+    scheme, host and port survive, so a token in the URL cannot reach a log,
+    and an "@" later in the path or query cannot mis-split the authority the
+    way a string trim would.
+
+    One definition, because three callers need the same answer: the two error
+    paths below, which is how a --exact WARN names the host it could not reach,
+    and --endpoint, which is how the preflight names it on success.
+    """
+    if not os.environ.get("ANTHROPIC_BASE_URL"):
+        return ""
+    parts = urllib.parse.urlsplit(BASE)
+    host = parts.hostname or ""
+    if not host:
+        return ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return f"{parts.scheme}://{host}"
+
+
+def note_endpoint():
+    """A SEPARATE stderr line, never folded into the message.
+
+    Putting the host inside "HTTP 400: <message>" would break the preflight's
+    split on the first ": " — a URL carries one of its own — and appending it
+    to the message would put it inside the quotation attributed to the
+    endpoint, which is the misattribution CR 7 removed.
+    """
+    shown = where()
+    if shown:
+        print(f"endpoint: {shown}", file=sys.stderr)
+
+
+if len(sys.argv) > 1 and sys.argv[1] == "--endpoint":
+    print(where())
+    sys.exit(0)
 
 path, model = sys.argv[1], sys.argv[2]
 body = json.dumps({
@@ -370,12 +417,8 @@ else:
     headers["authorization"] = "Bearer " + os.environ["ANTHROPIC_OAUTH_TOKEN"]
     headers["anthropic-beta"] = "oauth-2025-04-20"
 
-# The SDK's own knob, honoured so a gateway deployment counts against the
-# endpoint it actually has — and so the preflight can be exercised against a
-# stub, which is the only way to test "the API said no" without a bad key.
-base = (os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/")
 req = urllib.request.Request(
-    base + "/v1/messages/count_tokens",
+    BASE + "/v1/messages/count_tokens",
     data=body,
     headers=headers,
 )
@@ -394,12 +437,15 @@ except urllib.error.HTTPError as exc:
     except (ValueError, KeyError, TypeError):
         detail = raw
     print(f"HTTP {exc.code}: {detail[:300]}".replace("\n", " "), file=sys.stderr)
+    note_endpoint()
     sys.exit(1)
 except (urllib.error.URLError, OSError) as exc:
     print(f"count_tokens unreachable: {exc}", file=sys.stderr)
+    note_endpoint()
     sys.exit(2)
 except (KeyError, ValueError, TypeError) as exc:
     print(f"count_tokens answered without a token count: {exc}", file=sys.stderr)
+    note_endpoint()
     sys.exit(2)
 print(tokens)
 PY
@@ -438,13 +484,30 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   # Newlines flattened so a multi-line body stays one quotable sentence; the
   # trailing space that leaves would otherwise sit between the message and the
   # period a reader expects.
-  _why="$(tr '\n' ' ' <"$_probe/err" | sed 's/ *$//')"
+  # The request builder reports the host on its own `endpoint:` line, so drop
+  # that line here: this block names the host itself, and printing it twice in
+  # one verdict reads as two different hosts.
+  #
+  # `sed '/…/d'`, never `grep -v`: on the SUCCESS path this file is empty, grep
+  # matches nothing and exits 1, and under `set -euo pipefail` that killed the
+  # whole preflight with status 1 and no output at all. sed's status does not
+  # encode whether anything matched.
+  _why="$(sed '/^endpoint: /d' "$_probe/err" | tr '\n' ' ' | sed 's/ *$//')"
   # Name the host whenever it is not the API's own. ANTHROPIC_BASE_URL redirects
   # where the credential is SENT, so a stale one turns into "invalid x-api-key"
   # from a proxy — a credential verdict about a host the reader did not know was
   # in play. Silent on the default, so the ordinary line stays short.
+  #
+  # Asked of the request builder rather than read from the environment: the
+  # variable may carry credentials in its userinfo, and echoing it verbatim put
+  # a secret in every log this line reaches. `where()` there is the one place
+  # that redaction lives, and an `if` rather than `[ … ] && …` so the statement
+  # cannot become a block's exit status if it is ever moved (docs/STYLE.md).
   _at=""
-  [ -n "${ANTHROPIC_BASE_URL:-}" ] && _at=" at $ANTHROPIC_BASE_URL"
+  _shown="$(python3 "$_probe/count.py" --endpoint 2>/dev/null)" || _shown=""
+  if [ -n "$_shown" ]; then
+    _at=" at $_shown"
+  fi
   if [ "$_rc" -eq 0 ]; then
     echo "ok: $CRED_DESC, accepted by count_tokens for $MODEL$_at"
     exit 0
@@ -641,7 +704,11 @@ count_tokens() {
   if [ "$EXACT_OK" -ne 1 ]; then printf '%s' "$est"; return 0; fi
   out="$(python3 "$TMP/count.py" "$f" "$MODEL" 2>"$TMP/ct.err")" || rc=$?
   if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -qE '^[0-9]+$'; then
-    echo "WARN exact count failed for $f ($(tr -d '\n' <"$TMP/ct.err")); using estimate" >&2
+    # `tr '\n' ' '`, not `tr -d`: the request builder reports a redirected host
+    # on its own `endpoint:` line, and deleting the newline would run it into
+    # the message. This is the WARN a scheduled run actually meets when a
+    # gateway URL goes stale, so the host belongs in it.
+    echo "WARN exact count failed for $f ($(tr '\n' ' ' <"$TMP/ct.err" | sed 's/ *$//')); using estimate" >&2
     # Record the fallback for the caller. A marker FILE, not a variable: this
     # function is invoked in a command substitution, so its subshell cannot set
     # anything in the parent. Holding a credential is not the same as having
