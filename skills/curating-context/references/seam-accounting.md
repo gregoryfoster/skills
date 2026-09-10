@@ -35,8 +35,9 @@ ledger row carrying a `repo_commit`** — the state of the tree at the last
 recorded measurement. So each week's sweep spans the interval since the week
 before.
 
-Since v1.18 the gate is `moved` **or** relocation — a body line gone from the
-policy file and present under the docs root — because a demotion out of a
+Since v1.18 the gate is `moved` **or** relocation — a body line of 24+
+characters (8+ inside a fence) gone from the policy file and present under the
+docs root — because a demotion out of a
 section that *survives* moves no title at all, and the title-only gate skipped
 157 source files while reporting that nothing had left
 ([#272](https://github.com/gregoryfoster/skills/issues/272)). That widens the
