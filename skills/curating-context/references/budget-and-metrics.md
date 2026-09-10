@@ -132,23 +132,19 @@ rate-limited per usage tier (2,000–8,000 RPM), with limits independent of mess
 creation. So `--exact` has no cost argument against it — run it always. A zero
 credit balance blocks the whole API including free endpoints, which surfaces as a
 400 whose body names the reason — the script prints the API's own
-`error.message` from that body ("Your credit balance is too low to access the
-Anthropic API") rather than just the status line, falling back to the raw body
-when the shape is unfamiliar.
+`error.message` from that body rather than just the status line, falling back to
+the raw body when the shape is unfamiliar.
 
 ### Pointing the count somewhere else
 
-`ANTHROPIC_BASE_URL` — the Anthropic SDK's own knob — replaces
-`https://api.anthropic.com` for every `count_tokens` call the scripts make,
-which is what lets a repo behind a gateway or proxy count against the endpoint
-it actually has. It is read from the environment only; the repo-root secrets
-file is parsed for `ANTHROPIC_API_KEY` and nothing else.
-
-Treat it as part of the credential, because it decides where the credential is
-**sent**: a stale value returns `invalid x-api-key` from a proxy that never saw
-your account, which reads exactly like an expired key. `--check-credential`
-therefore names the host in all three of its answers whenever this is set, and
-stays silent about it when it is not.
+`ANTHROPIC_BASE_URL` — the SDK's own knob — replaces `https://api.anthropic.com`
+for every `count_tokens` call, so a repo behind a gateway counts against the
+endpoint it has. Environment only: the secrets file is parsed for
+`ANTHROPIC_API_KEY` and nothing else. Treat it as part of the credential, since
+it decides where the credential is **sent** — a stale value returns `invalid
+x-api-key` from a proxy that never saw your account, which reads exactly like an
+expired key. `--check-credential` names the host in all three answers when it is
+set, and says nothing when it is not.
 
 ### The Phase 0 preflight, in full
 
@@ -157,15 +153,15 @@ the endpoint, not just the environment: the credential still comes from the
 three sources below, and only the verdict moved. One free `count_tokens` call
 on a one-character body, the same request `--exact` will make, for the same
 model.
-Presence was the old test, and it passed a key that authenticated and could not
-spend — the run did every phase and lost the row to exit 4, over a remediation
-line advising the preflight that had just gone green (#271). Exit 3 means
-resolve a credential **now** — interactively, ask while the human still has
-context; autonomously, **abort the run**. The endpoint's own words are quoted,
-because "Your credit balance is too low" is more actionable than anything this
-script could infer from a 400. Exit 2 is an unreachable endpoint, not a bad key:
-an offline or sandboxed runner reaches it with a perfectly good credential, and
-telling that operator their billing lapsed sends them the wrong way. Discovered
+Presence was the old test: it passed a key that authenticated and could not
+spend, and the run lost the week's row to exit 4 over a remediation line naming
+the preflight that had just gone green (#271). Exit 3 means resolve a credential
+**now** — interactively, ask while the human still has context; autonomously,
+**abort the run**. The endpoint's own words are quoted, because "Your credit
+balance is too low" is more actionable than a 400 alone. Exit 2 is an
+unreachable endpoint, not a bad key: an offline or sandboxed runner reaches it
+with a perfectly good credential, and a billing verdict sends it the wrong way.
+Discovered
 any later, this failure costs eight phases of work toward a ledger row that
 `record-telemetry.sh` refuses at the very end.
 
