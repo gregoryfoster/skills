@@ -452,7 +452,15 @@ class TestOneRequestDefinition:
             "the count_tokens URL is built in more than one place, so the "
             "preflight can again answer for a request the run never makes"
         )
-        assert script.count("ctx_write_count_py ") == 2, (
-            "the preflight and the per-file counts no longer both write their "
-            "request from ctx_write_count_py"
-        )
+        # The two call sites by name, not a count of the substring. A count is
+        # satisfied by any two occurrences — one call site plus a comment
+        # naming the function — so the dangerous direction, deleting a call and
+        # mentioning it in prose, passed vacuously.
+        for call in (
+            'ctx_write_count_py "$_probe/count.py"',
+            'ctx_write_count_py "$TMP/count.py"',
+        ):
+            assert call in script, (
+                f"{call} is gone, so the preflight and the per-file counts no "
+                "longer both write their request from one definition"
+            )
