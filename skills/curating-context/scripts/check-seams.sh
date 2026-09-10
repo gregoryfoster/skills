@@ -632,7 +632,16 @@ def doc_lines(path):
 # are how the next reader fixes the wrong one (CR 8).
 RELOC_MIN_CHARS = 24
 RELOC_MIN_CHARS_FENCED = 8
-FENCE = re.compile(r"^\s*(?:```|~~~)")
+# A fence CLOSES on the marker that opened it, which prove-no-loss.sh does not
+# distinguish. Matching either interchangeably means a `~~~` inside a ``` block —
+# a gate's own output, a doc showing example markdown — flips the state, and the
+# rest of the file is then keyed by the fenced rules: headings compared, prose at
+# the lower floor. The same line would be keyed differently in two files, which
+# is the one thing a shared walker exists to prevent. No false trigger could be
+# produced from it — the destination side applies its own floor and absorbed the
+# case built for it — so this is a divergence from the sibling taken on
+# correctness rather than on a measurement (CR 13).
+FENCE = re.compile(r"^\s*(```|~~~)")
 LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 # Any ATX heading, where the module's HEADING deliberately starts at `##` — a
 # document title is not a section. Here the range has to be the full one: an H1
@@ -688,12 +697,19 @@ def body_keys(lines):
     """Comparable form -> first raw line, for every line that is evidence of a
     move. Fence state is tracked across the walk, so the caller cannot ask for
     one line's key without it and get the heading rule wrong."""
-    out, fenced = {}, False
+    out, opener = {}, None
     for raw in lines:
         s = raw.strip()
-        if FENCE.match(s):
-            fenced = not fenced
+        m = FENCE.match(s)
+        if m and opener is None:
+            opener = m.group(1)
             continue
+        if m and m.group(1) == opener:
+            opener = None
+            continue
+        # A marker of the OTHER kind inside a fence falls through to here, where
+        # it is keyed as the fenced content it is.
+        fenced = opener is not None
         if not s or (not fenced and ANY_HEADING.match(s)):
             continue
         k = LINK_DEPTH.sub("](", s)

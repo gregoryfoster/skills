@@ -391,6 +391,40 @@ class TestAFencedBlockIsContentToo:
         )
         assert "not swept" in r.stdout, r.stdout
 
+    def test_a_marker_of_the_other_kind_does_not_close_the_fence(self, tmp_path: Path):
+        """CR 13: matching ``` and ~~~ interchangeably let a `~~~` line INSIDE a
+        ``` block flip the state, so everything after it was keyed by the fenced
+        rules — prose at the lower floor — and the same line could be keyed
+        differently in two files.
+
+        Nothing here moves a section title, so the title half cannot open the
+        sweep. `short line here` is 15 characters: prose in the policy file, so
+        under the 24-character floor and not evidence — but the destination
+        carries it INSIDE a fence, where the floor is 8. A flipped state on the
+        policy side keys it at 8 as well, the two match, and the sweep opens on a
+        line the prose floor exists to exclude.
+        """
+        repo = tmp_path / "tilde"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        fenced_output = (
+            "# Repo\n\n## Output\n\nThe gate prints a report:\n\n"
+            "```text\nseams: 0\n~~~ not a fence, just output ~~~\n```\n\n"
+        )
+        _write(repo, "AGENTS.md", fenced_output + "short line here\n")
+        _write(repo, "src/app.py", '"""See AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(repo, "AGENTS.md", fenced_output)
+        _write(repo, "docs/NOTES.md", "# Notes\n\n```text\nshort line here\n```\n")
+        r = _run(repo)
+        assert r.returncode == 0, (
+            f"a tilde inside a fence flipped the fence state:\n{r.stdout}"
+        )
+        assert "not swept" in r.stdout, r.stdout
+
     def test_a_short_fenced_command_is_still_under_the_floor(self, tmp_path: Path):
         """The fenced floor is lower, not absent. `uv sync` is seven characters
         and is shared by half the repos in the cohort."""
