@@ -139,8 +139,9 @@ Exit codes:
      --check-credential got a credential accepted by count_tokens
   1  usage error, or no policy file found
   2  infrastructure failure (unreadable file, awk/find failure, or
-     --check-credential could not reach the endpoint at all — including no
-     python3 to address it with; neither is a verdict on a credential)
+     --check-credential could not reach the endpoint at all — no python3 to
+     address it with, or an ANTHROPIC_BASE_URL that cannot be parsed; none of
+     these is a verdict on a credential)
   3  --check-credential only: no credential that count_tokens will accept —
      none resolved, or the one that did was refused
   4  --gate only: the policy file is over budget
@@ -394,9 +395,39 @@ def note_endpoint():
         print(f"endpoint: {shown}", file=sys.stderr)
 
 
+def base_problem():
+    """Why BASE cannot be addressed, or "" when it can.
+
+    Checked BEFORE anything is sent, because urllib.request.Request() raises
+    ValueError for a URL with no scheme, that raise sat outside the try below,
+    and the traceback escaping with status 1 was read by the caller as a
+    REFUSAL — so `ANTHROPIC_BASE_URL=gateway.example.com`, the likeliest way to
+    mistype this knob, reported a perfectly good credential as one the endpoint
+    rejected, and quoted 900 characters of traceback as the endpoint's words.
+
+    Names the variable, never its value: it may carry credentials in its
+    userinfo, which is what where() exists to strip.
+    """
+    if not os.environ.get("ANTHROPIC_BASE_URL"):
+        return ""
+    parts = urllib.parse.urlsplit(BASE)
+    if parts.scheme not in ("http", "https"):
+        return "ANTHROPIC_BASE_URL has no http:// or https:// scheme"
+    if not parts.hostname:
+        return "ANTHROPIC_BASE_URL names no host"
+    return ""
+
+
 if len(sys.argv) > 1 and sys.argv[1] == "--endpoint":
     print(where())
     sys.exit(0)
+
+# Exit 2, the caller's infrastructure code: a knob that cannot be parsed is not
+# a verdict on a credential, and saying so costs one check before any request.
+problem = base_problem()
+if problem:
+    print(f"count_tokens cannot be addressed: {problem}", file=sys.stderr)
+    sys.exit(2)
 
 path, model = sys.argv[1], sys.argv[2]
 body = json.dumps({
@@ -417,11 +448,22 @@ else:
     headers["authorization"] = "Bearer " + os.environ["ANTHROPIC_OAUTH_TOKEN"]
     headers["anthropic-beta"] = "oauth-2025-04-20"
 
-req = urllib.request.Request(
-    BASE + "/v1/messages/count_tokens",
-    data=body,
-    headers=headers,
-)
+try:
+    req = urllib.request.Request(
+        BASE + "/v1/messages/count_tokens",
+        data=body,
+        headers=headers,
+    )
+except ValueError:
+    # Defence in depth behind base_problem(): whatever urllib refuses to parse
+    # is infrastructure, not a refusal. The exception text quotes the full URL,
+    # so it is deliberately NOT printed — that is where a userinfo token would
+    # be.
+    print(
+        "count_tokens cannot be addressed: ANTHROPIC_BASE_URL is not a usable URL",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 try:
     with urllib.request.urlopen(req, timeout=60) as resp:
         tokens = json.load(resp)["input_tokens"]
@@ -543,9 +585,10 @@ if [ "$CHECK_CRED" -eq 1 ]; then
     exit 3
   fi
   echo "ERROR could not reach count_tokens$_at to test $CRED_DESC: $_why" >&2
-  echo "      That is a verdict on the network, not on the credential — an offline" >&2
-  echo "      or sandboxed runner reaches this line with a perfectly good key, so" >&2
-  echo "      it exits 2 (infrastructure) rather than 3 (fix your credential)." >&2
+  echo "      That is a verdict on the network or the configuration, not on the" >&2
+  echo "      credential — an offline runner, and a base URL that cannot be" >&2
+  echo "      addressed, both reach this line with a perfectly good key, so it" >&2
+  echo "      exits 2 (infrastructure) rather than 3 (fix your credential)." >&2
   exit 2
 fi
 

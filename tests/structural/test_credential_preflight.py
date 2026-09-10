@@ -458,6 +458,60 @@ class TestTheRedirectedHostIsNamedSafely:
         assert "endpoint:" not in r.stderr
 
 
+class TestAnUnusableBaseUrlIsNotACredentialVerdict:
+    """`Request()` raises ValueError for a URL with no scheme, that raise sat
+    outside the try, and status 1 means REFUSED to the caller — so the likeliest
+    way to mistype this knob reported a good credential as one the endpoint
+    rejected, over 900 characters of traceback quoted as the endpoint's words.
+    """
+
+    SECRET = "svc-token-s3cr3t"
+
+    @pytest.mark.parametrize(
+        "base,reason",
+        [
+            ("gateway.example.com", "no http:// or https:// scheme"),
+            ("127.0.0.1:8080", "no http:// or https:// scheme"),
+            ("ftp://gateway.example.com", "no http:// or https:// scheme"),
+            ("https://", "names no host"),
+        ],
+    )
+    def test_it_is_exit_2_and_says_which_knob(
+        self, repo: Path, tmp_path: Path, base: str, reason: str
+    ):
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        env["ANTHROPIC_BASE_URL"] = base
+        r = _run(repo, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "ANTHROPIC_BASE_URL" in r.stderr
+        assert reason in r.stderr
+        assert "REFUSED" not in r.stderr
+        assert "Traceback" not in r.stderr
+
+    def test_the_unusable_value_is_not_echoed(self, repo: Path, tmp_path: Path):
+        """The value is where a userinfo token lives, and the ValueError text
+        quotes the whole URL — which is why the exception is not printed."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        env["ANTHROPIC_BASE_URL"] = f"{self.SECRET}@gateway.example.com"
+        r = _run(repo, env)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert self.SECRET not in r.stdout + r.stderr
+
+    def test_exact_degrades_without_a_traceback(self, repo: Path, tmp_path: Path):
+        """Every file's count would otherwise carry the same traceback into a
+        WARN, thirty times over."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        env["ANTHROPIC_BASE_URL"] = "gateway.example.com"
+        r = _run_exact(repo, env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "cannot be addressed" in r.stderr
+        assert "Traceback" not in r.stderr
+        assert json.loads(r.stdout)["policy"]["tokens_exact"] is False
+
+
 class TestTheJwtProfile:
     """The hand-maintained JWT branch is now the general case: the endpoint is
     asked, and its answer is quoted. The profile is still last, and still loses
