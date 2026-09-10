@@ -100,8 +100,13 @@ def _definitions(block: str) -> dict[str, str]:
     return out
 
 
-def _twins() -> dict[str, dict[str, str]]:
-    """name -> {script: dumped definition}, for names defined in 2+ scripts.
+def _discover() -> tuple[dict[str, dict[str, set[str]]], list[tuple[str, int, str]]]:
+    """Every definition in every heredoc, and every heredoc that failed to parse.
+
+    Nothing is asserted here. This runs at import, and an assertion at import
+    fails COLLECTION: the module reports as an error with none of its tests
+    run, which reads as broken tooling rather than as the finding it is, and
+    takes the vacuity guard down with it (CR 17). The tests below assert.
 
     Keyed by SCRIPT rather than by heredoc, so a script with several blocks —
     score-cohort.sh has four — that defines a name twice internally is that
@@ -109,25 +114,53 @@ def _twins() -> dict[str, dict[str, str]]:
     its own failure below.
     """
     seen: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    unparsable: list[tuple[str, int, str]] = []
     for sh in sorted(SCRIPTS.glob("*.sh")):
-        for block in HEREDOC.findall(sh.read_text(encoding="utf-8")):
-            for name, dumped in _definitions(block).items():
+        for n, block in enumerate(HEREDOC.findall(sh.read_text(encoding="utf-8"))):
+            try:
+                defs = _definitions(block)
+            except SyntaxError as exc:
+                unparsable.append((sh.name, n, f"line {exc.lineno}: {exc.msg}"))
+                continue
+            for name, dumped in defs.items():
                 seen[name][sh.name].add(dumped)
-    twins = {}
-    for name, per_script in seen.items():
-        if len(per_script) < 2:
-            continue
-        for script, variants in per_script.items():
-            assert len(variants) == 1, (
-                f"{script} defines `{name}` differently in two of its own "
-                f"heredocs — pick one before the cross-script comparison can mean "
-                "anything"
-            )
-        twins[name] = {s: next(iter(v)) for s, v in per_script.items()}
-    return twins
+    return seen, unparsable
 
 
-TWINS = _twins()
+SEEN, UNPARSABLE = _discover()
+# name -> {script: dumped definition}, for names defined in 2+ scripts. A script
+# holding two variants of one name contributes its FIRST here and is reported
+# by test_no_script_defines_a_twin_two_ways; the cross-script comparison still
+# runs on the rest rather than being withheld until that is fixed.
+TWINS = {
+    name: {s: sorted(v)[0] for s, v in per_script.items()}
+    for name, per_script in SEEN.items()
+    if len(per_script) >= 2
+}
+
+
+def test_every_heredoc_parses():
+    """A heredoc that does not parse contributes nothing to discovery, so its
+    definitions are outside the pin without anyone knowing."""
+    assert not UNPARSABLE, "\n".join(
+        f"{script} heredoc #{n}: {why}" for script, n, why in UNPARSABLE
+    )
+
+
+def test_no_script_defines_a_twin_two_ways():
+    """A script with several heredocs defining one twin two ways has to pick
+    one before the comparison across scripts can mean anything."""
+    split = {
+        (name, script): variants
+        for name, per_script in SEEN.items()
+        if len(per_script) >= 2
+        for script, variants in per_script.items()
+        if len(variants) > 1
+    }
+    assert not split, "\n".join(
+        f"{script} defines `{name}` {len(variants)} ways in its own heredocs"
+        for (name, script), variants in sorted(split.items())
+    )
 
 
 def test_the_discovery_is_looking():
