@@ -694,7 +694,13 @@ def body_keys(lines):
 
 
 def relocated_lines():
-    """Base body lines that left the policy file for the live docs tree."""
+    """Base body lines that left the policy file for the live docs tree.
+
+    One entry per DISTINCT normalised line, so the count is of lines the
+    predicate can tell apart rather than of raw lines moved — two identical
+    bullets leaving together are one entry, and the report says "body line(s)"
+    on that basis.
+    """
     left = body_keys(base_lines)
     for k in body_keys(now_lines):
         left.pop(k, None)
@@ -902,10 +908,15 @@ elif relocated:
     # nothing can reference a title that never left — but the FILENAME class is
     # live, and it is the one that catches "see AGENTS.md § Project Overview"
     # for a diagram that now lives in docs/ARCHITECTURE.md.
+    # One example line, for the reason the `generic` note names its titles: a
+    # claim a reader cannot check reads exactly like the over-claim this branch
+    # replaced. It is also the only place the collected text is used, so the
+    # predicate keeping it is not dead weight.
     print(f"note: swept {len(src)} tracked source file(s) outside the docs "
           "tree for the policy filename. No section title left the policy "
           f"file, but {len(relocated)} body line(s) did — a demotion out of a "
-          "section that survived — so there is no moved title to sweep for.")
+          f"section that survived, e.g. {relocated[0][:60]!r} — so there is no "
+          "moved title to sweep for.")
 else:
     # Both halves of the claim, because the old single sentence — "nothing left
     # the policy file" — was the thing that talked a run out of checking by

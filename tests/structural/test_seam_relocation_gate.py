@@ -164,6 +164,19 @@ class TestDemotionOutOfASurvivingSection:
         assert "No section title left the policy file" in r.stdout, r.stdout
         assert "body line(s) did" in r.stdout, r.stdout
 
+    def test_the_note_quotes_a_line_that_moved(self, tmp_path: Path):
+        """CR 5: a claim a reader cannot check reads exactly like the over-claim
+        this branch replaced. The `generic` note names the titles it narrowed to;
+        this one names a line it counted."""
+        repo = _demoted_repo(tmp_path)
+        _write(repo, "src/dispatch.py", '"""Nothing to see."""\n')
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert "e.g." in r.stdout, r.stdout
+        assert "The command to fact flow runs through the dispatcher" in r.stdout, (
+            r.stdout
+        )
+
     def test_no_source_still_disables_the_class(self, tmp_path: Path):
         """Relocation widens the gate; it does not outrank the opt-out."""
         repo = _demoted_repo(tmp_path)
