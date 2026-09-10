@@ -334,8 +334,10 @@ class TestTheTwoTiersAreDisjoint:
         assert self.near(5000, pct=80)
 
     def test_a_zero_budget_is_never_near(self):
-        """Nothing to be near. Guarded because the threshold arithmetic would
-        otherwise make every file in a misconfigured repo 'approaching'."""
+        """Nothing to be near. Only the empty-file case actually needs the
+        guard — any file with tokens > 0 already fails `tokens <= budget` — but
+        0 of 0 satisfies both inequalities and would report as approaching a
+        budget that does not exist (CR 6)."""
         assert not self.near(0, budget=0)
         assert not self.near(100, budget=0)
 
