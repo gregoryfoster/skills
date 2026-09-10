@@ -352,36 +352,44 @@ class TestAFencedBlockIsContentToo:
         assert r.returncode == 3, r.stdout
         assert "source-back-reference" in r.stdout, r.stdout
 
-    def test_a_markdown_heading_outside_a_fence_is_still_skipped(self, tmp_path: Path):
-        """The asymmetry has to stay an asymmetry: a section heading that left
-        is `moved`'s business, and counting it here would make every title move
-        look like a relocation as well."""
-        repo = tmp_path / "headingonly"
+    def test_a_heading_outside_a_fence_is_not_evidence_of_a_move(self, tmp_path: Path):
+        """CR 10: this case used to move a `###`, which leaves `moved` non-empty
+        — so `relocated` short-circuited, the predicate never ran, and the test
+        would have passed with the heading rule deleted.
+
+        An H1 is the shape that makes it real. `HEADING` starts at `##`, so a
+        document title leaving the policy file moves no *section* title and
+        `moved` stays empty; the only thing that could open the sweep here is the
+        H1 counting as a body line. It is the full-range `ANY_HEADING` that stops
+        it, which is exactly what the comment beside that regex claims.
+        """
+        repo = tmp_path / "h1only"
         repo.mkdir()
         _git(repo, "init", "-q")
         _git(repo, "config", "user.email", "t@t")
         _git(repo, "config", "user.name", "t")
-        # The heading is the ONLY line long enough to clear either floor, so if
-        # it counted, this run would sweep.
+        # The H1 is the ONLY line long enough to clear the prose floor, so if it
+        # counted as content this run would sweep.
         _write(
             repo,
             "AGENTS.md",
-            "# Repo\n\n## Build\n\nrun make\n\n### A deliberately long subsection "
-            "heading\n\nok\n",
+            "# A deliberately long document title for the repo\n\n## Build\n\n"
+            "run make\n",
         )
         _write(repo, "src/app.py", '"""See AGENTS.md."""\n')
         _git(repo, "add", "-A")
         _git(repo, "commit", "-qm", "pre")
-        _write(repo, "AGENTS.md", "# Repo\n\n## Build\n\nrun make\n\nok\n")
+        _write(repo, "AGENTS.md", "## Build\n\nrun make\n")
         _write(
             repo,
-            "docs/SUB.md",
-            "# Sub\n\n### A deliberately long subsection heading\n\nok\n",
+            "docs/TITLE.md",
+            "# A deliberately long document title for the repo\n\nmoved here.\n",
         )
         r = _run(repo)
-        # The title left, so `moved` opens the sweep — but on the title, not on
-        # a relocation, and the note is what says which.
-        assert "moved title(s)" in r.stdout, r.stdout
+        assert r.returncode == 0, (
+            f"an H1 was counted as a relocated body line:\n{r.stdout}"
+        )
+        assert "not swept" in r.stdout, r.stdout
 
     def test_a_short_fenced_command_is_still_under_the_floor(self, tmp_path: Path):
         """The fenced floor is lower, not absent. `uv sync` is seven characters
