@@ -561,7 +561,13 @@ def delink(line):
 # behind the `tighten` warrant. Every atom here is checkable and its loss is
 # real; nothing here is a judgement call about wording, which is exactly the
 # thing whole-line matching already refuses to arbitrate.
-FENCE = re.compile(r"^\s*(?:```|~~~)")
+# Capturing, so the walk below can close a fence only on the marker that opened
+# it: a `~~~` inside a ``` block — a gate's own output, a doc showing example
+# markdown — is content, and toggling on either kind flipped the state and keyed
+# the rest of the file by the fenced rules. One line, keyed differently in two
+# files, is the disagreement #275 is about; this definition is pinned identical
+# across the three scripts that carry it by test_heredoc_twins.py.
+FENCE = re.compile(r"^\s*(```|~~~)")
 # Single-backtick spans only. A span cannot contain a backtick or span a line,
 # so this leaves ``code with ` inside`` alone rather than mis-splitting it.
 CODE_SPAN = re.compile(r"`([^`\n]+)`")
@@ -597,12 +603,17 @@ def atoms_of(lines, skip_fenced=True):
     presence-anywhere standard whole-line matching already applies, not a new
     weakness.
     """
-    found, origin, fenced = set(), {}, False
+    found, origin, opener = set(), {}, None
     for raw in lines:
-        if FENCE.match(raw):
-            fenced = not fenced
+        m = FENCE.match(raw)
+        if m and opener is None:
+            opener = m.group(1)
             continue
-        if fenced:
+        if m and m.group(1) == opener:
+            opener = None
+            continue
+        # A marker of the OTHER kind inside a fence falls through as content.
+        if opener is not None:
             if skip_fenced:
                 continue
             # Inside a fence the WHOLE LINE is the code. There are no backticks

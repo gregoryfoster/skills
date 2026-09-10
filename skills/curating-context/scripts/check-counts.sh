@@ -355,15 +355,22 @@ def line_at(starts, offset):
 hits = []
 blocks = []
 block = []
-in_fence = False
+# A fence closes only on the marker that opened it. The constant captured the
+# marker from the start and this loop ignored it, toggling on either kind — so a
+# `~~~` inside a ``` block flipped the state and everything after the real close
+# was skipped as fenced, a count in the prose below it never judged. The three
+# scripts that walk fences now agree on this, pinned by test_heredoc_twins.py on
+# the constant and by test_fence_close.py on the behaviour (#275).
+opener = None
 for i, line in enumerate(lines):
-    if FENCE.match(line):
-        in_fence = not in_fence
+    m = FENCE.match(line)
+    if m and (opener is None or m.group(1) == opener):
+        opener = m.group(1) if opener is None else None
         if block:
             blocks.append(block)
             block = []
         continue
-    if in_fence:
+    if opener is not None:
         continue
     if index_start is not None and index_start <= i < index_end:
         # Held to the length bound instead. A blurb that states a count AND runs
