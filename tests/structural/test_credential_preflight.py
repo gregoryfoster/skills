@@ -183,6 +183,17 @@ def _run(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _run_exact(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(MEASURE), "--exact", "--no-write", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     return _repo(tmp_path)
@@ -363,6 +374,67 @@ class TestTheJwtProfile:
             r = _run(repo, env)
         assert r.returncode == 0, r.stdout + r.stderr
         assert stub.requests[0]["headers"]["x-api-key"] == KEY
+
+
+class TestExactAnnouncesTheSourceItResolved:
+    """The announcements are the other half of ctx_resolve_credential's contract.
+
+    They used to sit inside the branch that selected the source, where they
+    could not drift from it. They now hang off a `case` switching on a string
+    that branch sets 200 lines earlier, so a renamed label silently deletes
+    them — and both are load-bearing: the INFO line is how an interactive run
+    learns it read a key out of `.env` (which `--no-env-file` exists to
+    refuse), and the WARN is the only warning that an `ant` profile will 401
+    and quietly downgrade the row.
+    """
+
+    def test_the_secrets_file_source_says_so(self, repo: Path, tmp_path: Path):
+        (repo / ".env").write_text(f"ANTHROPIC_API_KEY={KEY}\n")
+        env = _no_ant(tmp_path, _clean_env())
+        with _Stub() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _run_exact(repo, env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "read ANTHROPIC_API_KEY from a repo-root secrets file" in r.stderr
+        assert "--no-env-file" in r.stderr, "the announcement omits how to refuse it"
+        assert KEY not in r.stdout + r.stderr
+        # The announcement has to be about a credential that was actually used,
+        # or it is only evidence that some string was printed.
+        assert json.loads(r.stdout)["policy"]["tokens_exact"] is True
+        assert stub.requests[0]["headers"]["x-api-key"] == KEY
+
+    def test_the_profile_source_warns_about_jwt(self, repo: Path, tmp_path: Path):
+        env = _with_ant(tmp_path, _clean_env())
+        with _Stub() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _run_exact(repo, env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "falling back to the `ant auth` profile" in r.stderr
+        assert "yet accept JWT auth" in r.stderr
+        assert "fake-jwt-token" not in r.stdout + r.stderr
+        assert stub.requests[0]["headers"]["authorization"] == "Bearer fake-jwt-token"
+
+    def test_the_environment_source_announces_nothing(self, repo: Path, tmp_path: Path):
+        """The silent default, pinned so a later `*)` arm cannot start
+        narrating the ordinary case into every scheduled run's log."""
+        env = _no_ant(tmp_path, _clean_env())
+        env["ANTHROPIC_API_KEY"] = KEY
+        with _Stub() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _run_exact(repo, env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "secrets file" not in r.stderr
+        assert "ant auth" not in r.stderr
+
+    def test_no_credential_says_what_the_row_will_record(
+        self, repo: Path, tmp_path: Path
+    ):
+        env = _no_ant(tmp_path, _clean_env())
+        r = _run_exact(repo, env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "using offline estimate" in r.stderr
+        assert "tokens_exact=false" in r.stderr
+        assert json.loads(r.stdout)["policy"]["tokens_exact"] is False
 
 
 class TestOneRequestDefinition:
