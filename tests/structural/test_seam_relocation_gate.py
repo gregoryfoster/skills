@@ -245,3 +245,149 @@ class TestTheGateStillGates:
         r = _run(repo)
         assert r.returncode == 0, r.stdout
         assert "not swept" in r.stdout, r.stdout
+
+
+# A command block, the thing Phase 3 demotes most often. Its comment line is a
+# shell comment and its commands are short, which is the pair that made the
+# first fix blind to it (CR 1).
+FENCED_BASE = (
+    "# Repo\n\n## Dev setup\n\n"
+    "The hooks run the structural suite on every commit.\n\n"
+    "```bash\n# activate the local git hooks\npre-commit install\n"
+    "uv sync --frozen\n```\n"
+)
+
+FENCED_NOW = (
+    "# Repo\n\n## Dev setup\n\n"
+    "The hooks run the structural suite on every commit.\n\n"
+    "Setup: [docs/SETUP.md](docs/SETUP.md).\n"
+)
+
+FENCED_DEST = (
+    "# Setup\n\n```bash\n# activate the local git hooks\npre-commit install\n"
+    "uv sync --frozen\n```\n"
+)
+
+
+def _fenced_repo(tmp_path: Path, name: str = "fenced") -> Path:
+    """`## Dev setup` keeps its heading and its prose; only the command block
+    moves to docs/SETUP.md."""
+    repo = tmp_path / name
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    _write(repo, "AGENTS.md", FENCED_BASE)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "pre")
+    _write(repo, "AGENTS.md", FENCED_NOW)
+    _write(repo, "docs/SETUP.md", FENCED_DEST)
+    return repo
+
+
+class TestAFencedBlockIsContentToo:
+    """CR 1: inside a fence the whole line is the code, so a `#` there is a
+    shell comment and not a heading — the asymmetry prove-no-loss.sh draws.
+
+    Reading one as a heading discarded `# activate the local git hooks`, and the
+    two commands beside it are 18 and 16 characters against a 24-character prose
+    floor, so a command-block demotion out of a surviving section reported "not
+    swept" with a stale docstring one file away. That is #272 in the shape Phase
+    3 moves most often.
+    """
+
+    def test_a_demoted_command_block_opens_the_sweep(self, tmp_path: Path):
+        repo = _fenced_repo(tmp_path)
+        _write(
+            repo, "src/hooks.py", '"""Hook installer. The list is in AGENTS.md."""\n'
+        )
+        _git(repo, "add", "-A")
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "source-back-reference" in r.stdout, r.stdout
+        assert "src/hooks.py:1" in r.stdout, r.stdout
+
+    def test_a_fenced_comment_line_is_evidence_on_its_own(self, tmp_path: Path):
+        """The line the heading rule used to discard. Alone in the block, it is
+        still a line that left the policy file for a doc."""
+        repo = tmp_path / "onlycomment"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Dev setup\n\nThe hooks run on every commit.\n\n"
+            "```bash\n# activate the local git hooks, once after cloning\n```\n",
+        )
+        _write(repo, "src/hooks.py", '"""See AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Dev setup\n\nThe hooks run on every commit.\n",
+        )
+        _write(
+            repo,
+            "docs/SETUP.md",
+            "# Setup\n\n```bash\n# activate the local git hooks, once after "
+            "cloning\n```\n",
+        )
+        r = _run(repo)
+        assert r.returncode == 3, r.stdout
+        assert "source-back-reference" in r.stdout, r.stdout
+
+    def test_a_markdown_heading_outside_a_fence_is_still_skipped(self, tmp_path: Path):
+        """The asymmetry has to stay an asymmetry: a section heading that left
+        is `moved`'s business, and counting it here would make every title move
+        look like a relocation as well."""
+        repo = tmp_path / "headingonly"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        # The heading is the ONLY line long enough to clear either floor, so if
+        # it counted, this run would sweep.
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Build\n\nrun make\n\n### A deliberately long subsection "
+            "heading\n\nok\n",
+        )
+        _write(repo, "src/app.py", '"""See AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(repo, "AGENTS.md", "# Repo\n\n## Build\n\nrun make\n\nok\n")
+        _write(
+            repo,
+            "docs/SUB.md",
+            "# Sub\n\n### A deliberately long subsection heading\n\nok\n",
+        )
+        r = _run(repo)
+        # The title left, so `moved` opens the sweep — but on the title, not on
+        # a relocation, and the note is what says which.
+        assert "moved title(s)" in r.stdout, r.stdout
+
+    def test_a_short_fenced_command_is_still_under_the_floor(self, tmp_path: Path):
+        """The fenced floor is lower, not absent. `uv sync` is seven characters
+        and is shared by half the repos in the cohort."""
+        repo = tmp_path / "shortfenced"
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Repo\n\n## Build\n\nrun make\n\n```bash\nuv sync\n```\n",
+        )
+        _write(repo, "src/app.py", '"""See AGENTS.md."""\n')
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "pre")
+        _write(repo, "AGENTS.md", "# Repo\n\n## Build\n\nrun make\n")
+        _write(repo, "docs/SETUP.md", "# Setup\n\n```bash\nuv sync\n```\n")
+        r = _run(repo)
+        assert r.returncode == 0, r.stdout
+        assert "not swept" in r.stdout, r.stdout

@@ -585,18 +585,33 @@ def doc_lines(path):
 # a body line present at --base, absent from the policy file now, and present
 # under the docs root. Deliberately coarser than that script's, because the
 # answer wanted here is one boolean rather than a per-line verdict. Headings and
-# fence markers are skipped — a heading leaving is exactly what `moved` measures,
-# and a bare ``` matches almost anything — and only the `../` half of its link
-# normalisation is applied, so a demoted link-carrying line may not match. That
-# costs nothing while some other line in the same block does.
+# fence markers are skipped, and only the `../` half of its link normalisation is
+# applied, so a demoted link-carrying line may not match. That costs nothing
+# while some other line in the same block does.
 #
-# The length floor is what keeps the coarseness honest in the direction that
-# matters. A short line reappearing in a doc by coincidence would turn the sweep
-# on for nothing, and an unconditional source sweep is the outcome the gate
-# exists to avoid: this repo alone would report ~180 legitimate mentions. A
-# TIGHTENED line whose old wording still stands in a doc does trip it — content
-# did leave the policy file, so the sweep running is the defensible call.
+# A heading is skipped OUTSIDE a fence and nowhere else, which is the asymmetry
+# prove-no-loss.sh draws and for the same reason: inside a fence the whole line
+# is the code, and a `#` there is a shell comment. Reading one as a heading made
+# this predicate blind to the commonest demotion target there is — a command
+# block — because its comment line was discarded and its commands fell under the
+# prose floor: `## Dev setup` keeping its heading while its ```bash block moved
+# to docs/SETUP.md reported "not swept", which is #272 surviving in the shape
+# Phase 3 moves most often (CR 1).
+#
+# The floor is what keeps the coarseness honest in the other direction. A short
+# line reappearing in a doc by coincidence would turn the sweep on for nothing,
+# and an unconditional source sweep is the outcome the gate exists to avoid:
+# this repo alone would report ~180 legitimate mentions. A TIGHTENED line whose
+# old wording still stands in a doc does trip it — content did leave the policy
+# file, so the sweep running is the defensible call.
+#
+# Fenced lines get the LOWER floor, because a command is identifying at a length
+# no prose fragment is: `uv sync --frozen` is sixteen characters and names one
+# thing, where sixteen characters of a sentence name nothing. 8 is borrowed from
+# prove-no-loss.sh's WARRANT_MIN_CHARS, which draws the same line for the same
+# reason — short enough that matching one line today is luck.
 RELOC_MIN_CHARS = 24
+RELOC_MIN_CHARS_FENCED = 8
 FENCE = re.compile(r"^\s*(?:```|~~~)")
 LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 # Any ATX heading, where the module's HEADING deliberately starts at `##` — a
@@ -606,34 +621,35 @@ LINK_DEPTH = re.compile(r"\]\((?:\.\./)+")
 ANY_HEADING = re.compile(r"^#{1,6}\s")
 
 
-def body_key(line):
-    """A body line's comparable form, or "" when it is not evidence of a move."""
-    s = line.strip()
-    if not s or FENCE.match(s) or ANY_HEADING.match(s):
-        return ""
-    s = LINK_DEPTH.sub("](", s)
-    return s if len(s) >= RELOC_MIN_CHARS else ""
+def body_keys(lines):
+    """Comparable form -> first raw line, for every line that is evidence of a
+    move. Fence state is tracked across the walk, so the caller cannot ask for
+    one line's key without it and get the heading rule wrong."""
+    out, fenced = {}, False
+    for raw in lines:
+        s = raw.strip()
+        if FENCE.match(s):
+            fenced = not fenced
+            continue
+        if not s or (not fenced and ANY_HEADING.match(s)):
+            continue
+        k = LINK_DEPTH.sub("](", s)
+        floor = RELOC_MIN_CHARS_FENCED if fenced else RELOC_MIN_CHARS
+        if len(k) >= floor:
+            out.setdefault(k, s)
+    return out
 
 
 def relocated_lines():
     """Base body lines that left the policy file for the live docs tree."""
-    left = {}
-    for raw in base_lines:
-        k = body_key(raw)
-        if k:
-            left.setdefault(k, raw.strip())
-    for raw in now_lines:
-        # `body_key` returns "" for a line that is not comparable, and "" is
-        # never a key, so no guard is needed here.
-        left.pop(body_key(raw), None)
+    left = body_keys(base_lines)
+    for k in body_keys(now_lines):
+        left.pop(k, None)
     if not left:
         return []
     dest = set()
     for d in docs:
-        for raw in doc_lines(d):
-            k = body_key(raw)
-            if k:
-                dest.add(k)
+        dest |= body_keys(doc_lines(d)).keys()
     return [v for k, v in left.items() if k in dest]
 
 
