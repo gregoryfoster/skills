@@ -1491,7 +1491,8 @@ sort -u "$TMP/refs" >"$TMP/refs.sorted"
 # found 13 (#274). Disjoint from `orphans` by construction: linked=true only.
 # FILENAME rather than NR == FNR, which misreads an empty first file. The
 # policy file is skipped: when it sits under DOCS_DIR the inventory holds it,
-# reachable and never self-linked, and it cannot index itself (CR 1).
+# reachable and never self-linked, and it cannot index itself (CR 1). That the
+# inventory holds it at all is #277; once that lands, drop `$6 != policy`.
 awk -F"$TAB" -v policy="$POLICY" 'FILENAME == ARGV[1] { ref[$0] = 1; next }
   $5 == "true" && $6 != policy && !($6 in ref) { print $6 }' \
   "$TMP/refs.sorted" "$TMP/docs.tsv" | sort >"$TMP/unindexed"
