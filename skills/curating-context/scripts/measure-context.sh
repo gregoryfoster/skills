@@ -118,8 +118,9 @@ Output (stdout, JSON):
               usually kept-plus-demoted rather than moved whole.
   docs      [ { path, lines, bytes, tokens, tokens_exact, tokens_source,
                 linked, budget, over_budget, near_budget } ]
-              live only, and never the policy file: one under --docs-dir is
-              measured once, as `policy` (#277).
+              live only, and never the policy file: one under --docs-dir, or
+              reached there through a symlink, is measured once, as `policy`
+              (#277).
               `tokens_exact` is PER ROW: one transient count_tokens
               failure no longer disowns the rows that were counted exactly.
               policy.tokens_exact stays run-wide — true only when every count in
@@ -681,11 +682,12 @@ if [ -z "$POLICY" ]; then
     [ -f "$cand" ] && { POLICY="$cand"; break; }
   done
 fi
-# The trim the docs dir already gets in ctx_read_str_knob. Every path this run
-# compares with the policy — the doc inventory's `find`, each link `norm`
-# resolves — is spelled without a leading `./`, so `--file ./docs/AGENTS.md`
-# matched none of them: the inventory kept the policy file as a doc and called
-# it an orphan of itself (#277).
+# The trim the docs dir already gets in ctx_read_str_knob, so the policy is one
+# path wherever this run compares or records it: the walk matches it against
+# `norm`'s output, which never carries a leading `./`, and it names the ledger
+# row's `file` and the policy's calibration row, which the write guard looks up
+# by the bare path. `--file ./docs/AGENTS.md` kept the prefix in all of them
+# (#277). The inventory's skip compares identity and needs none of this.
 POLICY="${POLICY#./}"
 if [ -z "$POLICY" ] || [ ! -f "$POLICY" ]; then
   echo "ERROR no policy file found (looked for AGENTS.md, CLAUDE.md under $ROOT)" >&2
@@ -1401,13 +1403,15 @@ if [ -d "$DOCS_DIR" ]; then
   ARCHIVAL_SKIPPED=0
   while IFS= read -r d; do
     [ -n "$d" ] || continue
-    # The policy file is measured once, as `policy`. Under DOCS_DIR the find
-    # lists it too, and inventoried it was a reference doc of itself — twice in
-    # tokens_live, and on an --exact run twice in the persisted calibration
-    # (#277). Ahead of the archival test, so a policy file under an archival
-    # subtree is neither tallied as skipped archive nor rescanned for anchors:
-    # the walk above started from it.
-    [ "$d" = "$POLICY" ] && continue
+    # The policy file is measured once, as `policy`, but the find lists it too
+    # when it sits under DOCS_DIR — by path, or as the target of a symlinked
+    # root AGENTS.md, which a flagless run reaches. Inventoried, it was a
+    # reference doc of itself: counted twice, or reported an orphan of itself
+    # (#277). `-ef` compares identity, so no spelling or symlink slips past.
+    # Ahead of the archival test, so a policy file under an archival subtree is
+    # neither tallied as skipped archive nor rescanned for anchors: the walk
+    # above started from it.
+    [ "$d" -ef "$POLICY" ] && continue
     if ctx_is_archival "$d"; then
       ARCHIVAL_SKIPPED=$(( ARCHIVAL_SKIPPED + 1 ))
       # Out of the inventory, still a source of anchors — see scan_anchors_only.

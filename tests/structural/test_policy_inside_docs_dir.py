@@ -151,12 +151,26 @@ class TestMeasuredOnceAsThePolicy:
         assert not any(d["over_budget"] or d["near_budget"] for d in data["docs"])
 
     def test_a_dot_slash_spelling_is_the_same_file(self, tmp_path: Path):
-        """`--file ./docs/AGENTS.md` matched no path the run compares with, so
-        the inventory kept the policy file and called it an orphan of itself."""
+        """`--file ./docs/AGENTS.md` matched no path the run compares with, and
+        the inventory called the policy file an orphan of itself. The skip
+        compares identity now (CR 1); what this pins is the trim, without which
+        the ledger's `file` and the walk keep a second spelling."""
         repo = _repo(tmp_path, "inside", "docs/AGENTS.md")
         dotted = _measure(repo, "--file", "./docs/AGENTS.md", "--docs-dir", "docs")
         assert dotted["links"]["orphans"] == ["docs/ORPHAN.md"]
         assert dotted == _measure(repo, *INSIDE)
+
+    def test_a_root_symlink_into_the_docs_dir_is_the_same_file(self, tmp_path: Path):
+        """CR 1. Guidance kept under `docs/` and found at the root through a
+        symlink: a flagless run — the cadence's — measures `AGENTS.md`, and the
+        inventory's `find` lists its target. A path comparison missed it, and
+        the policy file was reported an orphan of itself."""
+        repo = _repo(tmp_path, "symlink", "docs/AGENTS.md")
+        (repo / "AGENTS.md").symlink_to("docs/AGENTS.md")
+        data = _measure(repo)
+        root = _measure(_repo(tmp_path, "root", "AGENTS.md"))
+        assert data["links"]["orphans"] == ["docs/ORPHAN.md"]
+        assert data["totals"] == root["totals"]
 
     def test_under_an_archival_subtree_it_is_not_archive(self, tmp_path: Path):
         """The skip comes first: a policy file under `docs/plans/` is the policy,
