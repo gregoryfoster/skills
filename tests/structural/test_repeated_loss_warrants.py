@@ -200,6 +200,35 @@ class TestBreadthIsStillRefused:
         assert "over-broad" in r.stderr, r.stderr
         assert "2 lines matched (3 with copies)" in r.stderr, r.stderr
         assert "loss_warranted" not in r.stdout, r.stdout
+        # Neither line is inside the other, so narrowing CAN separate them and
+        # the ordering hint below would be wrong advice here.
+        assert "ABOVE this one" not in r.stderr, r.stderr
+
+    def test_a_line_inside_another_is_told_to_reorder_not_narrow(self, tmp_path: Path):
+        """Deleted code nests lines: `return make_legacy_drivers()` is part of
+        `return make_legacy_drivers() or {}`, so no narrowing of the shorter
+        line's entry excludes the longer line, and "narrow the content" was
+        advice nobody could follow. A line is charged to the FIRST entry that
+        matches it, so order is the remedy — and the advice must work."""
+        nested = "return make_legacy_drivers()"
+        nesting = "return make_legacy_drivers() or {}"
+        repo = _repo(
+            tmp_path,
+            "# P\n\n## Constructors\n\nBuild a site from its metadata.\n\n"
+            f"```python\n{nested}\n{nesting}\n```\n\n"
+            "## Imports\n\n```python\nimport this\n```\n",
+        )
+        (repo / "AGENTS.md").write_text(AFTER)
+        _ack(repo, f"disproven :: {nested}", f"disproven :: {nesting}")
+        r = _prove(repo)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "ABOVE this one" in r.stderr, r.stderr
+        assert f"`{nesting}`" in r.stderr, r.stderr
+
+        _ack(repo, f"disproven :: {nesting}", f"disproven :: {nested}")
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "loss_warranted: 2" in r.stdout, r.stdout
 
     def test_lines_equal_only_after_normalising_are_two_lines(self, tmp_path: Path):
         """normalise() erases a docs-root prefix because a MOVE forces it, so

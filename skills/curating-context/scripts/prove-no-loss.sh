@@ -896,18 +896,30 @@ for line in lost:
 # `](docs/X.md)` with `](X.md)` because a move forces that difference, but in
 # one base file they are two links to two targets, and folding them would let
 # one entry wave both through.
-broad = [(w, c, len(set(h)), len(h)) for (w, c, _), h in zip(entries, charged)
+broad = [(w, c, sorted(set(h)), len(h)) for (w, c, _), h in zip(entries, charged)
          if len(set(h)) > 1]
 if broad:
     print(f"ERROR {ack_path} has {len(broad)} over-broad entry(ies) — an "
           "acknowledgement covers ONE judged line:", file=sys.stderr)
-    for warrant, content, n, hits in broad:
-        copies = f" ({hits} with copies)" if hits > n else ""
-        print(f"  {n} lines matched{copies}: {warrant} :: {content[:70]}",
-              file=sys.stderr)
+    for warrant, content, lines, hits in broad:
+        copies = f" ({hits} with copies)" if hits > len(lines) else ""
+        print(f"  {len(lines)} lines matched{copies}: {warrant} :: "
+              f"{content[:70]}", file=sys.stderr)
         print("    split it into one entry per line — the copies of a line need "
               "only one —\n    or narrow the content so it identifies a single "
               "line", file=sys.stderr)
+        # Narrowing cannot help when one matched line is part of another:
+        # every substring of `return f()` is in `return f() or {}` too, and
+        # deleted code nests lines that way. A line is charged to the FIRST
+        # entry matching it, so order is the remedy, and advice that cannot be
+        # followed is no advice.
+        nested = next(((a, b) for a in lines for b in lines
+                       if a != b and a in b), None)
+        if nested:
+            print(f"    `{nested[0][:60]}` is part of a longer lost line, so "
+                  "no narrowing separates them:\n    list an entry for "
+                  f"`{nested[1][:60]}` ABOVE this one — a line is charged to\n"
+                  "    the first entry that matches it", file=sys.stderr)
     sys.exit(1)
 
 # --- the claim check ------------------------------------------------------
