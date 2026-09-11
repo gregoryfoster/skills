@@ -681,8 +681,9 @@ row = {
     "docs_total": totals["files_docs"],
     "docs_orphaned": len(links["orphans"]),
     # Reported, never gated (#274): a count of docs reached only through
-    # another doc, so the cohort can see the index filling in or not. None on
-    # a payload predating the field, for the reason links_dead_anchors gives.
+    # another doc. It lives on the row for a ledger reader; neither the
+    # roll-up nor --print-trend reads it (CR 3). None on a payload predating
+    # the field, for the reason links_dead_anchors gives.
     "docs_unindexed": (
         len(links["unindexed"]) if "unindexed" in links else None
     ),
