@@ -47,6 +47,7 @@ DOCS = {
     "docs/ORPHAN.md": "# O\n\nLinked by nothing.\n",
 }
 INSIDE = ("--file", "docs/AGENTS.md", "--docs-dir", "docs")
+AT_ROOT = ("--file", "AGENTS.md", "--docs-dir", "docs")
 
 
 def _clean_env() -> dict:
@@ -91,9 +92,10 @@ class TestMeasuredOnceAsThePolicy:
     def test_where_the_policy_sits_does_not_change_what_the_surface_weighs(
         self, tmp_path: Path
     ):
-        """The same policy text over the same docs, at the root and inside the
-        docs dir. Only the policy file's path may differ."""
-        root = _measure(_repo(tmp_path, "root", "AGENTS.md"))
+        """The same policy text over the same docs, measured with the same flags
+        (CR 2), at the root and inside the docs dir. Only the policy file's path
+        may differ."""
+        root = _measure(_repo(tmp_path, "root", "AGENTS.md"), *AT_ROOT)
         inside = _measure(_repo(tmp_path, "inside", "docs/AGENTS.md"), *INSIDE)
         assert inside["totals"] == root["totals"]
         assert inside["docs"] == root["docs"]
