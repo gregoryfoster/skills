@@ -1,8 +1,9 @@
-<!-- Split out of budget-and-metrics.md (#276): 6,031 tokens, 60% of that
-document, and a single subject — how a token count is obtained, and how far to
-trust the one you have. What the budgets ARE stayed behind. -->
-
 # Measuring tokens
+
+Split out of [budget-and-metrics.md](../budget-and-metrics.md) in v1.21: 6,031
+tokens, 60% of that document, and a single subject — how a token count is
+obtained, and how far to trust the one you have. What the budgets *are*, and
+the link graph, stayed behind.
 
 `measure-context.sh --exact` calls `POST /v1/messages/count_tokens`. That endpoint
 is the only accurate tokenizer for Claude models, and counts are model-specific —

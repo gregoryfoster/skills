@@ -1,9 +1,10 @@
-<!-- Split out of cadence.md (#276): at 5,373 tokens this block was 53% of that
-document, and it grows whenever install-cadence.sh's template does — #273 added
-1,687 bytes of it without anybody writing a word of prose here. cadence.md is
-the design; this is the artifact that design renders. -->
-
 # The cadence workflow, annotated
+
+Split out of [cadence.md](../cadence.md) in v1.21: at 5,373 tokens this block
+was 53% of that document, and it grows whenever `install-cadence.sh`'s template
+does — #273 added 1,687 bytes of it without anybody writing a word of prose
+there. cadence.md is the design; this is the artifact that design renders, and
+the design is the thing to read first.
 
 Follows the house scheduled-job pattern from
 [vendoring-openapi-client's live-drift guard](../../../vendoring-openapi-client/references/live-drift.md):
