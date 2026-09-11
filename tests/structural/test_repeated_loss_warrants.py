@@ -96,17 +96,23 @@ def _deleted_samples(tmp_path: Path) -> Path:
     return repo
 
 
-def _one_entry_per_text(repo: Path, warrant: str = "disproven") -> None:
-    _ack(repo, *(f"{warrant} :: {text}" for text in COPIES))
+def _one_entry_per_text(repo: Path) -> None:
+    _ack(repo, *(f"disproven :: {text}" for text in COPIES))
 
 
 class TestADeletedCodeSampleCanBeWarranted:
     def test_the_fixture_is_the_issues_shape(self, tmp_path: Path):
         """Twenty lost lines, eight texts. If the fixture drifts from that, the
-        cases below stop testing what #278 found."""
+        cases below stop testing what #278 found.
+
+        Each count is checked against the blocks themselves, not just the sum:
+        the report assertions below read only two of the eight, so a COPIES
+        table that disagreed with the blocks it describes would pass them."""
+        base = [line.strip() for line in BEFORE.splitlines()]
+        assert {text: base.count(text) for text in COPIES} == COPIES
+        assert OCCURRENCES == 20 and len(COPIES) == 8
         r = _prove(_deleted_samples(tmp_path))
         assert r.returncode == 3, r.stdout + r.stderr
-        assert OCCURRENCES == 20 and len(COPIES) == 8
         assert f"lost: {OCCURRENCES}" in r.stdout, r.stdout
 
     def test_one_entry_per_distinct_text_exits_clean(self, tmp_path: Path):
@@ -137,7 +143,6 @@ class TestADeletedCodeSampleCanBeWarranted:
         _one_entry_per_text(repo)
         r = _prove(repo)
         assert "1 hit(s) x4: disproven :: @cached_property" in r.stdout, r.stdout
-        assert "1 hit(s): disproven :: self.client" not in r.stdout, r.stdout
         assert "1 hit(s) x2: disproven :: self.client" in r.stdout, r.stdout
 
     def test_the_lost_list_names_each_text_once(self, tmp_path: Path):
@@ -147,6 +152,13 @@ class TestADeletedCodeSampleCanBeWarranted:
         rows = [x for x in r.stdout.splitlines() if x.startswith("  LOST  ")]
         assert len(rows) == len(COPIES), r.stdout
         assert any("@cached_property" in x and x.endswith("x4") for x in rows), r.stdout
+
+
+class TestARedundantEntryIsNamedAsOne:
+    """An entry that matched only lines an earlier entry was charged with is
+    neither stale nor ambiguous: its line is lost, and warranted. Reporting it
+    "matched nothing — accounted for now" was false of it, and this change
+    made the commonest shape of it passable."""
 
     def test_one_entry_per_occurrence_passes_and_names_the_extras(self, tmp_path: Path):
         """The shape an operator reached for before this fix. The first of the
@@ -178,6 +190,22 @@ class TestADeletedCodeSampleCanBeWarranted:
         assert "1 claim entry(ies) redundant" in r.stdout, r.stdout
         assert "matched nothing" not in r.stdout, r.stdout
         assert "claims_warranted: 1" in r.stdout, r.stdout
+
+    def test_a_narrower_entry_below_a_broader_one_is_redundant(self, tmp_path: Path):
+        """The other shape the third case names, and one this change moved: it
+        was reported stale, with "re-judge and prune" advice resting on a line
+        being accounted for that was in fact lost."""
+        repo = _repo(tmp_path, "# P\n\n## A\n\nthe contract lives in the spec\n")
+        (repo / "AGENTS.md").write_text("# P\n\n## A\n")
+        _ack(
+            repo,
+            "disproven :: the contract lives",
+            "disproven :: the contract lives in the spec",
+        )
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "1 entry(ies) redundant" in r.stdout, r.stdout
+        assert "matched nothing" not in r.stdout, r.stdout
 
 
 class TestBreadthIsStillRefused:
