@@ -264,7 +264,7 @@ class TestReachedIsNotIndexed:
         """Null, not 0: a measurement that never looked has not shown the index
         complete — the line `links_dead_anchors` already draws."""
         repo = _repo(tmp_path, INDEX, {"docs/STORAGE.md": "# S\n"})
-        payload = json.loads(_run(repo).stdout)
+        payload = _measure(repo)
         del payload["links"]["unindexed"]
         recorded = subprocess.run(
             ["bash", str(RECORD), "--dry-run"],
