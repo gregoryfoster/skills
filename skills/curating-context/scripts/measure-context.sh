@@ -118,7 +118,9 @@ Output (stdout, JSON):
               usually kept-plus-demoted rather than moved whole.
   docs      [ { path, lines, bytes, tokens, tokens_exact, tokens_source,
                 linked, budget, over_budget, near_budget } ]
-              live only. `tokens_exact` is PER ROW: one transient count_tokens
+              live only, and never the policy file: one under --docs-dir is
+              measured once, as `policy` (#277).
+              `tokens_exact` is PER ROW: one transient count_tokens
               failure no longer disowns the rows that were counted exactly.
               policy.tokens_exact stays run-wide — true only when every count in
               the run was exact — because the ledger compares whole runs.
@@ -679,6 +681,12 @@ if [ -z "$POLICY" ]; then
     [ -f "$cand" ] && { POLICY="$cand"; break; }
   done
 fi
+# The trim the docs dir already gets in ctx_read_str_knob. Every path this run
+# compares with the policy — the doc inventory's `find`, each link `norm`
+# resolves — is spelled without a leading `./`, so `--file ./docs/AGENTS.md`
+# matched none of them: the inventory kept the policy file as a doc and called
+# it an orphan of itself (#277).
+POLICY="${POLICY#./}"
 if [ -z "$POLICY" ] || [ ! -f "$POLICY" ]; then
   echo "ERROR no policy file found (looked for AGENTS.md, CLAUDE.md under $ROOT)" >&2
   exit 1
@@ -1393,6 +1401,13 @@ if [ -d "$DOCS_DIR" ]; then
   ARCHIVAL_SKIPPED=0
   while IFS= read -r d; do
     [ -n "$d" ] || continue
+    # The policy file is measured once, as `policy`. Under DOCS_DIR the find
+    # lists it too, and inventoried it was a reference doc of itself — twice in
+    # tokens_live, and on an --exact run twice in the persisted calibration
+    # (#277). Ahead of the archival test, so a policy file under an archival
+    # subtree is neither tallied as skipped archive nor rescanned for anchors:
+    # the walk above started from it.
+    [ "$d" = "$POLICY" ] && continue
     if ctx_is_archival "$d"; then
       ARCHIVAL_SKIPPED=$(( ARCHIVAL_SKIPPED + 1 ))
       # Out of the inventory, still a source of anchors — see scan_anchors_only.
@@ -1490,11 +1505,10 @@ sort -u "$TMP/refs" >"$TMP/refs.sorted"
 # and a routing probe found such a doc 1 time in 24 where a line of its own was
 # found 13 (#274). Disjoint from `orphans` by construction: linked=true only.
 # FILENAME rather than NR == FNR, which misreads an empty first file. The
-# policy file is skipped: when it sits under DOCS_DIR the inventory holds it,
-# reachable and never self-linked, and it cannot index itself (CR 1). That the
-# inventory holds it at all is #277; once that lands, drop `$6 != policy`.
-awk -F"$TAB" -v policy="$POLICY" 'FILENAME == ARGV[1] { ref[$0] = 1; next }
-  $5 == "true" && $6 != policy && !($6 in ref) { print $6 }' \
+# policy file, reached and never linked by itself, would read as unindexed; it
+# needs no term here because the inventory never holds it (#277).
+awk -F"$TAB" 'FILENAME == ARGV[1] { ref[$0] = 1; next }
+  $5 == "true" && !($6 in ref) { print $6 }' \
   "$TMP/refs.sorted" "$TMP/docs.tsv" | sort >"$TMP/unindexed"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
 sort -u "$TMP/dead_anchors" >"$TMP/dead_anchors.sorted"
