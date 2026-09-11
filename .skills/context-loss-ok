@@ -182,3 +182,7 @@ skills/using-git-worktrees/SKILL.md :: tighten :: **Agent-provisioned worktrees.
 skills/using-git-worktrees/SKILL.md :: tighten :: **When to pass `--force`:** git's `worktree remove` refuses
 skills/using-git-worktrees/SKILL.md :: tighten :: **When to pass `--unlock`:** normally never.
 skills/using-git-worktrees/SKILL.md :: tighten :: **`--dry-run`** reports the resolved path
+# #276: § "Measuring tokens" became a file of its own, so the pointer that named
+# it as a fragment names a path now. The split that invalidated the line is the
+# same run that corrected it.
+skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-metrics.md#measuring-tokens),

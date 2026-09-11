@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.20"
+  version: "1.21"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -145,7 +145,7 @@ after-row; **never rewrite the baseline row to match it**.
 
 A credential is not optional even interactively, and a WARN means the row is an
 estimate whatever credential was accepted
-([both](references/budget-and-metrics.md#measuring-tokens),
+([both](references/budget-and-metrics/measuring-tokens.md),
 [the baseline pair](references/telemetry.md#the-baseline-row-is-not-optional-either)).
 
 Read the baseline before touching anything; four numbers drive the run:
@@ -329,15 +329,10 @@ nothing;
 `"demote:Project Layout"` does. Row schema and tag vocabulary:
 [references/telemetry.md](references/telemetry.md).
 
-Rows also carry `skill_version` and `skill_commit`, so an outcome can be
-attributed to a *skill* change and not just a repo one, plus `repo_commit` —
-which state of *this* tree the row describes, and where the next scheduled seam
-sweep starts. Bump the frontmatter `version` whenever a change would plausibly
-alter what a run does — an unbumped version makes the cohort look uniform when
-it isn't. **What a run does, not what reads the rows afterwards**: changing
-`score-cohort.sh` or `cohort-report.sh` alters no curation, and since #194 the
-version *is* the arm — bumping for a gate change moves every future row into a
-new arm for a change no row experienced.
+Rows also carry `skill_version`, `skill_commit` and `repo_commit`. **Bump the
+frontmatter `version` whenever a change would plausibly alter what a run does**
+— and only then, because since #194 the version *is* the arm
+([what that excludes](references/telemetry.md#tagging-the-row--the-phase-7-text-in-full)).
 
 Commit the ledger with the edits, on a branch, then `record-telemetry.sh
 --repo-commit HEAD` and commit that: the append could not know the hash. Open a

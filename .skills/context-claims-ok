@@ -1,0 +1,3 @@
+# #276: the anchor this atom names is now a filename — the same retarget as the
+# line warranted in .skills/context-loss-ok, seen as an atom.
+skills/curating-context/SKILL.md :: retarget :: budget-and-metrics.md#measuring-tokens

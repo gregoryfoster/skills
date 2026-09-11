@@ -210,7 +210,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
             "demotion *raises* it",
         ),
     },
-    ("budget-and-metrics.md", "### The Phase 0 preflight, in full"): {
+    ("measuring-tokens.md", "### The Phase 0 preflight, in full"): {
         "source": PHASE_0,
         # Undated and present tense: SKILL.md kept a *tightened* Phase 0 and this
         # is the long form a reader comes here for. It must track additions.
@@ -226,7 +226,7 @@ REGISTRY: dict[tuple[str, str], dict] = {
             "eight phases of work toward a ledger row that `record-telemetry.sh` refuses",
         ),
     },
-    ("budget-and-metrics.md", "### The Phase 1 credential note, in full"): {
+    ("measuring-tokens.md", "### The Phase 1 credential note, in full"): {
         "source": PHASE_1,
         # "restated the rule above inline until v1.9, when it was demoted here
         # and replaced by a pointer. The words it carried:" — history, and the
@@ -235,7 +235,12 @@ REGISTRY: dict[tuple[str, str], dict] = {
         "pins": (
             "A credential is not optional even interactively",
             "estimate whatever credential was accepted",
-            "#measuring-tokens",
+            # The stem, not the whole anchor: since #276 the target is a
+            # FILE, so SKILL.md carries the path and the block — which now
+            # lives in that file — carries the within-document jump. The
+            # two spell the same destination differently, and this is the
+            # literal they still share, so a rename still trips the pin.
+            "measuring-tokens",
             "#the-baseline-row-is-not-optional-either",
         ),
     },
@@ -344,9 +349,12 @@ REGISTRY: dict[tuple[str, str], dict] = {
         # the attribution paragraph that follows it — not all of Phase 7, whose
         # remaining paragraphs went to four other destinations.
         "kind": "excerpt",
+        # The end bound moved with the text (#276): the reasoning behind the
+        # version rule was demoted into this excerpt, so the span it covers now
+        # ends where SKILL.md's Phase 7 stops — at the rule and its pointer.
         "covers": (
             "`<N>` and `<M>` are Phase 6.5's seam counts",
-            "makes the cohort look uniform when it isn't.",
+            "the version *is* the arm",
         ),
         "pins": (
             "`<N>`",

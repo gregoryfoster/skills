@@ -205,8 +205,13 @@ attributed to a *skill* change and not just a repo one, plus `repo_commit` —
 which state of *this* tree the row describes, and where the next scheduled seam
 sweep starts. Bump the frontmatter `version` whenever a change would plausibly
 alter what a run does — an unbumped version makes the cohort look uniform when
-it isn't, and the roll-up's `skill versions in play` footer is what surfaces
-that.
+it isn't. **What a run does, not what reads the rows afterwards**: changing
+`score-cohort.sh` or `cohort-report.sh` alters no curation, and since #194 the
+version *is* the arm — bumping for a gate change moves every future row into a
+new arm for a change no row experienced.
+The roll-up's `skill versions in play` footer is what surfaces an unbumped one.
+SKILL.md kept the rule and a pointer here when it demoted the reasoning in
+v1.21 (#276).
 
 ### Reading the trend
 

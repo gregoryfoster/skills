@@ -56,7 +56,10 @@ AGENTS.md :: stable :: How the two are reconciled
 skills/curating-context/SKILL.md :: enumerated :: Deletion needs one of exactly three warrants
 skills/curating-context/SKILL.md :: stable :: the third clause is what makes this skill safe
 skills/curating-context/SKILL.md :: stable :: it costs eight phases of work toward a ledger row
-skills/curating-context/SKILL.md :: enumerated :: Four numbers drive the whole run
+# #276: the warrant quoted text SKILL.md has never carried, so the count at
+# Phase 1 was unjudged and the entry was dead weight. The bullets below the
+# line enumerate the four, which is what makes the number unable to rot.
+skills/curating-context/SKILL.md :: enumerated :: four numbers drive the run
 skills/curating-context/SKILL.md :: enumerated :: Three verdicts, not interchangeable
 skills/curating-context/SKILL.md :: enumerated :: Two mechanical adjustments come with every move
 skills/curating-context/SKILL.md :: stable :: normalises exactly these two, and skips frontmatter
