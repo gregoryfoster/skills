@@ -213,14 +213,14 @@ class TestReachedIsNotIndexed:
         assert data["links"]["refs"] == ["docs/STORAGE.md", "docs/STORAGE_VARS.md"]
 
     def test_a_policy_file_inside_the_docs_dir_is_not_its_own_gap(self, tmp_path: Path):
-        """CR 1. With the policy file under `--docs-dir` the inventory holds
+        """CR 1. With the policy file under `--docs-dir` the inventory held
         it, reached and never linked by itself — so it was reported unindexed,
         and Phase 5 would have asked a run to index the policy file in itself.
 
-        The property, not the path to it: today the filter keeps the policy
-        out, and once #277 keeps it out of the inventory this passes for that
-        reason instead (CR 9). Asserting the inventory still holds it would
-        pin #277's defect and turn red on its fix."""
+        The property, not the path to it (CR 9). CR 1 kept the policy out with
+        a term in the `unindexed` filter; #277 keeps it out of the inventory,
+        dropped that term, and this passes unchanged. What the inventory holds
+        is `test_policy_inside_docs_dir.py`'s to pin."""
         repo = _repo(
             tmp_path,
             "# unused root policy\n",
