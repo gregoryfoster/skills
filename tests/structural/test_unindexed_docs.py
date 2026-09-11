@@ -215,16 +215,18 @@ class TestReachedIsNotIndexed:
     def test_a_policy_file_inside_the_docs_dir_is_not_its_own_gap(self, tmp_path: Path):
         """CR 1. With the policy file under `--docs-dir` the inventory holds
         it, reached and never linked by itself — so it was reported unindexed,
-        and Phase 5 would have asked a run to index the policy file in itself."""
+        and Phase 5 would have asked a run to index the policy file in itself.
+
+        The property, not the path to it: today the filter keeps the policy
+        out, and once #277 keeps it out of the inventory this passes for that
+        reason instead (CR 9). Asserting the inventory still holds it would
+        pin #277's defect and turn red on its fix."""
         repo = _repo(
             tmp_path,
             "# unused root policy\n",
             {"docs/AGENTS.md": "# P\n\n- [A.md](A.md) — a\n", "docs/A.md": "# A\n"},
         )
         data = _measure(repo, "--file", "docs/AGENTS.md", "--docs-dir", "docs")
-        assert "docs/AGENTS.md" in [doc["path"] for doc in data["docs"]], (
-            "precondition: the layout under test puts the policy in the inventory"
-        )
         assert data["links"]["unindexed"] == []
 
     def test_a_policy_file_linking_nothing_reaches_nothing(self, tmp_path: Path):
