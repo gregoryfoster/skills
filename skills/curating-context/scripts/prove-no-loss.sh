@@ -149,6 +149,15 @@ Warranted losses (.skills/context-loss-ok):
   enough: warnings ride in stdout, where the exit code, the ledger row and the
   cohort gate do not read them. Split a broad entry into one per line.
 
+  One line is one TEXT, not one occurrence (#278). A deleted code sample
+  repeats its lines — three constructor examples sharing
+  `self.metadata = metadata` — and every copy is the same judgement, so one
+  entry covers them all and the report counts them beside it (`1 hit(s) x3`).
+  `loss_warranted:` still counts every copy, so it reconciles with what --base
+  lost. Only identical text folds, surrounding whitespace aside: two links
+  equal only once a move's re-aiming is erased are two lines, and one entry
+  matching both is refused. A second entry for a copy is reported redundant.
+
   Comments are `#` at LINE START only. Stripping an inline one would silently
   broaden the entry — `Fixed in #412` becomes `Fixed in`.
 
@@ -411,6 +420,7 @@ python3 - "$TMP/before" "$POLICY" "$TMP/dests.u" "$SHOW_RELOCATED" "$ACK_FILE" \
 import os
 import re
 import sys
+from collections import Counter
 
 (before_path, policy, dests_path, show, ack_path, docs_dir, claims_on,
  claims_ack_path) = sys.argv[1:9]
@@ -875,14 +885,29 @@ for line in lost:
 # thing that can convert a content-loss failure into a pass, so it gets the same
 # treatment malformed syntax already gets — refusal, which errs toward NOT
 # passing. An acknowledgement is ONE judged line; two lines are two judgements.
-broad = [(w, c, len(h)) for (w, c, _), h in zip(entries, charged) if len(h) > 1]
+#
+# Counted in LINES, though, not in occurrences (#278). `lost` has a row per
+# base-line occurrence, and a deleted code sample repeats its lines — three
+# constructor examples sharing `self.metadata = metadata` — so every entry
+# naming a repeated line was charged each copy and refused, and a run that had
+# judged every line it deleted still could not reach `ok`. Copies of one line
+# are one judgement. They are copies when their TEXT is identical, as the report
+# prints it, and not when only their normalised forms are: normalise() equates
+# `](docs/X.md)` with `](X.md)` because a move forces that difference, but in
+# one base file they are two links to two targets, and folding them would let
+# one entry wave both through.
+broad = [(w, c, len(set(h)), len(h)) for (w, c, _), h in zip(entries, charged)
+         if len(set(h)) > 1]
 if broad:
     print(f"ERROR {ack_path} has {len(broad)} over-broad entry(ies) — an "
           "acknowledgement covers ONE judged line:", file=sys.stderr)
-    for warrant, content, n in broad:
-        print(f"  {n} lines matched: {warrant} :: {content[:70]}", file=sys.stderr)
-        print("    split it into one entry per line, or narrow the content so it "
-              "identifies a single line", file=sys.stderr)
+    for warrant, content, n, hits in broad:
+        copies = f" ({hits} with copies)" if hits > n else ""
+        print(f"  {n} lines matched{copies}: {warrant} :: {content[:70]}",
+              file=sys.stderr)
+        print("    split it into one entry per line — the copies of a line need "
+              "only one —\n    or narrow the content so it identifies a single "
+              "line", file=sys.stderr)
     sys.exit(1)
 
 # --- the claim check ------------------------------------------------------
@@ -946,18 +971,25 @@ if duplicated:
 if warranted:
     print(f"\n{len(warranted)} warranted loss(es) (judged in {ack_path}):",
           file=out)
-    width = max(len(w) for w, _ in warranted)
-    for warrant, line in warranted:
-        print(f"  WARRANTED {warrant:<{width}}  {line[:120]}", file=out)
+    # One row per line, its copies counted at the end: twenty rows for eight
+    # judgements bury the eight (#278). The count still totals the header.
+    folded = Counter(warranted)
+    width = max(len(w) for w, _ in folded)
+    for (warrant, line), n in folded.items():
+        copies = f"  x{n}" if n > 1 else ""
+        print(f"  WARRANTED {warrant:<{width}}  {line[:120]}{copies}", file=out)
     # Per-entry accountability, the part of check-seams.sh's ack report the
     # cohort named as what proved no entry had quietly become a blanket. An
-    # acknowledgement is ONE judged line, so anything above one hit is an
-    # entry doing the job of judgement without the judging.
+    # acknowledgement is ONE judged line — a broader one was refused above —
+    # so what is left to show is its copies: `1 hit(s) x4` is one judgement
+    # that waved four lines through, and must say four.
     print("\n  by entry:", file=out)
     for (warrant, content, _), hits in zip(entries, charged):
         if not hits:
             continue
-        print(f"    {len(hits)} hit(s): {warrant} :: {content[:70]}", file=out)
+        copies = f" x{len(hits)}" if len(hits) > 1 else ""
+        print(f"    {len(set(hits))} hit(s){copies}: {warrant} :: "
+              f"{content[:70]}", file=out)
 
 # An entry that matched nothing was called stale outright, and "prune it" is
 # only sound advice for some of them (#251). Two facts decide which:
@@ -983,14 +1015,30 @@ if warranted:
 # is to name the ambiguity, not to resolve it by guessing. A near-match test
 # would resolve it, and is refused deliberately: "close enough to be the same
 # line" is exactly the judgement whole-line matching exists to not make.
+#
+# A third case is neither. An entry that matches a LOST line and was charged
+# nothing matched only lines an earlier entry took first — a second entry for a
+# copy the first already covers, the one-per-occurrence file #278 tried, or a
+# narrower entry listed below a broader one. "Accounted for now" would be false
+# of it: its line is lost, and warranted. It is redundant.
 base_lines = [r.strip() for r in before if r.strip()]
-stale, ambiguous = [], []
+stale, ambiguous, redundant = [], [], []
 for i in in_scope:
     if charged[i]:
         continue
     warrant, content, scope = entries[i]
+    if any(content in line for line in lost):
+        redundant.append(entries[i])
+        continue
     settled = scope is not None or any(content in b for b in base_lines)
     (stale if settled else ambiguous).append(entries[i])
+
+if redundant:
+    print(f"\n  {len(redundant)} entry(ies) redundant — every line each matches "
+          "is already warranted by\n  an earlier entry, and one entry covers all "
+          "of a line's copies; prune:", file=out)
+    for warrant, content, _ in redundant:
+        print(f"    {warrant} :: {content[:70]}", file=out)
 
 if stale:
     print(f"\n  {len(stale)} entry(ies) matched nothing — the line each "
@@ -1041,12 +1089,22 @@ if claims_on:
     # "was this atom ever in this target" is a set lookup rather than a scan.
     # Shipping the fix for lines and the defect for atoms in one change is
     # exactly the drift a shared rule is supposed to prevent.
-    claim_stale, claim_ambiguous = [], []
+    # And the same third case: matched WHOLE, an uncharged entry whose atom was
+    # dropped can only be a repeat of an earlier entry naming that atom.
+    claim_stale, claim_ambiguous, claim_redundant = [], [], []
     for i in claim_in_scope:
         if claim_charged[i]:
             continue
+        if claim_entries[i][1] in dropped_atoms:
+            claim_redundant.append(claim_entries[i])
+            continue
         settled = claim_entries[i][2] is not None or claim_entries[i][1] in base_atoms
         (claim_stale if settled else claim_ambiguous).append(claim_entries[i])
+    if claim_redundant:
+        print(f"\n  {len(claim_redundant)} claim entry(ies) redundant — an "
+              "earlier entry already warrants\n  the same atom; prune:", file=out)
+        for warrant, content, _ in claim_redundant:
+            print(f"    {warrant} :: {content[:70]}", file=out)
     if claim_stale:
         print(f"\n  {len(claim_stale)} claim entry(ies) matched nothing — the "
               "atom each acknowledged is\n  an atom of this target and is "
@@ -1079,15 +1137,23 @@ if claims_unwarranted:
         print(f"           in: {atom_origin.get(atom, '')[:120]}", file=out)
 
 if unwarranted:
+    # Folded like the warranted list, and said so when it matters: a LOST row
+    # per copy reads as that many entries to write (#278).
+    folded = Counter(unwarranted)
     print(
         f"\nEach line below is missing from {policy} AND from every "
         "destination.\nA curation may only drop a line with a named warrant — "
         f"add a judged entry to\n{ack_path} (see --help) or restore the line "
-        "verbatim.\n",
+        "verbatim.",
         file=out,
     )
-    for line in unwarranted:
-        print(f"  LOST  {line[:160]}", file=out)
+    if len(folded) < len(unwarranted):
+        print("A line --base held more than once is listed once, with its "
+              "copies (xN) — one\nentry covers them all.", file=out)
+    print(file=out)
+    for line, n in folded.items():
+        copies = f"  x{n}" if n > 1 else ""
+        print(f"  LOST  {line[:160]}{copies}", file=out)
 elif claims_unwarranted:
     # Deliberately no OK line. Every line being accounted for is TRUE here and
     # printing it would still read as a pass twenty lines above exit 3 — the
