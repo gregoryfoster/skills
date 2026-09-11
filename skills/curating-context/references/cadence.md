@@ -56,7 +56,7 @@ append and exits 4** against a ledger of exact rows — correctly: an estimate a
 an exact count are not comparable. A scheduled job without the secret produces
 *nothing*, every week, silently, until somebody opens the Actions tab.
 
-The workflow below runs `--check-credential` as its first step for exactly this
+The workflow runs `--check-credential` as its first step for exactly this
 reason: fail loudly at second zero rather than at the last step of the job. That
 step spends one free `count_tokens` call rather than checking the secret is
 non-empty — a key that authenticates but cannot spend produced exactly the
