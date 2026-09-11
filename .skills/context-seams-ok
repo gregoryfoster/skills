@@ -71,3 +71,11 @@ skills/curating-context/references/telemetry.md :: reading of a surface nobody t
 skills/curating-context/references/write-guard-hook.md :: See [cadence.md](cadence.md).
 skills/curating-context/references/self-curation.md ::
 skills/using-git-worktrees/references/destroy-flags.md :: [SKILL.md](../SKILL.md#phase-5--destroy-the-worktree); this is the reasoning
+# #276: § "Measuring tokens" moved to references/budget-and-metrics/measuring-tokens.md
+# and took two demoted blocks with it. All three hits are in the registry that
+# tracks those blocks, and all three already NAME the new home — the registry
+# keys were re-pointed in the same commit, and the docstring quotes the headings
+# as examples of the convention rather than as a location.
+tests/structural/test_demoted_blocks.py :: ("measuring-tokens.md", "### The Phase 0 preflight, in full")
+tests/structural/test_demoted_blocks.py :: ("measuring-tokens.md", "### The Phase 1 credential note, in full")
+tests/structural/test_demoted_blocks.py :: `### The Phase 0 preflight, in full`, `### Tagging the row — the Phase 7 text in

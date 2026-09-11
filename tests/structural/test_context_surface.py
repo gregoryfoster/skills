@@ -4540,8 +4540,8 @@ class TestCadenceInstaller:
 
 
 class TestCadenceTemplateMatchesTheRenderer:
-    """references/cadence.md carries the workflow as an annotated block and says
-    it is what install-cadence.sh renders. It was not: `fetch-depth` and
+    """references/cadence/workflow.md carries the workflow as an annotated block
+    and says it is what install-cadence.sh renders. It was not: `fetch-depth` and
     `if: always()` were in the doc and absent from the rendered file, and
     `if: always()` is load-bearing — without it a failed push swallows the drift
     warnings.
@@ -4552,9 +4552,12 @@ class TestCadenceTemplateMatchesTheRenderer:
     def test_the_documented_block_is_the_rendered_file(self, tmp_path: Path):
         import re
 
-        doc = (REFERENCES / "cadence.md").read_text()
+        # references/cadence/workflow.md since #276: the block was 53% of
+        # cadence.md and grows whenever the template does, so it was demoted to
+        # a nested reference. The pin follows the block, not the filename.
+        doc = (REFERENCES / "cadence" / "workflow.md").read_text()
         block = re.search(r"```yaml\n(.*?)```", doc, re.S)
-        assert block, "cadence.md no longer carries a yaml block"
+        assert block, "cadence/workflow.md no longer carries a yaml block"
         repo = tmp_path / "r"
         repo.mkdir()
         _git(repo, "init", "-q")
@@ -4567,7 +4570,8 @@ class TestCadenceTemplateMatchesTheRenderer:
             timeout=30,
         ).stdout.replace("- cron: '0 15 * * 1'", "- cron: '<CRON>'")
         assert block.group(1) == rendered, (
-            "cadence.md's yaml block has drifted from install-cadence.sh --print"
+            "cadence/workflow.md's yaml block has drifted from "
+            "install-cadence.sh --print"
         )
 
 
