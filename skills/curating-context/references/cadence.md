@@ -198,15 +198,11 @@ must not be the fix's own shape. Why, and why `tokens_source` is per row:
 
 ## The workflow
 
-The rendered job, with the annotations that explain each step:
-[cadence/workflow.md](cadence/workflow.md). It is the **output** of
-`install-cadence.sh --print`, cron placeholder aside, and a test pins them to
-each other — an annotated copy that drifts from what actually installs is worse
-than no copy.
-
-It follows the house scheduled-job pattern and departs from it in one place;
-both are explained there, along with why every step is ordered as it is. What
-the job deliberately does *not* do is below.
+The rendered job, step by step, with the annotations that explain each one —
+including why the pattern it follows is departed from in one place, and what
+the pin between it and `install-cadence.sh` is protecting:
+[cadence/workflow.md](cadence/workflow.md). What the job deliberately does
+*not* do is below.
 
 ## Stagger the cron across the cohort
 
