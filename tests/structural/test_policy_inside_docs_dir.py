@@ -134,7 +134,10 @@ class TestMeasuredOnceAsThePolicy:
         ]
         row = json.loads(line)
         assert row["docs_total"] == 2, row
-        assert row["tokens_live"] == data["totals"]["tokens_live"], row
+        # The policy once, plus the one doc it reaches. Not the measurement's own
+        # total, which the row copies and a double count would leave equal (CR 3).
+        reached = next(d["tokens"] for d in data["docs"] if d["path"] == "docs/A.md")
+        assert row["tokens_live"] == data["policy"]["tokens"] + reached, row
 
     def test_it_is_not_priced_against_the_doc_budget(self, tmp_path: Path):
         """A doc budget the policy file exceeds and every real doc is under:
