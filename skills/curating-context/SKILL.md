@@ -279,8 +279,9 @@ Re-run Phase 1 and assert, before committing:
   directly under an existing `##` silently reparents everything below it, and no
   gate sees depth.
 - `links.dead` **and** `links.dead_anchors` are empty, and no new orphan
-  appeared. `dead_anchors` is the breakage a split makes and the one `dead` alone
-  cannot see ([the link graph](references/budget-and-metrics.md#the-link-graph)).
+  appeared, nor a new unindexed doc bar an annex. `dead_anchors` is the breakage
+  a split makes and the one `dead` alone cannot see
+  ([the link graph](references/budget-and-metrics.md#the-link-graph)).
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes — several cohort repos have structural
   tests that read `AGENTS.md`.

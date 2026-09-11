@@ -179,7 +179,7 @@ rides the row as `docs_unindexed`, reported and not gated
 
 ### What Phase 6 asserts about links
 
-- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](budget-and-metrics.md#the-link-graph)).
+- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared, nor a new unindexed doc bar an annex — the doc a doc split creates and links only from its parent, which no orphan count sees. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](budget-and-metrics.md#the-link-graph)).
 
 ### How a fragment is resolved
 
