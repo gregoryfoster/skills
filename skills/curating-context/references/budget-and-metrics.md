@@ -54,8 +54,9 @@ Phase 1 carried this and the archival exclusion inline until v1.9, in these word
 ### Where 6,000 came from, and where it goes
 
 An earlier version of this file justified a 4,000 budget by saying four of twelve
-cohort repos already sat under it. **That was an artefact of a bad estimator** (see
-the offline-estimate section below). Measured exactly, zero of twelve were under
+cohort repos already sat under it. **That was an artefact of a bad estimator**
+([the offline estimate](budget-and-metrics/measuring-tokens.md#the-offline-estimate-and-why-it-is-not-bytes4)).
+Measured exactly, zero of twelve were under
 4,000 — the leanest was `wslcb-licensing-tracker` at 5,331 and the heaviest
 `usa-wa` at 52,953.
 
