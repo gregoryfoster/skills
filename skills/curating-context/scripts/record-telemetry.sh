@@ -193,6 +193,9 @@ Row schema (one JSON object per line):
   tokens_live       policy + reachable live reference docs
   docs_total        live reference docs measured
   docs_orphaned     live docs not reachable from the policy file
+  docs_unindexed    live docs reachable only through another doc — the
+                    policy file never links them; null on a payload
+                    predating the field. Reported, not gated
   links_dead        broken relative links in the curated surface
   links_dead_anchors  links whose file resolves but whose #fragment names no
                     heading; null on a payload predating the field, which is
@@ -677,6 +680,12 @@ row = {
     "tokens_live": totals["tokens_live"],
     "docs_total": totals["files_docs"],
     "docs_orphaned": len(links["orphans"]),
+    # Reported, never gated (#274): a count of docs reached only through
+    # another doc, so the cohort can see the index filling in or not. None on
+    # a payload predating the field, for the reason links_dead_anchors gives.
+    "docs_unindexed": (
+        len(links["unindexed"]) if "unindexed" in links else None
+    ),
     "links_dead": len(links["dead"]),
     # None, not 0, when the payload predates the field (#120/#124): a row that
     # never measured anchors has not proved there are none, and the ledger

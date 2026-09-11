@@ -187,3 +187,36 @@ build when someone wants the answer — not a warrant count.
 **Generalisable lesson:** an unmeasured quantity recorded as a weak proxy stops
 being unmeasured to every downstream reader. Leave the gap visible and name the
 measurement that would close it.
+
+## Indexing a doc through its parent instead of the policy file
+
+**Proposed:** [#274](https://github.com/gregoryfoster/skills/issues/274), from a
+cohort run: list a child doc under its parent — nested beneath the parent's
+index line, or in the parent doc alone — rather than on a line of its own. At
+~58 tokens a line, and a line added by every relocation, the flat index taxed
+the budget relocation exists to relieve, and `docs_orphaned` would still pass
+because a nested link is still a link.
+
+**Refuted by:** a routing probe in two repos on `claude-opus-5`, with the
+method and full table in
+[cohort-patterns.md](cohort-patterns.md#reachable-is-not-routable). The
+parent-only form loses the route: `cannobserv`'s `TRANSPORT.md` fell from 12/12
+to 2/12 once its line moved into `ARCHITECTURE.md`, and
+`cannabis.observer-wordpress`, which already reaches 21 API parts through a
+contents table, found the sampled part 1 time in 24 against 13 with a line per
+part. `docs_orphaned` read 0 throughout: it measures reachability, and an agent
+routes by the policy file's words. The nested form kept the route but not its
+premise — the saving was the shorter description, and the same words on a flat
+line saved 3 tokens more.
+
+**Replaced by:** one line per live doc, kept in the policy file, and a
+measurement of the gap — `links.unindexed`, and `docs_unindexed` on the row —
+so a doc reached only through another doc is visible instead of counted as
+linked. A child's line may shed its description when its parent's line sits
+directly above it: 34/36 against 30/36 for the full clause, on three children in
+one repo. The one doc a parent may index alone is an annex, which no task needs
+except through that parent.
+
+**Generalisable lesson:** a passing gate is no evidence about a property it does
+not measure. #274 took `docs_orphaned` to be what made the index line
+mandatory, while four repos carried docs no line named at `docs_orphaned: 0`.

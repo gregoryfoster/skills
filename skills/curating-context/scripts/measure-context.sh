@@ -136,7 +136,12 @@ Output (stdout, JSON):
               so a breach is never also reported as approaching one, and a
               consumer may branch on them in either order. The band runs from
               --proximity-pct of the budget up to it (#273).
-  links     { refs, dead, dead_anchors, orphans }
+  links     { refs, dead, dead_anchors, orphans, unindexed }
+              `orphans` are live docs no chain of links reaches from the policy
+              file. `unindexed` are live docs a chain reaches but the policy
+              file itself never links — reached only through another doc, so
+              not orphans, and rarely found by an agent routing by the policy
+              file's words (#274). The two are disjoint.
               `dead` is a link whose FILE does not exist. `dead_anchors` is a
               link whose file exists and whose #fragment names no heading in it
               — reported as its own class so `dead` keeps its meaning for
@@ -1479,6 +1484,15 @@ sort -t"$TAB" -k2,2nr "$TMP/subsections.tsv" >"$TMP/subsections.sorted"
 sort -t"$TAB" -k3,3nr "$TMP/docs.tsv" >"$TMP/docs.sorted"
 awk -F"$TAB" '$5 == "false" { print $6 }' "$TMP/docs.tsv" | sort >"$TMP/orphans"
 sort -u "$TMP/refs" >"$TMP/refs.sorted"
+# Reached, but only through another doc: the policy file never names it. Not an
+# orphan — `orphans` is reachability, and that is what the docs_orphaned gate
+# needs — but an agent routes by the policy file's words, not the link graph,
+# and a routing probe found such a doc 1 time in 24 where a line of its own was
+# found 13 (#274). Disjoint from `orphans` by construction: linked=true only.
+# FILENAME rather than NR == FNR, which misreads an empty first file.
+awk -F"$TAB" 'FILENAME == ARGV[1] { ref[$0] = 1; next }
+  $5 == "true" && !($6 in ref) { print $6 }' \
+  "$TMP/refs.sorted" "$TMP/docs.tsv" | sort >"$TMP/unindexed"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
 sort -u "$TMP/dead_anchors" >"$TMP/dead_anchors.sorted"
 
@@ -1737,6 +1751,8 @@ printf ', "dead_anchors": '
 json_list "$TMP/dead_anchors.sorted"
 printf ', "orphans": '
 json_list "$TMP/orphans"
+printf ', "unindexed": '
+json_list "$TMP/unindexed"
 # Files whose link extraction failed. Non-empty means `dead` above is a verdict
 # on a SUBSET of the tree — read the two together or not at all (CR finding 22).
 printf ', "unchecked": '
