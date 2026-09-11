@@ -170,7 +170,7 @@ enforced by the structural suite:
 
 - **Every `references/<name>.md` must be linked from its sibling SKILL.md** —
   orphans fail [tests/structural/test_references.py](tests/structural/test_references.py),
-  which lets an *index* keep entries in a subdirectory it links ([#152](https://github.com/gregoryfoster/skills/issues/152)).
+  which lets a doc link what it keeps in a subdirectory ([#152](https://github.com/gregoryfoster/skills/issues/152)).
 - **Relative links resolve from the file that contains them.** Every rendered
   link in any `skills/**/*.md` — SKILL.md and references alike — must point at a
   real path, or [tests/structural/test_relative_links.py](tests/structural/test_relative_links.py)
