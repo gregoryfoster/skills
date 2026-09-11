@@ -154,7 +154,7 @@ Read the baseline before touching anything; four numbers drive the run:
 - `sections[0]` — the largest section and its `share`. A section over ~30% of
   the file is the finding, not a symptom.
 - `links.orphans` — live docs nothing points at. **The most common cohort defect.**
-  Its blind side is `links.unindexed`: docs only another doc points at.
+  Its blind side is `links.unindexed`: docs only other docs point at.
 - `docs[].over_budget`, `near_budget` — docs too large to load, or nearly.
 
 `totals.tokens_live` is watched, not optimised — a good demotion *raises* it — and
