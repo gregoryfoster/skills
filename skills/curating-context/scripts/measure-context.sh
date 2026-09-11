@@ -1489,9 +1489,11 @@ sort -u "$TMP/refs" >"$TMP/refs.sorted"
 # needs — but an agent routes by the policy file's words, not the link graph,
 # and a routing probe found such a doc 1 time in 24 where a line of its own was
 # found 13 (#274). Disjoint from `orphans` by construction: linked=true only.
-# FILENAME rather than NR == FNR, which misreads an empty first file.
-awk -F"$TAB" 'FILENAME == ARGV[1] { ref[$0] = 1; next }
-  $5 == "true" && !($6 in ref) { print $6 }' \
+# FILENAME rather than NR == FNR, which misreads an empty first file. The
+# policy file is skipped: when it sits under DOCS_DIR the inventory holds it,
+# reachable and never self-linked, and it cannot index itself (CR 1).
+awk -F"$TAB" -v policy="$POLICY" 'FILENAME == ARGV[1] { ref[$0] = 1; next }
+  $5 == "true" && $6 != policy && !($6 in ref) { print $6 }' \
   "$TMP/refs.sorted" "$TMP/docs.tsv" | sort >"$TMP/unindexed"
 sort -u "$TMP/dead" >"$TMP/dead.sorted"
 sort -u "$TMP/dead_anchors" >"$TMP/dead_anchors.sorted"

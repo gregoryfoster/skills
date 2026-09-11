@@ -58,9 +58,9 @@ def _repo(tmp_path: Path, policy: str, docs: dict[str, str]) -> Path:
     return repo
 
 
-def _run(repo: Path) -> subprocess.CompletedProcess:
+def _run(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(MEASURE), "--no-write", "--no-env-file"],
+        ["bash", str(MEASURE), "--no-write", "--no-env-file", *args],
         capture_output=True,
         text=True,
         cwd=str(repo),
@@ -69,8 +69,8 @@ def _run(repo: Path) -> subprocess.CompletedProcess:
     )
 
 
-def _measure(repo: Path) -> dict:
-    result = _run(repo)
+def _measure(repo: Path, *args: str) -> dict:
+    result = _run(repo, *args)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -211,6 +211,21 @@ class TestReachedIsNotIndexed:
         data = _measure(repo)
         assert data["links"]["unindexed"] == []
         assert data["links"]["refs"] == ["docs/STORAGE.md", "docs/STORAGE_VARS.md"]
+
+    def test_a_policy_file_inside_the_docs_dir_is_not_its_own_gap(self, tmp_path: Path):
+        """CR 1. With the policy file under `--docs-dir` the inventory holds
+        it, reached and never linked by itself — so it was reported unindexed,
+        and Phase 5 would have asked a run to index the policy file in itself."""
+        repo = _repo(
+            tmp_path,
+            "# unused root policy\n",
+            {"docs/AGENTS.md": "# P\n\n- [A.md](A.md) — a\n", "docs/A.md": "# A\n"},
+        )
+        data = _measure(repo, "--file", "docs/AGENTS.md", "--docs-dir", "docs")
+        assert "docs/AGENTS.md" in [doc["path"] for doc in data["docs"]], (
+            "precondition: the layout under test puts the policy in the inventory"
+        )
+        assert data["links"]["unindexed"] == []
 
     def test_a_policy_file_linking_nothing_reaches_nothing(self, tmp_path: Path):
         """The boundary: every doc is an orphan, so none is unindexed."""
