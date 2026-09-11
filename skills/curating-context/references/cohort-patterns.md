@@ -65,7 +65,76 @@ orphaned docs.
 One line per live doc, each naming **what a task would need it for** — the line is
 the routing signal that decides whether an agent loads a 10k-token file, so
 "style guide" is worse than "code style and formatting rules". The index is class
-A by construction: it is the mechanism progressive disclosure runs on.
+A by construction: it is the mechanism progressive disclosure runs on. A doc
+reached only through another doc has no such signal, and the gate cannot tell —
+[measured below](#reachable-is-not-routable).
+
+### Reachable is not routable
+
+[#274](https://github.com/gregoryfoster/skills/issues/274) asked whether the
+index could nest — a child doc listed under its parent instead of on a line of
+its own — since the relocation that keeps a doc under its per-doc budget adds a
+policy-file line each time it is used. Its four questions, measured on
+2026-09-11, read-only: `gh api` and scratch clones, nothing written to a member.
+
+**Does `docs_orphaned` still work?** Yes — and that is the trap. Reachability is
+transitive, so a doc linked only from its parent is no orphan: four members
+already reach 67 of their 258 live docs that way, every one at `docs_orphaned:
+0`. Phase 5's "every live reference doc" was never checked by anything;
+`links.unindexed` now lists the docs it misses, and
+`tests/structural/test_unindexed_docs.py` pins both halves.
+
+**Does it save?** Less than it looks. Across all 168 index lines in the cohort, a
+line costs 58.7 tokens — 29.1 for the link, 29.6 for the description — and a
+nested child still pays the link. On `cannobserv`'s three named children, nesting
+with a few-word description saved 55 tokens; the same words on flat lines saved
+58, so the indentation costs 3 and buys nothing. Moving the lines out of the
+policy file saved 189.
+
+**Does it cost retrieval?** Only when the line goes. A probe gave `claude-opus-5`
+the policy file and a task — written by a separate call that saw only the child
+doc — and asked which doc it would open, then allowed one more hop. Eighteen
+tasks at `cannobserv@7e25ed7` and twelve at `cannabis.observer-wordpress@cb9f21cd`,
+each run twice:
+
+| Layout | Reached |
+|---|---:|
+| `cannobserv`, each child on its own line (as shipped) | 30/36 |
+| … nested under its parent, a few words each | 35/36 |
+| … flat, the same few words | 34/36 |
+| … line moved into the parent doc | 21/36 |
+| … moved, child's topic named on the parent's line | 34/36 |
+| `cannabis.observer-wordpress` API parts, one line each | 13/24 |
+| … through `API.md`'s contents table (as shipped) | 1/24 |
+| … contents table, part titles on the parent's line | 2/24 |
+
+A doc named nowhere in the policy file is found rarely, whatever the link graph
+says: `TRANSPORT.md` — the one child no other `AGENTS.md` paragraph names — fell
+from 12/12 to 2/12. Naming its topic on the parent's line won the route back, but
+through the parent, so each such task read 11,429 tokens instead of 3,359: the
+always-paid saving becomes a per-task cost. And it works only where no sibling
+line names the topic better — `wordpress`'s `RULES-API-*` lines took every
+first hop from the part titles. Short descriptions cost nothing *here*: three
+children in one repo, each directly under its parent's line. Enough to say a
+parent's line can carry the topic, not enough to set a length.
+
+**Is budget pressure from the index?** Mostly not. Since each member's first
+curation the index is 15% of policy-file growth — +3,050 tokens, against +16,968
+in the sections — and only `cannobserv`, where the issue was measured, grew
+mainly by index lines. Index share runs from 6% to 27% of the file, and the
+budget binds members at both ends.
+
+So the line stays: one per live doc, in the policy file. What a child's line may
+shed is description, when its parent's line sits directly above it; indenting
+it adds nothing. The exception is an **annex** — a doc no task needs except by
+way of its parent, such as this skill's own `references/cadence/workflow.md`,
+the rendered file `cadence.md` explains. Every child the probe measured was
+needed on its own; an annex never is, so its parent's link is its route.
+`links.unindexed` still lists it, to be judged. A repo whose complete index
+cannot fit its budget — `cannabis.observer-wordpress` reaches 47 docs no line
+names — is Phase 4's case: report it, with `links.unindexed` naming what an
+agent will not find. The refuted form:
+[rejected-changes.md](rejected-changes.md#indexing-a-doc-through-its-parent-instead-of-the-policy-file).
 
 ### Normalizing the index — the Phase 5 step in full
 

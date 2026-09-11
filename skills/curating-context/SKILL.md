@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.21"
+  version: "1.22"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -154,6 +154,7 @@ Read the baseline before touching anything; four numbers drive the run:
 - `sections[0]` — the largest section and its `share`. A section over ~30% of
   the file is the finding, not a symptom.
 - `links.orphans` — live docs nothing points at. **The most common cohort defect.**
+  Its blind side is `links.unindexed`: docs only other docs point at.
 - `docs[].over_budget`, `near_budget` — docs too large to load, or nearly.
 
 `totals.tokens_live` is watched, not optimised — a good demotion *raises* it — and
@@ -225,8 +226,10 @@ Order matters — mechanical work first, so semantic edits land on a clean file:
 2. **Relink orphans.** Every live doc gets a link from the policy file's index
    section, or an explicit decision to delete the doc.
 3. **Normalize the index.** A `## Detail Docs` section listing every live
-   reference doc with a one-line purpose. The cohort's converged shape,
-   canonical section order and `docs/` filenames to align with:
+   reference doc with a one-line purpose — `links.unindexed` included, bar an
+   annex only its parent's reader needs: a doc reached only through another is
+   rarely found. The cohort's converged shape, canonical section order and
+   `docs/` filenames to align with:
    [references/cohort-patterns.md](references/cohort-patterns.md).
 4. **Demote class B**, creating or extending `docs/<TOPIC>.md`. Move the text; do
    not paraphrase it in transit — that is an unreviewable content change
@@ -276,8 +279,9 @@ Re-run Phase 1 and assert, before committing:
   directly under an existing `##` silently reparents everything below it, and no
   gate sees depth.
 - `links.dead` **and** `links.dead_anchors` are empty, and no new orphan
-  appeared. `dead_anchors` is the breakage a split makes and the one `dead` alone
-  cannot see ([the link graph](references/budget-and-metrics.md#the-link-graph)).
+  appeared, nor a new unindexed doc bar an annex. `dead_anchors` is the breakage
+  a split makes and the one `dead` alone cannot see
+  ([the link graph](references/budget-and-metrics.md#the-link-graph)).
 - `policy.tokens` is at or under budget, or the Phase 4 report explains why not.
 - The repo's own test suite still passes — several cohort repos have structural
   tests that read `AGENTS.md`.

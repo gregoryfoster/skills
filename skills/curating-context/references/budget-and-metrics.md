@@ -161,9 +161,25 @@ Keeping them as separate fields is what lets an existing consumer's `dead`
 semantics stay put, and lets a repo adopting the check stage the cleanup instead of
 turning the gate red on day one.
 
+### Reached, and indexed
+
+Two more lists, both about live docs rather than links, and disjoint:
+
+| Field | Meaning |
+|---|---|
+| `links.orphans` | no chain of links reaches the doc from the policy file |
+| `links.unindexed` | a chain reaches it, but the policy file never links it — reached only **through another doc** |
+
+Only the first is a gate (`docs_orphaned`). Reachability is transitive on
+purpose — a second-hop doc is not an orphan — which is exactly why it cannot
+stand for the index: an agent routes by the policy file's words, and a doc named
+only in another doc is one it rarely finds. `unindexed` makes that visible, and
+rides the row as `docs_unindexed`, reported and not gated
+([measured, and why](cohort-patterns.md#reachable-is-not-routable)).
+
 ### What Phase 6 asserts about links
 
-- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](budget-and-metrics.md#the-link-graph)).
+- `links.dead` **and** `links.dead_anchors` are empty, and no new orphan appeared, nor a new unindexed doc bar an annex — the doc a doc split creates and links only from its parent, which no orphan count sees. `dead_anchors` is the anchor half — a link whose file resolves and whose `#fragment` names no heading, which is the breakage a split makes and the one `dead` alone cannot see ([the link graph](budget-and-metrics.md#the-link-graph)).
 
 ### How a fragment is resolved
 
