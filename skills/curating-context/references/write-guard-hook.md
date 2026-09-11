@@ -7,7 +7,8 @@ the file is not the problem. The guard closes the loop at the only moment the
 growth is cheap to fix: the moment it happens.
 
 `context-budget-guard.sh` is a Claude Code `PostToolUse` hook. It watches edits to
-the context surface and speaks only when an edit pushes it further over budget.
+the context surface and speaks only when an edit makes a budget position worse —
+past the budget, or into the last stretch before one.
 
 ## Install
 
@@ -73,24 +74,42 @@ something committed it unannounced is a bad surprise.
    and names it, since it works — a re-run normalizes it. A settings file that is
    not valid JSON is **refused, not overwritten** — it may hold permissions and
    env config that would be expensive to lose.
-3. `.skills/context-budget` and `.skills/context-doc-budget`, only when the flags
-   are passed.
+3. `.skills/context-budget`, `.skills/context-doc-budget` and
+   `.skills/context-proximity-pct`, each only when its flag is passed.
 
 ## When it speaks
 
-Two conditions must **both** hold:
+**Growth is required, always.** The file must be larger than its committed
+(`HEAD`) version. **An edit that reduces the count is never flagged** —
+curating is never nagged, in any tier.
 
-- the file is over its budget, **and**
-- it is larger than its committed (`HEAD`) version.
+Given growth, there are two tiers:
 
-Requiring both is the whole design. Over-budget alone would fire on every edit to
-a file that is already over — which, measured exactly, is the state **ten of the
-twelve** cohort repos are in today, and a hook that fires on every edit is one
-everybody turns off. An
-increase alone would fire on healthy growth inside budget. Together they mean the
-guard speaks exactly when someone is making a known-bad number worse.
+| Tier | Fires when | Says |
+|---|---|---|
+| `WARN` | the file is **over** its budget | how far over, and where the addition belongs instead |
+| `NEAR` | the file is at or past **`proximity`% of** its budget | how much headroom is left, and that now is the cheap moment to decide |
 
-**An edit that reduces the count is never flagged.** Curating is never nagged.
+Requiring growth is the whole design, and it is what lets the second tier exist
+at all. Over-budget alone would fire on every edit to a file that is already
+over — which, measured exactly, is the state **ten of the twelve** cohort repos
+are in today, and a hook that fires on every edit is one everybody turns off. An
+increase alone would fire on healthy growth deep inside budget. Together they
+mean the guard speaks exactly when someone is making a number worse, so a tier
+*below* the budget adds a signal without adding nagging: it fires on the edit
+that enters the band, not on every edit thereafter.
+
+Before the `NEAR` tier the budget behaved as a **cliff**. A file at 9,999 tokens
+against a 10,000 budget was exactly as silent as one at 3,000, so the first
+thing a repo ever heard was that a file was already over — at which point the
+fix gets made under whatever deadline the crossing edit was made for. Two files
+in one cohort repo sat at 3 and 1 tokens of headroom with no surface reporting
+either ([#273](https://github.com/gregoryfoster/skills/issues/273)).
+
+The two messages are deliberately not interchangeable: the proximity one leads
+with the headroom and never uses the word "over". A proximity signal read as a
+breach costs the breach warning its meaning, which is worse than not having the
+tier.
 
 The comparison point is `HEAD`, not the previous edit, so the reported delta
 covers all uncommitted changes to the file — the message says "since HEAD" rather
@@ -122,6 +141,25 @@ guard that silently classified nothing.
 
 Env var, then `.skills/` file, then default — the same three-step lookup the repo
 already uses for `worktree_root` and `plans_dir`.
+
+The percentage of either budget at which the `NEAR` tier begins is a knob of its
+own: `CONTEXT_PROXIMITY_PCT`, then `.skills/context-proximity-pct`, then **90**.
+It is a knob because the right width depends on how fast a repo's surface grows
+— at a 10,000 doc budget the default band is about one section wide, which is
+enough warning to plan a demotion rather than rush one. `install-guard.sh
+--proximity-pct N` writes it, the same way `--budget` writes its own.
+
+Outside 1-100 the two sources part ways, as they do for the budgets: the knob
+file and the env var **degrade** to the default with a warning, because a repo
+should not stop measuring over an annotation, and a **flag is refused** —
+`install-guard.sh` and `measure-context.sh` exit 1 rather than write or measure
+against it. Both ends are out of range for a reason: above 100 the band is
+empty and the tier silently turns itself off, and at 0 every file is in it.
+
+`measure-context.sh` puts the same verdict on every row it emits, as
+`near_budget` beside `over_budget` — disjoint, so a breach is never also
+reported as approaching one — which is how the weekly cadence and the review
+delta come to draw the band in the same place as the hook.
 
 ### Symlinked policy files
 
@@ -173,7 +211,9 @@ resolved path when it finishes.
 
 An `ok:` line proves the hook ran and chose silence — a distinction you cannot
 otherwise make from the outside, and the first thing to check when someone
-reports "the guard never fires".
+reports "the guard never fires". `WARN:` and `NEAR:` are the two tiers, and each
+line carries the numbers behind the verdict, so the log answers *why* it spoke
+as well as *whether* it did.
 
 ## Deliberate limits
 

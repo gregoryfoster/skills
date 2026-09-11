@@ -198,10 +198,43 @@ jobs:
           fi
           python3 - /tmp/ctx.json <<'PY'
           import json, sys
-          p = json.load(open(sys.argv[1]))["policy"]
-          if p["over_budget"]:
-              print(f"::warning::{p['path']} is {p['tokens']} tokens against a "
-                    f"{p['budget']} budget. Run `curate context` in this repo.")
+
+          d = json.load(open(sys.argv[1]))
+          # Every live doc, not the policy file alone. Both tiers, and why the
+          # second is quieter: cadence.md (#273).
+          rows = [r for r in [d["policy"], *(d.get("docs") or [])]
+                  if isinstance(r, dict) and r.get("budget")
+                  and isinstance(r.get("tokens"), int)]
+
+
+          def num(r):
+              # A precise count is a claim an ESTIMATED row cannot make; the
+              # number is marked, not the row dropped (#123).
+              s = r.get("tokens_source")
+              if s == "exact":
+                  return str(r["tokens"]), ""
+              return "~%s" % r["tokens"], f" — an estimate ({s or 'source unstated'}), not a count"
+
+
+          # Breaches first, then approaches, at different levels on purpose.
+          for r in rows:
+              if r.get("over_budget"):
+                  n, est = num(r)
+                  print(f"::warning::{r['path']} is {n} tokens against a {r['budget']} "
+                        f"budget{est}. Run `curate context` in this repo.")
+          for r in rows:
+              if r.get("near_budget"):
+                  n, est = num(r)
+                  print(f"::notice::{r['path']} is approaching its budget: {n} tokens of "
+                        f"{r['budget']}, {r['budget'] - r['tokens']} left{est}. Not over — "
+                        f"the cheap moment to decide where the next section goes.")
+          # Older scripts than this workflow; every key read below the filter
+          # is filtered on, so no row can raise past it.
+          skipped = 1 + len(d.get("docs") or []) - len(rows)
+          if skipped:
+              print(f"::warning::{skipped} measured row(s) carry no budget or token count, "
+                    f"so their budget position went unreported — the measuring scripts are "
+                    f"older than this workflow. Re-run install-cadence.sh.")
           PY
           if [ "${COUNTS:-0}" -gt 0 ]; then
             echo "::warning::$COUNTS unjudged count(s) or over-long index line(s). Run \`curate context\`."

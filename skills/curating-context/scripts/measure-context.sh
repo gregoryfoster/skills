@@ -27,6 +27,14 @@ Options:
   --doc-budget N     Token budget per reference doc. Same chain via
                      CONTEXT_DOC_BUDGET and .skills/context-doc-budget;
                      default 10000.
+  --proximity-pct N  Percentage of a budget at which a file is reported as
+                     APPROACHING it rather than under it — `near_budget` on
+                     every row below, and the middle tier the weekly cadence,
+                     the write guard and the review delta all report. Same
+                     chain via CONTEXT_PROXIMITY_PCT and
+                     .skills/context-proximity-pct; default 90. Must be 1-100:
+                     above 100 the band is empty and the tier silently turns
+                     itself off, at 0 every file is in it.
   --archival NAMES   Space-separated <docs-dir> subdirectory names treated as an
                      archive rather than live context: excluded from the doc
                      inventory, and not traversed for links. Default:
@@ -99,7 +107,7 @@ Options:
 
 Output (stdout, JSON):
   policy    { path, lines, bytes, tokens, tokens_exact, tokens_source,
-              bytes_per_token, budget, over_budget }
+              bytes_per_token, budget, over_budget, near_budget }
   skill     { name, version, commit }  which skill version measured this, so a
               ledger row can be attributed to a skill change
   sections  [ { title, lines, bytes, tokens, share } ]  `##`, descending by size
@@ -109,7 +117,7 @@ Output (stdout, JSON):
               The unit most demotions actually act on: a large `##` section is
               usually kept-plus-demoted rather than moved whole.
   docs      [ { path, lines, bytes, tokens, tokens_exact, tokens_source,
-                linked, over_budget } ]
+                linked, budget, over_budget, near_budget } ]
               live only. `tokens_exact` is PER ROW: one transient count_tokens
               failure no longer disowns the rows that were counted exactly.
               policy.tokens_exact stays run-wide — true only when every count in
@@ -120,6 +128,14 @@ Output (stdout, JSON):
               A number quoted without it is a number nobody downstream can
               weigh — which is how #145's over-estimate reached a plan document,
               an issue comment and several status reports.
+              `budget` is on the row rather than once at the top level so a row
+              is self-describing, the way `policy` already was: a consumer
+              warning about one doc has the number it must quote without having
+              to know which of two budgets applies to it.
+              `over_budget` and `near_budget` are DISJOINT — under, near, over —
+              so a breach is never also reported as approaching one, and a
+              consumer may branch on them in either order. The band runs from
+              --proximity-pct of the budget up to it (#273).
   links     { refs, dead, dead_anchors, orphans }
               `dead` is a link whose FILE does not exist. `dead_anchors` is a
               link whose file exists and whose #fragment names no heading in it
@@ -155,6 +171,7 @@ DOCS_DIR=""
 # only the flag.
 BUDGET_OVERRIDE=""
 DOC_BUDGET_OVERRIDE=""
+PROXIMITY_OVERRIDE=""
 ARCHIVAL="plans specs research audits archive"
 GATE=0
 EXACT=0
@@ -178,6 +195,7 @@ while [ $# -gt 0 ]; do
     --docs-dir) DOCS_DIR="${2:?--docs-dir needs a path}"; shift 2 ;;
     --budget) BUDGET_OVERRIDE="${2:?--budget needs a number}"; shift 2 ;;
     --doc-budget) DOC_BUDGET_OVERRIDE="${2:?--doc-budget needs a number}"; shift 2 ;;
+    --proximity-pct) PROXIMITY_OVERRIDE="${2:?--proximity-pct needs a number}"; shift 2 ;;
     --archival) need_arg "$#" --archival 'pass "" to measure everything'
                 ARCHIVAL="$2"; shift 2 ;;
     --gate) GATE=1; shift ;;
@@ -201,7 +219,8 @@ done
 # run measures against 6000 and records that. Before #126 a malformed --budget
 # at least produced `[: 4,000: integer expression expected` on stderr; losing
 # that would be a step in the direction this change exists to reverse.
-for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE"; do
+for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE" \
+             "--proximity-pct=$PROXIMITY_OVERRIDE"; do
   _flag="${_pair%%=*}"; _val="${_pair#*=}"
   case "$_val" in
     '') ;;
@@ -210,6 +229,27 @@ for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE"; do
       exit 1 ;;
   esac
 done
+# The same FLAG-versus-FILE rule one level up. A percentage is the one knob here
+# with a meaningful range, and both ends fail silently: above 100 the band is
+# empty and the tier turns itself off, at 0 every file is in it. The library
+# degrades a knob FILE outside that range to the default with a WARN, because a
+# repo should not fail to measure over an annotation; a flag is a typo and is
+# refused, so the run never measures against a tier nobody asked for (#126).
+# Four digits or more is caught by the PATTERN, ahead of the comparison: `[`
+# evaluates as a 64-bit integer, so past that range it does not compare but
+# fails — bash's own "integer expression expected", twice, and then the `if`
+# falls through to the else branch and the run continues against a percentage
+# it just declined to check. A flag out of range exited 0 (CR 1).
+case "$PROXIMITY_OVERRIDE" in
+  '') ;;
+  [0-9][0-9][0-9][0-9]*)
+    echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY_OVERRIDE')" >&2
+    exit 1 ;;
+  *) if [ "$PROXIMITY_OVERRIDE" -lt 1 ] || [ "$PROXIMITY_OVERRIDE" -gt 100 ]; then
+       echo "ERROR --proximity-pct must be 1-100 (got '$PROXIMITY_OVERRIDE')" >&2
+       exit 1
+     fi ;;
+esac
 
 # A run is SCOPED when a FLAG narrowed its surface. The knobs (CONTEXT_DOCS_DIR,
 # .skills/context-docs-dir) configure what the repo's surface IS and do not
@@ -277,6 +317,10 @@ BUDGET="$(ctx_read_num_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" \
   "$ROOT/.skills/context-budget" 6000)"
 DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" \
   "$ROOT/.skills/context-doc-budget" 10000)"
+# The third tier, through the same chain, for the same reason: the cadence's
+# drift report, the write guard and the review delta must all call a file at 99%
+# of budget the same thing (#273).
+PROXIMITY_PCT="$(ctx_proximity_pct "$ROOT" "$PROXIMITY_OVERRIDE")"
 
 # --- one credential, one request ------------------------------------------
 # The preflight and the measurement resolve the same credential through these
@@ -1409,6 +1453,12 @@ json_list() {
 
 over_policy=false
 [ "$P_TOKENS" -gt "$BUDGET" ] && over_policy=true
+# The middle tier. Computed here rather than left to each consumer so that the
+# weekly report, the write guard and the review delta cannot disagree about
+# which files are approaching their budgets — the same rule the budgets
+# themselves follow (#126), one tier up (#273).
+near_policy=false
+ctx_near_budget "$P_TOKENS" "$BUDGET" "$PROXIMITY_PCT" && near_policy=true
 # tokens_exact reports whether the numbers ARE exact, not whether a credential was
 # found. If any count_tokens call fell back, the file's total is a blend at best
 # and an estimate at worst, and a blend must not be compared against a true exact
@@ -1616,10 +1666,11 @@ elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ]; then
   echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263)" >&2
 fi
 
-printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s},\n' \
+printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s, "near_budget": %s},\n' \
   "$(jesc "$POLICY")" "$P_LINES" "$P_BYTES" "$P_TOKENS" "$exact_flag" \
   "$(jesc "$P_SOURCE")" \
-  $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) "$BUDGET" "$over_policy"
+  $(( RATIO_X100 / 100 )) $(( RATIO_X100 % 100 )) "$BUDGET" "$over_policy" \
+  "$near_policy"
 
 printf '  "skill": {"name": "curating-context", "version": "%s", "commit": "%s"},\n' \
   "$(jesc "$SKILL_VERSION")" "$(jesc "$SKILL_COMMIT")"
@@ -1662,11 +1713,18 @@ while IFS="$TAB" read -r dl db dt dexact dlinked dpath dsource; do
   docs_tokens=$(( docs_tokens + dt ))
   dover=false
   [ "$dt" -gt "$DOC_BUDGET" ] && dover=true
+  # A doc row carries its own budget and its own middle tier, so a consumer
+  # reporting on one doc has everything it must quote. The weekly cadence read
+  # `policy` and nothing else while these rows already knew they were over — a
+  # hole rather than a delay, since the write guard sees only the writes its
+  # PostToolUse matcher intercepts and a `sed -i` escapes it entirely (#273).
+  dnear=false
+  ctx_near_budget "$dt" "$DOC_BUDGET" "$PROXIMITY_PCT" && dnear=true
   [ "$first" -eq 1 ] || printf ',\n'
   first=0
-  printf '    {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "linked": %s, "over_budget": %s}' \
+  printf '    {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "linked": %s, "budget": %s, "over_budget": %s, "near_budget": %s}' \
     "$(jesc "$dpath")" "$dl" "$db" "$dt" "$dexact" "$(jesc "$dsource")" \
-    "$dlinked" "$dover"
+    "$dlinked" "$DOC_BUDGET" "$dover" "$dnear"
 done <"$TMP/docs.sorted"
 [ "$first" -eq 1 ] || printf '\n'
 printf '  ],\n'

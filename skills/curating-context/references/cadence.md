@@ -169,6 +169,33 @@ Why the count is a standing half plus an interval half, why `--base-ledger`
 replaced `--base HEAD`, and what the first run reports when it has no
 predecessor: [seam-accounting.md](seam-accounting.md).
 
+## What the drift report covers
+
+Three things, in this order: every **breach**, every **approach**, then the seam
+and count sweeps.
+
+Both tiers cover **the policy file and every live reference doc**. The step read
+`["policy"]` alone until
+[#273](https://github.com/gregoryfoster/skills/issues/273), while
+`measure-context.sh` had already computed `over_budget` for every `docs[]` row
+and the job discarded it — a hole rather than a delay: on the shell-write path
+nothing else reports a doc breach, since the write guard sees only what its
+`PostToolUse` matcher intercepts and a `sed -i` escapes it.
+
+The approach tier is a `::notice::` and never says "over". The band, its knob,
+and why one tier makes a budget behave as a cliff:
+[write-guard-hook.md § When it speaks](write-guard-hook.md#when-it-speaks).
+
+Updating the vendored skill does not re-render an installed workflow, so
+`--check` reports one from before this as `drift report: STALE` and exits 3 —
+the marker #237 needed for the counts driver, and the only thing that tells an
+installed repo it reports the old half.
+
+**A number the run did not count is marked as an estimate**, and the row is not
+suppressed: silence about a doc over budget is the failure being fixed, so it
+must not be the fix's own shape. Why, and why `tokens_source` is per row:
+[budget-and-metrics.md](budget-and-metrics.md#run-wide-on-policy-per-row-on-docs).
+
 ## The workflow
 
 Follows the house scheduled-job pattern from
@@ -390,10 +417,43 @@ jobs:
           fi
           python3 - /tmp/ctx.json <<'PY'
           import json, sys
-          p = json.load(open(sys.argv[1]))["policy"]
-          if p["over_budget"]:
-              print(f"::warning::{p['path']} is {p['tokens']} tokens against a "
-                    f"{p['budget']} budget. Run `curate context` in this repo.")
+
+          d = json.load(open(sys.argv[1]))
+          # Every live doc, not the policy file alone. Both tiers, and why the
+          # second is quieter: cadence.md (#273).
+          rows = [r for r in [d["policy"], *(d.get("docs") or [])]
+                  if isinstance(r, dict) and r.get("budget")
+                  and isinstance(r.get("tokens"), int)]
+
+
+          def num(r):
+              # A precise count is a claim an ESTIMATED row cannot make; the
+              # number is marked, not the row dropped (#123).
+              s = r.get("tokens_source")
+              if s == "exact":
+                  return str(r["tokens"]), ""
+              return "~%s" % r["tokens"], f" — an estimate ({s or 'source unstated'}), not a count"
+
+
+          # Breaches first, then approaches, at different levels on purpose.
+          for r in rows:
+              if r.get("over_budget"):
+                  n, est = num(r)
+                  print(f"::warning::{r['path']} is {n} tokens against a {r['budget']} "
+                        f"budget{est}. Run `curate context` in this repo.")
+          for r in rows:
+              if r.get("near_budget"):
+                  n, est = num(r)
+                  print(f"::notice::{r['path']} is approaching its budget: {n} tokens of "
+                        f"{r['budget']}, {r['budget'] - r['tokens']} left{est}. Not over — "
+                        f"the cheap moment to decide where the next section goes.")
+          # Older scripts than this workflow; every key read below the filter
+          # is filtered on, so no row can raise past it.
+          skipped = 1 + len(d.get("docs") or []) - len(rows)
+          if skipped:
+              print(f"::warning::{skipped} measured row(s) carry no budget or token count, "
+                    f"so their budget position went unreported — the measuring scripts are "
+                    f"older than this workflow. Re-run install-cadence.sh.")
           PY
           if [ "${COUNTS:-0}" -gt 0 ]; then
             echo "::warning::$COUNTS unjudged count(s) or over-long index line(s). Run \`curate context\`."

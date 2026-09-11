@@ -599,6 +599,20 @@ def _run_guard(repo: Path, file_path: Path) -> str | None:
     return json.loads(result.stdout)["systemMessage"]
 
 
+def _is_breach(msg: str | None) -> bool:
+    """Whether the guard reported a file OVER its budget, rather than
+    approaching one.
+
+    Since [#273](https://github.com/gregoryfoster/skills/issues/273) the guard
+    has a second tier, so "said nothing at all" stopped being the test for "was
+    not reported as over". Both cases below sit at 9,600 and 9,700 tokens
+    against a 10,000 budget — deliberately a hair from the line, which is
+    exactly the proximity band. The calibration question these tests ask is
+    unchanged: does the guard call this file over budget?
+    """
+    return msg is not None and "over the" in msg
+
+
 class TestTheGuardActsOnTheCalibration:
     """#145's actual complaint, and its mirror.
 
@@ -628,11 +642,11 @@ class TestTheGuardActsOnTheCalibration:
         """
         doc = repo / "docs" / "OVER-REPORTED.md"
         _sized(doc, 28_080)
-        assert _run_guard(repo, doc) is not None, (
-            "sanity: uncalibrated, the global ratio flags this file"
+        assert _is_breach(_run_guard(repo, doc)), (
+            "sanity: uncalibrated, the global ratio flags this file as over"
         )
         _write_counts(repo, "28080 9700 docs/OVER-REPORTED.md\n")
-        assert _run_guard(repo, doc) is None, (
+        assert not _is_breach(_run_guard(repo, doc)), (
             "the guard still reports a file that is under budget as over it"
         )
 
@@ -646,12 +660,12 @@ class TestTheGuardActsOnTheCalibration:
         """
         doc = repo / "docs" / "UNDER-REPORTED.md"
         _sized(doc, 25_920)
-        assert _run_guard(repo, doc) is None, (
+        assert not _is_breach(_run_guard(repo, doc)), (
             "sanity: uncalibrated, the global ratio waves this file through"
         )
         _write_counts(repo, "25920 10400 docs/UNDER-REPORTED.md\n")
         msg = _run_guard(repo, doc)
-        assert msg is not None, "a file 400 tokens over budget went unreported"
+        assert _is_breach(msg), "a file 400 tokens over budget went unreported"
         assert "10,400" in msg or "10400" in msg, msg
 
     def test_the_policy_file_is_calibrated_too(self, repo: Path):

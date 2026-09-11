@@ -24,7 +24,11 @@ Options:
                  .skills/context-budget, then 6000.
   --doc-budget N Per-reference-doc budget. Default: CONTEXT_DOC_BUDGET, then
                  .skills/context-doc-budget, then 10000.
-  --quiet        Print only when something is over budget or growing.
+  --proximity-pct N
+                 Percentage of a budget at which a row reads NEAR rather than
+                 ok. Default: CONTEXT_PROXIMITY_PCT, then
+                 .skills/context-proximity-pct, then 90. Must be 1-100.
+  --quiet        Print only when something is over budget, near it, or growing.
   -h, --help     Show this help and exit 0.
 
 Scope — the agent-context surface:
@@ -51,6 +55,7 @@ USAGE
 BASE="HEAD"
 BUDGET_OVERRIDE=""
 DOC_BUDGET_OVERRIDE=""
+PROXIMITY_OVERRIDE=""
 QUIET=0
 
 while [ $# -gt 0 ]; do
@@ -58,6 +63,7 @@ while [ $# -gt 0 ]; do
     --base) BASE="${2:?--base needs a ref}"; shift 2 ;;
     --budget) BUDGET_OVERRIDE="${2:?--budget needs a number}"; shift 2 ;;
     --doc-budget) DOC_BUDGET_OVERRIDE="${2:?--doc-budget needs a number}"; shift 2 ;;
+    --proximity-pct) PROXIMITY_OVERRIDE="${2:?--proximity-pct needs a number}"; shift 2 ;;
     --quiet) QUIET=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "context-delta: ignoring unknown argument: $1" >&2; shift ;;
@@ -102,6 +108,11 @@ cd "$ROOT" 2>/dev/null || exit 0
 
 BUDGET="$(ctx_read_num_knob "$BUDGET_OVERRIDE" "${CONTEXT_BUDGET-}" "$ROOT/.skills/context-budget" 6000)"
 DOC_BUDGET="$(ctx_read_num_knob "$DOC_BUDGET_OVERRIDE" "${CONTEXT_DOC_BUDGET-}" "$ROOT/.skills/context-doc-budget" 10000)"
+# The proximity band, from the same library the guard and the weekly report read,
+# so a file at 99% of budget is called the same thing at edit time, at review
+# time and on the clock (#273). An out-of-range value degrades with a WARN there;
+# this script never fails a review over one.
+PROXIMITY_PCT="$(ctx_proximity_pct "$ROOT" "$PROXIMITY_OVERRIDE")"
 
 # Offline by design, same estimate the write guard uses — enough to decide
 # whether a section belongs in docs/. measure-context.sh --exact is the
@@ -170,11 +181,16 @@ done <"$TMP/surface.u"
 
 [ -s "$TMP/rows" ] || exit 0
 
-# In --quiet mode, say nothing unless something is over budget or growing.
+# In --quiet mode, say nothing unless something is over budget, near it, or
+# growing. Near counts even when the branch did not grow the file: a doc parked
+# at 99% is worth one line in a review that has already opened it, and the
+# alternative — hearing about it first at the edit that crosses — is the silence
+# this tier exists to end (#273).
 if [ "$QUIET" -eq 1 ]; then
   worth_saying=0
   while IFS="$(printf '\t')" read -r kind f now prev b; do
-    if [ "$now" -gt "$b" ] || [ "$now" -gt "$prev" ]; then worth_saying=1; break; fi
+    if [ "$now" -gt "$b" ] || [ "$now" -gt "$prev" ] \
+      || ctx_near_budget "$now" "$b" "$PROXIMITY_PCT"; then worth_saying=1; break; fi
   done <"$TMP/rows"
   [ "$worth_saying" -eq 1 ] || exit 0
 fi
@@ -191,6 +207,10 @@ while IFS="$(printf '\t')" read -r kind f now prev b; do
   elif [ "$now" -gt "$b" ]; then
     status="OVER by $(( now - b ))"
     flagged=1
+  elif ctx_near_budget "$now" "$b" "$PROXIMITY_PCT"; then
+    # The headroom figure was always printed here; what was missing is that
+    # nothing said 1 was different from 4000. Both read "ok" (#273).
+    status="NEAR ($(( b - now )) headroom)"
   else
     status="ok ($(( b - now )) headroom)"
   fi
