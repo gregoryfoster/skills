@@ -209,6 +209,24 @@ class TestAnEntryThatMatchedNothing:
         assert "though the text each names is still in AGENTS.md" in result.stdout
         assert ack in result.stdout, result.stdout
 
+    def test_text_across_a_hard_wrap_is_still_here(self, tmp_path: Path) -> None:
+        """CR 2: an entry's CONTENT is matched against the JOINED clause, so it
+        may span a wrap — and "is it still in this file?" must be asked of the
+        same joined text. Asked line by line, this unpinned entry reads as
+        absent and lands in "do not prune" instead of "prune"."""
+        entry = "enumerated :: Eight timers keep the tree fresh"
+        repo = _repo(
+            tmp_path,
+            entry,
+            policy=(
+                "# P\n\nEight timers keep the\n"
+                "tree fresh (`systemctl list-timers | wc -l`).\n"
+            ),
+        )
+        result = _run(repo)
+        assert "though the text each names is still in AGENTS.md" in result.stdout
+        assert "Do not prune" not in result.stdout, result.stdout
+
     def test_a_second_entry_for_one_hit_is_redundant(self, tmp_path: Path) -> None:
         """A hit is charged to the FIRST entry that matches it, so the second
         matched nothing while its hit sits in the report acknowledged."""
