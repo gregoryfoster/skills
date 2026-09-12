@@ -89,11 +89,14 @@ Options:
                    Lines STARTING with # are comments; a # anywhere else is part
                    of the pattern.
 
-                   PATH is a substring of the run's --file, as on
-                   prove-no-loss.sh: this file is per-repo and a run is
-                   per-file, so an entry pinned to another file is neither
-                   consulted nor called stale here. The report counts how many
-                   sat it out.
+                   PATH is a substring of the file the run reads, as on
+                   prove-no-loss.sh: its tracked path with symlinks resolved,
+                   so pin by AGENTS.md, never by a CLAUDE.md linking to it.
+                   This file is per-repo and a run is per-file, so an entry
+                   pinned to another file is neither consulted nor called
+                   stale here. The report names each such file and how many
+                   entries sat the run out, and marks UNREACHABLE a PATH that
+                   no file in the tree resolves to — no run will consult it.
 
                    An entry that matched nothing is reported by what this run
                    can know about it (#251). Text gone and PATH naming this
@@ -253,8 +256,11 @@ REL="$(ctx_resolve_rel "$ROOT" "$POLICY")"
 
 RC=0
 python3 - "$REL" "$ACK_FILE" "$INDEX_SECTION" "$INDEX_MAX" <<'PY' || RC=$?
+import os
 import re
+import subprocess
 import sys
+from collections import Counter
 
 policy_rel, ack_file, index_section, index_max = sys.argv[1:5]
 index_max = int(index_max)
@@ -488,7 +494,35 @@ if refused:
 # scoped elsewhere sits the run out entirely: it cannot warrant a hit here, and
 # it is not accused of going stale here either. Scoping only ever NARROWS.
 in_scope = [e for e in entries if not e[1] or e[1] in policy_rel]
-out_of_scope = len(entries) - len(in_scope)
+out_of_scope = Counter(e[1] for e in entries if e[1] and e[1] not in policy_rel)
+
+
+def run_targets():
+    """Every path a run can read: ctx_resolve_rel's answer for each file in the
+    tree, or None when the tree cannot be listed.
+
+    Untracked files count. A split's new doc is untracked mid-run, and calling
+    the entries just pinned to it unreachable would be #279's false prune again.
+    A link counts as the file it points at, because that is what REL resolves
+    it to — so a PATH naming only the link is unreachable, which is the point.
+    """
+    # stderr is inherited, not captured: a failure here says why on the way out.
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        stdout=subprocess.PIPE, text=True, errors="replace", check=False)
+    if listed.returncode != 0:
+        return None
+    root = os.path.realpath(".")
+    targets = set()
+    for p in filter(None, listed.stdout.split("\0")):
+        if os.path.islink(p):
+            real = os.path.relpath(os.path.realpath(p), root)
+            # Outside the repo ctx_resolve_rel gives up, and the run keeps the
+            # name it was handed.
+            if real.split(os.sep, 1)[0] != os.pardir:
+                p = real
+        targets.add(p)
+    return targets
 
 
 def fits(warrant, cls, content, full):
@@ -626,12 +660,32 @@ if ambiguous:
           "CONTENT`). Do not prune on this run alone:")
     for raw in ambiguous:
         print(f"  {raw[:70]}")
-# One line, not a listing. Each of these is reported in full on its own file's
-# run; here it is evidence of nothing, but a file whose entries quietly stop
-# applying is one nobody can audit, so the count is said out loud.
+# Named by file, never listed by entry: each entry is reported in full on its own
+# file's run, and repeating them on every other run is noise. But a bare count
+# hid the one thing this run CAN judge about them. A doc a split renamed or
+# deleted, a mistyped path, or a symlink's name leaves entries out of scope on
+# EVERY run — named on each one before #279, and on none once a count stood in
+# for them (CR 1). A file whose entries quietly stop applying is one nobody can
+# audit, so each such PATH is said out loud, and one no run can reach is called
+# out as exactly that.
 if out_of_scope:
-    print(f"\n{out_of_scope} entry(ies) in {ack_file} scoped to another target "
-          f"— not consulted for {policy_rel}.")
+    reachable = run_targets()
+    print(f"\n{sum(out_of_scope.values())} entry(ies) in {ack_file} scoped to "
+          f"another target — not consulted for {policy_rel}:")
+    unreachable = False
+    for path, n in sorted(out_of_scope.items()):
+        dead = reachable is not None and not any(path in t for t in reachable)
+        unreachable = unreachable or dead
+        print(f"  {n:>4}  {path}{'  UNREACHABLE' if dead else ''}")
+    if reachable is None:
+        print("  note: the tree could not be listed (git ls-files failed), so no "
+              "path above was\n  checked for a file a run can read.")
+    elif unreachable:
+        print("  UNREACHABLE: no file in the tree resolves to a path containing "
+              "it — a doc renamed\n  or deleted, a mistyped path, or a symlink's "
+              "name (a run reads the file a link\n  points at). No run will "
+              "consult those entries: re-point each to the file its text\n  "
+              "lives in now, or prune.")
 
 # ABOVE the two counts, which stay the last two lines and are matched by
 # anchored prefix rather than by offset from the end.

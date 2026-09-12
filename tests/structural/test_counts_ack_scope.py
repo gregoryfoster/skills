@@ -13,8 +13,10 @@ deletes live warrants. It is the defect #139 fixed for `prove-no-loss.sh` and
 The fix mirrors #139, and #251's refinement with it:
 
 - **An entry scoped to another file sits the run out.** It warrants nothing
-  here and is accused of nothing here. One line says how many did, so a file
-  whose entries quietly stop applying can still be audited.
+  here and is accused of nothing here. The report names each such file and how
+  many of its entries sat out, so a file whose entries quietly stop applying
+  can still be audited — and calls out a path no run can read, the one thing
+  this run CAN judge about them (CR 1).
 - **"Re-judge and prune" is said of one case only**: an entry pinned to this
   file whose text is gone from it. That is the expiry content-matching promises.
 - **An unpinned entry whose text is not in this file is ambiguous**, and the run
@@ -109,15 +111,42 @@ class TestAnEntryScopedToAnotherFile:
         )
         assert (
             "1 entry(ies) in .skills/context-counts-ok scoped to another target "
-            "— not consulted for AGENTS.md." in result.stdout
+            "— not consulted for AGENTS.md:" in result.stdout
         ), result.stdout
 
-    def test_the_report_is_a_count_not_a_listing(self, tmp_path: Path) -> None:
-        """Existence stays visible in one line. The entries are reported in full
-        on their own file's run, and listing them on every other run is noise a
-        repo with many pinned entries pays on each one."""
+    def test_the_report_names_the_file_not_the_entries(self, tmp_path: Path) -> None:
+        """The entries are reported in full on their own file's run, and listing
+        them on every other run is noise a repo with many pinned entries pays on
+        each one. The file is what a reader needs to tell a live pin from a dead
+        one. docs/X.md is untracked here, and is not called unreachable: a
+        split's new doc is untracked mid-run."""
         result = _run(_repo(tmp_path, PINNED))
+        assert "     1  docs/X.md\n" in result.stdout, result.stdout
         assert "alphabetized" not in result.stdout, result.stdout
+        assert "UNREACHABLE" not in result.stdout, result.stdout
+
+    def test_a_path_no_run_can_read_is_called_out(self, tmp_path: Path) -> None:
+        """CR 1: a doc renamed or deleted by a split leaves entries out of scope
+        on every run. Counted and never named, they were reported nowhere."""
+        repo = _repo(tmp_path, PINNED.replace("docs/X.md", "docs/STYLE.md"))
+        result = _run(repo, "--file", "docs/X.md")
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert "     1  docs/STYLE.md  UNREACHABLE\n" in result.stdout, result.stdout
+        assert "re-point each to the file its text" in result.stdout
+
+    def test_a_symlinks_name_is_no_target(self, tmp_path: Path) -> None:
+        """A run reads the file a link points at — the script resolves it so one
+        policy file is acknowledged under one name — so an entry pinned to
+        CLAUDE.md never applies, even on the run that was handed CLAUDE.md."""
+        repo = _repo(
+            tmp_path,
+            "CLAUDE.md :: enumerated :: Eight timers keep",
+            policy="# P\n\nEight timers keep the tree fresh.\n",
+        )
+        (repo / "CLAUDE.md").symlink_to("AGENTS.md")
+        result = _run(repo, "--file", "CLAUDE.md")
+        assert _counts(result) == (1, 0), result.stdout
+        assert "     1  CLAUDE.md  UNREACHABLE\n" in result.stdout, result.stdout
 
     def test_it_does_not_warrant_the_same_text_here(self, tmp_path: Path) -> None:
         """Scoping only ever NARROWS what an entry can reach (#139)."""
