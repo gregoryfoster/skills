@@ -89,6 +89,21 @@ Options:
                    Lines STARTING with # are comments; a # anywhere else is part
                    of the pattern.
 
+                   PATH is a substring of the run's --file, as on
+                   prove-no-loss.sh: this file is per-repo and a run is
+                   per-file, so an entry pinned to another file is neither
+                   consulted nor called stale here. The report counts how many
+                   sat it out.
+
+                   An entry that matched nothing is reported by what this run
+                   can know about it (#251). Text gone and PATH naming this
+                   file: stale, re-judge and prune. Text still here: redundant
+                   (an earlier entry took its hit) or spent (no hit left that
+                   its warrant covers), prune. Text gone and no PATH: a
+                   re-worded line and an entry judged for another file look
+                   alike here, and the report says so rather than advise a
+                   prune.
+
                    WARRANT is from a closed set, and an unrecognised one is
                    REFUSED rather than ignored — a warrant that merely failed to
                    match would report as an ordinary hit and send the reader to
@@ -465,27 +480,36 @@ if refused:
         print(f"  {ack_file}:{lineno}  {raw[:80]}", file=sys.stderr)
     sys.exit(1)
 
+# Scope, decided once. This file is per-repo while --file is per-target, and the
+# matching below always honoured a PATH — but the stale-entry report did not, so
+# every entry pinned to docs/STYLE.md was told to "re-judge and prune" on the
+# run against AGENTS.md, which never consulted it (#279, the defect #139 fixed in
+# prove-no-loss.sh). PATH is a substring of the target, as there. An entry
+# scoped elsewhere sits the run out entirely: it cannot warrant a hit here, and
+# it is not accused of going stale here either. Scoping only ever NARROWS.
+in_scope = [e for e in entries if not e[1] or e[1] in policy_rel]
+out_of_scope = len(entries) - len(in_scope)
+
+
+def fits(warrant, cls, content, full):
+    # A warrant belongs to one class. `pointer` on a count would silence the
+    # wrong remedy: "still a pointer" says nothing about whether a number is
+    # reproducible.
+    return warrant in CLASS_WARRANTS[cls] and content in full
+
+
+# By position, not by text: two identical lines are two entries, and the second
+# is the redundant one the report below has to be able to name.
 new, acked = [], []
-matched_by = {raw: [] for raw, _, _, _ in entries}
+charged = [[] for _ in in_scope]
 for cls, loc, detail, full in hits:
-    path = loc.rsplit(":", 1)[0]
-    hit = None
-    for raw, p_path, warrant, content in entries:
-        if p_path and p_path not in path:
-            continue
-        # A warrant belongs to one class. `pointer` on a count would silence the
-        # wrong remedy: "still a pointer" says nothing about whether a number is
-        # reproducible.
-        if warrant not in CLASS_WARRANTS[cls]:
-            continue
-        if content in full:
-            hit = raw
-            break
-    if hit is None:
+    idx = next((i for i, (_, _, warrant, content) in enumerate(in_scope)
+                if fits(warrant, cls, content, full)), None)
+    if idx is None:
         new.append((cls, loc, detail))
     else:
         acked.append((cls, loc))
-        matched_by[hit].append(loc)
+        charged[idx].append(loc)
 
 if index_max <= 0:
     print("note: index lines not checked (--index-max 0).")
@@ -524,19 +548,90 @@ if acked:
     # without the judging — the one way to zero this metric with no edit to the
     # file it measures.
     print("\n  by entry:")
-    for raw, locs in matched_by.items():
+    for (raw, _, _, _), locs in zip(in_scope, charged):
         if not locs:
             continue
         print(f"    {len(locs)} hit(s): {raw[:70]}")
         if len(locs) > 1:
             print(f"    WARN this entry covers {len(locs)} hits — an "
                   "acknowledgement should warrant ONE judged line; split it")
-unused = [raw for raw, _, _, _ in entries if not matched_by[raw]]
-if unused:
-    print(f"\n{len(unused)} entry(ies) in {ack_file} matched nothing — the text "
-          "each warranted has changed or gone; re-judge and prune:")
-    for raw in unused:
+
+# An in-scope entry that matched nothing was told its text "has changed or
+# gone", and to prune it — true of only some of them, which is #251's lesson
+# from prove-no-loss.sh. Whether this run may judge the entry at all is settled
+# by either of two facts: a PATH naming this file, or its CONTENT being in this
+# file. There is no --base here, so the second is read against the file as it
+# stands, paragraphs joined so text matched across a hard wrap is still found:
+#
+#   in a hit its warrant fits    an EARLIER entry took the hit, since a hit is
+#                                charged to the first match. Redundant.
+#   in the file, in no such hit  the clause stopped reporting — it gained its
+#                                command, lost its precision, or is the other
+#                                class. Nothing is left to warrant. Spent.
+#   gone, and pinned here        the text it warranted changed: the one case
+#                                "re-judge and prune" is true of. Stale.
+#   gone, and unpinned           a re-worded line, or an entry judged for
+#                                another file — this run cannot tell, and says
+#                                so rather than guess. Pruning on the second
+#                                reading discards a live warrant. Ambiguous.
+#
+# A near-match test would resolve the last case and is refused for #251's
+# reason: "close enough to be the same line" is the judgement content matching
+# exists to not make.
+paragraphs, para = [], []
+for line in lines + [""]:
+    if line.strip():
+        para.append(line.strip())
+    elif para:
+        paragraphs.append(" ".join(para))
+        para = []
+
+redundant, spent, stale, ambiguous = [], [], [], []
+for (raw, path, warrant, content), locs in zip(in_scope, charged):
+    if locs:
+        continue
+    if any(fits(warrant, cls, content, full) for cls, _, _, full in hits):
+        redundant.append(raw)
+    elif any(content in p for p in paragraphs):
+        spent.append(raw)
+    else:
+        (stale if path else ambiguous).append(raw)
+
+if redundant:
+    print(f"\n{len(redundant)} entry(ies) redundant — every hit each matches is "
+          "acknowledged by an\nearlier entry, since a hit is charged to the "
+          "first that matches. Prune, unless\nthat earlier entry is warned "
+          "about above as broad; narrow that one instead:")
+    for raw in redundant:
         print(f"  {raw[:70]}")
+if spent:
+    print(f"\n{len(spent)} entry(ies) matched nothing, though the text each "
+          f"names is still in {policy_rel}:\nno hit there is one its warrant "
+          "covers — the clause gained its command or lost\nits precision, or "
+          "the warrant is for the other class (`pointer` is for index\nlines "
+          "only). Nothing is left to warrant; prune, and judge afresh any hit "
+          "above\nthat quotes it:")
+    for raw in spent:
+        print(f"  {raw[:70]}")
+if stale:
+    print(f"\n{len(stale)} entry(ies) scoped to {policy_rel} matched nothing — "
+          "the text each warranted\nhas changed or gone; re-judge and prune:")
+    for raw in stale:
+        print(f"  {raw[:70]}")
+if ambiguous:
+    print(f"\n{len(ambiguous)} entry(ies) matched nothing AND name text that is "
+          f"not in {policy_rel}, so this\nrun cannot tell which of two things "
+          "happened: the text was re-worded (re-judge\nand prune), or the entry "
+          "was judged for another file (scope it with\n`PATH :: WARRANT :: "
+          "CONTENT`). Do not prune on this run alone:")
+    for raw in ambiguous:
+        print(f"  {raw[:70]}")
+# One line, not a listing. Each of these is reported in full on its own file's
+# run; here it is evidence of nothing, but a file whose entries quietly stop
+# applying is one nobody can audit, so the count is said out loud.
+if out_of_scope:
+    print(f"\n{out_of_scope} entry(ies) in {ack_file} scoped to another target "
+          f"— not consulted for {policy_rel}.")
 
 # ABOVE the two counts, which stay the last two lines and are matched by
 # anchored prefix rather than by offset from the end.
