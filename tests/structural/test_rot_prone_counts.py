@@ -360,7 +360,11 @@ class TestTheWarrantVocabulary:
         )
         result = _run(repo)
         assert _counts(result)[0] == 1
-        assert "matched nothing" in result.stdout
+        # Still reported, though not as stale: unpinned, with its text absent,
+        # it cannot be told from an entry judged for another file, and the
+        # report says so (#279). Which report each case gets is pinned in
+        # test_counts_ack_scope.py.
+        assert "  enumerated :: Eight scheduled timers\n" in result.stdout
 
     def test_a_path_scoped_entry_is_accepted(self, tmp_path: Path) -> None:
         repo = _repo(
