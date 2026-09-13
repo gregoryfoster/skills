@@ -747,9 +747,11 @@ def reaches(content, line):
     """Does an entry's CONTENT reach this lost line?
 
     As a substring from WARRANT_MIN_CHARS up, and by equality below it (#283).
-    A short entry was only accepted because it IS a whole line at --base, so
-    equality is the match it was accepted for: `}` reaches every lost `}` —
-    copies of one line, one judgement (#278) — and never `return {}`."""
+    Below the floor no fragment identifies a line, but a whole text does, so a
+    short entry may reach only a line that is exactly its text: `}` reaches
+    every lost `}` — copies of one line, one judgement (#278) — and never
+    `return {}`. Whether a short entry is accepted at all is short_fragment()'s
+    question; this one is only what an accepted entry can reach."""
     if len(content) < WARRANT_MIN_CHARS:
         return content == line
     return content in line
