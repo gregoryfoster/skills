@@ -1149,8 +1149,11 @@ def index_evidence(lost_line):
             why = why or (f"the line that keeps it adds no link to a doc "
                           f"{policy} did not link at --base")
         elif stray:
+            # Each in backticks: an atom is a token, and `make register`
+            # unquoted reads as two words of the sentence around it.
+            quoted = ", ".join(f"`{a}`" for a in stray)
             why = why or (f"the line that keeps it also adds "
-                          f"{', '.join(stray)[:80]} — an index extension adds "
+                          f"{quoted[:100]} — an index extension adds "
                           "links to unindexed docs, and nothing else a claim "
                           "check could weigh")
         else:

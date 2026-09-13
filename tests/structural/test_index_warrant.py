@@ -247,13 +247,13 @@ class TestTheEvidenceIsChecked:
         now = GROUPED + f", {REGISTER} (run `make register` first)"
         repo = _index_repo(tmp_path, now)
         _ack(repo, ENTRY)
-        self._refused(repo, "also adds make register")
+        self._refused(repo, "also adds `make register`")
 
     def test_an_issue_reference_riding_along_is_refused(self, tmp_path: Path):
         now = GROUPED + f", {REGISTER} (#412)"
         repo = _index_repo(tmp_path, now)
         _ack(repo, ENTRY)
-        self._refused(repo, "also adds #412")
+        self._refused(repo, "also adds `#412`")
 
     def test_a_lost_prose_line_cannot_borrow_the_extension(self, tmp_path: Path):
         """The hole an atoms-only check leaves. A prose line has no atom, so
