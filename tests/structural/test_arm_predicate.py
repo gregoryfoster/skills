@@ -76,9 +76,11 @@ def _member(
     after: int,
     version: str,
     later: str | None = None,
+    no_loss: str = "ok",
 ) -> None:
     """A member with a baseline, a scored curation, and optionally a LATER
-    curation on a newer version — the shape every cohort repo now has."""
+    curation on a newer version — the shape every cohort repo now has.
+    `no_loss` is the scored curation's verdict."""
     d = root / name / ".skills"
     d.mkdir(parents=True, exist_ok=True)
     rows = [
@@ -90,6 +92,7 @@ def _member(
             ts="2026-08-06",
             skill_version=version,
             skill_commit="deadbee",
+            no_loss=no_loss,
         ),
     ]
     if later is not None:
@@ -241,15 +244,17 @@ class TestTheRosterSaysWhatItsAnnotationsAre:
         assert waves and set(waves) == {"a", "b"}, (waves, out.stderr)
 
 
-class TestAnUnpairedMemberIsListedNotScored:
+class TestAnUnpairedMemberIsListedNotPaired:
     """A roster entry with a wave and no `pair:` — broker, which postdates the
     baseline the pairs were matched on and has no size neighbour (#280). Its
-    roster comment relies on the gate listing it and leaving the pairwise
-    verdict alone, and nothing pinned either until a member depended on it."""
+    roster comment says "safety gates only", and that is two claims: the gate
+    lists it and leaves the pairwise verdict alone, and it still counts for
+    the safety gates, because `arm()` keeps a repo in its arm whether or not it
+    has a partner. Nothing pinned either until a member depended on both."""
 
-    def _with_unpaired(self, root: Path) -> Path:
+    def _with_unpaired(self, root: Path, no_loss: str = "ok") -> Path:
         roster = _two_pairs(root)
-        _member(root, "solo", 2569, 3064, "1.3")
+        _member(root, "solo", 2569, 3064, "1.3", no_loss=no_loss)
         with roster.open("a") as fh:
             fh.write(f"{root / 'solo'}  wave:b\n")
         return roster
@@ -276,6 +281,23 @@ class TestAnUnpairedMemberIsListedNotScored:
         assert [(p["pair"], p["winner"]) for p in runs[1]["pairs"]] == [
             (p["pair"], p["winner"]) for p in runs[0]["pairs"]
         ]
+
+    def test_it_still_vetoes_on_a_safety_failure(self, tmp_path: Path):
+        """The same run as above, which every pair adopts, with the unpaired
+        treatment repo's curation recorded `no_loss: failed`. Content lost under
+        the proposed version is lost whether or not the repo had a partner, so
+        it rejects on its own — `arm()` says not to narrow the arms to paired
+        repos, and this is what would go quiet if someone did."""
+        r = _score(
+            self._with_unpaired(tmp_path, no_loss="failed"),
+            "--min-pairs",
+            "2",
+            "--format",
+            "json",
+        )
+        payload = json.loads(r.stdout)
+        assert payload["verdict"] == "REJECT", payload["reasons"]
+        assert payload["treatment_arm_failures"] == ["solo"], payload
 
 
 class TestTheGateRecordsTheDecision:
