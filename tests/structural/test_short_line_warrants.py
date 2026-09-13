@@ -118,7 +118,7 @@ class TestAShortEntryIsNeverASubstring:
         assert "  LOST  return {}" in r.stdout, r.stdout
         assert "over-broad" not in r.stderr, r.stderr
 
-    def test_a_short_entry_reaches_a_line_only_whole(self, tmp_path: Path):
+    def test_indentation_is_not_part_of_the_line(self, tmp_path: Path):
         """Whitespace around a line is not part of it, as everywhere in this
         report — the closer indented two levels is still `}`."""
         block = "```js\nif (x) {\n    wait(x);\n    }\n```\n"
