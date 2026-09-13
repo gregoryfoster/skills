@@ -151,6 +151,25 @@ class TestAnIndexExtensionCanBeScored:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "indexes: docs/HEALTH_ROW.md" in r.stdout, r.stdout
 
+    def test_a_reference_doc_extends_its_own_index(self, tmp_path: Path):
+        """--file need not be the policy file, and a reference doc's links are
+        relative to its own directory. Every other case here runs against a
+        root AGENTS.md, whose directory is empty, so a join that ignored the
+        directory would pass them all."""
+        repo = _repo(tmp_path, "# P\n")
+        (repo / "docs" / "api").mkdir(parents=True)
+        for name in ("a", "b", "c"):
+            (repo / "docs" / "api" / f"{name}.md").write_text(f"# {name}\n")
+        parts = "Parts: [a](api/a.md), [b](api/b.md)"
+        (repo / "docs" / "API.md").write_text(f"# API\n\n{parts}\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "a doc with an index of its own")
+        (repo / "docs" / "API.md").write_text(f"# API\n\n{parts}, [c](api/c.md)\n")
+        _ack(repo, "index :: Parts: [a](api/a.md)")
+        r = _prove(repo, "--file", "docs/API.md")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "indexes: docs/api/c.md" in r.stdout, r.stdout
+
 
 class TestTheEvidenceIsChecked:
     """Every refusal is exit 1, the code for an acknowledgement file that
