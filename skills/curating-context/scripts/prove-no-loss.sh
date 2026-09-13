@@ -1066,9 +1066,9 @@ if broad:
 #     `and`, and a test of order would refuse the most ordinary way a list
 #     grows. The cost, named rather than hidden, is that a reordering passes
 #     as well — `A before B` read back as `B before A`, with a link. Words,
-#     not only atoms: a prose line carries no atom,
-#     and an atoms-only test would let any lost prose line be "extended into"
-#     any index line that gained a link; and
+#     not only atoms: a prose line carries no atom, and an atoms-only test
+#     would let any lost prose line be "extended into" any index line that
+#     gained a link; and
 #   adds, among atoms, only links to docs --file did not link at --base, with
 #     their own labels — at least one. Plain words may come with them, since a
 #     one-line description routes as well as a full line (#274); a new span,
