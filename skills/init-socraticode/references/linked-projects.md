@@ -10,6 +10,13 @@ defaults to none, so most installs skip it entirely.
 linked project must **itself be indexed** to contribute results; a linked path
 that was never indexed contributes nothing and says nothing about it.
 
+Links reach `codebase_search` only, and only when a call passes
+`includeLinked: true`. A linked path that does not exist is dropped by the
+server without a word, so the daily health check names every configured link
+that does not resolve — from this variable and from `.socraticode.json`'s
+`linkedProjects` ([#281](https://github.com/gregoryfoster/skills/issues/281)).
+It cannot see whether a link that *does* resolve was ever indexed.
+
 ## Write it into `.claude/settings.local.json`
 
 Write `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env`

@@ -18,8 +18,10 @@ Two mechanisms answer that, and this file gates both:
   said so. A tripwire nobody pulls is not a tripwire, so this file runs it.
 - **The hook.** `scripts/socraticode-health.sh` re-uses the once-per-day
   SessionStart cadence `skills-submodule-update.sh` established. Its contract is
-  narrow and worth pinning: silent when there is nothing to say, silent when it
-  cannot judge, exit 0 on every path including the ones that fail.
+  narrow and worth pinning: silent when there is nothing to say or the repo
+  never adopted SocratiCode, loud about a configured repo whose toolchain is
+  gone (#281, pinned in test_health_configured_gaps.py), exit 0 on every path
+  including the ones that fail.
 
 The node tests skip loudly when node is absent, the way `TestShellcheck` skips
 on a missing binary. No network, no Docker, no MCP server: the driver is
@@ -65,6 +67,9 @@ def _clean_env(**extra: str) -> dict:
         "SOCRATICODE_PROBE_FILE",
         "HEALTH_TIMEOUT_MS",
         "SOCRATICODE_HEALTH_FORCE",
+        # health-check reads it since #281, and a session that runs this suite
+        # may well have it set — the skill writes it into settings.local.json.
+        "SOCRATICODE_LINKED_PROJECTS",
     ):
         env.pop(k, None)
     env.update(extra)
@@ -955,14 +960,10 @@ class TestHealthHook:
             f"hook; got {result.stdout!r}"
         )
 
-    def test_silent_when_the_driver_is_missing(self, tmp_path: Path) -> None:
-        repo = _repo(tmp_path)
-        result = _run_hook(repo, SOCRATICODE_DRIVER="/nonexistent/driver.mjs")
-        assert result.returncode == 0
-        assert result.stdout == "", (
-            "an unresolvable driver is a condition the hook cannot judge, not a "
-            "finding to announce at session start"
-        )
+    # A missing driver was pinned silent here, as a condition the hook cannot
+    # judge. Past the manifest gate it can, and it now reports it (#281) — see
+    # test_health_configured_gaps.py, which also keeps the no-manifest case
+    # above silent under a missing driver and a missing node.
 
     @requires_node
     def test_reports_findings_once_per_day(self, tmp_path: Path) -> None:

@@ -290,7 +290,11 @@ The hook is silent unless it finds something, runs at most once per UTC day, and
 exits 0 on every path; it re-checks the Phase 6 yield gate, `codebase_health`,
 and a failed last operation, so an install that was green in January is not
 assumed green in June
-([#107](https://github.com/gregoryfoster/skills/issues/107)). Set
+([#107](https://github.com/gregoryfoster/skills/issues/107)). In a repo
+carrying the manifest, a host that has lost node or the driver is a finding too,
+not a skip, and so is a linked project that does not resolve
+([#281](https://github.com/gregoryfoster/skills/issues/281)); a repo that never
+adopted SocratiCode hears nothing. Set
 `SOCRATICODE_PROBE_FILE` in `.claude/settings.local.json`'s `env` block to a
 file with several first-party imports if you want the confirmatory graph probe.
 

@@ -57,8 +57,11 @@ Behaviour:
     skipped unless the manifest is found there.
   - Runs at most once per UTC day, per PROJECT — the lock lives in the common
     git dir, so N worktrees of one repo produce one report a day, not N.
-  - Silent when there is nothing to report, and on every infrastructure
-    condition it cannot judge (no node, no driver, no manifest).
+  - Silent when there is nothing to report, and in a repo never configured
+    for SocratiCode (no manifest). Past that gate a missing toolchain is a
+    FINDING, not a skip (#281): no node means the codebase_* tools cannot run
+    while the policy still sends agents to them, and no driver means nothing
+    was measured. Each is reported once a day like any other finding.
   - Says FAILED TO RUN when the driver exits non-zero without printing any
     findings (#254). A crashed check and a check that found defects both exit
     1, and the crash must not be rendered in the shape that means "measured,
@@ -185,7 +188,33 @@ if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
   echo "socraticode-health: cannot write $LOCK; this check will repeat every session (see $LOG)" >&2
 fi
 
-command -v node >/dev/null 2>&1 || { _log "node not on PATH — skipped"; exit 0; }
+# Past the manifest gate, a missing toolchain is reported, not skipped (#281).
+# Silence is right for a repo that never adopted SocratiCode — nagging a machine
+# that never installed it is the tuned-out reporter #180 exists to prevent — and
+# the manifest gate above has already ruled that case out. What reaches here is
+# a project CONFIGURED for SocratiCode whose toolchain is gone, and that is the
+# very state a once-per-day reporter exists for. CannObserv/notifier lost node,
+# the plugin, the Qdrant image and its volume; this line logged "node not on
+# PATH — skipped" five times over nine days, reached no session, and every agent
+# in them was told by AGENTS.md to prefer codebase_search over grep.
+#
+# The loud path is stdout, the quiet one the log, the same split every other
+# finding here uses, and the lock above keeps it to one report a day. Exit 0
+# still: this is advice, not a gate.
+#
+# The docs pointer is conditional because an install that predates the detail
+# doc would be sent to a file it does not have.
+_see=""
+[ -f "$PROJECT/docs/SOCRATICODE.md" ] && _see=" (see docs/SOCRATICODE.md)"
+
+if ! command -v node >/dev/null 2>&1; then
+  _log "node not on PATH — reported"
+  # "Will fail", not "may": the plugin starts its server as `npx` with no env
+  # of its own, so the server inherits the PATH this hook was given.
+  echo "socraticode-health: node is not on PATH, but this project is configured for SocratiCode (.socraticodecontextartifacts.json is present). The plugin starts its server with npx on this same PATH, so semantic search is unavailable and the codebase_* tools will fail — answer code questions with grep/rg this session."
+  echo "socraticode-health: restoring node is an install fix, not a session one: init-socraticode's preflight.sh --check names what is missing${_see}."
+  exit 0
+fi
 
 DRIVER=""
 # skills-vendor/*/ BEFORE the two symlink dirs, which are symlinks into it and
@@ -210,7 +239,19 @@ for candidate in \
     break
   fi
 done
-[ -n "$DRIVER" ] || { _log "mcp-driver.mjs not found — skipped"; exit 0; }
+# The same argument one step on (#281). A repo carrying the manifest vendors
+# this skill, so a driver found nowhere is a broken install, not an absent one,
+# and the check it would have run did not happen. Said in the words the
+# FAILED TO RUN branch below uses for the same fact: nothing was measured, and
+# silence would read as a clean day. The tools themselves may be fine — the
+# driver is only this hook's instrument — so, unlike the node case, this does
+# not tell a session to stop using them.
+if [ -z "$DRIVER" ]; then
+  _log "mcp-driver.mjs not found — reported"
+  echo "socraticode-health: this project is configured for SocratiCode (.socraticodecontextartifacts.json is present), but mcp-driver.mjs was not found, so today's check could not run. Nothing was measured — this is not a clean result."
+  echo "socraticode-health: restore the vendored init-socraticode skill, or point SOCRATICODE_DRIVER at mcp-driver.mjs; --help lists where this hook looks${_see}."
+  exit 0
+fi
 
 PROBE_ARGS=()
 if [ -n "${SOCRATICODE_PROBE_FILE:-}" ]; then
