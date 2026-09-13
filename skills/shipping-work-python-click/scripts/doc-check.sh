@@ -370,7 +370,7 @@ printf '  - %s\n' "${DOC_SECTIONS[@]}"
 # independently: the list says what to watch, the advice what to do about a
 # hit, and either can be right on its own. What this closes is the silence. A
 # repo that tailored its list against the PHP defaults and never its advice was
-# told, on every hit for months, to check AGENTS.md and README.md, never the
+# told, on every hit from then on, to check AGENTS.md and README.md, never the
 # docs/COMMANDS.md that actually drifted, while both source labels printed
 # above already disagreed and nothing said so.
 #
