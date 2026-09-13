@@ -200,6 +200,19 @@ class TestTheEvidenceIsChecked:
         _ack(repo, ENTRY)
         self._refused(repo, "adds no link to a doc")
 
+    def test_a_padded_link_at_base_still_counts_as_linked(self, tmp_path: Path):
+        """measure-context.sh accepts `[l](  docs/X.md )` and counts the doc
+        as indexed, so linking it again is no repair. The reading of --base may
+        err toward "linked", never away from it: a doc it misses becomes
+        eligible, and `index` would certify re-linking a doc already named."""
+        style = "Style rules: [the guide](  docs/STYLE.md )"
+        now = GROUPED + ", [docs/STYLE.md](docs/STYLE.md)"
+        repo = _index_repo(
+            tmp_path, now, base_extra=f"\n{style}\n", now_extra=f"\n{style}\n"
+        )
+        _ack(repo, ENTRY)
+        self._refused(repo, "adds no link to a doc")
+
     def test_a_link_outside_the_docs_is_refused(self, tmp_path: Path):
         """An index points at reference docs; a source file is not one."""
         now = GROUPED + ", [the app](src/app.py)"

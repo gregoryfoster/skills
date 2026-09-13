@@ -1070,12 +1070,20 @@ if broad:
 #
 # "Did not link at --base" is links.unindexed plus links.orphans when --file is
 # the policy file, and the same question asked of --file when it is not. It is
-# read with this script's own link pattern rather than measure-context.sh's
-# (the two cannot share code, and a second parser is how two gates come to
-# disagree). The pattern also catches a `](…)` inside code, which can only
-# count a doc as linked when it was not — fewer docs eligible, never more.
+# read with a pattern of this script's own rather than measure-context.sh's
+# extractor (the two cannot share code, and a second parser is how two gates
+# come to disagree), so the ways the two differ have to fall on one side: this
+# reading may count a doc as linked when measure-context.sh would not, never
+# the reverse — fewer docs eligible, never more. It catches a `](…)` inside
+# code or with no label, which only errs that way. It must also allow what
+# measure-context.sh allows, and that is why BASE_LINK is not LINK_TARGET:
+# measure-context.sh accepts a padded destination, `[l](  docs/X.md )`, and the
+# atom pattern, which starts at the first character after `](`, missed it — a
+# doc already indexed was then eligible, and `index` certified re-linking it.
+# LINK_TARGET stays as it is; an atom's shape is another question.
 # Eligible docs are the destinations this run searched: --docs-dir's live docs
 # and anything named with --also, which is where an index points.
+BASE_LINK = re.compile(r"\]\(\s*([^)\s]+)")
 WORD = re.compile(r"\w+|[^\w\s]")
 
 
@@ -1100,7 +1108,7 @@ def link_path(target):
 
 
 linked_at_base = {link_path(t) for raw in before
-                  for t in LINK_TARGET.findall(raw)} - {None}
+                  for t in BASE_LINK.findall(raw)} - {None}
 unindexed_docs = {os.path.normpath(os.path.relpath(p)) for p in others} - linked_at_base
 
 
