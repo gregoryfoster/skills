@@ -61,7 +61,9 @@ Behaviour:
     for SocratiCode (no manifest). Past that gate a missing toolchain is a
     FINDING, not a skip (#281): no node means the codebase_* tools cannot run
     while the policy still sends agents to them, and no driver means nothing
-    was measured. Each is reported once a day like any other finding.
+    was measured. Each is reported once a day like any other finding. The
+    manifest is tracked, so that includes a clone on a machine that never
+    installed SocratiCode, whose policy block misleads it just the same.
   - Says FAILED TO RUN when the driver exits non-zero without printing any
     findings (#254). A crashed check and a check that found defects both exit
     1, and the crash must not be rendered in the shape that means "measured,
@@ -189,14 +191,21 @@ if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
 fi
 
 # Past the manifest gate, a missing toolchain is reported, not skipped (#281).
-# Silence is right for a repo that never adopted SocratiCode — nagging a machine
-# that never installed it is the tuned-out reporter #180 exists to prevent — and
-# the manifest gate above has already ruled that case out. What reaches here is
-# a project CONFIGURED for SocratiCode whose toolchain is gone, and that is the
-# very state a once-per-day reporter exists for. CannObserv/notifier lost node,
-# the plugin, the Qdrant image and its volume; this line logged "node not on
-# PATH — skipped" five times over nine days, reached no session, and every agent
-# in them was told by AGENTS.md to prefer codebase_search over grep.
+# Silence is right for a repo that never adopted SocratiCode — nagging it would
+# be the tuned-out reporter #180 exists to prevent — and the manifest gate above
+# has already ruled that repo out. What reaches here is a project CONFIGURED for
+# SocratiCode whose toolchain is missing on this machine, and that is the very
+# state a once-per-day reporter exists for. CannObserv/notifier lost node, the
+# plugin, the Qdrant image and its volume; this line logged "node not on PATH —
+# skipped" five times over nine days, reached no session, and every agent in
+# them was told by AGENTS.md to prefer codebase_search over grep.
+#
+# Configured is a property of the REPO; the toolchain belongs to the MACHINE.
+# The manifest and this hook's registration in .claude/settings.json are both
+# tracked, so a fresh clone on a machine that never installed SocratiCode lands
+# here too, and hears this line once a day. That is still the right line: the
+# tracked policy block sends that session's agent to codebase_search just the
+# same, and the grep fallback is what it needs.
 #
 # The loud path is stdout, the quiet one the log, the same split every other
 # finding here uses, and the lock above keeps it to one report a day. Exit 0

@@ -128,9 +128,11 @@ class TestAMissingNodeIsReported:
         )
 
     def test_an_unconfigured_repo_still_hears_nothing(self, tmp_path: Path) -> None:
-        """The case the skip was right about, and still is. A machine that
-        never installed SocratiCode must not be nagged about it — the
-        tuned-out reporter #180 exists to prevent."""
+        """The case the skip was right about, and still is: a REPO that never
+        adopted SocratiCode must not be nagged about it — the tuned-out
+        reporter #180 exists to prevent. A machine that never installed it is
+        another matter: the manifest is tracked, so a clone of a configured
+        repo there takes test_it_reaches_the_session's path, and should."""
         repo = _repo(tmp_path, manifest=False)
         result = _run_hook(
             repo,
