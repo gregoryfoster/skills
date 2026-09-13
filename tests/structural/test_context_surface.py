@@ -108,8 +108,8 @@ def _advisory(stdout: str) -> str | None:
 
 
 class TestSymlinkedPolicyFile:
-    """CLAUDE.md -> ./AGENTS.md is uniform across the twelve cohort members, and
-    Claude Code's `#` memory shortcut writes by the CLAUDE.md name."""
+    """CLAUDE.md -> AGENTS.md is the cohort norm, and Claude Code's `#` memory
+    shortcut writes by the CLAUDE.md name."""
 
     @pytest.fixture
     def repo(self, tmp_path: Path) -> Path:
