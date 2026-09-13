@@ -140,7 +140,9 @@ The index warrant:
   CHECKED rather than trusted. It holds when one line of --file as it is now:
 
     keeps every word and every atom of the lost line — extended, with nothing
-    removed or reworded; and
+    removed. Words are counted, not placed, so a list can take its new
+    separator (`A and B` -> `A, B and C`); the cost is that a reordering
+    passes too; and
     adds, among atoms, only links to docs --file did not link at --base (a doc
     under --docs-dir, or named by --also), with their own labels — at least one.
 
@@ -1060,7 +1062,11 @@ if broad:
 # not trusted. It holds when one line of --file as it is now
 #
 #   keeps every word and every atom of the lost line — extended, with nothing
-#     removed or reworded. Words, not only atoms: a prose line carries no atom,
+#     removed. Counted, not placed: `A and B` becoming `A, B and C` moves the
+#     `and`, and a test of order would refuse the most ordinary way a list
+#     grows. The cost, named rather than hidden, is that a reordering passes
+#     as well — `A before B` read back as `B before A`, with a link. Words,
+#     not only atoms: a prose line carries no atom,
 #     and an atoms-only test would let any lost prose line be "extended into"
 #     any index line that gained a link; and
 #   adds, among atoms, only links to docs --file did not link at --base, with
