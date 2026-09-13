@@ -108,8 +108,8 @@ def _advisory(stdout: str) -> str | None:
 
 
 class TestSymlinkedPolicyFile:
-    """CLAUDE.md -> ./AGENTS.md is uniform across the twelve cohort members, and
-    Claude Code's `#` memory shortcut writes by the CLAUDE.md name."""
+    """CLAUDE.md -> AGENTS.md is the cohort norm, and Claude Code's `#` memory
+    shortcut writes by the CLAUDE.md name."""
 
     @pytest.fixture
     def repo(self, tmp_path: Path) -> Path:
@@ -2140,30 +2140,57 @@ class TestRosterAnnotations:
         )
         assert out.stdout.splitlines() == ["local|/abs/path|a|1", "repo|owner/two||"]
 
-    def test_shipped_roster_is_fully_paired(self):
-        """Every cohort member is in exactly one pair, each pair holds one repo
-        from each arm, and the arms are the same size. A half-assigned roster
-        would produce a verdict from whichever repos happened to be annotated."""
-        root = Path(__file__).resolve().parent.parent.parent
+    def test_shipped_roster_pairs_every_member_not_declared_unpaired(self):
+        """Every cohort member carries a wave and is in exactly one pair, each
+        pair holding one repo from each wave — unless it is DECLARED unpaired.
+        A half-assigned roster would produce a verdict from whichever repos
+        happened to be annotated.
+
+        An unpaired member is legitimate: broker postdates the baseline the
+        pairs were matched on and has no size neighbour (#280), and the gate
+        scores such a repo on the safety gates alone. But an omitted `pair:`
+        and a deliberate one parse identically, so the deliberate one must say
+        so in the comment block directly above it, opening `# unpaired`."""
+        roster = Path(__file__).resolve().parent.parent.parent / ".skills" / "cohort"
         out = subprocess.run(
-            [
-                "bash",
-                "-c",
-                f'. "{LIB}"; ctx_read_roster "{root / ".skills" / "cohort"}"',
-            ],
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{roster}"'],
             capture_output=True,
             text=True,
             env=_clean_env(),
             timeout=30,
         )
         rows = [line.split("\x1f") for line in out.stdout.splitlines()]
-        assert len(rows) == 12
-        assert all(wave in ("a", "b") and pair for _, _, wave, pair in rows)
+        assert rows and all(wave in ("a", "b") for _, _, wave, _ in rows), rows
         by_pair: dict[str, list[str]] = {}
         for _, _, wave, pair in rows:
-            by_pair.setdefault(pair, []).append(wave)
-        assert len(by_pair) == 6
-        assert all(sorted(v) == ["a", "b"] for v in by_pair.values())
+            if pair:
+                by_pair.setdefault(pair, []).append(wave)
+        assert len(by_pair) == 6, by_pair
+        assert all(sorted(v) == ["a", "b"] for v in by_pair.values()), by_pair
+
+        # Stripped, and the entry found by its first token before any `#`: the
+        # comment grammar ctx_read_roster uses, so an indented comment is still
+        # a comment here and an inline one never hides the entry.
+        lines = [ln.strip() for ln in roster.read_text().splitlines()]
+        for _, entry, _, pair in rows:
+            if pair:
+                continue
+            at = next(
+                (
+                    i
+                    for i, ln in enumerate(lines)
+                    if ln.split("#", 1)[0].split()[:1] == [entry]
+                ),
+                None,
+            )
+            assert at is not None, f"{entry} was parsed from no roster line"
+            top = at
+            while top > 0 and lines[top - 1].startswith("#"):
+                top -= 1
+            assert top < at and lines[top].startswith("# unpaired"), (
+                f"{entry} carries no pair: and no `# unpaired` comment above it "
+                "saying why — an omitted pair and a deliberate one look the same"
+            )
 
     def test_rollup_reports_the_split(self, tmp_path: Path):
         """Rollout order is a property of the cohort, so it belongs in the

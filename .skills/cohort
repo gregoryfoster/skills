@@ -3,14 +3,22 @@
 # One entry per line: an owner/repo slug (read over `gh api`, no clone needed) or
 # an absolute/relative local path. Blank lines and # comments are ignored.
 #
-# These are the CannObserv repos built on the shared agent-tooling foundation
-# (init-project-fastapi scaffold, managing-skills vendoring, init-socraticode
-# indexing) — the same set that skill-family sweeps target.
+# These are the CannObserv repos that vendor this skill library through
+# managing-skills — the same set that skill-family sweeps target. Most also carry
+# the rest of the shared agent-tooling foundation (init-project-fastapi scaffold,
+# init-socraticode indexing), but membership is the vendoring alone:
+# cannabis.observer-wordpress, for one, is PHP and was never scaffolded, and
+# broker has neither (#280).
 #
 # An entry may carry whitespace-separated key:value annotations:
 #
 #   wave:  which half of the cohort a change reaches first
 #   pair:  which size-matched pair, so a rollout reaches like alongside like
+#
+# An entry with no pair: is declared, never just left bare: the comment block
+# directly above it opens `# unpaired` and says why. The gate lists such a member
+# and scores it on the safety gates alone, and an omitted pair parses the same as
+# a deliberate one, so the comment is the only difference (#280).
 #
 # THESE ARE ROLLOUT ORDER, NOT AN ASSIGNMENT IN FORCE (2026-08-17, #168).
 # They once meant more: wave A adopted first and wave B was held back, so that a
@@ -62,3 +70,12 @@ CannObserv/address-validator             wave:b pair:5
 # pair contributes to the safety gates only.
 CannObserv/notifier                      wave:a pair:6
 CannObserv/wslcb-licensing-tracker       wave:b pair:6
+
+# unpaired — 2,569, exact, from broker's own 2026-09-11 pre-curation baseline: it
+# postdates the 2026-08-05 baseline the pairs were matched on (#280). Less than
+# half the smallest member, so it has no size neighbour, and like pair 6 it is
+# under budget: safety gates only. score-cohort.sh lists it under "not in any
+# pair" and leaves the pairwise verdict alone. Wave B, opposite archiver, whose
+# layout it inherited — the way each pair puts its two like members in opposite
+# waves.
+CannObserv/broker                        wave:b

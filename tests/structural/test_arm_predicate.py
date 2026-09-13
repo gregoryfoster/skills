@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ROOT / "skills" / "curating-context" / "scripts"
 REFERENCES = ROOT / "skills" / "curating-context" / "references"
 SCORE = SCRIPTS / "score-cohort.sh"
+LIB = SCRIPTS / "_context-lib.sh"
 ROSTER = ROOT / ".skills" / "cohort"
 
 
@@ -75,9 +76,11 @@ def _member(
     after: int,
     version: str,
     later: str | None = None,
+    no_loss: str = "ok",
 ) -> None:
     """A member with a baseline, a scored curation, and optionally a LATER
-    curation on a newer version — the shape every cohort repo now has."""
+    curation on a newer version — the shape every cohort repo now has.
+    `no_loss` is the scored curation's verdict."""
     d = root / name / ".skills"
     d.mkdir(parents=True, exist_ok=True)
     rows = [
@@ -89,6 +92,7 @@ def _member(
             ts="2026-08-06",
             skill_version=version,
             skill_commit="deadbee",
+            no_loss=no_loss,
         ),
     ]
     if later is not None:
@@ -219,9 +223,81 @@ class TestTheRosterSaysWhatItsAnnotationsAre:
 
     def test_the_annotations_themselves_survive(self):
         """Retired as a control, retained as staging. Removing them would take
-        `cohort-report.sh`'s split and the rollout order with them."""
-        text = ROSTER.read_text()
-        assert text.count("wave:a") == 6 and text.count("wave:b") == 6
+        `cohort-report.sh`'s split and the rollout order with them.
+
+        Every entry still carries a wave, and both waves are populated. Not a
+        6/6 tally: an unpaired member (#280) takes a wave without a partner in
+        the other, so the waves need not balance. The pairs themselves are held
+        by test_context_surface.py's TestRosterAnnotations.
+
+        Read through `ctx_read_roster`, never re-parsed here: the scripts strip
+        inline comments, lowercase the wave and skip an unknown token, and a
+        second parser that did none of that would fail a roster they read."""
+        out = subprocess.run(
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{ROSTER}"'],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
+        )
+        waves = [line.split("\x1f")[2] for line in out.stdout.splitlines()]
+        assert waves and set(waves) == {"a", "b"}, (waves, out.stderr)
+
+
+class TestAnUnpairedMemberIsListedNotPaired:
+    """A roster entry with a wave and no `pair:` — broker, which postdates the
+    baseline the pairs were matched on and has no size neighbour (#280). Its
+    roster comment says "safety gates only", and that is two claims: the gate
+    lists it and leaves the pairwise verdict alone, and it still counts for
+    the safety gates, because `arm()` keeps a repo in its arm whether or not it
+    has a partner. Nothing pinned either until a member depended on both."""
+
+    def _with_unpaired(self, root: Path, no_loss: str = "ok") -> Path:
+        roster = _two_pairs(root)
+        _member(root, "solo", 2569, 3064, "1.3", no_loss=no_loss)
+        with roster.open("a") as fh:
+            fh.write(f"{root / 'solo'}  wave:b\n")
+        return roster
+
+    def test_it_is_listed_under_not_in_any_pair(self, tmp_path: Path):
+        r = _score(self._with_unpaired(tmp_path))
+        listed = [ln for ln in r.stdout.splitlines() if "not in any pair" in ln]
+        assert len(listed) == 1 and "solo" in listed[0], r.stdout
+
+    def test_it_leaves_the_verdict_unchanged(self, tmp_path: Path):
+        """At `--min-pairs 2`, so the verdict being compared is ADOPT: an
+        unpaired repo that blocked or diluted adoption would show here, where
+        at the default floor both runs are INCONCLUSIVE for another reason."""
+        runs = [
+            json.loads(_score(roster, "--min-pairs", "2", "--format", "json").stdout)
+            for roster in (
+                _two_pairs(tmp_path / "paired"),
+                self._with_unpaired(tmp_path / "unpaired"),
+            )
+        ]
+        assert runs[0]["verdict"] == "ADOPT", runs[0]["reasons"]
+        for key in ("verdict", "informative_pairs", "treatment_wins"):
+            assert runs[1][key] == runs[0][key], (key, runs[1]["reasons"])
+        assert [(p["pair"], p["winner"]) for p in runs[1]["pairs"]] == [
+            (p["pair"], p["winner"]) for p in runs[0]["pairs"]
+        ]
+
+    def test_it_still_vetoes_on_a_safety_failure(self, tmp_path: Path):
+        """The same run as above, which every pair adopts, with the unpaired
+        treatment repo's curation recorded `no_loss: failed`. Content lost under
+        the proposed version is lost whether or not the repo had a partner, so
+        it rejects on its own — `arm()` says not to narrow the arms to paired
+        repos, and this is what would go quiet if someone did."""
+        r = _score(
+            self._with_unpaired(tmp_path, no_loss="failed"),
+            "--min-pairs",
+            "2",
+            "--format",
+            "json",
+        )
+        payload = json.loads(r.stdout)
+        assert payload["verdict"] == "REJECT", payload["reasons"]
+        assert payload["treatment_arm_failures"] == ["solo"], payload
 
 
 class TestTheGateRecordsTheDecision:
