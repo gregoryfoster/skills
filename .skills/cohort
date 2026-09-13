@@ -7,8 +7,8 @@
 # managing-skills — the same set that skill-family sweeps target. Most also carry
 # the rest of the shared agent-tooling foundation (init-project-fastapi scaffold,
 # init-socraticode indexing), but membership is the vendoring alone:
-# cannabis.observer-wordpress is PHP and was never scaffolded, and broker has
-# neither (#280).
+# cannabis.observer-wordpress, for one, is PHP and was never scaffolded, and
+# broker has neither (#280).
 #
 # An entry may carry whitespace-separated key:value annotations:
 #
