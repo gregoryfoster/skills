@@ -27,6 +27,12 @@ Pinned here:
 - **The two files are independent.** Tailoring one leaves the other at its
   defaults. There is deliberately no dead-entry probe for advice: it is prose,
   not patterns, so its reader is the simpler of the two.
+- **But half a tailoring is not silent** ([#284](https://github.com/gregoryfoster/skills/issues/284)).
+  Resolution stays independent; what changed is that a hit printed with exactly
+  one file tailored says which half is still the skill's. That is advice
+  *presence*, decidable from the two source labels, not advice *correctness*,
+  which is prose and stays unjudged. A note, never a gate: the exit code does
+  not move, and the green path prints nothing new.
 - **A present-but-unusable file is exit 2, not a silent fallback.** Unreadable,
   a dangling symlink, a symlink loop, a directory or a FIFO in its place, or a
   `.skills` that is not a resolvable, searchable directory — each one had restored the
@@ -246,6 +252,110 @@ class TestIndependence:
         assert DEFAULT_ADVICE_MARKER in _advice(result.stdout)
 
 
+# The opening of each note. Asserted by prefix so a rewording of the remedy
+# sentence does not read as the note disappearing.
+PATHS_ONLY_NOTE = "tailors .skills/doc-sensitive-paths but not"
+SECTIONS_ONLY_NOTE = "tailors .skills/doc-sections but not"
+
+
+class TestHalfATailoringIsNamed:
+    """#284: `cannabis.observer-wordpress` tailored its path list hard against
+    the PHP defaults and never its advice, so every hit printed a layout it does
+    not have — `docs/COMMANDS.md`, the doc that drifted, could never be named.
+    Both source labels were already on screen and disagreed; nothing said so.
+
+    TestIndependence above still holds and is not reopened: each file resolves
+    alone. The note is the only change, and every case here pins where it may
+    NOT appear as firmly as where it must.
+    """
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_a_tailored_list_with_default_advice_is_named(
+        self, variant: str, tmp_path: Path
+    ):
+        """The issue's case. Four copies, because TestBodyParity catches drift
+        but not a variant whose own defaults would change the branch taken."""
+        repo = make_repo(
+            tmp_path,
+            ["README.md", "docs/contracts/ingest.md"],
+            ["docs/contracts/ingest.md"],
+        )
+        _commit_override(repo, "doc-sensitive-paths", CHARTER_PATHS)
+        result = run_doc_check(repo, variant)
+        assert result.returncode == 1, (
+            f"{variant}: a note must not move the exit code; got "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        advice = _advice(result.stdout)
+        assert PATHS_ONLY_NOTE in advice, (
+            f"{variant} printed default advice beside a tailored list without "
+            f"saying so:\n{result.stdout}"
+        )
+        assert "Commit .skills/doc-sections" in advice, (
+            f"the note must name the file that fixes it:\n{result.stdout}"
+        )
+        assert advice.index(DEFAULT_ADVICE_MARKER) < advice.index(PATHS_ONLY_NOTE), (
+            f"the note belongs after the bullets it qualifies:\n{result.stdout}"
+        )
+
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_tailored_advice_with_a_default_list_is_named(
+        self, variant: str, tmp_path: Path
+    ):
+        """The mirror case the issue left open, taken for the reason it gave:
+        both or neither. Advice naming this repo's docs against the skill's
+        watch list is the same hazard pointed the other way — a change those
+        docs describe can pass unflagged."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        _commit_override(repo, "doc-sections", CHARTER_ADVICE)
+        result = run_doc_check(repo, variant)
+        assert result.returncode == 1, f"stderr: {result.stderr}"
+        advice = _advice(result.stdout)
+        assert SECTIONS_ONLY_NOTE in advice, (
+            f"{variant} watched the skill's defaults under tailored advice "
+            f"without saying so:\n{result.stdout}"
+        )
+        assert PATHS_ONLY_NOTE not in advice, result.stdout
+        assert "Commit .skills/doc-sensitive-paths" in advice, result.stdout
+
+    def test_both_files_tailored_is_not_a_mismatch(self, tmp_path: Path):
+        """The trap in "compare the two labels": tailored, they name different
+        files, so a string comparison calls the fully tailored repo half
+        tailored. That repo did everything asked of it."""
+        repo = make_repo(
+            tmp_path,
+            ["README.md", "docs/contracts/ingest.md"],
+            ["docs/contracts/ingest.md"],
+        )
+        _commit_override(repo, "doc-sensitive-paths", CHARTER_PATHS)
+        _commit_override(repo, "doc-sections", CHARTER_ADVICE)
+        result = run_doc_check(repo)
+        assert result.returncode == 1, f"stderr: {result.stderr}"
+        assert "Note: this project tailors" not in result.stdout, result.stdout
+
+    def test_neither_file_tailored_is_not_a_mismatch(self, tmp_path: Path):
+        """Defaults on both sides agree with each other. A repo that has not
+        tailored anything is not told about a disagreement it does not have."""
+        repo = make_repo(tmp_path, ["README.md"], ["README.md"])
+        result = run_doc_check(repo)
+        assert result.returncode == 1, f"stderr: {result.stderr}"
+        assert "Note: this project tailors" not in result.stdout, result.stdout
+
+    def test_the_green_path_prints_no_note(self, tmp_path: Path):
+        """A half tailoring is named where its advice is printed, not on every
+        clean run. The list here is live, so the dead-entry note stays quiet
+        too and the absence is about the thing this class pins."""
+        repo = make_repo(tmp_path, CLICK_LIVE_TREE, ["src/co/cli.py"])
+        _commit_override(repo, "doc-sensitive-paths", "docs/\n")
+        result = run_doc_check(repo)
+        assert result.returncode == 0, (
+            f"src/co/cli.py is not under docs/; got exit {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "No sensitive paths changed" in result.stdout, result.stdout
+        assert "tailors" not in result.stdout, result.stdout
+
+
 class TestHelp:
     @pytest.mark.parametrize("variant", VARIANTS)
     def test_help_documents_the_sections_override(self, variant: str, tmp_path: Path):
@@ -257,6 +367,10 @@ class TestHelp:
         )
         assert "unreadable" in result.stdout, (
             f"{variant} --help must list an unreadable override under exit 2:\n"
+            f"{result.stdout}"
+        )
+        assert "exactly one is" in result.stdout, (
+            f"{variant} --help must say a half tailoring is named on a hit:\n"
             f"{result.stdout}"
         )
 
