@@ -1138,9 +1138,9 @@ function expectedArtifactCount(projectPath) {
 //   - an entry resolving to the root itself is dropped and is not counted: it
 //     names the collection every search already reads, so dropping it costs
 //     nothing and reporting it would be noise;
-//   - a `.socraticode.json` that does not parse is ignored whole — upstream's
-//     loader returns null on any throw — so that is reported too, since it
-//     drops every link the file declares at once.
+//   - a `.socraticode.json` that cannot be read or does not parse is ignored
+//     whole — upstream's loader returns null on any throw — so that is
+//     reported too, since it drops every link the file declares at once.
 //
 // The env source is THIS process's environment. Through the hook that is the
 // session's, which is where the skill writes the variable
@@ -1169,7 +1169,10 @@ function linkedProjects(projectPath, env = process.env) {
     try {
       cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
     } catch (e) {
-      report.configError = `${SOCRATICODE_CONFIG_NAME} is not valid JSON (${e.message}), `
+      // One message for both throws, as upstream has one catch for both: a
+      // file that is a directory, or unreadable, is not a JSON problem, and
+      // calling it one sends the reader to fix syntax that is not there.
+      report.configError = `${SOCRATICODE_CONFIG_NAME} cannot be read as JSON (${e.message}), `
         + 'so the server ignores the whole file, linkedProjects included';
     }
     const declared = cfg && typeof cfg === 'object' ? cfg.linkedProjects : undefined;

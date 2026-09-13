@@ -334,8 +334,19 @@ class TestLinkedProjectsConfiguredAgainstResolved:
         project = _checkouts(tmp_path)
         _config(project, '{"linkedProjects": ["../a"],}')
         finding = _linked(project)["finding"]
-        assert finding and "not valid JSON" in finding, finding
+        assert finding and "cannot be read as JSON" in finding, finding
         assert "ignores the whole file" in finding, finding
+
+    @requires_node
+    def test_an_unreadable_config_is_not_called_invalid(self, tmp_path: Path) -> None:
+        """A directory in its place throws on the read, not the parse, and
+        upstream ignores it the same way. The message must not send the
+        reader to fix JSON that does not exist."""
+        project = _checkouts(tmp_path)
+        (project / ".socraticode.json").mkdir()
+        finding = _linked(project)["finding"]
+        assert finding and "cannot be read as JSON" in finding, finding
+        assert "EISDIR" in finding, finding
 
     @requires_node
     def test_a_bare_string_is_named(self, tmp_path: Path) -> None:
