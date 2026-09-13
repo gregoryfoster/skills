@@ -145,7 +145,7 @@ Safety gates (checked before any score)
   (#253): surfaced, never gated. They ride the same column as `/c`, `/c2w`,
   `/c3d` — the marker says the run ran prove-no-loss.sh --claims at all, which
   is the whole distinction a `tighten` needs and which no_loss_warrants cannot
-  make (it aggregates all six warrant kinds). A dropped-but-judged atom is a
+  make (it aggregates every warrant kind). A dropped-but-judged atom is a
   judgement, not a safety violation; an unwarranted one already fails the run
   through no_loss, which IS a gate.
 

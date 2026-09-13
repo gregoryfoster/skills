@@ -6,8 +6,8 @@ flag for either. So a run that passed the claim check and cleared it wrote **the
 same row** as a run that never ran it: exactly the `null` ≠ `0` distinction the
 ledger already draws for `no_loss_warrants`, one field over.
 
-Nothing else on the row answers it. `no_loss_warrants` aggregates all six
-warrant kinds, so a `tighten` is indistinguishable from a `retarget` in the
+Nothing else on the row answers it. `no_loss_warrants` aggregates every
+warrant kind, so a `tighten` is indistinguishable from a `retarget` in the
 count; `actions` carries `prune:<section>`, which says a tightening happened but
 not whether its check ran. The ack file would answer it and the scorer cannot
 read the ack file — only the row.
