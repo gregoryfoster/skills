@@ -212,7 +212,12 @@ if override_present .skills; then
   fi
 fi
 
-LIST_SOURCE="built-in defaults"
+# The label a source prints when nothing overrode it. One definition, because
+# the half-tailoring note at the foot of this script decides which half is
+# still generic by comparing each source against it (#284).
+DEFAULTS_LABEL="built-in defaults"
+
+LIST_SOURCE="$DEFAULTS_LABEL"
 if override_present .skills/doc-sensitive-paths; then
   read_list_file .skills/doc-sensitive-paths
   if [[ ${#PARSED[@]} -eq 0 ]]; then
@@ -224,7 +229,7 @@ if override_present .skills/doc-sensitive-paths; then
   LIST_SOURCE=".skills/doc-sensitive-paths"
 fi
 
-SECTIONS_SOURCE="built-in defaults"
+SECTIONS_SOURCE="$DEFAULTS_LABEL"
 if override_present .skills/doc-sections; then
   read_list_file .skills/doc-sections
   if [[ ${#PARSED[@]} -eq 0 ]]; then
@@ -388,13 +393,13 @@ printf '  - %s\n' "${DOC_SECTIONS[@]}"
 # change those docs describe can pass unflagged. On the green path neither
 # note is about the verdict printed, and one line on every clean run is the
 # reporter that gets tuned out.
-if [[ "$LIST_SOURCE" != "built-in defaults" && "$SECTIONS_SOURCE" == "built-in defaults" ]]; then
+if [[ "$LIST_SOURCE" != "$DEFAULTS_LABEL" && "$SECTIONS_SOURCE" == "$DEFAULTS_LABEL" ]]; then
   echo ""
   echo "Note: this project tailors .skills/doc-sensitive-paths but not"
   echo ".skills/doc-sections, so the sections above are this skill's defaults and"
   echo "describe a project layout that may not be yours. Commit .skills/doc-sections"
   echo "to route these hits at your own docs."
-elif [[ "$LIST_SOURCE" == "built-in defaults" && "$SECTIONS_SOURCE" != "built-in defaults" ]]; then
+elif [[ "$LIST_SOURCE" == "$DEFAULTS_LABEL" && "$SECTIONS_SOURCE" != "$DEFAULTS_LABEL" ]]; then
   echo ""
   echo "Note: this project tailors .skills/doc-sections but not"
   echo ".skills/doc-sensitive-paths, so the paths above were matched against this"
