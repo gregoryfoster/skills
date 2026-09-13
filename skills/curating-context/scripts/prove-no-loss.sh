@@ -1121,7 +1121,10 @@ unindexed_docs = {os.path.normpath(os.path.relpath(p)) for p in others} - linked
 def index_evidence(lost_line):
     """Check one `index`-warranted line. Returns (docs, why): the docs the
     extension indexes and None, or None and the reason it does not hold."""
-    if not current:
+    # Asked of the file, not of `current`: a --file emptied in place has no
+    # line either, and "no longer exists" would send its reader looking for a
+    # deletion. It falls through to the reason below, which is true of it.
+    if not os.path.exists(policy):
         return None, (f"{policy} no longer exists, so no line of it was "
                       "extended in place")
     old_words = words(lost_line)

@@ -278,6 +278,17 @@ class TestTheEvidenceIsChecked:
         assert r.returncode == 1, r.stdout + r.stderr
         assert "no longer exists" in r.stderr, r.stderr
 
+    def test_an_emptied_target_is_not_called_gone(self, tmp_path: Path):
+        """A file emptied in place has no current line either, but it is
+        there, and "no longer exists" would send its reader looking for a
+        deletion that did not happen."""
+        repo = _index_repo(tmp_path, EXTENDED)
+        (repo / "AGENTS.md").write_text("")
+        _ack(repo, ENTRY)
+        self._refused(repo, "keeps every word and atom")
+        r = _prove(repo)
+        assert "no longer exists" not in r.stderr + r.stdout, r.stderr
+
 
 class TestTheWarrantStaysALineWarrant:
     def test_the_claim_file_does_not_take_it(self, tmp_path: Path):
