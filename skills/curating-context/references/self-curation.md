@@ -142,7 +142,7 @@ already separates the pass from a repo curation, but pass-kind is contract, not
 inference from a path.
 
 No cohort reader sees these rows: this repo is not in `.skills/cohort` (the
-roster is the twelve CannObserv members), so `score-cohort.sh` and
+roster is the CannObserv members), so `score-cohort.sh` and
 `cohort-report.sh` never read this ledger, and the "one policy file per repo,
 most rows" rule cannot be tipped by them. Within this repo, trend readers group
 by file.

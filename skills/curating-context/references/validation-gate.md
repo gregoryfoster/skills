@@ -14,7 +14,8 @@ strictly higher than the current skill on the held-out validation split." Across
 six benchmarks, seven models and three execution modes it was best or tied-best in
 all 52 cells.
 
-**The twelve cohort repos are the held-out split.** That is the thing most skills
+**The cohort repos are the held-out split** — the twelve in size-matched pairs,
+and any unpaired member for the safety gates alone. That is the thing most skills
 cannot manufacture, and it is the only reason this gate is buildable here.
 
 ```bash
@@ -167,7 +168,7 @@ gap     = max(0, tokens - budget)
 closure = (gap_before - gap_after) / gap_before
 ```
 
-A fraction rather than a token count, because the cohort spans 5,331 to 52,953
+A fraction rather than a token count, because the pairs span 5,331 to 52,953
 and an absolute reduction would let `usa-wa` decide every verdict on its own.
 
 Closure is **capped at 1.0**: a run that cuts far past the budget scores exactly

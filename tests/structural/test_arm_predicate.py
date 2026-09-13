@@ -219,9 +219,55 @@ class TestTheRosterSaysWhatItsAnnotationsAre:
 
     def test_the_annotations_themselves_survive(self):
         """Retired as a control, retained as staging. Removing them would take
-        `cohort-report.sh`'s split and the rollout order with them."""
-        text = ROSTER.read_text()
-        assert text.count("wave:a") == 6 and text.count("wave:b") == 6
+        `cohort-report.sh`'s split and the rollout order with them.
+
+        Every entry still carries a wave, and both waves are populated. Not a
+        6/6 tally: an unpaired member (#280) takes a wave without a partner in
+        the other, so the waves need not balance. The pairs themselves are held
+        by test_context_surface.py's TestRosterAnnotations."""
+        waves = [
+            dict(n.split(":", 1) for n in line.split()[1:]).get("wave")
+            for line in ROSTER.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        assert waves and set(waves) == {"a", "b"}, waves
+
+
+class TestAnUnpairedMemberIsListedNotScored:
+    """A roster entry with a wave and no `pair:` — broker, which postdates the
+    baseline the pairs were matched on and has no size neighbour (#280). Its
+    roster comment relies on the gate listing it and leaving the pairwise
+    verdict alone, and nothing pinned either until a member depended on it."""
+
+    def _with_unpaired(self, root: Path) -> Path:
+        roster = _two_pairs(root)
+        _member(root, "solo", 2569, 3064, "1.3")
+        with roster.open("a") as fh:
+            fh.write(f"{root / 'solo'}  wave:b\n")
+        return roster
+
+    def test_it_is_listed_under_not_in_any_pair(self, tmp_path: Path):
+        r = _score(self._with_unpaired(tmp_path))
+        listed = [ln for ln in r.stdout.splitlines() if "not in any pair" in ln]
+        assert len(listed) == 1 and "solo" in listed[0], r.stdout
+
+    def test_it_leaves_the_verdict_unchanged(self, tmp_path: Path):
+        """At `--min-pairs 2`, so the verdict being compared is ADOPT: an
+        unpaired repo that blocked or diluted adoption would show here, where
+        at the default floor both runs are INCONCLUSIVE for another reason."""
+        runs = [
+            json.loads(_score(roster, "--min-pairs", "2", "--format", "json").stdout)
+            for roster in (
+                _two_pairs(tmp_path / "paired"),
+                self._with_unpaired(tmp_path / "unpaired"),
+            )
+        ]
+        assert runs[0]["verdict"] == "ADOPT", runs[0]["reasons"]
+        for key in ("verdict", "informative_pairs", "treatment_wins"):
+            assert runs[1][key] == runs[0][key], (key, runs[1]["reasons"])
+        assert [(p["pair"], p["winner"]) for p in runs[1]["pairs"]] == [
+            (p["pair"], p["winner"]) for p in runs[0]["pairs"]
+        ]
 
 
 class TestTheGateRecordsTheDecision:
