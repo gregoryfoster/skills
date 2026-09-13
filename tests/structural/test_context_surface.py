@@ -2168,11 +2168,22 @@ class TestRosterAnnotations:
         assert len(by_pair) == 6, by_pair
         assert all(sorted(v) == ["a", "b"] for v in by_pair.values()), by_pair
 
-        lines = roster.read_text().splitlines()
+        # Stripped, and the entry found by its first token before any `#`: the
+        # comment grammar ctx_read_roster uses, so an indented comment is still
+        # a comment here and an inline one never hides the entry.
+        lines = [ln.strip() for ln in roster.read_text().splitlines()]
         for _, entry, _, pair in rows:
             if pair:
                 continue
-            at = next(i for i, ln in enumerate(lines) if ln.split()[:1] == [entry])
+            at = next(
+                (
+                    i
+                    for i, ln in enumerate(lines)
+                    if ln.split("#", 1)[0].split()[:1] == [entry]
+                ),
+                None,
+            )
+            assert at is not None, f"{entry} was parsed from no roster line"
             top = at
             while top > 0 and lines[top - 1].startswith("#"):
                 top -= 1
