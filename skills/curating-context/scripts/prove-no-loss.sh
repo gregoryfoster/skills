@@ -132,8 +132,9 @@ Warranted losses (.skills/context-loss-ok):
   An entry that matched nothing is reported, and "re-judge and prune" is sound
   advice for only some of them (#251). Two facts settle whether this run is
   entitled to judge it, and either alone is enough: a PATH that matched says the
-  entry IS about this target, and so does CONTENT appearing in this target at
-  --base. With neither, the run cannot tell a re-worded line from an entry
+  entry IS about this target, and so does CONTENT matching a line of this target
+  at --base (under 8 characters, a whole line; `fi` inside `file` is not one).
+  With neither, the run cannot tell a re-worded line from an entry
   judged against another surface, and says so instead of guessing — an unscoped
   entry pinning an AGENTS.md line reported stale on every reference-doc run in
   one repo, and pruning on that advice would have discarded a live warrant.
@@ -144,11 +145,10 @@ Warranted losses (.skills/context-loss-ok):
   ALREADY unaccounted for, so it can neither hide a relocation nor invent one.
 
   An acknowledgement covers ONE judged line. An entry matching more than one is
-  REFUSED, as is CONTENT under 8 characters that is only part of a line — one
-  broad line that zeroes the count is the gaming vector this file introduces,
-  and a warning about it is not enough: warnings ride in stdout, where the exit
-  code, the ledger row and the cohort gate do not read them. Split a broad
-  entry into one per line.
+  REFUSED — one broad line that zeroes the count is the gaming vector this file
+  introduces, and a warning about it is not enough: warnings ride in stdout,
+  where the exit code, the ledger row and the cohort gate do not read them.
+  Split a broad entry into one per line.
 
   A line under 8 characters is warranted by naming ALL of it (#283). Deleted
   code is full of them — `}`, `fi`, `done`, a ```js opener — and no fragment of
@@ -156,9 +156,12 @@ Warranted losses (.skills/context-loss-ok):
   matched by EQUALITY with a whole line, surrounding whitespace aside, never as
   a substring: `disproven :: }` warrants every lost `}` and never reaches
   `return {}`. The claim file's ATOM works the same way, which is why it needs
-  no floor. One that is part of a --base line without being all of one is
-  refused as a fragment; one in no --base line matches nothing, and is
-  reported the way any entry whose line has gone is.
+  no floor. One that is part of a line this run lost and left unwarranted is
+  REFUSED as a fragment: it reaches nothing, and the line it was written for is
+  still a loss. Any other short entry that is no whole --base line matches
+  nothing and is reported the way any entry whose line has gone is — including
+  one whose own line an earlier curation deleted while its text lives on inside
+  a longer line, as `fi` does inside `file`.
 
   One line is one TEXT, not one occurrence (#278). A deleted code sample
   repeats its lines — three constructor examples sharing
@@ -473,11 +476,11 @@ DUP_MIN_CHARS = 40
 # It guards SUBSTRING matching, and that is all it guards (#283). `ly l`
 # matching one line is luck; `}` matching the line `}` is not — a line under
 # the floor is still identified exactly by its whole text. So below the floor
-# an entry is matched by equality (`reaches()`), and one that is a fragment of
-# a base line is refused (`short_fragment()`). Without that, a deleted code
+# an entry is matched by equality (`reaches()`); without that, a deleted code
 # block could never reach `ok` once it took a closer or a fence opener with it,
 # however carefully every line it deleted had been judged — #278's problem, at
-# the short end.
+# the short end. One that is part of a line this run lost and left unwarranted
+# is refused, after charging (the fragment refusal).
 WARRANT_MIN_CHARS = 8
 
 # Two groups — the hashes and the title — as check-counts.sh has it, so the two
@@ -750,38 +753,12 @@ def reaches(content, line):
     Below the floor no fragment identifies a line, but a whole text does, so a
     short entry may reach only a line that is exactly its text: `}` reaches
     every lost `}` — copies of one line, one judgement (#278) — and never
-    `return {}`. Whether a short entry is accepted at all is short_fragment()'s
-    question; this one is only what an accepted entry can reach."""
+    `return {}`. Whether a short entry that reaches nothing is refused is the
+    fragment refusal's question, after charging; this one is only what an
+    entry can reach."""
     if len(content) < WARRANT_MIN_CHARS:
         return content == line
     return content in line
-
-
-def short_fragment(content, scope, whole_lines):
-    """Is a CONTENT under the floor refused? Only when it reads as a FRAGMENT.
-
-    Three shapes reach here, and only one is refused (#283):
-
-      a whole line at --base     accepted; `reaches()` holds it to equality.
-      part of a line at --base   refused. `ly l` inside `only line` is the
-                                 fragment the floor exists for, and under
-                                 equality it could never match anyway.
-      in no line at --base       accepted, and inert: it can match nothing
-                                 here, so it lands in the stale-or-ambiguous
-                                 report like any entry whose line is gone.
-
-    The third is not refused because refusing it would turn expiry into an
-    error. A curation that warranted `disproven :: }` deleted that `}`, so the
-    NEXT run's --base does not hold it, and every later run would exit 1 on an
-    entry this file promises only to report stale (#139, #251). The same holds
-    for an unscoped short entry on a run against another target, and a scoped
-    one is not this run's to judge at all.
-    """
-    if whole_lines is None:
-        return True
-    if not applies_here(scope) or content in whole_lines:
-        return False
-    return any(content in w for w in whole_lines)
 
 # Acknowledgement entries, refused rather than ignored when malformed. A typo'd
 # warrant that merely failed to match would report as an ordinary loss and send
@@ -803,19 +780,18 @@ def short_fragment(content, scope, whole_lines):
 # another target (#139). PATH is matched as a substring of the target, the same
 # way .skills/context-seams-ok pins an entry to one file. Scoping only ever
 # NARROWS what an entry can reach.
-def parse_ack(path, warrants, min_chars, unit, whole_lines=None):
+def parse_ack(path, warrants, unit):
     """Read an acknowledgement file. Returns (entries, malformed).
 
     Shared by the loss file and the claim file, because two files with the same
     grammar and two parsers is how they drift: the scoped form (#139) would have
     had to be found and fixed twice. What differs between them is passed in —
-    the vocabulary, the length floor, the noun for the error messages, and the
-    whole lines a short entry may name — and nothing else does.
+    the vocabulary and the noun for the error messages — and nothing else does.
 
-    `whole_lines` is the loss file's alone (#283): an entry under the floor is
-    refused only when `short_fragment()` says it reads as part of one of them.
-    Omitted — the claim file, whose floor is 1 — nothing under the floor exists
-    to accept.
+    No length is malformed here (#283). A loss-file entry under the floor
+    matches whole lines only, so it cannot hit one by luck, and the one short
+    shape that IS refused — part of a line this run lost and left unwarranted —
+    is a fact about the run, not the entry, so it waits for the charging below.
 
     A MISSING file is not an error: most repos will never have one, and the
     default path must not turn every clean run into an infrastructure failure.
@@ -855,20 +831,6 @@ def parse_ack(path, warrants, min_chars, unit, whole_lines=None):
             elif not content:
                 why = (f"empty {unit} — an entry with no {unit.lower()} matches "
                        "everything")
-            elif len(content) < min_chars and short_fragment(content, scope,
-                                                             whole_lines):
-                # Checked here as well as by the over-broad refusal below, because
-                # a two-character entry that happens to hit exactly one line
-                # today is not identifying that line — it will silently move to
-                # a different one the moment the surface changes, which is the
-                # opposite of the expiry this file promises.
-                why = (f"{unit} is {len(content)} characters and only part of a "
-                       f"line of {policy} at --base — under {min_chars} an entry "
-                       "must be a whole line, which it then matches exactly; at "
-                       f"least {min_chars} characters are needed to identify one "
-                       "line by a fragment. If the line it named is gone, prune "
-                       "the entry; if it was judged for another target, scope "
-                       f"it: PATH :: WARRANT :: {unit}")
             else:
                 entries.append((warrant, content, scope))
                 continue
@@ -887,15 +849,14 @@ def refuse_malformed(path, malformed):
     sys.exit(1)
 
 
-entries, malformed = parse_ack(ack_path, WARRANTS, WARRANT_MIN_CHARS, "CONTENT",
-                               whole_lines=set(base_lines))
+entries, malformed = parse_ack(ack_path, WARRANTS, "CONTENT")
 refuse_malformed(ack_path, malformed)
 
-# An atom is matched WHOLE against a set, so neither guard the loss file needs
-# applies: a set element cannot be over-broad, and `#41` identifies itself at
-# three characters. Passing the floor as 1 is the whole difference.
+# An atom is matched WHOLE against a set, so neither refusal the loss file runs
+# after charging applies: a set element cannot be over-broad, and `#41`
+# identifies itself at three characters, so no atom is a fragment of another.
 claim_entries, claim_malformed = parse_ack(
-    claims_ack_path, CLAIM_WARRANTS, 1, "ATOM") if claims_on else ([], [])
+    claims_ack_path, CLAIM_WARRANTS, "ATOM") if claims_on else ([], [])
 refuse_malformed(claims_ack_path, claim_malformed)
 
 inline = dests.get(policy, set())
@@ -963,6 +924,46 @@ for line in lost:
     else:
         warranted.append((entries[idx][0], line))
         charged[idx].append(line)
+
+# A short entry that is part of a line this run lost, and left unwarranted, is
+# REFUSED (#283). Below the floor an entry matches whole lines only, so `ly l`
+# beside a lost `only line` reaches nothing, while whoever wrote it believes
+# that line judged. It is the one shape where an entry's failure to match is
+# the run's failure to pass, so it is named as the entry's fault rather than
+# left to read as an ordinary loss.
+#
+# Only there — not wherever the text occurs at --base, which is where this
+# refusal first looked. Short texts occur everywhere, `fi` inside `file` and
+# `)` in most prose, so that refused an entry's own expiry: a curation that
+# warranted `disproven :: fi` deleted that `fi`, the next run's --base still
+# held `file`, and every run from then on exited 1 on an entry this file
+# promises only to report (#139, #251). An entry equal to a --base line is not
+# a fragment at all, and one that is part only of lines kept, moved or
+# warranted has no loss riding on it; both land in the report below. Checked
+# after charging, which a fragment cannot change: it matches nothing.
+whole = set(base_lines)
+fragments = []
+for i in in_scope:
+    warrant, content, _ = entries[i]
+    if len(content) >= WARRANT_MIN_CHARS or content in whole:
+        continue
+    part_of = next((line for line in unwarranted if content in line), None)
+    if part_of is not None:
+        fragments.append((warrant, content, part_of))
+if fragments:
+    print(f"ERROR {ack_path} has {len(fragments)} entry(ies) too short to "
+          "identify the lost line each is part of:", file=sys.stderr)
+    for warrant, content, line in fragments:
+        print(f"  {warrant} :: {content}", file=sys.stderr)
+        print(f"    is {len(content)} characters and only part of "
+              f"`{line[:70]}` — under {WARRANT_MIN_CHARS} an entry must be a "
+              "whole line, which it\n    then matches exactly; at least "
+              f"{WARRANT_MIN_CHARS} characters are needed to identify one line "
+              "by a fragment", file=sys.stderr)
+    print("  Name the lost line whole. If an entry's own line is gone, prune it; "
+          "if it was\n  judged for another target, scope it: "
+          "PATH :: WARRANT :: CONTENT", file=sys.stderr)
+    sys.exit(1)
 
 # An entry that covers more than one line is REFUSED, not warned about. Breadth
 # is the whole attack surface here: `retarget :: e` matched every dropped line
@@ -1092,8 +1093,10 @@ if warranted:
 #
 #   Is the entry ABOUT this target? A PATH that matched says yes outright.
 #   Unscoped says nothing — the file is per-repo while --file is per-target.
-#   Was its CONTENT in this target at --base? If so the entry is certainly about
-#   this target, whatever its scope, and its line is now accounted for.
+#   Was its CONTENT in this target at --base, as `reaches()` matches it — so
+#   under the floor as a whole line, since `fi` inside `file` names nothing? If
+#   so the entry is certainly about this target, whatever its scope, and its
+#   line is now accounted for.
 #
 # Either fact alone settles it as STALE, which is the expiry this file promises
 # and the case worth pruning. Neither holding leaves a question this run cannot
@@ -1144,8 +1147,8 @@ if stale:
         print(f"    {warrant} :: {content[:70]}", file=out)
 
 if ambiguous:
-    print(f"\n  {len(ambiguous)} entry(ies) matched nothing AND pin content "
-          f"that is not in\n  {policy} at --base, so this run cannot tell which "
+    print(f"\n  {len(ambiguous)} entry(ies) matched nothing AND match no line "
+          f"of\n  {policy} at --base, so this run cannot tell which "
           "of two things happened:\n  the line was re-worded (re-judge and "
           "prune), or the entry was judged for\n  another surface (add a PATH "
           "scope). Do not prune on this run alone:", file=out)

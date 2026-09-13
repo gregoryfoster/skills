@@ -20,14 +20,19 @@ CONTENT is matched WHOLE — by equality with a line, never as a substring — s
 `disproven :: }` warrants every lost `}` and never reaches `return {}`.
 
 One refinement on the issue's letter, pinned below. It asked that short CONTENT
-"not a whole line at --base" be refused. A fragment of a base line is, which is
-the `ly l` case. Content in no base line at all is not: that is the next run
-after a curation deleted the line, or a run against another target, and under
-equality such an entry can match nothing. Refusing it would turn the expiry
-this file promises to report into an exit 1 on every later run.
+"not a whole line at --base" be refused. A fragment of a line this run LOST and
+left unwarranted is, which is the `ly l` case: the entry was written for that
+line and reaches nothing. Any other is not. The next run after a curation
+deleted a `fi` still holds `file`, and a run against another target holds
+whatever it holds; under equality such an entry can match nothing, and
+refusing it turned the expiry this file promises to report into an exit 1 on
+every later run. The first cut refused a fragment of ANY base line and did
+exactly that (CR 14).
 """
 
 from pathlib import Path
+
+import pytest
 
 from .test_loss_warrants import _ack, _prove, _repo
 
@@ -139,24 +144,44 @@ class TestAFragmentIsStillRefused:
     """The issue's third criterion. `ly l` in test_loss_warrants.py runs
     unchanged; these pin the cases it does not."""
 
-    def test_a_fragment_of_a_base_line_is_refused(self, tmp_path: Path):
-        """`{` is inside `function connect(url) {` and is no line of its own:
-        under equality it could never match, and as a substring it would be
-        the luck the floor exists to refuse."""
+    def test_a_fragment_of_an_unwarranted_lost_line_is_refused(self, tmp_path: Path):
+        """`{` is inside `function connect(url) {`, which is lost and which
+        nothing else warrants: under equality `{` could never reach it, and as
+        a substring it would be the luck the floor exists to refuse. The
+        refusal names the line, since that is the one to name whole."""
         repo = _deleted_js_block(tmp_path)
-        _ack(repo, *_long_entries(), "disproven :: {")
+        _ack(repo, "disproven :: return open(url);", "disproven :: {")
         r = _prove(repo)
         assert r.returncode == 1, r.stdout + r.stderr
         assert "characters" in r.stderr and "at least 8" in r.stderr, r.stderr
+        assert "function connect(url) {" in r.stderr, r.stderr
         assert "loss_warranted" not in r.stdout, (
             "a refused ack file must not also emit a verdict: " + r.stdout
         )
 
+    def test_a_fragment_of_a_line_warranted_elsewhere_is_not_refused(
+        self, tmp_path: Path
+    ):
+        """The same `{`, but its line has an entry of its own: no loss rides
+        on the fragment, so it is reported like any entry that matched nothing,
+        and the run it sits in is not stopped for it."""
+        repo = _deleted_js_block(tmp_path)
+        _ack(
+            repo,
+            *_long_entries(),
+            "disproven :: }",
+            "disproven :: ```js",
+            "disproven :: {",
+        )
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "cannot tell which" in r.stdout, r.stdout
+
     def test_the_refusal_names_every_way_out(self, tmp_path: Path):
         """Three things look like a fragment and the run cannot tell them
         apart: an entry written as one, an entry whose own short line is gone
-        while a longer line holding its text remains, and an entry judged for
-        another target. So the message names all three remedies."""
+        while a lost line holding its text went unwarranted, and an entry
+        judged for another target. So the message names all three remedies."""
         repo = _deleted_js_block(tmp_path)
         _ack(repo, "disproven :: {")
         r = _prove(repo)
@@ -167,8 +192,33 @@ class TestAFragmentIsStillRefused:
 
 
 class TestAShortEntryWhoseLineIsGoneExpiresQuietly:
-    """The refinement. Content in no line at --base cannot match anything, and
-    is exactly what the run after a code-block deletion sees."""
+    """The refinement. An entry whose line is gone can match nothing, and is
+    exactly what the run after a code-block deletion sees — whether its text is
+    in no line at all or lives on inside a longer one."""
+
+    @pytest.mark.parametrize(
+        ("entry", "report"),
+        [
+            ("disproven :: fi", "cannot tell which"),
+            ("AGENTS.md :: disproven :: fi", "matched nothing"),
+        ],
+    )
+    def test_its_text_inside_a_longer_line_does_not_refuse_it(
+        self, tmp_path: Path, entry: str, report: str
+    ):
+        """CR 14's reproduction. The previous curation deleted a `fi` and
+        warranted it; this run's --base has no `fi` line but does say `file`,
+        and this run's own loss is warranted. Refusing `fi` as a fragment of
+        `file` stopped every run after the one it served — scoped or not, since
+        a scope says whose entry it is, not whether its line survived."""
+        kept = "Edit the config file before the first run."
+        repo = _repo(tmp_path, f"# P\n\n{SETUP}\n{kept}\nKeep this line.\n")
+        (repo / "AGENTS.md").write_text(f"# P\n\n{SETUP}\n{kept}\n")
+        _ack(repo, "disproven :: Keep this line.", entry)
+        r = _prove(repo)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "lost: 0" in r.stdout, r.stdout
+        assert report in r.stdout, r.stdout
 
     def test_the_next_run_reports_it_rather_than_refusing(self, tmp_path: Path):
         """The previous curation deleted the `}` and warranted it. This run's
@@ -195,16 +245,19 @@ class TestAShortEntryWhoseLineIsGoneExpiresQuietly:
         assert "cannot tell which" in r.stdout, r.stdout
 
     def test_one_scoped_to_another_target_is_not_judged_here(self, tmp_path: Path):
-        """Even a fragment of THIS target's line: an entry pinned elsewhere is
-        about lines this run never read."""
+        """Even a fragment of a line THIS run lost and left unwarranted — the
+        one shape refused in scope: an entry pinned elsewhere is about lines
+        this run never read. The loss is reported as a loss, not as the
+        entry's fault."""
         repo = _deleted_js_block(tmp_path)
         _ack(
             repo,
-            *_long_entries(),
+            "disproven :: return open(url);",
             "disproven :: }",
             "disproven :: ```js",
             "docs/API.md :: disproven :: {",
         )
         r = _prove(repo)
-        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "  LOST  function connect(url) {" in r.stdout, r.stdout
         assert "scoped to another target" in r.stdout, r.stdout
