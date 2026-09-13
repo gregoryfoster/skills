@@ -44,6 +44,13 @@ What it reports (to stdout, which Claude Code injects as session context):
     reachable with 3 edges across 374 files; the policy this skill writes then
     sends every agent to codebase_graph_query first, where an empty answer
     reads as 'no dependents' rather than 'the tool failed'.
+  - A configured repo missing its toolchain on this machine (#281): no node,
+    so the codebase_* tools cannot start, or no driver, so nothing was
+    measured. Only past the manifest gate — see Behaviour.
+  - Linked projects configured in .socraticode.json or
+    SOCRATICODE_LINKED_PROJECTS whose paths do not resolve (#281). The server
+    drops each without a word, so codebase_search with includeLinked: true
+    searches fewer repos than the configuration names.
 
 It reports. It never re-indexes, never starts Docker, never edits a file — a
 session-start hook is the wrong place to spend an hour of CPU or to change the
