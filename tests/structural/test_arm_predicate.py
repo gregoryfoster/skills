@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ROOT / "skills" / "curating-context" / "scripts"
 REFERENCES = ROOT / "skills" / "curating-context" / "references"
 SCORE = SCRIPTS / "score-cohort.sh"
+LIB = SCRIPTS / "_context-lib.sh"
 ROSTER = ROOT / ".skills" / "cohort"
 
 
@@ -224,13 +225,20 @@ class TestTheRosterSaysWhatItsAnnotationsAre:
         Every entry still carries a wave, and both waves are populated. Not a
         6/6 tally: an unpaired member (#280) takes a wave without a partner in
         the other, so the waves need not balance. The pairs themselves are held
-        by test_context_surface.py's TestRosterAnnotations."""
-        waves = [
-            dict(n.split(":", 1) for n in line.split()[1:]).get("wave")
-            for line in ROSTER.read_text().splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
-        assert waves and set(waves) == {"a", "b"}, waves
+        by test_context_surface.py's TestRosterAnnotations.
+
+        Read through `ctx_read_roster`, never re-parsed here: the scripts strip
+        inline comments, lowercase the wave and skip an unknown token, and a
+        second parser that did none of that would fail a roster they read."""
+        out = subprocess.run(
+            ["bash", "-c", f'. "{LIB}"; ctx_read_roster "{ROSTER}"'],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=30,
+        )
+        waves = [line.split("\x1f")[2] for line in out.stdout.splitlines()]
+        assert waves and set(waves) == {"a", "b"}, (waves, out.stderr)
 
 
 class TestAnUnpairedMemberIsListedNotScored:
