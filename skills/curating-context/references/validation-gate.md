@@ -41,8 +41,8 @@ rubric's quality is most visible. The fifth is maintenance.
 
 So the scored run is **the first ledger row carrying a `skill_version` whose
 actions are not purely `baseline*`**, and the pairs exist so that first-against-
-first is a fair comparison. This is also why the staging matters: if all twelve
-repos adopt on the same day and the same version, every first curation is spent,
+first is a fair comparison. This is also why the staging matters: if every repo
+adopts on the same day and the same version, every first curation is spent,
 and the only comparisons left are between maintenance runs.
 
 Three details decide whether that run is scored at all:
@@ -156,8 +156,8 @@ own assignment.
 
 **That leaves four informative pairs at best.** A clean sweep of four is p=0.062
 under a one-sided sign test — suggestive, not significant. The gate says so in its
-own output rather than letting a sweep read as proof. Twelve repos is the sample
-that exists; the alternative is not a better experiment but no experiment.
+own output rather than letting a sweep read as proof. Twelve paired repos is the
+sample that exists; the alternative is not a better experiment but no experiment.
 
 ## The metric
 
