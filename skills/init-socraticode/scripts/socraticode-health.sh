@@ -348,7 +348,11 @@ if [ "$RC" -ne 0 ]; then
   if [ -n "$_found" ]; then
     echo "socraticode-health: findings from today's once-per-day check (see $LOG):"
     printf '%s\n' "$_found"
-    echo "socraticode-health: this hook reports only. Re-index with codebase_index, or re-run init-socraticode, to act on it."
+    # A finding's own fix comes first (#281). A linked project that does not
+    # resolve is repaired by a checkout or by dropping the entry, and an hour
+    # of re-indexing does nothing for it; a LOW yield names its own policy
+    # swap. The rest name no fix, and for them the index is the lever.
+    echo "socraticode-health: this hook reports only. Where a finding names its own fix, apply that; otherwise re-index with codebase_index, or re-run init-socraticode, to act on it."
   else
     echo "socraticode-health: the check FAILED TO RUN (driver exited $RC with no findings) — see $LOG."
     echo "socraticode-health: this is not a clean result. Nothing was measured today."

@@ -414,3 +414,9 @@ class TestTheLinkedGapReachesTheReport:
         assert result.returncode == 0, result.stderr
         assert "linkedProjects — 0 of 1 resolved" in result.stdout, result.stdout
         assert "FAILED TO RUN" not in result.stdout, result.stdout
+        # The footer follows every finding list. Unqualified, it sent this
+        # one — the only finding — to a re-index, which checks nothing out.
+        assert "names its own fix" in result.stdout, (
+            "the footer must defer to a finding's own remedy before offering "
+            f"a re-index: {result.stdout!r}"
+        )
