@@ -273,9 +273,10 @@ class TestAGenuineLossStillFails:
 
     def test_content_under_the_floor_is_refused(self, tmp_path: Path):
         """An entry short enough to match one line by luck is not identifying
-        it — the next edit silently moves it to a different line, which is the
-        opposite of the expiry the file promises. Caught at parse time, so the
-        message names the rule rather than the symptom."""
+        it. Below the floor it matches whole lines only (#283), so `ly l`
+        reaches nothing and the line it was written for stays lost. Refused
+        before any verdict, so the message names the rule rather than the
+        symptom."""
         repo = _repo(tmp_path, "# P\n\n## A\n\nonly line\n")
         (repo / "AGENTS.md").write_text("# P\n\n## A\n")
         _ack(repo, "duplicate :: ly l")
