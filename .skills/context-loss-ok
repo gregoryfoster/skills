@@ -195,6 +195,9 @@ skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-me
 skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Then list each contested file and the issues that touch it. Three refinements:
 # Process Logs introduced a ledger this run moved to references/process-log.md.
 skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Rules that originated there:
+# Step 10 named "the body of this skill" as where promotions go; this change moved
+# most rules to references/, so the destination is retargeted (CR 2).
+skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Promote a pattern into the body of this skill only when it has recurred
 # Q0 named a Step 7 rule "Bundle related issues" that exists nowhere in the
 # skill (`grep -rn "Bundle related" skills/` hits only this line); the rule it
 # means is Shape A.

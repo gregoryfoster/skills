@@ -1,6 +1,6 @@
 # Process Log — orchestrating-issue-backlog
 
-Session-specific institutional memory for the [`orchestrating-issue-backlog`](../SKILL.md) skill. Each entry captures: project, interview answers, batch shape, non-obvious decisions, and tactical lessons. New sessions are appended chronologically; stable patterns get promoted into the SKILL.md body and (optionally) summarized here.
+Session-specific institutional memory for the [`orchestrating-issue-backlog`](../SKILL.md) skill. Each entry captures: project, interview answers, batch shape, non-obvious decisions, and tactical lessons. New sessions are appended chronologically; stable patterns get promoted into the skill — its body, or the reference that owns the step — and listed under "Rules promoted into the skill" below.
 
 **This file is the root of the index.** Each session is its own entry file under
 `process-log/<year>/`, named `<date>-<project>.md`, and each year's rows live in
@@ -14,11 +14,11 @@ two things: write the entry file, and add one row to that year's index — see
 
 ---
 
-## Rules promoted into SKILL.md
+## Rules promoted into the skill
 
-Which sessions each rule in [`SKILL.md`](../SKILL.md) came from. Moved here from
-its Process Logs section in the #285 curation: it is provenance, not runtime
-instruction. Step and Q numbers refer to `SKILL.md`; Rule and Worker-step
+Which sessions each of the skill's rules came from, wherever it now lives —
+[`SKILL.md`](../SKILL.md) or one of its references. Moved here from its Process
+Logs section in the #285 curation: it is provenance, not runtime instruction. Step and Q numbers refer to `SKILL.md`; Rule and Worker-step
 numbers to [`execution.md`](execution.md).
 
 - Rules 5/6 (per-batch ceiling, runtime fall-through detection) — 2026-05-22 port-pool incident; Rule 5 slot-reclaim semantics + cheap ceiling re-verification — 2026-06-09
