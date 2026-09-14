@@ -129,8 +129,8 @@ The ruling, and the three questions Batch A raised:
    it *and* `count_tokens` is under it — so the effective bound is always the
    stricter of the two readings, and no one can loosen a ratchet by choosing a
    measurement. "Exact is the contract" was tried first and is wrong: it fails
-   `orchestrating-issue-backlog`, whose estimate runs 1,252 tokens HIGH, in the
-   only gate that actually runs. "Estimate is the contract" is worse: it is a
+   `orchestrating-issue-backlog`, whose estimate ran 1,252 tokens HIGH when this
+   was written, in the only gate that actually runs. "Estimate is the contract" is worse: it is a
    number that does not describe what a run loads, and it would let
    `init-project-fastapi` carry 2,284 unbudgeted real tokens. Binding both costs
    nothing but honesty about which reading is in force, and every `SKILL.md`
@@ -539,11 +539,13 @@ class BudgetBlindSpotWarning(Warning):
     assert the worst case against the ratchet — #217's option 2, arrived at by
     accident, in the one place nobody is watching.
 
-    Option 2 is not wrong; it is unaffordable today. Asserting it fails seven
-    of nineteen skills and needs ~8,100 tokens of trimming, 3,410 of it from
-    `orchestrating-issue-backlog`, whose ratchet comment refuses exactly that
-    trade. When those seven come down on their own merits, promoting this
-    category is the whole change.
+    Option 2 is not wrong; it was unaffordable when #217 measured it. Asserting
+    it failed seven of nineteen skills and needed ~8,100 tokens of trimming,
+    3,410 of it from `orchestrating-issue-backlog` — whose ratchet comment then
+    refused to trim a runbook's rules to fit, and which #285 later cut by
+    demotion instead. The live warning names today's set and margins. When
+    those come down on their own merits, promoting this category is the whole
+    change.
     """
 
 
