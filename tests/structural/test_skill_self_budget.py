@@ -317,15 +317,16 @@ SKILL_MD_RATCHETS = {
     "orchestrating-issue-backlog": 9_800,
 }
 
-# The two long runbooks, at ~2.5x and ~1.6x the standard, deserve more than one
-# line.
+# The two outliers, long runbooks at ~2.5x and ~1.6x the standard, deserve more
+# than one line.
 #
 # `init-project-fastapi` and `orchestrating-issue-backlog` are long procedural
 # runbooks, not policy files: read top-to-bottom once, in order, with each step
 # depending on the state the previous one left behind. That shape resists the
-# demotion move that got `curating-context` from 10,902 to ~7,350, because
-# demotion trades an always-loaded token for an on-demand one only when the
-# demoted block is genuinely optional. A step in the middle of a bootstrap is
+# demotion move that got `curating-context` from 10,902 to ~7,350 — resists,
+# not forbids, as the orchestrator bullet below shows — because demotion
+# trades an always-loaded token for an on-demand one only when the demoted
+# block is genuinely optional. A step in the middle of a bootstrap is
 # not optional, and a run that has to fetch it mid-sequence pays the tokens
 # anyway plus a round trip.
 #
@@ -344,7 +345,8 @@ SKILL_MD_RATCHETS = {
 #   What stayed inline is what every run executes, which is why it stops at
 #   ~1.6x rather than conforming.
 #
-# Neither trim belongs to #141. This gate stops growth; #96 reclaims size.
+# Neither trim belongs to #141. This gate stops growth; curation reclaims size —
+# #96's for the bootstrap, and #285's already for the orchestrator.
 
 # Reference docs are held to the repo's 10,000-token per-doc knob.
 #
