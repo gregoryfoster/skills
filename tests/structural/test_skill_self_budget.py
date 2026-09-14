@@ -649,7 +649,7 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     caveat = (
         "This is the calibrated OFFLINE ESTIMATE at "
         f"{RATIO_KNOB.name} bytes/token, not an exact count — pre-commit has "
-        "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 6% high "
+        "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 7% high "
         "on SKILL.md files and 24% low to 13% high on reference docs, and the "
         "budget binds BOTH readings — so clearing this one is necessary, not "
         "sufficient. The other:\n  " + exact_cmd(skill)
