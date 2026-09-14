@@ -72,6 +72,10 @@ usage() {
   echo "defaults. Both files ignore blank lines and #-comments, and each REPLACES"
   echo "its defaults rather than extending them."
   echo ""
+  echo "The two files resolve independently, so either may be tailored alone. When"
+  echo "exactly one is, a hit ends with a note naming the half that is still this"
+  echo "skill's default. The exit code is unchanged."
+  echo ""
   echo "Exit codes:"
   echo "  0  no sensitive paths changed (or no changes at all)"
   echo "  1  one or more sensitive paths changed"
@@ -208,7 +212,12 @@ if override_present .skills; then
   fi
 fi
 
-LIST_SOURCE="built-in defaults"
+# The label a source prints when nothing overrode it. One definition, because
+# the half-tailoring note at the foot of this script decides which half is
+# still generic by comparing each source against it (#284).
+DEFAULTS_LABEL="built-in defaults"
+
+LIST_SOURCE="$DEFAULTS_LABEL"
 if override_present .skills/doc-sensitive-paths; then
   read_list_file .skills/doc-sensitive-paths
   if [[ ${#PARSED[@]} -eq 0 ]]; then
@@ -220,7 +229,7 @@ if override_present .skills/doc-sensitive-paths; then
   LIST_SOURCE=".skills/doc-sensitive-paths"
 fi
 
-SECTIONS_SOURCE="built-in defaults"
+SECTIONS_SOURCE="$DEFAULTS_LABEL"
 if override_present .skills/doc-sections; then
   read_list_file .skills/doc-sections
   if [[ ${#PARSED[@]} -eq 0 ]]; then
@@ -361,4 +370,41 @@ echo ""
 # printed under "built-in defaults" tells the reader exactly which file to add.
 echo "Spot-check these doc sections before shipping (advice: $SECTIONS_SOURCE):"
 printf '  - %s\n' "${DOC_SECTIONS[@]}"
+
+# Half a tailoring, said out loud (#284). The two files still RESOLVE
+# independently: the list says what to watch, the advice what to do about a
+# hit, and either can be right on its own. What this closes is the silence. A
+# repo that tailored its list against the PHP defaults and never its advice was
+# told, on every hit from then on, to check AGENTS.md and README.md, never the
+# docs/COMMANDS.md that actually drifted, while both source labels printed
+# above already disagreed and nothing said so.
+#
+# Only the disagreement is decidable. Whether an advice line routes a given
+# entry is a question about prose, and a checker for it would be satisfied by
+# pasting paths into the advice, which makes the advice worse. Whether the
+# advice is the project's at all is two variables already in scope. They are
+# compared through the default label, not to each other: the tailored labels
+# name different files, so "both tailored" is a mismatch by string and a match
+# by meaning.
+#
+# Both directions, and the hit path only. Default advice beside a tailored
+# list describes a layout that may not be this repo's. Tailored advice beside a
+# default list names this repo's docs while watching the skill's paths, so a
+# change those docs describe can pass unflagged. On the green path neither
+# note is about the verdict printed, and one line on every clean run is the
+# reporter that gets tuned out.
+if [[ "$LIST_SOURCE" != "$DEFAULTS_LABEL" && "$SECTIONS_SOURCE" == "$DEFAULTS_LABEL" ]]; then
+  echo ""
+  echo "Note: this project tailors .skills/doc-sensitive-paths but not"
+  echo ".skills/doc-sections, so the sections above are this skill's defaults and"
+  echo "describe a project layout that may not be yours. Commit .skills/doc-sections"
+  echo "to route these hits at your own docs."
+elif [[ "$LIST_SOURCE" == "$DEFAULTS_LABEL" && "$SECTIONS_SOURCE" != "$DEFAULTS_LABEL" ]]; then
+  echo ""
+  echo "Note: this project tailors .skills/doc-sections but not"
+  echo ".skills/doc-sensitive-paths, so the paths above were matched against this"
+  echo "skill's defaults, which may not watch the files your sections describe — a"
+  echo "change to one of those can pass unflagged. Commit .skills/doc-sensitive-paths"
+  echo "to watch the paths your docs depend on."
+fi
 exit 1

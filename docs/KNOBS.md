@@ -37,8 +37,8 @@ forking a skill.
 | `plans_dir` | single-line path | `writing-plans`, `orchestrating-issue-backlog`, `init-project-fastapi` | env `PLANS_DIR` wins, then this file | `<repo-root>/docs/plans/` |
 | `skills-pin` | one `<submodule-path> <commit-ish>` per line, `#`-comments | `managing-skills` | env `SKILLS_PIN_FILE` wins, then this file | no pins — every submodule is refreshed |
 | `forked-ok` | one repo-relative path per line, `#`-comments | `managing-skills`' doctor | declares rather than configures — there is no default to replace | nothing is declared, so every divergence is reported (advisory in every mode, never healed) |
-| `doc-sensitive-paths` | one path per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `SENSITIVE_PATHS` wholesale | the variant's built-in path list |
-| `doc-sections` | one section per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `DOC_SECTIONS` wholesale | the variant's built-in advice |
+| `doc-sensitive-paths` | one path per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `SENSITIVE_PATHS` wholesale | the variant's built-in path list; a hit says so when `doc-sections` is tailored ([#284](https://github.com/gregoryfoster/skills/issues/284)) |
+| `doc-sections` | one section per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `DOC_SECTIONS` wholesale | the variant's built-in advice; a hit says so when `doc-sensitive-paths` is tailored (#284) |
 | `import-targets` | one package name per line, `#`-comments | `shipping-work-python-click`, `reviewing-code-python-click` | replaces the pyproject-derived default | the `[project] name` from `pyproject.toml` |
 | `context-budget` | a single number | `curating-context`, the context-budget hook | env `CONTEXT_BUDGET` wins, then this file | 6,000 tokens |
 | `context-doc-budget` | a single number | `curating-context` | env `CONTEXT_DOC_BUDGET` wins, then this file | 10,000 tokens per doc |
