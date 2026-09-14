@@ -20,6 +20,8 @@ Do NOT assign priorities, design batches, write a design doc, or open a GitHub i
 
 Create a task for each item and complete them in order. Item numbers match the `Step N` headings below; item 0 runs before the numbered sequence, like Q0.
 
+Rule, Orchestrator-step and Worker-step numbers cited in this file refer to [references/execution.md](references/execution.md).
+
 0. **Sync local main** — `git checkout main && git pull --ff-only`; clear any untracked stray from the checkout (Rule 1)
 1. **Fetch all open issues** — `gh issue list --state open --limit 50 --json number,title,labels,body`
 2. **Explore project context** — read AGENTS.md, recent commits, existing design docs
@@ -152,7 +154,7 @@ Get approval before writing the design doc.
 
 The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The section structure below is specific to backlog orchestration and differs from the generic plan structure prescribed by `writing-plans` — share the directory, not the shape.
 
-Read [references/execution.md](references/execution.md) before writing it: the doc records the batch→main merge strategy that file has you ask for, and carries its Rules 1–6 as the runtime's checklist.
+Read [references/execution.md](references/execution.md) before writing it: the doc records the batch→main merge strategy that file has you ask for.
 
 Sections:
 - **Goal** — one paragraph
@@ -212,7 +214,7 @@ After the plan is approved and committed, capture this session's adjustments: ru
 
 ## Executing the plan
 
-The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules 1–6 and the recovery procedure are in [references/execution.md](references/execution.md), and the Rule, Orchestrator-step and Worker-step numbers this file cites refer to it. Read it before Step 8 — the design doc records the batch→main merge strategy it asks for — and before launching any batch.
+The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules 1–6 and the recovery procedure are in [references/execution.md](references/execution.md). Step 8 reads it first; read it again before launching any batch.
 
 ## Key Principles
 

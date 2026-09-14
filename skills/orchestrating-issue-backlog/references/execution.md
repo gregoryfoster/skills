@@ -1,12 +1,13 @@
 # Executing the plan
 
-Loaded from [`SKILL.md`](../SKILL.md) once the plan is approved: before Step 8,
-whose design doc records the batch→main merge strategy this file asks for, and
-before any batch launches. Step and Q numbers refer to `SKILL.md`; Rule,
-Orchestrator-step and Worker-step numbers refer to this file.
+Loaded from [`SKILL.md`](../SKILL.md) at Step 8, whose design doc records the
+batch→main merge strategy this file asks for, and before any batch launches.
+Step and Q numbers refer to `SKILL.md`; Rule, Orchestrator-step and Worker-step
+numbers refer to this file.
 
-Demoted from the body in the #285 curation: a planning run reaches it only at
-Step 8, and a batch launch needs all of it.
+Demoted from the body in the #285 curation. A planning run meets Rule 1 at Step
+1–2 (its sync is also checklist item 0) and the rest from Step 8; a batch launch
+needs all of it.
 
 ## Agent Roles
 
