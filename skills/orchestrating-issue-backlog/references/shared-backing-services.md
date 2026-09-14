@@ -22,6 +22,6 @@ Three resolutions, in preference order:
 ## The escape grep (Step 5, item 3)
 
 3. **Where a shared backing service sets the ceiling (Q5), grep for the helpers that *escape* the isolation fixture.** A helper that opens its own engine/connection and destroys shared state is a *hard* conflict zone — not the **soft** fixture dependency item 2 ends by naming: it does not degrade other agents, it corrupts them mid-run, and the failure presents as an unrelated worker's mysterious red. It forces its issue solo on a database property with no file-overlap footprint at all (process-log 2026-08-11 usa-wa: a `reset_migration_schemas` helper documented as deliberately bypassing the savepointed `db_session` fixture forced a three-line test fix into its own batch). One grep, run alongside the contested-file grep:
-```bash
-grep -rnE 'DROP (SCHEMA|DATABASE)|TRUNCATE|create_async_engine|create_engine' --include='*.py' <test trees> <testing helper modules>
-```
+   ```bash
+   grep -rnE 'DROP (SCHEMA|DATABASE)|TRUNCATE|create_async_engine|create_engine' --include='*.py' <test trees> <testing helper modules>
+   ```
