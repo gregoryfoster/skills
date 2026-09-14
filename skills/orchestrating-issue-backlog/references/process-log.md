@@ -33,6 +33,9 @@ numbers to [`execution.md`](execution.md).
 - Q5 shared-backing-service sub-question + the provision / serialize / cap resolution ladder + read-the-guard clause, incl. its can-the-role-create-them half — 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, 2026-08-11 usa-wa, 2026-08-11 observo, 2026-08-13 usa-wa, 2026-08-13 observo, 2026-08-13 power-map, 2026-08-17 watcher, 2026-08-28 power-map — and accept "no ceiling" as an answer, 2026-08-12 / 2026-08-18
 - Worker step 5 "issue body is a proposal, not a specification" + the report-back corrections slot + Step 8 body-decay note — 2026-08-09, 2026-08-10
 - Step 4 decide-then-rescore at the approval gate + write scope changes back to GitHub — 2026-08-09, 2026-08-11; decisions move the *graph*, not only scores — 2026-08-23, 2026-08-28 power-map
+- Step 4 measure an empirical decision at the gate rather than ask — 2026-08-21, 2026-08-27, 2026-09-14 observo
+- Step 5 item 2 ([`shared-files.md`](shared-files.md)) where a shared fixture hides — `conftest.py`, module-local fixtures, test fakes of a protocol the backlog changes — 2026-07-08, 2026-08-13 power-map, 2026-09-14 observo
+- Step 7 ([`batch-design.md`](batch-design.md)) a budget-tight file is single-writer — 2026-08-16, 2026-08-18, 2026-09-14 observo
 
 ---
 ## Adding an entry
