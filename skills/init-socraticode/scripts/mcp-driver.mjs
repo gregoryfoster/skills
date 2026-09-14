@@ -1117,6 +1117,98 @@ function expectedArtifactCount(projectPath) {
   return m.count;
 }
 
+// ── linked projects: configured ≠ resolved (#281) ───────────────────────────
+// socraticode's loadLinkedProjects() (config.js, 1.13.3) reads two sources —
+// `.socraticode.json`'s `linkedProjects` array and the comma-separated
+// SOCRATICODE_LINKED_PROJECTS — resolves each entry against the project root,
+// and DROPS any path that does not exist. Silently, and upstream documents that
+// as intended. It is a soft failure: you search less, you are not told a wrong
+// answer. But nothing anywhere said which links resolved, so a cohort that
+// believes it has cross-repo search and one that has it looked identical.
+//
+// The same resolution, reported rather than dropped. Transcribed, not imported:
+// the server package is not a dependency of this driver, and on a plugin-only
+// host it lives in the npx cache where nothing can import it (#85/3b). What is
+// mirrored, so a count here is a count there:
+//
+//   - an entry is a string that is non-empty once trimmed, resolved with
+//     path.resolve(root, entry), so relative entries are relative to the root;
+//   - entries are de-duplicated by resolved path across BOTH sources, as the
+//     upstream Set does;
+//   - an entry resolving to the root itself is dropped and is not counted: it
+//     names the collection every search already reads, so dropping it costs
+//     nothing and reporting it would be noise;
+//   - a `.socraticode.json` that cannot be read or does not parse is ignored
+//     whole — upstream's loader returns null on any throw — so that is
+//     reported too, since it drops every link the file declares at once.
+//
+// The env source is THIS process's environment. Through the hook that is the
+// session's, which is where the skill writes the variable
+// (`.claude/settings.local.json`'s env block) and what the plugin's server
+// inherits — the same route SOCRATICODE_PROBE_FILE already takes.
+const SOCRATICODE_CONFIG_NAME = '.socraticode.json';
+const LINKED_ENV = 'SOCRATICODE_LINKED_PROJECTS';
+
+function linkedProjects(projectPath, env = process.env) {
+  const root = resolvePath(projectPath);
+  const report = { configured: 0, resolved: [], missing: [], configError: null };
+  const seen = new Set();
+  const consider = (entry, source) => {
+    const trimmed = entry.trim();
+    if (!trimmed) return;
+    const abs = resolvePath(root, trimmed);
+    if (abs === root || seen.has(abs)) return;
+    seen.add(abs);
+    report.configured += 1;
+    (existsSync(abs) ? report.resolved : report.missing).push({ path: trimmed, source });
+  };
+
+  const cfgPath = joinPath(root, SOCRATICODE_CONFIG_NAME);
+  if (existsSync(cfgPath)) {
+    let cfg = null;
+    try {
+      cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    } catch (e) {
+      // One message for both throws, as upstream has one catch for both: a
+      // file that is a directory, or unreadable, is not a JSON problem, and
+      // calling it one sends the reader to fix syntax that is not there.
+      report.configError = `${SOCRATICODE_CONFIG_NAME} cannot be read as JSON (${e.message}), `
+        + 'so the server ignores the whole file, linkedProjects included';
+    }
+    const declared = cfg && typeof cfg === 'object' ? cfg.linkedProjects : undefined;
+    if (Array.isArray(declared)) {
+      for (const p of declared) if (typeof p === 'string') consider(p, SOCRATICODE_CONFIG_NAME);
+    } else if (declared !== undefined) {
+      // Upstream reads the key only when it is an array; a bare string — the
+      // likeliest slip — is ignored as silently as a missing path.
+      report.configError = `${SOCRATICODE_CONFIG_NAME}'s linkedProjects is not an array, `
+        + 'so the server ignores it';
+    }
+  }
+  const fromEnv = (env[LINKED_ENV] || '').trim();
+  if (fromEnv) for (const p of fromEnv.split(',')) consider(p, LINKED_ENV);
+  return report;
+}
+
+// One defect for the whole of it, or null. Worded for the one tool it touches:
+// linked collections are consulted by codebase_search ONLY — the upstream
+// resolver has exactly one caller — and only when the call passes
+// includeLinked: true, which defaults to false. Saying "search is degraded"
+// without that qualifier would send a reader hunting in tools it never reached.
+function linkedProjectsFinding(linked) {
+  const parts = [];
+  if (linked.configError) parts.push(linked.configError);
+  if (linked.missing.length) {
+    const named = linked.missing.map((m) => `${m.path} (${m.source})`).join(', ');
+    parts.push(
+      `linkedProjects — ${linked.resolved.length} of ${linked.configured} resolved (missing: ${named}); `
+      + 'codebase_search with includeLinked: true skips the missing ones and says nothing. '
+      + 'Check out the missing paths, or drop them from where they are declared'
+    );
+  }
+  return parts.length ? parts.join('; ') : null;
+}
+
 // ── projectPath resolution (#226, generalizing #180) ────────────────────────
 // SocratiCode indexes by ABSOLUTE project path. A relative argument — `.` most
 // of all — therefore names whatever directory the caller happens to be standing
@@ -1674,6 +1766,16 @@ async function cmdHealthCheck(projectPath, probePath) {
     }
   });
 
+  // ── configured ≠ resolved (#281) ──────────────────────────────────────────
+  // No server call: the resolution is the filesystem's, and is read the way
+  // the server reads it. After the server checks rather than before, so the
+  // infrastructure findings lead the list — and a defect, not a note, because
+  // a named action repairs it: check the checkout out, or drop the entry.
+  const linked = linkedProjects(projectPath);
+  report.linkedProjects = linked;
+  const linkedFinding = linkedProjectsFinding(linked);
+  if (linkedFinding) defect(linkedFinding);
+
   // One array, both severities, in encounter order — the shape the JSON has
   // always had. `renderFinding` is what makes the severity legible: a note
   // carries its marker into the string, so nothing has to be cross-referenced
@@ -1801,6 +1903,9 @@ Commands:
            infra triage on a cadence: codebase_health + codebase_status +
            codebase_graph_status, with the graph measured by EDGE YIELD rather
            than by READY. JSON verdict on stdout, findings on stderr.
+           Also reports linked projects that are configured and do not
+           resolve (.socraticode.json's linkedProjects and
+           SOCRATICODE_LINKED_PROJECTS), which the server drops silently.
            Each finding carries a SEVERITY: a defect is a state a named action
            repairs and sets exit 1; a note is a measurement no action changes,
            is prefixed "note: " in both the JSON and on stderr, and costs
@@ -2004,6 +2109,8 @@ export {
   parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
   // finding severity (#220)
   SEVERITY, NOTE_PREFIX, renderFinding,
+  // configured ≠ resolved linked projects (#281)
+  linkedProjects, linkedProjectsFinding,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,

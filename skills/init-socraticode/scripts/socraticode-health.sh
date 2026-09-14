@@ -44,6 +44,13 @@ What it reports (to stdout, which Claude Code injects as session context):
     reachable with 3 edges across 374 files; the policy this skill writes then
     sends every agent to codebase_graph_query first, where an empty answer
     reads as 'no dependents' rather than 'the tool failed'.
+  - A configured repo missing its toolchain on this machine (#281): no node,
+    so the codebase_* tools cannot start, or no driver, so nothing was
+    measured. Only past the manifest gate — see Behaviour.
+  - Linked projects configured in .socraticode.json or
+    SOCRATICODE_LINKED_PROJECTS whose paths do not resolve (#281). The server
+    drops each without a word, so codebase_search with includeLinked: true
+    searches fewer repos than the configuration names.
 
 It reports. It never re-indexes, never starts Docker, never edits a file — a
 session-start hook is the wrong place to spend an hour of CPU or to change the
@@ -57,8 +64,13 @@ Behaviour:
     skipped unless the manifest is found there.
   - Runs at most once per UTC day, per PROJECT — the lock lives in the common
     git dir, so N worktrees of one repo produce one report a day, not N.
-  - Silent when there is nothing to report, and on every infrastructure
-    condition it cannot judge (no node, no driver, no manifest).
+  - Silent when there is nothing to report, and in a repo never configured
+    for SocratiCode (no manifest). Past that gate a missing toolchain is a
+    FINDING, not a skip (#281): no node means the codebase_* tools cannot run
+    while the policy still sends agents to them, and no driver means nothing
+    was measured. Each is reported once a day like any other finding. The
+    manifest is tracked, so that includes a clone on a machine that never
+    installed SocratiCode, whose policy block misleads it just the same.
   - Says FAILED TO RUN when the driver exits non-zero without printing any
     findings (#254). A crashed check and a check that found defects both exit
     1, and the crash must not be rendered in the shape that means "measured,
@@ -185,7 +197,40 @@ if ! date -u +%Y%m%d > "$LOCK" 2>/dev/null; then
   echo "socraticode-health: cannot write $LOCK; this check will repeat every session (see $LOG)" >&2
 fi
 
-command -v node >/dev/null 2>&1 || { _log "node not on PATH — skipped"; exit 0; }
+# Past the manifest gate, a missing toolchain is reported, not skipped (#281).
+# Silence is right for a repo that never adopted SocratiCode — nagging it would
+# be the tuned-out reporter #180 exists to prevent — and the manifest gate above
+# has already ruled that repo out. What reaches here is a project CONFIGURED for
+# SocratiCode whose toolchain is missing on this machine, and that is the very
+# state a once-per-day reporter exists for. CannObserv/notifier lost node, the
+# plugin, the Qdrant image and its volume; this line logged "node not on PATH —
+# skipped" five times over nine days, reached no session, and every agent in
+# them was told by AGENTS.md to prefer codebase_search over grep.
+#
+# Configured is a property of the REPO; the toolchain belongs to the MACHINE.
+# The manifest and this hook's registration in .claude/settings.json are both
+# tracked, so a fresh clone on a machine that never installed SocratiCode lands
+# here too, and hears this line once a day. That is still the right line: the
+# tracked policy block sends that session's agent to codebase_search just the
+# same, and the grep fallback is what it needs.
+#
+# The loud path is stdout, the quiet one the log, the same split every other
+# finding here uses, and the lock above keeps it to one report a day. Exit 0
+# still: this is advice, not a gate.
+#
+# The docs pointer is conditional because an install that predates the detail
+# doc would be sent to a file it does not have.
+_see=""
+[ -f "$PROJECT/docs/SOCRATICODE.md" ] && _see=" (see docs/SOCRATICODE.md)"
+
+if ! command -v node >/dev/null 2>&1; then
+  _log "node not on PATH — reported"
+  # "Will fail", not "may": the plugin starts its server as `npx` with no env
+  # of its own, so the server inherits the PATH this hook was given.
+  echo "socraticode-health: node is not on PATH, but this project is configured for SocratiCode (.socraticodecontextartifacts.json is present). The plugin starts its server with npx on this same PATH, so semantic search is unavailable and the codebase_* tools will fail — answer code questions with grep/rg this session."
+  echo "socraticode-health: restoring node is an install fix, not a session one: init-socraticode's preflight.sh --check names what is missing${_see}."
+  exit 0
+fi
 
 DRIVER=""
 # skills-vendor/*/ BEFORE the two symlink dirs, which are symlinks into it and
@@ -210,7 +255,19 @@ for candidate in \
     break
   fi
 done
-[ -n "$DRIVER" ] || { _log "mcp-driver.mjs not found — skipped"; exit 0; }
+# The same argument one step on (#281). A repo carrying the manifest vendors
+# this skill, so a driver found nowhere is a broken install, not an absent one,
+# and the check it would have run did not happen. Said in the words the
+# FAILED TO RUN branch below uses for the same fact: nothing was measured, and
+# silence would read as a clean day. The tools themselves may be fine — the
+# driver is only this hook's instrument — so, unlike the node case, this does
+# not tell a session to stop using them.
+if [ -z "$DRIVER" ]; then
+  _log "mcp-driver.mjs not found — reported"
+  echo "socraticode-health: this project is configured for SocratiCode (.socraticodecontextartifacts.json is present), but mcp-driver.mjs was not found, so today's check could not run. Nothing was measured — this is not a clean result."
+  echo "socraticode-health: restore the vendored init-socraticode skill, or point SOCRATICODE_DRIVER at mcp-driver.mjs; --help lists where this hook looks${_see}."
+  exit 0
+fi
 
 PROBE_ARGS=()
 if [ -n "${SOCRATICODE_PROBE_FILE:-}" ]; then
@@ -291,7 +348,11 @@ if [ "$RC" -ne 0 ]; then
   if [ -n "$_found" ]; then
     echo "socraticode-health: findings from today's once-per-day check (see $LOG):"
     printf '%s\n' "$_found"
-    echo "socraticode-health: this hook reports only. Re-index with codebase_index, or re-run init-socraticode, to act on it."
+    # A finding's own fix comes first (#281). A linked project that does not
+    # resolve is repaired by a checkout or by dropping the entry, and an hour
+    # of re-indexing does nothing for it; a LOW yield names its own policy
+    # swap. The rest name no fix, and for them the index is the lever.
+    echo "socraticode-health: this hook reports only. Where a finding names its own fix, apply that; otherwise re-index with codebase_index, or re-run init-socraticode, to act on it."
   else
     echo "socraticode-health: the check FAILED TO RUN (driver exited $RC with no findings) — see $LOG."
     echo "socraticode-health: this is not a clean result. Nothing was measured today."
