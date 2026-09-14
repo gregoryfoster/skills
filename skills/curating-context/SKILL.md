@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.26"
+  version: "1.27"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -266,7 +266,8 @@ Re-run Phase 1 and assert, before committing:
 
   A line the run had to **rewrite** rather than move — a pointer this change
   retargeted, a heading Phase 6.5 forced you to rename, a class-C tightening
-  (which needs `--claims`) — is not a loss. Give each a judged entry in
+  (which needs `--claims`), an index line Phase 5 extended in place (`index`,
+  checked by the script) — is not a loss. Give each a judged entry in
   `.skills/context-loss-ok` (`WARRANT :: CONTENT`, or
   `PATH :: WARRANT :: CONTENT` to scope it to one target; warrant from the
   closed set in `--help`), re-run, and carry `loss_warranted:` to Phase 7 as

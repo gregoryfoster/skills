@@ -123,7 +123,7 @@ from the check's own trailer. Until
 [#253](https://github.com/gregoryfoster/skills/issues/253) the ledger could not
 see this check at all, so a run that passed `--claims` and cleared it wrote the
 same row as one that never ran it — and `no_loss_warrants` cannot stand in,
-because it aggregates all six warrant kinds and a `tighten` is
+because it aggregates every warrant kind and a `tighten` is
 indistinguishable from a `retarget` in the count. Recorded and surfaced, never
 gated: a dropped-but-judged atom is a judgement, and an unwarranted one already
 fails the run through `no_loss`.

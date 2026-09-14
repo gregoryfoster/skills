@@ -69,8 +69,8 @@ Options:
   --claims-ack-file PATH
                    Warrant file for atoms a tightening legitimately dropped.
                    Default: .skills/context-claims-ok. Same grammar and warrants
-                   as --ack-file minus `tighten`, and ATOM is matched WHOLE, not
-                   as a substring.
+                   as --ack-file minus `tighten` and `index`, and ATOM is
+                   matched WHOLE, not as a substring.
   --show-relocated Also list which destination each moved line landed in.
   -h, --help       Show this help and exit 0.
 
@@ -115,19 +115,42 @@ Warranted losses (.skills/context-loss-ok):
     default    the tool now does this by default, so the instruction is noise
     tighten    Phase 3 class C rewrote the line in place — same claims, fewer
                words. REQUIRES --claims, and is refused without it (#250).
+    index      Phase 5 extended an index line in place to link a doc it did
+               not link at --base. CHECKED here, and refused when the
+               evidence does not hold (#282): see "The index warrant".
 
   `tighten` is the one warrant a run can always claim about its own edit, so
   alone it would be self-certifying — and the breadth guard below cannot
   restrain it, because class C's defining defect is a section written as ONE
   paragraph. One entry, one line, a whole section waved through: on the run that
   found this, five entries would have covered the entire body of a 9,826-token
-  document. The other five warrants do not have this problem. Two are
-  COMPULSORY, forced by the skill itself; three point at evidence outside the
-  entry (a duplicate elsewhere, a command's verdict, a tool's default). So
-  `tighten` is gated on a check the rewrite cannot perform on itself: --claims
-  must pass, meaning every atom of the base line turns up somewhere or carries
-  its own judged entry. Line matching proves the MOVES; atom matching proves
-  the REWRITES.
+  document. The other warrants do not have this problem. Two are COMPULSORY,
+  forced by the skill itself; three point at evidence outside the entry (a
+  duplicate elsewhere, a command's verdict, a tool's default); `index` is
+  verified by this script. So `tighten` is gated on a check the rewrite cannot
+  perform on itself: --claims must pass, meaning every atom of the base line
+  turns up somewhere or carries its own judged entry. Line matching proves the
+  MOVES; atom matching proves the REWRITES.
+
+The index warrant:
+  Phase 5 gives every unindexed or orphaned doc an index entry, and a repo that
+  lists several docs on one line gets it by extending that line in place — the
+  old line is then present nowhere, and nothing moved, nothing was tightened,
+  nothing is verbatim elsewhere. Its evidence is mechanical, so the entry is
+  CHECKED rather than trusted. It holds when one line of --file as it is now:
+
+    keeps every word and every atom of the lost line — extended, with nothing
+    removed. Words are counted, not placed, so a list can take its new
+    separator (`A and B` -> `A, B and C`); the cost is that a reordering
+    passes too; and
+    adds, among atoms, only links to docs --file did not link at --base (a doc
+    under --docs-dir, or named by --also), with their own labels — at least one.
+
+  Plain words may come with the link: a one-line description routes as well as
+  a full line (#274). A new backticked span, issue reference or other link is a
+  new claim, not an index repair. A failed check is refused (exit 1) with its
+  reason, and a warranted row prints the docs it indexes. Not accepted in
+  --claims-ack-file: an atom has no line to extend.
 
   An entry that matched nothing is reported, and "re-judge and prune" is sound
   advice for only some of them (#251). Two facts settle whether this run is
@@ -266,8 +289,8 @@ The claim check (--claims):
   An atom a tightening legitimately drops gets a judged entry in
   .skills/context-claims-ok, same grammar and same warrants MINUS `tighten`
   (warranting an atom with the warrant the atom check exists to gate would be
-  circular). The differences from --ack-file follow from atoms being tokens
-  rather than prose:
+  circular) and `index` (whose evidence is a line). The differences from
+  --ack-file follow from atoms being tokens rather than prose:
 
     ATOM is matched WHOLE, against the dropped set — never as a substring. So
     there is no minimum length (`#41` identifies itself exactly) and no
@@ -284,7 +307,8 @@ The claim check (--claims):
 Exit codes:
   0  every line accounted for, or warranted
   1  usage error, no policy file found, a malformed acknowledgement entry, a
-     `tighten` warrant without --claims, or --claims-ack-file without --claims
+     `tighten` warrant without --claims, an `index` warrant its evidence does
+     not bear out, or --claims-ack-file without --claims
   2  infrastructure failure (base revision unreadable, python3 missing)
   3  one or more lines — or, under --claims, atoms — unaccounted for and
      unwarranted; the run must justify or restore them
@@ -447,7 +471,11 @@ claims_on = claims_on == "1"
 # already the warrants the LOST message names in prose, and had nowhere to live.
 # `tighten` is the sixth and the only one that is not self-limiting, which is why
 # it is the only one carrying a precondition: see REQUIRES_CLAIMS (#250).
-WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default", "tighten")
+# `index` is the seventh, and the first this script CHECKS rather than records:
+# its evidence is mechanical, so it is verified line by line (#282) — see
+# CHECKED and index_evidence().
+WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default", "tighten",
+            "index")
 
 # Warrants that name an edit the run cannot certify for itself, and what each
 # needs before it counts. `tighten` is claimed ABOUT the author's own rewrite —
@@ -456,10 +484,16 @@ WARRANTS = ("retarget", "rename", "duplicate", "disproven", "default", "tighten"
 # The atom check is that outside evidence, so the warrant is refused without it.
 REQUIRES_CLAIMS = ("tighten",)
 
+# Warrants whose evidence is checked here, against the lost line and the file
+# as it is now, rather than trusted to the entry. A failed check is a refusal.
+CHECKED = ("index",)
+
 # The claim file's vocabulary is the loss file's minus `tighten`: warranting a
 # dropped atom with the very warrant the atom check exists to gate would close
-# the loop the gate is there to open.
-CLAIM_WARRANTS = tuple(w for w in WARRANTS if w not in REQUIRES_CLAIMS)
+# the loop the gate is there to open. Minus `index` too: its evidence is a LINE
+# extended in place, and an atom has no line to extend, so in the claim file it
+# would be the one entry nothing could check.
+CLAIM_WARRANTS = tuple(w for w in WARRANTS if w not in REQUIRES_CLAIMS + CHECKED)
 
 # Below this, a line shared by the policy file and a destination is structure,
 # not duplicated content: fences, `---`, `## Detail Docs`, one-word bullets.
@@ -721,10 +755,15 @@ try:
     # same standard whole-line matching already applies; asking it to survive in
     # a particular file would fail every tightening that also demoted.
     dest_atoms = set()
+    # The target's own lines as they are now, raw, which only the `index`
+    # warrant reads: its evidence is one line of this file, not a set (#282).
+    current = []
     for path in dest_paths:
         lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
         lines, _ = strip_frontmatter(lines)
         dests[path] = {n for n in (normalise(l) for l in lines) if n}
+        if path == policy:
+            current = lines
         if claims_on:
             dest_atoms |= atoms_of(lines, skip_fenced=False)[0]
     base_atoms, atom_origin = atoms_of(before) if claims_on else (set(), {})
@@ -1009,6 +1048,145 @@ if broad:
                   "    the first entry that matches it", file=sys.stderr)
     sys.exit(1)
 
+# --- the index warrant (#282) ---------------------------------------------
+# Phase 5 gives every doc in links.unindexed (and every orphan) an index entry,
+# and where a repo groups several docs on one line that means extending the
+# line in place. The old line is then present nowhere, and no warrant before
+# this one was honest about it: nothing moved, so not `retarget`; the same
+# claims plus one in MORE words, so not `tighten`; not verbatim anywhere, so not
+# `duplicate`. CannObserv/archiver's run had to record `no_loss: null` for an
+# index repair its own routing probe had just measured at 0/24 -> 22/24 — #250's
+# problem again: the skill prescribing an edit its own gate cannot score.
+#
+# What the edit leaves behind is mechanical, so the warrant is CHECKED here,
+# not trusted. It holds when one line of --file as it is now
+#
+#   keeps every word and every atom of the lost line — extended, with nothing
+#     removed. Counted, not placed: `A and B` becoming `A, B and C` moves the
+#     `and`, and a test of order would refuse the most ordinary way a list
+#     grows. The cost, named rather than hidden, is that a reordering passes
+#     as well — `A before B` read back as `B before A`, with a link. Words,
+#     not only atoms: a prose line carries no atom, and an atoms-only test
+#     would let any lost prose line be "extended into" any index line that
+#     gained a link; and
+#   adds, among atoms, only links to docs --file did not link at --base, with
+#     their own labels — at least one. Plain words may come with them, since a
+#     one-line description routes as well as a full line (#274); a new span,
+#     issue reference or other link is a new claim, and is not an index repair.
+#
+# "Did not link at --base" is links.unindexed plus links.orphans when --file is
+# the policy file, and the same question asked of --file when it is not. It is
+# read with a pattern of this script's own rather than measure-context.sh's
+# extractor (the two cannot share code, and a second parser is how two gates
+# come to disagree), so the ways the two differ have to fall on one side: this
+# reading may count a doc as linked when measure-context.sh would not, never
+# the reverse — fewer docs eligible, never more. It catches a `](…)` inside
+# code or with no label, which only errs that way. It must also allow what
+# measure-context.sh allows, and that is why BASE_LINK is not LINK_TARGET:
+# measure-context.sh accepts a padded destination, `[l](  docs/X.md )`, and the
+# atom pattern, which starts at the first character after `](`, missed it — a
+# doc already indexed was then eligible, and `index` certified re-linking it.
+# LINK_TARGET stays as it is; an atom's shape is another question.
+# Eligible docs are the destinations this run searched: --docs-dir's live docs
+# and anything named with --also, which is where an index points.
+BASE_LINK = re.compile(r"\]\(\s*([^)\s]+)")
+WORD = re.compile(r"\w+|[^\w\s]")
+
+
+def words(line):
+    return Counter(WORD.findall(delink(line.strip())))
+
+
+def link_path(target):
+    """A link target as written in --file -> the repo path it names, or None.
+
+    Relative to --file's directory, fragment dropped; a leading `/` is the
+    repo root, as measure-context.sh's norm() has it. A URL or a bare
+    `#anchor` names no file here."""
+    path = target.split("#", 1)[0]
+    if not path or re.match(r"^[a-z][a-z0-9+.-]*:", path, re.I):
+        return None
+    if path.startswith("/"):
+        joined = path.lstrip("/")
+    else:
+        joined = os.path.join(os.path.dirname(policy), path)
+    return os.path.normpath(os.path.relpath(os.path.normpath(joined)))
+
+
+linked_at_base = {link_path(t) for raw in before
+                  for t in BASE_LINK.findall(raw)} - {None}
+unindexed_docs = {os.path.normpath(os.path.relpath(p)) for p in others} - linked_at_base
+
+
+def index_evidence(lost_line):
+    """Check one `index`-warranted line. Returns (docs, why): the docs the
+    extension indexes and None, or None and the reason it does not hold."""
+    # Asked of the file, not of `current`: a --file emptied in place has no
+    # line either, and "no longer exists" would send its reader looking for a
+    # deletion. It falls through to the reason below, which is true of it.
+    if not os.path.exists(policy):
+        return None, (f"{policy} no longer exists, so no line of it was "
+                      "extended in place")
+    old_words = words(lost_line)
+    old_atoms = atoms_of([lost_line])[0]
+    holders = [c for c in current if c.strip()
+               and not old_words - words(c) and old_atoms <= atoms_of([c])[0]]
+    if not holders:
+        return None, (f"no line of {policy} now keeps every word and atom of "
+                      "it — an index line extended in place loses nothing")
+    why = None
+    for line in holders:
+        added = atoms_of([line])[0] - old_atoms
+        docs, labels = set(), set()
+        for target in LINK_TARGET.findall(line):
+            path = link_path(target)
+            if path in unindexed_docs:
+                docs.add(path)
+                # The forms a link and its own label take among the atoms:
+                # the target as atoms_of() normalises it, as written, as a
+                # repo path, and the bare filename a backticked label uses.
+                labels |= {delink("](" + target)[2:], target.split("#", 1)[0],
+                           path, os.path.basename(path)}
+        stray = sorted(a for a in added if a not in labels)
+        if not docs:
+            why = why or (f"the line that keeps it adds no link to a doc "
+                          f"{policy} did not link at --base")
+        elif stray:
+            # Each in backticks: an atom is a token, and `make register`
+            # unquoted reads as two words of the sentence around it.
+            quoted = ", ".join(f"`{a}`" for a in stray)
+            why = why or (f"the line that keeps it also adds "
+                          f"{quoted[:100]} — an index extension adds "
+                          "links to unindexed docs, and nothing else a claim "
+                          "check could weigh")
+        else:
+            return sorted(docs), None
+    return None, why
+
+
+# Refused when the evidence fails, never downgraded to an ordinary loss: an
+# entry its own evidence contradicts is a malformed claim, and the file that
+# can turn exit 3 into exit 0 must not keep one (the rule `tighten` and the
+# over-broad refusal already follow).
+index_docs, index_refused = {}, []
+for warrant, line in warranted:
+    if warrant not in CHECKED or line in index_docs:
+        continue
+    docs, why = index_evidence(line)
+    if docs is None:
+        index_refused.append((line, why))
+    index_docs[line] = docs
+if index_refused:
+    print(f"ERROR {ack_path}: {len(index_refused)} `index` entry(ies) not borne "
+          f"out by {policy} as it is now:", file=sys.stderr)
+    for line, why in index_refused:
+        print(f"  {line[:100]}", file=sys.stderr)
+        print(f"    {why}", file=sys.stderr)
+    print("  `index` holds only for a line extended in place to link a doc it "
+          "did not link\n  at --base. Anything else wants its own warrant, or "
+          "the line restored.", file=sys.stderr)
+    sys.exit(1)
+
 # --- the claim check ------------------------------------------------------
 # Set difference, not line matching: an atom that exists at --base and in no
 # destination is a claim the rewrite dropped. Sorted so the report is stable
@@ -1075,6 +1253,12 @@ if warranted:
     for (warrant, line), n in folded.items():
         copies = f"  x{n}" if n > 1 else ""
         print(f"  WARRANTED {warrant:<{width}}  {line[:120]}{copies}", file=out)
+        # With what the check found, as a claim entry carries its line: the
+        # doc it indexes is the whole of the evidence, and the reader should
+        # not have to re-derive it to review the row.
+        if warrant in CHECKED:
+            print(f"            {'':<{width}}  indexes: "
+                  f"{', '.join(index_docs[line])}", file=out)
     # Per-entry accountability, the part of check-seams.sh's ack report the
     # cohort named as what proved no entry had quietly become a blanket. An
     # acknowledgement is ONE judged line — a broader one was refused above —

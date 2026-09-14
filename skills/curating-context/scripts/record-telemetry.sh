@@ -79,7 +79,7 @@ Options:
                    cleared it writes the same row as one that never ran the
                    check, so the ledger cannot tell a VERIFIED class-C
                    tightening from an unverified one (#253). `no_loss_warrants`
-                   cannot answer it — it aggregates all six warrant kinds, so a
+                   cannot answer it — it aggregates every warrant kind, so a
                    `tighten` is indistinguishable from a `retarget` in the
                    count.
                    A non-zero --claims-dropped requires --no-loss failed:
