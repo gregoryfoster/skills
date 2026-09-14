@@ -286,31 +286,39 @@ SKILL_MD_RATCHETS = {
     # lost: 0 with 5 warranted rewrites on pass 2. The entry is deleted rather
     # than lowered: the file is held to
     # the same 6,000 every other skill is, and needs no exception at all.
-    # A ten-step orchestration procedure with scoring rubrics, conflict-zone
-    # analysis, and batch-plan templates. The largest file in the repo. See the
-    # outlier note below. Bound by its ESTIMATE, which reads 1,252 higher than
-    # count_tokens — the reason this file learned that "exact is the contract"
-    # does not survive contact with the gate that actually runs.
+    # A ten-step orchestration procedure: the interview, the scoring rubric, the
+    # conflict-zone and batch-design steps, and the design-doc and tracking-issue
+    # templates. See the outlier note below. Bound by its ESTIMATE, which read
+    # 633 higher than count_tokens at the #285 curation (9,769 vs 9,136) — the
+    # reason this file learned that "exact is the contract" does not survive
+    # contact with the gate that actually runs.
     #
-    # Raised once, from 22,900, and the raise is the record of what it bought:
-    # the skill's own Orchestrator step 2 ("check out `batch/<X>` before
-    # spawning agents") took production down in a repo whose deploy units carry
-    # a checkout guard, across three separate batches before anyone connected
-    # the outage to this file (#146). A ratchet that forces a runbook to omit
-    # the rule its own instruction needs is optimising the wrong quantity.
+    # Came down from 23,110 in that curation, which was the classification pass
+    # the outlier note asked for. What a run needs only on some backlogs moved
+    # verbatim into references/: the execution protocol (Agent Roles, Branch
+    # Hygiene Rules 1–6, Recovery), the issue-audit dispositions, the
+    # shared-file and shared-backing-service procedures, the batch-shape special
+    # cases and provenance priors, and the rule-provenance ledger. Each step
+    # kept its instruction plus a pointer. 22,995 -> 9,769 estimated, 21,775 ->
+    # 9,136 exact, and prove-no-loss.sh lost: 0 after six warranted rewrites.
     #
-    # The session paid most of the way first, so the raise is the residue and
-    # not the bill: ~1,275 bytes of genuine double-writing removed — the
-    # stale-checkout paragraph told three times over (checklist item 0, Step
-    # 1–2, Rule 1), four Key Principles bullets restating Step 7 and the branch
-    # strategy, and nine provenance lines folded into the siblings that already
-    # named the same steps — against ~1,820 bytes of new rule. Net +207 tokens.
-    # Set at current size again: this file still cannot grow without someone
-    # arguing for it here.
-    "orchestrating-issue-backlog": 23_110,
+    # The ratchet had been raised once before, from 22,900, and that raise is
+    # still the record of what it bought: the skill's own Orchestrator step 2
+    # ("check out `batch/<X>` before spawning agents") took production down in a
+    # repo whose deploy units carry a checkout guard, across three separate
+    # batches before anyone connected the outage to this file (#146). A ratchet
+    # that forces a runbook to omit the rule its own instruction needs is
+    # optimising the wrong quantity. The curation kept that rule, and every
+    # other, by moving rather than cutting.
+    #
+    # 6,000 would mean demoting what every run executes — the footprint grep,
+    # the decide-then-rescore gate, the shape heuristic — which is the class-A
+    # line curating-context's Phase 4 says to report rather than cross.
+    "orchestrating-issue-backlog": 9_800,
 }
 
-# The two outliers, at 2.8x and 3.6x the standard, deserve more than one line.
+# The two long runbooks, at ~2.5x and ~1.6x the standard, deserve more than one
+# line.
 #
 # `init-project-fastapi` and `orchestrating-issue-backlog` are long procedural
 # runbooks, not policy files: read top-to-bottom once, in order, with each step
@@ -329,11 +337,12 @@ SKILL_MD_RATCHETS = {
 #   forks to walk one. Conditional-block delimiters (docs/CONVENTIONS.md) or a
 #   split into a core bootstrap plus per-variant references would let a run load
 #   only its own path. That is a redesign, and it is #96's kind of work.
-# - `orchestrating-issue-backlog` would have to move its rubrics and templates
-#   out of the body. Unlike the bootstrap, much of its bulk IS optional per run:
-#   a session that never hits a conflict zone still loads the conflict-zone
-#   analysis. It already carries references/ and already demotes its process log
-#   there, so the mechanism exists and only the classification pass is missing.
+# - `orchestrating-issue-backlog` had to move its optional bulk out of the
+#   body, and #285 did. Unlike the bootstrap, much of it WAS optional per run:
+#   a session that never hits a conflict zone no longer loads the conflict-zone
+#   hazards, and a planning run meets the execution protocol only at Step 8.
+#   What stayed inline is what every run executes, which is why it stops at
+#   ~1.6x rather than conforming.
 #
 # Neither trim belongs to #141. This gate stops growth; #96 reclaims size.
 

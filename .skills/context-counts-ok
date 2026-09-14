@@ -69,3 +69,24 @@ skills/curating-context/SKILL.md :: stable :: Offer all three **once per repo**
 skills/using-git-worktrees/SKILL.md :: stable :: Same branch in two worktrees is fine
 skills/using-git-worktrees/SKILL.md :: enumerated :: Two symptoms identify the case
 skills/using-git-worktrees/SKILL.md :: enumerated :: Three responsibilities the calling agent must handle
+
+# --- #285 curation of orchestrating-issue-backlog/SKILL.md (2026-09-14) ---
+# The counts this run introduced dropped their precision instead: the file's own
+# "Three refinements:" over four sub-bullets was this check's defect, live. The
+# entries below carried over from before the run and were judged in place.
+skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: Two sub-questions, both capping
+skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: Use this three-dimension rubric
+skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: there are two clean shapes
+skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: The three routes for that case
+skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: Three variants:
+# A closed session's figures: records of an event, which cannot drift.
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: Two such decisions moved one issue from 14 to 16
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: collapsing a three-agent batch to two-plus-a-gate
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: narrowed to two commands
+# Pairs by construction: the sentence is about two of something.
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: accidental two-agent overlap
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: (two separate work items
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: in any file two agents share
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: two issues in different regions of the same measurement tool
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: better as two clean review surfaces
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: if two independent batches become unblocked simultaneously

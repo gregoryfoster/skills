@@ -60,4 +60,4 @@ The procedure assumes you have already halted further completion signals for the
 
 `isolation: "worktree"` is an Agent tool parameter that creates and tears down a temporary worktree per agent. It does not control the host project's worktree-create tooling, which may fall through silently when its own resource pool (ports, docker slots, license seats) is exhausted. When that fall-through drops an agent into the main checkout, the agent has no way to know it isn't isolated — `git status`, `git branch`, and `pwd` all look normal because the main checkout *is* a real working tree.
 
-The 2026-05-22 cannabis.observer-wordpress incident (Process Log entry of that date) is the canonical case. See Rules 5 and 6 in the main SKILL.md for prevention and detection; this file is the recovery path.
+The 2026-05-22 cannabis.observer-wordpress incident (Process Log entry of that date) is the canonical case. See Rules 5 and 6 in [`execution.md`](execution.md) for prevention and detection; this file is the recovery path.

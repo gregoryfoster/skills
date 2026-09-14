@@ -186,3 +186,20 @@ skills/using-git-worktrees/SKILL.md :: tighten :: **`--dry-run`** reports the re
 # it as a fragment names a path now. The split that invalidated the line is the
 # same run that corrected it.
 skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-metrics.md#measuring-tokens),
+
+# #285 curation of orchestrating-issue-backlog/SKILL.md. Every other line moved
+# verbatim into references/; these six were rewritten in place.
+# Step 5 item 1 ended "Three refinements:" over four sub-bullets that this run
+# moved to references/issue-audit.md — the pointer is retargeted, and the count
+# corrected (there were four; the sweep refinement was added after the count).
+skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Then list each contested file and the issues that touch it. Three refinements:
+# Process Logs introduced a ledger this run moved to references/process-log.md.
+skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Rules that originated there:
+# Q0 named a Step 7 rule "Bundle related issues" that exists nowhere in the
+# skill (`grep -rn "Bundle related" skills/` hits only this line); the rule it
+# means is Shape A.
+skills/orchestrating-issue-backlog/SKILL.md :: disproven :: see the "Bundle related issues" rule in Step 7
+# The self-budget prose names the ratchet the same change lowered, 23,110 -> 9,800.
+skills/orchestrating-issue-backlog/SKILL.md :: retarget :: held to a **23,110-token ratchet (estimate and exact)** by
+skills/orchestrating-issue-backlog/SKILL.md :: retarget :: 6,000-token standard, set so this file cannot grow. Raised once,
+skills/orchestrating-issue-backlog/SKILL.md :: retarget :: from 22,900; that test's comment carries the argument.

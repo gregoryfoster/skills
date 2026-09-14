@@ -14,6 +14,27 @@ two things: write the entry file, and add one row to that year's index — see
 
 ---
 
+## Rules promoted into SKILL.md
+
+Which sessions each rule in [`SKILL.md`](../SKILL.md) came from. Moved here from
+its Process Logs section in the #285 curation: it is provenance, not runtime
+instruction. Step and Q numbers refer to `SKILL.md`; Rule and Worker-step
+numbers to [`execution.md`](execution.md).
+
+- Rules 5/6 (per-batch ceiling, runtime fall-through detection) — 2026-05-22 port-pool incident; Rule 5 slot-reclaim semantics + cheap ceiling re-verification — 2026-06-09
+- Rule 3 revision (verify-and-merge per worker; reconciliation checklist) — 2026-05-09, 2026-05-11; **the main checkout's branch never moves where the repo deploys from it** — 2026-08-13 usa-wa
+- Step 1–2 closed-in-fact grep per issue (**zero hits is ambiguous, not exculpatory**), closed-prerequisite check, rescope-to-residual with its defer branch, generated-artifact read — 2026-05-09, 2026-05-11, 2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13 observo, 2026-08-13 power-map
+- Step 5: footprint grep, bidirectional (bodies understate *and*, in partial-fix backlogs, overstate); test-surface grep and line-window ownership, generalized to any large shared file then to function/region granularity; the no-file-overlap dependency edge; the shared-fixture-*escape* grep (hard conflict zone, vs. 2026-07-08's soft one); stated-*relationships*-are-hypotheses; grep-sizes-surface-not-behaviour; sweep enumeration; an issue body's own hedge as a grep target — 2026-05-09, 2026-06-28, 2026-07-08, 2026-08-09, 2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13 cli
+- Step 5/6 backlog-provenance geometry (CR-surfaced, AR-surfaced, feature-followup, adoption-feedback) — 2026-05-09, 2026-05-11, 2026-06-28, 2026-08-07, 2026-08-09, 2026-08-11
+- Steps 5/6 "low-discovery backlog mode" — 2026-06-08 (spec-derived), 2026-06-09 (followup-derived)
+- Step 7: Shape A/B distinction (bundle vs. split same-file pairs) with its "differ in kind" refinement — 2026-05-11, 2026-05-25, 2026-06-09; "foundation shared files are read-only" — 2026-06-08; chain-appending rule — 2026-08-07; byte-for-byte-sync-test bundle signal + design-gate-with-no-file-overlap — 2026-08-10
+- Step 8 docs-only-worktree authoring option — 2026-06-08; Step 9 `--body-file` over heredoc — 2026-05-24, 2026-05-25, 2026-06-08, 2026-06-09
+- Step 4: rubric variable-weight escape hatch, confirmed for **Foundation**-leading (×3) as well as Correctness — 2026-05-24 (Correctness), 2026-06-29 (Foundation). Key Principles "blast ≠ priority" — isolate an issue whose blast intersects **multiple** otherwise-parallel agents, plus its three further variants — 2026-06-29, 2026-08-07, 2026-08-11
+- Q5 shared-backing-service sub-question + the provision / serialize / cap resolution ladder + read-the-guard clause, incl. its can-the-role-create-them half — 2026-06-16, 2026-07-19, 2026-08-07, 2026-08-09, 2026-08-11 usa-wa, 2026-08-11 observo, 2026-08-13 usa-wa, 2026-08-13 observo, 2026-08-13 power-map, 2026-08-17 watcher, 2026-08-28 power-map — and accept "no ceiling" as an answer, 2026-08-12 / 2026-08-18
+- Worker step 5 "issue body is a proposal, not a specification" + the report-back corrections slot + Step 8 body-decay note — 2026-08-09, 2026-08-10
+- Step 4 decide-then-rescore at the approval gate + write scope changes back to GitHub — 2026-08-09, 2026-08-11; decisions move the *graph*, not only scores — 2026-08-23, 2026-08-28 power-map
+
+---
 ## Adding an entry
 
 1. Write `process-log/<year>/<date>-<project>.md`, opening with a

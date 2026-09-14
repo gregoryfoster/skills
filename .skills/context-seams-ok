@@ -79,3 +79,125 @@ skills/using-git-worktrees/references/destroy-flags.md :: [SKILL.md](../SKILL.md
 tests/structural/test_demoted_blocks.py :: ("measuring-tokens.md", "### The Phase 0 preflight, in full")
 tests/structural/test_demoted_blocks.py :: ("measuring-tokens.md", "### The Phase 1 credential note, in full")
 tests/structural/test_demoted_blocks.py :: `### The Phase 0 preflight, in full`, `### Tagging the row — the Phase 7 text in
+
+# --- #285 curation of orchestrating-issue-backlog/SKILL.md (2026-09-14) ---
+# 105 hits judged; one real seam fixed (recovery.md sent readers to 'Rules 5 and 6
+# in the main SKILL.md', which moved to execution.md). The rest, by group:
+
+# The #285 curation's destination docs name SKILL.md as the home of the Step and Q
+# numbers they cite, which stays true: every Step and Q is still in SKILL.md.
+skills/orchestrating-issue-backlog/references/batch-design.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7. Step and Q numbers refer to
+skills/orchestrating-issue-backlog/references/batch-design.md :: `SKILL.md`.
+skills/orchestrating-issue-backlog/references/design-doc-authoring.md :: Step 8 of [`SKILL.md`](../SKILL.md) commits the backlog design doc directly to
+skills/orchestrating-issue-backlog/references/execution.md :: Loaded from [`SKILL.md`](../SKILL.md) once the plan is approved: before Step 8,
+skills/orchestrating-issue-backlog/references/execution.md :: before any batch launches. Step and Q numbers refer to `SKILL.md`; Rule,
+skills/orchestrating-issue-backlog/references/issue-audit.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 1–2 and 5 when an issue's claim
+skills/orchestrating-issue-backlog/references/issue-audit.md :: needs more than the basic grep. Step and Q numbers refer to `SKILL.md`;
+skills/orchestrating-issue-backlog/references/process-log.md :: Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
+skills/orchestrating-issue-backlog/references/process-log.md :: ## Rules promoted into SKILL.md
+skills/orchestrating-issue-backlog/references/process-log.md :: Which sessions each rule in [`SKILL.md`](../SKILL.md) came from. Moved here from
+skills/orchestrating-issue-backlog/references/process-log.md :: instruction. Step and Q numbers refer to `SKILL.md`; Rule and Worker-step
+skills/orchestrating-issue-backlog/references/shared-backing-services.md :: Loaded from [`SKILL.md`](../SKILL.md) when Q5's second sub-question finds a
+skills/orchestrating-issue-backlog/references/shared-backing-services.md :: Step numbers refer to `SKILL.md`, so "item 2" below is its Step 5 item 2
+skills/orchestrating-issue-backlog/references/shared-files.md :: Loaded from [`SKILL.md`](../SKILL.md) Step 5 (item 2) whenever two issues touch
+skills/orchestrating-issue-backlog/references/shared-files.md :: the policy file included. Step numbers refer to `SKILL.md`.
+
+# SKILL.md's own pointers and index lines name the titles that moved, and point at
+# references/execution.md, where they now are.
+skills/orchestrating-issue-backlog/SKILL.md :: The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules
+skills/orchestrating-issue-backlog/SKILL.md :: - [references/execution.md](references/execution.md) — running the approved plan
+skills/orchestrating-issue-backlog/SKILL.md :: - [references/recovery.md](references/recovery.md) — salvaging a worker that fel
+
+# Text that moved WITH its titles uses the phrases in its own prose: execution.md
+# and recovery.md name sections beside them, and batch-design.md's low-discovery
+# paragraph lists "branch strategy" as design-doc content, which it still is.
+skills/orchestrating-issue-backlog/references/batch-design.md :: **Low-discovery backlog mode (compressed Steps 5/6).** Two shapes already name t
+skills/orchestrating-issue-backlog/references/execution.md :: 4. Launches all worker agents whose batch gate is currently satisfied simultaneo
+skills/orchestrating-issue-backlog/references/execution.md :: Any output indicates a worker fell through and is modifying files in the main ch
+skills/orchestrating-issue-backlog/references/execution.md :: When Rule 6 fires — or a worker's pre-flight isolation check (Worker step 2) doe
+skills/orchestrating-issue-backlog/references/recovery.md :: The 2026-05-22 cannabis.observer-wordpress incident (Process Log entry of that d
+
+# The session journal (process-log/<year>/) records what SKILL.md said at the time,
+# and session headings carry issue numbers by design. History, not guidance; the
+# index links files, never these heading anchors.
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-05-24-skills.md :: - **Single-owner assignment to resolve a one-line shared-file overlap.** [skills
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-05-25-skills.md :: - **Bundle three issues touching the same file into one agent with sequential co
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-07-usa-wa.md :: - **Q0 repurposed for prerequisite pairs.** SKILL.md frames Q0 as duplicate reso
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-skills.md :: **Shape:** Batch A — 7 parallel agents (A1 #132 `_context-lib.sh`; A2 #120+#124+
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-skills.md :: - **#110 reaches a third skill.** The issue names `curating-context` and `managi
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-skills.md :: **Worker prompts should name who else is in each file, not just what the worker
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-skills.md :: **Letting a worker stop at an honest number beat forcing the target.** C1 could
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-usa-wa-207-execution.md :: `using-git-worktrees/SKILL.md` now documents `worktree-agent-<id>` at `.claude/w
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-12-skills.md :: relative-prefixed carve-out at `curating-context/SKILL.md:250` — `](../tests/x.p
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-12-skills.md :: Each skill must **name its own ratchet in prose**. Generalized, that edits all 1
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-13-cli.md :: **Correction to #154:** its title advertises "two suggested SKILL.md promotions"
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-13-cli.md :: wrappers the SKILL.md orchestrator steps reference are deliberately absent from
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-13-power-map.md :: recurrence count. This is the **9th** — the SKILL.md line said "six sessions acr
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-16-skills.md :: `SKILL.md` whose ratchet lives in it, and the headroom is thin enough to matter:
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-16-skills.md :: `SKILL.md` has **13 tokens** of headroom against its 23,110 ratchet, and #161 (B
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-replicator.md :: At session time `SKILL.md` carried a hand-maintained tally — "Nine sessions acro
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-replicator.md :: projects have found the real ceiling in sub-question 2" at `SKILL.md:82`, duplic
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-replicator.md :: > `2026-08-18-skills.md`. (The issue that filed this entry cited "SKILL.md line
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-replicator.md :: - **Bash `grep` against the skill's own `SKILL.md` path was blocked by a hook**
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: Four promoted, and the payment is recorded below. See the SKILL.md diff on `#161
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: policy: applied by hand in eight #182 briefs, present nowhere in SKILL.md. It ea
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: Demoting the list takes the citation out of `SKILL.md`'s body and the guard with
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: - **`SKILL.md` still reads "Nine sessions across four projects" for Q5.** The 20
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: have hidden a `+9` that needed explaining. `SKILL.md`: 61,208 → 61,202 bytes; es
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher-268-execution.md :: never move. It is *not* the merge-safety signal SKILL.md treats it as in that
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher.md :: SKILL.md already carries "a generated artifact under a byte-for-byte sync test
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher.md :: `watcher_a1_test` works. The clause in SKILL.md covers both; no edit needed.
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher.md :: mid-gate. SKILL.md already says you cannot tell which issues need this until you
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher.md :: disjoint" side of SKILL.md's heuristic rather than the "one-partial ⇒ clusters"
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-18-skills.md :: | `init-project-fastapi/SKILL.md` | **43 exact** / 17,100 |
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-18-skills.md :: | `orchestrating-issue-backlog/SKILL.md` | **149 estimate** / 23,110 |
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-18-skills.md :: | `curating-context/SKILL.md` | **177 exact** / 7,600 |
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-18-skills.md :: | `init-socraticode/SKILL.md` | **412 exact** / 10,050 |
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-18-skills.md :: zero coverage of any `skills/*/SKILL.md`.** There is no exact figure available o
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-18-skills.md :: - **A running tally in a runbook is a defect, not a stale fact.** `SKILL.md:82`
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-19-skills-199-execution.md :: `test_skill_self_budget.py` measures `--file skills/{skill}/SKILL.md`, so the
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-19-skills-199-execution.md :: `SKILL.md` both say **twice**, and nothing substantiated five. Mine.
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-19-skills-199-execution.md :: `SKILL.md:387` cites #189 by number. The issue never closed because nothing
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-19-skills-199-execution.md :: | `orchestrating-issue-backlog/SKILL.md` | **55** |
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-19-skills-199-execution.md :: | `curating-context/SKILL.md` | **151** |
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-19-skills-199-execution.md :: `orchestrating-issue-backlog/SKILL.md`, whose Step 10 pointer at `:244` was
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-20-skills-213-execution.md :: **Rule for future briefs: an agent that grows a `SKILL.md` must report the
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-20-skills.md :: init-socraticode SKILL.md **Phase 3** — visible only by mapping the issues'
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills-219-execution.md :: correctly refuses to quote a SKILL.md worst case at a call site whose
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills-219-execution.md :: The first lesson above is a genuine Rule 1 clause. `SKILL.md` measures 23,054
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills.md :: `init-socraticode/SKILL.md` sits at 9,758 estimated against a 10,050 ratchet —
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills.md :: finding in `SKILL.md` instead of `references/`, it would have breached the
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills.md :: paragraph. It was **not promoted**, because `SKILL.md` measures 23,054 against
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-27-skills-239-execution.md :: SKILL.md headroom figure (~20) that was ~143 by launch; four "prerequisite"
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-27-skills-239-execution.md :: **The orchestrator CR must run the opt-in exact gate when any SKILL.md grew.**
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-27-skills-239-execution.md :: The fourth #217-class breach: curating-context/SKILL.md at 7,661 exact vs the
+skills/orchestrating-issue-backlog/references/process-log/2026/index.md :: | [2026-08-13](2026-08-13-power-map.md) | CannObserv/power-map | Q5 variant — th
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-09-observo.md :: **[Promotion candidate → Agent Roles / worker prompts.]** Across six batches and
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-06-08-wordpress.md :: When a backlog comes from a single recently-filed spec authored in the same sess
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-usa-wa-207-execution.md :: It lived in *four* places — Orchestrator step 2, Rule 3's canonical pattern bloc
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: | Five Key Principles bullets | Verbatim restatements of Step 7, the Branch stra
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-03-23-skills.md :: - Worker agents self-review and fix all findings before signaling completion. Ke
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-05-22-wordpress.md :: **Incident:** `/orchestrating-issue-backlog` launched 10 parallel worker agents
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-182-execution.md :: Execution of the #182 plan (planning entry above). Four batches, 9 worker agents
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher-268-execution.md :: seven worker agents, three CR rounds, three production deploys. Eight issues
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-13-observo.md :: - The cited anchor (`ARCHITECTURE.md` §"Cross-consumer Signal replay & crash rec
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-13-observo.md :: exists; the contract moved to `CONSUMER-RECOVERY.md` §"Cross-consumer crash reco
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-usa-wa-207-execution.md :: ## Session 2026-08-11→13 — CannObserv/usa-wa (#207 execution)
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-11-usa-wa.md :: ## Session 2026-08-11 — CannObserv/usa-wa (post-#179b followup backlog)
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-13-skills.md :: ## Session 2026-08-13 — gregoryfoster/skills (#144 execution addendum)
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-skills-161-promotion.md :: ## Session 2026-08-17 — gregoryfoster/skills (#161 promotion pass)
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher-268-execution.md :: ## Session 2026-08-17 — CannObserv/watcher, #268 execution addendum
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-17-watcher.md :: ### #265: closed-in-fact by one day
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills-219-execution.md :: ## Session 2026-08-21 — gregoryfoster/skills (#219 execution)
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-08-21-skills.md :: ## Session 2026-08-21 — gregoryfoster/skills (#214–217 → #219)
+skills/orchestrating-issue-backlog/references/process-log/2026/2026-09-14-observo.md :: ## Session 2026-09-14 — CannObserv/observo (#543–#562)
+
+# Tests that follow the relocated content: they slice references/execution.md by
+# the moved headings, and the ratchet comment narrates the move.
+tests/structural/test_content_invariants.py :: # The #285 curation demoted the execution protocol (Agent Roles, Branch
+tests/structural/test_content_invariants.py :: self.execution.index("### Worker agents") : self.execution.index(
+tests/structural/test_content_invariants.py :: "## Branch Hygiene Rules"
+tests/structural/test_content_invariants.py :: "### Rule 6 — Detect worktree fall-through at runtime"
+tests/structural/test_content_invariants.py :: body.index("### Orchestrator agent") : body.index("### Worker agents")
+tests/structural/test_content_invariants.py :: protocol = self.execution[self.execution.index("### Worker agents") :]
+tests/structural/test_skill_self_budget.py :: # verbatim into references/: the execution protocol (Agent Roles, Branch
