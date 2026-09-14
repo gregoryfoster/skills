@@ -191,7 +191,8 @@ skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-me
 # verbatim into references/; these six were rewritten in place.
 # Step 5 item 1 ended "Three refinements:" over four sub-bullets that this run
 # moved to references/issue-audit.md — the pointer is retargeted, and the count
-# corrected (there were four; the sweep refinement was added after the count).
+# corrected: there were four. The count and three refinements landed together
+# in 709b6b6; the hedge refinement followed in 3b374bb without updating it.
 skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Then list each contested file and the issues that touch it. Three refinements:
 # Process Logs introduced a ledger this run moved to references/process-log.md.
 skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Rules that originated there:
