@@ -104,11 +104,19 @@ silently.
 
 ## Adopting `projectId` on a repo already in the store
 
-It renames the collections. A set already in the store under this checkout's
-path hash — `validate-store` prints it as `pathHash` — is orphaned. Remove it
-(`codebase_remove`, `codebase_graph_remove`, `codebase_context_remove`) from
-the host that wrote it, not by addressing the store from here without a
-`projectId`.
+It renames the collections, and orphans any set already in the store under
+this checkout's path hash (`validate-store` prints it as `pathHash`). The three
+remove tools — `codebase_remove`, `codebase_graph_remove`,
+`codebase_context_remove` — take only a `projectPath` and resolve the id the way
+indexing does, `.socraticode.json` first. So the order decides what they delete:
+
+- **Before** the `projectId` reaches the checkout that wrote the old set, run
+  them there, on the host that wrote it: that checkout still resolves to the
+  hash.
+- **After**, the same calls delete the *new* collections. The old set is then
+  reachable only by a server started with `SOCRATICODE_PROJECT_ID=<pathHash>`,
+  which outranks the file: export it for one Claude Code session, run the
+  three removals there, and end the session. Never persist it.
 
 ## Namespace
 
