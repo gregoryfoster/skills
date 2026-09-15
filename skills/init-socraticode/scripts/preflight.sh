@@ -279,12 +279,20 @@ unreachable() {
 # choose. An external store with an external (or cloud) embedder starts no
 # container, and demanding Docker there reported a ✗ that was not a defect
 # (#287).
-DOCKER_FOR=""
-[ "$STORE_MODE" = managed ] && DOCKER_FOR="the managed Qdrant"
+# DOCKER_FOR says why, for the gate's own line; DOCKER_WHAT names what runs,
+# for the boot-persistence lines, which used to say "Qdrant never starts" on a
+# host where only an Ollama container needed Docker (#287 CR 22).
+DOCKER_FOR="" DOCKER_WHAT=""
+if [ "$STORE_MODE" = managed ]; then
+  DOCKER_FOR="the managed Qdrant" DOCKER_WHAT="the Qdrant container"
+fi
 if [ "$E_PROVIDER" = ollama ]; then
   case "$O_MODE" in
     external) ;;
-    docker) DOCKER_FOR="${DOCKER_FOR:+$DOCKER_FOR and }the Ollama embedder (OLLAMA_MODE=docker)" ;;
+    docker)
+      DOCKER_FOR="${DOCKER_FOR:+$DOCKER_FOR and }the Ollama embedder (OLLAMA_MODE=docker)"
+      DOCKER_WHAT="${DOCKER_WHAT:+$DOCKER_WHAT and }the Ollama container"
+      ;;
     *)
       # Probed only where the answer changes the verdict: next to a managed
       # Qdrant, Docker is needed either way.
@@ -292,6 +300,7 @@ if [ "$E_PROVIDER" = ollama ]; then
         NATIVE="$(curl -q -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
         if [ "$NATIVE" != 200 ]; then
           DOCKER_FOR="the Ollama embedder (OLLAMA_MODE=$O_MODE falls back to a container when no native Ollama answers on localhost:11434)"
+          DOCKER_WHAT="the Ollama container"
         fi
       fi
       ;;
@@ -315,7 +324,6 @@ if [ -z "$DOCKER_FOR" ]; then
 elif ! command -v docker >/dev/null 2>&1; then
   fail "Docker not installed (needed for $DOCKER_FOR)"
   hint "macOS: brew install --cask docker   Linux: https://docs.docker.com/engine/install/"
-  [ "$STORE_MODE" = external ] && hint "Or keep the client Docker-free: OLLAMA_MODE=external and OLLAMA_URL=<the store's Ollama>"
 else
   if docker_socket_idle; then
     # Not probed — but not assumed either (#287 CR 10). Socket activation
@@ -365,14 +373,21 @@ else
       *enabled* | *static* | *indirect*)
         # Matches enabled / enabled-runtime on either unit; socket activation
         # counts, and "disabled" contains no "enabled" substring.
-        pass "Docker starts at boot (index survives a reboot)"
+        pass "Docker starts at boot ($DOCKER_WHAT survives a reboot)"
         ;;
       *)
-        printf '  \033[33m•\033[0m %s\n' "Docker is not enabled at boot — after a reboot the daemon stays down, Qdrant never starts, and codebase_search returns nothing"
+        warn "Docker is not enabled at boot — after a reboot the daemon stays down and $DOCKER_WHAT with it, so codebase_search fails or returns nothing"
         hint "sudo systemctl enable docker"
         ;;
     esac
   fi
+fi
+
+# An external-store client still embedding through an Ollama container is
+# Docker-bound for that alone. Said whether or not Docker is here: the host
+# that has it is the one that never heard it before (#287 CR 22).
+if [ "$STORE_MODE" = external ] && [ -n "$DOCKER_FOR" ]; then
+  warn "This external-store client still embeds through an Ollama container — OLLAMA_MODE=external with the store's OLLAMA_URL keeps it Docker-free"
 fi
 
 # ── External store: the URL, its TLS, and an answer ─────────────────────────

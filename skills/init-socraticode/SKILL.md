@@ -20,9 +20,10 @@ returns hits).
 SocratiCode gives agents `codebase_search` / `codebase_impact` / `codebase_flow`
 / `codebase_symbol` / `codebase_graph_*` / `codebase_context_*` MCP tools backed
 by a Qdrant vector store (local, or shared: `STORE=external`) + Ollama
-embeddings + an AST dependency/symbol graph. It's a Claude Code **plugin** (`socraticode@socraticode`) whose MCP server
-also ships the management tools this skill drives (`codebase_index`,
-`codebase_status`, `codebase_health`, `codebase_watch`, …).
+embeddings + an AST dependency/symbol graph. It's a Claude Code **plugin**
+(`socraticode@socraticode`) whose MCP server also ships the management tools
+this skill drives (`codebase_index`, `codebase_status`, `codebase_health`,
+`codebase_watch`, …).
 
 <HARD-GATE>
 Do NOT write files into the target project or start a (slow, one-time) index
@@ -41,7 +42,7 @@ Ask the user; each has a default they can accept silently.
 | Parameter | Default | Choices | Drives |
 |---|---|---|---|
 | `PROJECT_PATH` | repo root (`git rev-parse --show-toplevel`) | any abs path | what gets indexed; passed to every `codebase_*` call |
-| `STORE` | `managed` | `managed` \| `external` | Phase 1 gates, Phase 3 steps 4–5 — `external`: a Qdrant reached by URL, no Docker ([`references/external-store.md`](references/external-store.md)) |
+| `STORE` | `managed` | `managed` \| `external` | Phase 1 gates, Phase 3 steps 4–5 — `external`: a Qdrant reached by URL, not a container ([`references/external-store.md`](references/external-store.md)) |
 | `EMBEDDING_BACKEND` | `ollama-docker` | `ollama-docker` \| `ollama-native` \| `openai` \| `google` | Phase 1 backend env, index speed — see [`references/embedding-backends.md`](references/embedding-backends.md); `STORE=external` uses the store's instead |
 | `POLICY_FILE` | `AGENTS.md` | `AGENTS.md` \| `CLAUDE.md` | Phase 3 — where the Code Exploration Policy block lands |
 | `INSTALL_HOOK` | `yes` | `yes` \| `no` | Phase 3 — install the two SessionStart hooks (prefetch reminder + once-per-day health check) |
@@ -77,16 +78,16 @@ bash "<SKILL_DIR>/scripts/preflight.sh"
 ```
 
 Gates: Docker installed + daemon running, **only when something will run in
-it** (a managed Qdrant, or an Ollama in `docker`/`auto` mode), never probed on a
-socket-activated host with the daemon down; Node `>=18.17` (26+ is checked
-against the resolved `socraticode@latest`, not refused, and warns if the
-registry is unreachable — [#269](https://github.com/gregoryfoster/skills/issues/269));
-`npx` reachable; for `STORE=external`, the store's URL, TLS, key and answer,
-the external Ollama, and whether this session carries the settings `env` block
-(a first install passes the values inline, the key already in place); and
-advisory checks that Docker starts at
-boot (gotcha L), the `socraticode` marketplace is registered, and the plugin
-MCP server is Connected.
+it** (a managed Qdrant, or an Ollama container: `docker` mode, or `auto` with no
+native one), never probed on a socket-activated host with the daemon down; Node
+`>=18.17` (26+ is checked against the resolved `socraticode@latest`, not
+refused, and warns if the registry is unreachable —
+[#269](https://github.com/gregoryfoster/skills/issues/269)); `npx` reachable;
+for `STORE=external`, the store's URL, TLS, key and answer, the external
+Ollama, and whether this session carries the settings `env` block (a first
+install passes the values inline, the key already in place); and advisory
+checks that Docker starts at boot (gotcha L), the `socraticode` marketplace is
+registered, and the plugin MCP server is Connected.
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
 non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix

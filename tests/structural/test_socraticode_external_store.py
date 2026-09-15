@@ -262,6 +262,25 @@ class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
         )
 
     @requires_bash
+    def test_a_host_with_docker_still_hears_how_to_drop_it(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 CR 22: the Docker-free nudge used to print only when Docker was
+        missing, so the host running the fallback container never heard it —
+        and its boot line blamed Qdrant, which it does not run."""
+        binv = _host(tmp_path, systemd=True)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["000", 7]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, SERVICE="active", **env
+        )
+        assert "daemon reachable" in result.stdout, result.stdout
+        nudge = _line(result.stdout, "keeps it Docker-free")
+        assert "•" in nudge and "OLLAMA_MODE=external" in nudge, result.stdout
+        boot = _line(result.stdout, "at boot")
+        assert "Ollama container" in boot and "Qdrant" not in boot, boot
+
+    @requires_bash
     def test_auto_ollama_with_a_native_one_needs_none(self, tmp_path: Path) -> None:
         binv = _host(tmp_path, docker=False)
         env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
