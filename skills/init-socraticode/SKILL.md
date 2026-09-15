@@ -1,10 +1,10 @@
 ---
 name: init-socraticode
-description: Installs, configures, and indexes SocratiCode semantic code search on a project — Docker/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + docs/SOCRATICODE.md, SessionStart prefetch and once-per-day health hooks, a context-artifacts manifest, and a full blocking index verified by edge yield rather than graph status. Use when adding semantic code search to a repo.
-compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running, Node >=18.17, and npx. Run from the target repo's root.
+description: Installs, configures, and indexes SocratiCode semantic code search on a project — Docker-or-shared-store/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + docs/SOCRATICODE.md, SessionStart prefetch and once-per-day health hooks, a context-artifacts manifest, and a full blocking index verified by edge yield rather than graph status. Use when adding semantic code search to a repo.
+compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running (or a reachable external Qdrant), Node >=18.17, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.5"
+  version: "1.6"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -19,8 +19,8 @@ returns hits).
 
 SocratiCode gives agents `codebase_search` / `codebase_impact` / `codebase_flow`
 / `codebase_symbol` / `codebase_graph_*` / `codebase_context_*` MCP tools backed
-by a local Qdrant vector store + Ollama embeddings + an AST dependency/symbol
-graph. It's a Claude Code **plugin** (`socraticode@socraticode`) whose MCP server
+by a Qdrant vector store (local, or shared: `STORE=external`) + Ollama
+embeddings + an AST dependency/symbol graph. It's a Claude Code **plugin** (`socraticode@socraticode`) whose MCP server
 also ships the management tools this skill drives (`codebase_index`,
 `codebase_status`, `codebase_health`, `codebase_watch`, …).
 
@@ -38,16 +38,16 @@ Ask the user; each has a default they can accept silently.
 | Parameter | Default | Choices | Drives |
 |---|---|---|---|
 | `PROJECT_PATH` | repo root (`git rev-parse --show-toplevel`) | any abs path | what gets indexed; passed to every `codebase_*` call |
+| `STORE` | `managed` | `managed` \| `external` | Phase 1 gates, Phase 3 steps 4–5 — `external`: a Qdrant reached by URL, no Docker ([`references/external-store.md`](references/external-store.md)) |
 | `EMBEDDING_BACKEND` | `ollama-docker` | `ollama-docker` \| `ollama-native` \| `openai` \| `google` | Phase 1 backend env, index speed — see [`references/embedding-backends.md`](references/embedding-backends.md) |
 | `POLICY_FILE` | `AGENTS.md` | `AGENTS.md` \| `CLAUDE.md` | Phase 3 — where the Code Exploration Policy block lands |
 | `INSTALL_HOOK` | `yes` | `yes` \| `no` | Phase 3 — install the two SessionStart hooks (prefetch reminder + once-per-day health check) |
-| `LINKED_PROJECTS` | none | comma-separated abs paths | Phase 3 — cross-repo search over sibling checkouts via `SOCRATICODE_LINKED_PROJECTS` |
+| `LINKED_PROJECTS` | none | comma-separated sibling paths | Phase 3 — cross-repo search: relative `linkedProjects` in `.socraticode.json` |
 
-**Backend note (do not silently default for large repos).** `ollama-docker` needs
-no key but is **CPU-only and slow** (`usa-wa`: ~1105 files / 6019 chunks / ~75
-min). For large repos or when a key/GPU is available, steer the user to `openai`
-/ `google` / `ollama-native`. If they pick a cloud backend, collect the API key
-and confirm which env var the installed server version expects.
+**Backend note (do not silently default for large repos).** `ollama-docker` is
+keyless but **CPU-only and slow** (`usa-wa`: ~75 min); steer large repos, or a
+user with a key/GPU, to `openai` / `google` / `ollama-native`, and for a cloud
+backend collect the key and confirm the env var the installed server expects.
 
 Confirm all parameters before Phase 1.
 
@@ -73,17 +73,17 @@ each Bash call runs in a fresh shell, so they are not inherited. Clean up
 bash "<SKILL_DIR>/scripts/preflight.sh"
 ```
 
-Gates: Docker installed + daemon running; Node `>=18.17` (26+ is checked against
-the resolved `socraticode@latest`, not refused, and warns if the registry is
-unreachable — [#269](https://github.com/gregoryfoster/skills/issues/269));
-`npx` reachable; and advisory checks that Docker starts at boot, the
-`socraticode` marketplace is registered, and the plugin MCP server is Connected.
-
-The boot-persistence advisory is the one whose absence bites later rather than
-now: on a systemd host where `systemctl is-enabled docker` is `disabled`, the
-index works today and vanishes after the next reboot — the daemon never comes
-back, so Qdrant never starts and `codebase_search` quietly returns nothing
-(gotcha L).
+Gates: Docker installed + daemon running, **only when something will run in
+it** (a managed Qdrant, or an Ollama in `docker`/`auto` mode), never probed on a
+socket-activated host with the daemon down; Node `>=18.17` (26+ is checked
+against the resolved `socraticode@latest`, not refused, and warns if the
+registry is unreachable — [#269](https://github.com/gregoryfoster/skills/issues/269));
+`npx` reachable; for `STORE=external`, the store's URL, TLS, key and answer,
+the external Ollama, and whether this session carries the settings `env` block
+([`references/external-store.md`](references/external-store.md) — a first
+install passes the values inline); and advisory checks that Docker starts at
+boot (gotcha L), the `socraticode` marketplace is registered, and the plugin
+MCP server is Connected.
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
 non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix
@@ -101,26 +101,19 @@ environment where the MCP server / driver will run, before Phase 5.
 ```bash
 claude plugin marketplace add giancarloerra/socraticode   # once per host
 claude plugin install socraticode@socraticode             # user scope
-claude mcp list                                            # expect: plugin:socraticode:socraticode ✓ Connected
+SOCRATICODE_AUTO_RESUME=off claude mcp list   # read-only (gotcha R); expect: plugin:socraticode:socraticode ✓ Connected
 ```
 
-**The marketplace step is not optional on a fresh host.** `socraticode@socraticode`
-is `plugin@marketplace`; with no marketplace registered the install has nothing to
-resolve against and fails. `giancarloerra/socraticode` is the canonical source
-(per the plugin-hub listing). Forks exist — `oltivex/socraticode` and
-`Flink-JP/socraticode` among them — so if a project has standardized on one, add
-that instead, deliberately rather than by accident; the plugin name stays
-`socraticode@socraticode` either way. Preflight Gate 4 reports whether the
-marketplace is registered, separately from whether the server is Connected.
+**The marketplace step is not optional on a fresh host:** `socraticode@socraticode`
+is `plugin@marketplace`, so with none registered the install fails.
+`giancarloerra/socraticode` is canonical (per the plugin-hub listing); forks
+such as `oltivex/socraticode` and `Flink-JP/socraticode` exist — add one only
+deliberately, and the plugin name stays the same. Preflight Gate 4 reports the
+marketplace separately from the connection.
 
-**Duplicate-config trap.** If `claude mcp list` (or the session toolset) shows
-BOTH `mcp__plugin_socraticode_socraticode__*` and a standalone
-`mcp__socraticode__*`, remove the standalone — the plugin already provides the
-server:
-
-```bash
-claude mcp remove socraticode
-```
+**Duplicate-config trap.** A standalone `mcp__socraticode__*` beside the
+plugin's `mcp__plugin_socraticode_socraticode__*` is redundant — preflight Gate
+4 flags it; remove it with `claude mcp remove socraticode`.
 
 ### Phase 3 — Author the project's exploration policy (idempotent)
 
@@ -196,14 +189,23 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    A copy freezes at install day and `.skills/doctor.sh` sees only *dangling*
    symlinks, so the drift reads as a healthy install; retyping a hook from prose
    is worse still (#186).
-4. **Linked projects** (only when `LINKED_PROJECTS` is set — it defaults to
-   none, so most installs skip this) → follow
-   [`references/linked-projects.md`](references/linked-projects.md): write
-   `SOCRATICODE_LINKED_PROJECTS=<comma-separated abs paths>` into the `env` block
-   of `.claude/settings.local.json` (merge, never clobber), then make sure that
-   file is git-ignored — it holds one VM's absolute paths. Enables cross-repo
-   `codebase_search` over sibling checkouts; each linked project must itself be
-   indexed to contribute results.
+4. **`.socraticode.json`** (when `STORE=external` or `LINKED_PROJECTS` is set)
+   → at the repo root, merged, committed: `projectId` for an external store
+   (default: the repo name), and each linked sibling in `linkedProjects` as a
+   path **relative to the repo root** — never absolute, which names one host's
+   layout. Each linked project must itself be indexed to contribute results.
+   Details, and migrating an older install's `SOCRATICODE_LINKED_PROJECTS`:
+   [`references/linked-projects.md`](references/linked-projects.md).
+5. **Client `env` block** (only `STORE=external`, and only after step 4 wrote
+   `projectId`) → merge it into `.claude/settings.json`, per
+   [`references/external-store.md`](references/external-store.md) (the key is
+   already in git-ignored `.claude/settings.local.json`). Never the block
+   alone: without a `projectId`
+   a session names its collections by a hash of the checkout path, shared by
+   every host with the same layout. Then restart Claude Code here, trust the
+   folder, and re-run `preflight.sh --check` from the new session — its `env`
+   block line must be ✓ before Phase 5. This session cannot index: its server
+   started without the block.
 
 ### Phase 4 — Configure context artifacts
 
@@ -246,6 +248,11 @@ projects authoring first-party skills under `skills/`:
 
 ### Phase 5 — Run the index and block until *fully* done
 
+**Gate first, on either path:** `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
+validate-store "<PROJECT_PATH>"` fails, naming the defect, when a server
+launched here would address the wrong store or collections. The driver runs it
+before its own launches.
+
 **Preferred (native) path** — when the `codebase_*` tools are callable in this
 session (run the `ToolSearch` prefetch from
 [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
@@ -278,16 +285,13 @@ during indexing (gotcha B), and blocks on the same three-signal predicate before
 returning. It **owns its child process and kills by PID** — no `pkill -f`
 self-match (gotcha G) — and parses status strings loosely (gotcha H).
 
-> **If the driver can't find the server**, run `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
-> resolve` — it prints the launch command it would use and exits without
-> starting anything (no Docker, no network). It reads the plugin's own
-> `mcp.json` first, so a plugin-only host resolves to the same `npx -y
-> socraticode` the session runs (gotcha I). Override with `SOCRATICODE_ENTRY`
-> only if that chain comes up empty.
+> **If the driver can't find the server**, `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
+> resolve` prints the launch command it would use, starting nothing (gotcha I);
+> `SOCRATICODE_ENTRY` overrides it only if that chain comes up empty.
 
-> **Timeouts.** First index is slow and one-time (gotcha D). The driver's ceiling
-> is `INDEX_TIMEOUT_MS` (default 2h). For a large repo on CPU Ollama, raise it or
-> switch backends rather than letting it abort a live build.
+> **Timeouts.** The first index is slow and one-time (gotcha D): raise
+> `INDEX_TIMEOUT_MS` (default 2h) or switch backends rather than let it abort a
+> live build.
 
 ### Phase 6 — Verify
 
@@ -296,6 +300,8 @@ Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PAT
 - A sample `codebase_search` returns hits.
 - `codebase_graph_status` is READY **and clears the yield floor** (below).
 - `codebase_list_projects` shows the project.
+- `STORE=external`: `codebase_health` reports `Qdrant mode: external` and the
+  store's endpoint, not a container.
 - `codebase_status`: artifacts N/N, and the last operation **completed, not
   FAILED**. A failed last operation fails verification even with every other
   light green — the delta that failed is missing from the index. On usa-wa an
@@ -321,17 +327,14 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 server states the yield itself and `health-check` prefers it (`source` says which
 ruled), but only for a graph *it* built. Rebuild before writing variant B ([#207](https://github.com/gregoryfoster/skills/issues/207)).
 
-A low-yield graph is an upstream defect this skill cannot repair: route around it
-but never fail the install: a repo with *no* policy is worse off than one whose
-policy avoids the broken tool.
-
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 
 Present a completion table:
 
 | Component | Status |
 |---|---|
-| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) · Node `<version>` (>=18.17) ✓ · npx ✓ |
+| Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17) ✓ · npx ✓ |
+| Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
 | Backend | `<EMBEDDING_BACKEND>` |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |
@@ -347,18 +350,18 @@ Running this skill on a project that already has SocratiCode is **safe and is
 the audit**: every file edit is idempotent and Phase 6 re-verifies the
 completion signals. Before an audit re-run read
 [`references/audit-rerun.md`](references/audit-rerun.md) — what each phase
-re-does, the partial installs a re-run repairs (including a manifest the server
-silently rejected, which has been reporting `artifacts 0/0` as if healthy), and
-the one thing a re-run must not do quietly: rescue repo-authored prose out of an
-unmarked policy section before Phase 3 replaces the span
+re-does, the partial installs a re-run repairs, and the one thing a re-run must
+not do quietly: rescue repo-authored prose out of an unmarked policy section
+before Phase 3 replaces the span
 ([#115](https://github.com/gregoryfoster/skills/issues/115)).
 
 ## Key invariants
 
-Three further invariants — completion is three signals, the graph is gated on
-yield not `READY`, and a FAILED last operation fails verification — are enforced
-by Phases 5–6 and recorded under *Invariants a phase already enforces* in
-[`references/troubleshooting.md`](references/troubleshooting.md).
+Seven further invariants are enforced by Phases 4–6 and recorded under
+*Invariants a phase already enforces* in
+[`references/troubleshooting.md`](references/troubleshooting.md): three
+completion signals, yield over `READY`, a FAILED last operation, the fenced
+driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
 
 - **All file edits are idempotent.** The AGENTS.md policy block and the
   `docs/SOCRATICODE.md` template are both marker-delimited — a re-run replaces
@@ -368,8 +371,9 @@ by Phases 5–6 and recorded under *Invariants a phase already enforces* in
 - **The health hook reports; it never repairs.** No re-index, no Docker start,
   no file edit from a SessionStart hook — it runs before an agent has context
   and must cost a bounded, silent-when-clean moment.
-- **Never mutate the host toolchain.** Preflight detects and instructs; its one
-  network read resolves the published server version, and warns when it fails.
+- **Never mutate the host toolchain.** Preflight detects and instructs. Its
+  network reads are bounded GETs, and it runs no docker command that would
+  start a socket-activated daemon.
 - **The policy block pays rent on every invocation.** It is the one section
   `curating-context` will not edit, so whatever lands in `AGENTS.md` is a fixed
   cost the repo cannot curate away — 1,247 tokens and 15% of watcher's whole
@@ -381,27 +385,12 @@ by Phases 5–6 and recorded under *Invariants a phase already enforces* in
   replaced.** The unmarked branch replaces a whole span, and repos grow real
   content in it. Move anything the template does not carry to
   `## Code Exploration Notes (repo-specific)` outside the markers, and say so.
-- **The driver is a fenced fallback, not the default.** Prefer native tools;
-  reach for `mcp-driver.mjs` only when the session won't expose the tools even
-  after a restart. It owns its child process — no `pkill -f`.
-- **Artifacts are project-adapted, not verbatim.** Both the policy block and
-  `.socraticodecontextartifacts.json` must name this project's real files/paths.
-  Each artifact is `{name, path, description}` — `path` is a **single literal
-  file or directory**, never an array and never a glob (the server `stat()`s it;
-  a directory indexes recursively).
-- **Exclude vendored skill trees.** Any repo that vendors skills via
-  `managing-skills` must ship a `.socraticodeignore` (`skills-vendor/`, `skills/`,
-  `.claude/skills/`) or the submodule content dominates the index. Every
-  `init-project-fastapi` repo qualifies.
-- **The file watcher is ephemeral.** Don't promise persistent auto-update from a
-  one-shot run; it needs the plugin daemon live in an interactive session
-  (gotcha E). Don't leave an orphaned node process to fake it.
 
 See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
-gotcha matrix (A–N) and the native-vs-fallback decision tree.
+gotcha matrix (A–T) and the native-vs-fallback decision tree.
 
 **Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
 6,000-token standard, set at current size so this file cannot grow. Came down
 from 10,050 by demoting Phase 0, Phase 4's index-scope and legacy-array
-guidance, and three phase-enforced invariants into `references/`.
+guidance, and seven phase-enforced invariants into `references/`.

@@ -65,21 +65,47 @@ def _stub_toolchain(tmp_path: Path, node_version: str, npm_reply: str | None) ->
     (binv / "npx").write_text("#!/bin/sh\nexit 0\n")
     # `docker info` succeeding is all Gate 1 asks for.
     (binv / "docker").write_text("#!/bin/sh\nexit 0\n")
-    for name in ("node", "npm", "npx", "docker"):
+    # A host with no systemd, so Gate 1 always reaches `docker info`. On a
+    # Linux host whose Docker socket is listening over a stopped daemon, the
+    # gate would pass WITHOUT probing (#287) — and the broken-docker case below
+    # would stop being able to fail.
+    (binv / "systemctl").write_text("#!/bin/sh\nexit 1\n")
+    for name in ("node", "npm", "npx", "docker", "systemctl"):
         (binv / name).chmod(0o755)
     return binv
 
 
+# Every variable that can move preflight to the external store, where Gate 1
+# stops asking for Docker (#287). A session on an external-store VM carries
+# them from its settings env block; the exit codes below are about a managed
+# host, so they must not depend on where the suite runs.
+STORE_VARIABLES = (
+    "QDRANT_MODE",
+    "QDRANT_URL",
+    "QDRANT_HOST",
+    "QDRANT_API_KEY",
+    "OLLAMA_MODE",
+    "OLLAMA_URL",
+    "EMBEDDING_PROVIDER",
+)
+
+
+def _env(binv: Path) -> dict:
+    env = {k: v for k, v in os.environ.items() if k not in STORE_VARIABLES}
+    env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+    return env
+
+
 def _run(tmp_path: Path, node_version: str, npm_reply: str | None):
     binv = _stub_toolchain(tmp_path, node_version, npm_reply)
-    env = dict(os.environ)
-    env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+    # cwd outside any repo, so no project settings file can declare a store.
     return subprocess.run(
         ["bash", str(PREFLIGHT)],
         capture_output=True,
         text=True,
         timeout=120,
-        env=env,
+        env=_env(binv),
+        cwd=str(tmp_path),
     )
 
 
@@ -151,8 +177,7 @@ class TestTheRegistryIsNotAlwaysTheAuthority:
         self, tmp_path: Path
     ) -> None:
         binv = _stub_toolchain(tmp_path, "v26.0.0", "1.13.1")
-        env = dict(os.environ)
-        env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+        env = _env(binv)
         env["SOCRATICODE_ENTRY"] = str(tmp_path / "some-local-build" / "index.js")
         result = subprocess.run(
             ["bash", str(PREFLIGHT)],
@@ -160,6 +185,7 @@ class TestTheRegistryIsNotAlwaysTheAuthority:
             text=True,
             timeout=120,
             env=env,
+            cwd=str(tmp_path),
         )
         line = _node_line(result.stdout)
         assert "1.13.1" not in line, (
@@ -184,14 +210,13 @@ class TestTheExitCodeAssertionsAreHermetic:
         binv = _stub_toolchain(tmp_path, "v26.0.0", "1.13.1")
         (binv / "docker").write_text("#!/bin/sh\nexit 1\n")
         (binv / "docker").chmod(0o755)
-        env = dict(os.environ)
-        env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
         result = subprocess.run(
             ["bash", str(PREFLIGHT)],
             capture_output=True,
             text=True,
             timeout=120,
-            env=env,
+            env=_env(binv),
+            cwd=str(tmp_path),
         )
         assert result.returncode == 1, (
             "Gate 1 is not reaching the exit code, so stubbing docker in "

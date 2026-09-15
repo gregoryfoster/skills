@@ -28,9 +28,17 @@ export GOOGLE_API_KEY=...      # or the provider's documented var for the instal
 ```
 
 Native (host) Ollama with a GPU: install Ollama on the host, `ollama pull
-nomic-embed-text`, and configure SocratiCode to use the host endpoint instead of
-the container. Exact env var names can drift between versions — confirm against
-the installed `socraticode` release before relying on one.
+nomic-embed-text`, and point SocratiCode at it instead of the container:
+`OLLAMA_MODE=external` and `OLLAMA_URL=http://<host>:11434` (the names in
+1.13.3's `embedding-config.js`; confirm against the installed release if it is
+far newer). Left at the default `auto`, the server uses a native Ollama only
+when one answers on localhost:11434 and otherwise starts a container.
+
+With `STORE=external` the embedder is not a free choice: every client of one
+store must embed with the same model at the same dimension, because a
+collection holds vectors of one shape. Use what the store's other clients use —
+the `env` block in [`external-store.md`](external-store.md) sets it, and an
+external Ollama keeps the client Docker-free.
 
 ## Cost/time reality (default CPU Ollama)
 

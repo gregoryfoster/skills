@@ -12,11 +12,34 @@
 #                                # (no mutation happens in either mode)
 #   bash preflight.sh --help     # show usage
 #
-# One network read, and only on Node 26+: `npm view socraticode version`, to
-# learn whether the build that will launch carries the Node 26 Qdrant transport
-# bridge. Bounded to a few seconds and degraded to a warning when it does not
-# answer, so an air-gapped host is slowed rather than blocked. Nothing else here
-# touches the network, and nothing here mutates anything in either mode.
+# Two stores (#287). `managed`, the default, runs Qdrant in a local Docker
+# container. `external` reaches a shared Qdrant by URL and needs no Docker
+# unless the embedder does. The mode, and each value below, is read the way the
+# server will see it: this process's environment first, then the env block of
+# .claude/settings.local.json, then .claude/settings.json. On a first install,
+# before the skill has written those files, pass them in the environment:
+#
+#   QDRANT_MODE=external QDRANT_URL=https://<full host name>:6333 \
+#     OLLAMA_MODE=external OLLAMA_URL=http://<host>:11434 bash preflight.sh
+#
+# Docker is gated only when something will run in it: a managed Qdrant, or an
+# Ollama embedder in `docker` mode (or `auto` mode with no native Ollama on
+# localhost:11434, which falls back to a container). On a socket-activated host
+# whose daemon is down, no docker command runs at all — any of them would
+# start the daemon.
+#
+# Network reads, all bounded to a few seconds and none a write:
+#   - Node 26+ only: `npm view socraticode version`, to learn whether the build
+#     that will launch carries the Node 26 Qdrant transport bridge. Degraded to
+#     a warning when it does not answer, so an air-gapped host is slowed rather
+#     than blocked.
+#   - external store: GET <QDRANT_URL>/collections, without the key and then
+#     with it, so a store that answers 401 is told apart from one that does not
+#     answer, and a rejected key from a missing one. The key goes to curl on
+#     stdin, never on its command line.
+#   - Ollama in `external` mode: GET <OLLAMA_URL>/api/tags; in `auto` mode with
+#     an external store, the same probe of localhost:11434 that the server
+#     makes to choose between a native Ollama and a container.
 #
 # Exit codes: 0 = all gates green; 1 = at least one gate failed (see messages).
 # <<< usage
@@ -74,22 +97,188 @@ version_ge() {
 echo "SocratiCode preflight — host readiness"
 echo
 
-# ── Gate 1: Docker installed and the daemon running ─────────────────────────
-# Qdrant (vector store) and the default Ollama embedder both run as containers.
-if ! command -v docker >/dev/null 2>&1; then
-  fail "Docker not installed"
-  hint "macOS: brew install --cask docker   Linux: https://docs.docker.com/engine/install/"
-elif ! docker info >/dev/null 2>&1; then
-  fail "Docker installed but the daemon is not running"
-  hint "Start Docker Desktop (macOS) or: sudo systemctl start docker (Linux)"
+# ── Configuration: the values the server will see ───────────────────────────
+# Environment first: inside a Claude Code session it already carries the
+# settings `env` block, so this is the server's own view. The project's settings
+# files next, for a run from a plain shell. Only the PROJECT files — theirs is
+# the block an untrusted folder drops (the trust gate below), where user
+# settings apply everywhere regardless.
+#
+# A pattern match, not a JSON parse: this script has to run where node is
+# missing (#281 sends exactly that host here), and the values it reads — a
+# mode, a URL, a key — never carry a quote.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SETTINGS=("$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json")
+
+# from_settings KEY — the first project settings file declaring KEY as a
+# string. Sets S_VAL and S_SRC (relative to the repo root); both empty if none.
+from_settings() {
+  local key="$1" f m
+  S_VAL="" S_SRC=""
+  for f in "${SETTINGS[@]}"; do
+    [ -f "$f" ] || continue
+    m="$(grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$f" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$m" ]; then
+      S_VAL="$(printf '%s' "$m" | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//')"
+      S_SRC="${f#"$ROOT"/}"
+      return 0
+    fi
+  done
+}
+
+# resolve KEY — the environment's value, else the settings files'. Sets R_VAL.
+resolve() {
+  R_VAL="${!1:-}"
+  if [ -z "$R_VAL" ]; then
+    from_settings "$1"
+    R_VAL="$S_VAL"
+  fi
+}
+
+resolve QDRANT_MODE;        STORE_MODE="$R_VAL"
+resolve QDRANT_URL;         Q_URL="${R_VAL%/}"
+resolve QDRANT_HOST;        Q_HOST="$R_VAL"
+resolve QDRANT_API_KEY;     Q_KEY="$R_VAL"
+resolve EMBEDDING_PROVIDER; E_PROVIDER="${R_VAL:-ollama}"
+resolve OLLAMA_MODE;        O_MODE="${R_VAL:-auto}"
+resolve OLLAMA_URL;         O_URL="${R_VAL:-http://localhost:11434}"
+O_URL="${O_URL%/}"
+# Declared in a FILE, whatever the environment says — the trust gate compares
+# the two.
+from_settings QDRANT_MODE;  DECL_MODE="$S_VAL" DECL_SRC="$S_SRC"
+
+# Upstream's own rule: anything but "external" is managed.
+if [ "$STORE_MODE" = external ]; then
+  if [ -n "${QDRANT_MODE:-}" ]; then
+    echo "Store: external (QDRANT_MODE from the environment)"
+  else
+    echo "Store: external (QDRANT_MODE from $DECL_SRC)"
+  fi
 else
-  pass "Docker installed and daemon reachable"
+  STORE_MODE=managed
+  echo "Store: managed — a local Qdrant in Docker"
+fi
+
+# http_status URL [KEY] — prints the HTTP status of a GET; returns curl's exit
+# status, so 0 means some HTTP answer arrived. The key rides in on stdin as a
+# curl config line, never on the command line, where every process on the host
+# can read it for the life of the call.
+http_status() {
+  local key="${2:-}" esc
+  if [ -n "$key" ]; then
+    esc="${key//\\/\\\\}"
+    esc="${esc//\"/\\\"}"
+    printf 'header = "api-key: %s"\n' "$esc" \
+      | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$1" 2>/dev/null
+  else
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null
+  fi
+}
+
+# url_host URL — the host alone: no scheme, userinfo, port or path.
+url_host() {
+  local rest="${1#*://}"
+  rest="${rest%%/*}"
+  rest="${rest##*@}"
+  case "$rest" in
+    \[*) printf '%s' "${rest%%]*}]" ;;
+    *) printf '%s' "${rest%%:*}" ;;
+  esac
+}
+
+# The hosts upstream lets carry a key over plain http, and no others.
+is_loopback() {
+  case "$1" in
+    localhost | 127.0.0.1 | \[::1\]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# unreachable WHAT URL RC — the ✗ for a probe that got no HTTP answer, named by
+# curl's exit status, because each has a different fix.
+unreachable() {
+  local what="$1" url="$2" rc="$3" host
+  host="$(url_host "$url")"
+  case "$rc" in
+    6)
+      fail "$what: cannot resolve $host"
+      hint "Check the host name. On a tailnet, a peer the ACL does not admit is invisible — it fails as DNS, not as a denial"
+      ;;
+    7) fail "$what: connection refused at $url" ;;
+    28) fail "$what: no answer from $url within 5s" ;;
+    35 | 51 | 53 | 54 | 58 | 59 | 60 | 64 | 66 | 77 | 80 | 82 | 83 | 90 | 91)
+      fail "$what: TLS failed at $url (curl exit $rc)"
+      case "$host" in
+        *.* | \[*) ;;
+        *) hint "A certificate names the full host name, and $host is a short one — use the FQDN (on a tailnet, the full MagicDNS name <host>.<tailnet>.ts.net)" ;;
+      esac
+      ;;
+    *) fail "$what: no answer from $url (curl exit $rc)" ;;
+  esac
+}
+
+# ── Gate 1: Docker — only when something will run in it ─────────────────────
+# A managed Qdrant is a container. So is an Ollama embedder in `docker` mode,
+# and one in `auto` mode (upstream's default) unless a native Ollama answers on
+# localhost:11434 — the server makes that same probe, with a 2s budget, to
+# choose. An external store with an external (or cloud) embedder starts no
+# container, and demanding Docker there reported a ✗ that was not a defect
+# (#287).
+DOCKER_FOR=""
+[ "$STORE_MODE" = managed ] && DOCKER_FOR="the managed Qdrant"
+if [ "$E_PROVIDER" = ollama ]; then
+  case "$O_MODE" in
+    external) ;;
+    docker) DOCKER_FOR="${DOCKER_FOR:+$DOCKER_FOR and }the Ollama embedder (OLLAMA_MODE=docker)" ;;
+    *)
+      # Probed only where the answer changes the verdict: next to a managed
+      # Qdrant, Docker is needed either way.
+      if [ "$STORE_MODE" = external ]; then
+        NATIVE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+        if [ "$NATIVE" != 200 ]; then
+          DOCKER_FOR="the Ollama embedder (OLLAMA_MODE=$O_MODE falls back to a container when no native Ollama answers on localhost:11434)"
+        fi
+      fi
+      ;;
+  esac
+fi
+
+# True on a systemd host whose Docker socket is listening while the daemon is
+# down. Every docker command — `docker info` included — connects to that socket,
+# and connecting STARTS the daemon: on broker's 2 GB, no-swap node a read-only
+# `docker ps` brought up dockerd and containerd, ~120 MB, beside the cohort's
+# production Redis (#287). `systemctl is-active` asks systemd instead, and
+# touches nothing.
+docker_socket_idle() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl is-active --quiet docker.socket 2>/dev/null || return 1
+  ! systemctl is-active --quiet docker.service 2>/dev/null
+}
+
+if [ -z "$DOCKER_FOR" ]; then
+  pass "Docker not needed — the store is external and the embedder is not a container, so nothing here starts one"
+elif ! command -v docker >/dev/null 2>&1; then
+  fail "Docker not installed (needed for $DOCKER_FOR)"
+  hint "macOS: brew install --cask docker   Linux: https://docs.docker.com/engine/install/"
+  [ "$STORE_MODE" = external ] && hint "Or keep the client Docker-free: OLLAMA_MODE=external and OLLAMA_URL=<the store's Ollama>"
+else
+  if docker_socket_idle; then
+    # Not probed, and not a failure: the socket is how this host runs Docker,
+    # and the server's first docker call brings the daemon up.
+    pass "Docker is socket-activated and its daemon is down — not probed, since any docker command would start it; the server starts it on first use (needed for $DOCKER_FOR)"
+  elif ! docker info >/dev/null 2>&1; then
+    fail "Docker installed but the daemon is not running (needed for $DOCKER_FOR)"
+    hint "Start Docker Desktop (macOS) or: sudo systemctl start docker (Linux)"
+  else
+    pass "Docker installed and daemon reachable (needed for $DOCKER_FOR)"
+  fi
 
   # Boot persistence (advisory; systemd hosts only). SocratiCode creates both
   # containers with `--restart unless-stopped`, so they come back on their own
   # once the daemon is up — the only thing that doesn't survive a reboot is a
   # daemon that was never enabled at boot. Symptom if missed: search silently
-  # returns nothing after a restart (troubleshooting gotcha L).
+  # returns nothing after a restart (troubleshooting gotcha L). `is-enabled`
+  # reads unit files; like `is-active`, it never starts the daemon.
   if command -v systemctl >/dev/null 2>&1; then
     DOCKER_BOOT="$(systemctl is-enabled docker 2>/dev/null || true)"
     DOCKER_SOCKET_BOOT="$(systemctl is-enabled docker.socket 2>/dev/null || true)"
@@ -107,6 +296,97 @@ else
         hint "sudo systemctl enable docker"
         ;;
     esac
+  fi
+fi
+
+# ── External store: the URL, its TLS, and an answer ─────────────────────────
+# Mirrors upstream's ensureExternalQdrantReady (1.13.3) and adds the two checks
+# it leaves to the first index: whether the store answers at all, and whether
+# it takes the key. QDRANT_URL, never QDRANT_HOST: the URL built from a host
+# alone uses QDRANT_PORT, whose default is 16333 rather than Qdrant's 6333, so
+# the mistake reads as a network fault (CannObserv/broker#17, trap 3).
+if [ "$STORE_MODE" = external ]; then
+  Q_SCHEME="${Q_URL%%://*}"
+  Q_URL_HOST="$(url_host "$Q_URL")"
+  if [ -z "$Q_URL" ]; then
+    fail "QDRANT_MODE=external but QDRANT_URL is not set${Q_HOST:+ (QDRANT_HOST=$Q_HOST is)}"
+    hint "Set QDRANT_URL=https://<full host name>:6333 — a URL built from QDRANT_HOST uses port ${QDRANT_PORT:-16333}, not Qdrant's 6333"
+  elif [ -n "$Q_KEY" ] && [ "$Q_SCHEME" != https ] && ! is_loopback "$Q_URL_HOST"; then
+    # Upstream refuses before it connects, so there is nothing to probe.
+    fail "QDRANT_API_KEY is set but $Q_URL is not https — the server refuses to send the key over plain http"
+    hint "Serve the store over TLS and use https://<full host name>:6333"
+  elif ! command -v curl >/dev/null 2>&1; then
+    warn "curl not found — the store at $Q_URL was not probed"
+  else
+    Q_RC=0
+    Q_CODE="$(http_status "$Q_URL/collections")" || Q_RC=$?
+    if [ "$Q_RC" -ne 0 ]; then
+      unreachable "Qdrant store" "$Q_URL" "$Q_RC"
+    else
+      case "$Q_CODE" in
+        200) pass "Qdrant store answers at $Q_URL (no key required)" ;;
+        401 | 403)
+          if [ -z "$Q_KEY" ]; then
+            fail "Qdrant store at $Q_URL requires an API key (HTTP $Q_CODE without one), and QDRANT_API_KEY is not set"
+            hint "Put it in the env block of .claude/settings.local.json — git-ignored — never in the tracked settings.json"
+          else
+            K_RC=0
+            K_CODE="$(http_status "$Q_URL/collections" "$Q_KEY")" || K_RC=$?
+            if [ "$K_RC" -ne 0 ]; then
+              unreachable "Qdrant store" "$Q_URL" "$K_RC"
+            elif [ "$K_CODE" = 200 ]; then
+              pass "Qdrant store answers at $Q_URL and accepts QDRANT_API_KEY"
+            else
+              fail "Qdrant store at $Q_URL rejects QDRANT_API_KEY (HTTP $K_CODE; the key is ${#Q_KEY} characters)"
+              hint "A truncated key is refused exactly like a wrong one — compare its length with the store's"
+            fi
+          fi
+          ;;
+        *) fail "Qdrant store at $Q_URL answered HTTP $Q_CODE to /collections — is it a Qdrant endpoint?" ;;
+      esac
+    fi
+  fi
+fi
+
+# ── External embedder: an Ollama the server will not start ──────────────────
+# Upstream checks it at the first index and names OLLAMA_URL when it fails; the
+# model itself it pulls on demand, so only the answer is gated here.
+if [ "$E_PROVIDER" = ollama ] && [ "$O_MODE" = external ]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl not found — Ollama at $O_URL was not probed"
+  else
+    O_RC=0
+    O_CODE="$(http_status "$O_URL/api/tags")" || O_RC=$?
+    if [ "$O_RC" -ne 0 ]; then
+      unreachable "Ollama" "$O_URL" "$O_RC"
+    elif [ "$O_CODE" = 200 ]; then
+      pass "Ollama answers at $O_URL"
+    else
+      fail "Ollama at $O_URL answered HTTP $O_CODE to /api/tags"
+    fi
+  fi
+fi
+
+# ── Trust: the settings env block reaches this session ──────────────────────
+# Claude Code applies a project's `env` block only in a trusted folder, and only
+# to sessions started after it was written. Without it QDRANT_MODE reverts to
+# managed and OLLAMA_MODE to auto, and the server does not report missing
+# configuration — it starts a local Docker stack, through the socket if the
+# host has one (CannObserv/broker#17, trap 6). Trust cannot be read reliably
+# from outside (it is inherited from a parent folder, and IDE and SDK sessions
+# skip the prompt), so this checks its effect: CLAUDECODE marks a process a
+# session started, and that process either carries the block or does not.
+if [ "$DECL_MODE" = external ]; then
+  if [ -n "${CLAUDECODE:-}" ]; then
+    if [ "${QDRANT_MODE:-}" = external ]; then
+      pass "This session carries $DECL_SRC's env block (QDRANT_MODE=external) — the folder is trusted"
+    else
+      fail "$DECL_SRC sets QDRANT_MODE=external, but this session's environment does not carry it — its SocratiCode server runs managed mode and starts a local Docker stack instead of reaching the store"
+      hint "Restart Claude Code in this folder and accept the trust prompt, then re-run this check from the new session"
+    fi
+  else
+    warn "Outside a Claude Code session, so whether $DECL_SRC's env block reaches the server is unconfirmed — an untrusted folder drops it"
+    hint "Re-run this check from a Claude Code session started in this folder"
   fi
 fi
 
@@ -201,7 +481,14 @@ if command -v claude >/dev/null 2>&1; then
     hint "claude plugin marketplace add giancarloerra/socraticode"
   fi
 
-  MCP_LIST="$(claude mcp list 2>/dev/null || true)"
+  # `claude mcp list` STARTS each server to test it, and SocratiCode's startup
+  # auto-resume then runs an incremental update of the project at its cwd and,
+  # in managed mode, probes Docker: a write to the index and, on a
+  # socket-activated host, a daemon start — from a check that promises neither.
+  # Before a projectId exists that write lands in collections named by this
+  # checkout's path hash (#287). Upstream reads SOCRATICODE_AUTO_RESUME=off
+  # before any Docker or Qdrant access, so the probe stays a probe.
+  MCP_LIST="$(SOCRATICODE_AUTO_RESUME=off claude mcp list 2>/dev/null || true)"
   if printf '%s\n' "$MCP_LIST" | grep -q 'plugin:socraticode:socraticode.*Connected'; then
     pass "Plugin MCP server connected (plugin:socraticode:socraticode)"
   else

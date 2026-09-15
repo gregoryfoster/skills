@@ -70,6 +70,13 @@ def _clean_env(**extra: str) -> dict:
         # health-check reads it since #281, and a session that runs this suite
         # may well have it set — the skill writes it into settings.local.json.
         "SOCRATICODE_LINKED_PROJECTS",
+        # Read by the store guard since #287, which every server-launching
+        # command runs first. A session on an external-store VM carries the
+        # first from its settings env block, and every fixture here declares no
+        # projectId, so leaving it in would refuse each launch these tests make.
+        "QDRANT_MODE",
+        "SOCRATICODE_PROJECT_ID",
+        "SOCRATICODE_BRANCH_AWARE",
     ):
         env.pop(k, None)
     env.update(extra)

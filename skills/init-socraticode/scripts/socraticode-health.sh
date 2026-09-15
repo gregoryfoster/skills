@@ -6,8 +6,9 @@
 # Sibling of managing-skills' skills-submodule-update.sh, which established this
 # cadence pattern (UTC day-stamped lock in .git/, bounded log, always exit 0).
 # Deliberately a separate hook rather than an extension of that one: this one
-# needs a running MCP server and Docker, and the submodule refresh must not
-# start depending on either.
+# needs a running MCP server and the store behind it — Docker for a managed
+# store, a reachable URL for an external one (#287) — and the submodule refresh
+# must not start depending on either.
 set -euo pipefail
 # -E on its own line, not folded into `set -Eeuo` above: the structural suite
 # pins the literal `set -euo pipefail` as the house convention, and a superset
@@ -51,10 +52,17 @@ What it reports (to stdout, which Claude Code injects as session context):
     SOCRATICODE_LINKED_PROJECTS whose paths do not resolve (#281). The server
     drops each without a word, so codebase_search with includeLinked: true
     searches fewer repos than the configuration names.
+  - A store the server must not be launched against (#287): an external store
+    with no projectId, a projectId a linked project also declares, or project
+    settings declaring QDRANT_MODE=external that the session does not carry.
+    The driver then skips its server checks, since the launch is itself a
+    write, and says that nothing past the configuration was measured.
 
-It reports. It never re-indexes, never starts Docker, never edits a file — a
-session-start hook is the wrong place to spend an hour of CPU or to change the
-repo under an agent that has already begun work.
+It reports. It never re-indexes, never starts a container, never edits a
+file — a session-start hook is the wrong place to spend an hour of CPU or to
+change the repo under an agent that has already begun work. (A managed store's
+server does probe Docker, which on a socket-activated host starts the daemon;
+an external store with an external embedder never touches Docker.)
 
 Behaviour:
   - Measures the MAIN CHECKOUT, not the session's cwd (#180). SocratiCode

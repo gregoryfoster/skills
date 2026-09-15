@@ -11,9 +11,9 @@ every file edit is idempotent:
 | Phase | What a re-run does |
 |---|---|
 | 1–2 | read-only when already satisfied |
-| 3 | policy block and `docs/SOCRATICODE.md` each replace between their own markers, preserving what follows `END`; both hook merges dedupe |
+| 3 | policy block and `docs/SOCRATICODE.md` each replace between their own markers, preserving what follows `END`; both hook merges dedupe; `.socraticode.json` and the `env` block merge rather than replace |
 | 4 | migrates a legacy top-level-array manifest in place, and re-validates every artifact path |
-| 5 | re-indexes only if the index is missing or stale |
+| 5 | `validate-store` first; re-indexes only if the index is missing or stale |
 | 6 | re-verifies the completion signals, and re-measures graph yield |
 
 Because Phase 6 re-measures yield, a repo installed before the yield gate
@@ -27,7 +27,16 @@ The common drift found across the cohort
 - a manifest with **no policy block or prefetch hook** (observo);
 - hook docs that drifted from `settings.json` (archiver);
 - a manifest the server silently rejected, which has been reporting `artifacts
-  0/0` as if healthy (gotcha K) — a re-run is the only thing that catches it.
+  0/0` as if healthy (gotcha K) — a re-run is the only thing that catches it;
+- `SOCRATICODE_LINKED_PROJECTS` as one host's absolute paths in
+  `.claude/settings.local.json` — an install before
+  [#287](https://github.com/gregoryfoster/skills/issues/287). Move the entries
+  into `.socraticode.json`'s `linkedProjects`, relative
+  ([`linked-projects.md`](linked-projects.md#migrating-an-older-install));
+- a repo moving to `STORE=external`. If it was ever indexed into that store
+  without a `projectId`, those collections sit under its path hash and the
+  rename orphans them; see
+  [`external-store.md`](external-store.md#adopting-projectid-on-a-repo-already-in-the-store).
 
 ## One thing a re-run must not do quietly
 

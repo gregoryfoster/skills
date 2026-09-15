@@ -42,6 +42,7 @@
 // after the interface changed.)
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -1143,9 +1144,11 @@ function expectedArtifactCount(projectPath) {
 //     reported too, since it drops every link the file declares at once.
 //
 // The env source is THIS process's environment. Through the hook that is the
-// session's, which is where the skill writes the variable
-// (`.claude/settings.local.json`'s env block) and what the plugin's server
-// inherits — the same route SOCRATICODE_PROBE_FILE already takes.
+// session's, which is where installs before #287 wrote the variable
+// (`.claude/settings.local.json`'s env block, one host's absolute paths) and
+// what the plugin's server inherits — the same route SOCRATICODE_PROBE_FILE
+// already takes. The skill now writes relative entries into the committed
+// `.socraticode.json` instead.
 const SOCRATICODE_CONFIG_NAME = '.socraticode.json';
 const LINKED_ENV = 'SOCRATICODE_LINKED_PROJECTS';
 
@@ -1207,6 +1210,166 @@ function linkedProjectsFinding(linked) {
     );
   }
   return parts.length ? parts.join('; ') : null;
+}
+
+// ── the store a launched server would address (#287) ────────────────────────
+// SocratiCode names a project's collections by its projectId, which config.js
+// (1.13.3) resolves from SOCRATICODE_PROJECT_ID, then `.socraticode.json`'s
+// `projectId`, then sha256(<absolute path>)[:12]. Against a per-host Qdrant the
+// hash is harmless. Against a SHARED store it is not per-host at all: exe.dev
+// VMs check a repo out at the same path, so broker's VM and notifier's clone of
+// broker both resolve to `d4eab3ecb321` — two hosts writing one collection set
+// under a lock that is host-local (os.tmpdir()/socraticode-locks), and nothing
+// reports it.
+//
+// A launch is already a write. At startup the server's auto-resume runs an
+// incremental update of the project at its cwd whenever that project's
+// collection exists, and every status or query call starts the file watcher on
+// the same condition. So the guard stands before EVERY command that launches a
+// server, not before `index` alone: `status` under the wrong id writes too.
+//
+// The mode is the other half. A project's settings `env` block reaches the
+// server only through a Claude Code session in a trusted folder; a process that
+// lacks it launches a managed server — a local Docker stack, started through
+// the socket if the host has one — while the settings say external.
+//
+// Transcribed rather than imported, like linkedProjects() above and for the
+// same reason: nothing here can import the server package.
+const PROJECT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const PROJECT_SETTINGS = ['.claude/settings.local.json', '.claude/settings.json'];
+const PATH_HASH = 'path hash';
+
+function readJsonOrNull(path) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+}
+
+// config.js coreProjectId: the fallback id, from the resolved (not real) path.
+function pathHash(folder) {
+  return createHash('sha256').update(resolvePath(folder)).digest('hex').slice(0, 12);
+}
+
+// A folder's own declared projectId, trimmed, or null — readProjectIdFromConfigFile
+// minus its throw, so an invalid id comes back to be reported rather than
+// ending the run.
+function declaredProjectId(folder) {
+  const cfg = readJsonOrNull(joinPath(folder, SOCRATICODE_CONFIG_NAME));
+  const id = cfg && typeof cfg === 'object' ? cfg.projectId : undefined;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
+}
+
+// The QDRANT_MODE a project's settings files declare, local over shared. Only
+// the project's files: theirs is the block an untrusted folder drops, where
+// user settings apply everywhere regardless.
+function declaredStoreMode(root) {
+  for (const rel of PROJECT_SETTINGS) {
+    const mode = readJsonOrNull(joinPath(root, rel))?.env?.QDRANT_MODE;
+    if (typeof mode === 'string') return { mode, in: rel };
+  }
+  return null;
+}
+
+// config.js projectIdFromPath, including the branch suffix it appends to the
+// hash — and only to the hash — under SOCRATICODE_BRANCH_AWARE=true.
+function effectiveProjectId(root, env) {
+  const fromEnv = (env.SOCRATICODE_PROJECT_ID || '').trim();
+  if (fromEnv) return { value: fromEnv, source: 'SOCRATICODE_PROJECT_ID' };
+  const fromFile = declaredProjectId(root);
+  if (fromFile) return { value: fromFile, source: SOCRATICODE_CONFIG_NAME };
+  let value = pathHash(root);
+  if (env.SOCRATICODE_BRANCH_AWARE === 'true') {
+    const branch = gitIn(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const safe = branch && branch !== 'HEAD'
+      ? branch.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+      : '';
+    if (safe) value = `${value}__${safe}`;
+  }
+  return { value, source: PATH_HASH };
+}
+
+// Every finding is a defect except absolute linked entries: those still
+// resolve on this host, and only portability suffers. A defect blocks a
+// launch; see guardStore().
+function storeConfig(projectPath, env = process.env) {
+  const root = resolvePath(projectPath);
+  const store = env.QDRANT_MODE === 'external' ? 'external' : 'managed';
+  const declared = declaredStoreMode(root);
+  const hash = pathHash(root);
+  const projectId = effectiveProjectId(root, env);
+  const findings = [];
+  const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
+  const note = (message) => findings.push({ severity: SEVERITY.note, message });
+
+  if (declared?.mode === 'external' && store !== 'external') {
+    defect(
+      `${declared.in} sets QDRANT_MODE=external, but this process's environment does not carry it — `
+      + 'a server launched from here runs managed mode, a local Docker stack, instead of reaching the store. '
+      + "Claude Code applies a project's env block only in a trusted folder, and only to sessions started "
+      + "after it was written: run from such a session, or export the block's variables"
+    );
+  }
+
+  if (projectId.source !== PATH_HASH && !PROJECT_ID_PATTERN.test(projectId.value)) {
+    defect(
+      `projectId "${projectId.value}" (${projectId.source}) is outside [a-zA-Z0-9_-] — `
+      + 'the server throws on every call rather than sanitize it'
+    );
+  }
+
+  // Keyed on the store the repo is CONFIGURED for, not only the one this
+  // process would reach: with the mode defect above, fixing trust alone would
+  // otherwise walk the operator straight into this one on the next run.
+  const external = store === 'external' || declared?.mode === 'external';
+  if (external && projectId.source === PATH_HASH) {
+    defect(
+      `this project uses an external store but declares no projectId, so its collections are named by its path hash `
+      + `(codebase_${projectId.value}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
+      + `Write .socraticode.json with {"projectId": "<repo name>"} before any server here reaches the store`
+    );
+  } else if (external && projectId.value === hash) {
+    defect(
+      `projectId "${hash}" is this checkout's own path hash — the id every host with this layout resolves to `
+      + 'without one, so declaring it names nothing. Use the repo name'
+    );
+  }
+
+  // A linked sibling on the same id is one collection set written by two
+  // repos, and resolveLinkedCollections() drops the link as a duplicate of
+  // this project. Compared as upstream dedupes: the sibling's own declared id
+  // or its path hash, against this project's effective id.
+  const linked = linkedProjects(root, env);
+  for (const entry of linked.resolved) {
+    const sibling = resolvePath(root, entry.path);
+    if ((declaredProjectId(sibling) ?? pathHash(sibling)) === projectId.value) {
+      defect(
+        `projectId "${projectId.value}" is also linked project ${entry.path}'s (${entry.source}) — `
+        + 'the two repos write one collection set, and codebase_search drops the link as a duplicate of this one'
+      );
+    }
+  }
+  for (const entry of [...linked.resolved, ...linked.missing]) {
+    if (entry.source === SOCRATICODE_CONFIG_NAME && isAbsolutePath(entry.path)) {
+      note(
+        `linkedProjects entry ${entry.path} is absolute, which names one host's layout in a committed file — `
+        + 'write it relative to the repo root (../<sibling>)'
+      );
+    }
+  }
+
+  return { store, declared, projectId, pathHash: hash, findings };
+}
+
+// Before any command that launches a server. Dies naming every defect: the
+// launch itself is the write this exists to prevent, so there is nothing to
+// measure first.
+function guardStore(projectPath) {
+  const defects = storeConfig(projectPath).findings.filter((f) => f.severity === SEVERITY.defect);
+  if (defects.length) {
+    die(
+      'refusing to launch a server — it would address the wrong store, or the wrong collections in it:\n'
+      + defects.map((f) => `  - ${f.message}`).join('\n')
+      + '\n  Check with: node mcp-driver.mjs validate-store <projectPath>'
+    );
+  }
 }
 
 // ── projectPath resolution (#226, generalizing #180) ────────────────────────
@@ -1332,7 +1495,37 @@ function cmdValidateManifest(projectPath) {
   console.error(`[driver] ${m.path} — OK: ${m.count} artifact(s), every path resolves`);
 }
 
+// Phase 5 gate: the store and the id a server launched here would use, checked
+// before one is — the native path's codebase_index has no guard of its own.
+// Same convention as validate-manifest: verdict on stdout, prose on stderr.
+function cmdValidateStore(projectPath) {
+  const s = storeConfig(projectPath);
+  const defects = s.findings.filter((f) => f.severity === SEVERITY.defect);
+  const notes = s.findings.filter((f) => f.severity === SEVERITY.note);
+  process.stdout.write(JSON.stringify({
+    config: joinPath(projectPath, SOCRATICODE_CONFIG_NAME),
+    store: s.store,
+    declared: s.declared,
+    projectId: s.projectId,
+    pathHash: s.pathHash,
+    valid: defects.length === 0,
+    findings: s.findings.map(renderFinding),
+  }, null, 2) + '\n');
+
+  if (defects.length) {
+    console.error('[driver] store config — INVALID:');
+    for (const f of defects) console.error(`  - ${f.message}`);
+  } else {
+    console.error(`[driver] store config — OK: ${s.store} store, projectId "${s.projectId.value}" (${s.projectId.source})`);
+  }
+  for (const f of notes) console.error(`  - ${renderFinding(f)}`);
+  // exitCode, not exit(): the verdict above is the contract, and stdout on a
+  // pipe is asynchronous.
+  if (defects.length) process.exitCode = 1;
+}
+
 async function cmdStatus(projectPath) {
+  guardStore(projectPath);
   await withClient(async (client) => {
     const text = await client.callTool('codebase_status', { projectPath });
     process.stdout.write(text + '\n');
@@ -1340,6 +1533,7 @@ async function cmdStatus(projectPath) {
 }
 
 async function cmdIndex(projectPath) {
+  guardStore(projectPath);
   // Authoritative expected artifact count (null when there's no manifest). This
   // is what makes "artifacts N/N" real — the status line alone can't tell
   // "0 configured" from "not reported yet".
@@ -1531,7 +1725,28 @@ async function cmdHealthCheck(projectPath, probePath) {
   const note = (message) => findings.push({ severity: SEVERITY.note, message });
   const report = { projectPath, healthy: true, findings: [] };
 
-  await withClient(async (client) => {
+  // ── the store a launch would address (#287) ──────────────────────────────
+  // Before the server, not after it: the launch is the write. With a defect
+  // here the server checks are skipped, and a note says so — a report with no
+  // infrastructure findings otherwise reads as clean infrastructure.
+  const store = storeConfig(projectPath);
+  report.store = {
+    store: store.store,
+    declared: store.declared,
+    projectId: store.projectId,
+    pathHash: store.pathHash,
+  };
+  findings.push(...store.findings);
+  const launchBlocked = store.findings.some((f) => f.severity === SEVERITY.defect);
+  if (launchBlocked) {
+    report.serverChecks = 'skipped';
+    note(
+      'the server checks did not run — a server launched here would address the wrong store or collections, '
+      + 'so nothing past the configuration was measured'
+    );
+  }
+
+  if (!launchBlocked) await withClient(async (client) => {
     const call = async (tool, args) => {
       try {
         return { text: await client.callTool(tool, args), error: null };
@@ -1815,6 +2030,7 @@ async function cmdHealthCheck(projectPath, probePath) {
 }
 
 async function cmdVerify(projectPath) {
+  guardStore(projectPath);
   await withClient(async (client) => {
     const list = await client.callTool('codebase_list_projects', {});
     // Keep the error rather than flattening it to '': "not-ready" would
@@ -1916,6 +2132,15 @@ Commands:
   validate-manifest
            check .socraticodecontextartifacts.json (shape, unique names, every
            path resolves) and exit 0/1; no server, no network. Run before index.
+  validate-store
+           check the store and projectId a server launched here would use, and
+           exit 0/1; no server, no network. A defect: an external store with
+           no projectId (or with this checkout's own path hash as one); a
+           projectId outside [a-zA-Z0-9_-], or one a linked project also
+           declares; project settings declaring QDRANT_MODE=external that this
+           environment does not carry. index, status and verify refuse to
+           launch a server on any of them, and health-check reports them and
+           skips its server checks — a launch is itself a write.
 
 projectPath defaults to the current working directory.
 
@@ -2060,6 +2285,7 @@ async function runCli() {
     }
     case 'resolve': cmdResolve(); break;
     case 'validate-manifest': cmdValidateManifest(projectPath); break;
+    case 'validate-store': cmdValidateStore(projectPath); break;
     case '--help': case '-h': console.log(USAGE); break;
     default:
       console.error(USAGE);
@@ -2111,6 +2337,8 @@ export {
   SEVERITY, NOTE_PREFIX, renderFinding,
   // configured ≠ resolved linked projects (#281)
   linkedProjects, linkedProjectsFinding,
+  // the store and id a launch would address (#287)
+  storeConfig, pathHash,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,

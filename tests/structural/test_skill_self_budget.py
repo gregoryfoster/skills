@@ -256,6 +256,14 @@ SKILL_MD_RATCHETS = {
     # index-scope and legacy-array guidance, and the three phase-enforced
     # entries from Key invariants — all into references/, all verbatim.
     #
+    # #287 added a second store — an external Qdrant, with a projectId-first
+    # write order and a trust check — at ~680 tokens of procedure, against 18
+    # of headroom (9,382 exact). It was paid for without raising this number:
+    # four more phase-enforced invariants moved verbatim to troubleshooting.md,
+    # three callouts that restated a gotcha (I, D, the duplicate-config trap)
+    # were cut to their pointer, and the new procedure's own detail went to
+    # references/external-store.md. 9,343 exact after, 9,289 estimated.
+    #
     # 8,000 was the target and is NOT honestly reachable. Phase 3 looked like
     # the way there: it says "follow references/code-exploration-policy.md" and
     # then restates that reference's marker algorithm, rescue rules and hook
