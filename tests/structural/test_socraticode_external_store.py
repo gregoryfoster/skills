@@ -261,6 +261,42 @@ class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
         assert not any(NATIVE_OLLAMA in c["argv"] for c in _curl_calls(binv))
 
 
+class TestValuesUpstreamRefuses:
+    """#287 CR 9: upstream throws on these, so each is a server that will not
+    start — and the gates must not read a typo as a choice."""
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "variable,value",
+        [("EMBEDDING_PROVIDER", "Ollama"), ("OLLAMA_MODE", "extern")],
+    )
+    def test_an_invalid_value_fails(
+        self, tmp_path: Path, variable: str, value: str
+    ) -> None:
+        binv = _host(tmp_path)
+        env = {**EXTERNAL, variable: value}
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        line = _line(result.stdout, f"{variable}={value}")
+        assert "✗" in line and "throws at startup" in line, result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_ollama_mode_is_checked_whatever_the_provider(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        env = {**EXTERNAL, "EMBEDDING_PROVIDER": "openai", "OLLAMA_MODE": "Docker"}
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        assert "✗" in _line(result.stdout, "OLLAMA_MODE=Docker"), result.stdout
+
+    @requires_bash
+    def test_a_qdrant_mode_typo_is_named(self, tmp_path: Path) -> None:
+        """Never refused upstream, only read as managed — so said aloud."""
+        binv = _host(tmp_path)
+        result = _preflight(tmp_path, _project(tmp_path), binv, QDRANT_MODE="extrenal")
+        line = _line(result.stdout, "QDRANT_MODE=extrenal")
+        assert "•" in line and "managed" in line, result.stdout
+        assert "Store: managed" in result.stdout, result.stdout
+
+
 class TestASocketActivatedDaemonIsNotStarted:
     """`docker info` connects to the socket, and connecting starts the daemon."""
 
