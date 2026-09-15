@@ -1290,6 +1290,20 @@ class TestStoreConfig:
         assert "does not carry" not in defect, defect
 
     @requires_node
+    def test_a_mode_from_elsewhere_still_checks_the_block(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 40: QDRANT_MODE from user settings or a shell, the
+        Ollama settings in the project block — a check keyed on the declared
+        mode never ran, and the server embedded through a container."""
+        project = _project(
+            tmp_path, shared={"OLLAMA_MODE": "external", "OLLAMA_URL": OLLAMA_URL}
+        )
+        _config(project, {"projectId": "broker"})
+        r = _store(project, QDRANT_MODE="external", QDRANT_URL=STORE_URL)
+        assert r["declared"] is None, r
+        [defect] = _defects(r)
+        assert "OLLAMA_MODE (.claude/settings.json)" in defect, defect
+
+    @requires_node
     def test_both_defects_surface_together(self, tmp_path: Path) -> None:
         """Keyed on the CONFIGURED store: fixing trust alone must not walk the
         operator into the projectId defect on the next run."""

@@ -557,6 +557,13 @@ fi
 # QDRANT_MODE from somewhere else — user settings, a shell export — but not
 # OLLAMA_MODE was reported trusted and Docker-free, while its server ran Ollama
 # in auto mode and started a container. Names only: a value may be the key.
+#
+# Keyed on the mode the project DECLARES, where the driver's check also runs on
+# the mode this process resolves (#287 round 2, CR 40). The difference is the
+# first install: its Phase 1 passes the store's values inline while the
+# project holds only the key, which that session started too early to carry,
+# so keying on the resolved mode would fail the documented flow. The driver
+# never runs before Phase 3 has written the block.
 if [ "$DECL_MODE" = external ]; then
   if [ -n "${CLAUDECODE:-}" ]; then
     UNCARRIED="" DIFFERENT=""

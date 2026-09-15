@@ -1396,7 +1396,13 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
   // Unset and different are two failures, told apart (#287 round 2, CR 29):
   // the first is a dropped block, the second a process started before the
   // file changed — in a folder already trusted, where no prompt appears.
-  if (declared?.mode === 'external') {
+  //
+  // Keyed on the store the repo is CONFIGURED for OR the one this process
+  // reaches (#287 round 2, CR 40). With the mode from user settings or a shell
+  // export and OLLAMA_* in the project block, a check keyed on the declared
+  // mode alone never ran, while the server embedded through a container.
+  const external = store === 'external' || declared?.mode === 'external';
+  if (external) {
     const unset = [];
     const different = [];
     for (const k of Object.keys(carriedBlock)) {
@@ -1450,7 +1456,6 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
   // Keyed on the store the repo is CONFIGURED for, not only the one this
   // process would reach: with the mode defect above, fixing trust alone would
   // otherwise walk the operator straight into this one on the next run.
-  const external = store === 'external' || declared?.mode === 'external';
   const configError = unreadable(joinPath(root, SOCRATICODE_CONFIG_NAME));
   if (external && projectId.source === PATH_HASH) {
     const collection = `${env.QDRANT_COLLECTION_PREFIX || ''}codebase_${projectId.value}`;
