@@ -796,6 +796,70 @@ class TestTheDriverDoesNotLaunchIntoTheWrongStore:
         assert report["store"]["projectId"]["value"] == "broker", report
 
 
+# STUB_SERVER, prefixed with a line recording the environment it was started
+# with. The second `node:fs` import is legal ESM; the stub itself is unchanged.
+ENV_RECORDING_SERVER = (
+    "import { writeFileSync } from 'node:fs';\n"
+    "writeFileSync(process.env.STUB_ENV_OUT, JSON.stringify({\n"
+    "  autoResume: process.env.SOCRATICODE_AUTO_RESUME ?? null,\n"
+    "  watcher: process.env.SOCRATICODE_WATCHER ?? null,\n"
+    "}));\n"
+) + STUB_SERVER
+
+INDEX_REPLIES = {
+    "codebase_index": "Indexing started in the background for: /repo",
+    "codebase_status": STATUS_CLEAN,
+    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+    "codebase_health": HEALTH_OK,
+}
+
+
+class TestTheDriversOwnServerDoesNotWrite:
+    """#287 CR 1. Upstream's startup auto-resume runs an incremental update of
+    the server's cwd project whenever its collection exists; through the health
+    hook that cwd is the session's, and with a shared projectId a worktree's
+    files went into the store once a day, from a hook that "never re-indexes"."""
+
+    def _launch(self, tmp_path: Path, command: str, **env: str) -> dict:
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        stub = tmp_path / "env-server.mjs"
+        stub.write_text(ENV_RECORDING_SERVER)
+        replies = tmp_path / "replies.json"
+        replies.write_text(json.dumps(INDEX_REPLIES))
+        seen = tmp_path / "server-env.json"
+        result = _driver(
+            project,
+            command,
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(replies),
+            STUB_ENV_OUT=str(seen),
+            HEALTH_TIMEOUT_MS="30000",
+            POLL_INTERVAL_MS="10",
+            **env,
+        )
+        assert seen.exists(), f"{command} never launched the stub: {result.stderr}"
+        return json.loads(seen.read_text())
+
+    @requires_node
+    @pytest.mark.parametrize("command", ["status", "verify", "health-check"])
+    def test_read_only_commands_start_neither_writer(
+        self, tmp_path: Path, command: str
+    ) -> None:
+        seen = self._launch(tmp_path, command, SOCRATICODE_AUTO_RESUME="all")
+        assert seen == {"autoResume": "off", "watcher": "manual"}, (
+            "the caller's own SOCRATICODE_AUTO_RESUME must not loosen the "
+            f"driver's terms for its server: {seen}"
+        )
+
+    @requires_node
+    def test_index_keeps_the_watcher_but_not_auto_resume(self, tmp_path: Path) -> None:
+        """A completed index starting its watcher is upstream's sequence; an
+        incremental run racing the full index the driver asked for is not."""
+        seen = self._launch(tmp_path, "index")
+        assert seen == {"autoResume": "off", "watcher": None}, seen
+
+
 class TestTheHookCarriesItIntoTheSession:
     @requires_node
     def test_a_store_defect_reaches_the_session(self, tmp_path: Path) -> None:

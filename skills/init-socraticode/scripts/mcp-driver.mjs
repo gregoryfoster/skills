@@ -172,13 +172,15 @@ function resolveServerLaunch() {
 
 // ── minimal JSON-RPC 2.0 stdio client ───────────────────────────────────────
 class RpcClient {
-  constructor(launch) {
+  constructor(launch, overrides = {}) {
     // We own this child. On our exit we kill it by child.pid — never pkill.
     // launch.env carries the plugin's PATH when we resolved from its mcp.json;
     // merging over process.env keeps that authoritative without dropping ours.
+    // `overrides` land last: they are the driver's terms for its own server
+    // (see withClient), and neither the shell nor the plugin may loosen them.
     this.child = spawn(launch.command, launch.args, {
       stdio: ['pipe', 'pipe', 'inherit'],
-      env: { ...process.env, ...launch.env },
+      env: { ...process.env, ...launch.env, ...overrides },
     });
     this.nextId = 1;
     this.pending = new Map();
@@ -1445,10 +1447,24 @@ function resolveProjectPath(arg) {
 // ── high-level flows ─────────────────────────────────────────────────────────
 function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 
-async function withClient(fn) {
+// The driver's server does what it is asked and nothing else (#287 CR 1).
+// Upstream's startup auto-resume runs an incremental update of the project at
+// the server's cwd whenever that project's collection exists, and the cwd is
+// the caller's — through the health hook, the session's, which may be a
+// worktree. With a shared projectId that wrote a worktree's files into the
+// store once a day, from a hook whose contract is "reports; never re-indexes".
+// Upstream reads SOCRATICODE_AUTO_RESUME=off before any Docker or Qdrant
+// access. `readOnly` also stops the watcher that status and query calls start
+// on their own, so `status`, `verify` and `health-check` write nothing; `index`
+// keeps it, since a completed index starting its watcher is upstream's normal
+// sequence.
+async function withClient(fn, { readOnly = false } = {}) {
   const launch = resolveServerLaunch();
   console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);
-  const client = new RpcClient(launch);
+  const client = new RpcClient(launch, {
+    SOCRATICODE_AUTO_RESUME: 'off',
+    ...(readOnly ? { SOCRATICODE_WATCHER: 'manual' } : {}),
+  });
   try {
     await client.handshake();
     return await fn(client);
@@ -1529,7 +1545,7 @@ async function cmdStatus(projectPath) {
   await withClient(async (client) => {
     const text = await client.callTool('codebase_status', { projectPath });
     process.stdout.write(text + '\n');
-  });
+  }, { readOnly: true });
 }
 
 async function cmdIndex(projectPath) {
@@ -1979,7 +1995,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
     }
-  });
+  }, { readOnly: true });
 
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
   // No server call: the resolution is the filesystem's, and is read the way
@@ -2098,7 +2114,7 @@ async function cmdVerify(projectPath) {
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
-  });
+  }, { readOnly: true });
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
