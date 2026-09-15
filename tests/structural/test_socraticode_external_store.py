@@ -1321,3 +1321,143 @@ class TestTheSkillStatesTheOrder:
             ["bash", str(HOOK), "--help"], capture_output=True, text=True, timeout=30
         ).stdout
         assert "runs no docker command of its own" in " ".join(help_text.split())
+
+
+IGNORED_FILE = ".claude/settings.local.json"
+
+
+def _ignore_guard() -> str:
+    """The guard block exactly as linked-projects.md ships it."""
+    body = LINKED_REF.read_text()
+    section = body[body.index("## Make sure settings.local.json is git-ignored") :]
+    start = section.index("```bash\n") + len("```bash\n")
+    return section[start : section.index("```", start)]
+
+
+class TestTheIgnoreGuard:
+    """The block the HARD-GATE's key write rests on, run as the reference
+    ships it. It passed a negated rule as protection, leaving the key file
+    unignored, and appended another block on every run while `.gitignore` was
+    untracked (#287 round 2, CR 25)."""
+
+    def _repo(self, tmp_path: Path, **files: str) -> tuple[Path, dict]:
+        """A repo whose committed files are `files` (path → text), plus an
+        uncommitted settings.local.json. No global or system git config, and a
+        HOME of its own, so the developer's excludes decide nothing here."""
+        repo = tmp_path / "repo"
+        env = _clean_env(
+            HOME=str(tmp_path / "home"),
+            XDG_CONFIG_HOME=str(tmp_path / "home" / ".config"),
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=os.devnull,
+        )
+        subprocess.run(
+            ["git", "init", "-q", str(repo)], check=True, capture_output=True, env=env
+        )
+        for rel, text in files.items():
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text(text)
+        if files:
+            self._git(repo, env, "add", "--", *files)
+            self._git(repo, env, "commit", "-q", "-m", "fixture")
+        (repo / ".claude").mkdir(exist_ok=True)
+        if IGNORED_FILE not in files:
+            (repo / IGNORED_FILE).write_text("{}")
+        return repo, env
+
+    @staticmethod
+    def _git(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def _guard(self, repo: Path, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [shutil.which("bash") or "/bin/bash", "-c", _ignore_guard()],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+
+    def _ignored(self, repo: Path, env: dict) -> bool:
+        return (
+            self._git(repo, env, "check-ignore", "-q", "--", IGNORED_FILE).returncode
+            == 0
+        )
+
+    def _staged_rule(self, repo: Path, env: dict) -> bool:
+        staged = self._git(repo, env, "show", ":.gitignore").stdout
+        return IGNORED_FILE in staged.splitlines()
+
+    @requires_bash
+    def test_no_gitignore_gets_one_rule_staged_once(self, tmp_path: Path) -> None:
+        repo, env = self._repo(tmp_path)
+        first = self._guard(repo, env)
+        assert "STOP" not in first.stderr, first.stderr
+        after_one = (repo / ".gitignore").read_text()
+        second = self._guard(repo, env)
+        assert "STOP" not in second.stderr, second.stderr
+        assert (repo / ".gitignore").read_text() == after_one, (
+            "a re-run appended a second block"
+        )
+        assert after_one.splitlines().count(IGNORED_FILE) == 1, after_one
+        assert self._staged_rule(repo, env), "the rule must reach the index"
+        assert self._ignored(repo, env)
+
+    @requires_bash
+    def test_a_negated_rule_is_not_protection(self, tmp_path: Path) -> None:
+        repo, env = self._repo(
+            tmp_path, **{".gitignore": ".claude/*\n!.claude/*.json\n"}
+        )
+        assert not self._ignored(repo, env), "fixture: the negation re-includes it"
+        self._guard(repo, env)
+        assert self._ignored(repo, env), (repo / ".gitignore").read_text()
+        assert self._staged_rule(repo, env)
+        after_one = (repo / ".gitignore").read_text()
+        self._guard(repo, env)
+        assert (repo / ".gitignore").read_text() == after_one
+
+    @requires_bash
+    def test_a_rule_only_this_clone_holds_is_not_enough(self, tmp_path: Path) -> None:
+        repo, env = self._repo(tmp_path)
+        (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+        (repo / ".git" / "info" / "exclude").write_text(IGNORED_FILE + "\n")
+        assert self._ignored(repo, env), "fixture: ignored, but by this clone alone"
+        self._guard(repo, env)
+        assert self._staged_rule(repo, env), (repo / ".gitignore").read_text()
+
+    @requires_bash
+    def test_a_tracked_rule_is_left_alone(self, tmp_path: Path) -> None:
+        body = "# local\n" + IGNORED_FILE + "\n"
+        repo, env = self._repo(tmp_path, **{".gitignore": body})
+        result = self._guard(repo, env)
+        assert "STOP" not in result.stderr, result.stderr
+        assert (repo / ".gitignore").read_text() == body
+        assert self._git(repo, env, "diff", "--cached", "--name-only").stdout == ""
+
+    @requires_bash
+    def test_a_tracked_settings_file_stops_it(self, tmp_path: Path) -> None:
+        repo, env = self._repo(tmp_path, **{IGNORED_FILE: "{}"})
+        result = self._guard(repo, env)
+        assert "STOP" in result.stderr and "is tracked" in result.stderr, result.stderr
+        assert not (repo / ".gitignore").exists(), "no rule untracks a tracked file"
+
+    @requires_bash
+    def test_a_nested_re_include_stops_without_stacking(self, tmp_path: Path) -> None:
+        repo, env = self._repo(
+            tmp_path, **{".claude/.gitignore": "!settings.local.json\n"}
+        )
+        first = self._guard(repo, env)
+        assert "still not ignored" in first.stderr, first.stderr
+        after_one = (repo / ".gitignore").read_text()
+        second = self._guard(repo, env)
+        assert "still not ignored" in second.stderr, second.stderr
+        assert (repo / ".gitignore").read_text() == after_one, (
+            "appending again cannot outrank .claude/.gitignore, so it must not try"
+        )

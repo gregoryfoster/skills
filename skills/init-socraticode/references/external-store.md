@@ -23,8 +23,9 @@ The one write `SKILL.md`'s HARD-GATE allows before preflight, in this order:
 1. **The ignore rule, first.** `.claude/settings.local.json` must be ignored by
    a rule the repo tracks — a global excludes file protects one machine, not
    the repo, and a secret written before the check is one `git add -A` from a
-   commit. The test and the append block are in
-   [`linked-projects.md`](linked-projects.md#make-sure-settingslocaljson-is-git-ignored).
+   commit. The block that writes and stages the rule is in
+   [`linked-projects.md`](linked-projects.md#make-sure-settingslocaljson-is-git-ignored);
+   a `STOP` from it holds the key back until the operator clears it.
 2. **Then the key**, into the `env` block of `.claude/settings.local.json` —
    never on a command line, where `ps` and shell history keep it, and never in
    the tracked file. Where the operator delivers it out of band, wait for it
