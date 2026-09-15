@@ -20,6 +20,8 @@
 #
 # (The 14 entries that justified the #95 trim were removed on merge for exactly
 # that reason — CR round 2, finding 9. The trim itself is in git history.)
+# (Likewise the 8 entries that justified the #285 curation of
+# orchestrating-issue-backlog/SKILL.md, removed once it landed in 2a6dc25.)
 #
 # The file is per-repo while --file is per-target, so an entry for one target
 # used to report "matched nothing" on a run against another. Scope it instead:
@@ -186,30 +188,3 @@ skills/using-git-worktrees/SKILL.md :: tighten :: **`--dry-run`** reports the re
 # it as a fragment names a path now. The split that invalidated the line is the
 # same run that corrected it.
 skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-metrics.md#measuring-tokens),
-
-# #285 curation of orchestrating-issue-backlog/SKILL.md. Every other line moved
-# verbatim into references/; the entries below were rewritten in place — six by
-# the curation, then one each by CR 2 and CR 17, which name themselves.
-# Step 5 item 1 ended "Three refinements:" over four sub-bullets that this run
-# moved to references/issue-audit.md — the pointer is retargeted, and the count
-# corrected: there were four. The count and three refinements landed together
-# in 709b6b6; the hedge refinement followed in 3b374bb without updating it.
-skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Then list each contested file and the issues that touch it. Three refinements:
-# Process Logs introduced a ledger this run moved to references/process-log.md.
-skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Rules that originated there:
-# Step 10 named "the body of this skill" as where promotions go; this change moved
-# most rules to references/, so the destination is retargeted (CR 2).
-skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Promote a pattern into the body of this skill only when it has recurred
-# The low-discovery paragraph (now in batch-design.md) said Step 8's design doc
-# carries a "Rules 1–6 checklist". Step 8's own section list has none, and none of
-# the repo's twelve backlog design docs has a rule or checklist heading
-# (`grep -ciE '^#+ .*(rule|hygiene|checklist)' docs/plans/*backlog*.md`). CR 17.
-skills/orchestrating-issue-backlog/SKILL.md :: disproven :: Rules 1–6 checklist, branch strategy, Key Decisions
-# Q0 named a Step 7 rule "Bundle related issues" that exists nowhere in the
-# skill (`grep -rn "Bundle related" skills/` hits only this line); the rule it
-# means is Shape A.
-skills/orchestrating-issue-backlog/SKILL.md :: disproven :: see the "Bundle related issues" rule in Step 7
-# The self-budget prose names the ratchet the same change lowered, 23,110 -> 9,800.
-skills/orchestrating-issue-backlog/SKILL.md :: retarget :: held to a **23,110-token ratchet (estimate and exact)** by
-skills/orchestrating-issue-backlog/SKILL.md :: retarget :: 6,000-token standard, set so this file cannot grow. Raised once,
-skills/orchestrating-issue-backlog/SKILL.md :: retarget :: from 22,900; that test's comment carries the argument.
