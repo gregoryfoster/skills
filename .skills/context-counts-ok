@@ -86,7 +86,9 @@ skills/orchestrating-issue-backlog/SKILL.md :: stable :: narrowed to two command
 # Pairs by construction: the sentence is about two of something.
 skills/orchestrating-issue-backlog/SKILL.md :: stable :: accidental two-agent overlap
 skills/orchestrating-issue-backlog/SKILL.md :: stable :: (two separate work items
-skills/orchestrating-issue-backlog/SKILL.md :: stable :: in any file two agents share
 skills/orchestrating-issue-backlog/SKILL.md :: stable :: two issues in different regions of the same measurement tool
 skills/orchestrating-issue-backlog/SKILL.md :: stable :: better as two clean review surfaces
 skills/orchestrating-issue-backlog/SKILL.md :: stable :: if two independent batches become unblocked simultaneously
+# Written by the curation itself, in Step 5 item 2's pointer, so not carried
+# over: a pair by construction, like the group above.
+skills/orchestrating-issue-backlog/SKILL.md :: stable :: in any file two agents share
