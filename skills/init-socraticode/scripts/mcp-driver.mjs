@@ -1259,10 +1259,15 @@ function declaredProjectId(folder) {
   return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
-// The variables that decide which store a server reaches and how it embeds —
-// every one an untrusted folder's dropped env block can take with it.
+// The variables that decide which store a server reaches, which collections
+// in it, and how it embeds — every one an untrusted folder's dropped env block
+// can take with it. The prefix and the id override choose the collections
+// themselves: left behind, either sends every write to another set in the
+// same store, so they are store variables as much as the URL is (#287 round
+// 2, CR 28).
 const STORE_KEYS = [
   'QDRANT_MODE', 'QDRANT_URL', 'QDRANT_HOST', 'QDRANT_PORT', 'QDRANT_API_KEY',
+  'QDRANT_COLLECTION_PREFIX', 'SOCRATICODE_PROJECT_ID',
   'OLLAMA_MODE', 'OLLAMA_URL', 'EMBEDDING_PROVIDER', 'EMBEDDING_MODEL', 'EMBEDDING_DIMENSIONS',
 ];
 

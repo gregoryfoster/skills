@@ -515,7 +515,10 @@ fi
 if [ "$DECL_MODE" = external ]; then
   if [ -n "${CLAUDECODE:-}" ]; then
     UNCARRIED=""
+    # The collection prefix and id override too (#287 round 2, CR 28): left
+    # behind, either points every write at another collection set.
     for key in QDRANT_MODE QDRANT_URL QDRANT_HOST QDRANT_PORT QDRANT_API_KEY \
+      QDRANT_COLLECTION_PREFIX SOCRATICODE_PROJECT_ID \
       OLLAMA_MODE OLLAMA_URL EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS; do
       from_settings "$key" project
       if [ -n "$S_VAL" ] && [ "${!key:-}" != "$S_VAL" ]; then

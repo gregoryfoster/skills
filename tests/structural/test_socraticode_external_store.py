@@ -834,6 +834,20 @@ class TestTrustIsCheckedByItsEffect:
         assert KEY not in result.stdout + result.stderr
 
     @requires_bash
+    def test_the_collection_prefix_is_part_of_the_block(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 28: a session without the declared prefix writes
+        the unprefixed collections of the same store."""
+        binv = _host(tmp_path)
+        project = _project(
+            tmp_path, shared={**EXTERNAL, "QDRANT_COLLECTION_PREFIX": "team_"}
+        )
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1", **EXTERNAL
+        )
+        assert "✗" in _line(result.stdout, "(QDRANT_COLLECTION_PREFIX)"), result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
     def test_a_session_with_the_block_passes(self, tmp_path: Path) -> None:
         binv = _host(tmp_path)
         project = _project(tmp_path, shared=EXTERNAL)
@@ -1083,6 +1097,32 @@ class TestStoreConfig:
         defects = _defects(_store(project))
         assert len(defects) == 2, defects
         assert any("declares no projectId" in d for d in defects), defects
+
+    @requires_node
+    @pytest.mark.parametrize(
+        "variable,value",
+        [
+            ("QDRANT_COLLECTION_PREFIX", "team_"),
+            ("SOCRATICODE_PROJECT_ID", "broker-ci"),
+        ],
+    )
+    def test_a_collection_choosing_variable_left_behind_is_a_defect(
+        self, tmp_path: Path, variable: str, value: str
+    ) -> None:
+        """#287 round 2, CR 28: both choose the collections themselves; a
+        process without them writes another set in the same store, and the
+        guard let `index` do exactly that."""
+        project = _project(
+            tmp_path, shared={"QDRANT_MODE": "external", variable: value}
+        )
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert f"{variable} (.claude/settings.json)" in defect, defect
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(
+            project, "index", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry)
+        )
+        assert result.returncode == 1 and not marker.exists(), result.stderr
 
     @requires_node
     def test_local_settings_override_shared_ones(self, tmp_path: Path) -> None:
