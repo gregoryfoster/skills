@@ -341,7 +341,8 @@ SKILL_MD_RATCHETS = {
 # - `orchestrating-issue-backlog` had to move its optional bulk out of the
 #   body, and #285 did. Unlike the bootstrap, much of it WAS optional per run:
 #   a session that never hits a conflict zone no longer loads the conflict-zone
-#   hazards, and a planning run meets the execution protocol only at Step 8.
+#   hazards, and a planning run cites a few Rules along the way but needs the
+#   execution protocol whole only from Step 8.
 #   What stayed inline is what every run executes, which is why it stops at
 #   ~1.6x rather than conforming.
 #

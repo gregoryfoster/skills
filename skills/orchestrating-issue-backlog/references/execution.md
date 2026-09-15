@@ -5,9 +5,9 @@ batch→main merge strategy this file asks for, and before any batch launches.
 Step and Q numbers refer to `SKILL.md`; Rule, Orchestrator-step and Worker-step
 numbers refer to this file.
 
-Demoted from the body in the #285 curation. A planning run meets Rule 1 at Step
-1–2 (its sync is also checklist item 0) and the rest from Step 8; a batch launch
-needs all of it.
+Demoted from the body in the #285 curation. A planning run cites Rules 1 and 6 at
+Step 1–2 and Rule 5 at Step 7, and needs the whole protocol from Step 8; a batch
+launch needs all of it.
 
 ## Agent Roles
 

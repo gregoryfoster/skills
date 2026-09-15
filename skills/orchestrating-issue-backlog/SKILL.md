@@ -214,7 +214,7 @@ After the plan is approved and committed, capture this session's adjustments: ru
 
 ## Executing the plan
 
-The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules 1–6 and the recovery procedure are in [references/execution.md](references/execution.md). Step 8 reads it first; read it again before launching any batch.
+The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules 1–6 and the recovery procedure are in [references/execution.md](references/execution.md). Step 8 sends you there; read it again before launching any batch.
 
 ## Key Principles
 
