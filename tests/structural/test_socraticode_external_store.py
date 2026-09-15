@@ -245,6 +245,23 @@ class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
         assert result.returncode == 1
 
     @requires_bash
+    def test_docker_mode_ollama_needs_docker_beside_an_external_store(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _host(tmp_path, docker=False)
+        env = {
+            "QDRANT_MODE": "external",
+            "QDRANT_URL": STORE_URL,
+            "OLLAMA_MODE": "docker",
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        line = _line(result.stdout, "Docker not installed")
+        assert "✗" in line and "OLLAMA_MODE=docker" in line, result.stdout
+        assert "managed Qdrant" not in line, (
+            "the store is external; only Ollama needs it"
+        )
+
+    @requires_bash
     def test_auto_ollama_with_a_native_one_needs_none(self, tmp_path: Path) -> None:
         binv = _host(tmp_path, docker=False)
         env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
@@ -355,6 +372,22 @@ class TestASocketActivatedDaemonIsNotStarted:
         )
         assert "info" in _log(binv, "docker"), result.stdout
         assert "daemon reachable" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_an_ollama_fallback_on_an_idle_socket_is_not_probed(
+        self, tmp_path: Path
+    ) -> None:
+        """External store, auto Ollama with no native one: Docker is needed for
+        the fallback container — and the idle socket still is not touched."""
+        binv = _host(tmp_path, systemd=True)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["000", 7]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, SOCKET="active", **env
+        )
+        line = _line(result.stdout, "socket-activated")
+        assert "✓" in line and "Ollama" in line, result.stdout
+        assert _log(binv, "docker") == "", _log(binv, "docker")
 
     @requires_bash
     def test_an_external_store_runs_no_docker_command(self, tmp_path: Path) -> None:
@@ -808,11 +841,44 @@ class TestStoreConfig:
         assert r["projectId"]["source"] == "path hash", r
 
     @requires_node
-    def test_the_path_hash_is_upstreams(self, tmp_path: Path) -> None:
+    def test_the_path_hash_is_sha256_of_the_resolved_path(self, tmp_path: Path) -> None:
+        """config.js coreProjectId: sha256(path.resolve(folder))[:12]. Checked
+        against that formula restated here, not against upstream itself — the
+        server package is no dependency of this suite (#287 CR 19)."""
         project = _project(tmp_path)
         r = _store(project)
         assert r["pathHash"] == _hash(project), r
         assert r["projectId"]["value"] == r["pathHash"], r
+
+    @requires_node
+    def test_the_branch_suffix_follows_upstream(self, tmp_path: Path) -> None:
+        """SOCRATICODE_BRANCH_AWARE appends the sanitized branch to the hash,
+        and only to the hash: a declared projectId ignores it."""
+        project = _project(tmp_path)
+        for args in (
+            ["commit", "-q", "--allow-empty", "-m", "init"],
+            ["checkout", "-q", "-b", "feat/x-y"],
+        ):
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(project),
+                    "-c",
+                    "user.email=t@example.com",
+                    "-c",
+                    "user.name=t",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+                env=_clean_env(),
+            )
+        r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
+        assert r["projectId"]["value"] == f"{_hash(project)}__feat_x-y", r
+        _config(project, {"projectId": "broker"})
+        r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
+        assert r["projectId"]["value"] == "broker", r
 
     @requires_node
     def test_an_external_store_without_a_projectId_is_a_defect(
@@ -1187,9 +1253,13 @@ class TestTheSkillStatesTheOrder:
         assert "Never the block alone" in " ".join(body.split())
 
     def test_trust_is_confirmed_before_the_index(self) -> None:
-        flat = " ".join(SKILL_MD.read_text().split())
-        assert "trusting the folder" in flat, flat
-        assert "This session cannot index" in flat, (
+        """Inside step 5 — after the block is written, before any phase that
+        could launch a server — not merely somewhere in the file."""
+        body = " ".join(SKILL_MD.read_text().split())
+        step5 = body[body.index("**Client `env` block**") : body.index("### Phase 4")]
+        for phrase in ("trusting the folder", "re-run this skill", "bare"):
+            assert phrase in step5, f"{phrase!r} missing from step 5: {step5}"
+        assert "This session cannot index" in step5, (
             "the session that wrote the block runs a server started without it"
         )
 
@@ -1214,4 +1284,12 @@ class TestTheSkillStatesTheOrder:
 
     def test_the_health_hook_no_longer_assumes_docker(self) -> None:
         body = HOOK.read_text()
+        flat = " ".join(body.split())
         assert "needs a running MCP server and Docker" not in body
+        assert "a reachable URL for an external one" in flat, (
+            "the header must name what an external store needs instead"
+        )
+        help_text = subprocess.run(
+            ["bash", str(HOOK), "--help"], capture_output=True, text=True, timeout=30
+        ).stdout
+        assert "runs no docker command of its own" in " ".join(help_text.split())
