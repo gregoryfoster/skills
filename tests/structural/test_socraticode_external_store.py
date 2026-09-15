@@ -874,6 +874,33 @@ class TestStoreConfig:
         assert "also linked project ../notifier" in defect, defect
 
     @requires_node
+    def test_a_sibling_with_an_invalid_id_breaks_every_linked_search(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 CR 12: upstream's resolveLinkedCollections throws on it, so
+        every includeLinked search fails — not only the bad sibling's."""
+        project = _project(tmp_path)
+        (tmp_path / "archiver").mkdir()
+        _config(tmp_path / "archiver", {"projectId": "bad id!"})
+        _config(project, {"projectId": "broker", "linkedProjects": ["../archiver"]})
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "../archiver" in defect and "throws" in defect, defect
+
+    @requires_node
+    def test_two_siblings_on_one_id_are_named(self, tmp_path: Path) -> None:
+        """Upstream keeps the first and drops the second without a word."""
+        project = _project(tmp_path)
+        for name in ("archiver", "watcher"):
+            (tmp_path / name).mkdir()
+            _config(tmp_path / name, {"projectId": "archiver"})
+        _config(
+            project,
+            {"projectId": "broker", "linkedProjects": ["../archiver", "../watcher"]},
+        )
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "../archiver and ../watcher" in defect, defect
+
+    @requires_node
     def test_an_absolute_linked_entry_is_a_note(self, tmp_path: Path) -> None:
         project = _project(tmp_path)
         (tmp_path / "archiver").mkdir()

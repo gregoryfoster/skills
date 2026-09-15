@@ -1358,18 +1358,37 @@ function storeConfig(projectPath, env = process.env) {
     );
   }
 
-  // A linked sibling on the same id is one collection set written by two
-  // repos, and resolveLinkedCollections() drops the link as a duplicate of
-  // this project. Compared as upstream dedupes: the sibling's own declared id
-  // or its path hash, against this project's effective id.
+  // Each sibling as upstream's resolveLinkedCollections() reads it: its own
+  // declared id, else its path hash. A sibling on this project's id is one
+  // collection set written by two repos, and the link is dropped as a
+  // duplicate of this one. Two siblings on one id collapse the same way, and a
+  // sibling whose declared id is invalid makes upstream THROW — failing every
+  // includeLinked search, not only its own (#287 CR 12).
   const linked = linkedProjects(root, env);
+  const siblingIds = new Map();
   for (const entry of linked.resolved) {
     const sibling = resolvePath(root, entry.path);
-    if ((declaredProjectId(sibling) ?? pathHash(sibling)) === projectId.value) {
+    const declaredId = declaredProjectId(sibling);
+    if (declaredId && !PROJECT_ID_PATTERN.test(declaredId)) {
+      defect(
+        `linked project ${entry.path} (${entry.source}) declares projectId "${declaredId}", outside `
+        + '[a-zA-Z0-9_-] — upstream throws on it, so every codebase_search with includeLinked: true fails'
+      );
+      continue;
+    }
+    const id = declaredId ?? pathHash(sibling);
+    if (id === projectId.value) {
       defect(
         `projectId "${projectId.value}" is also linked project ${entry.path}'s (${entry.source}) — `
         + 'the two repos write one collection set, and codebase_search drops the link as a duplicate of this one'
       );
+    } else if (siblingIds.has(id)) {
+      defect(
+        `linked projects ${siblingIds.get(id)} and ${entry.path} both resolve to projectId "${id}" — `
+        + 'one collection, searched once, so the repo that did not write it is never searched'
+      );
+    } else {
+      siblingIds.set(id, entry.path);
     }
   }
   for (const entry of [...linked.resolved, ...linked.missing]) {
