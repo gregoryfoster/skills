@@ -52,23 +52,28 @@ retires the second copy. Name each migrated entry in the report.
 
 Linked projects no longer need the file, but an external store's API key lives
 there, and an older install's absolute paths may still. Don't assume an
-upstream template ignored it: if `git check-ignore -q
-.claude/settings.local.json` fails, append a newline-safe block to `.gitignore`
-(create it if absent) — matching the `init-project-fastapi` template's header:
-
-```gitignore
-# Machine-specific Claude Code settings (local permissions, env, linked projects)
-.claude/settings.local.json
-```
-
-Ensure a preceding blank line so the block can't fuse onto a
-trailing-newline-less last rule:
+upstream template ignored it, and don't settle for any rule that happens to
+match: only a rule in a file the repo tracks protects every clone. A global
+excludes file, or `.git/info/exclude`, protects one machine — which is how
+`CannObserv/broker`, a public repo, came one `git add -A` from the cohort's
+key. `git check-ignore -v` names the rule's source; append the block to
+`.gitignore` (creating it if absent) unless that source is a tracked file:
 
 ```bash
-printf '\n%s\n%s\n' \
-  '# Machine-specific Claude Code settings (local permissions, env, linked projects)' \
-  '.claude/settings.local.json' >> .gitignore
+src="$(git check-ignore -v .claude/settings.local.json 2>/dev/null | cut -d: -f1 || true)"
+if [ -z "$src" ] || ! git ls-files --error-unmatch -- "$src" >/dev/null 2>&1; then
+  printf '\n%s\n%s\n' \
+    '# Machine-specific Claude Code settings (local permissions, env, linked projects)' \
+    '.claude/settings.local.json' >> .gitignore
+fi
 ```
+
+The leading `\n` keeps the block from fusing onto a trailing-newline-less last
+rule; the header matches the `init-project-fastapi` template's.
+
+**If the file itself is already tracked, stop.** `git check-ignore` reports a
+tracked path as not ignored, and no rule untracks it. Tell the operator: it
+needs `git rm --cached`, and its history checked, before any key goes in.
 
 Repos bootstrapped by `init-project-fastapi` already carry this rule; the guard
 covers repos indexed standalone.
