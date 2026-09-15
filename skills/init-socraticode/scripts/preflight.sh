@@ -16,8 +16,10 @@
 # container. `external` reaches a shared Qdrant by URL and needs no Docker
 # unless the embedder does. The mode, and each value below, is read the way the
 # server will see it: this process's environment first, then the env block of
-# .claude/settings.local.json, then .claude/settings.json. On a first install,
-# before the skill has written those files, pass them in the environment:
+# .claude/settings.local.json, then .claude/settings.json, then the user's
+# settings.json (under CLAUDE_CONFIG_DIR, default ~/.claude). On a first
+# install, before the skill has written those files, pass them in the
+# environment:
 #
 #   QDRANT_MODE=external QDRANT_URL=https://<full host name>:6333 \
 #     OLLAMA_MODE=external OLLAMA_URL=http://<host>:11434 bash preflight.sh
@@ -99,43 +101,67 @@ echo
 
 # ── Configuration: the values the server will see ───────────────────────────
 # Environment first: inside a Claude Code session it already carries the
-# settings `env` block, so this is the server's own view. The project's settings
-# files next, for a run from a plain shell. Only the PROJECT files — theirs is
-# the block an untrusted folder drops (the trust gate below), where user
-# settings apply everywhere regardless.
+# settings `env` block, so this is the server's own view. The settings files
+# next, for a run from a plain shell: the project's two, then the user's.
 #
 # A pattern match, not a JSON parse: this script has to run where node is
-# missing (#281 sends exactly that host here), and the values it reads — a
-# mode, a URL, a key — never carry a quote.
+# missing (#281 sends exactly that host here). The values it reads — a mode, a
+# URL, a key — are plain strings in practice, and one that is not is refused
+# rather than misread (from_settings).
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SETTINGS=("$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json")
+PROJECT_SETTINGS=("$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.json")
+# User settings rank last, for values only (#287 CR 7): the reference offers
+# them as the home of a host-wide key, and ignoring them told such a host its
+# key was not set. The trust gate's declared block stays the project's alone.
+USER_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+ESCAPED=""
 
-# from_settings KEY — the first project settings file declaring KEY as a
-# string. Sets S_VAL and S_SRC (relative to the repo root); both empty if none.
+# from_settings KEY [project] — the first settings file declaring KEY as a
+# string: the project's two, then (without `project`) the user's. Sets S_VAL
+# and S_SRC (relative to the repo root where it can be); both empty if none.
+#
+# The pattern spans JSON escapes so a value is never cut short at an escaped
+# quote — `"se\"c\\ret"` used to read as `se\`, probed as a 3-character key
+# and reported rejected — but an escape is not decoded, so a value holding one
+# is refused, and said so, rather than guessed at.
 from_settings() {
   local key="$1" f m
+  local -a files=("${PROJECT_SETTINGS[@]}")
+  [ "${2:-}" = project ] || files+=("$USER_SETTINGS")
   S_VAL="" S_SRC=""
-  for f in "${SETTINGS[@]}"; do
+  for f in "${files[@]}"; do
     [ -f "$f" ] || continue
-    m="$(grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$f" 2>/dev/null | head -n 1 || true)"
-    if [ -n "$m" ]; then
-      S_VAL="$(printf '%s' "$m" | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//')"
-      S_SRC="${f#"$ROOT"/}"
-      return 0
-    fi
+    m="$(grep -oE "\"$key\""'[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' "$f" 2>/dev/null | head -n 1 || true)"
+    [ -n "$m" ] || continue
+    S_SRC="${f#"$ROOT"/}"
+    S_VAL="$(printf '%s' "$m" | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//')"
+    case "$S_VAL" in
+      *\\*)
+        case " $ESCAPED " in
+          *" $key "*) ;;
+          *)
+            ESCAPED="$ESCAPED $key"
+            warn "$key in $S_SRC holds a JSON escape this check does not decode — not used; export it for this run instead"
+            ;;
+        esac
+        S_VAL=""
+        ;;
+    esac
+    return 0
   done
 }
 
-# resolve KEY — the environment's value, else the settings files'. Sets R_VAL.
+# resolve KEY — the environment's value, else the settings files'. Sets R_VAL,
+# and R_SRC to where it came from.
 resolve() {
-  R_VAL="${!1:-}"
+  R_VAL="${!1:-}" R_SRC="the environment"
   if [ -z "$R_VAL" ]; then
     from_settings "$1"
-    R_VAL="$S_VAL"
+    R_VAL="$S_VAL" R_SRC="$S_SRC"
   fi
 }
 
-resolve QDRANT_MODE;        STORE_MODE="$R_VAL"
+resolve QDRANT_MODE;        STORE_MODE="$R_VAL" STORE_SRC="$R_SRC"
 resolve QDRANT_URL;         Q_URL="${R_VAL%/}"
 resolve QDRANT_HOST;        Q_HOST="$R_VAL"
 resolve QDRANT_API_KEY;     Q_KEY="$R_VAL"
@@ -145,15 +171,11 @@ resolve OLLAMA_URL;         O_URL="${R_VAL:-http://localhost:11434}"
 O_URL="${O_URL%/}"
 # Declared in a FILE, whatever the environment says — the trust gate compares
 # the two.
-from_settings QDRANT_MODE;  DECL_MODE="$S_VAL" DECL_SRC="$S_SRC"
+from_settings QDRANT_MODE project; DECL_MODE="$S_VAL" DECL_SRC="$S_SRC"
 
 # Upstream's own rule: anything but "external" is managed.
 if [ "$STORE_MODE" = external ]; then
-  if [ -n "${QDRANT_MODE:-}" ]; then
-    echo "Store: external (QDRANT_MODE from the environment)"
-  else
-    echo "Store: external (QDRANT_MODE from $DECL_SRC)"
-  fi
+  echo "Store: external (QDRANT_MODE from $STORE_SRC)"
 else
   STORE_MODE=managed
   echo "Store: managed — a local Qdrant in Docker"
@@ -387,7 +409,7 @@ if [ "$DECL_MODE" = external ]; then
     UNCARRIED=""
     for key in QDRANT_MODE QDRANT_URL QDRANT_HOST QDRANT_PORT QDRANT_API_KEY \
       OLLAMA_MODE OLLAMA_URL EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS; do
-      from_settings "$key"
+      from_settings "$key" project
       if [ -n "$S_VAL" ] && [ "${!key:-}" != "$S_VAL" ]; then
         UNCARRIED="${UNCARRIED:+$UNCARRIED, }$key"
       fi

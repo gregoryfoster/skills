@@ -93,6 +93,9 @@ STORE_VARIABLES = (
 def _env(binv: Path) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in STORE_VARIABLES}
     env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+    # Preflight reads user settings for values since #287 CR 7: an empty
+    # config dir, so the developer's own settings.json cannot name a store.
+    env["CLAUDE_CONFIG_DIR"] = str(binv.parent / "claude-config")
     return env
 
 

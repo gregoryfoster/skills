@@ -33,8 +33,9 @@ The one write `SKILL.md`'s HARD-GATE allows before preflight, in this order:
 The key alone addresses nothing: no `QDRANT_MODE` travels with it.
 
 Preflight reads each value from the environment, then
-`.claude/settings.local.json`, then `.claude/settings.json`. Before Phase 3 has
-written the rest, pass them to the Phase 1 run:
+`.claude/settings.local.json`, then `.claude/settings.json`, then user settings.
+A value holding a JSON escape is refused, with a warning, rather than misread.
+Before Phase 3 has written the rest, pass them to the Phase 1 run:
 
 ```bash
 QDRANT_MODE=external QDRANT_URL=https://<full host name>:6333 \

@@ -165,6 +165,9 @@ def _preflight(
         CURL_REPLIES=str(replies),
         SOCKET="inactive",
         SERVICE="inactive",
+        # Preflight reads user settings for values (#287 CR 7); the developer's
+        # own ~/.claude/settings.json must not be one of them.
+        CLAUDE_CONFIG_DIR=str(stub_dir / "claude-config"),
     )
     base.update(env)
     return subprocess.run(
@@ -452,6 +455,62 @@ class TestTheExternalStoreGate:
         assert "QDRANT_MODE from .claude/settings.json" in result.stdout, result.stdout
         assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
         assert "Docker not needed" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_an_escaped_value_is_refused_not_misread(self, tmp_path: Path) -> None:
+        """#287 CR 7: `"se\\"c\\\\ret"` used to read as `se\\` and be probed,
+        then reported as a rejected 3-character key."""
+        binv = _host(tmp_path)
+        project = _project(
+            tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": 'se"c\\ret'}
+        )
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, project, binv, curl)
+        warned = _line(result.stdout, "does not decode")
+        assert "•" in warned and "QDRANT_API_KEY" in warned, result.stdout
+        assert "rejects QDRANT_API_KEY" not in result.stdout, result.stdout
+        assert not any(c["stdin"] for c in _curl_calls(binv)), (
+            "an unreadable key must not be sent at all"
+        )
+
+    @requires_bash
+    def test_user_settings_supply_a_value(self, tmp_path: Path) -> None:
+        """The reference offers user settings as a host-wide key's home; a
+        plain-shell run was told the key was not set."""
+        binv = _host(tmp_path)
+        config = binv.parent / "claude-config"
+        config.mkdir()
+        (config / "settings.json").write_text(
+            json.dumps({"env": {"QDRANT_API_KEY": KEY}})
+        )
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path, shared=EXTERNAL), binv, curl)
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_user_settings_are_not_the_project_block(self, tmp_path: Path) -> None:
+        """User settings apply trusted or not, so a store declared there is
+        named as the source and never judged as a dropped project block."""
+        binv = _host(tmp_path, docker=False)
+        config = binv.parent / "claude-config"
+        config.mkdir()
+        (config / "settings.json").write_text(json.dumps({"env": EXTERNAL}))
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, STORE_OPEN, CLAUDECODE="1"
+        )
+        assert f"QDRANT_MODE from {config / 'settings.json'}" in result.stdout, (
+            result.stdout
+        )
+        assert "env block" not in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout
 
     @requires_bash
     def test_local_settings_win_and_the_environment_wins_over_both(
