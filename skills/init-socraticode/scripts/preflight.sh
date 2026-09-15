@@ -164,6 +164,7 @@ resolve() {
 resolve QDRANT_MODE;        STORE_MODE="$R_VAL" STORE_SRC="$R_SRC"
 resolve QDRANT_URL;         Q_URL="${R_VAL%/}"
 resolve QDRANT_HOST;        Q_HOST="$R_VAL"
+resolve QDRANT_PORT;        Q_PORT="$R_VAL"
 resolve QDRANT_API_KEY;     Q_KEY="$R_VAL"
 resolve EMBEDDING_PROVIDER; E_PROVIDER="${R_VAL:-ollama}"
 resolve OLLAMA_MODE;        O_MODE="${R_VAL:-auto}"
@@ -375,18 +376,27 @@ else
 fi
 
 # ── External store: the URL, its TLS, and an answer ─────────────────────────
-# Mirrors upstream's ensureExternalQdrantReady (1.13.3) and adds the two checks
-# it leaves to the first index: whether the store answers at all, and whether
-# it takes the key. QDRANT_URL, never QDRANT_HOST: the URL built from a host
-# alone uses QDRANT_PORT, whose default is 16333 rather than Qdrant's 6333, so
-# the mistake reads as a network fault (CannObserv/broker#17, trap 3).
+# Follows upstream's ensureExternalQdrantReady (1.13.3) — no key over plain http
+# except to loopback — and adds the two checks it leaves to the first index:
+# whether the store answers at all, and whether it takes the key.
+#
+# Stricter than upstream in one place, by this skill's choice (#287 CR 11): it
+# requires QDRANT_URL. Upstream accepts a non-localhost QDRANT_HOST alone and
+# builds http://<host>:<QDRANT_PORT> from it — plain http, which cannot carry a
+# key, on a port whose default is 16333 rather than Qdrant's 6333, so the
+# mistake reads as a network fault (CannObserv/broker#17, trap 3).
 if [ "$STORE_MODE" = external ]; then
   # Lowercased, as upstream's URL parser does: `HTTPS://` is https there.
   Q_SCHEME="$(printf '%s' "${Q_URL%%://*}" | tr '[:upper:]' '[:lower:]')"
   Q_URL_HOST="$(url_host "$Q_URL" | tr '[:upper:]' '[:lower:]')"
   if [ -z "$Q_URL" ]; then
-    fail "QDRANT_MODE=external but QDRANT_URL is not set${Q_HOST:+ (QDRANT_HOST=$Q_HOST is)}"
-    hint "Set QDRANT_URL=https://<full host name>:6333 — a URL built from QDRANT_HOST uses port ${QDRANT_PORT:-16333}, not Qdrant's 6333"
+    if [ -n "$Q_PORT" ]; then
+      PORT_NOTE="port $Q_PORT"
+    else
+      PORT_NOTE="port 16333, QDRANT_PORT's default rather than Qdrant's 6333"
+    fi
+    fail "QDRANT_MODE=external but QDRANT_URL is not set${Q_HOST:+ — QDRANT_HOST=$Q_HOST alone is not enough for this skill}"
+    hint "Set QDRANT_URL=https://<full host name>:6333. A URL built from QDRANT_HOST is plain http on $PORT_NOTE, and plain http cannot carry a key"
   elif [ -n "$Q_KEY" ] && [ "$Q_SCHEME" != https ] && ! is_loopback "$Q_URL_HOST"; then
     # Upstream refuses before it connects, so there is nothing to probe.
     fail "QDRANT_API_KEY is set but $Q_URL is not https — the server refuses to send the key over plain http"

@@ -391,6 +391,22 @@ class TestTheExternalStoreGate:
         assert result.returncode == 1
 
     @requires_bash
+    def test_the_host_hint_reads_the_port_it_names(self, tmp_path: Path) -> None:
+        """#287 CR 11: the hint read QDRANT_PORT from the environment only, and
+        with it set said "uses port 6333, not Qdrant's 6333"."""
+        binv = _host(tmp_path)
+        env = {k: v for k, v in EXTERNAL.items() if k != "QDRANT_URL"}
+        project = _project(tmp_path, local={"QDRANT_PORT": "6333"})
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, QDRANT_HOST="index", **env
+        )
+        assert "plain http on port 6333" in result.stdout, result.stdout
+        assert "not Qdrant's 6333" not in result.stdout, result.stdout
+        assert "not enough for this skill" in result.stdout, (
+            "stricter than upstream by choice, and worded as such"
+        )
+
+    @requires_bash
     def test_a_key_is_never_sent_over_plain_http(self, tmp_path: Path) -> None:
         binv = _host(tmp_path)
         env = {
