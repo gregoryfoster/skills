@@ -1246,6 +1246,15 @@ function readJsonOrNull(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
 }
 
+// Why a file that exists could not be used, or null — absent included. The
+// null above is upstream's loader and right for the id it mirrors; it is wrong
+// for a finding, where "absent" and "does not parse" need opposite remedies:
+// write the file, or fix it without rewriting it (#287 round 2, CR 34).
+function unreadable(path) {
+  if (!existsSync(path)) return null;
+  try { JSON.parse(readFileSync(path, 'utf8')); return null; } catch (e) { return e.message; }
+}
+
 // config.js coreProjectId: the fallback id, from the resolved (not real) path.
 function pathHash(folder) {
   return createHash('sha256').update(resolvePath(folder)).digest('hex').slice(0, 12);
@@ -1361,6 +1370,25 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
   const siblingDefect = (message) => findings.push({ severity: SEVERITY.defect, message, blocking: false });
   const note = (message) => findings.push({ severity: SEVERITY.note, message });
 
+  // A settings file that does not parse was read above as declaring nothing,
+  // which printed "OK: managed store" for one that declared external. Claude
+  // Code applies none of such a file, so the block it may hold reaches no
+  // session — the untrusted-folder fallback by another road — and the store a
+  // launch would address cannot be known. A defect, then: it blocks (#287
+  // round 2, CR 34).
+  for (const dir of worktree ? [root, worktree] : [root]) {
+    for (const rel of PROJECT_SETTINGS) {
+      const why = unreadable(joinPath(dir, rel));
+      if (why) {
+        defect(
+          `${dir === root ? rel : joinPath(dir, rel)} does not parse (${why}) — Claude Code applies none of it, `
+          + 'so any env block it declares reaches no session, and the store a server here would address '
+          + 'cannot be checked. Fix its JSON'
+        );
+      }
+    }
+  }
+
   // Every store variable the block declares, not QDRANT_MODE alone (#287 CR
   // 2): with the mode carried and OLLAMA_MODE not, the launched server runs
   // Ollama in auto mode and starts a container. Names only — one is the key.
@@ -1423,12 +1451,20 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
   // process would reach: with the mode defect above, fixing trust alone would
   // otherwise walk the operator straight into this one on the next run.
   const external = store === 'external' || declared?.mode === 'external';
+  const configError = unreadable(joinPath(root, SOCRATICODE_CONFIG_NAME));
   if (external && projectId.source === PATH_HASH) {
-    defect(
-      `this project uses an external store but declares no projectId, so its collections are named by its path hash `
-      + `(${env.QDRANT_COLLECTION_PREFIX || ''}codebase_${projectId.value}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
-      + `Write .socraticode.json with {"projectId": "<repo name>"} before any server here reaches the store`
-    );
+    const collection = `${env.QDRANT_COLLECTION_PREFIX || ''}codebase_${projectId.value}`;
+    // A file that does not parse is ignored whole upstream, projectId and all.
+    // "Write .socraticode.json" there invited an overwrite that would drop
+    // every other key it holds, linkedProjects first (#287 round 2, CR 34).
+    defect(configError
+      ? `${SOCRATICODE_CONFIG_NAME} does not parse (${configError}), so the server ignores all of it — its `
+        + `projectId included — and names this project's collections by its path hash (${collection}), `
+        + `an id every host checking the repo out at ${root} shares. Fix its JSON rather than rewriting it, `
+        + 'which would drop the keys it already holds'
+      : `this project uses an external store but declares no projectId, so its collections are named by its path hash `
+        + `(${collection}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
+        + `Write .socraticode.json with {"projectId": "<repo name>"} before any server here reaches the store`);
   } else if (external && projectId.value === hash) {
     defect(
       `projectId "${hash}" is this checkout's own path hash — the id every host with this layout resolves to `

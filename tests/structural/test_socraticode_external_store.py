@@ -1321,6 +1321,37 @@ class TestStoreConfig:
             assert KEY not in r.stdout + r.stderr
 
     @requires_node
+    def test_a_config_that_does_not_parse_is_not_called_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 34: a trailing comma drew "declares no projectId —
+        Write .socraticode.json", and following that would have dropped the
+        linkedProjects the file already held."""
+        project = _project(tmp_path)
+        (project / ".socraticode.json").write_text(
+            '{"projectId": "broker", "linkedProjects": ["../notifier"],}'
+        )
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "does not parse" in defect and "Fix its JSON" in defect, defect
+        assert "Write .socraticode.json" not in defect, defect
+
+    @requires_node
+    def test_a_settings_file_that_does_not_parse_blocks(self, tmp_path: Path) -> None:
+        """It read as declaring nothing — "OK: managed store" for a file that
+        declared external, which no session receives either."""
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        (project / ".claude").mkdir()
+        (project / ".claude" / "settings.json").write_text(
+            '{"env": {"QDRANT_MODE": "external",}}'
+        )
+        [defect] = _defects(_store(project))
+        assert ".claude/settings.json does not parse" in defect, defect
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(project, "status", SOCRATICODE_ENTRY=str(entry))
+        assert result.returncode == 1 and not marker.exists(), result.stderr
+
+    @requires_node
     def test_local_settings_override_shared_ones(self, tmp_path: Path) -> None:
         project = _project(
             tmp_path,
