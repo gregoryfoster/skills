@@ -107,6 +107,10 @@ STORE_VARIABLES = (
 
 def _env(binv: Path) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in STORE_VARIABLES}
+    # The Node gate reads it to decide which build launches; a developer who
+    # exported one failed four tests here. The test that needs it sets its own
+    # (#287 round 2, CR 51).
+    env.pop("SOCRATICODE_ENTRY", None)
     env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
     # Preflight reads user settings for values since #287 CR 7: an empty
     # config dir, so the developer's own settings.json cannot name a store.
