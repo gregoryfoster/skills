@@ -578,9 +578,13 @@ class TestTheExternalStoreGate:
         ), "upstream refuses before connecting, so the gate must not connect either"
 
     @requires_bash
-    def test_loopback_may_carry_a_key_over_http(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+    def test_loopback_may_carry_a_key_over_http(
+        self, tmp_path: Path, host: str
+    ) -> None:
+        """Upstream's three loopback names, each of them (#287 round 2, CR 52)."""
         binv = _host(tmp_path)
-        url = "http://localhost:6333"
+        url = f"http://{host}:6333"
         env = {**EXTERNAL, "QDRANT_URL": url, "QDRANT_API_KEY": KEY}
         curl = {
             f"{url}/collections": ["401", 0],
@@ -968,6 +972,26 @@ class TestTheExternalStoreGate:
         assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
 
     @requires_bash
+    def test_user_settings_rank_below_the_project(self, tmp_path: Path) -> None:
+        """Last, as Claude Code ranks them: a host-wide value must not
+        override the one this repo declares (#287 round 2, CR 52)."""
+        binv = _host(tmp_path)
+        config = binv.parent / "claude-config"
+        config.mkdir()
+        user_url = "https://user.tail0.ts.net:6333"
+        (config / "settings.json").write_text(
+            json.dumps({"env": {"QDRANT_URL": user_url}})
+        )
+        curl = {
+            f"{STORE_URL}/collections": ["200", 0],
+            f"{user_url}/collections": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path, shared=EXTERNAL), binv, curl)
+        assert f"answers at {STORE_URL}" in result.stdout, result.stdout
+        assert user_url not in result.stdout, result.stdout
+
+    @requires_bash
     def test_user_settings_are_not_the_project_block(self, tmp_path: Path) -> None:
         """User settings apply trusted or not, so a store declared there is
         named as the source and never judged as a dropped project block."""
@@ -1212,6 +1236,16 @@ class TestStoreConfig:
             )
         r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
         assert r["projectId"]["value"] == f"{_hash(project)}__feat_x-y", r
+        # Upstream's sanitizeBranchName also collapses runs of `_` and trims
+        # one from each end: `_feat/__x_` → `feat_x` (#287 round 2, CR 52).
+        subprocess.run(
+            ["git", "-C", str(project), "checkout", "-q", "-b", "_feat/__x_"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
+        r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
+        assert r["projectId"]["value"] == f"{_hash(project)}__feat_x", r
         _config(project, {"projectId": "broker"})
         r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
         assert r["projectId"]["value"] == "broker", r
