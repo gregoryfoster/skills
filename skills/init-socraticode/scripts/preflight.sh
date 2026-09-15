@@ -116,19 +116,23 @@ PROJECT_SETTINGS=("$ROOT/.claude/settings.local.json" "$ROOT/.claude/settings.js
 USER_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 ESCAPED=""
 
-# from_settings KEY [project] — the first settings file declaring KEY as a
-# string: the project's two, then (without `project`) the user's. Sets S_VAL
-# and S_SRC (relative to the repo root where it can be); both empty if none.
+# from_settings KEY [project] [quiet] — the first settings file declaring KEY
+# as a string: the project's two, then (without `project`) the user's. Sets
+# S_VAL and S_SRC (relative to the repo root where it can be); both empty if
+# none. S_ESC is set when the value was refused.
 #
 # The pattern spans JSON escapes so a value is never cut short at an escaped
 # quote — `"se\"c\\ret"` used to read as `se\`, probed as a 3-character key
 # and reported rejected — but an escape is not decoded, so a value holding one
-# is refused, and said so, rather than guessed at.
+# is refused, and said so once, rather than guessed at. `quiet` is for a
+# caller that reads a file only to compare it with what the environment
+# already supplied: warning there "not used" contradicted the ✓ that used it
+# (#287 round 2, CR 43).
 from_settings() {
   local key="$1" f m
   local -a files=("${PROJECT_SETTINGS[@]}")
   [ "${2:-}" = project ] || files+=("$USER_SETTINGS")
-  S_VAL="" S_SRC=""
+  S_VAL="" S_SRC="" S_ESC=""
   for f in "${files[@]}"; do
     [ -f "$f" ] || continue
     m="$(grep -oE "\"$key\""'[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' "$f" 2>/dev/null | head -n 1 || true)"
@@ -137,11 +141,14 @@ from_settings() {
     S_VAL="$(printf '%s' "$m" | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//')"
     case "$S_VAL" in
       *\\*)
+        S_ESC=1
         case " $ESCAPED " in
           *" $key "*) ;;
           *)
-            ESCAPED="$ESCAPED $key"
-            warn "$key in $S_SRC holds a JSON escape this check does not decode — not used; export it for this run instead"
+            if [ "${3:-}" != quiet ]; then
+              ESCAPED="$ESCAPED $key"
+              warn "$key in $S_SRC holds a JSON escape this check does not decode, so this run treats it as unset — a Claude Code session started here carries it decoded"
+            fi
             ;;
         esac
         S_VAL=""
@@ -514,8 +521,16 @@ if [ "$STORE_MODE" = external ]; then
         200) pass "Qdrant store answers at $Q_URL (no key required)" ;;
         401 | 403)
           if [ -z "$Q_KEY" ]; then
-            fail "Qdrant store at $Q_URL requires an API key (HTTP $Q_CODE without one), and QDRANT_API_KEY is not set"
-            hint "Put it in the env block of .claude/settings.local.json — git-ignored — never in the tracked settings.json"
+            from_settings QDRANT_API_KEY "" quiet
+            if [ -n "$S_ESC" ]; then
+              # Set, where the operator put it — only undecodable here, so
+              # "not set, put it in settings.local.json" sent them in a circle.
+              fail "Qdrant store at $Q_URL requires an API key (HTTP $Q_CODE without one), and the QDRANT_API_KEY in $S_SRC was not used — it holds a JSON escape this check does not decode"
+              hint "Run this check from a Claude Code session started here, whose environment carries the key decoded"
+            else
+              fail "Qdrant store at $Q_URL requires an API key (HTTP $Q_CODE without one), and QDRANT_API_KEY is not set"
+              hint "Put it in the env block of .claude/settings.local.json — git-ignored — never in the tracked settings.json"
+            fi
           else
             K_RC=0
             K_CODE="$(http_status "$Q_URL/collections" "$Q_KEY")" || K_RC=$?
@@ -584,7 +599,12 @@ if [ "$DECL_MODE" = external ]; then
     for key in QDRANT_MODE QDRANT_URL QDRANT_HOST QDRANT_PORT QDRANT_API_KEY \
       QDRANT_COLLECTION_PREFIX SOCRATICODE_PROJECT_ID \
       OLLAMA_MODE OLLAMA_URL EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS; do
-      from_settings "$key" project
+      from_settings "$key" project quiet
+      if [ -n "$S_ESC" ]; then
+        # Declared but undecodable: presence is all there is to compare.
+        [ -n "${!key:-}" ] || UNCARRIED="${UNCARRIED:+$UNCARRIED, }$key"
+        continue
+      fi
       [ -n "$S_VAL" ] || continue
       if [ -z "${!key:-}" ]; then
         UNCARRIED="${UNCARRIED:+$UNCARRIED, }$key"

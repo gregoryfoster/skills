@@ -890,6 +890,54 @@ class TestTheExternalStoreGate:
         assert not any(c["stdin"] for c in _curl_calls(binv)), (
             "an unreadable key must not be sent at all"
         )
+        # #287 round 2, CR 43: the ✗ said "QDRANT_API_KEY is not set — put it
+        # in settings.local.json", where it already was.
+        refused = _line(result.stdout, "requires an API key")
+        assert "✗" in refused and "was not used" in refused, result.stdout
+        assert "is not set" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_an_escaped_key_the_session_carries_draws_no_warning(
+        self, tmp_path: Path
+    ) -> None:
+        """The environment supplied the key and the store accepted it; the
+        trust gate's read of the file then warned "not used" (CR 43)."""
+        binv = _host(tmp_path)
+        key = 'se"c\\ret'
+        project = _project(tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": key})
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path,
+            project,
+            binv,
+            curl,
+            CLAUDECODE="1",
+            QDRANT_API_KEY=key,
+            **EXTERNAL,
+        )
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+        assert "does not decode" not in result.stdout, result.stdout
+        assert "✓" in _line(result.stdout, "env block"), result.stdout
+
+    @requires_bash
+    def test_an_escaped_key_the_session_lacks_is_uncarried(
+        self, tmp_path: Path
+    ) -> None:
+        """Undecodable, it cannot be compared by value — but absent is absent."""
+        binv = _host(tmp_path)
+        project = _project(
+            tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": 'se"c\\ret'}
+        )
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1", **EXTERNAL
+        )
+        assert "(QDRANT_API_KEY)" in _line(result.stdout, "does not carry"), (
+            result.stdout
+        )
 
     @requires_bash
     def test_user_settings_supply_a_value(self, tmp_path: Path) -> None:
