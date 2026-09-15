@@ -1,7 +1,8 @@
 # Linked projects — cross-repo `codebase_search`
 
-Phase 3 item 4. Read this only when `LINKED_PROJECTS` is set; the parameter
-defaults to none, so most installs skip it entirely.
+Phase 3 item 4. Read this when `LINKED_PROJECTS` is set (it defaults to none),
+when a re-run finds an older install's `SOCRATICODE_LINKED_PROJECTS`, or for the
+`.claude/settings.local.json` ignore rule an external store's key depends on.
 
 ## What it does
 

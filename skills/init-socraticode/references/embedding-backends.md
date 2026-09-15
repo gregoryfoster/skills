@@ -1,7 +1,7 @@
 # Embedding backends — the tradeoff
 
 SocratiCode needs an embedding model to turn code chunks into vectors. The
-backend is a **parameter the operator chooses up front** (SKILL.md Phase 0) — do
+backend is a **parameter the operator chooses up front** (SKILL.md's parameters) — do
 not silently default it for large repos, because the default is CPU-bound and
 slow.
 

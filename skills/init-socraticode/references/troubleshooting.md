@@ -26,16 +26,25 @@ symptom you'll see, why it happens, and the fix the skill bakes in.
 | **S** | Two hosts write one project's collections in a shared store while every health check stays green; `codebase_list_projects` shows a 12-hex-character id no repo declares. | No `projectId`, so the id is `sha256(<absolute path>)[:12]`, and hosts that check repos out at the same path share it — broker's VM and notifier's clone of broker both built `d4eab3ecb321`. The index lock is host-local, and startup auto-resume writes to any collection that already exists. | `.socraticode.json` carries `projectId` before the `env` block exists ([`external-store.md`](external-store.md)). `mcp-driver.mjs validate-store` fails an external store with no `projectId`, with the checkout's own path hash as one, or with one a linked project also declares; `index`, `status` and `verify` refuse to launch on those, and `health-check` reports them without launching. |
 | **T** | A repo configured for an external store starts Docker containers — or, on a host with no Docker, fails trying — instead of reaching the store. | A project's settings `env` block applies only to a session started in a trusted folder after the block was written. Without it `QDRANT_MODE` reverts to managed and `OLLAMA_MODE` to auto, and the server reports no missing configuration (CannObserv/broker#17, trap 6). | Checked by effect: when the project settings declare `QDRANT_MODE=external`, `preflight.sh --check` run from a session fails on every store variable the block declares that the session's environment lacks — the mode alone is not the block, since `OLLAMA_MODE` left behind still starts an Ollama container — and `validate-store` fails the same way in any process, so the driver never launches that server. Restart Claude Code in the folder, accept the trust prompt, and re-check from the new session. |
 
-## Node 26 hard refusal (preflight gate, not a runtime surprise)
+## Node 26: the build decides, not the version
 
-`engines.node` for the stack is `>=18.0.0 <26.0.0`. Node 26+ is **hard-refused**:
-qdrant-js pins undici v6, incompatible with Node 26's bundled undici — the server
-`process.exit(1)`s on start. [`scripts/preflight.sh`](../scripts/preflight.sh)
-blocks on this before anything else runs. Fix: `nvm install 22 && nvm use 22`.
+This section used to say Node 26+ was hard-refused, and until
+[#269](https://github.com/gregoryfoster/skills/issues/269) preflight did refuse
+it: `@qdrant/js-client-rest` < 1.19 hands its undici-6 Agent to Node 26's
+built-in fetch (undici 8), and the server `process.exit(1)`s on start.
+SocratiCode 1.13.0 pairs the client with a matching undici, so the question is
+which build will launch. [`scripts/preflight.sh`](../scripts/preflight.sh)'s
+Node gate resolves `socraticode@latest` on Node 26+ and fails only a build older
+than 1.13.0; a registry that does not answer is a warning, and the floor is
+upstream's `engines` (`>=18.17.0`). Fix for an old build:
+`nvm install 22 && nvm use 22`.
 
 ## Quick decision tree
 
 ```
+mcp-driver.mjs validate-store <projectPath> passes?   (Phase 5 gate, either path)
+├─ no  → fix what it names first — a launch is itself a write.
+└─ yes ↓
 codebase_* tools callable in this session?
 ├─ yes → use them natively (preferred). Index via codebase_index, poll codebase_status.
 └─ no  → restart Claude Code, retry the ToolSearch prefetch.
