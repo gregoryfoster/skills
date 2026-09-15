@@ -250,11 +250,19 @@ SKILL_MD_RATCHETS = {
     # demoting Phases 8, 10, 11 and 16's table into references/ (#190) — an
     # interim pass at #96's problem, not the redesign the runbook note describes.
     "init-project-fastapi": 14_700,
-    # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
+    # Docker-or-shared-store/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Came down
     # from 10,050 in #230's CR round 2 by demoting Phase 0, Phase 4's
     # index-scope and legacy-array guidance, and the three phase-enforced
     # entries from Key invariants — all into references/, all verbatim.
+    #
+    # #287 added a second store — an external Qdrant, with a projectId-first
+    # write order and a trust check — at ~680 tokens of procedure, against 18
+    # of headroom (9,382 exact). It was paid for without raising this number:
+    # four more phase-enforced invariants moved verbatim to troubleshooting.md,
+    # three callouts that restated a gotcha (I, D, the duplicate-config trap)
+    # were cut to their pointer, and the new procedure's own detail went to
+    # references/external-store.md. 9,343 exact after, 9,289 estimated.
     #
     # 8,000 was the target and is NOT honestly reachable. Phase 3 looked like
     # the way there: it says "follow references/code-exploration-policy.md" and

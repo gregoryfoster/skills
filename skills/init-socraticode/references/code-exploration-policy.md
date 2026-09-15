@@ -298,8 +298,10 @@ adopted SocratiCode hears nothing. Set
 `SOCRATICODE_PROBE_FILE` in `.claude/settings.local.json`'s `env` block to a
 file with several first-party imports if you want the confirmatory graph probe.
 
-**It reports; it does not repair.** No re-index, no `docker start`, no file
-edit. A SessionStart hook runs before the agent has any context, and a hook that
+**It reports; it does not repair.** No re-index, no file edit, and no `docker`
+command of its own — though on a managed store the server it launches starts a
+stopped Qdrant container when asked for status, as any session's server does.
+A SessionStart hook runs before the agent has any context, and a hook that
 started a two-hour index — or rewrote `AGENTS.md` under an agent already at work
 — would be a worse failure than the one it detected.
 

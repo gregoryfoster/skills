@@ -6,8 +6,9 @@
 # Sibling of managing-skills' skills-submodule-update.sh, which established this
 # cadence pattern (UTC day-stamped lock in .git/, bounded log, always exit 0).
 # Deliberately a separate hook rather than an extension of that one: this one
-# needs a running MCP server and Docker, and the submodule refresh must not
-# start depending on either.
+# needs a running MCP server and the store behind it — Docker for a managed
+# store, a reachable URL for an external one (#287) — and the submodule refresh
+# must not start depending on either.
 set -euo pipefail
 # -E on its own line, not folded into `set -Eeuo` above: the structural suite
 # pins the literal `set -euo pipefail` as the house convention, and a superset
@@ -51,10 +52,26 @@ What it reports (to stdout, which Claude Code injects as session context):
     SOCRATICODE_LINKED_PROJECTS whose paths do not resolve (#281). The server
     drops each without a word, so codebase_search with includeLinked: true
     searches fewer repos than the configuration names.
+  - A store the server must not be launched against (#287): an external store
+    with no projectId, or with the checkout's own path hash as one; a
+    projectId outside [a-zA-Z0-9_-], or one a linked project shares; a store
+    variable the project settings declare that the session does not carry, or
+    carries with another value — or, in a worktree, a key only the main
+    checkout's settings.local.json holds; a project settings file that does
+    not parse. The driver then skips its server checks, since the launch is
+    itself a write, and says that nothing past the configuration was measured.
+  - Linked projects that break includeLinked search without blocking the
+    check: one whose projectId is invalid, or two that share one.
 
-It reports. It never re-indexes, never starts Docker, never edits a file — a
-session-start hook is the wrong place to spend an hour of CPU or to change the
-repo under an agent that has already begun work.
+It reports. It runs no docker command of its own, never re-indexes and never
+edits a file — a session-start hook is the wrong place to spend an hour of CPU
+or to change the repo under an agent that has already begun work. The server
+it launches runs with upstream's auto-resume off and its watcher on manual, so
+it writes no index content either. Upstream's own readiness paths are another
+matter: on a managed store, codebase_status starts a stopped Qdrant container,
+and its Docker probe wakes a socket-activated daemon; codebase_graph_status
+creates a project's empty symbol-graph metadata collection when a graph lacks
+one. An external store with an external embedder touches no Docker at all.
 
 Behaviour:
   - Measures the MAIN CHECKOUT, not the session's cwd (#180). SocratiCode

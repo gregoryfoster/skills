@@ -1,0 +1,2163 @@
+"""An external store needs no Docker, and is never addressed without a projectId (#287).
+
+The CannObserv cohort runs one shared SocratiCode store: Qdrant and Ollama on
+one VM, every repo a client with `QDRANT_MODE=external`. Reviewing broker's
+adoption (CannObserv/broker#17) against this skill found three places that
+assumed the local Docker stack, and one that did harm:
+
+- **Preflight demanded Docker in every mode.** Gate 1 failed unless Docker was
+  installed and answering. An external client needs neither, so #281's advice
+  to run `preflight.sh --check` answered such a host with a ✗ that was not a
+  defect. Docker is now gated only when something will run in it — a managed
+  Qdrant, or an Ollama embedder that is (or will fall back to) a container.
+- **`docker info` started Docker.** On broker's VM `docker.service` is disabled
+  and `docker.socket` enabled, and a read-only `docker ps` brought up dockerd
+  and containerd beside the cohort's production Redis on a 2 GB, no-swap node.
+  Preflight now asks systemd, and runs no docker command against a socket whose
+  daemon is down.
+- **Nothing wrote a `projectId`, and linked projects went in as absolute
+  paths.** Without one the id is sha256(<path>)[:12], which on hosts that check
+  repos out at the same path is not per-host: broker's VM and notifier's clone
+  of broker both resolved to `d4eab3ecb321`, two hosts writing one collection
+  set under a host-local lock. The driver now refuses to launch a server into
+  that state, since the server's startup auto-resume makes a launch a write.
+
+And one the issue named as the adoption's third step: an untrusted folder
+drops the settings `env` block, so the server falls back to managed mode and
+starts a local stack instead of failing. Trust is checked by its effect.
+
+Preflight is driven through stubs on a PATH that holds nothing else, so no case
+here can reach a real Docker daemon, a real store, or a real `claude`.
+"""
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from .test_socraticode_graph_yield import (
+    DRIVER,
+    GRAPH_OK_HIGH_UNRESOLVED,
+    HEALTH_OK,
+    HOOK,
+    STATUS_CLEAN,
+    STUB_SERVER,
+    _clean_env,
+    _repo,
+    requires_node,
+)
+from .test_socraticode_node_gate import PREFLIGHT, STORE_VARIABLES, requires_bash
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+SKILL = REPO_ROOT / "skills" / "init-socraticode"
+SKILL_MD = SKILL / "SKILL.md"
+EXTERNAL_REF = SKILL / "references" / "external-store.md"
+LINKED_REF = SKILL / "references" / "linked-projects.md"
+
+STORE_URL = "https://index.tail0.ts.net:6333"
+OLLAMA_URL = "http://index:11434"
+NATIVE_OLLAMA = "http://localhost:11434/api/tags"
+KEY = "k3y-that-must-never-be-printed"
+
+# Everything preflight runs besides the stubbed tools. Linked into their own
+# directory rather than inheriting PATH, so a host with a real docker, curl or
+# systemctl cannot answer in the stubs' place.
+PREFLIGHT_TOOLS = ("git", "sed", "grep", "head", "tail", "tr")
+
+CURL_STUB = """#!{python}
+import json, os, sys
+args = sys.argv[1:]
+stdin = sys.stdin.read() if "-K" in args else ""
+url = args[-1]
+with open(os.path.join(os.environ["STUB_DIR"], "curl.log"), "a") as log:
+    log.write(json.dumps({{"argv": args, "stdin": stdin}}) + "\\n")
+with open(os.environ["CURL_REPLIES"]) as f:
+    replies = json.load(f)
+reply = replies.get(url + (" +key" if "api-key:" in stdin else "")) or replies.get(url)
+code, rc = reply if reply else ("000", 7)
+sys.stdout.write(str(code))
+sys.exit(int(rc))
+"""
+
+SYSTEMCTL_STUB = """#!/bin/sh
+echo "$*" >> "$STUB_DIR/systemctl.log"
+case "$*" in
+  "is-active --quiet docker.socket") [ "$SOCKET" = active ] ;;
+  "is-active --quiet docker.service") [ "$SERVICE" = active ] ;;
+  "is-enabled docker") echo disabled; exit 1 ;;
+  "is-enabled docker.socket") echo enabled ;;
+  "is-enabled docker.service") echo "${SERVICE_ENABLED:-disabled}" ;;
+  "is-failed --quiet docker.service") [ "${SERVICE_FAILED:-no}" = yes ] ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+def _host(tmp_path: Path, *, docker: bool = True, systemd: bool = False) -> Path:
+    """A bin dir: stubbed node/npm/npx/claude/curl, and docker/systemctl on request."""
+    stub_dir = tmp_path / "stubs"
+    binv = stub_dir / "bin"
+    binv.mkdir(parents=True)
+    for tool in PREFLIGHT_TOOLS:
+        found = shutil.which(tool)
+        assert found, f"{tool} must be on PATH for preflight to run at all"
+        (binv / tool).symlink_to(found)
+    stubs = {
+        # v22 answers the Node gate without the Node 26 registry read.
+        "node": '#!/bin/sh\n[ "$1" = --version ] && echo v22.11.0\nexit 0\n',
+        "npm": "#!/bin/sh\nexit 1\n",
+        "npx": "#!/bin/sh\nexit 0\n",
+        "claude": (
+            "#!/bin/sh\n"
+            'echo "$* AUTO_RESUME=${SOCRATICODE_AUTO_RESUME:-}" >> "$STUB_DIR/claude.log"\n'
+            "exit 0\n"
+        ),
+        "curl": CURL_STUB.format(python=sys.executable),
+    }
+    if docker:
+        stubs["docker"] = '#!/bin/sh\necho "$*" >> "$STUB_DIR/docker.log"\nexit 0\n'
+    if systemd:
+        stubs["systemctl"] = SYSTEMCTL_STUB
+    for name, body in stubs.items():
+        (binv / name).write_text(body)
+        (binv / name).chmod(0o755)
+    return binv
+
+
+def _project(tmp_path: Path, **settings: dict) -> Path:
+    """A git repo; `local=` and `shared=` become the two settings files' env."""
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", str(project)],
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
+    names = {"local": "settings.local.json", "shared": "settings.json"}
+    for which, env in settings.items():
+        (project / ".claude").mkdir(exist_ok=True)
+        (project / ".claude" / names[which]).write_text(json.dumps({"env": env}))
+    return project
+
+
+def _preflight(
+    tmp_path: Path,
+    project: Path,
+    binv: Path,
+    curl: dict | None = None,
+    **env: str,
+) -> subprocess.CompletedProcess:
+    stub_dir = binv.parent
+    replies = stub_dir / "curl-replies.json"
+    replies.write_text(json.dumps(curl or {}))
+    base = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in STORE_VARIABLES
+        and k not in ("CLAUDECODE", "DOCKER_CONTEXT")
+        and not k.startswith("GIT_")
+    }
+    base.update(
+        PATH=str(binv),
+        STUB_DIR=str(stub_dir),
+        CURL_REPLIES=str(replies),
+        SOCKET="inactive",
+        SERVICE="inactive",
+        # Preflight reads user settings for values (#287 CR 7); the developer's
+        # own ~/.claude/settings.json must not be one of them.
+        CLAUDE_CONFIG_DIR=str(stub_dir / "claude-config"),
+        # A socket path that does not exist unless a test makes one, so the
+        # idle-socket checks (#287 CR 10) never read the host's real socket.
+        DOCKER_HOST=f"unix://{stub_dir / 'docker.sock'}",
+        # And a docker config of its own: Docker Desktop writes a non-default
+        # currentContext, which decides whether the socket is the one reached.
+        DOCKER_CONFIG=str(stub_dir / "docker-config"),
+    )
+    base.update(env)
+    result = subprocess.run(
+        [shutil.which("bash") or "/bin/bash", str(PREFLIGHT)],
+        cwd=str(project),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=base,
+    )
+    # Every run is a leak check, not the two paths that used to carry one: a
+    # key printed on the rejected-key line or the plain-http refusal passed
+    # the whole suite (#287 round 2, CR 36).
+    for secret in _keys_in_play(project, stub_dir, env):
+        assert secret not in result.stdout + result.stderr, "a gate printed the key"
+    return result
+
+
+def _keys_in_play(project: Path, stub_dir: Path, env: dict) -> set[str]:
+    """Every QDRANT_API_KEY a preflight run could have read."""
+    keys = {env.get("QDRANT_API_KEY", "")}
+    for settings in (
+        project / ".claude" / "settings.local.json",
+        project / ".claude" / "settings.json",
+        stub_dir / "claude-config" / "settings.json",
+    ):
+        try:
+            keys.add(json.loads(settings.read_text())["env"]["QDRANT_API_KEY"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return keys - {""}
+
+
+def _log(binv: Path, tool: str) -> str:
+    path = binv.parent / f"{tool}.log"
+    return path.read_text() if path.exists() else ""
+
+
+def _curl_calls(binv: Path) -> list[dict]:
+    return [json.loads(line) for line in _log(binv, "curl").splitlines()]
+
+
+def _line(out: str, needle: str) -> str:
+    return next((ln for ln in out.splitlines() if needle in ln), "")
+
+
+EXTERNAL = {
+    "QDRANT_MODE": "external",
+    "QDRANT_URL": STORE_URL,
+    "OLLAMA_MODE": "external",
+    "OLLAMA_URL": OLLAMA_URL,
+}
+STORE_OPEN = {
+    f"{STORE_URL}/collections": ["200", 0],
+    f"{OLLAMA_URL}/api/tags": ["200", 0],
+}
+
+
+class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
+    @requires_bash
+    def test_an_external_store_and_embedder_need_no_docker(
+        self, tmp_path: Path
+    ) -> None:
+        """The #281 host: configured, external, no Docker at all — and green."""
+        binv = _host(tmp_path, docker=False)
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **EXTERNAL)
+        assert "✗" not in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout
+        assert "✓" in _line(result.stdout, "Docker not needed"), result.stdout
+
+    @requires_bash
+    def test_a_managed_store_still_needs_docker(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, docker=False)
+        result = _preflight(tmp_path, _project(tmp_path), binv)
+        assert "✗" in _line(result.stdout, "Docker not installed"), result.stdout
+        assert "managed Qdrant" in _line(result.stdout, "Docker not installed")
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_auto_ollama_with_no_native_one_needs_docker(self, tmp_path: Path) -> None:
+        """Upstream's `auto` falls back to a container when localhost:11434 is
+        silent — so an external store alone does not make a host Docker-free.
+        The ✗ names the Ollama embedder, and the • nudge the setting that would
+        drop it."""
+        binv = _host(tmp_path, docker=False)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["000", 7]}
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **env)
+        line = _line(result.stdout, "Docker not installed")
+        assert "✗" in line and "Ollama" in line, result.stdout
+        assert "•" in _line(result.stdout, "OLLAMA_MODE=external"), result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_docker_mode_ollama_needs_docker_beside_an_external_store(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _host(tmp_path, docker=False)
+        env = {
+            "QDRANT_MODE": "external",
+            "QDRANT_URL": STORE_URL,
+            "OLLAMA_MODE": "docker",
+        }
+        # A native Ollama answering, so `docker` treated like `auto` — which
+        # would then need no Docker — cannot pass (#287 round 2, CR 50).
+        curl = {**STORE_OPEN, NATIVE_OLLAMA: ["200", 0]}
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **env)
+        line = _line(result.stdout, "Docker not installed")
+        assert "✗" in line and "OLLAMA_MODE=docker" in line, result.stdout
+        assert "falls back" not in line, "docker mode is not the auto fallback"
+        assert "managed Qdrant" not in line, (
+            "the store is external; only Ollama needs it"
+        )
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_a_host_with_docker_still_hears_how_to_drop_it(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 CR 22: the Docker-free nudge used to print only when Docker was
+        missing, so the host running the fallback container never heard it —
+        and its boot line blamed Qdrant, which it does not run."""
+        binv = _host(tmp_path, systemd=True)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["000", 7]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, SERVICE="active", **env
+        )
+        assert "daemon reachable" in result.stdout, result.stdout
+        nudge = _line(result.stdout, "keeps it Docker-free")
+        assert "•" in nudge and "OLLAMA_MODE=external" in nudge, result.stdout
+        boot = _line(result.stdout, "at boot")
+        assert "Ollama container" in boot and "Qdrant" not in boot, boot
+
+    @requires_bash
+    def test_auto_ollama_with_a_native_one_needs_none(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, docker=False)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["200", 0]}
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **env)
+        assert "Docker not needed" in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    def test_a_cloud_embedder_is_not_probed_for(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, docker=False)
+        env = {
+            "QDRANT_MODE": "external",
+            "QDRANT_URL": STORE_URL,
+            "EMBEDDING_PROVIDER": "openai",
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        assert "Docker not needed" in result.stdout, result.stdout
+        assert not any(NATIVE_OLLAMA in c["argv"] for c in _curl_calls(binv))
+
+
+class TestValuesUpstreamRefuses:
+    """#287 CR 9: upstream throws on these — lazily, on the first call that
+    needs the embedder, so the server connects and every call fails (round 2,
+    CR 42) — and the gates must not read a typo as a choice."""
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "variable,value",
+        [("EMBEDDING_PROVIDER", "Ollama"), ("OLLAMA_MODE", "extern")],
+    )
+    def test_an_invalid_value_fails(
+        self, tmp_path: Path, variable: str, value: str
+    ) -> None:
+        binv = _host(tmp_path)
+        env = {**EXTERNAL, variable: value}
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        line = _line(result.stdout, f"{variable}={value}")
+        assert "✗" in line and "fails every index, search and health call" in line, (
+            result.stdout
+        )
+        assert "at startup" not in line, "loadEmbeddingConfig is lazy"
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_ollama_mode_is_checked_whatever_the_provider(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        env = {**EXTERNAL, "EMBEDDING_PROVIDER": "openai", "OLLAMA_MODE": "Docker"}
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        assert "✗" in _line(result.stdout, "OLLAMA_MODE=Docker"), result.stdout
+
+    @requires_bash
+    def test_a_qdrant_mode_typo_is_named(self, tmp_path: Path) -> None:
+        """Never refused upstream, only read as managed — so said aloud."""
+        binv = _host(tmp_path)
+        result = _preflight(tmp_path, _project(tmp_path), binv, QDRANT_MODE="extrenal")
+        line = _line(result.stdout, "QDRANT_MODE=extrenal")
+        assert "•" in line and "managed" in line, result.stdout
+        assert "Store: managed" in result.stdout, result.stdout
+
+
+class TestASocketActivatedDaemonIsNotStarted:
+    """`docker info` connects to the socket, and connecting starts the daemon."""
+
+    @requires_bash
+    def test_an_idle_socket_is_not_probed(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(tmp_path, _project(tmp_path), binv, SOCKET="active")
+        assert _log(binv, "docker") == "", (
+            f"a docker command ran against an idle socket: {_log(binv, 'docker')!r}"
+        )
+        assert "✓" in _line(result.stdout, "socket-activated"), result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "state,expected",
+        [
+            ({"SERVICE_ENABLED": "masked"}, "is masked"),
+            ({"SERVICE_ENABLED": "masked-runtime"}, "is masked"),
+            ({"SERVICE_FAILED": "yes"}, "is failed"),
+        ],
+    )
+    def test_an_idle_socket_that_cannot_start_the_daemon_fails(
+        self, tmp_path: Path, state: dict, expected: str
+    ) -> None:
+        """#287 CR 10: socket activation cannot start a masked service, and a
+        failed one is retried by the first call — neither earns the ✓. And a
+        masked one earns no boot ✓ after its ✗ either (round 2, CR 31)."""
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, SOCKET="active", **state
+        )
+        assert "✗" in _line(result.stdout, expected), result.stdout
+        assert _log(binv, "docker") == "", "still no docker command"
+        assert result.returncode == 1
+        if "SERVICE_ENABLED" in state:
+            assert "starts at boot" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_stopped_masked_service_is_not_told_to_start(
+        self, tmp_path: Path
+    ) -> None:
+        """No socket, daemon down: the probe's "systemctl start docker" hint
+        fails on a masked unit, so the mask is read before any probe."""
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, SERVICE_ENABLED="masked"
+        )
+        assert "✗" in _line(result.stdout, "is masked"), result.stdout
+        assert "sudo systemctl start" not in result.stdout, result.stdout
+        assert "sudo systemctl unmask" in result.stdout, result.stdout
+        assert _log(binv, "docker") == "", _log(binv, "docker")
+
+    @requires_bash
+    def test_a_running_masked_service_warns_about_the_reboot(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            SERVICE="active",
+            SERVICE_ENABLED="masked",
+        )
+        assert "daemon reachable" in result.stdout, result.stdout
+        assert "•" in _line(result.stdout, "after a reboot"), result.stdout
+        assert "starts at boot" not in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can write any file")
+    def test_an_unwritable_socket_fails(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, systemd=True)
+        sock = binv.parent / "docker.sock"
+        sock.write_text("")
+        sock.chmod(0o444)
+        result = _preflight(tmp_path, _project(tmp_path), binv, SOCKET="active")
+        assert "✗" in _line(result.stdout, "not writable"), result.stdout
+        assert "usermod -aG docker" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_running_daemon_is_still_probed(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, SOCKET="active", SERVICE="active"
+        )
+        assert "info" in _log(binv, "docker"), result.stdout
+        assert "daemon reachable" in result.stdout, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            {"DOCKER_HOST": "tcp://10.0.0.5:2375"},
+            {"DOCKER_HOST": "", "DOCKER_CONTEXT": "remote"},
+            {"DOCKER_HOST": "", "CURRENT_CONTEXT": "desktop-linux"},
+        ],
+    )
+    def test_another_daemon_is_probed_not_assumed(
+        self, tmp_path: Path, endpoint: dict
+    ) -> None:
+        """#287 round 2, CR 39: the local socket's state said "the server
+        starts it on first use" about a daemon the server never talks to.
+        Probing that one cannot start the local daemon."""
+        binv = _host(tmp_path, systemd=True)
+        env = dict(endpoint)
+        context = env.pop("CURRENT_CONTEXT", None)
+        if context:
+            config = binv.parent / "docker-config"
+            config.mkdir()
+            (config / "config.json").write_text(
+                json.dumps({"auths": {}, "currentContext": context})
+            )
+        result = _preflight(tmp_path, _project(tmp_path), binv, SOCKET="active", **env)
+        assert "info" in _log(binv, "docker"), result.stdout
+        assert "socket-activated" not in result.stdout, result.stdout
+        assert "daemon reachable" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_an_ollama_fallback_on_an_idle_socket_is_not_probed(
+        self, tmp_path: Path
+    ) -> None:
+        """External store, auto Ollama with no native one: Docker is needed for
+        the fallback container — and the idle socket still is not touched."""
+        binv = _host(tmp_path, systemd=True)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["000", 7]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, SOCKET="active", **env
+        )
+        line = _line(result.stdout, "socket-activated")
+        assert "✓" in line and "Ollama" in line, result.stdout
+        assert _log(binv, "docker") == "", _log(binv, "docker")
+
+    @requires_bash
+    def test_an_external_store_runs_no_docker_command(self, tmp_path: Path) -> None:
+        """Broker's host exactly: socket enabled, daemon down, client external."""
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, STORE_OPEN, SOCKET="active", **EXTERNAL
+        )
+        assert _log(binv, "docker") == "", _log(binv, "docker")
+        # Positive too: a preflight that died after its banner also ran no
+        # docker command (#287 round 2, CR 50).
+        assert "✓" in _line(result.stdout, "Docker not needed"), result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    def test_the_plugin_check_cannot_auto_resume(self, tmp_path: Path) -> None:
+        """`claude mcp list` starts the server, whose startup auto-resume writes
+        to the index and, in managed mode, probes Docker."""
+        binv = _host(tmp_path)
+        _preflight(tmp_path, _project(tmp_path), binv)
+        listed = _line(_log(binv, "claude"), "mcp list")
+        assert listed, _log(binv, "claude")
+        assert "AUTO_RESUME=off" in listed, listed
+
+
+class TestTheExternalStoreGate:
+    @requires_bash
+    def test_qdrant_url_is_required(self, tmp_path: Path) -> None:
+        """broker#17 trap 3: the URL built from a host uses port 16333."""
+        binv = _host(tmp_path)
+        env = {k: v for k, v in EXTERNAL.items() if k != "QDRANT_URL"}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, STORE_OPEN, QDRANT_HOST="index", **env
+        )
+        line = _line(result.stdout, "QDRANT_URL is not set")
+        assert "✗" in line, result.stdout
+        assert "16333" in result.stdout, result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_the_host_hint_reads_the_port_it_names(self, tmp_path: Path) -> None:
+        """#287 CR 11: the hint read QDRANT_PORT from the environment only, and
+        with it set said "uses port 6333, not Qdrant's 6333"."""
+        binv = _host(tmp_path)
+        env = {k: v for k, v in EXTERNAL.items() if k != "QDRANT_URL"}
+        project = _project(tmp_path, local={"QDRANT_PORT": "6333"})
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, QDRANT_HOST="index", **env
+        )
+        assert "plain http on port 6333" in result.stdout, result.stdout
+        assert "not Qdrant's 6333" not in result.stdout, result.stdout
+        assert "not enough for this skill" in result.stdout, (
+            "stricter than upstream by choice, and worded as such"
+        )
+
+    @requires_bash
+    def test_a_key_is_never_sent_over_plain_http(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        env = {
+            **EXTERNAL,
+            "QDRANT_URL": "http://index.tail0.ts.net:6333",
+            "QDRANT_API_KEY": KEY,
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        assert "✗" in _line(result.stdout, "is not https"), result.stdout
+        assert not any(
+            "index.tail0.ts.net:6333" in " ".join(c["argv"]) for c in _curl_calls(binv)
+        ), "upstream refuses before connecting, so the gate must not connect either"
+
+    @requires_bash
+    @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+    def test_loopback_may_carry_a_key_over_http(
+        self, tmp_path: Path, host: str
+    ) -> None:
+        """Upstream's three loopback names, each of them (#287 round 2, CR 52)."""
+        binv = _host(tmp_path)
+        url = f"http://{host}:6333"
+        env = {**EXTERNAL, "QDRANT_URL": url, "QDRANT_API_KEY": KEY}
+        curl = {
+            f"{url}/collections": ["401", 0],
+            f"{url}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **env)
+        assert "is not https" not in result.stdout, result.stdout
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_short_name_tls_failure_names_the_full_one(self, tmp_path: Path) -> None:
+        """broker#17 trap 4: the short name is not in the certificate's SAN."""
+        binv = _host(tmp_path)
+        url = "https://index:6333"
+        curl = {f"{url}/collections": ["000", 60], f"{OLLAMA_URL}/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, **{**EXTERNAL, "QDRANT_URL": url}
+        )
+        assert "✗" in _line(result.stdout, "did not verify"), result.stdout
+        assert "MagicDNS" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_full_name_tls_failure_does_not_blame_the_name(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _host(tmp_path)
+        curl = {
+            f"{STORE_URL}/collections": ["000", 60],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **EXTERNAL)
+        assert "did not verify" in result.stdout, result.stdout
+        assert "MagicDNS" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_failed_handshake_is_not_blamed_on_the_name(self, tmp_path: Path) -> None:
+        """#287 CR 8: exit 35 is a handshake that never happened — most often a
+        port serving plain http — and no certificate was ever read."""
+        binv = _host(tmp_path)
+        url = "https://localhost:18765"
+        curl = {f"{url}/collections": ["000", 35], f"{OLLAMA_URL}/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, **{**EXTERNAL, "QDRANT_URL": url}
+        )
+        assert "✗" in _line(result.stdout, "handshake failed"), result.stdout
+        assert "serve TLS" in result.stdout, result.stdout
+        assert "MagicDNS" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_every_probe_ignores_curlrc(self, tmp_path: Path) -> None:
+        """`-q` has to be curl's first argument to stop ~/.curlrc being read; a
+        `--fail` there turned a 401 into exit 22."""
+        binv = _host(tmp_path)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["401", 0], NATIVE_OLLAMA: ["000", 7]}
+        _preflight(tmp_path, _project(tmp_path), binv, curl, QDRANT_API_KEY=KEY, **env)
+        calls = _curl_calls(binv)
+        assert len(calls) == 3, calls  # native probe, store, store with the key
+        assert all(c["argv"][0] == "-q" for c in calls), calls
+
+    @requires_bash
+    def test_every_probe_bypasses_a_proxy_as_the_server_does(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 32: curl honours http(s)_proxy and Node's fetch
+        does not, so with a proxy set the native-Ollama probe failed through
+        it and preflight demanded Docker the server would never start."""
+        binv = _host(tmp_path)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["401", 0], NATIVE_OLLAMA: ["200", 0]}
+        _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            curl,
+            QDRANT_API_KEY=KEY,
+            http_proxy="http://127.0.0.1:9",
+            **env,
+        )
+        calls = _curl_calls(binv)
+        assert len(calls) == 3, calls  # native probe, store, store with the key
+        assert all(c["argv"][1:3] == ["--noproxy", "*"] for c in calls), calls
+
+    @requires_bash
+    def test_no_curl_is_said_not_read_as_no_native_ollama(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, docker=False)
+        (binv / "curl").unlink()
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        result = _preflight(tmp_path, _project(tmp_path), binv, **env)
+        assert "•" in _line(result.stdout, "not probed for a native Ollama"), (
+            result.stdout
+        )
+        assert "Ollama" in _line(result.stdout, "Docker not installed"), result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "url", ["https://INDEX.TAIL0.TS.NET:6333", "http://LOCALHOST:6333"]
+    )
+    def test_the_host_compares_as_upstream_parses_it(
+        self, tmp_path: Path, url: str
+    ) -> None:
+        """Upstream's URL parser lowercases the host; neither of these is plain
+        http to a remote host. The scheme is another matter: see below."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{url}/collections": ["401", 0],
+            f"{url}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            curl,
+            QDRANT_API_KEY=KEY,
+            **{**EXTERNAL, "QDRANT_URL": url},
+        )
+        assert "is not https" not in result.stdout, result.stdout
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # curl guesses http; the client throws. With a key, `localhost`
+            # read off a scheme-less URL even passed as loopback.
+            ("index.tail0.ts.net:6333", "does not start with http:// or https://"),
+            ("localhost:6333", "does not start with http:// or https://"),
+            # js-client-rest's prefix check is case-sensitive.
+            ("HTTPS://index.tail0.ts.net:6333", "does not start with http://"),
+            # The client drops the path; curl would have followed it.
+            ("https://index.tail0.ts.net:6333/qdrant", "has a path (/qdrant)"),
+            # Readiness GET on 80, client on 6333; curl probed 80.
+            ("http://index.tail0.ts.net", "names no port"),
+        ],
+    )
+    def test_a_url_the_client_cannot_use_fails_unprobed(
+        self, tmp_path: Path, url: str, expected: str
+    ) -> None:
+        """#287 round 2, CR 27: each of these passed — curl answered — while
+        the server's Qdrant client refused or missed it on every call."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{url}/collections": ["200", 0],
+            f"{url}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            curl,
+            QDRANT_API_KEY=KEY,
+            **{**EXTERNAL, "QDRANT_URL": url},
+        )
+        assert "✗" in _line(result.stdout, expected), result.stdout
+        assert result.returncode == 1, result.stdout
+        assert not any(url in " ".join(c["argv"]) for c in _curl_calls(binv)), (
+            "a URL the server cannot use proves nothing by answering curl"
+        )
+
+    @requires_bash
+    def test_https_needs_no_port(self, tmp_path: Path) -> None:
+        """Both of the server's readers put https on 443, so it is not the
+        portless http case."""
+        binv = _host(tmp_path)
+        url = "https://index.tail0.ts.net"
+        curl = {f"{url}/collections": ["200", 0], f"{OLLAMA_URL}/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, **{**EXTERNAL, "QDRANT_URL": url}
+        )
+        assert "✓" in _line(result.stdout, f"answers at {url}"), result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "replies,expected",
+        [
+            # A typo'd OLLAMA_URL scheme: curl exit 1, unsupported protocol.
+            (
+                {
+                    f"{STORE_URL}/collections": ["200", 0],
+                    f"{OLLAMA_URL}/api/tags": ["000", 1],
+                },
+                "is not a URL curl can fetch",
+            ),
+            (
+                {
+                    f"{STORE_URL}/collections": ["200", 0],
+                    f"{OLLAMA_URL}/api/tags": ["000", 3],
+                },
+                "is not a URL curl can fetch",
+            ),
+            (
+                {
+                    f"{STORE_URL}/collections": ["000", 98],
+                    f"{OLLAMA_URL}/api/tags": ["200", 0],
+                },
+                "requires a client certificate",
+            ),
+        ],
+    )
+    def test_a_non_network_failure_is_not_called_no_answer(
+        self, tmp_path: Path, replies: dict, expected: str
+    ) -> None:
+        """#287 round 2, CR 41: each of these read "no answer from …" — a
+        network fault — where the fix is a URL or a certificate."""
+        binv = _host(tmp_path)
+        result = _preflight(tmp_path, _project(tmp_path), binv, replies, **EXTERNAL)
+        assert "✗" in _line(result.stdout, expected), result.stdout
+        assert "no answer" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_dns_failure_names_the_acl(self, tmp_path: Path) -> None:
+        """A peer the tailnet ACL does not admit presents as DNS, not a denial."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{STORE_URL}/collections": ["000", 6],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **EXTERNAL)
+        assert "✗" in _line(result.stdout, "cannot resolve"), result.stdout
+        assert "ACL" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_guarded_store_with_no_key_asks_for_one(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **EXTERNAL)
+        line = _line(result.stdout, "requires an API key")
+        assert "✗" in line, result.stdout
+        assert "settings.local.json" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_rejected_key_is_named_by_its_length(self, tmp_path: Path) -> None:
+        """A truncated key 401s exactly like a wrong one; the length is the
+        only cheap way to tell them apart."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, QDRANT_API_KEY=KEY, **EXTERNAL
+        )
+        line = _line(result.stdout, "rejects QDRANT_API_KEY")
+        assert "✗" in line and f"{len(KEY)} characters" in line, result.stdout
+
+    @requires_bash
+    def test_an_accepted_key_passes(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, QDRANT_API_KEY=KEY, **EXTERNAL
+        )
+        assert "✓" in _line(result.stdout, "accepts QDRANT_API_KEY"), result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    def test_the_key_reaches_curl_on_stdin_only(self, tmp_path: Path) -> None:
+        """argv is readable by every process on the host for the life of the
+        call; and nothing a gate prints may carry the secret."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, QDRANT_API_KEY=KEY, **EXTERNAL
+        )
+        calls = _curl_calls(binv)
+        assert any(KEY in c["stdin"] for c in calls), calls
+        assert not any(KEY in " ".join(c["argv"]) for c in calls), calls
+        assert KEY not in result.stdout + result.stderr
+
+    @requires_bash
+    def test_values_come_from_the_project_settings(self, tmp_path: Path) -> None:
+        """A plain-shell run on a configured repo: nothing in the environment,
+        the mode in settings.json and the key in settings.local.json."""
+        binv = _host(tmp_path, docker=False)
+        project = _project(tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": KEY})
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, project, binv, curl)
+        assert "QDRANT_MODE from .claude/settings.json" in result.stdout, result.stdout
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+        assert "Docker not needed" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_an_escaped_value_is_refused_not_misread(self, tmp_path: Path) -> None:
+        """#287 CR 7: `"se\\"c\\\\ret"` used to read as `se\\` and be probed,
+        then reported as a rejected 3-character key."""
+        binv = _host(tmp_path)
+        project = _project(
+            tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": 'se"c\\ret'}
+        )
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, project, binv, curl)
+        warned = _line(result.stdout, "does not decode")
+        assert "•" in warned and "QDRANT_API_KEY" in warned, result.stdout
+        assert "rejects QDRANT_API_KEY" not in result.stdout, result.stdout
+        assert not any(c["stdin"] for c in _curl_calls(binv)), (
+            "an unreadable key must not be sent at all"
+        )
+        # #287 round 2, CR 43: the ✗ said "QDRANT_API_KEY is not set — put it
+        # in settings.local.json", where it already was.
+        refused = _line(result.stdout, "requires an API key")
+        assert "✗" in refused and "was not used" in refused, result.stdout
+        assert "is not set" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_an_escaped_key_the_session_carries_draws_no_warning(
+        self, tmp_path: Path
+    ) -> None:
+        """The environment supplied the key and the store accepted it; the
+        trust gate's read of the file then warned "not used" (CR 43)."""
+        binv = _host(tmp_path)
+        key = 'se"c\\ret'
+        project = _project(tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": key})
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path,
+            project,
+            binv,
+            curl,
+            CLAUDECODE="1",
+            QDRANT_API_KEY=key,
+            **EXTERNAL,
+        )
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+        assert "does not decode" not in result.stdout, result.stdout
+        assert "✓" in _line(result.stdout, "env block"), result.stdout
+
+    @requires_bash
+    def test_an_escaped_key_the_session_lacks_is_uncarried(
+        self, tmp_path: Path
+    ) -> None:
+        """Undecodable, it cannot be compared by value — but absent is absent."""
+        binv = _host(tmp_path)
+        project = _project(
+            tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": 'se"c\\ret'}
+        )
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1", **EXTERNAL
+        )
+        assert "(QDRANT_API_KEY)" in _line(result.stdout, "does not carry"), (
+            result.stdout
+        )
+
+    @requires_bash
+    def test_user_settings_supply_a_value(self, tmp_path: Path) -> None:
+        """The reference offers user settings as a host-wide key's home; a
+        plain-shell run was told the key was not set."""
+        binv = _host(tmp_path)
+        config = binv.parent / "claude-config"
+        config.mkdir()
+        (config / "settings.json").write_text(
+            json.dumps({"env": {"QDRANT_API_KEY": KEY}})
+        )
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path, shared=EXTERNAL), binv, curl)
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+
+    @requires_bash
+    def test_user_settings_rank_below_the_project(self, tmp_path: Path) -> None:
+        """Last, as Claude Code ranks them: a host-wide value must not
+        override the one this repo declares (#287 round 2, CR 52)."""
+        binv = _host(tmp_path)
+        config = binv.parent / "claude-config"
+        config.mkdir()
+        user_url = "https://user.tail0.ts.net:6333"
+        (config / "settings.json").write_text(
+            json.dumps({"env": {"QDRANT_URL": user_url}})
+        )
+        curl = {
+            f"{STORE_URL}/collections": ["200", 0],
+            f"{user_url}/collections": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, _project(tmp_path, shared=EXTERNAL), binv, curl)
+        assert f"answers at {STORE_URL}" in result.stdout, result.stdout
+        assert user_url not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_user_settings_are_not_the_project_block(self, tmp_path: Path) -> None:
+        """User settings apply trusted or not, so a store declared there is
+        named as the source and never judged as a dropped project block."""
+        binv = _host(tmp_path, docker=False)
+        config = binv.parent / "claude-config"
+        config.mkdir()
+        (config / "settings.json").write_text(json.dumps({"env": EXTERNAL}))
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, STORE_OPEN, CLAUDECODE="1"
+        )
+        assert f"QDRANT_MODE from {config / 'settings.json'}" in result.stdout, (
+            result.stdout
+        )
+        assert "env block" not in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    def test_local_settings_win_and_the_environment_wins_over_both(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _host(tmp_path)
+        local_url = "https://local.tail0.ts.net:6333"
+        env_url = "https://env.tail0.ts.net:6333"
+        project = _project(tmp_path, shared=EXTERNAL, local={"QDRANT_URL": local_url})
+        curl = {
+            f"{local_url}/collections": ["200", 0],
+            f"{env_url}/collections": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        from_files = _preflight(tmp_path, project, binv, curl)
+        assert f"answers at {local_url}" in from_files.stdout, from_files.stdout
+        from_env = _preflight(tmp_path, project, binv, curl, QDRANT_URL=env_url)
+        assert f"answers at {env_url}" in from_env.stdout, from_env.stdout
+
+
+class TestTrustIsCheckedByItsEffect:
+    """An untrusted folder drops the env block, and the server then starts a
+    local stack rather than reporting missing configuration."""
+
+    @requires_bash
+    def test_a_session_without_the_block_fails(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        result = _preflight(tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1")
+        line = _line(result.stdout, "does not carry")
+        assert "✗" in line, result.stdout
+        assert "Docker" in line, "the ✗ must say what the fallback does"
+        assert "trust" in result.stdout, result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_the_mode_alone_is_not_the_block(self, tmp_path: Path) -> None:
+        """#287 CR 2, reproduced: QDRANT_MODE reached the session from somewhere
+        else, OLLAMA_MODE did not. Reading the file for the missing one said
+        trusted and Docker-free while the server ran Ollama in auto mode."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        result = _preflight(
+            tmp_path,
+            project,
+            binv,
+            STORE_OPEN,
+            CLAUDECODE="1",
+            QDRANT_MODE="external",
+            QDRANT_URL=STORE_URL,
+        )
+        line = _line(result.stdout, "does not carry")
+        assert "✗" in line, result.stdout
+        assert "OLLAMA_MODE, OLLAMA_URL" in line, line
+        assert "QDRANT_MODE" not in line.split("(")[1], "name only what is missing"
+        # #287 round 2, CR 29: the store is still reached; only the embedder
+        # moves, and "a local Docker stack instead of the store" was false.
+        assert "Ollama in auto mode" in line and "container" in line, line
+        assert "managed store" not in line, line
+
+    @requires_bash
+    def test_a_missing_key_is_named_without_its_value(self, tmp_path: Path) -> None:
+        """A key installed after the session started: the server 401s rather
+        than falling back, so the ✗ must not claim a Docker fallback — and the
+        value must appear nowhere."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": KEY})
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, project, binv, curl, CLAUDECODE="1", **EXTERNAL)
+        line = _line(result.stdout, "does not carry")
+        assert "✗" in line and "(QDRANT_API_KEY)" in line, result.stdout
+        assert "Docker" not in line, line
+        assert KEY not in result.stdout + result.stderr
+
+    @requires_bash
+    def test_the_collection_prefix_is_part_of_the_block(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 28: a session without the declared prefix writes
+        the unprefixed collections of the same store."""
+        binv = _host(tmp_path)
+        project = _project(
+            tmp_path, shared={**EXTERNAL, "QDRANT_COLLECTION_PREFIX": "team_"}
+        )
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1", **EXTERNAL
+        )
+        assert "✗" in _line(result.stdout, "(QDRANT_COLLECTION_PREFIX)"), result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_a_stale_session_is_not_called_untrusted(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 29: a session carrying an older QDRANT_URL was told
+        it "does not carry" the block and to accept a trust prompt its already
+        trusted folder never shows. It carries a value; the value is old."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        old_url = "https://old.tail0.ts.net:6333"
+        curl = {**STORE_OPEN, f"{old_url}/collections": ["200", 0]}
+        env = {**EXTERNAL, "QDRANT_URL": old_url}
+        result = _preflight(tmp_path, project, binv, curl, CLAUDECODE="1", **env)
+        line = _line(result.stdout, "other values")
+        assert "✗" in line and "(QDRANT_URL)" in line, result.stdout
+        assert "started before" in line, line
+        assert "does not carry" not in result.stdout, result.stdout
+        assert "trust" not in _line(result.stdout.split(line)[1], "→"), (
+            "a trusted folder shows no prompt"
+        )
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_a_session_with_the_block_passes(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        result = _preflight(
+            tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1", **EXTERNAL
+        )
+        assert "✓" in _line(
+            result.stdout, "carries .claude/settings.json's env block"
+        ), result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    def test_outside_a_session_it_is_advisory(self, tmp_path: Path) -> None:
+        """A plain shell cannot see what a session would carry; unconfirmed is
+        not broken."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        result = _preflight(tmp_path, project, binv, STORE_OPEN)
+        line = _line(result.stdout, "unconfirmed")
+        assert "•" in line and "✗" not in line, result.stdout
+        assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    def test_a_managed_repo_hears_nothing_about_it(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path)
+        result = _preflight(tmp_path, _project(tmp_path), binv, CLAUDECODE="1")
+        assert "Store: managed" in result.stdout, "the run reached the gates"
+        assert "env block" not in result.stdout, result.stdout
+
+
+# ── the driver ───────────────────────────────────────────────────────────────
+
+
+def _store(project: Path, **env: str) -> dict:
+    """`storeConfig()` from a one-shot node eval, with its findings rendered."""
+    script = (
+        "import { storeConfig } from "
+        f"{json.dumps(str(DRIVER))};"
+        f"const r = storeConfig({json.dumps(str(project))});"
+        "process.stdout.write(JSON.stringify(r));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(**env),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _defects(r: dict) -> list[str]:
+    return [f["message"] for f in r["findings"] if f["severity"] == "defect"]
+
+
+def _notes(r: dict) -> list[str]:
+    return [f["message"] for f in r["findings"] if f["severity"] == "note"]
+
+
+def _config(project: Path, body: dict) -> None:
+    (project / ".socraticode.json").write_text(json.dumps(body))
+
+
+def _hash(path: Path) -> str:
+    return hashlib.sha256(str(path).encode()).hexdigest()[:12]
+
+
+class TestStoreConfig:
+    """The driver's transcription of upstream's projectId resolution, and the
+    mode the project settings declare against the one this process carries."""
+
+    @requires_node
+    def test_a_managed_default_install_is_untouched(self, tmp_path: Path) -> None:
+        """Most installs: no settings, no config, per-host store. The hash is
+        harmless there and must not become a finding."""
+        r = _store(_project(tmp_path))
+        assert r["store"] == "managed" and r["findings"] == [], r
+        assert r["projectId"]["source"] == "path hash", r
+
+    @requires_node
+    def test_the_path_hash_is_sha256_of_the_resolved_path(self, tmp_path: Path) -> None:
+        """config.js coreProjectId: sha256(path.resolve(folder))[:12]. Checked
+        against that formula restated here, not against upstream itself — the
+        server package is no dependency of this suite (#287 CR 19)."""
+        project = _project(tmp_path)
+        r = _store(project)
+        assert r["pathHash"] == _hash(project), r
+        assert r["projectId"]["value"] == r["pathHash"], r
+
+    @requires_node
+    def test_the_branch_suffix_follows_upstream(self, tmp_path: Path) -> None:
+        """SOCRATICODE_BRANCH_AWARE appends the sanitized branch to the hash,
+        and only to the hash: a declared projectId ignores it."""
+        project = _project(tmp_path)
+        for args in (
+            ["commit", "-q", "--allow-empty", "-m", "init"],
+            ["checkout", "-q", "-b", "feat/x-y"],
+        ):
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(project),
+                    "-c",
+                    "user.email=t@example.com",
+                    "-c",
+                    "user.name=t",
+                    *args,
+                ],
+                check=True,
+                capture_output=True,
+                env=_clean_env(),
+            )
+        r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
+        assert r["projectId"]["value"] == f"{_hash(project)}__feat_x-y", r
+        # Upstream's sanitizeBranchName also collapses runs of `_` and trims
+        # one from each end: `_feat/__x_` → `feat_x` (#287 round 2, CR 52).
+        subprocess.run(
+            ["git", "-C", str(project), "checkout", "-q", "-b", "_feat/__x_"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
+        r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
+        assert r["projectId"]["value"] == f"{_hash(project)}__feat_x", r
+        _config(project, {"projectId": "broker"})
+        r = _store(project, SOCRATICODE_BRANCH_AWARE="true")
+        assert r["projectId"]["value"] == "broker", r
+
+    @requires_node
+    def test_an_external_store_without_a_projectId_is_a_defect(
+        self, tmp_path: Path
+    ) -> None:
+        project = _project(tmp_path)
+        r = _store(project, QDRANT_MODE="external")
+        [defect] = _defects(r)
+        assert "declares no projectId" in defect, defect
+        assert f"codebase_{_hash(project)}" in defect, (
+            "name the collection it would write"
+        )
+
+    @requires_node
+    def test_the_named_collection_carries_the_prefix(self, tmp_path: Path) -> None:
+        """#287 CR 23: upstream prepends QDRANT_COLLECTION_PREFIX to every
+        collection name, so the one the defect names must carry it too."""
+        project = _project(tmp_path)
+        r = _store(project, QDRANT_MODE="external", QDRANT_COLLECTION_PREFIX="team_")
+        [defect] = _defects(r)
+        assert f"team_codebase_{_hash(project)}" in defect, defect
+
+    @requires_node
+    def test_a_declared_projectId_clears_it(self, tmp_path: Path) -> None:
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        r = _store(project, QDRANT_MODE="external")
+        assert r["findings"] == [], r
+        assert r["projectId"] == {"value": "broker", "source": ".socraticode.json"}, r
+
+    @requires_node
+    def test_the_environment_override_ranks_first(self, tmp_path: Path) -> None:
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        r = _store(project, QDRANT_MODE="external", SOCRATICODE_PROJECT_ID="other")
+        assert r["projectId"] == {
+            "value": "other",
+            "source": "SOCRATICODE_PROJECT_ID",
+        }, r
+
+    @requires_node
+    def test_the_own_path_hash_as_projectId_names_nothing(self, tmp_path: Path) -> None:
+        """broker#18: a copied hash id is the same collision as none at all."""
+        project = _project(tmp_path)
+        _config(project, {"projectId": _hash(project)})
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "own path hash" in defect, defect
+        assert "(.socraticode.json)" in defect and "Use the repo name" in defect
+
+    @requires_node
+    def test_the_own_path_hash_from_the_environment_is_the_cleanup(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 44: external-store.md's cleanup sets
+        SOCRATICODE_PROJECT_ID=<pathHash> for one session, and the defect told
+        a checkout already declaring `broker` to "use the repo name"."""
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(
+                project, QDRANT_MODE="external", SOCRATICODE_PROJECT_ID=_hash(project)
+            )
+        )
+        assert "(SOCRATICODE_PROJECT_ID)" in defect and "unset it" in defect, defect
+        assert "Use the repo name" not in defect, defect
+
+    @requires_node
+    def test_an_invalid_projectId_is_a_defect_in_either_mode(
+        self, tmp_path: Path
+    ) -> None:
+        """Upstream throws on every call rather than sanitize it."""
+        project = _project(tmp_path)
+        _config(project, {"projectId": "not.valid"})
+        [defect] = _defects(_store(project))
+        assert "[a-zA-Z0-9_-]" in defect, defect
+
+    @requires_node
+    def test_a_sibling_on_the_same_id_is_a_defect(self, tmp_path: Path) -> None:
+        """broker#18: a copied `"projectId": "notifier"` writes into notifier's
+        set, and search drops the link as a duplicate of this project."""
+        project = _project(tmp_path)
+        (tmp_path / "notifier").mkdir()
+        _config(tmp_path / "notifier", {"projectId": "notifier"})
+        _config(project, {"projectId": "notifier", "linkedProjects": ["../notifier"]})
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "also linked project ../notifier" in defect, defect
+
+    @requires_node
+    def test_a_sibling_with_an_invalid_id_breaks_every_linked_search(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 CR 12: upstream's resolveLinkedCollections throws on it, so
+        every includeLinked search fails — not only the bad sibling's."""
+        project = _project(tmp_path)
+        (tmp_path / "archiver").mkdir()
+        _config(tmp_path / "archiver", {"projectId": "bad id!"})
+        _config(project, {"projectId": "broker", "linkedProjects": ["../archiver"]})
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "../archiver" in defect and "throws" in defect, defect
+        assert "host step" in defect, "a finding names its own fix (CR 44)"
+
+    @requires_node
+    def test_two_siblings_on_one_id_are_named(self, tmp_path: Path) -> None:
+        """Upstream keeps the first and drops the second without a word."""
+        project = _project(tmp_path)
+        for name in ("archiver", "watcher"):
+            (tmp_path / name).mkdir()
+            _config(tmp_path / name, {"projectId": "archiver"})
+        _config(
+            project,
+            {"projectId": "broker", "linkedProjects": ["../archiver", "../watcher"]},
+        )
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "../archiver and ../watcher" in defect, defect
+        assert "host step" in defect, "a finding names its own fix (CR 44)"
+
+    @requires_node
+    def test_an_absolute_linked_entry_is_a_note(self, tmp_path: Path) -> None:
+        project = _project(tmp_path)
+        (tmp_path / "archiver").mkdir()
+        _config(
+            project,
+            {"projectId": "broker", "linkedProjects": [str(tmp_path / "archiver")]},
+        )
+        r = _store(project, QDRANT_MODE="external")
+        assert _defects(r) == [], r
+        [note] = _notes(r)
+        assert "is absolute" in note and "relative" in note, note
+
+    @requires_node
+    def test_a_declared_store_this_process_lacks_is_a_defect(
+        self, tmp_path: Path
+    ) -> None:
+        """The untrusted-folder fallback, seen from a process: settings say
+        external, and a server launched from here would run managed."""
+        project = _project(tmp_path, shared={"QDRANT_MODE": "external"})
+        _config(project, {"projectId": "broker"})
+        r = _store(project)
+        assert r["declared"] == {"mode": "external", "in": ".claude/settings.json"}, r
+        [defect] = _defects(r)
+        assert "does not carry: QDRANT_MODE (.claude/settings.json)" in defect, defect
+        assert "Docker" in defect, defect
+
+    @requires_node
+    def test_the_mode_alone_is_not_the_block_here_either(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 29: the driver's half of CR 2 had no test — a
+        STORE_KEYS of ['QDRANT_MODE'] passed the suite."""
+        shared = {
+            "QDRANT_MODE": "external",
+            "QDRANT_URL": STORE_URL,
+            "OLLAMA_MODE": "external",
+            "OLLAMA_URL": OLLAMA_URL,
+        }
+        project = _project(tmp_path, shared=shared)
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(project, QDRANT_MODE="external", QDRANT_URL=STORE_URL)
+        )
+        assert "OLLAMA_MODE (.claude/settings.json)" in defect, defect
+        assert "QDRANT_MODE (" not in defect, "name only what is missing"
+        assert "Ollama in auto mode" in defect and "managed store" not in defect, defect
+
+    @requires_node
+    def test_a_cloud_embedder_does_not_fall_back_to_ollama(
+        self, tmp_path: Path
+    ) -> None:
+        project = _project(
+            tmp_path, shared={"QDRANT_MODE": "external", "OLLAMA_MODE": "external"}
+        )
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(project, QDRANT_MODE="external", EMBEDDING_PROVIDER="openai")
+        )
+        assert "OLLAMA_MODE" in defect and "runs without them" in defect, defect
+        assert "Ollama in auto mode" not in defect, defect
+
+    @requires_node
+    def test_a_different_value_is_its_own_defect(self, tmp_path: Path) -> None:
+        """A value compared by presence alone let a session reach another store
+        and be called trusted."""
+        project = _project(
+            tmp_path, shared={"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        )
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(
+                project,
+                QDRANT_MODE="external",
+                QDRANT_URL="https://old.tail0.ts.net:6333",
+            )
+        )
+        assert "other values" in defect, defect
+        assert "QDRANT_URL (.claude/settings.json)" in defect, defect
+        assert "does not carry" not in defect, defect
+
+    @requires_node
+    def test_a_mode_from_elsewhere_still_checks_the_block(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 40: QDRANT_MODE from user settings or a shell, the
+        Ollama settings in the project block — a check keyed on the declared
+        mode never ran, and the server embedded through a container."""
+        project = _project(
+            tmp_path, shared={"OLLAMA_MODE": "external", "OLLAMA_URL": OLLAMA_URL}
+        )
+        _config(project, {"projectId": "broker"})
+        r = _store(project, QDRANT_MODE="external", QDRANT_URL=STORE_URL)
+        assert r["declared"] is None, r
+        [defect] = _defects(r)
+        assert "OLLAMA_MODE (.claude/settings.json)" in defect, defect
+
+    @requires_node
+    def test_both_defects_surface_together(self, tmp_path: Path) -> None:
+        """Keyed on the CONFIGURED store: fixing trust alone must not walk the
+        operator into the projectId defect on the next run."""
+        project = _project(tmp_path, shared={"QDRANT_MODE": "external"})
+        defects = _defects(_store(project))
+        assert len(defects) == 2, defects
+        assert any("declares no projectId" in d for d in defects), defects
+
+    @requires_node
+    @pytest.mark.parametrize(
+        "variable,value",
+        [
+            ("QDRANT_COLLECTION_PREFIX", "team_"),
+            ("SOCRATICODE_PROJECT_ID", "broker-ci"),
+        ],
+    )
+    def test_a_collection_choosing_variable_left_behind_is_a_defect(
+        self, tmp_path: Path, variable: str, value: str
+    ) -> None:
+        """#287 round 2, CR 28: both choose the collections themselves; a
+        process without them writes another set in the same store, and the
+        guard let `index` do exactly that."""
+        project = _project(
+            tmp_path, shared={"QDRANT_MODE": "external", variable: value}
+        )
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert f"{variable} (.claude/settings.json)" in defect, defect
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(
+            project, "index", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry)
+        )
+        assert result.returncode == 1 and not marker.exists(), result.stderr
+
+    @requires_node
+    def test_a_worktree_is_held_to_its_own_settings(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 30: the hook measures the main checkout, whose
+        git-ignored settings.local.json holds the key — a file a session in a
+        worktree never reads. Blaming trust there sent the operator after a
+        problem no restart could fix."""
+        main = _project(
+            tmp_path,
+            shared={"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL},
+            local={"QDRANT_API_KEY": KEY},
+        )
+        _config(main, {"projectId": "broker"})
+        (main / ".gitignore").write_text(".claude/settings.local.json\n")
+        for args in (
+            ["add", "."],
+            ["commit", "-q", "-m", "init"],
+            ["worktree", "add", "-q", str(tmp_path / "wt")],
+        ):
+            subprocess.run(
+                ["git", "-C", str(main), "-c", "user.email=t@example.com"]
+                + ["-c", "user.name=t", *args],
+                check=True,
+                capture_output=True,
+                env=_clean_env(),
+            )
+
+        def gate(cwd: Path, **env: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["node", str(DRIVER), "validate-store", str(main)],
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=_clean_env(QDRANT_MODE="external", QDRANT_URL=STORE_URL, **env),
+            )
+
+        from_worktree = gate(tmp_path / "wt")
+        assert from_worktree.returncode == 1, from_worktree.stderr
+        assert "QDRANT_API_KEY is declared only in" in from_worktree.stderr
+        assert "user settings" in from_worktree.stderr, from_worktree.stderr
+        assert "trusted folder" not in from_worktree.stderr, from_worktree.stderr
+        assert gate(tmp_path / "wt", QDRANT_API_KEY=KEY).returncode == 0
+        # From the main checkout the local file IS the session's, so a missing
+        # key there is still the dropped block it always was.
+        from_main = gate(main)
+        assert "does not carry: QDRANT_API_KEY (.claude/settings.local.json)" in (
+            from_main.stderr
+        ), from_main.stderr
+        for r in (from_worktree, from_main):
+            assert KEY not in r.stdout + r.stderr
+
+    @requires_node
+    def test_a_config_that_does_not_parse_is_not_called_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 34: a trailing comma drew "declares no projectId —
+        Write .socraticode.json", and following that would have dropped the
+        linkedProjects the file already held."""
+        project = _project(tmp_path)
+        (project / ".socraticode.json").write_text(
+            '{"projectId": "broker", "linkedProjects": ["../notifier"],}'
+        )
+        [defect] = _defects(_store(project, QDRANT_MODE="external"))
+        assert "does not parse" in defect and "Fix its JSON" in defect, defect
+        assert "Write .socraticode.json" not in defect, defect
+
+    @requires_node
+    def test_a_settings_file_that_does_not_parse_blocks(self, tmp_path: Path) -> None:
+        """It read as declaring nothing — "OK: managed store" for a file that
+        declared external, which no session receives either."""
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        (project / ".claude").mkdir()
+        (project / ".claude" / "settings.json").write_text(
+            '{"env": {"QDRANT_MODE": "external",}}'
+        )
+        [defect] = _defects(_store(project))
+        assert ".claude/settings.json does not parse" in defect, defect
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(project, "status", SOCRATICODE_ENTRY=str(entry))
+        assert result.returncode == 1 and not marker.exists(), result.stderr
+
+    @requires_node
+    def test_local_settings_override_shared_ones(self, tmp_path: Path) -> None:
+        project = _project(
+            tmp_path,
+            shared={"QDRANT_MODE": "external"},
+            local={"QDRANT_MODE": "managed"},
+        )
+        r = _store(project)
+        assert r["declared"] == {
+            "mode": "managed",
+            "in": ".claude/settings.local.json",
+        }, r
+        assert r["findings"] == [], r
+
+
+def _driver(project: Path, *args: str, **env: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["node", str(DRIVER), *args, str(project)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(**env),
+    )
+
+
+def _launch_marker(tmp_path: Path) -> tuple[Path, Path]:
+    """A server entry that records being started, and the file it writes."""
+    marker = tmp_path / "server-launched"
+    entry = tmp_path / "marker-server.mjs"
+    entry.write_text(
+        "import { writeFileSync } from 'node:fs';\n"
+        f"writeFileSync({json.dumps(str(marker))}, 'launched');\n"
+        "process.exit(1);\n"
+    )
+    return entry, marker
+
+
+class TestValidateStore:
+    @requires_node
+    def test_a_defect_fails_with_a_verdict(self, tmp_path: Path) -> None:
+        project = _project(tmp_path)
+        result = _driver(project, "validate-store", QDRANT_MODE="external")
+        assert result.returncode == 1, result.stderr
+        verdict = json.loads(result.stdout)
+        assert verdict["valid"] is False and verdict["store"] == "external", verdict
+        assert verdict["pathHash"] == _hash(project), verdict
+        [blocking] = verdict["blocking"]
+        assert "declares no projectId" in blocking, verdict
+        assert "  - this project uses an external store" in result.stderr, result.stderr
+
+    @requires_node
+    def test_a_clean_config_passes(self, tmp_path: Path) -> None:
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        result = _driver(project, "validate-store", QDRANT_MODE="external")
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["valid"] is True
+        assert 'projectId "broker"' in result.stderr, result.stderr
+
+
+class TestTheDriverDoesNotLaunchIntoTheWrongStore:
+    """A launch is a write: startup auto-resume updates any collection that
+    already exists, and status or query calls start the watcher."""
+
+    @requires_node
+    @pytest.mark.parametrize("command", ["index", "status", "verify"])
+    def test_launching_commands_refuse(self, tmp_path: Path, command: str) -> None:
+        project = _project(tmp_path)
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(
+            project, command, QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry)
+        )
+        assert result.returncode == 1, result.stderr
+        assert "refusing to launch a server" in result.stderr, result.stderr
+        assert not marker.exists(), f"{command} launched a server into the wrong store"
+
+    @requires_node
+    def test_a_bad_sibling_does_not_stop_this_project(self, tmp_path: Path) -> None:
+        """#287 CR 12: a sibling's invalid id breaks includeLinked search, but
+        no write of this project's lands anywhere wrong — reported, and the
+        launch goes ahead."""
+        project = _project(tmp_path)
+        (tmp_path / "archiver").mkdir()
+        _config(tmp_path / "archiver", {"projectId": "bad id!"})
+        _config(project, {"projectId": "broker", "linkedProjects": ["../archiver"]})
+        gate = _driver(project, "validate-store", QDRANT_MODE="external")
+        assert gate.returncode == 0, gate.stderr
+        verdict = json.loads(gate.stdout)
+        assert verdict["valid"] is True and verdict["blocking"] == [], verdict
+        assert any("bad id!" in f for f in verdict["findings"]), (
+            "reported, and told apart from a blocking one by `blocking` (CR 45)"
+        )
+        assert "not ones that block a launch" in gate.stderr, gate.stderr
+        entry, marker = _launch_marker(tmp_path)
+        _driver(project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry))
+        assert marker.exists(), "status refused to launch over a sibling's stub"
+
+    def _siblings(self, tmp_path: Path, own_id: str, *ids: str) -> Path:
+        """This project, linked to one sibling per id in `ids`."""
+        project = _project(tmp_path)
+        names = [f"sibling{i}" for i in range(len(ids))]
+        for name, sibling_id in zip(names, ids):
+            (tmp_path / name).mkdir()
+            _config(tmp_path / name, {"projectId": sibling_id})
+        _config(
+            project,
+            {"projectId": own_id, "linkedProjects": [f"../{n}" for n in names]},
+        )
+        return project
+
+    @requires_node
+    def test_a_sibling_on_this_projects_id_blocks_the_launch(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 37: the one sibling defect that IS a wrong write —
+        two repos, one collection set. Made non-blocking, it survived."""
+        project = self._siblings(tmp_path, "notifier", "notifier")
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(
+            project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry)
+        )
+        assert result.returncode == 1, result.stderr
+        assert "refusing to launch" in result.stderr, result.stderr
+        assert not marker.exists(), "status wrote into the sibling's collections"
+
+    @requires_node
+    def test_two_siblings_on_one_id_block_nothing(self, tmp_path: Path) -> None:
+        """…and the other way: made blocking, it also survived."""
+        project = self._siblings(tmp_path, "broker", "archiver", "archiver")
+        gate = _driver(project, "validate-store", QDRANT_MODE="external")
+        assert gate.returncode == 0, gate.stderr
+        assert json.loads(gate.stdout)["valid"] is True
+        entry, marker = _launch_marker(tmp_path)
+        _driver(project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry))
+        assert marker.exists(), "status refused over two siblings' stubs"
+
+    @requires_node
+    def test_health_check_measures_past_a_sibling_defect(self, tmp_path: Path) -> None:
+        """The hook's help says the sibling defects report "without blocking
+        the check"; health-check skipping its server checks over one survived."""
+        project = self._siblings(tmp_path, "broker", "bad id!")
+        stub = tmp_path / "stub-server.mjs"
+        stub.write_text(STUB_SERVER)
+        replies = tmp_path / "replies.json"
+        replies.write_text(
+            json.dumps(
+                {
+                    "codebase_health": HEALTH_OK,
+                    "codebase_status": STATUS_CLEAN,
+                    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+                }
+            )
+        )
+        result = _driver(
+            project,
+            "health-check",
+            QDRANT_MODE="external",
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(replies),
+            HEALTH_TIMEOUT_MS="30000",
+        )
+        report = json.loads(result.stdout)
+        assert "serverChecks" not in report, report
+        assert "health" in report, "codebase_health never ran"
+        assert any("bad id!" in f for f in report["findings"]), report
+        assert result.returncode == 1, "the sibling defect is still a defect"
+
+    @requires_node
+    def test_health_check_reports_and_skips_its_server_checks(
+        self, tmp_path: Path
+    ) -> None:
+        project = _project(tmp_path, shared={"QDRANT_MODE": "external"})
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(
+            project,
+            "health-check",
+            SOCRATICODE_ENTRY=str(entry),
+            HEALTH_TIMEOUT_MS="30000",
+        )
+        assert not marker.exists(), (
+            "health-check launched a server into the wrong store"
+        )
+        assert result.returncode == 1, result.stderr
+        report = json.loads(result.stdout)
+        assert report["serverChecks"] == "skipped", report
+        assert report["store"]["declared"]["mode"] == "external", report
+        assert "  - the project settings declare store variables" in result.stderr
+        assert "  - note: the server checks did not run" in result.stderr, (
+            "a report with no infrastructure findings reads as clean infrastructure"
+        )
+
+    @requires_node
+    def test_a_clean_external_store_is_measured_as_before(self, tmp_path: Path) -> None:
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        stub = tmp_path / "stub-server.mjs"
+        stub.write_text(STUB_SERVER)
+        replies = tmp_path / "replies.json"
+        replies.write_text(
+            json.dumps(
+                {
+                    "codebase_health": HEALTH_OK,
+                    "codebase_status": STATUS_CLEAN,
+                    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+                }
+            )
+        )
+        result = _driver(
+            project,
+            "health-check",
+            QDRANT_MODE="external",
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(replies),
+            HEALTH_TIMEOUT_MS="30000",
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert "serverChecks" not in report, report
+        assert report["store"]["projectId"]["value"] == "broker", report
+
+
+# STUB_SERVER, prefixed with a line recording the environment it was started
+# with. The second `node:fs` import is legal ESM; the stub itself is unchanged.
+ENV_RECORDING_SERVER = (
+    "import { writeFileSync } from 'node:fs';\n"
+    "writeFileSync(process.env.STUB_ENV_OUT, JSON.stringify({\n"
+    "  autoResume: process.env.SOCRATICODE_AUTO_RESUME ?? null,\n"
+    "  watcher: process.env.SOCRATICODE_WATCHER ?? null,\n"
+    "}));\n"
+) + STUB_SERVER
+
+INDEX_REPLIES = {
+    "codebase_index": "Indexing started in the background for: /repo",
+    "codebase_status": STATUS_CLEAN,
+    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+    "codebase_health": HEALTH_OK,
+}
+
+
+class TestTheDriversOwnServerDoesNotWrite:
+    """#287 CR 1. Upstream's startup auto-resume runs an incremental update of
+    the server's cwd project whenever its collection exists; through the health
+    hook that cwd is the session's, and with a shared projectId a worktree's
+    files went into the store once a day, from a hook that "never re-indexes"."""
+
+    def _launch(self, tmp_path: Path, command: str, **env: str) -> dict:
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        stub = tmp_path / "env-server.mjs"
+        stub.write_text(ENV_RECORDING_SERVER)
+        replies = tmp_path / "replies.json"
+        replies.write_text(json.dumps(INDEX_REPLIES))
+        seen = tmp_path / "server-env.json"
+        result = _driver(
+            project,
+            command,
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(replies),
+            STUB_ENV_OUT=str(seen),
+            HEALTH_TIMEOUT_MS="30000",
+            POLL_INTERVAL_MS="10",
+            **env,
+        )
+        assert seen.exists(), f"{command} never launched the stub: {result.stderr}"
+        return json.loads(seen.read_text())
+
+    @requires_node
+    @pytest.mark.parametrize("command", ["status", "verify", "health-check"])
+    def test_read_only_commands_start_neither_writer(
+        self, tmp_path: Path, command: str
+    ) -> None:
+        seen = self._launch(tmp_path, command, SOCRATICODE_AUTO_RESUME="all")
+        assert seen == {"autoResume": "off", "watcher": "manual"}, (
+            "the caller's own SOCRATICODE_AUTO_RESUME must not loosen the "
+            f"driver's terms for its server: {seen}"
+        )
+
+    @requires_node
+    def test_index_keeps_the_watcher_but_not_auto_resume(self, tmp_path: Path) -> None:
+        """A completed index starting its watcher is upstream's sequence; an
+        incremental run racing the full index the driver asked for is not."""
+        seen = self._launch(tmp_path, "index")
+        assert seen == {"autoResume": "off", "watcher": None}, seen
+
+
+VERIFY_REPLIES = {
+    "codebase_list_projects": "Indexed projects:\n  /repo (broker)",
+    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+    "codebase_search": "--- src/app.py (lines 10-20) [python] score: 0.51\nbody",
+    "codebase_status": STATUS_CLEAN,
+}
+HEALTH_EXTERNAL = (
+    "SocratiCode — Infrastructure Health Check:\n\n"
+    f"Qdrant mode: external\nQdrant endpoint: {STORE_URL}\n"
+)
+
+
+class TestVerifyConfirmsTheStoreFromTheServersSide:
+    """#287 round 2, CR 38: Phase 6 accepts "native tools, or verify" for a
+    check that codebase_health reports `Qdrant mode: external`, and verify
+    never called codebase_health."""
+
+    def _verify(self, tmp_path: Path, replies: dict, **env: str):
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        stub = tmp_path / "stub-server.mjs"
+        stub.write_text(STUB_SERVER)
+        path = tmp_path / "replies.json"
+        path.write_text(json.dumps(replies))
+        return _driver(
+            project,
+            "verify",
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(path),
+            **env,
+        )
+
+    @requires_node
+    def test_an_external_server_passes(self, tmp_path: Path) -> None:
+        replies = {**VERIFY_REPLIES, "codebase_health": HEALTH_EXTERNAL}
+        result = self._verify(tmp_path, replies, QDRANT_MODE="external")
+        assert result.returncode == 0, result.stderr
+        assert "[driver] qdrant mode: external" in result.stderr, result.stderr
+
+    @requires_node
+    def test_a_server_that_runs_managed_fails(self, tmp_path: Path) -> None:
+        health = HEALTH_EXTERNAL.replace(
+            "Qdrant mode: external", "Qdrant mode: managed"
+        )
+        replies = {**VERIFY_REPLIES, "codebase_health": health}
+        result = self._verify(tmp_path, replies, QDRANT_MODE="external")
+        assert result.returncode == 1, result.stderr
+        assert "managed, not external" in result.stderr, result.stderr
+        assert "verification failed" in result.stderr, result.stderr
+
+    @requires_node
+    def test_a_managed_store_is_not_asked(self, tmp_path: Path) -> None:
+        """No codebase_health reply at all: a managed verify must not call it."""
+        result = self._verify(tmp_path, VERIFY_REPLIES)
+        assert result.returncode == 0, result.stderr
+        assert "qdrant mode" not in result.stderr, result.stderr
+
+
+class TestTheHookCarriesItIntoTheSession:
+    @requires_node
+    def test_a_store_defect_reaches_the_session(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text(
+            json.dumps({"env": {"QDRANT_MODE": "external"}})
+        )
+        entry, marker = _launch_marker(tmp_path)
+        result = subprocess.run(
+            ["bash", str(HOOK)],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(
+                HOME=str(tmp_path / "home"),
+                SOCRATICODE_DRIVER=str(DRIVER),
+                SOCRATICODE_ENTRY=str(entry),
+                SOCRATICODE_HEALTH_FORCE="1",
+            ),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "does not carry: QDRANT_MODE" in result.stdout, result.stdout
+        assert "declares no projectId" in result.stdout, result.stdout
+        assert "FAILED TO RUN" not in result.stdout, result.stdout
+        assert not marker.exists()
+
+
+# ── the documents ────────────────────────────────────────────────────────────
+
+
+class TestTheSkillStatesTheOrder:
+    def test_projectId_precedes_the_env_block(self) -> None:
+        body = SKILL_MD.read_text()
+        assert "`STORE`" in body, "the parameter must be collectable"
+        step4 = body.index("**`.socraticode.json`**")
+        step5 = body.index("**Client `env` block**")
+        assert step4 < step5, "the projectId step must come first"
+        assert "Never the block alone" in " ".join(body.split())
+
+    def test_trust_is_confirmed_before_the_index(self) -> None:
+        """Inside step 5 — after the block is written, before any phase that
+        could launch a server — not merely somewhere in the file."""
+        body = " ".join(SKILL_MD.read_text().split())
+        step5 = body[body.index("**Client `env` block**") : body.index("### Phase 4")]
+        for phrase in ("trusting the folder", "re-run this skill", "bare"):
+            assert phrase in step5, f"{phrase!r} missing from step 5: {step5}"
+        assert "The session that wrote the block cannot index" in step5, (
+            "the session that wrote the block runs a server started without it"
+        )
+        # #287 round 2, CR 33: unconditional, the restart looped — the re-run
+        # reached step 5 again and was told to restart again.
+        assert "Unless this session's Phase 1 already showed" in step5, step5
+
+    def test_phase_five_gates_on_the_store(self) -> None:
+        body = SKILL_MD.read_text()
+        phase5 = body[body.index("### Phase 5") : body.index("### Phase 6")]
+        assert "validate-store" in phase5, phase5
+
+    def test_linked_projects_are_written_relative(self) -> None:
+        flat = " ".join(LINKED_REF.read_text().split())
+        assert "relative to the repo root" in flat, flat
+        assert "Migrating an older install" in flat, flat
+
+    def test_the_reference_carries_the_env_block(self) -> None:
+        body = EXTERNAL_REF.read_text()
+        for key in ("QDRANT_MODE", "QDRANT_URL", "OLLAMA_MODE", "OLLAMA_URL"):
+            assert f'"{key}"' in body, key
+        assert '"QDRANT_API_KEY"' not in body, (
+            "the key belongs in a git-ignored file, never in the block shown for "
+            "the tracked settings.json"
+        )
+
+    def test_the_health_hook_no_longer_assumes_docker(self) -> None:
+        body = HOOK.read_text()
+        flat = " ".join(body.split())
+        assert "needs a running MCP server and Docker" not in body
+        assert "a reachable URL for an external one" in flat, (
+            "the header must name what an external store needs instead"
+        )
+        help_text = subprocess.run(
+            ["bash", str(HOOK), "--help"], capture_output=True, text=True, timeout=30
+        ).stdout
+        usage = subprocess.run(
+            ["node", str(DRIVER), "--help"], capture_output=True, text=True, timeout=30
+        ).stdout
+        # Every defect the guard can raise, in both lists of them (CR 45).
+        for text in (" ".join(help_text.split()), " ".join(usage.split())):
+            for defect in ("carries with another value", "does not parse", "worktree"):
+                assert defect in text, (defect, text)
+        flat_help = " ".join(help_text.split())
+        assert "runs no docker command of its own" in flat_help
+        # #287 round 2, CR 35: codebase_graph_status can create a collection,
+        # and a managed store's codebase_status starts a container — so the
+        # claim is no index content, and every doc of the invariant says "of
+        # its own".
+        assert "writes no index content" in flat_help, flat_help
+        assert "writes nothing" not in flat_help, flat_help
+        skill = " ".join(SKILL_MD.read_text().split())
+        assert "no `docker` command of its own" in skill
+        policy_ref = SKILL / "references" / "code-exploration-policy.md"
+        assert "no `docker start`" not in policy_ref.read_text()
+
+
+IGNORED_FILE = ".claude/settings.local.json"
+
+
+def _ignore_guard() -> str:
+    """The guard block exactly as linked-projects.md ships it."""
+    body = LINKED_REF.read_text()
+    section = body[body.index("## Make sure settings.local.json is git-ignored") :]
+    start = section.index("```bash\n") + len("```bash\n")
+    return section[start : section.index("```", start)]
+
+
+class TestTheIgnoreGuard:
+    """The block the HARD-GATE's key write rests on, run as the reference
+    ships it. It passed a negated rule as protection, leaving the key file
+    unignored, and appended another block on every run while `.gitignore` was
+    untracked (#287 round 2, CR 25)."""
+
+    def _repo(self, tmp_path: Path, **files: str) -> tuple[Path, dict]:
+        """A repo whose committed files are `files` (path → text), plus an
+        uncommitted settings.local.json. No global or system git config, and a
+        HOME of its own, so the developer's excludes decide nothing here."""
+        repo = tmp_path / "repo"
+        env = _clean_env(
+            HOME=str(tmp_path / "home"),
+            XDG_CONFIG_HOME=str(tmp_path / "home" / ".config"),
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_CONFIG_GLOBAL=os.devnull,
+        )
+        subprocess.run(
+            ["git", "init", "-q", str(repo)], check=True, capture_output=True, env=env
+        )
+        for rel, text in files.items():
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text(text)
+        if files:
+            self._git(repo, env, "add", "--", *files)
+            self._git(repo, env, "commit", "-q", "-m", "fixture")
+        (repo / ".claude").mkdir(exist_ok=True)
+        if IGNORED_FILE not in files:
+            (repo / IGNORED_FILE).write_text("{}")
+        return repo, env
+
+    @staticmethod
+    def _git(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def _guard(self, repo: Path, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [shutil.which("bash") or "/bin/bash", "-c", _ignore_guard()],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+
+    def _ignored(self, repo: Path, env: dict) -> bool:
+        return (
+            self._git(repo, env, "check-ignore", "-q", "--", IGNORED_FILE).returncode
+            == 0
+        )
+
+    def _staged_rule(self, repo: Path, env: dict) -> bool:
+        staged = self._git(repo, env, "show", ":.gitignore").stdout
+        return IGNORED_FILE in staged.splitlines()
+
+    @requires_bash
+    def test_no_gitignore_gets_one_rule_staged_once(self, tmp_path: Path) -> None:
+        repo, env = self._repo(tmp_path)
+        first = self._guard(repo, env)
+        assert "STOP" not in first.stderr, first.stderr
+        after_one = (repo / ".gitignore").read_text()
+        second = self._guard(repo, env)
+        assert "STOP" not in second.stderr, second.stderr
+        assert (repo / ".gitignore").read_text() == after_one, (
+            "a re-run appended a second block"
+        )
+        assert after_one.splitlines().count(IGNORED_FILE) == 1, after_one
+        assert self._staged_rule(repo, env), "the rule must reach the index"
+        assert self._ignored(repo, env)
+
+    @requires_bash
+    def test_a_negated_rule_is_not_protection(self, tmp_path: Path) -> None:
+        repo, env = self._repo(
+            tmp_path, **{".gitignore": ".claude/*\n!.claude/*.json\n"}
+        )
+        assert not self._ignored(repo, env), "fixture: the negation re-includes it"
+        self._guard(repo, env)
+        assert self._ignored(repo, env), (repo / ".gitignore").read_text()
+        assert self._staged_rule(repo, env)
+        after_one = (repo / ".gitignore").read_text()
+        self._guard(repo, env)
+        assert (repo / ".gitignore").read_text() == after_one
+
+    @requires_bash
+    def test_a_rule_only_this_clone_holds_is_not_enough(self, tmp_path: Path) -> None:
+        repo, env = self._repo(tmp_path)
+        (repo / ".git" / "info").mkdir(parents=True, exist_ok=True)
+        (repo / ".git" / "info" / "exclude").write_text(IGNORED_FILE + "\n")
+        assert self._ignored(repo, env), "fixture: ignored, but by this clone alone"
+        self._guard(repo, env)
+        assert self._staged_rule(repo, env), (repo / ".gitignore").read_text()
+
+    @requires_bash
+    def test_a_tracked_rule_is_left_alone(self, tmp_path: Path) -> None:
+        body = "# local\n" + IGNORED_FILE + "\n"
+        repo, env = self._repo(tmp_path, **{".gitignore": body})
+        result = self._guard(repo, env)
+        assert "STOP" not in result.stderr, result.stderr
+        assert (repo / ".gitignore").read_text() == body
+        assert self._git(repo, env, "diff", "--cached", "--name-only").stdout == ""
+
+    @requires_bash
+    def test_a_tracked_settings_file_stops_it(self, tmp_path: Path) -> None:
+        repo, env = self._repo(tmp_path, **{IGNORED_FILE: "{}"})
+        result = self._guard(repo, env)
+        assert "STOP" in result.stderr and "is tracked" in result.stderr, result.stderr
+        assert not (repo / ".gitignore").exists(), "no rule untracks a tracked file"
+
+    @requires_bash
+    def test_a_nested_re_include_stops_without_stacking(self, tmp_path: Path) -> None:
+        repo, env = self._repo(
+            tmp_path, **{".claude/.gitignore": "!settings.local.json\n"}
+        )
+        first = self._guard(repo, env)
+        assert "still not ignored" in first.stderr, first.stderr
+        after_one = (repo / ".gitignore").read_text()
+        second = self._guard(repo, env)
+        assert "still not ignored" in second.stderr, second.stderr
+        assert (repo / ".gitignore").read_text() == after_one, (
+            "appending again cannot outrank .claude/.gitignore, so it must not try"
+        )

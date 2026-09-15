@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+from .test_socraticode_node_gate import STORE_VARIABLES
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "skills" / "init-socraticode" / "scripts"
 DRIVER = SCRIPTS / "mcp-driver.mjs"
@@ -70,6 +72,11 @@ def _clean_env(**extra: str) -> dict:
         # health-check reads it since #281, and a session that runs this suite
         # may well have it set — the skill writes it into settings.local.json.
         "SOCRATICODE_LINKED_PROJECTS",
+        # Read by the store guard since #287, which every server-launching
+        # command runs first. A session on an external-store VM carries them
+        # from its settings env block, and every fixture here declares no
+        # projectId, so leaving them in would refuse each launch these make.
+        *STORE_VARIABLES,
     ):
         env.pop(k, None)
     env.update(extra)

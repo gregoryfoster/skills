@@ -42,6 +42,7 @@
 // after the interface changed.)
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -171,13 +172,15 @@ function resolveServerLaunch() {
 
 // ── minimal JSON-RPC 2.0 stdio client ───────────────────────────────────────
 class RpcClient {
-  constructor(launch) {
+  constructor(launch, overrides = {}) {
     // We own this child. On our exit we kill it by child.pid — never pkill.
     // launch.env carries the plugin's PATH when we resolved from its mcp.json;
     // merging over process.env keeps that authoritative without dropping ours.
+    // `overrides` land last: they are the driver's terms for its own server
+    // (see withClient), and neither the shell nor the plugin may loosen them.
     this.child = spawn(launch.command, launch.args, {
       stdio: ['pipe', 'pipe', 'inherit'],
-      env: { ...process.env, ...launch.env },
+      env: { ...process.env, ...launch.env, ...overrides },
     });
     this.nextId = 1;
     this.pending = new Map();
@@ -1143,9 +1146,11 @@ function expectedArtifactCount(projectPath) {
 //     reported too, since it drops every link the file declares at once.
 //
 // The env source is THIS process's environment. Through the hook that is the
-// session's, which is where the skill writes the variable
-// (`.claude/settings.local.json`'s env block) and what the plugin's server
-// inherits — the same route SOCRATICODE_PROBE_FILE already takes.
+// session's, which is where installs before #287 wrote the variable
+// (`.claude/settings.local.json`'s env block, one host's absolute paths) and
+// what the plugin's server inherits — the same route SOCRATICODE_PROBE_FILE
+// already takes. The skill now writes relative entries into the committed
+// `.socraticode.json` instead.
 const SOCRATICODE_CONFIG_NAME = '.socraticode.json';
 const LINKED_ENV = 'SOCRATICODE_LINKED_PROJECTS';
 
@@ -1209,6 +1214,339 @@ function linkedProjectsFinding(linked) {
   return parts.length ? parts.join('; ') : null;
 }
 
+// ── the store a launched server would address (#287) ────────────────────────
+// SocratiCode names a project's collections by its projectId, which config.js
+// (1.13.3) resolves from SOCRATICODE_PROJECT_ID, then `.socraticode.json`'s
+// `projectId`, then sha256(<absolute path>)[:12]. Against a per-host Qdrant the
+// hash is harmless. Against a SHARED store it is not per-host at all: exe.dev
+// VMs check a repo out at the same path, so broker's VM and notifier's clone of
+// broker both resolve to `d4eab3ecb321` — two hosts writing one collection set
+// under a lock that is host-local (os.tmpdir()/socraticode-locks), and nothing
+// reports it.
+//
+// A launch is already a write. At startup the server's auto-resume runs an
+// incremental update of the project at its cwd whenever that project's
+// collection exists, and every status or query call starts the file watcher on
+// the same condition. So the guard stands before EVERY command that launches a
+// server, not before `index` alone: `status` under the wrong id writes too.
+//
+// The mode is the other half. A project's settings `env` block reaches the
+// server only through a Claude Code session in a trusted folder; a process that
+// lacks it launches a managed server — a local Docker stack, started through
+// the socket if the host has one — while the settings say external.
+//
+// Transcribed rather than imported, like linkedProjects() above and for the
+// same reason: nothing here can import the server package.
+const PROJECT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const LOCAL_SETTINGS = '.claude/settings.local.json';
+const PROJECT_SETTINGS = [LOCAL_SETTINGS, '.claude/settings.json'];
+const PATH_HASH = 'path hash';
+
+function readJsonOrNull(path) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
+}
+
+// Why a file that exists could not be used, or null — absent included. The
+// null above is upstream's loader and right for the id it mirrors; it is wrong
+// for a finding, where "absent" and "does not parse" need opposite remedies:
+// write the file, or fix it without rewriting it (#287 round 2, CR 34).
+function unreadable(path) {
+  if (!existsSync(path)) return null;
+  try { JSON.parse(readFileSync(path, 'utf8')); return null; } catch (e) { return e.message; }
+}
+
+// config.js coreProjectId: the fallback id, from the resolved (not real) path.
+function pathHash(folder) {
+  return createHash('sha256').update(resolvePath(folder)).digest('hex').slice(0, 12);
+}
+
+// A folder's own declared projectId, trimmed, or null — readProjectIdFromConfigFile
+// minus its throw, so an invalid id comes back to be reported rather than
+// ending the run.
+function declaredProjectId(folder) {
+  const cfg = readJsonOrNull(joinPath(folder, SOCRATICODE_CONFIG_NAME));
+  const id = cfg && typeof cfg === 'object' ? cfg.projectId : undefined;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
+}
+
+// The variables that decide which store a server reaches, which collections
+// in it, and how it embeds — every one an untrusted folder's dropped env block
+// can take with it. The prefix and the id override choose the collections
+// themselves: left behind, either sends every write to another set in the
+// same store, so they are store variables as much as the URL is (#287 round
+// 2, CR 28).
+const STORE_KEYS = [
+  'QDRANT_MODE', 'QDRANT_URL', 'QDRANT_HOST', 'QDRANT_PORT', 'QDRANT_API_KEY',
+  'QDRANT_COLLECTION_PREFIX', 'SOCRATICODE_PROJECT_ID',
+  'OLLAMA_MODE', 'OLLAMA_URL', 'EMBEDDING_PROVIDER', 'EMBEDDING_MODEL', 'EMBEDDING_DIMENSIONS',
+];
+
+// Each store variable a project's settings files declare, local over shared,
+// with the file that declared it. Only the project's files: theirs is the block
+// an untrusted folder drops, where user settings apply everywhere regardless.
+function declaredStoreEnv(root) {
+  const out = {};
+  for (const rel of [...PROJECT_SETTINGS].reverse()) {
+    const env = readJsonOrNull(joinPath(root, rel))?.env;
+    if (!env || typeof env !== 'object') continue;
+    for (const key of STORE_KEYS) {
+      const v = env[key];
+      if (typeof v === 'string' || typeof v === 'number') out[key] = { value: String(v), in: rel };
+    }
+  }
+  return out;
+}
+
+// config.js projectIdFromPath, including the branch suffix it appends to the
+// hash — and only to the hash — under SOCRATICODE_BRANCH_AWARE=true.
+function effectiveProjectId(root, env) {
+  const fromEnv = (env.SOCRATICODE_PROJECT_ID || '').trim();
+  if (fromEnv) return { value: fromEnv, source: 'SOCRATICODE_PROJECT_ID' };
+  const fromFile = declaredProjectId(root);
+  if (fromFile) return { value: fromFile, source: SOCRATICODE_CONFIG_NAME };
+  let value = pathHash(root);
+  if (env.SOCRATICODE_BRANCH_AWARE === 'true') {
+    const branch = gitIn(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const safe = branch && branch !== 'HEAD'
+      ? branch.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+      : '';
+    if (safe) value = `${value}__${safe}`;
+  }
+  return { value, source: PATH_HASH };
+}
+
+// The checkout a process here runs in, when that is ANOTHER worktree of the
+// project's repository; else null. A session carries the env block of the
+// checkout it was started in, while the hook — and a relative projectPath —
+// measure the main checkout (#180). From a worktree session the two differ,
+// and the main checkout's git-ignored settings.local.json, the key's home, is
+// not a file that session ever read (#287 round 2, CR 30). A process in an
+// unrelated repository, or in none, is still held to the project's block.
+function otherWorktree(root, cwd) {
+  const top = gitIn(cwd, ['rev-parse', '--show-toplevel']);
+  if (top === null || realOrSelf(top) === realOrSelf(root)) return null;
+  const mine = gitCommonDir(cwd);
+  const theirs = gitCommonDir(root);
+  return mine && theirs && realOrSelf(mine) === realOrSelf(theirs) ? realOrSelf(top) : null;
+}
+
+// What a server lacking `unset` runs, named for what is actually missing: the
+// mode moves the store; OLLAMA_MODE moves only the embedder, and only when the
+// embedder is Ollama. "Falls back to a local Docker stack instead of reaching
+// the store" was said of both, and of the second it is false (#287 round 2,
+// CR 29).
+function runsWithout(unset, env) {
+  if (unset.includes('QDRANT_MODE')) {
+    return 'runs a managed store — a local Qdrant in Docker — instead of reaching the external one';
+  }
+  if (unset.includes('OLLAMA_MODE') && (env.EMBEDDING_PROVIDER || 'ollama') === 'ollama') {
+    return 'embeds through Ollama in auto mode — a container, unless a native Ollama answers on '
+      + "localhost:11434 — not through the store's";
+  }
+  return 'runs without them';
+}
+
+// Every finding is a defect except absolute linked entries: those still
+// resolve on this host, and only portability suffers. A defect blocks a
+// launch (guardStore) unless it is marked `blocking: false` — the sibling
+// defects, which break includeLinked search but send no write to the wrong
+// collections, so they must not stop this project being indexed or measured.
+const blocks = (f) => f.severity === SEVERITY.defect && f.blocking !== false;
+
+function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
+  const root = resolvePath(projectPath);
+  const store = env.QDRANT_MODE === 'external' ? 'external' : 'managed';
+  const declaredEnv = declaredStoreEnv(root);
+  const worktree = otherWorktree(root, cwd);
+  // The block this process could have been handed: its own checkout's.
+  const carriedBlock = worktree ? declaredStoreEnv(worktree) : declaredEnv;
+  const declared = declaredEnv.QDRANT_MODE
+    ? { mode: declaredEnv.QDRANT_MODE.value, in: declaredEnv.QDRANT_MODE.in }
+    : null;
+  const hash = pathHash(root);
+  const projectId = effectiveProjectId(root, env);
+  const findings = [];
+  const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
+  const siblingDefect = (message) => findings.push({ severity: SEVERITY.defect, message, blocking: false });
+  const note = (message) => findings.push({ severity: SEVERITY.note, message });
+
+  // A settings file that does not parse was read above as declaring nothing,
+  // which printed "OK: managed store" for one that declared external. Claude
+  // Code applies none of such a file, so the block it may hold reaches no
+  // session — the untrusted-folder fallback by another road — and the store a
+  // launch would address cannot be known. A defect, then: it blocks (#287
+  // round 2, CR 34).
+  for (const dir of worktree ? [root, worktree] : [root]) {
+    for (const rel of PROJECT_SETTINGS) {
+      const why = unreadable(joinPath(dir, rel));
+      if (why) {
+        defect(
+          `${dir === root ? rel : joinPath(dir, rel)} does not parse (${why}) — Claude Code applies none of it, `
+          + 'so any env block it declares reaches no session, and the store a server here would address '
+          + 'cannot be checked. Fix its JSON'
+        );
+      }
+    }
+  }
+
+  // Every store variable the block declares, not QDRANT_MODE alone (#287 CR
+  // 2): with the mode carried and OLLAMA_MODE not, the launched server runs
+  // Ollama in auto mode and starts a container. Names only — one is the key.
+  //
+  // Unset and different are two failures, told apart (#287 round 2, CR 29):
+  // the first is a dropped block, the second a process started before the
+  // file changed — in a folder already trusted, where no prompt appears.
+  //
+  // Keyed on the store the repo is CONFIGURED for OR the one this process
+  // reaches (#287 round 2, CR 40). With the mode from user settings or a shell
+  // export and OLLAMA_* in the project block, a check keyed on the declared
+  // mode alone never ran, while the server embedded through a container.
+  const external = store === 'external' || declared?.mode === 'external';
+  if (external) {
+    const unset = [];
+    const different = [];
+    for (const k of Object.keys(carriedBlock)) {
+      const carried = env[k] ?? '';
+      if (carried === '') unset.push(k);
+      else if (carried !== carriedBlock[k].value) different.push(k);
+    }
+    const named = (keys) => keys
+      .map((k) => `${k} (${worktree ? joinPath(worktree, carriedBlock[k].in) : carriedBlock[k].in})`)
+      .join(', ');
+    // Declared in the main checkout's local file and nowhere this worktree
+    // reads: no restart or trust prompt brings it, and saying so sent the
+    // operator after a trust problem that did not exist.
+    const stranded = worktree
+      ? Object.keys(declaredEnv).filter((k) => declaredEnv[k].in === LOCAL_SETTINGS
+        && !(k in carriedBlock) && (env[k] ?? '') === '')
+      : [];
+    if (stranded.length) {
+      const them = stranded.length > 1 ? 'them' : 'it';
+      defect(
+        `${stranded.join(', ')} ${stranded.length > 1 ? 'are' : 'is'} declared only in `
+        + `${joinPath(root, LOCAL_SETTINGS)}, which belongs to that checkout — this process runs in ${worktree}, `
+        + `another worktree whose settings do not declare ${them}, so a server launched from here runs without ${them}. `
+        + `Hold ${them} in user settings, which every checkout reads, or copy the file into this worktree`
+      );
+    }
+    if (unset.length) {
+      defect(
+        'the project settings declare store variables this process\'s environment does not carry: '
+        + `${named(unset)} — a server launched from here ${runsWithout(unset, env)}. `
+        + "Claude Code applies a project's env block only in a trusted folder, and only to sessions "
+        + "started after it was written: run from such a session, or export the block's variables"
+      );
+    }
+    if (different.length) {
+      defect(
+        'this process\'s environment carries other values than the project settings declare for: '
+        + `${named(different)} — a server launched from here runs those instead. A session started `
+        + 'before the settings changed keeps the old values: restart it, or re-export them'
+      );
+    }
+  }
+
+  if (projectId.source !== PATH_HASH && !PROJECT_ID_PATTERN.test(projectId.value)) {
+    defect(
+      `projectId "${projectId.value}" (${projectId.source}) is outside [a-zA-Z0-9_-] — `
+      + 'the server throws on every call rather than sanitize it'
+    );
+  }
+
+  // Keyed on the store the repo is CONFIGURED for, not only the one this
+  // process would reach: with the mode defect above, fixing trust alone would
+  // otherwise walk the operator straight into this one on the next run.
+  const configError = unreadable(joinPath(root, SOCRATICODE_CONFIG_NAME));
+  if (external && projectId.source === PATH_HASH) {
+    const collection = `${env.QDRANT_COLLECTION_PREFIX || ''}codebase_${projectId.value}`;
+    // A file that does not parse is ignored whole upstream, projectId and all.
+    // "Write .socraticode.json" there invited an overwrite that would drop
+    // every other key it holds, linkedProjects first (#287 round 2, CR 34).
+    defect(configError
+      ? `${SOCRATICODE_CONFIG_NAME} does not parse (${configError}), so the server ignores all of it — its `
+        + `projectId included — and names this project's collections by its path hash (${collection}), `
+        + `an id every host checking the repo out at ${root} shares. Fix its JSON rather than rewriting it, `
+        + 'which would drop the keys it already holds'
+      : `this project uses an external store but declares no projectId, so its collections are named by its path hash `
+        + `(${collection}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
+        + `Write .socraticode.json with {"projectId": "<repo name>"} before any server here reaches the store`);
+  } else if (external && projectId.value === hash) {
+    // Named by where it came from (#287 round 2, CR 44): through the
+    // environment it is the documented one-session cleanup of the old set,
+    // and "Use the repo name" told a checkout that already declares one to
+    // write it again.
+    defect(projectId.source === 'SOCRATICODE_PROJECT_ID'
+      ? `projectId "${hash}" (SOCRATICODE_PROJECT_ID) is this checkout's own path hash, which reaches the `
+        + 'collections written before .socraticode.json had a projectId — the one-session cleanup in '
+        + "external-store.md. Nothing launched here should write under it: unset it once the removals are done"
+      : `projectId "${hash}" (${projectId.source}) is this checkout's own path hash — the id every host with `
+        + 'this layout resolves to without one, so declaring it names nothing. Use the repo name');
+  }
+
+  // Each sibling as upstream's resolveLinkedCollections() reads it: its own
+  // declared id, else its path hash. A sibling on this project's id is one
+  // collection set written by two repos, and the link is dropped as a
+  // duplicate of this one. Two siblings on one id collapse the same way, and a
+  // sibling whose declared id is invalid makes upstream THROW — failing every
+  // includeLinked search, not only its own (#287 CR 12).
+  const linked = linkedProjects(root, env);
+  const siblingIds = new Map();
+  for (const entry of linked.resolved) {
+    const sibling = resolvePath(root, entry.path);
+    const declaredId = declaredProjectId(sibling);
+    if (declaredId && !PROJECT_ID_PATTERN.test(declaredId)) {
+      siblingDefect(
+        `linked project ${entry.path} (${entry.source}) declares projectId "${declaredId}", outside `
+        + '[a-zA-Z0-9_-] — upstream throws on it, so every codebase_search with includeLinked: true fails. '
+        + "Fix the projectId in that sibling's .socraticode.json, a host step outside this repo"
+      );
+      continue;
+    }
+    const id = declaredId ?? pathHash(sibling);
+    if (id === projectId.value) {
+      defect(
+        `projectId "${projectId.value}" is also linked project ${entry.path}'s (${entry.source}) — `
+        + 'the two repos write one collection set, and codebase_search drops the link as a duplicate of this one. '
+        + "Give this project its own projectId, or correct the sibling's .socraticode.json if it is the stub that is wrong"
+      );
+    } else if (siblingIds.has(id)) {
+      siblingDefect(
+        `linked projects ${siblingIds.get(id)} and ${entry.path} both resolve to projectId "${id}" — `
+        + 'one collection, searched once, so the repo that did not write it is never searched. '
+        + "Correct the one whose .socraticode.json names the other's id, a host step outside this repo"
+      );
+    } else {
+      siblingIds.set(id, entry.path);
+    }
+  }
+  for (const entry of [...linked.resolved, ...linked.missing]) {
+    if (entry.source === SOCRATICODE_CONFIG_NAME && isAbsolutePath(entry.path)) {
+      note(
+        `linkedProjects entry ${entry.path} is absolute, which names one host's layout in a committed file — `
+        + 'write it relative to the repo root (../<sibling>)'
+      );
+    }
+  }
+
+  return { store, declared, projectId, pathHash: hash, findings };
+}
+
+// Before any command that launches a server. Dies naming every defect: the
+// launch itself is the write this exists to prevent, so there is nothing to
+// measure first.
+function guardStore(projectPath) {
+  const config = storeConfig(projectPath);
+  const defects = config.findings.filter(blocks);
+  if (defects.length) {
+    die(
+      'refusing to launch a server — it would address the wrong store, or the wrong collections in it:\n'
+      + defects.map((f) => `  - ${f.message}`).join('\n')
+      + '\n  Check with: node mcp-driver.mjs validate-store <projectPath>'
+    );
+  }
+  return config;
+}
+
 // ── projectPath resolution (#226, generalizing #180) ────────────────────────
 // SocratiCode indexes by ABSOLUTE project path. A relative argument — `.` most
 // of all — therefore names whatever directory the caller happens to be standing
@@ -1247,16 +1585,20 @@ const realOrSelf = (p) => { try { return realpathSync(p); } catch { return p; } 
 // clone. Confirming that git calls the candidate a working-tree root keeps a
 // layout we guessed wrong about from being measured; the caller's own path is
 // the safer answer there.
+// The shared git dir of `dir`'s repository, absolute, or null outside one.
+// --path-format=absolute needs git >= 2.31; without it --git-common-dir is
+// relative to the queried directory in a primary checkout (plain `.git`) and
+// absolute in a worktree, so the fallback resolves it against that directory.
+function gitCommonDir(dir) {
+  const absolute = gitIn(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (absolute !== null) return absolute;
+  const relative = gitIn(dir, ['rev-parse', '--git-common-dir']);
+  return relative === null ? null : resolvePath(dir, relative);
+}
+
 function mainCheckoutOf(dir) {
-  // --path-format=absolute needs git >= 2.31; without it --git-common-dir is
-  // relative to the queried directory in a primary checkout (plain `.git`) and
-  // absolute in a worktree, so the fallback resolves it against that directory.
-  let commonDir = gitIn(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-  if (commonDir === null) {
-    const relative = gitIn(dir, ['rev-parse', '--git-common-dir']);
-    if (relative === null) return null;
-    commonDir = resolvePath(dir, relative);
-  }
+  const commonDir = gitCommonDir(dir);
+  if (commonDir === null) return null;
   const candidate = resolvePath(commonDir, '..');
   const top = gitIn(candidate, ['rev-parse', '--show-toplevel']);
   if (top === null) return null;
@@ -1282,10 +1624,29 @@ function resolveProjectPath(arg) {
 // ── high-level flows ─────────────────────────────────────────────────────────
 function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 
-async function withClient(fn) {
+// The driver's server does what it is asked and nothing else (#287 CR 1).
+// Upstream's startup auto-resume runs an incremental update of the project at
+// the server's cwd whenever that project's collection exists, and the cwd is
+// the caller's — through the health hook, the session's, which may be a
+// worktree. With a shared projectId that wrote a worktree's files into the
+// store once a day, from a hook whose contract is "reports; never re-indexes".
+// Upstream reads SOCRATICODE_AUTO_RESUME=off before any Docker or Qdrant
+// access. `readOnly` also stops the watcher that status and query calls start
+// on their own, so `status`, `verify` and `health-check` write no index
+// content; `index` keeps it, since a completed index starting its watcher is
+// upstream's normal sequence. Not "nothing" (#287 round 2, CR 35): upstream's
+// readiness paths still act — on a managed store codebase_status starts a
+// stopped Qdrant container, codebase_graph_status creates a project's empty
+// symbol-graph metadata collection when a graph lacks one, and verify's sample
+// search pulls a missing embedding model, onto the store's Ollama when it is
+// external.
+async function withClient(fn, { readOnly = false } = {}) {
   const launch = resolveServerLaunch();
   console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);
-  const client = new RpcClient(launch);
+  const client = new RpcClient(launch, {
+    SOCRATICODE_AUTO_RESUME: 'off',
+    ...(readOnly ? { SOCRATICODE_WATCHER: 'manual' } : {}),
+  });
   try {
     await client.handshake();
     return await fn(client);
@@ -1332,14 +1693,54 @@ function cmdValidateManifest(projectPath) {
   console.error(`[driver] ${m.path} — OK: ${m.count} artifact(s), every path resolves`);
 }
 
+// Phase 5 gate: the store and the id a server launched here would use, checked
+// before one is — the native path's codebase_index has no guard of its own.
+// Same convention as validate-manifest: verdict on stdout, prose on stderr.
+function cmdValidateStore(projectPath) {
+  const s = storeConfig(projectPath);
+  const defects = s.findings.filter(blocks);
+  const reported = s.findings.filter((f) => f.severity === SEVERITY.defect && !blocks(f));
+  const notes = s.findings.filter((f) => f.severity === SEVERITY.note);
+  process.stdout.write(JSON.stringify({
+    config: joinPath(projectPath, SOCRATICODE_CONFIG_NAME),
+    store: s.store,
+    declared: s.declared,
+    projectId: s.projectId,
+    pathHash: s.pathHash,
+    valid: defects.length === 0,
+    // The findings `valid` answers to. A sibling's defect sat in `findings`
+    // beside `valid: true`, rendered exactly like one that blocks, with
+    // nothing to tell them apart (#287 round 2, CR 45).
+    blocking: defects.map(renderFinding),
+    findings: s.findings.map(renderFinding),
+  }, null, 2) + '\n');
+
+  if (defects.length) {
+    console.error('[driver] store config — INVALID:');
+    for (const f of defects) console.error(`  - ${f.message}`);
+  } else {
+    console.error(`[driver] store config — OK: ${s.store} store, projectId "${s.projectId.value}" (${s.projectId.source})`);
+  }
+  if (reported.length) {
+    console.error('[driver] linked projects — defects, but not ones that block a launch:');
+    for (const f of reported) console.error(`  - ${f.message}`);
+  }
+  for (const f of notes) console.error(`  - ${renderFinding(f)}`);
+  // exitCode, not exit(): the verdict above is the contract, and stdout on a
+  // pipe is asynchronous.
+  if (defects.length) process.exitCode = 1;
+}
+
 async function cmdStatus(projectPath) {
+  guardStore(projectPath);
   await withClient(async (client) => {
     const text = await client.callTool('codebase_status', { projectPath });
     process.stdout.write(text + '\n');
-  });
+  }, { readOnly: true });
 }
 
 async function cmdIndex(projectPath) {
+  guardStore(projectPath);
   // Authoritative expected artifact count (null when there's no manifest). This
   // is what makes "artifacts N/N" real — the status line alone can't tell
   // "0 configured" from "not reported yet".
@@ -1531,7 +1932,28 @@ async function cmdHealthCheck(projectPath, probePath) {
   const note = (message) => findings.push({ severity: SEVERITY.note, message });
   const report = { projectPath, healthy: true, findings: [] };
 
-  await withClient(async (client) => {
+  // ── the store a launch would address (#287) ──────────────────────────────
+  // Before the server, not after it: the launch is the write. With a defect
+  // here the server checks are skipped, and a note says so — a report with no
+  // infrastructure findings otherwise reads as clean infrastructure.
+  const store = storeConfig(projectPath);
+  report.store = {
+    store: store.store,
+    declared: store.declared,
+    projectId: store.projectId,
+    pathHash: store.pathHash,
+  };
+  findings.push(...store.findings);
+  const launchBlocked = store.findings.some(blocks);
+  if (launchBlocked) {
+    report.serverChecks = 'skipped';
+    note(
+      'the server checks did not run — a server launched here would address the wrong store or collections, '
+      + 'so nothing past the configuration was measured'
+    );
+  }
+
+  if (!launchBlocked) await withClient(async (client) => {
     const call = async (tool, args) => {
       try {
         return { text: await client.callTool(tool, args), error: null };
@@ -1764,7 +2186,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
     }
-  });
+  }, { readOnly: true });
 
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
   // No server call: the resolution is the filesystem's, and is read the way
@@ -1815,7 +2237,23 @@ async function cmdHealthCheck(projectPath, probePath) {
 }
 
 async function cmdVerify(projectPath) {
+  const { store } = guardStore(projectPath);
   await withClient(async (client) => {
+    // An external store is confirmed from the server's side (#287 round 2,
+    // CR 38): Phase 6 accepts "native tools, or verify" for a check that
+    // `codebase_health` reports `Qdrant mode: external`, and verify never made
+    // it. The store guard confirmed this process carries the block; this
+    // confirms the server read it as one.
+    let qdrantMode = null;
+    let healthError = null;
+    if (store === 'external') {
+      try {
+        const health = await client.callTool('codebase_health', {});
+        qdrantMode = (health.match(/^[ \t]*Qdrant mode\s*:\s*(\S+)/im) || [])[1] ?? null;
+      } catch (e) {
+        healthError = e.message;
+      }
+    }
     const list = await client.callTool('codebase_list_projects', {});
     // Keep the error rather than flattening it to '': "not-ready" would
     // misreport a failed call as a still-building graph.
@@ -1879,10 +2317,17 @@ async function cmdVerify(projectPath) {
         console.error('[driver] → write the DEGRADED Code Exploration Policy (variant B): route imports/dependents/blast-radius to grep, and warn that empty graph output is tool failure, not absence.');
       }
     }
+    if (store === 'external') {
+      console.error(`[driver] qdrant mode: ${qdrantMode === 'external' ? 'external'
+        : healthError ? `UNREADABLE — ${healthError}` : `${qdrantMode ?? 'not reported'}, not external`}`);
+      if (qdrantMode !== 'external') {
+        die('verification failed — the server does not report Qdrant mode: external, so it is not reaching the store');
+      }
+    }
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
-  });
+  }, { readOnly: true });
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -1897,8 +2342,9 @@ Commands:
            graph is READY, and context artifacts are all indexed
   status   print codebase_status once and exit
   verify   sample codebase_search + graph_status + list_projects + a check that
-           the last recorded operation did not FAIL; exit 0/1. Reports graph
-           yield without gating on it.
+           the last recorded operation did not FAIL, and on an external store
+           that codebase_health reports Qdrant mode: external; exit 0/1.
+           Reports graph yield without gating on it.
   health-check
            infra triage on a cadence: codebase_health + codebase_status +
            codebase_graph_status, with the graph measured by EDGE YIELD rather
@@ -1916,6 +2362,20 @@ Commands:
   validate-manifest
            check .socraticodecontextartifacts.json (shape, unique names, every
            path resolves) and exit 0/1; no server, no network. Run before index.
+  validate-store
+           check the store and projectId a server launched here would use, and
+           exit 0/1; no server, no network. JSON verdict on stdout: "valid",
+           and "blocking" — the findings that decide it. A blocking defect: an
+           external store with no projectId (or with this checkout's own path
+           hash as one); a projectId outside [a-zA-Z0-9_-], or one a linked
+           project also resolves to; a store variable the project settings
+           declare that this environment does not carry, or carries with
+           another value (from a worktree, one only the main checkout's
+           settings.local.json holds); a project settings file that does not
+           parse. index, status and verify refuse to launch a server on any of
+           them, and health-check reports them and skips its server checks — a
+           launch is itself a write. A linked project's invalid projectId, or
+           two linked projects on one id, is reported and blocks nothing.
 
 projectPath defaults to the current working directory.
 
@@ -1953,7 +2413,10 @@ Env:
 
 Exit codes:
   0  clean — the command ran and found nothing to report
-  1  the command ran and found a defect (health-check, verify)
+  1  the command ran and found a defect (health-check, verify,
+     validate-store, validate-manifest), or refused to launch a server into
+     the wrong store or collections (index, status, verify; see
+     validate-store)
   2  usage
   3  the command DID NOT COMPLETE — it threw, or health-check hit its
      timeout. Nothing was measured, so this is not a clean result and it is
@@ -2060,6 +2523,7 @@ async function runCli() {
     }
     case 'resolve': cmdResolve(); break;
     case 'validate-manifest': cmdValidateManifest(projectPath); break;
+    case 'validate-store': cmdValidateStore(projectPath); break;
     case '--help': case '-h': console.log(USAGE); break;
     default:
       console.error(USAGE);
@@ -2111,6 +2575,8 @@ export {
   SEVERITY, NOTE_PREFIX, renderFinding,
   // configured ≠ resolved linked projects (#281)
   linkedProjects, linkedProjectsFinding,
+  // the store and id a launch would address (#287)
+  storeConfig, pathHash,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   indexingInProgress, lastOperationCompleted, lastOperationFailed,

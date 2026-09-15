@@ -65,21 +65,69 @@ def _stub_toolchain(tmp_path: Path, node_version: str, npm_reply: str | None) ->
     (binv / "npx").write_text("#!/bin/sh\nexit 0\n")
     # `docker info` succeeding is all Gate 1 asks for.
     (binv / "docker").write_text("#!/bin/sh\nexit 0\n")
-    for name in ("node", "npm", "npx", "docker"):
+    # Gate 4 runs `claude mcp list`, which starts every MCP server configured
+    # on the machine running the suite — seconds per test, and a real plugin
+    # server in a structural test. Stubbed, Gate 4 stays advisory and silent
+    # about the host (#287 CR 18).
+    (binv / "claude").write_text("#!/bin/sh\nexit 0\n")
+    # A host with no systemd, so Gate 1 always reaches `docker info`. On a
+    # Linux host whose Docker socket is listening over a stopped daemon, the
+    # gate would pass WITHOUT probing (#287) — and the broken-docker case below
+    # would stop being able to fail.
+    (binv / "systemctl").write_text("#!/bin/sh\nexit 1\n")
+    for name in ("node", "npm", "npx", "docker", "systemctl", "claude"):
         (binv / name).chmod(0o755)
     return binv
 
 
+# Every variable that moves which store a server reaches, which id it writes
+# under, or whether it writes on its own (#287). A session on an external-store
+# VM carries most of them from its settings env block, and the assertions in
+# this file and the two that import it describe a managed host, so none may
+# depend on where the suite runs. One tuple, shared, because three lists kept
+# by hand had already drifted apart — QDRANT_PORT was in none (#287 CR 18).
+STORE_VARIABLES = (
+    "QDRANT_MODE",
+    "QDRANT_URL",
+    "QDRANT_HOST",
+    "QDRANT_PORT",
+    "QDRANT_API_KEY",
+    "OLLAMA_MODE",
+    "OLLAMA_URL",
+    "EMBEDDING_PROVIDER",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIMENSIONS",
+    "QDRANT_COLLECTION_PREFIX",
+    "SOCRATICODE_PROJECT_ID",
+    "SOCRATICODE_BRANCH_AWARE",
+    "SOCRATICODE_AUTO_RESUME",
+    "SOCRATICODE_WATCHER",
+)
+
+
+def _env(binv: Path) -> dict:
+    env = {k: v for k, v in os.environ.items() if k not in STORE_VARIABLES}
+    # The Node gate reads it to decide which build launches; a developer who
+    # exported one failed four tests here. The test that needs it sets its own
+    # (#287 round 2, CR 51).
+    env.pop("SOCRATICODE_ENTRY", None)
+    env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+    # Preflight reads user settings for values since #287 CR 7: an empty
+    # config dir, so the developer's own settings.json cannot name a store.
+    env["CLAUDE_CONFIG_DIR"] = str(binv.parent / "claude-config")
+    return env
+
+
 def _run(tmp_path: Path, node_version: str, npm_reply: str | None):
     binv = _stub_toolchain(tmp_path, node_version, npm_reply)
-    env = dict(os.environ)
-    env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+    # cwd outside any repo, so no project settings file can declare a store.
     return subprocess.run(
         ["bash", str(PREFLIGHT)],
         capture_output=True,
         text=True,
         timeout=120,
-        env=env,
+        env=_env(binv),
+        cwd=str(tmp_path),
     )
 
 
@@ -151,8 +199,7 @@ class TestTheRegistryIsNotAlwaysTheAuthority:
         self, tmp_path: Path
     ) -> None:
         binv = _stub_toolchain(tmp_path, "v26.0.0", "1.13.1")
-        env = dict(os.environ)
-        env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
+        env = _env(binv)
         env["SOCRATICODE_ENTRY"] = str(tmp_path / "some-local-build" / "index.js")
         result = subprocess.run(
             ["bash", str(PREFLIGHT)],
@@ -160,6 +207,7 @@ class TestTheRegistryIsNotAlwaysTheAuthority:
             text=True,
             timeout=120,
             env=env,
+            cwd=str(tmp_path),
         )
         line = _node_line(result.stdout)
         assert "1.13.1" not in line, (
@@ -184,14 +232,13 @@ class TestTheExitCodeAssertionsAreHermetic:
         binv = _stub_toolchain(tmp_path, "v26.0.0", "1.13.1")
         (binv / "docker").write_text("#!/bin/sh\nexit 1\n")
         (binv / "docker").chmod(0o755)
-        env = dict(os.environ)
-        env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
         result = subprocess.run(
             ["bash", str(PREFLIGHT)],
             capture_output=True,
             text=True,
             timeout=120,
-            env=env,
+            env=_env(binv),
+            cwd=str(tmp_path),
         )
         assert result.returncode == 1, (
             "Gate 1 is not reaching the exit code, so stubbing docker in "
@@ -217,3 +264,37 @@ class TestTheDocsAgreeWithTheGate:
             body = path.read_text()
             assert ">=18 <26" not in body, f"{path.name} still advertises <26"
             assert "Node<26" not in body, f"{path.name} still advertises Node<26"
+
+
+class TestABrokenNodeFailsTheGate:
+    """`node --version` sat outside any condition, so a node that failed — a
+    version-manager shim pointing at an uninstalled version — ended the script
+    under set -e with no ✗, no later gate and no summary line (#287 round 2,
+    CR 46)."""
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "echo 'N/A: version \"v99\" is not yet installed' >&2; exit 126",
+            "echo garbage; exit 0",
+        ],
+    )
+    def test_it_is_a_fail_and_the_run_finishes(self, tmp_path: Path, body: str) -> None:
+        binv = _stub_toolchain(tmp_path, "v22.11.0", None)
+        (binv / "node").write_text(f"#!/bin/sh\n{body}\n")
+        result = subprocess.run(
+            ["bash", str(PREFLIGHT)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=_env(binv),
+            cwd=str(tmp_path),
+        )
+        line = next(
+            (ln for ln in result.stdout.splitlines() if "reported no version" in ln), ""
+        )
+        assert "✗" in line, result.stdout + result.stderr
+        assert "npx reachable" in result.stdout, "the later gates still ran"
+        assert "Preflight FAILED" in result.stdout, result.stdout
+        assert result.returncode == 1

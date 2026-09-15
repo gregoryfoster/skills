@@ -107,7 +107,8 @@ silently — the hook's output cannot drift from itself.
   embedding similarity, so an empty result means "nothing scored above the
   threshold", not "no such code" — retry with `minScore: 0` before concluding
   absence. With `includeLinked: true` it also searches linked projects, but
-  only those whose paths resolve: a missing checkout is dropped without a word.
+  only those whose paths resolve: a missing path — no checkout, no stub — is
+  dropped without a word.
   The daily health check names any that do not.
 - **`codebase_impact` / `codebase_graph_query`** read the AST dependency graph,
   which is built separately from the embeddings. If the graph is stale or
