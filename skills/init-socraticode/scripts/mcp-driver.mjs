@@ -1302,7 +1302,11 @@ function effectiveProjectId(root, env) {
 
 // Every finding is a defect except absolute linked entries: those still
 // resolve on this host, and only portability suffers. A defect blocks a
-// launch; see guardStore().
+// launch (guardStore) unless it is marked `blocking: false` — the sibling
+// defects, which break includeLinked search but send no write to the wrong
+// collections, so they must not stop this project being indexed or measured.
+const blocks = (f) => f.severity === SEVERITY.defect && f.blocking !== false;
+
 function storeConfig(projectPath, env = process.env) {
   const root = resolvePath(projectPath);
   const store = env.QDRANT_MODE === 'external' ? 'external' : 'managed';
@@ -1314,6 +1318,7 @@ function storeConfig(projectPath, env = process.env) {
   const projectId = effectiveProjectId(root, env);
   const findings = [];
   const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
+  const siblingDefect = (message) => findings.push({ severity: SEVERITY.defect, message, blocking: false });
   const note = (message) => findings.push({ severity: SEVERITY.note, message });
 
   // Every store variable the block declares, not QDRANT_MODE alone (#287 CR
@@ -1370,7 +1375,7 @@ function storeConfig(projectPath, env = process.env) {
     const sibling = resolvePath(root, entry.path);
     const declaredId = declaredProjectId(sibling);
     if (declaredId && !PROJECT_ID_PATTERN.test(declaredId)) {
-      defect(
+      siblingDefect(
         `linked project ${entry.path} (${entry.source}) declares projectId "${declaredId}", outside `
         + '[a-zA-Z0-9_-] — upstream throws on it, so every codebase_search with includeLinked: true fails'
       );
@@ -1383,7 +1388,7 @@ function storeConfig(projectPath, env = process.env) {
         + 'the two repos write one collection set, and codebase_search drops the link as a duplicate of this one'
       );
     } else if (siblingIds.has(id)) {
-      defect(
+      siblingDefect(
         `linked projects ${siblingIds.get(id)} and ${entry.path} both resolve to projectId "${id}" — `
         + 'one collection, searched once, so the repo that did not write it is never searched'
       );
@@ -1407,7 +1412,7 @@ function storeConfig(projectPath, env = process.env) {
 // launch itself is the write this exists to prevent, so there is nothing to
 // measure first.
 function guardStore(projectPath) {
-  const defects = storeConfig(projectPath).findings.filter((f) => f.severity === SEVERITY.defect);
+  const defects = storeConfig(projectPath).findings.filter(blocks);
   if (defects.length) {
     die(
       'refusing to launch a server — it would address the wrong store, or the wrong collections in it:\n'
@@ -1559,7 +1564,8 @@ function cmdValidateManifest(projectPath) {
 // Same convention as validate-manifest: verdict on stdout, prose on stderr.
 function cmdValidateStore(projectPath) {
   const s = storeConfig(projectPath);
-  const defects = s.findings.filter((f) => f.severity === SEVERITY.defect);
+  const defects = s.findings.filter(blocks);
+  const reported = s.findings.filter((f) => f.severity === SEVERITY.defect && !blocks(f));
   const notes = s.findings.filter((f) => f.severity === SEVERITY.note);
   process.stdout.write(JSON.stringify({
     config: joinPath(projectPath, SOCRATICODE_CONFIG_NAME),
@@ -1576,6 +1582,10 @@ function cmdValidateStore(projectPath) {
     for (const f of defects) console.error(`  - ${f.message}`);
   } else {
     console.error(`[driver] store config — OK: ${s.store} store, projectId "${s.projectId.value}" (${s.projectId.source})`);
+  }
+  if (reported.length) {
+    console.error('[driver] linked projects — defects, but not ones that block a launch:');
+    for (const f of reported) console.error(`  - ${f.message}`);
   }
   for (const f of notes) console.error(`  - ${renderFinding(f)}`);
   // exitCode, not exit(): the verdict above is the contract, and stdout on a
@@ -1796,7 +1806,7 @@ async function cmdHealthCheck(projectPath, probePath) {
     pathHash: store.pathHash,
   };
   findings.push(...store.findings);
-  const launchBlocked = store.findings.some((f) => f.severity === SEVERITY.defect);
+  const launchBlocked = store.findings.some(blocks);
   if (launchBlocked) {
     report.serverChecks = 'skipped';
     note(

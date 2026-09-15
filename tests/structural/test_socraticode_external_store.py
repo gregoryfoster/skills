@@ -1011,6 +1011,23 @@ class TestTheDriverDoesNotLaunchIntoTheWrongStore:
         assert not marker.exists(), f"{command} launched a server into the wrong store"
 
     @requires_node
+    def test_a_bad_sibling_does_not_stop_this_project(self, tmp_path: Path) -> None:
+        """#287 CR 12: a sibling's invalid id breaks includeLinked search, but
+        no write of this project's lands anywhere wrong — reported, and the
+        launch goes ahead."""
+        project = _project(tmp_path)
+        (tmp_path / "archiver").mkdir()
+        _config(tmp_path / "archiver", {"projectId": "bad id!"})
+        _config(project, {"projectId": "broker", "linkedProjects": ["../archiver"]})
+        gate = _driver(project, "validate-store", QDRANT_MODE="external")
+        assert gate.returncode == 0, gate.stderr
+        assert json.loads(gate.stdout)["valid"] is True
+        assert "not ones that block a launch" in gate.stderr, gate.stderr
+        entry, marker = _launch_marker(tmp_path)
+        _driver(project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry))
+        assert marker.exists(), "status refused to launch over a sibling's stub"
+
+    @requires_node
     def test_health_check_reports_and_skips_its_server_checks(
         self, tmp_path: Path
     ) -> None:
