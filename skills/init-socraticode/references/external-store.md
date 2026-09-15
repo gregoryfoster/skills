@@ -133,8 +133,8 @@ silently.
 
 **A stub is a host step, not this skill's.** It sits outside the repo, so the
 skill writes none. Name each linked entry whose path does not resolve in the
-completion report — the daily health check names them too — and leave the
-stubs to the operator.
+completion table's Store config row, beside the `linkedProjects` count — the
+daily health check names them too — and leave the stubs to the operator.
 
 ## Adopting `projectId` on a repo already in the store
 
