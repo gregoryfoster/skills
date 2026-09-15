@@ -574,6 +574,40 @@ class TestTheExternalStoreGate:
         assert all(c["argv"][0] == "-q" for c in calls), calls
 
     @requires_bash
+    def test_every_probe_bypasses_a_proxy_as_the_server_does(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 32: curl honours http(s)_proxy and Node's fetch
+        does not, so with a proxy set the native-Ollama probe failed through
+        it and preflight demanded Docker the server would never start."""
+        binv = _host(tmp_path)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["401", 0], NATIVE_OLLAMA: ["200", 0]}
+        _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            curl,
+            QDRANT_API_KEY=KEY,
+            http_proxy="http://127.0.0.1:9",
+            **env,
+        )
+        calls = _curl_calls(binv)
+        assert len(calls) == 3, calls  # native probe, store, store with the key
+        assert all(c["argv"][1:3] == ["--noproxy", "*"] for c in calls), calls
+
+    @requires_bash
+    def test_no_curl_is_said_not_read_as_no_native_ollama(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, docker=False)
+        (binv / "curl").unlink()
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        result = _preflight(tmp_path, _project(tmp_path), binv, **env)
+        assert "•" in _line(result.stdout, "not probed for a native Ollama"), (
+            result.stdout
+        )
+        assert "Ollama" in _line(result.stdout, "Docker not installed"), result.stdout
+
+    @requires_bash
     @pytest.mark.parametrize(
         "url", ["https://INDEX.TAIL0.TS.NET:6333", "http://LOCALHOST:6333"]
     )

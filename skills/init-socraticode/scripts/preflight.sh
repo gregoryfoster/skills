@@ -204,7 +204,10 @@ fi
 # http_status URL [KEY] — prints the HTTP status of a GET; returns curl's exit
 # status, so 0 means some HTTP answer arrived. `-q` first, in every curl call
 # here: it must lead to stop ~/.curlrc being read, and a `--fail` in one turned
-# a 401 into exit 22, "no answer" in place of "requires an API key" (#287 CR 8). The key rides in on stdin as a
+# a 401 into exit 22, "no answer" in place of "requires an API key" (#287 CR 8).
+# `--noproxy '*'` in every one too (#287 round 2, CR 32): the server's fetch
+# and its Qdrant client ignore http(s)_proxy, so a probe sent through a proxy
+# answers for a route the server never takes. The key rides in on stdin as a
 # curl config line, never on the command line, where every process on the host
 # can read it for the life of the call.
 http_status() {
@@ -213,9 +216,9 @@ http_status() {
     esc="${key//\\/\\\\}"
     esc="${esc//\"/\\\"}"
     printf 'header = "api-key: %s"\n' "$esc" \
-      | curl -q -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$1" 2>/dev/null
+      | curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$1" 2>/dev/null
   else
-    curl -q -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null
+    curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null
   fi
 }
 
@@ -297,7 +300,13 @@ if [ "$E_PROVIDER" = ollama ]; then
       # Probed only where the answer changes the verdict: next to a managed
       # Qdrant, Docker is needed either way.
       if [ "$STORE_MODE" = external ]; then
-        NATIVE="$(curl -q -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+        if command -v curl >/dev/null 2>&1; then
+          NATIVE="$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+        else
+          # Said, not assumed: the gate below treats it as the fallback case.
+          NATIVE=""
+          warn "curl not found — localhost:11434 was not probed for a native Ollama, so Docker is gated as if none answers"
+        fi
         if [ "$NATIVE" != 200 ]; then
           DOCKER_FOR="the Ollama embedder (OLLAMA_MODE=$O_MODE falls back to a container when no native Ollama answers on localhost:11434)"
           DOCKER_WHAT="the Ollama container"
