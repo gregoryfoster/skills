@@ -1251,6 +1251,24 @@ class TestStoreConfig:
         _config(project, {"projectId": _hash(project)})
         [defect] = _defects(_store(project, QDRANT_MODE="external"))
         assert "own path hash" in defect, defect
+        assert "(.socraticode.json)" in defect and "Use the repo name" in defect
+
+    @requires_node
+    def test_the_own_path_hash_from_the_environment_is_the_cleanup(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 44: external-store.md's cleanup sets
+        SOCRATICODE_PROJECT_ID=<pathHash> for one session, and the defect told
+        a checkout already declaring `broker` to "use the repo name"."""
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(
+                project, QDRANT_MODE="external", SOCRATICODE_PROJECT_ID=_hash(project)
+            )
+        )
+        assert "(SOCRATICODE_PROJECT_ID)" in defect and "unset it" in defect, defect
+        assert "Use the repo name" not in defect, defect
 
     @requires_node
     def test_an_invalid_projectId_is_a_defect_in_either_mode(
@@ -1285,6 +1303,7 @@ class TestStoreConfig:
         _config(project, {"projectId": "broker", "linkedProjects": ["../archiver"]})
         [defect] = _defects(_store(project, QDRANT_MODE="external"))
         assert "../archiver" in defect and "throws" in defect, defect
+        assert "host step" in defect, "a finding names its own fix (CR 44)"
 
     @requires_node
     def test_two_siblings_on_one_id_are_named(self, tmp_path: Path) -> None:
@@ -1299,6 +1318,7 @@ class TestStoreConfig:
         )
         [defect] = _defects(_store(project, QDRANT_MODE="external"))
         assert "../archiver and ../watcher" in defect, defect
+        assert "host step" in defect, "a finding names its own fix (CR 44)"
 
     @requires_node
     def test_an_absolute_linked_entry_is_a_note(self, tmp_path: Path) -> None:

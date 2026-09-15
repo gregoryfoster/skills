@@ -1471,10 +1471,16 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
         + `(${collection}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
         + `Write .socraticode.json with {"projectId": "<repo name>"} before any server here reaches the store`);
   } else if (external && projectId.value === hash) {
-    defect(
-      `projectId "${hash}" is this checkout's own path hash — the id every host with this layout resolves to `
-      + 'without one, so declaring it names nothing. Use the repo name'
-    );
+    // Named by where it came from (#287 round 2, CR 44): through the
+    // environment it is the documented one-session cleanup of the old set,
+    // and "Use the repo name" told a checkout that already declares one to
+    // write it again.
+    defect(projectId.source === 'SOCRATICODE_PROJECT_ID'
+      ? `projectId "${hash}" (SOCRATICODE_PROJECT_ID) is this checkout's own path hash, which reaches the `
+        + 'collections written before .socraticode.json had a projectId — the one-session cleanup in '
+        + "external-store.md. Nothing launched here should write under it: unset it once the removals are done"
+      : `projectId "${hash}" (${projectId.source}) is this checkout's own path hash — the id every host with `
+        + 'this layout resolves to without one, so declaring it names nothing. Use the repo name');
   }
 
   // Each sibling as upstream's resolveLinkedCollections() reads it: its own
@@ -1491,7 +1497,8 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
     if (declaredId && !PROJECT_ID_PATTERN.test(declaredId)) {
       siblingDefect(
         `linked project ${entry.path} (${entry.source}) declares projectId "${declaredId}", outside `
-        + '[a-zA-Z0-9_-] — upstream throws on it, so every codebase_search with includeLinked: true fails'
+        + '[a-zA-Z0-9_-] — upstream throws on it, so every codebase_search with includeLinked: true fails. '
+        + "Fix the projectId in that sibling's .socraticode.json, a host step outside this repo"
       );
       continue;
     }
@@ -1499,12 +1506,14 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
     if (id === projectId.value) {
       defect(
         `projectId "${projectId.value}" is also linked project ${entry.path}'s (${entry.source}) — `
-        + 'the two repos write one collection set, and codebase_search drops the link as a duplicate of this one'
+        + 'the two repos write one collection set, and codebase_search drops the link as a duplicate of this one. '
+        + "Give this project its own projectId, or correct the sibling's .socraticode.json if it is the stub that is wrong"
       );
     } else if (siblingIds.has(id)) {
       siblingDefect(
         `linked projects ${siblingIds.get(id)} and ${entry.path} both resolve to projectId "${id}" — `
-        + 'one collection, searched once, so the repo that did not write it is never searched'
+        + 'one collection, searched once, so the repo that did not write it is never searched. '
+        + "Correct the one whose .socraticode.json names the other's id, a host step outside this repo"
       );
     } else {
       siblingIds.set(id, entry.path);
