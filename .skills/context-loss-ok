@@ -199,6 +199,11 @@ skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Rules that originated
 # Step 10 named "the body of this skill" as where promotions go; this change moved
 # most rules to references/, so the destination is retargeted (CR 2).
 skills/orchestrating-issue-backlog/SKILL.md :: retarget :: Promote a pattern into the body of this skill only when it has recurred
+# The low-discovery paragraph (now in batch-design.md) said Step 8's design doc
+# carries a "Rules 1–6 checklist". Step 8's own section list has none, and none of
+# the repo's twelve backlog design docs has a rule or checklist heading
+# (`grep -ciE '^#+ .*(rule|hygiene|checklist)' docs/plans/*backlog*.md`). CR 17.
+skills/orchestrating-issue-backlog/SKILL.md :: disproven :: Rules 1–6 checklist, branch strategy, Key Decisions
 # Q0 named a Step 7 rule "Bundle related issues" that exists nowhere in the
 # skill (`grep -rn "Bundle related" skills/` hits only this line); the rule it
 # means is Shape A.
