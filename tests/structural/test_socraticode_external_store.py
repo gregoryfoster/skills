@@ -912,6 +912,15 @@ class TestStoreConfig:
         )
 
     @requires_node
+    def test_the_named_collection_carries_the_prefix(self, tmp_path: Path) -> None:
+        """#287 CR 23: upstream prepends QDRANT_COLLECTION_PREFIX to every
+        collection name, so the one the defect names must carry it too."""
+        project = _project(tmp_path)
+        r = _store(project, QDRANT_MODE="external", QDRANT_COLLECTION_PREFIX="team_")
+        [defect] = _defects(r)
+        assert f"team_codebase_{_hash(project)}" in defect, defect
+
+    @requires_node
     def test_a_declared_projectId_clears_it(self, tmp_path: Path) -> None:
         project = _project(tmp_path)
         _config(project, {"projectId": "broker"})

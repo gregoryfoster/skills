@@ -1353,7 +1353,7 @@ function storeConfig(projectPath, env = process.env) {
   if (external && projectId.source === PATH_HASH) {
     defect(
       `this project uses an external store but declares no projectId, so its collections are named by its path hash `
-      + `(codebase_${projectId.value}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
+      + `(${env.QDRANT_COLLECTION_PREFIX || ''}codebase_${projectId.value}) — an id every host checking the repo out at ${root} shares, under a host-local lock. `
       + `Write .socraticode.json with {"projectId": "<repo name>"} before any server here reaches the store`
     );
   } else if (external && projectId.value === hash) {
@@ -2247,7 +2247,10 @@ Env:
 
 Exit codes:
   0  clean — the command ran and found nothing to report
-  1  the command ran and found a defect (health-check, verify)
+  1  the command ran and found a defect (health-check, verify,
+     validate-store, validate-manifest), or refused to launch a server into
+     the wrong store or collections (index, status, verify; see
+     validate-store)
   2  usage
   3  the command DID NOT COMPLETE — it threw, or health-check hit its
      timeout. Nothing was measured, so this is not a clean result and it is
