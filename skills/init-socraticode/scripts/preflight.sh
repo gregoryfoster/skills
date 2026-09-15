@@ -610,6 +610,14 @@ if command -v claude >/dev/null 2>&1; then
   # Before a projectId exists that write lands in collections named by this
   # checkout's path hash (#287). Upstream reads SOCRATICODE_AUTO_RESUME=off
   # before any Docker or Qdrant access, so the probe stays a probe.
+  #
+  # How the variable gets there is inferred, not observed (#287 CR 24): it
+  # rides claude's own environment into the server it starts, the route a
+  # settings `env` block takes to reach a plugin server — which the cohort's
+  # external stores demonstrate daily. Testing it directly means writing
+  # ~/.claude.json under a live session, which this suite does not do. If
+  # claude ever stopped passing its environment through, the probe would
+  # regress to the auto-resume it had before, no worse.
   MCP_LIST="$(SOCRATICODE_AUTO_RESUME=off claude mcp list 2>/dev/null || true)"
   if printf '%s\n' "$MCP_LIST" | grep -q 'plugin:socraticode:socraticode.*Connected'; then
     pass "Plugin MCP server connected (plugin:socraticode:socraticode)"
