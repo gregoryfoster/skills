@@ -1305,6 +1305,22 @@ function effectiveProjectId(root, env) {
   return { value, source: PATH_HASH };
 }
 
+// What a server lacking `unset` runs, named for what is actually missing: the
+// mode moves the store; OLLAMA_MODE moves only the embedder, and only when the
+// embedder is Ollama. "Falls back to a local Docker stack instead of reaching
+// the store" was said of both, and of the second it is false (#287 round 2,
+// CR 29).
+function runsWithout(unset, env) {
+  if (unset.includes('QDRANT_MODE')) {
+    return 'runs a managed store — a local Qdrant in Docker — instead of reaching the external one';
+  }
+  if (unset.includes('OLLAMA_MODE') && (env.EMBEDDING_PROVIDER || 'ollama') === 'ollama') {
+    return 'embeds through Ollama in auto mode — a container, unless a native Ollama answers on '
+      + "localhost:11434 — not through the store's";
+  }
+  return 'runs without them';
+}
+
 // Every finding is a defect except absolute linked entries: those still
 // resolve on this host, and only portability suffers. A defect blocks a
 // launch (guardStore) unless it is marked `blocking: false` — the sibling
@@ -1329,17 +1345,32 @@ function storeConfig(projectPath, env = process.env) {
   // Every store variable the block declares, not QDRANT_MODE alone (#287 CR
   // 2): with the mode carried and OLLAMA_MODE not, the launched server runs
   // Ollama in auto mode and starts a container. Names only — one is the key.
+  //
+  // Unset and different are two failures, told apart (#287 round 2, CR 29):
+  // the first is a dropped block, the second a process started before the
+  // file changed — in a folder already trusted, where no prompt appears.
   if (declared?.mode === 'external') {
-    const uncarried = Object.keys(declaredEnv).filter((k) => (env[k] ?? '') !== declaredEnv[k].value);
-    if (uncarried.length) {
-      const fallsBack = uncarried.includes('QDRANT_MODE') || uncarried.includes('OLLAMA_MODE');
+    const unset = [];
+    const different = [];
+    for (const k of Object.keys(declaredEnv)) {
+      const carried = env[k] ?? '';
+      if (carried === '') unset.push(k);
+      else if (carried !== declaredEnv[k].value) different.push(k);
+    }
+    const named = (keys) => keys.map((k) => `${k} (${declaredEnv[k].in})`).join(', ');
+    if (unset.length) {
       defect(
         'the project settings declare store variables this process\'s environment does not carry: '
-        + uncarried.map((k) => `${k} (${declaredEnv[k].in})`).join(', ')
-        + ' — a server launched from here does not run that configuration'
-        + (fallsBack ? ', and falls back to a local Docker stack instead of reaching the store' : '')
-        + ". Claude Code applies a project's env block only in a trusted folder, and only to sessions "
+        + `${named(unset)} — a server launched from here ${runsWithout(unset, env)}. `
+        + "Claude Code applies a project's env block only in a trusted folder, and only to sessions "
         + "started after it was written: run from such a session, or export the block's variables"
+      );
+    }
+    if (different.length) {
+      defect(
+        'this process\'s environment carries other values than the project settings declare for: '
+        + `${named(different)} — a server launched from here runs those instead. A session started `
+        + 'before the settings changed keeps the old values: restart it, or re-export them'
       );
     }
   }

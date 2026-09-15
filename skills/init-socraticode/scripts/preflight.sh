@@ -514,30 +514,50 @@ fi
 # in auto mode and started a container. Names only: a value may be the key.
 if [ "$DECL_MODE" = external ]; then
   if [ -n "${CLAUDECODE:-}" ]; then
-    UNCARRIED=""
+    UNCARRIED="" DIFFERENT=""
     # The collection prefix and id override too (#287 round 2, CR 28): left
     # behind, either points every write at another collection set.
     for key in QDRANT_MODE QDRANT_URL QDRANT_HOST QDRANT_PORT QDRANT_API_KEY \
       QDRANT_COLLECTION_PREFIX SOCRATICODE_PROJECT_ID \
       OLLAMA_MODE OLLAMA_URL EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS; do
       from_settings "$key" project
-      if [ -n "$S_VAL" ] && [ "${!key:-}" != "$S_VAL" ]; then
+      [ -n "$S_VAL" ] || continue
+      if [ -z "${!key:-}" ]; then
         UNCARRIED="${UNCARRIED:+$UNCARRIED, }$key"
+      elif [ "${!key}" != "$S_VAL" ]; then
+        DIFFERENT="${DIFFERENT:+$DIFFERENT, }$key"
       fi
     done
-    case "$UNCARRIED" in
-      '')
-        pass "This session carries $DECL_SRC's env block — every store variable it declares — so the folder is trusted"
+    # Two failures, told apart (#287 round 2, CR 29). A value the session
+    # lacks is the dropped block of an untrusted folder, or one written after
+    # the session began; a value it carries differently is a session that
+    # started before the file changed, in a folder already trusted, where no
+    # prompt will appear. And what the server runs without them is named for
+    # what is missing: the mode moves the store, OLLAMA_MODE only the embedder.
+    case ", $UNCARRIED, " in
+      *", QDRANT_MODE, "*)
+        WITHOUT="runs a managed store — a local Qdrant in Docker — instead of reaching the external one"
         ;;
-      *QDRANT_MODE* | *OLLAMA_MODE*)
-        fail "The project settings declare store variables this session does not carry ($UNCARRIED) — its SocratiCode server falls back to a local Docker stack instead of reaching the store"
-        hint "Restart Claude Code in this folder and accept the trust prompt, then re-run this check from the new session"
+      *", OLLAMA_MODE, "*)
+        if [ "${EMBEDDING_PROVIDER:-ollama}" = ollama ]; then
+          WITHOUT="embeds through Ollama in auto mode — a container, unless a native Ollama answers on localhost:11434 — not through the store's"
+        else
+          WITHOUT="runs without them"
+        fi
         ;;
-      *)
-        fail "The project settings declare store variables this session does not carry ($UNCARRIED) — its SocratiCode server runs without them"
-        hint "Restart Claude Code in this folder and accept the trust prompt, then re-run this check from the new session"
-        ;;
+      *) WITHOUT="runs without them" ;;
     esac
+    if [ -z "$UNCARRIED$DIFFERENT" ]; then
+      pass "This session carries $DECL_SRC's env block — every store variable it declares — so the folder is trusted"
+    fi
+    if [ -n "$UNCARRIED" ]; then
+      fail "The project settings declare store variables this session does not carry ($UNCARRIED) — its SocratiCode server $WITHOUT"
+      hint "Restart Claude Code in this folder, trusting it if asked, then re-run this check from the new session"
+    fi
+    if [ -n "$DIFFERENT" ]; then
+      fail "This session carries other values than the project settings declare ($DIFFERENT) — most likely it started before they changed, and its SocratiCode server runs the old ones"
+      hint "Restart Claude Code in this folder, then re-run this check from the new session"
+    fi
   else
     warn "Outside a Claude Code session, so whether $DECL_SRC's env block reaches the server is unconfirmed — an untrusted folder drops it"
     hint "Re-run this check from a Claude Code session started in this folder"

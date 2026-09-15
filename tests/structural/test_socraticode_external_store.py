@@ -813,7 +813,10 @@ class TestTrustIsCheckedByItsEffect:
         assert "✗" in line, result.stdout
         assert "OLLAMA_MODE, OLLAMA_URL" in line, line
         assert "QDRANT_MODE" not in line.split("(")[1], "name only what is missing"
-        assert "Docker" in line, line
+        # #287 round 2, CR 29: the store is still reached; only the embedder
+        # moves, and "a local Docker stack instead of the store" was false.
+        assert "Ollama in auto mode" in line and "container" in line, line
+        assert "managed store" not in line, line
 
     @requires_bash
     def test_a_missing_key_is_named_without_its_value(self, tmp_path: Path) -> None:
@@ -845,6 +848,26 @@ class TestTrustIsCheckedByItsEffect:
             tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1", **EXTERNAL
         )
         assert "✗" in _line(result.stdout, "(QDRANT_COLLECTION_PREFIX)"), result.stdout
+        assert result.returncode == 1
+
+    @requires_bash
+    def test_a_stale_session_is_not_called_untrusted(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 29: a session carrying an older QDRANT_URL was told
+        it "does not carry" the block and to accept a trust prompt its already
+        trusted folder never shows. It carries a value; the value is old."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        old_url = "https://old.tail0.ts.net:6333"
+        curl = {**STORE_OPEN, f"{old_url}/collections": ["200", 0]}
+        env = {**EXTERNAL, "QDRANT_URL": old_url}
+        result = _preflight(tmp_path, project, binv, curl, CLAUDECODE="1", **env)
+        line = _line(result.stdout, "other values")
+        assert "✗" in line and "(QDRANT_URL)" in line, result.stdout
+        assert "started before" in line, line
+        assert "does not carry" not in result.stdout, result.stdout
+        assert "trust" not in _line(result.stdout.split(line)[1], "→"), (
+            "a trusted folder shows no prompt"
+        )
         assert result.returncode == 1
 
     @requires_bash
@@ -1088,6 +1111,58 @@ class TestStoreConfig:
         [defect] = _defects(r)
         assert "does not carry: QDRANT_MODE (.claude/settings.json)" in defect, defect
         assert "Docker" in defect, defect
+
+    @requires_node
+    def test_the_mode_alone_is_not_the_block_here_either(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 29: the driver's half of CR 2 had no test — a
+        STORE_KEYS of ['QDRANT_MODE'] passed the suite."""
+        shared = {
+            "QDRANT_MODE": "external",
+            "QDRANT_URL": STORE_URL,
+            "OLLAMA_MODE": "external",
+            "OLLAMA_URL": OLLAMA_URL,
+        }
+        project = _project(tmp_path, shared=shared)
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(project, QDRANT_MODE="external", QDRANT_URL=STORE_URL)
+        )
+        assert "OLLAMA_MODE (.claude/settings.json)" in defect, defect
+        assert "QDRANT_MODE (" not in defect, "name only what is missing"
+        assert "Ollama in auto mode" in defect and "managed store" not in defect, defect
+
+    @requires_node
+    def test_a_cloud_embedder_does_not_fall_back_to_ollama(
+        self, tmp_path: Path
+    ) -> None:
+        project = _project(
+            tmp_path, shared={"QDRANT_MODE": "external", "OLLAMA_MODE": "external"}
+        )
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(project, QDRANT_MODE="external", EMBEDDING_PROVIDER="openai")
+        )
+        assert "OLLAMA_MODE" in defect and "runs without them" in defect, defect
+        assert "Ollama in auto mode" not in defect, defect
+
+    @requires_node
+    def test_a_different_value_is_its_own_defect(self, tmp_path: Path) -> None:
+        """A value compared by presence alone let a session reach another store
+        and be called trusted."""
+        project = _project(
+            tmp_path, shared={"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        )
+        _config(project, {"projectId": "broker"})
+        [defect] = _defects(
+            _store(
+                project,
+                QDRANT_MODE="external",
+                QDRANT_URL="https://old.tail0.ts.net:6333",
+            )
+        )
+        assert "other values" in defect, defect
+        assert "QDRANT_URL (.claude/settings.json)" in defect, defect
+        assert "does not carry" not in defect, defect
 
     @requires_node
     def test_both_defects_surface_together(self, tmp_path: Path) -> None:
