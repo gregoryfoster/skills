@@ -376,14 +376,35 @@ fi
 # from outside (it is inherited from a parent folder, and IDE and SDK sessions
 # skip the prompt), so this checks its effect: CLAUDECODE marks a process a
 # session started, and that process either carries the block or does not.
+#
+# Every store variable the block declares, not QDRANT_MODE alone (#287 CR 2).
+# The gates above read an absent value from the files, so a session that got
+# QDRANT_MODE from somewhere else — user settings, a shell export — but not
+# OLLAMA_MODE was reported trusted and Docker-free, while its server ran Ollama
+# in auto mode and started a container. Names only: a value may be the key.
 if [ "$DECL_MODE" = external ]; then
   if [ -n "${CLAUDECODE:-}" ]; then
-    if [ "${QDRANT_MODE:-}" = external ]; then
-      pass "This session carries $DECL_SRC's env block (QDRANT_MODE=external) — the folder is trusted"
-    else
-      fail "$DECL_SRC sets QDRANT_MODE=external, but this session's environment does not carry it — its SocratiCode server runs managed mode and starts a local Docker stack instead of reaching the store"
-      hint "Restart Claude Code in this folder and accept the trust prompt, then re-run this check from the new session"
-    fi
+    UNCARRIED=""
+    for key in QDRANT_MODE QDRANT_URL QDRANT_HOST QDRANT_PORT QDRANT_API_KEY \
+      OLLAMA_MODE OLLAMA_URL EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS; do
+      from_settings "$key"
+      if [ -n "$S_VAL" ] && [ "${!key:-}" != "$S_VAL" ]; then
+        UNCARRIED="${UNCARRIED:+$UNCARRIED, }$key"
+      fi
+    done
+    case "$UNCARRIED" in
+      '')
+        pass "This session carries $DECL_SRC's env block — every store variable it declares — so the folder is trusted"
+        ;;
+      *QDRANT_MODE* | *OLLAMA_MODE*)
+        fail "The project settings declare store variables this session does not carry ($UNCARRIED) — its SocratiCode server falls back to a local Docker stack instead of reaching the store"
+        hint "Restart Claude Code in this folder and accept the trust prompt, then re-run this check from the new session"
+        ;;
+      *)
+        fail "The project settings declare store variables this session does not carry ($UNCARRIED) — its SocratiCode server runs without them"
+        hint "Restart Claude Code in this folder and accept the trust prompt, then re-run this check from the new session"
+        ;;
+    esac
   else
     warn "Outside a Claude Code session, so whether $DECL_SRC's env block reaches the server is unconfirmed — an untrusted folder drops it"
     hint "Re-run this check from a Claude Code session started in this folder"

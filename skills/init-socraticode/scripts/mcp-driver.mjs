@@ -1259,15 +1259,27 @@ function declaredProjectId(folder) {
   return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
-// The QDRANT_MODE a project's settings files declare, local over shared. Only
-// the project's files: theirs is the block an untrusted folder drops, where
-// user settings apply everywhere regardless.
-function declaredStoreMode(root) {
-  for (const rel of PROJECT_SETTINGS) {
-    const mode = readJsonOrNull(joinPath(root, rel))?.env?.QDRANT_MODE;
-    if (typeof mode === 'string') return { mode, in: rel };
+// The variables that decide which store a server reaches and how it embeds —
+// every one an untrusted folder's dropped env block can take with it.
+const STORE_KEYS = [
+  'QDRANT_MODE', 'QDRANT_URL', 'QDRANT_HOST', 'QDRANT_PORT', 'QDRANT_API_KEY',
+  'OLLAMA_MODE', 'OLLAMA_URL', 'EMBEDDING_PROVIDER', 'EMBEDDING_MODEL', 'EMBEDDING_DIMENSIONS',
+];
+
+// Each store variable a project's settings files declare, local over shared,
+// with the file that declared it. Only the project's files: theirs is the block
+// an untrusted folder drops, where user settings apply everywhere regardless.
+function declaredStoreEnv(root) {
+  const out = {};
+  for (const rel of [...PROJECT_SETTINGS].reverse()) {
+    const env = readJsonOrNull(joinPath(root, rel))?.env;
+    if (!env || typeof env !== 'object') continue;
+    for (const key of STORE_KEYS) {
+      const v = env[key];
+      if (typeof v === 'string' || typeof v === 'number') out[key] = { value: String(v), in: rel };
+    }
   }
-  return null;
+  return out;
 }
 
 // config.js projectIdFromPath, including the branch suffix it appends to the
@@ -1294,20 +1306,32 @@ function effectiveProjectId(root, env) {
 function storeConfig(projectPath, env = process.env) {
   const root = resolvePath(projectPath);
   const store = env.QDRANT_MODE === 'external' ? 'external' : 'managed';
-  const declared = declaredStoreMode(root);
+  const declaredEnv = declaredStoreEnv(root);
+  const declared = declaredEnv.QDRANT_MODE
+    ? { mode: declaredEnv.QDRANT_MODE.value, in: declaredEnv.QDRANT_MODE.in }
+    : null;
   const hash = pathHash(root);
   const projectId = effectiveProjectId(root, env);
   const findings = [];
   const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
   const note = (message) => findings.push({ severity: SEVERITY.note, message });
 
-  if (declared?.mode === 'external' && store !== 'external') {
-    defect(
-      `${declared.in} sets QDRANT_MODE=external, but this process's environment does not carry it — `
-      + 'a server launched from here runs managed mode, a local Docker stack, instead of reaching the store. '
-      + "Claude Code applies a project's env block only in a trusted folder, and only to sessions started "
-      + "after it was written: run from such a session, or export the block's variables"
-    );
+  // Every store variable the block declares, not QDRANT_MODE alone (#287 CR
+  // 2): with the mode carried and OLLAMA_MODE not, the launched server runs
+  // Ollama in auto mode and starts a container. Names only — one is the key.
+  if (declared?.mode === 'external') {
+    const uncarried = Object.keys(declaredEnv).filter((k) => (env[k] ?? '') !== declaredEnv[k].value);
+    if (uncarried.length) {
+      const fallsBack = uncarried.includes('QDRANT_MODE') || uncarried.includes('OLLAMA_MODE');
+      defect(
+        'the project settings declare store variables this process\'s environment does not carry: '
+        + uncarried.map((k) => `${k} (${declaredEnv[k].in})`).join(', ')
+        + ' — a server launched from here does not run that configuration'
+        + (fallsBack ? ', and falls back to a local Docker stack instead of reaching the store' : '')
+        + ". Claude Code applies a project's env block only in a trusted folder, and only to sessions "
+        + "started after it was written: run from such a session, or export the block's variables"
+      );
+    }
   }
 
   if (projectId.source !== PATH_HASH && !PROJECT_ID_PATTERN.test(projectId.value)) {

@@ -481,11 +481,51 @@ class TestTrustIsCheckedByItsEffect:
         binv = _host(tmp_path)
         project = _project(tmp_path, shared=EXTERNAL)
         result = _preflight(tmp_path, project, binv, STORE_OPEN, CLAUDECODE="1")
-        line = _line(result.stdout, "does not carry it")
+        line = _line(result.stdout, "does not carry")
         assert "✗" in line, result.stdout
         assert "Docker" in line, "the ✗ must say what the fallback does"
         assert "trust" in result.stdout, result.stdout
         assert result.returncode == 1
+
+    @requires_bash
+    def test_the_mode_alone_is_not_the_block(self, tmp_path: Path) -> None:
+        """#287 CR 2, reproduced: QDRANT_MODE reached the session from somewhere
+        else, OLLAMA_MODE did not. Reading the file for the missing one said
+        trusted and Docker-free while the server ran Ollama in auto mode."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL)
+        result = _preflight(
+            tmp_path,
+            project,
+            binv,
+            STORE_OPEN,
+            CLAUDECODE="1",
+            QDRANT_MODE="external",
+            QDRANT_URL=STORE_URL,
+        )
+        line = _line(result.stdout, "does not carry")
+        assert "✗" in line, result.stdout
+        assert "OLLAMA_MODE, OLLAMA_URL" in line, line
+        assert "QDRANT_MODE" not in line.split("(")[1], "name only what is missing"
+        assert "Docker" in line, line
+
+    @requires_bash
+    def test_a_missing_key_is_named_without_its_value(self, tmp_path: Path) -> None:
+        """A key installed after the session started: the server 401s rather
+        than falling back, so the ✗ must not claim a Docker fallback — and the
+        value must appear nowhere."""
+        binv = _host(tmp_path)
+        project = _project(tmp_path, shared=EXTERNAL, local={"QDRANT_API_KEY": KEY})
+        curl = {
+            f"{STORE_URL}/collections": ["401", 0],
+            f"{STORE_URL}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(tmp_path, project, binv, curl, CLAUDECODE="1", **EXTERNAL)
+        line = _line(result.stdout, "does not carry")
+        assert "✗" in line and "(QDRANT_API_KEY)" in line, result.stdout
+        assert "Docker" not in line, line
+        assert KEY not in result.stdout + result.stderr
 
     @requires_bash
     def test_a_session_with_the_block_passes(self, tmp_path: Path) -> None:
@@ -657,7 +697,8 @@ class TestStoreConfig:
         r = _store(project)
         assert r["declared"] == {"mode": "external", "in": ".claude/settings.json"}, r
         [defect] = _defects(r)
-        assert "does not carry it" in defect and "Docker" in defect, defect
+        assert "does not carry: QDRANT_MODE (.claude/settings.json)" in defect, defect
+        assert "Docker" in defect, defect
 
     @requires_node
     def test_both_defects_surface_together(self, tmp_path: Path) -> None:
@@ -761,7 +802,7 @@ class TestTheDriverDoesNotLaunchIntoTheWrongStore:
         report = json.loads(result.stdout)
         assert report["serverChecks"] == "skipped", report
         assert report["store"]["declared"]["mode"] == "external", report
-        assert "  - .claude/settings.json sets QDRANT_MODE=external" in result.stderr
+        assert "  - the project settings declare store variables" in result.stderr
         assert "  - note: the server checks did not run" in result.stderr, (
             "a report with no infrastructure findings reads as clean infrastructure"
         )
@@ -883,7 +924,7 @@ class TestTheHookCarriesItIntoTheSession:
             ),
         )
         assert result.returncode == 0, result.stderr
-        assert "does not carry it" in result.stdout, result.stdout
+        assert "does not carry: QDRANT_MODE" in result.stdout, result.stdout
         assert "declares no projectId" in result.stdout, result.stdout
         assert "FAILED TO RUN" not in result.stdout, result.stdout
         assert not marker.exists()
