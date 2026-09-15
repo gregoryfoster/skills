@@ -354,7 +354,7 @@ class TestTheExternalStoreGate:
         result = _preflight(
             tmp_path, _project(tmp_path), binv, curl, **{**EXTERNAL, "QDRANT_URL": url}
         )
-        assert "✗" in _line(result.stdout, "TLS failed"), result.stdout
+        assert "✗" in _line(result.stdout, "did not verify"), result.stdout
         assert "MagicDNS" in result.stdout, result.stdout
 
     @requires_bash
@@ -367,8 +367,60 @@ class TestTheExternalStoreGate:
             f"{OLLAMA_URL}/api/tags": ["200", 0],
         }
         result = _preflight(tmp_path, _project(tmp_path), binv, curl, **EXTERNAL)
-        assert "TLS failed" in result.stdout, result.stdout
+        assert "did not verify" in result.stdout, result.stdout
         assert "MagicDNS" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_failed_handshake_is_not_blamed_on_the_name(self, tmp_path: Path) -> None:
+        """#287 CR 8: exit 35 is a handshake that never happened — most often a
+        port serving plain http — and no certificate was ever read."""
+        binv = _host(tmp_path)
+        url = "https://localhost:18765"
+        curl = {f"{url}/collections": ["000", 35], f"{OLLAMA_URL}/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, **{**EXTERNAL, "QDRANT_URL": url}
+        )
+        assert "✗" in _line(result.stdout, "handshake failed"), result.stdout
+        assert "serve TLS" in result.stdout, result.stdout
+        assert "MagicDNS" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_every_probe_ignores_curlrc(self, tmp_path: Path) -> None:
+        """`-q` has to be curl's first argument to stop ~/.curlrc being read; a
+        `--fail` there turned a 401 into exit 22."""
+        binv = _host(tmp_path)
+        env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
+        curl = {f"{STORE_URL}/collections": ["401", 0], NATIVE_OLLAMA: ["000", 7]}
+        _preflight(tmp_path, _project(tmp_path), binv, curl, QDRANT_API_KEY=KEY, **env)
+        calls = _curl_calls(binv)
+        assert len(calls) == 3, calls  # native probe, store, store with the key
+        assert all(c["argv"][0] == "-q" for c in calls), calls
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "url", ["HTTPS://INDEX.TAIL0.TS.NET:6333", "http://LOCALHOST:6333"]
+    )
+    def test_scheme_and_host_compare_as_upstream_parses_them(
+        self, tmp_path: Path, url: str
+    ) -> None:
+        """Upstream's URL parser lowercases both; neither of these is plain
+        http to a remote host."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{url}/collections": ["401", 0],
+            f"{url}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            curl,
+            QDRANT_API_KEY=KEY,
+            **{**EXTERNAL, "QDRANT_URL": url},
+        )
+        assert "is not https" not in result.stdout, result.stdout
+        assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
 
     @requires_bash
     def test_a_dns_failure_names_the_acl(self, tmp_path: Path) -> None:

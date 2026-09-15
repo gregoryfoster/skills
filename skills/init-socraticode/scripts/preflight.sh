@@ -182,7 +182,9 @@ else
 fi
 
 # http_status URL [KEY] — prints the HTTP status of a GET; returns curl's exit
-# status, so 0 means some HTTP answer arrived. The key rides in on stdin as a
+# status, so 0 means some HTTP answer arrived. `-q` first, in every curl call
+# here: it must lead to stop ~/.curlrc being read, and a `--fail` in one turned
+# a 401 into exit 22, "no answer" in place of "requires an API key" (#287 CR 8). The key rides in on stdin as a
 # curl config line, never on the command line, where every process on the host
 # can read it for the life of the call.
 http_status() {
@@ -191,9 +193,9 @@ http_status() {
     esc="${key//\\/\\\\}"
     esc="${esc//\"/\\\"}"
     printf 'header = "api-key: %s"\n' "$esc" \
-      | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$1" 2>/dev/null
+      | curl -q -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$1" 2>/dev/null
   else
-    curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null
+    curl -q -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null
   fi
 }
 
@@ -226,14 +228,25 @@ unreachable() {
       fail "$what: cannot resolve $host"
       hint "Check the host name. On a tailnet, a peer the ACL does not admit is invisible — it fails as DNS, not as a denial"
       ;;
-    7) fail "$what: connection refused at $url" ;;
+    7) fail "$what: cannot connect to $url (refused, or no route to it)" ;;
     28) fail "$what: no answer from $url within 5s" ;;
-    35 | 51 | 53 | 54 | 58 | 59 | 60 | 64 | 66 | 77 | 80 | 82 | 83 | 90 | 91)
-      fail "$what: TLS failed at $url (curl exit $rc)"
+    35)
+      # The handshake itself failed, which a certificate never causes: most
+      # often the port answers plain http.
+      fail "$what: TLS handshake failed at $url (curl exit 35)"
+      hint "Does that port serve TLS? An http:// endpoint behind an https:// URL fails exactly this way"
+      ;;
+    51 | 60)
+      # The certificate did not verify — and a name missing from its SAN is
+      # the usual reason on a tailnet.
+      fail "$what: the certificate at $url did not verify (curl exit $rc)"
       case "$host" in
         *.* | \[*) ;;
         *) hint "A certificate names the full host name, and $host is a short one — use the FQDN (on a tailnet, the full MagicDNS name <host>.<tailnet>.ts.net)" ;;
       esac
+      ;;
+    53 | 54 | 58 | 59 | 64 | 66 | 77 | 80 | 82 | 83 | 90 | 91)
+      fail "$what: TLS failed at $url (curl exit $rc)"
       ;;
     *) fail "$what: no answer from $url (curl exit $rc)" ;;
   esac
@@ -256,7 +269,7 @@ if [ "$E_PROVIDER" = ollama ]; then
       # Probed only where the answer changes the verdict: next to a managed
       # Qdrant, Docker is needed either way.
       if [ "$STORE_MODE" = external ]; then
-        NATIVE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
+        NATIVE="$(curl -q -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:11434/api/tags 2>/dev/null || true)"
         if [ "$NATIVE" != 200 ]; then
           DOCKER_FOR="the Ollama embedder (OLLAMA_MODE=$O_MODE falls back to a container when no native Ollama answers on localhost:11434)"
         fi
@@ -328,8 +341,9 @@ fi
 # alone uses QDRANT_PORT, whose default is 16333 rather than Qdrant's 6333, so
 # the mistake reads as a network fault (CannObserv/broker#17, trap 3).
 if [ "$STORE_MODE" = external ]; then
-  Q_SCHEME="${Q_URL%%://*}"
-  Q_URL_HOST="$(url_host "$Q_URL")"
+  # Lowercased, as upstream's URL parser does: `HTTPS://` is https there.
+  Q_SCHEME="$(printf '%s' "${Q_URL%%://*}" | tr '[:upper:]' '[:lower:]')"
+  Q_URL_HOST="$(url_host "$Q_URL" | tr '[:upper:]' '[:lower:]')"
   if [ -z "$Q_URL" ]; then
     fail "QDRANT_MODE=external but QDRANT_URL is not set${Q_HOST:+ (QDRANT_HOST=$Q_HOST is)}"
     hint "Set QDRANT_URL=https://<full host name>:6333 — a URL built from QDRANT_HOST uses port ${QDRANT_PORT:-16333}, not Qdrant's 6333"
