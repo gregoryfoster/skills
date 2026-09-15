@@ -400,10 +400,30 @@ fi
 # builds http://<host>:<QDRANT_PORT> from it — plain http, which cannot carry a
 # key, on a port whose default is 16333 rather than Qdrant's 6333, so the
 # mistake reads as a network fault (CannObserv/broker#17, trap 3).
+#
+# And the URL is read the way the server's two readers of it read it, since
+# curl reads more than either (#287 round 2, CR 27). @qdrant/js-client-rest
+# 1.18 throws on a URL not starting with a literal `http://` or `https://` —
+# case-sensitive, so `HTTPS://` too — ignores its path, and puts an http URL
+# with no port on 6333; ensureExternalQdrantReady's readiness GET keeps the
+# path and uses 80. curl would have guessed a scheme, followed the path, and
+# probed port 80, passing each of these while the server failed every call.
 if [ "$STORE_MODE" = external ]; then
-  # Lowercased, as upstream's URL parser does: `HTTPS://` is https there.
-  Q_SCHEME="$(printf '%s' "${Q_URL%%://*}" | tr '[:upper:]' '[:lower:]')"
+  Q_SCHEME="${Q_URL%%://*}"
+  case "$Q_URL" in http://* | https://*) Q_SCHEME_OK=1 ;; *) Q_SCHEME_OK="" ;; esac
+  # The host compares lowercased, as upstream's URL parser returns it.
   Q_URL_HOST="$(url_host "$Q_URL" | tr '[:upper:]' '[:lower:]')"
+  Q_AUTHORITY="${Q_URL#*://}" Q_PATH=""
+  case "$Q_AUTHORITY" in
+    */*) Q_PATH="/${Q_AUTHORITY#*/}" Q_AUTHORITY="${Q_AUTHORITY%%/*}" ;;
+  esac
+  Q_AUTHORITY="${Q_AUTHORITY##*@}"
+  case "$Q_AUTHORITY" in
+    \[*\]:*) Q_URL_PORT="${Q_AUTHORITY##*\]:}" ;;
+    \[*) Q_URL_PORT="" ;;
+    *:*) Q_URL_PORT="${Q_AUTHORITY##*:}" ;;
+    *) Q_URL_PORT="" ;;
+  esac
   if [ -z "$Q_URL" ]; then
     if [ -n "$Q_PORT" ]; then
       PORT_NOTE="port $Q_PORT"
@@ -412,6 +432,15 @@ if [ "$STORE_MODE" = external ]; then
     fi
     fail "QDRANT_MODE=external but QDRANT_URL is not set${Q_HOST:+ — QDRANT_HOST=$Q_HOST alone is not enough for this skill}"
     hint "Set QDRANT_URL=https://<full host name>:6333. A URL built from QDRANT_HOST is plain http on $PORT_NOTE, and plain http cannot carry a key"
+  elif [ -z "$Q_SCHEME_OK" ]; then
+    fail "QDRANT_URL=$Q_URL does not start with http:// or https:// — the server's Qdrant client refuses any other form, uppercase included"
+    hint "Use https://<full host name>:6333"
+  elif [ -n "$Q_PATH" ]; then
+    fail "QDRANT_URL=$Q_URL has a path ($Q_PATH) — the server's Qdrant client drops it and calls $Q_SCHEME://$Q_AUTHORITY at the root"
+    hint "Serve the store at the root of its host and port; the client takes no path from the URL"
+  elif [ "$Q_SCHEME" = http ] && [ -z "$Q_URL_PORT" ]; then
+    fail "QDRANT_URL=$Q_URL names no port — the server's readiness check then reaches port 80 and its Qdrant client 6333"
+    hint "Write the port: http://<host>:6333"
   elif [ -n "$Q_KEY" ] && [ "$Q_SCHEME" != https ] && ! is_loopback "$Q_URL_HOST"; then
     # Upstream refuses before it connects, so there is nothing to probe.
     fail "QDRANT_API_KEY is set but $Q_URL is not https — the server refuses to send the key over plain http"

@@ -539,13 +539,13 @@ class TestTheExternalStoreGate:
 
     @requires_bash
     @pytest.mark.parametrize(
-        "url", ["HTTPS://INDEX.TAIL0.TS.NET:6333", "http://LOCALHOST:6333"]
+        "url", ["https://INDEX.TAIL0.TS.NET:6333", "http://LOCALHOST:6333"]
     )
-    def test_scheme_and_host_compare_as_upstream_parses_them(
+    def test_the_host_compares_as_upstream_parses_it(
         self, tmp_path: Path, url: str
     ) -> None:
-        """Upstream's URL parser lowercases both; neither of these is plain
-        http to a remote host."""
+        """Upstream's URL parser lowercases the host; neither of these is plain
+        http to a remote host. The scheme is another matter: see below."""
         binv = _host(tmp_path)
         curl = {
             f"{url}/collections": ["401", 0],
@@ -562,6 +562,60 @@ class TestTheExternalStoreGate:
         )
         assert "is not https" not in result.stdout, result.stdout
         assert "accepts QDRANT_API_KEY" in result.stdout, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # curl guesses http; the client throws. With a key, `localhost`
+            # read off a scheme-less URL even passed as loopback.
+            ("index.tail0.ts.net:6333", "does not start with http:// or https://"),
+            ("localhost:6333", "does not start with http:// or https://"),
+            # js-client-rest's prefix check is case-sensitive.
+            ("HTTPS://index.tail0.ts.net:6333", "does not start with http://"),
+            # The client drops the path; curl would have followed it.
+            ("https://index.tail0.ts.net:6333/qdrant", "has a path (/qdrant)"),
+            # Readiness GET on 80, client on 6333; curl probed 80.
+            ("http://index.tail0.ts.net", "names no port"),
+        ],
+    )
+    def test_a_url_the_client_cannot_use_fails_unprobed(
+        self, tmp_path: Path, url: str, expected: str
+    ) -> None:
+        """#287 round 2, CR 27: each of these passed — curl answered — while
+        the server's Qdrant client refused or missed it on every call."""
+        binv = _host(tmp_path)
+        curl = {
+            f"{url}/collections": ["200", 0],
+            f"{url}/collections +key": ["200", 0],
+            f"{OLLAMA_URL}/api/tags": ["200", 0],
+        }
+        result = _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            curl,
+            QDRANT_API_KEY=KEY,
+            **{**EXTERNAL, "QDRANT_URL": url},
+        )
+        assert "✗" in _line(result.stdout, expected), result.stdout
+        assert result.returncode == 1, result.stdout
+        assert not any(url in " ".join(c["argv"]) for c in _curl_calls(binv)), (
+            "a URL the server cannot use proves nothing by answering curl"
+        )
+
+    @requires_bash
+    def test_https_needs_no_port(self, tmp_path: Path) -> None:
+        """Both of the server's readers put https on 443, so it is not the
+        portless http case."""
+        binv = _host(tmp_path)
+        url = "https://index.tail0.ts.net"
+        curl = {f"{url}/collections": ["200", 0], f"{OLLAMA_URL}/api/tags": ["200", 0]}
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, curl, **{**EXTERNAL, "QDRANT_URL": url}
+        )
+        assert "✓" in _line(result.stdout, f"answers at {url}"), result.stdout
+        assert result.returncode == 0, result.stdout
 
     @requires_bash
     def test_a_dns_failure_names_the_acl(self, tmp_path: Path) -> None:

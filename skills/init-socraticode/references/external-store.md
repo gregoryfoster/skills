@@ -10,7 +10,7 @@ gate load-bearing ([#287](https://github.com/gregoryfoster/skills/issues/287)).
 
 | Value | Where it goes | Why it matters |
 |---|---|---|
-| `QDRANT_URL` | `.claude/settings.json` `env` | `https://<full host name>:6333`. The full name, because that is what the certificate names — on a tailnet the MagicDNS FQDN `<host>.<tailnet>.ts.net`, never the short name. Never `QDRANT_HOST`: a URL built from a host alone uses `QDRANT_PORT`, whose default is 16333, not Qdrant's 6333, and the mistake reads as a network fault. |
+| `QDRANT_URL` | `.claude/settings.json` `env` | `https://<full host name>:6333`. The full name, because that is what the certificate names — on a tailnet the MagicDNS FQDN `<host>.<tailnet>.ts.net`, never the short name. A lowercase scheme and no path: the server's Qdrant client refuses any other scheme and drops a path, and an `http://` URL needs its port. Never `QDRANT_HOST`: a URL built from a host alone uses `QDRANT_PORT`, whose default is 16333, not Qdrant's 6333, and the mistake reads as a network fault. |
 | `QDRANT_API_KEY` | `.claude/settings.local.json` `env` (git-ignored), or user settings | Never the tracked file. With a key, the URL must be https: upstream refuses to send it over plain http to anything but loopback. |
 | `OLLAMA_MODE`, `OLLAMA_URL` | `.claude/settings.json` `env` | `external` and the store's Ollama. Left at `auto`, a host with no native Ollama on localhost:11434 starts an Ollama container — Docker after all. |
 | `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` | `.claude/settings.json` `env` | What every other client of the store uses: a collection holds vectors from one model at one dimension. |
