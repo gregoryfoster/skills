@@ -175,7 +175,7 @@ def _preflight(
         DOCKER_HOST=f"unix://{stub_dir / 'docker.sock'}",
     )
     base.update(env)
-    return subprocess.run(
+    result = subprocess.run(
         [shutil.which("bash") or "/bin/bash", str(PREFLIGHT)],
         cwd=str(project),
         capture_output=True,
@@ -183,6 +183,27 @@ def _preflight(
         timeout=60,
         env=base,
     )
+    # Every run is a leak check, not the two paths that used to carry one: a
+    # key printed on the rejected-key line or the plain-http refusal passed
+    # the whole suite (#287 round 2, CR 36).
+    for secret in _keys_in_play(project, stub_dir, env):
+        assert secret not in result.stdout + result.stderr, "a gate printed the key"
+    return result
+
+
+def _keys_in_play(project: Path, stub_dir: Path, env: dict) -> set[str]:
+    """Every QDRANT_API_KEY a preflight run could have read."""
+    keys = {env.get("QDRANT_API_KEY", "")}
+    for settings in (
+        project / ".claude" / "settings.local.json",
+        project / ".claude" / "settings.json",
+        stub_dir / "claude-config" / "settings.json",
+    ):
+        try:
+            keys.add(json.loads(settings.read_text())["env"]["QDRANT_API_KEY"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return keys - {""}
 
 
 def _log(binv: Path, tool: str) -> str:
