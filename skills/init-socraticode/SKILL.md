@@ -1,7 +1,7 @@
 ---
 name: init-socraticode
 description: Installs, configures, and indexes SocratiCode semantic code search on a project — Docker-or-shared-store/Node preflight, plugin enablement, a project-adapted Code Exploration Policy + docs/SOCRATICODE.md, SessionStart prefetch and once-per-day health hooks, a context-artifacts manifest, and a full blocking index verified by edge yield rather than graph status. Use when adding semantic code search to a repo.
-compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running (or a reachable external Qdrant), Node >=18.17, and npx. Run from the target repo's root.
+compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running (or an external Qdrant and Ollama), Node >=18.17, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
   version: "1.6"
