@@ -1463,6 +1463,76 @@ class TestTheDriverDoesNotLaunchIntoTheWrongStore:
         _driver(project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry))
         assert marker.exists(), "status refused to launch over a sibling's stub"
 
+    def _siblings(self, tmp_path: Path, own_id: str, *ids: str) -> Path:
+        """This project, linked to one sibling per id in `ids`."""
+        project = _project(tmp_path)
+        names = [f"sibling{i}" for i in range(len(ids))]
+        for name, sibling_id in zip(names, ids):
+            (tmp_path / name).mkdir()
+            _config(tmp_path / name, {"projectId": sibling_id})
+        _config(
+            project,
+            {"projectId": own_id, "linkedProjects": [f"../{n}" for n in names]},
+        )
+        return project
+
+    @requires_node
+    def test_a_sibling_on_this_projects_id_blocks_the_launch(
+        self, tmp_path: Path
+    ) -> None:
+        """#287 round 2, CR 37: the one sibling defect that IS a wrong write —
+        two repos, one collection set. Made non-blocking, it survived."""
+        project = self._siblings(tmp_path, "notifier", "notifier")
+        entry, marker = _launch_marker(tmp_path)
+        result = _driver(
+            project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry)
+        )
+        assert result.returncode == 1, result.stderr
+        assert "refusing to launch" in result.stderr, result.stderr
+        assert not marker.exists(), "status wrote into the sibling's collections"
+
+    @requires_node
+    def test_two_siblings_on_one_id_block_nothing(self, tmp_path: Path) -> None:
+        """…and the other way: made blocking, it also survived."""
+        project = self._siblings(tmp_path, "broker", "archiver", "archiver")
+        gate = _driver(project, "validate-store", QDRANT_MODE="external")
+        assert gate.returncode == 0, gate.stderr
+        assert json.loads(gate.stdout)["valid"] is True
+        entry, marker = _launch_marker(tmp_path)
+        _driver(project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry))
+        assert marker.exists(), "status refused over two siblings' stubs"
+
+    @requires_node
+    def test_health_check_measures_past_a_sibling_defect(self, tmp_path: Path) -> None:
+        """The hook's help says the sibling defects report "without blocking
+        the check"; health-check skipping its server checks over one survived."""
+        project = self._siblings(tmp_path, "broker", "bad id!")
+        stub = tmp_path / "stub-server.mjs"
+        stub.write_text(STUB_SERVER)
+        replies = tmp_path / "replies.json"
+        replies.write_text(
+            json.dumps(
+                {
+                    "codebase_health": HEALTH_OK,
+                    "codebase_status": STATUS_CLEAN,
+                    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+                }
+            )
+        )
+        result = _driver(
+            project,
+            "health-check",
+            QDRANT_MODE="external",
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(replies),
+            HEALTH_TIMEOUT_MS="30000",
+        )
+        report = json.loads(result.stdout)
+        assert "serverChecks" not in report, report
+        assert "health" in report, "codebase_health never ran"
+        assert any("bad id!" in f for f in report["findings"]), report
+        assert result.returncode == 1, "the sibling defect is still a defect"
+
     @requires_node
     def test_health_check_reports_and_skips_its_server_checks(
         self, tmp_path: Path
