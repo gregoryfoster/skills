@@ -260,3 +260,37 @@ class TestTheDocsAgreeWithTheGate:
             body = path.read_text()
             assert ">=18 <26" not in body, f"{path.name} still advertises <26"
             assert "Node<26" not in body, f"{path.name} still advertises Node<26"
+
+
+class TestABrokenNodeFailsTheGate:
+    """`node --version` sat outside any condition, so a node that failed — a
+    version-manager shim pointing at an uninstalled version — ended the script
+    under set -e with no ✗, no later gate and no summary line (#287 round 2,
+    CR 46)."""
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "echo 'N/A: version \"v99\" is not yet installed' >&2; exit 126",
+            "echo garbage; exit 0",
+        ],
+    )
+    def test_it_is_a_fail_and_the_run_finishes(self, tmp_path: Path, body: str) -> None:
+        binv = _stub_toolchain(tmp_path, "v22.11.0", None)
+        (binv / "node").write_text(f"#!/bin/sh\n{body}\n")
+        result = subprocess.run(
+            ["bash", str(PREFLIGHT)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=_env(binv),
+            cwd=str(tmp_path),
+        )
+        line = next(
+            (ln for ln in result.stdout.splitlines() if "reported no version" in ln), ""
+        )
+        assert "✗" in line, result.stdout + result.stderr
+        assert "npx reachable" in result.stdout, "the later gates still ran"
+        assert "Preflight FAILED" in result.stdout, result.stdout
+        assert result.returncode == 1

@@ -664,9 +664,15 @@ NODE26_SERVER_MIN=1.13.0  # release carrying the Node 26 transport bridge
 if ! command -v node >/dev/null 2>&1; then
   fail "Node not installed"
   hint "Install Node >=$NODE_MIN (nvm: 'nvm install 22', or https://nodejs.org)"
+elif ! NODE_RAW="$(node --version 2>/dev/null)" || [ "${NODE_RAW#v[0-9]}" = "$NODE_RAW" ]; then
+  # A condition, like every other probe here (#287 round 2, CR 46). Outside
+  # one, a node that fails — a version-manager shim pointing at a version that
+  # is not installed — ended the script under set -e: no ✗, no later gate, no
+  # summary line.
+  fail "Node is on PATH ($(command -v node)) but 'node --version' reported no version — a broken install, or a shim pointing at nothing"
+  hint "Reinstall Node >=$NODE_MIN, or point the shim at an installed version: 'nvm install 22 && nvm use 22'"
 else
-  NODE_RAW="$(node --version)"            # e.g. v22.11.0
-  NODE_VER="${NODE_RAW#v}"
+  NODE_VER="${NODE_RAW#v}"                # NODE_RAW e.g. v22.11.0
   NODE_MAJOR="${NODE_VER%%.*}"
   if ! version_ge "$NODE_VER" "$NODE_MIN"; then
     fail "Node $NODE_RAW is too old — SocratiCode's engines require >=$NODE_MIN"
