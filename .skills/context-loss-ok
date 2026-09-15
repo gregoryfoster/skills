@@ -188,7 +188,8 @@ skills/using-git-worktrees/SKILL.md :: tighten :: **`--dry-run`** reports the re
 skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-metrics.md#measuring-tokens),
 
 # #285 curation of orchestrating-issue-backlog/SKILL.md. Every other line moved
-# verbatim into references/; these six were rewritten in place.
+# verbatim into references/; the entries below were rewritten in place — six by
+# the curation, then one each by CR 2 and CR 17, which name themselves.
 # Step 5 item 1 ended "Three refinements:" over four sub-bullets that this run
 # moved to references/issue-audit.md — the pointer is retargeted, and the count
 # corrected: there were four. The count and three refinements landed together
