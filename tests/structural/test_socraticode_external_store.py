@@ -259,15 +259,16 @@ class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
     @requires_bash
     def test_auto_ollama_with_no_native_one_needs_docker(self, tmp_path: Path) -> None:
         """Upstream's `auto` falls back to a container when localhost:11434 is
-        silent — so an external store alone does not make a host Docker-free,
-        and the ✗ must say which setting would."""
+        silent — so an external store alone does not make a host Docker-free.
+        The ✗ names the Ollama embedder, and the • nudge the setting that would
+        drop it."""
         binv = _host(tmp_path, docker=False)
         env = {"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL}
         curl = {f"{STORE_URL}/collections": ["200", 0], NATIVE_OLLAMA: ["000", 7]}
         result = _preflight(tmp_path, _project(tmp_path), binv, curl, **env)
         line = _line(result.stdout, "Docker not installed")
         assert "✗" in line and "Ollama" in line, result.stdout
-        assert "OLLAMA_MODE=external" in result.stdout, result.stdout
+        assert "•" in _line(result.stdout, "OLLAMA_MODE=external"), result.stdout
         assert result.returncode == 1
 
     @requires_bash
@@ -280,12 +281,17 @@ class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
             "QDRANT_URL": STORE_URL,
             "OLLAMA_MODE": "docker",
         }
-        result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
+        # A native Ollama answering, so `docker` treated like `auto` — which
+        # would then need no Docker — cannot pass (#287 round 2, CR 50).
+        curl = {**STORE_OPEN, NATIVE_OLLAMA: ["200", 0]}
+        result = _preflight(tmp_path, _project(tmp_path), binv, curl, **env)
         line = _line(result.stdout, "Docker not installed")
         assert "✗" in line and "OLLAMA_MODE=docker" in line, result.stdout
+        assert "falls back" not in line, "docker mode is not the auto fallback"
         assert "managed Qdrant" not in line, (
             "the store is external; only Ollama needs it"
         )
+        assert result.returncode == 1
 
     @requires_bash
     def test_a_host_with_docker_still_hears_how_to_drop_it(
@@ -507,10 +513,14 @@ class TestASocketActivatedDaemonIsNotStarted:
     def test_an_external_store_runs_no_docker_command(self, tmp_path: Path) -> None:
         """Broker's host exactly: socket enabled, daemon down, client external."""
         binv = _host(tmp_path, systemd=True)
-        _preflight(
+        result = _preflight(
             tmp_path, _project(tmp_path), binv, STORE_OPEN, SOCKET="active", **EXTERNAL
         )
         assert _log(binv, "docker") == "", _log(binv, "docker")
+        # Positive too: a preflight that died after its banner also ran no
+        # docker command (#287 round 2, CR 50).
+        assert "✓" in _line(result.stdout, "Docker not needed"), result.stdout
+        assert result.returncode == 0, result.stdout
 
     @requires_bash
     def test_the_plugin_check_cannot_auto_resume(self, tmp_path: Path) -> None:
@@ -1112,6 +1122,7 @@ class TestTrustIsCheckedByItsEffect:
     def test_a_managed_repo_hears_nothing_about_it(self, tmp_path: Path) -> None:
         binv = _host(tmp_path)
         result = _preflight(tmp_path, _project(tmp_path), binv, CLAUDECODE="1")
+        assert "Store: managed" in result.stdout, "the run reached the gates"
         assert "env block" not in result.stdout, result.stdout
 
 
