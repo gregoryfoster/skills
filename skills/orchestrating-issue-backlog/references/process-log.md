@@ -18,8 +18,9 @@ two things: write the entry file, and add one row to that year's index — see
 
 Which sessions each of the skill's rules came from, wherever it now lives —
 [`SKILL.md`](../SKILL.md) or one of its references. Moved here from its Process
-Logs section in the #285 curation: it is provenance, not runtime instruction. Step and Q numbers refer to `SKILL.md`; Rule and Worker-step
-numbers to [`execution.md`](execution.md).
+Logs section in the #285 curation: it is provenance, not runtime instruction.
+Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
+[`execution.md`](execution.md).
 
 - Rules 5/6 (per-batch ceiling, runtime fall-through detection) — 2026-05-22 port-pool incident; Rule 5 slot-reclaim semantics + cheap ceiling re-verification — 2026-06-09
 - Rule 3 revision (verify-and-merge per worker; reconciliation checklist) — 2026-05-09, 2026-05-11; **the main checkout's branch never moves where the repo deploys from it** — 2026-08-13 usa-wa
