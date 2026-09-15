@@ -91,7 +91,8 @@ the folder if it asks; an already-trusted folder does not — and re-run the
 skill in the new session, which remembers nothing of this one. Phases 1–4 are
 idempotent, so it converges on what is already written, and its Phase 1
 preflight must show `This session carries .claude/settings.json's env block` ✓
-before Phase 5.
+before Phase 5. That ✓ is also how the re-run knows it is the new session: it
+goes on to Phase 5 instead of restarting again.
 
 Run that preflight **bare**. The inline values of a first install would stand
 in for the block and pass the trust line whether or not the session carries

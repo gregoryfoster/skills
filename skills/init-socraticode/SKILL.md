@@ -204,11 +204,12 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    already in git-ignored `.claude/settings.local.json`). Never the block
    alone: without a `projectId`
    a session names its collections by a hash of the checkout path, shared by
-   every host with the same layout. Then restart Claude Code here, trusting the
-   folder if asked, and re-run this skill in the new session (Phases 1–4 are
-   idempotent): its bare `preflight.sh --check` must show the `env` block line
-   ✓ before Phase 5. This session cannot index: its server started without the
-   block.
+   every host with the same layout. Unless this session's Phase 1 already
+   showed the `env` block line ✓, restart Claude Code here, trusting the folder
+   if asked, and re-run this skill in the new session (Phases 1–4 are
+   idempotent); its bare `preflight.sh --check` must show that line ✓ before
+   Phase 5. The session that wrote the block cannot index: its server started
+   without it.
 
 ### Phase 4 — Configure context artifacts
 
@@ -378,8 +379,7 @@ driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
   start a socket-activated daemon.
 - **The policy block pays rent on every invocation.** It is the one section
   `curating-context` will not edit, so whatever lands in `AGENTS.md` is a fixed
-  cost the repo cannot curate away — 1,247 tokens and 15% of watcher's whole
-  curated file before the split. Keep the block at the negative rule plus the
+  cost the repo cannot curate away. Keep the block at the negative rule plus the
   two or three highest-traffic rows; everything else goes to
   `docs/SOCRATICODE.md`. Adding a row to the block is a budget decision
   ([#115](https://github.com/gregoryfoster/skills/issues/115)).
