@@ -394,4 +394,4 @@ gotcha matrix (A–T) and the native-vs-fallback decision tree.
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
 6,000-token standard, set at current size so this file cannot grow. Came down
 from 10,050 by demoting Phase 0, Phase 4's index-scope and legacy-array
-guidance, and seven phase-enforced invariants into `references/`.
+guidance, and three phase-enforced invariants into `references/`.
