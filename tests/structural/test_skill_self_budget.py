@@ -289,7 +289,7 @@ SKILL_MD_RATCHETS = {
     # A ten-step orchestration procedure: the interview, the scoring rubric, the
     # conflict-zone and batch-design steps, and the design-doc and tracking-issue
     # templates. See the runbook note below. Bound by its ESTIMATE, which read
-    # 640 higher than count_tokens at the #285 curation (9,773 vs 9,133) — the
+    # 642 higher than count_tokens at the #285 curation (9,767 vs 9,125) — the
     # reason this file learned that "exact is the contract" does not survive
     # contact with the gate that actually runs.
     #
@@ -299,8 +299,8 @@ SKILL_MD_RATCHETS = {
     # Hygiene Rules 1–6, Recovery), the issue-audit dispositions, the
     # shared-file and shared-backing-service procedures, the batch-shape special
     # cases and provenance priors, and the rule-provenance ledger. Each step
-    # kept its instruction plus a pointer. 22,995 -> 9,773 estimated, 21,775 ->
-    # 9,133 exact, and prove-no-loss.sh lost: 0 after seven warranted rewrites.
+    # kept its instruction plus a pointer. 22,995 -> 9,767 estimated, 21,775 ->
+    # 9,125 exact, and prove-no-loss.sh lost: 0 after eight warranted rewrites.
     #
     # The ratchet had been raised once before, from 22,900, and that raise is
     # still the record of what it bought: the skill's own Orchestrator step 2
