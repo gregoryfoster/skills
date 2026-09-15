@@ -1238,7 +1238,8 @@ function linkedProjectsFinding(linked) {
 // Transcribed rather than imported, like linkedProjects() above and for the
 // same reason: nothing here can import the server package.
 const PROJECT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const PROJECT_SETTINGS = ['.claude/settings.local.json', '.claude/settings.json'];
+const LOCAL_SETTINGS = '.claude/settings.local.json';
+const PROJECT_SETTINGS = [LOCAL_SETTINGS, '.claude/settings.json'];
 const PATH_HASH = 'path hash';
 
 function readJsonOrNull(path) {
@@ -1305,6 +1306,21 @@ function effectiveProjectId(root, env) {
   return { value, source: PATH_HASH };
 }
 
+// The checkout a process here runs in, when that is ANOTHER worktree of the
+// project's repository; else null. A session carries the env block of the
+// checkout it was started in, while the hook — and a relative projectPath —
+// measure the main checkout (#180). From a worktree session the two differ,
+// and the main checkout's git-ignored settings.local.json, the key's home, is
+// not a file that session ever read (#287 round 2, CR 30). A process in an
+// unrelated repository, or in none, is still held to the project's block.
+function otherWorktree(root, cwd) {
+  const top = gitIn(cwd, ['rev-parse', '--show-toplevel']);
+  if (top === null || realOrSelf(top) === realOrSelf(root)) return null;
+  const mine = gitCommonDir(cwd);
+  const theirs = gitCommonDir(root);
+  return mine && theirs && realOrSelf(mine) === realOrSelf(theirs) ? realOrSelf(top) : null;
+}
+
 // What a server lacking `unset` runs, named for what is actually missing: the
 // mode moves the store; OLLAMA_MODE moves only the embedder, and only when the
 // embedder is Ollama. "Falls back to a local Docker stack instead of reaching
@@ -1328,10 +1344,13 @@ function runsWithout(unset, env) {
 // collections, so they must not stop this project being indexed or measured.
 const blocks = (f) => f.severity === SEVERITY.defect && f.blocking !== false;
 
-function storeConfig(projectPath, env = process.env) {
+function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
   const root = resolvePath(projectPath);
   const store = env.QDRANT_MODE === 'external' ? 'external' : 'managed';
   const declaredEnv = declaredStoreEnv(root);
+  const worktree = otherWorktree(root, cwd);
+  // The block this process could have been handed: its own checkout's.
+  const carriedBlock = worktree ? declaredStoreEnv(worktree) : declaredEnv;
   const declared = declaredEnv.QDRANT_MODE
     ? { mode: declaredEnv.QDRANT_MODE.value, in: declaredEnv.QDRANT_MODE.in }
     : null;
@@ -1352,12 +1371,30 @@ function storeConfig(projectPath, env = process.env) {
   if (declared?.mode === 'external') {
     const unset = [];
     const different = [];
-    for (const k of Object.keys(declaredEnv)) {
+    for (const k of Object.keys(carriedBlock)) {
       const carried = env[k] ?? '';
       if (carried === '') unset.push(k);
-      else if (carried !== declaredEnv[k].value) different.push(k);
+      else if (carried !== carriedBlock[k].value) different.push(k);
     }
-    const named = (keys) => keys.map((k) => `${k} (${declaredEnv[k].in})`).join(', ');
+    const named = (keys) => keys
+      .map((k) => `${k} (${worktree ? joinPath(worktree, carriedBlock[k].in) : carriedBlock[k].in})`)
+      .join(', ');
+    // Declared in the main checkout's local file and nowhere this worktree
+    // reads: no restart or trust prompt brings it, and saying so sent the
+    // operator after a trust problem that did not exist.
+    const stranded = worktree
+      ? Object.keys(declaredEnv).filter((k) => declaredEnv[k].in === LOCAL_SETTINGS
+        && !(k in carriedBlock) && (env[k] ?? '') === '')
+      : [];
+    if (stranded.length) {
+      const them = stranded.length > 1 ? 'them' : 'it';
+      defect(
+        `${stranded.join(', ')} ${stranded.length > 1 ? 'are' : 'is'} declared only in `
+        + `${joinPath(root, LOCAL_SETTINGS)}, which belongs to that checkout — this process runs in ${worktree}, `
+        + `another worktree whose settings do not declare ${them}, so a server launched from here runs without ${them}. `
+        + `Hold ${them} in user settings, which every checkout reads, or copy the file into this worktree`
+      );
+    }
     if (unset.length) {
       defect(
         'the project settings declare store variables this process\'s environment does not carry: '
@@ -1496,16 +1533,20 @@ const realOrSelf = (p) => { try { return realpathSync(p); } catch { return p; } 
 // clone. Confirming that git calls the candidate a working-tree root keeps a
 // layout we guessed wrong about from being measured; the caller's own path is
 // the safer answer there.
+// The shared git dir of `dir`'s repository, absolute, or null outside one.
+// --path-format=absolute needs git >= 2.31; without it --git-common-dir is
+// relative to the queried directory in a primary checkout (plain `.git`) and
+// absolute in a worktree, so the fallback resolves it against that directory.
+function gitCommonDir(dir) {
+  const absolute = gitIn(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (absolute !== null) return absolute;
+  const relative = gitIn(dir, ['rev-parse', '--git-common-dir']);
+  return relative === null ? null : resolvePath(dir, relative);
+}
+
 function mainCheckoutOf(dir) {
-  // --path-format=absolute needs git >= 2.31; without it --git-common-dir is
-  // relative to the queried directory in a primary checkout (plain `.git`) and
-  // absolute in a worktree, so the fallback resolves it against that directory.
-  let commonDir = gitIn(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-  if (commonDir === null) {
-    const relative = gitIn(dir, ['rev-parse', '--git-common-dir']);
-    if (relative === null) return null;
-    commonDir = resolvePath(dir, relative);
-  }
+  const commonDir = gitCommonDir(dir);
+  if (commonDir === null) return null;
   const candidate = resolvePath(commonDir, '..');
   const top = gitIn(candidate, ['rev-parse', '--show-toplevel']);
   if (top === null) return null;

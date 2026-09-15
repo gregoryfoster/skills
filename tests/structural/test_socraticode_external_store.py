@@ -1200,6 +1200,57 @@ class TestStoreConfig:
         assert result.returncode == 1 and not marker.exists(), result.stderr
 
     @requires_node
+    def test_a_worktree_is_held_to_its_own_settings(self, tmp_path: Path) -> None:
+        """#287 round 2, CR 30: the hook measures the main checkout, whose
+        git-ignored settings.local.json holds the key — a file a session in a
+        worktree never reads. Blaming trust there sent the operator after a
+        problem no restart could fix."""
+        main = _project(
+            tmp_path,
+            shared={"QDRANT_MODE": "external", "QDRANT_URL": STORE_URL},
+            local={"QDRANT_API_KEY": KEY},
+        )
+        _config(main, {"projectId": "broker"})
+        (main / ".gitignore").write_text(".claude/settings.local.json\n")
+        for args in (
+            ["add", "."],
+            ["commit", "-q", "-m", "init"],
+            ["worktree", "add", "-q", str(tmp_path / "wt")],
+        ):
+            subprocess.run(
+                ["git", "-C", str(main), "-c", "user.email=t@example.com"]
+                + ["-c", "user.name=t", *args],
+                check=True,
+                capture_output=True,
+                env=_clean_env(),
+            )
+
+        def gate(cwd: Path, **env: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["node", str(DRIVER), "validate-store", str(main)],
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=_clean_env(QDRANT_MODE="external", QDRANT_URL=STORE_URL, **env),
+            )
+
+        from_worktree = gate(tmp_path / "wt")
+        assert from_worktree.returncode == 1, from_worktree.stderr
+        assert "QDRANT_API_KEY is declared only in" in from_worktree.stderr
+        assert "user settings" in from_worktree.stderr, from_worktree.stderr
+        assert "trusted folder" not in from_worktree.stderr, from_worktree.stderr
+        assert gate(tmp_path / "wt", QDRANT_API_KEY=KEY).returncode == 0
+        # From the main checkout the local file IS the session's, so a missing
+        # key there is still the dropped block it always was.
+        from_main = gate(main)
+        assert "does not carry: QDRANT_API_KEY (.claude/settings.local.json)" in (
+            from_main.stderr
+        ), from_main.stderr
+        for r in (from_worktree, from_main):
+            assert KEY not in r.stdout + r.stderr
+
+    @requires_node
     def test_local_settings_override_shared_ones(self, tmp_path: Path) -> None:
         project = _project(
             tmp_path,
