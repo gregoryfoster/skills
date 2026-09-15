@@ -49,6 +49,8 @@ from pathlib import Path
 
 import pytest
 
+from .test_socraticode_node_gate import STORE_VARIABLES
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILL_DIR = REPO_ROOT / "skills" / "init-socraticode"
 DRIVER = SKILL_DIR / "scripts" / "mcp-driver.mjs"
@@ -168,6 +170,12 @@ def _clean_env(**extra: str) -> dict:
         "SOCRATICODE_PROBE_FILE",
         "HEALTH_TIMEOUT_MS",
         "SOCRATICODE_HEALTH_FORCE",
+        # health-check reads both since #281 and #287, and a session on an
+        # external-store host carries them from its settings env block: a
+        # fixture declaring no projectId is then refused its launch, and a
+        # linked path the fixture lacks becomes a finding (#287 round 2, CR 26).
+        "SOCRATICODE_LINKED_PROJECTS",
+        *STORE_VARIABLES,
     ):
         env.pop(k, None)
     env.update(extra)
