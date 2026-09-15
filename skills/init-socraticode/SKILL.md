@@ -42,7 +42,7 @@ Ask the user; each has a default they can accept silently.
 |---|---|---|---|
 | `PROJECT_PATH` | repo root (`git rev-parse --show-toplevel`) | any abs path | what gets indexed; passed to every `codebase_*` call |
 | `STORE` | `managed` | `managed` \| `external` | Phase 1 gates, Phase 3 steps 4–5 — `external`: a Qdrant reached by URL, no Docker ([`references/external-store.md`](references/external-store.md)) |
-| `EMBEDDING_BACKEND` | `ollama-docker` | `ollama-docker` \| `ollama-native` \| `openai` \| `google` | Phase 1 backend env, index speed — see [`references/embedding-backends.md`](references/embedding-backends.md) |
+| `EMBEDDING_BACKEND` | `ollama-docker` | `ollama-docker` \| `ollama-native` \| `openai` \| `google` | Phase 1 backend env, index speed — see [`references/embedding-backends.md`](references/embedding-backends.md); `STORE=external` uses the store's instead |
 | `POLICY_FILE` | `AGENTS.md` | `AGENTS.md` \| `CLAUDE.md` | Phase 3 — where the Code Exploration Policy block lands |
 | `INSTALL_HOOK` | `yes` | `yes` \| `no` | Phase 3 — install the two SessionStart hooks (prefetch reminder + once-per-day health check) |
 | `LINKED_PROJECTS` | none | comma-separated sibling paths | Phase 3 — cross-repo search: relative `linkedProjects` in `.socraticode.json` |
@@ -337,7 +337,7 @@ Present a completion table:
 | Preflight | Docker ✓ (boot-enabled: `<yes/n-a>`) or not needed · `external`: store `<url>` ✓, `env` block in session ✓ · Node `<version>` (>=18.17) ✓ · npx ✓ |
 | Store config | `validate-store` ✓ · `.socraticode.json`: `projectId` `<id/none>`, `<N>` relative `linkedProjects` |
 | Plugin | marketplace `socraticode` registered · `plugin:socraticode:socraticode` Connected |
-| Backend | `<EMBEDDING_BACKEND>` |
+| Backend | `<EMBEDDING_BACKEND>`, or the store's (`external`: `OLLAMA_URL`, model) |
 | Policy | `## Code Exploration Policy` in `<POLICY_FILE>` (marker-delimited, variant `<A/B>`) · `docs/SOCRATICODE.md` written |
 | SessionStart hooks | `<INSTALL_HOOK>` — `.claude/hooks/socraticode-reminder.sh` (prefetch, `<symlink/copy>`) · `.claude/hooks/socraticode-health.sh` (once-per-day infra check, `<symlink/copy>`) |
 | Context artifacts | `.socraticodecontextartifacts.json` (N artifacts, each `path` resolves) |
