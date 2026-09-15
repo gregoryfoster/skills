@@ -1616,9 +1616,14 @@ function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 // store once a day, from a hook whose contract is "reports; never re-indexes".
 // Upstream reads SOCRATICODE_AUTO_RESUME=off before any Docker or Qdrant
 // access. `readOnly` also stops the watcher that status and query calls start
-// on their own, so `status`, `verify` and `health-check` write nothing; `index`
-// keeps it, since a completed index starting its watcher is upstream's normal
-// sequence.
+// on their own, so `status`, `verify` and `health-check` write no index
+// content; `index` keeps it, since a completed index starting its watcher is
+// upstream's normal sequence. Not "nothing" (#287 round 2, CR 35): upstream's
+// readiness paths still act — on a managed store codebase_status starts a
+// stopped Qdrant container, codebase_graph_status creates a project's empty
+// symbol-graph metadata collection when a graph lacks one, and verify's sample
+// search pulls a missing embedding model, onto the store's Ollama when it is
+// external.
 async function withClient(fn, { readOnly = false } = {}) {
   const launch = resolveServerLaunch();
   console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);

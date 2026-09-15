@@ -1644,7 +1644,18 @@ class TestTheSkillStatesTheOrder:
         help_text = subprocess.run(
             ["bash", str(HOOK), "--help"], capture_output=True, text=True, timeout=30
         ).stdout
-        assert "runs no docker command of its own" in " ".join(help_text.split())
+        flat_help = " ".join(help_text.split())
+        assert "runs no docker command of its own" in flat_help
+        # #287 round 2, CR 35: codebase_graph_status can create a collection,
+        # and a managed store's codebase_status starts a container — so the
+        # claim is no index content, and every doc of the invariant says "of
+        # its own".
+        assert "writes no index content" in flat_help, flat_help
+        assert "writes nothing" not in flat_help, flat_help
+        skill = " ".join(SKILL_MD.read_text().split())
+        assert "no `docker` command of its own" in skill
+        policy_ref = SKILL / "references" / "code-exploration-policy.md"
+        assert "no `docker start`" not in policy_ref.read_text()
 
 
 IGNORED_FILE = ".claude/settings.local.json"

@@ -372,7 +372,7 @@ driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
   is merged and deduped. Re-running the skill, or running it on a project that
   already has these files, must not duplicate blocks or stack hooks.
 - **The health hook reports; it never repairs.** No re-index, no `docker`
-  command, no file edit from a SessionStart hook — it runs before an agent has
+  command of its own, no file edit from a SessionStart hook — it runs before an agent has
   context and must cost a bounded, silent-when-clean moment.
 - **Never mutate the host toolchain.** Preflight detects and instructs. Its
   network reads are bounded GETs, and it runs no docker command that would

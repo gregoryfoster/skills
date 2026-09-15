@@ -65,10 +65,11 @@ It reports. It runs no docker command of its own, never re-indexes and never
 edits a file — a session-start hook is the wrong place to spend an hour of CPU
 or to change the repo under an agent that has already begun work. The server
 it launches runs with upstream's auto-resume off and its watcher on manual, so
-it writes nothing to the index either. Upstream's own readiness checks are
-another matter: on a managed store, codebase_status starts a stopped Qdrant
-container, and its Docker probe wakes a socket-activated daemon. An external
-store with an external embedder touches no Docker at all.
+it writes no index content either. Upstream's own readiness paths are another
+matter: on a managed store, codebase_status starts a stopped Qdrant container,
+and its Docker probe wakes a socket-activated daemon; codebase_graph_status
+creates a project's empty symbol-graph metadata collection when a graph lacks
+one. An external store with an external embedder touches no Docker at all.
 
 Behaviour:
   - Measures the MAIN CHECKOUT, not the session's cwd (#180). SocratiCode
