@@ -128,6 +128,11 @@ The linked path only selects which collection to query; no source is read from
 it. A stub naming a collection that does not exist yet is skipped by search,
 silently.
 
+**A stub is a host step, not this skill's.** It sits outside the repo, so the
+skill writes none. Name each linked entry whose path does not resolve in the
+completion report — the daily health check names them too — and leave the
+stubs to the operator.
+
 ## Adopting `projectId` on a repo already in the store
 
 It renames the collections, and orphans any set already in the store under
