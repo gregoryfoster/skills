@@ -317,9 +317,30 @@ elif ! command -v docker >/dev/null 2>&1; then
   [ "$STORE_MODE" = external ] && hint "Or keep the client Docker-free: OLLAMA_MODE=external and OLLAMA_URL=<the store's Ollama>"
 else
   if docker_socket_idle; then
-    # Not probed, and not a failure: the socket is how this host runs Docker,
-    # and the server's first docker call brings the daemon up.
-    pass "Docker is socket-activated and its daemon is down — not probed, since any docker command would start it; the server starts it on first use (needed for $DOCKER_FOR)"
+    # Not probed — but not assumed either (#287 CR 10). Socket activation
+    # cannot start a masked service, a failed one is retried by the first
+    # docker call and may fail again, and a socket this user cannot write to
+    # refuses every call. Each read below asks systemd or the filesystem; none
+    # connects to the socket.
+    DOCKER_SOCK="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+    case "$DOCKER_SOCK" in
+      unix://*) DOCKER_SOCK="${DOCKER_SOCK#unix://}" ;;
+      *) DOCKER_SOCK="" ;;
+    esac
+    if [ "$(systemctl is-enabled docker.service 2>/dev/null || true)" = masked ]; then
+      fail "docker.socket is listening, but docker.service is masked — socket activation cannot start it (needed for $DOCKER_FOR)"
+      hint "sudo systemctl unmask docker.service"
+    elif systemctl is-failed --quiet docker.service 2>/dev/null; then
+      fail "docker.socket is listening, but docker.service is failed — the first docker call retries it and may fail the same way (needed for $DOCKER_FOR)"
+      hint "journalctl -u docker.service, then: sudo systemctl reset-failed docker.service"
+    elif [ -n "$DOCKER_SOCK" ] && [ -e "$DOCKER_SOCK" ] && [ ! -w "$DOCKER_SOCK" ]; then
+      fail "Docker's socket $DOCKER_SOCK is not writable by ${USER:-this user} — every docker call the server makes is refused (needed for $DOCKER_FOR)"
+      hint "sudo usermod -aG docker ${USER:-<user>}, then log in again"
+    else
+      # The socket is how this host runs Docker, and the server's first docker
+      # call brings the daemon up.
+      pass "Docker is socket-activated and its daemon is down — not probed, since any docker command would start it; the server starts it on first use (needed for $DOCKER_FOR)"
+    fi
   elif ! docker info >/dev/null 2>&1; then
     fail "Docker installed but the daemon is not running (needed for $DOCKER_FOR)"
     hint "Start Docker Desktop (macOS) or: sudo systemctl start docker (Linux)"

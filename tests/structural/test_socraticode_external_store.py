@@ -91,6 +91,8 @@ case "$*" in
   "is-active --quiet docker.service") [ "$SERVICE" = active ] ;;
   "is-enabled docker") echo disabled; exit 1 ;;
   "is-enabled docker.socket") echo enabled ;;
+  "is-enabled docker.service") echo "${SERVICE_ENABLED:-disabled}" ;;
+  "is-failed --quiet docker.service") [ "${SERVICE_FAILED:-no}" = yes ] ;;
   *) exit 1 ;;
 esac
 """
@@ -168,6 +170,9 @@ def _preflight(
         # Preflight reads user settings for values (#287 CR 7); the developer's
         # own ~/.claude/settings.json must not be one of them.
         CLAUDE_CONFIG_DIR=str(stub_dir / "claude-config"),
+        # A socket path that does not exist unless a test makes one, so the
+        # idle-socket checks (#287 CR 10) never read the host's real socket.
+        DOCKER_HOST=f"unix://{stub_dir / 'docker.sock'}",
     )
     base.update(env)
     return subprocess.run(
@@ -309,6 +314,38 @@ class TestASocketActivatedDaemonIsNotStarted:
         )
         assert "✓" in _line(result.stdout, "socket-activated"), result.stdout
         assert result.returncode == 0, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "state,expected",
+        [
+            ({"SERVICE_ENABLED": "masked"}, "is masked"),
+            ({"SERVICE_FAILED": "yes"}, "is failed"),
+        ],
+    )
+    def test_an_idle_socket_that_cannot_start_the_daemon_fails(
+        self, tmp_path: Path, state: dict, expected: str
+    ) -> None:
+        """#287 CR 10: socket activation cannot start a masked service, and a
+        failed one is retried by the first call — neither earns the ✓."""
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, SOCKET="active", **state
+        )
+        assert "✗" in _line(result.stdout, expected), result.stdout
+        assert _log(binv, "docker") == "", "still no docker command"
+        assert result.returncode == 1
+
+    @requires_bash
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can write any file")
+    def test_an_unwritable_socket_fails(self, tmp_path: Path) -> None:
+        binv = _host(tmp_path, systemd=True)
+        sock = binv.parent / "docker.sock"
+        sock.write_text("")
+        sock.chmod(0o444)
+        result = _preflight(tmp_path, _project(tmp_path), binv, SOCKET="active")
+        assert "✗" in _line(result.stdout, "not writable"), result.stdout
+        assert "usermod -aG docker" in result.stdout, result.stdout
 
     @requires_bash
     def test_a_running_daemon_is_still_probed(self, tmp_path: Path) -> None:
