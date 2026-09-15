@@ -245,10 +245,10 @@ SKILL_MD_RATCHETS = {
     # of the body is literal file content and command sequences, which is why it
     # tokenizes at 2.35 bytes/token — the densest SKILL.md in the repo, though
     # three of its own reference docs are denser still (2.04 to 2.12). See the
-    # outlier note below. Bound by its EXACT count; its estimate reads 1,764
+    # runbook note below. Bound by its EXACT count; its estimate reads 1,764
     # lower, the worst calibration gap of any SKILL.md. Came down from 17,100 by
     # demoting Phases 8, 10, 11 and 16's table into references/ (#190) — an
-    # interim pass at #96's problem, not the redesign the outlier note describes.
+    # interim pass at #96's problem, not the redesign the runbook note describes.
     "init-project-fastapi": 14_700,
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Came down
@@ -288,13 +288,13 @@ SKILL_MD_RATCHETS = {
     # the same 6,000 every other skill is, and needs no exception at all.
     # A ten-step orchestration procedure: the interview, the scoring rubric, the
     # conflict-zone and batch-design steps, and the design-doc and tracking-issue
-    # templates. See the outlier note below. Bound by its ESTIMATE, which read
+    # templates. See the runbook note below. Bound by its ESTIMATE, which read
     # 640 higher than count_tokens at the #285 curation (9,773 vs 9,133) — the
     # reason this file learned that "exact is the contract" does not survive
     # contact with the gate that actually runs.
     #
     # Came down from 23,110 in that curation, which was the classification pass
-    # the outlier note asked for. What a run needs only on some backlogs moved
+    # the runbook note asked for. What a run needs only on some backlogs moved
     # verbatim into references/: the execution protocol (Agent Roles, Branch
     # Hygiene Rules 1–6, Recovery), the issue-audit dispositions, the
     # shared-file and shared-backing-service procedures, the batch-shape special
@@ -317,8 +317,9 @@ SKILL_MD_RATCHETS = {
     "orchestrating-issue-backlog": 9_800,
 }
 
-# The two outliers, long runbooks at ~2.5x and ~1.6x the standard, deserve more
-# than one line.
+# The runbook note. Two long procedural runbooks, at ~2.5x and ~1.6x the
+# standard, deserve more than one line — set apart by their shape, not by the
+# multiple: init-socraticode sits at ~1.57x without needing this note.
 #
 # `init-project-fastapi` and `orchestrating-issue-backlog` are long procedural
 # runbooks, not policy files: read top-to-bottom once, in order, with each step
