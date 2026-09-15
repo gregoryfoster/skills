@@ -18,13 +18,18 @@ gate load-bearing ([#287](https://github.com/gregoryfoster/skills/issues/287)).
 
 ## Before Phase 1: the key, and the values preflight needs
 
-Install the key first, into the `env` block of `.claude/settings.local.json` —
-never on a command line, where `ps` and shell history keep it, and never in the
-tracked file. Confirm git ignores that file: `git check-ignore -v
-.claude/settings.local.json` must print a rule from the tracked `.gitignore`,
-since a global excludes file protects one machine, not the repo. The append
-block is in
-[`linked-projects.md`](linked-projects.md#make-sure-settingslocaljson-is-git-ignored).
+The one write `SKILL.md`'s HARD-GATE allows before preflight, in this order:
+
+1. **The ignore rule, first.** `.claude/settings.local.json` must be ignored by
+   a rule the repo tracks — a global excludes file protects one machine, not
+   the repo, and a secret written before the check is one `git add -A` from a
+   commit. The test and the append block are in
+   [`linked-projects.md`](linked-projects.md#make-sure-settingslocaljson-is-git-ignored).
+2. **Then the key**, into the `env` block of `.claude/settings.local.json` —
+   never on a command line, where `ps` and shell history keep it, and never in
+   the tracked file. Where the operator delivers it out of band, wait for it
+   rather than asking for it in the conversation.
+
 The key alone addresses nothing: no `QDRANT_MODE` travels with it.
 
 Preflight reads each value from the environment, then

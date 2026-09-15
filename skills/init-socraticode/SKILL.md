@@ -29,6 +29,9 @@ Do NOT write files into the target project or start a (slow, one-time) index
 until you have (1) collected and confirmed the parameters below and (2) passed
 preflight (Phase 1). The first index can take an hour or more on the default CPU
 backend — get the backend choice and artifact paths right before you start it.
+Except, for `STORE=external`, the tracked ignore rule and then the API key in
+`.claude/settings.local.json`: preflight reads the key
+([`references/external-store.md`](references/external-store.md)).
 </HARD-GATE>
 
 ## Parameters to collect
@@ -80,8 +83,8 @@ against the resolved `socraticode@latest`, not refused, and warns if the
 registry is unreachable — [#269](https://github.com/gregoryfoster/skills/issues/269));
 `npx` reachable; for `STORE=external`, the store's URL, TLS, key and answer,
 the external Ollama, and whether this session carries the settings `env` block
-([`references/external-store.md`](references/external-store.md) — a first
-install passes the values inline); and advisory checks that Docker starts at
+(a first install passes the values inline, the key already in place); and
+advisory checks that Docker starts at
 boot (gotcha L), the `socraticode` marketplace is registered, and the plugin
 MCP server is Connected.
 
@@ -186,9 +189,7 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
      deliberately distinct, so one hook's strip cannot evict the other's entry
      from the array they share. It is silent when clean, so a stale copy is
      indistinguishable from a healthy one. It reports; it never re-indexes.
-   A copy freezes at install day and `.skills/doctor.sh` sees only *dangling*
-   symlinks, so the drift reads as a healthy install; retyping a hook from prose
-   is worse still (#186).
+   Why a copy is the worse install (#99, #186): the reference's Step A.
 4. **`.socraticode.json`** (when `STORE=external` or `LINKED_PROJECTS` is set)
    → at the repo root, merged, committed: `projectId` for an external store
    (default: the repo name), and each linked sibling in `linkedProjects` as a
@@ -231,10 +232,9 @@ mechanics in
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest "<PROJECT_PATH>"
 ```
 
-It checks the top-level shape, the `{name, path, description}` triple, unique
-(case-insensitive) names, the absent-`paths`-plural rule, globs, and that **every
-path resolves** — exiting non-zero with one line per problem on stderr and a
-`{present, count, valid, errors}` verdict on stdout. A non-resolving path
+It checks shape, names and globs, and that **every path resolves** — exiting
+non-zero with one line per problem (the rules:
+[`references/context-artifacts.md`](references/context-artifacts.md)). A non-resolving path
 is not cosmetic: the server skips it silently, so `artifacts N/N` never reaches
 parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every reported line, or
 drop the category, before indexing.
