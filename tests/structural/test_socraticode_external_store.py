@@ -159,7 +159,9 @@ def _preflight(
     base = {
         k: v
         for k, v in os.environ.items()
-        if k not in STORE_VARIABLES and k != "CLAUDECODE" and not k.startswith("GIT_")
+        if k not in STORE_VARIABLES
+        and k not in ("CLAUDECODE", "DOCKER_CONTEXT")
+        and not k.startswith("GIT_")
     }
     base.update(
         PATH=str(binv),
@@ -173,6 +175,9 @@ def _preflight(
         # A socket path that does not exist unless a test makes one, so the
         # idle-socket checks (#287 CR 10) never read the host's real socket.
         DOCKER_HOST=f"unix://{stub_dir / 'docker.sock'}",
+        # And a docker config of its own: Docker Desktop writes a non-default
+        # currentContext, which decides whether the socket is the one reached.
+        DOCKER_CONFIG=str(stub_dir / "docker-config"),
     )
     base.update(env)
     result = subprocess.run(
@@ -447,6 +452,35 @@ class TestASocketActivatedDaemonIsNotStarted:
             tmp_path, _project(tmp_path), binv, SOCKET="active", SERVICE="active"
         )
         assert "info" in _log(binv, "docker"), result.stdout
+        assert "daemon reachable" in result.stdout, result.stdout
+
+    @requires_bash
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            {"DOCKER_HOST": "tcp://10.0.0.5:2375"},
+            {"DOCKER_HOST": "", "DOCKER_CONTEXT": "remote"},
+            {"DOCKER_HOST": "", "CURRENT_CONTEXT": "desktop-linux"},
+        ],
+    )
+    def test_another_daemon_is_probed_not_assumed(
+        self, tmp_path: Path, endpoint: dict
+    ) -> None:
+        """#287 round 2, CR 39: the local socket's state said "the server
+        starts it on first use" about a daemon the server never talks to.
+        Probing that one cannot start the local daemon."""
+        binv = _host(tmp_path, systemd=True)
+        env = dict(endpoint)
+        context = env.pop("CURRENT_CONTEXT", None)
+        if context:
+            config = binv.parent / "docker-config"
+            config.mkdir()
+            (config / "config.json").write_text(
+                json.dumps({"auths": {}, "currentContext": context})
+            )
+        result = _preflight(tmp_path, _project(tmp_path), binv, SOCKET="active", **env)
+        assert "info" in _log(binv, "docker"), result.stdout
+        assert "socket-activated" not in result.stdout, result.stdout
         assert "daemon reachable" in result.stdout, result.stdout
 
     @requires_bash

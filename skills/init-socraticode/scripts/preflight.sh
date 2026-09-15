@@ -322,8 +322,27 @@ fi
 # `docker ps` brought up dockerd and containerd, ~120 MB, beside the cohort's
 # production Redis (#287). `systemctl is-active` asks systemd instead, and
 # touches nothing.
+#
+# Only where the docker CLI would reach that socket (#287 round 2, CR 39). A
+# DOCKER_HOST over tcp or ssh, or a context other than `default`, points every
+# docker call — the server's too — at another daemon, which says nothing about
+# the local socket's state and which `docker info` can probe without touching
+# it. The CLI's own order decides: DOCKER_HOST, then DOCKER_CONTEXT, then the
+# config's currentContext.
 docker_socket_idle() {
+  local ctx
   command -v systemctl >/dev/null 2>&1 || return 1
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    case "$DOCKER_HOST" in unix://*) ;; *) return 1 ;; esac
+  else
+    ctx="${DOCKER_CONTEXT:-}"
+    if [ -z "$ctx" ]; then
+      ctx="$(grep -oE '"currentContext"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        "${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json" 2>/dev/null \
+        | head -n 1 | sed -E 's/.*"([^"]*)"$/\1/' || true)"
+    fi
+    case "${ctx:-default}" in default) ;; *) return 1 ;; esac
+  fi
   systemctl is-active --quiet docker.socket 2>/dev/null || return 1
   ! systemctl is-active --quiet docker.service 2>/dev/null
 }
