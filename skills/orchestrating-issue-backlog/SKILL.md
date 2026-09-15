@@ -20,7 +20,7 @@ Do NOT assign priorities, design batches, write a design doc, or open a GitHub i
 
 Create a task for each item and complete them in order. Item numbers match the `Step N` headings below; item 0 runs before the numbered sequence, like Q0.
 
-Rule, Orchestrator-step and Worker-step numbers cited in this file refer to [references/execution.md](references/execution.md).
+Rule and Worker-step numbers cited in this file refer to [references/execution.md](references/execution.md).
 
 0. **Sync local main** — `git checkout main && git pull --ff-only`; clear any untracked stray from the checkout (Rule 1)
 1. **Fetch all open issues** — `gh issue list --state open --limit 50 --json number,title,labels,body`

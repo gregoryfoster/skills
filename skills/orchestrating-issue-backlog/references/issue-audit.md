@@ -1,7 +1,7 @@
 # Auditing what an issue body claims
 
 Loaded from [`SKILL.md`](../SKILL.md) Steps 1–2 and 5 when an issue's claim
-needs more than the basic grep. Step and Q numbers refer to `SKILL.md`.
+needs more than the basic grep. Step numbers refer to `SKILL.md`.
 
 ## Dispositions the closed-in-fact grep cannot settle (Steps 1–2)
 

@@ -1,7 +1,6 @@
 # Batch geometry: special cases and priors
 
-Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7. Step and Q numbers refer to
-`SKILL.md`.
+Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites.
 
 ## Special cases that force a shape (Step 7)
 

@@ -88,13 +88,12 @@ tests/structural/test_demoted_blocks.py :: `### The Phase 0 preflight, in full`,
 
 # The #285 curation's destination docs name SKILL.md as the home of the Step and Q
 # numbers they cite, which stays true: every Step and Q is still in SKILL.md.
-skills/orchestrating-issue-backlog/references/batch-design.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7. Step and Q numbers refer to
-skills/orchestrating-issue-backlog/references/batch-design.md :: `SKILL.md`.
+skills/orchestrating-issue-backlog/references/batch-design.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites.
 skills/orchestrating-issue-backlog/references/design-doc-authoring.md :: Step 8 of [`SKILL.md`](../SKILL.md) commits the backlog design doc directly to
 skills/orchestrating-issue-backlog/references/execution.md :: Loaded from [`SKILL.md`](../SKILL.md) at Step 8, whose design doc records the
 skills/orchestrating-issue-backlog/references/execution.md :: Step and Q numbers refer to `SKILL.md`; Rule, Orchestrator-step and Worker-step
 skills/orchestrating-issue-backlog/references/issue-audit.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 1–2 and 5 when an issue's claim
-skills/orchestrating-issue-backlog/references/issue-audit.md :: needs more than the basic grep. Step and Q numbers refer to `SKILL.md`.
+skills/orchestrating-issue-backlog/references/issue-audit.md :: needs more than the basic grep. Step numbers refer to `SKILL.md`.
 skills/orchestrating-issue-backlog/references/process-log.md :: Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 skills/orchestrating-issue-backlog/references/process-log.md :: [`SKILL.md`](../SKILL.md) or one of its references. Moved here from its Process
 skills/orchestrating-issue-backlog/references/process-log.md :: instruction. Step and Q numbers refer to `SKILL.md`; Rule and Worker-step
