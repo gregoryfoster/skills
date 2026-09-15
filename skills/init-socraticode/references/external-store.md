@@ -85,11 +85,18 @@ configuration: it starts a local Docker stack, through the socket if the host
 has one.
 
 So the session that wrote the block cannot index; its server started without
-it. After step 2, restart Claude Code in the repo, accept the trust prompt, and
-from the new session run `preflight.sh --check`. Its line `This session carries
-.claude/settings.json's env block` must be ✓. Continue from Phase 4 there.
-Phase 6 confirms from the server's side: `codebase_health` reports `Qdrant mode:
-external` and the store's endpoint, and no container.
+it. After the block (step 2 above), restart Claude Code in the repo — trusting
+the folder if it asks; an already-trusted folder does not — and re-run the
+skill in the new session, which remembers nothing of this one. Phases 1–4 are
+idempotent, so it converges on what is already written, and its Phase 1
+preflight must show `This session carries .claude/settings.json's env block` ✓
+before Phase 5.
+
+Run that preflight **bare**. The inline values of a first install would stand
+in for the block and pass the trust line whether or not the session carries
+it. Phase 6 then confirms from the server's side, where nothing stands in:
+`codebase_health` reports `Qdrant mode: external` and the store's endpoint, and
+no container.
 
 Trust is checked by its effect because it cannot be read reliably from outside:
 it is inherited from a parent folder, and IDE and SDK sessions skip the prompt.

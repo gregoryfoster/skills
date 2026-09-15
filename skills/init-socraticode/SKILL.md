@@ -203,10 +203,11 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    already in git-ignored `.claude/settings.local.json`). Never the block
    alone: without a `projectId`
    a session names its collections by a hash of the checkout path, shared by
-   every host with the same layout. Then restart Claude Code here, trust the
-   folder, and re-run `preflight.sh --check` from the new session — its `env`
-   block line must be ✓ before Phase 5. This session cannot index: its server
-   started without the block.
+   every host with the same layout. Then restart Claude Code here, trusting the
+   folder if asked, and re-run this skill in the new session (Phases 1–4 are
+   idempotent): its bare `preflight.sh --check` must show the `env` block line
+   ✓ before Phase 5. This session cannot index: its server started without the
+   block.
 
 ### Phase 4 — Configure context artifacts
 

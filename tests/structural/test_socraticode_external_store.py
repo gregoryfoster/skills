@@ -1171,7 +1171,7 @@ class TestTheSkillStatesTheOrder:
 
     def test_trust_is_confirmed_before_the_index(self) -> None:
         flat = " ".join(SKILL_MD.read_text().split())
-        assert "trust the folder" in flat, flat
+        assert "trusting the folder" in flat, flat
         assert "This session cannot index" in flat, (
             "the session that wrote the block runs a server started without it"
         )
