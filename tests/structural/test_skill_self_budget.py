@@ -1466,9 +1466,10 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
 
     The warning is the verdict surfaced where a green run can see it. It is
     NOT the assertion: asserting `worst_case_exact` against the ratchet is
-    #217's option 2, which fails seven of nineteen skills today and needs
-    ~8,100 tokens of trimming — rejected on measured cost, not on merit, and
-    it becomes correct the moment those seven ratchets come down.
+    #217's option 2, which failed seven of nineteen skills when #217 measured
+    it and needed ~8,100 tokens of trimming — rejected on measured cost, not on
+    merit, and it becomes correct the moment the ratchets the warning names
+    come down.
     """
 
     SKILL = "init-project-fastapi"

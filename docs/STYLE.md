@@ -137,7 +137,7 @@ the estimate is always on, which let
 three ratchets be breached past a green suite. Two things close that
 ([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
 run now **warns** about each skill whose worst permissible exact count exceeds
-its ratchet (seven today — a warning, not a failure), and
+its ratchet (a warning, not a failure), and
 [.github/workflows/skill-budget-exact.yml](../.github/workflows/skill-budget-exact.yml)
 runs the exact pass weekly as the gate that does fail. On the commit path the
 exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
