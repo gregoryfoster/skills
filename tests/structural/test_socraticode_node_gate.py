@@ -65,28 +65,42 @@ def _stub_toolchain(tmp_path: Path, node_version: str, npm_reply: str | None) ->
     (binv / "npx").write_text("#!/bin/sh\nexit 0\n")
     # `docker info` succeeding is all Gate 1 asks for.
     (binv / "docker").write_text("#!/bin/sh\nexit 0\n")
+    # Gate 4 runs `claude mcp list`, which starts every MCP server configured
+    # on the machine running the suite — seconds per test, and a real plugin
+    # server in a structural test. Stubbed, Gate 4 stays advisory and silent
+    # about the host (#287 CR 18).
+    (binv / "claude").write_text("#!/bin/sh\nexit 0\n")
     # A host with no systemd, so Gate 1 always reaches `docker info`. On a
     # Linux host whose Docker socket is listening over a stopped daemon, the
     # gate would pass WITHOUT probing (#287) — and the broken-docker case below
     # would stop being able to fail.
     (binv / "systemctl").write_text("#!/bin/sh\nexit 1\n")
-    for name in ("node", "npm", "npx", "docker", "systemctl"):
+    for name in ("node", "npm", "npx", "docker", "systemctl", "claude"):
         (binv / name).chmod(0o755)
     return binv
 
 
-# Every variable that can move preflight to the external store, where Gate 1
-# stops asking for Docker (#287). A session on an external-store VM carries
-# them from its settings env block; the exit codes below are about a managed
-# host, so they must not depend on where the suite runs.
+# Every variable that moves which store a server reaches, which id it writes
+# under, or whether it writes on its own (#287). A session on an external-store
+# VM carries most of them from its settings env block, and the assertions in
+# this file and the two that import it describe a managed host, so none may
+# depend on where the suite runs. One tuple, shared, because three lists kept
+# by hand had already drifted apart — QDRANT_PORT was in none (#287 CR 18).
 STORE_VARIABLES = (
     "QDRANT_MODE",
     "QDRANT_URL",
     "QDRANT_HOST",
+    "QDRANT_PORT",
     "QDRANT_API_KEY",
     "OLLAMA_MODE",
     "OLLAMA_URL",
     "EMBEDDING_PROVIDER",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIMENSIONS",
+    "SOCRATICODE_PROJECT_ID",
+    "SOCRATICODE_BRANCH_AWARE",
+    "SOCRATICODE_AUTO_RESUME",
+    "SOCRATICODE_WATCHER",
 )
 
 
