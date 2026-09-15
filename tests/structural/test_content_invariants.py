@@ -674,6 +674,17 @@ class TestOrchestratingIssueBacklog:
     @pytest.fixture(autouse=True)
     def _load(self):
         self.s = skill("orchestrating-issue-backlog")
+        refs = self.s.directory / "references"
+        # The #285 curation demoted the execution protocol (Agent Roles, Branch
+        # Hygiene Rules, Recovery) and the conditional hazards into references/.
+        # Each pin below follows its content rather than the file it used to
+        # live in. `surface` is the body plus every top-level reference doc; the
+        # session journal under process-log/<year>/ is history, not guidance.
+        self.execution = (refs / "execution.md").read_text()
+        self.shared_files = (refs / "shared-files.md").read_text()
+        self.surface = "\n".join(
+            [self.s.body] + [p.read_text() for p in sorted(refs.glob("*.md"))]
+        )
 
     def test_writing_plans_cross_reference_present(self):
         assert "writing-plans" in self.s.body, (
@@ -695,21 +706,21 @@ class TestOrchestratingIssueBacklog:
     # is unfalsifiable advice and produced no action.
 
     def test_worktree_base_stated_as_fact_not_variance(self):
-        body = self.s.body
+        body = self.execution
         assert "independent of the orchestrator's checked-out branch" in body, (
             "Rule 3 must state the worktree base as fact: worktrees are created "
             "from `origin/main`, independent of the orchestrator's checked-out "
             "branch. `git checkout -b batch/<X>` sets the merge TARGET, not the "
             "base — a reader who believes otherwise skips the remediation."
         )
-        assert "Branch base also varies" not in body, (
+        assert "Branch base also varies" not in self.surface, (
             "Rule 3 must not describe the worktree base as varying. It does not "
             "vary; describing it as variance is what left the remediation "
             "optional (#150)."
         )
 
     def test_worker_protocol_merges_batch_branch_after_isolation_check(self):
-        body = self.s.body
+        body = self.execution
         isolation = body.find('[ -f "$(git rev-parse --show-toplevel)/.git" ]')
         merge = body.find("git merge batch/<X>")
         implement = body.find("**Implement with TDD**")
@@ -745,10 +756,18 @@ class TestOrchestratingIssueBacklog:
         Checking that a cited number is merely IN RANGE does not catch this —
         3, 5 and 7 all still exist, they just mean other things now. So each
         citation is resolved against the cited step's TITLE.
+
+        Since #285 the protocol and both citations live in three different
+        files — execution.md, the process-log.md ledger, and
+        shared-backing-services.md — so the citations are sought across the
+        whole surface. A renumbering in one file now falsifies prose in another,
+        which is exactly the case a same-file check would miss.
         """
-        body = self.s.body
-        protocol = body[
-            body.index("### Worker agents") : body.index("## Key Principles")
+        body = self.surface
+        protocol = self.execution[
+            self.execution.index("### Worker agents") : self.execution.index(
+                "## Branch Hygiene Rules"
+            )
         ]
         steps = {
             int(n): title
@@ -768,12 +787,13 @@ class TestOrchestratingIssueBacklog:
 
         cited_body = re.search(r"Worker step (\d+) \"issue body is a proposal", body)
         assert cited_body, (
-            "The adopted-improvements list must still cite the issue-body rule "
-            'as `Worker step N "issue body is a proposal, not a specification"`.'
+            "The rule-provenance ledger (references/process-log.md) must still "
+            "cite the issue-body rule as "
+            '`Worker step N "issue body is a proposal, not a specification"`.'
         )
         expected = step_titled("issue body as a proposal")
         assert int(cited_body.group(1)) == expected, (
-            f"Adopted improvements cites 'Worker step {cited_body.group(1)}' for "
+            f"The ledger cites 'Worker step {cited_body.group(1)}' for "
             f"the issue-body rule, which is now step {expected}."
         )
 
@@ -781,7 +801,8 @@ class TestOrchestratingIssueBacklog:
             r"Worker steps (\d+)[-–](\d+) run before the completion signal", body
         )
         assert cited_verify, (
-            "The Q5 answer must still cite the pre-signal verification steps as "
+            "The Q5 resolution ladder (references/shared-backing-services.md) "
+            "must still cite the pre-signal verification steps as "
             "`Worker steps N-M run before the completion signal`."
         )
         want = (step_titled("Run full test suite"), step_titled("Self-review diff"))
@@ -792,7 +813,7 @@ class TestOrchestratingIssueBacklog:
         )
 
     def test_worker_prompts_must_carry_a_falsifiable_baseline(self):
-        body = self.s.body
+        body = self.execution
         assert "expected test count on `batch/<X>`" in body, (
             "Every worker prompt must carry the expected test count on the "
             "batch branch with a stop-if-it-does-not-match instruction. That "
@@ -818,6 +839,12 @@ class TestOrchestratingIssueBacklog:
         (`None == None`, after the state moved to another column) stays green
         while verifying nothing, and no keyword sweep reaches it: it names
         neither the literal the fix removes nor the one it adds.
+
+        Since #285 the procedure lives in references/shared-files.md and Step 5
+        item 2 is its pointer, so the pin has two halves. A pointer that merely
+        says "vacuous" would satisfy the old single check while the procedure
+        it routes to lost the instruction — the green-while-verifying-nothing
+        failure this test exists to catch, reproduced in the test.
         """
         body = self.s.body
         section = body[
@@ -825,11 +852,17 @@ class TestOrchestratingIssueBacklog:
                 "### Step 7: Batch design"
             )
         ]
-        assert "vacuous" in section, (
+        assert "vacuous" in section and "references/shared-files.md" in section, (
             "Step 5's conflict-zone analysis must tell the orchestrator to grep "
             "for the assertions a change makes VACUOUS, not only the ones it "
-            "breaks. The invalidated half is caught by the suite; the vacuous "
-            "half is exactly what the suite cannot report."
+            "breaks, and route to references/shared-files.md for how. The "
+            "invalidated half is caught by the suite; the vacuous half is "
+            "exactly what the suite cannot report."
+        )
+        assert "vacuous" in self.shared_files and "None == None" in self.shared_files, (
+            "references/shared-files.md must carry the vacuous-assertion "
+            "procedure itself — the `None == None` degradation and the re-anchor "
+            "fix — not just the word Step 5 points with."
         )
 
     def test_rule_6_reads_the_exit_code_not_only_stdout(self):
@@ -841,7 +874,7 @@ class TestOrchestratingIssueBacklog:
         a caller reading output alone. The corruption disables the detector
         instead of tripping it (#189, twice in one four-agent batch).
         """
-        body = self.s.body
+        body = self.execution
         rule6 = body[
             body.index(
                 "### Rule 6 — Detect worktree fall-through at runtime"
@@ -873,7 +906,7 @@ class TestOrchestratingIssueBacklog:
         are indistinguishable, so Rule 6 plus reconciliation is the correct
         first move for either signal.
         """
-        body = self.s.body
+        body = self.execution
         orchestrator = body[
             body.index("### Orchestrator agent") : body.index("### Worker agents")
         ]
@@ -892,7 +925,7 @@ class TestOrchestratingIssueBacklog:
         four workers diagnosed a stale briefed baseline instead of silently
         reconciling to it (#182 Batch A, sourced from #156).
         """
-        protocol = self.s.body[self.s.body.index("### Worker agents") :]
+        protocol = self.execution[self.execution.index("### Worker agents") :]
         assert "N passed, M skipped" in protocol, (
             "The worker protocol's required report-back slot must demand the "
             "suite's COLLECTED COUNT (`N passed, M skipped`), not a bare "
@@ -911,12 +944,12 @@ class TestOrchestratingIssueBacklog:
         Promoting it unqualified would carry the error upstream into the skill,
         where every consumer inherits it.
         """
-        body = self.s.body
-        assert not re.search(r"hook runs ruff|runs ruff, not pytest", body), (
+        assert not re.search(r"hook runs ruff|runs ruff, not pytest", self.surface), (
             "The skill must not assert that the pre-commit hook runs a linter "
             "rather than the test suite. That is true of the repo the finding "
             "was observed in and false of others — including this one (#161)."
         )
+        body = self.execution
         assert "--no-verify" in body, (
             "The red-phase-commit rule must name `--no-verify`, since a hook "
             "that runs the suite rejects the red commit outright."

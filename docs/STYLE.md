@@ -130,14 +130,14 @@ The defences that do work are already in place — the `GIT_DIR` scrub above, an
 
 It binds **both** readings — the offline estimate pre-commit sees, and
 `count_tokens` under `SKILL_BUDGET_EXACT=1`. On SKILL.md files the estimate is
-observed running 13% low to 6% high, and `POLICY_ESTIMATE_BAND` permits 15%
+observed running 13% low to 7% high, and `POLICY_ESTIMATE_BAND` permits 15%
 either way — that band edge, not the observed figure, is what the warning below
 computes a worst case from. So neither reading alone is the contract — and only
 the estimate is always on, which let
 three ratchets be breached past a green suite. Two things close that
 ([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
 run now **warns** about each skill whose worst permissible exact count exceeds
-its ratchet (seven today — a warning, not a failure), and
+its ratchet (a warning, not a failure), and
 [.github/workflows/skill-budget-exact.yml](../.github/workflows/skill-budget-exact.yml)
 runs the exact pass weekly as the gate that does fail. On the commit path the
 exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per

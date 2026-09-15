@@ -129,8 +129,8 @@ The ruling, and the three questions Batch A raised:
    it *and* `count_tokens` is under it — so the effective bound is always the
    stricter of the two readings, and no one can loosen a ratchet by choosing a
    measurement. "Exact is the contract" was tried first and is wrong: it fails
-   `orchestrating-issue-backlog`, whose estimate runs 1,252 tokens HIGH, in the
-   only gate that actually runs. "Estimate is the contract" is worse: it is a
+   `orchestrating-issue-backlog`, whose estimate ran 1,252 tokens HIGH when this
+   was written, in the only gate that actually runs. "Estimate is the contract" is worse: it is a
    number that does not describe what a run loads, and it would let
    `init-project-fastapi` carry 2,284 unbudgeted real tokens. Binding both costs
    nothing but honesty about which reading is in force, and every `SKILL.md`
@@ -245,10 +245,10 @@ SKILL_MD_RATCHETS = {
     # of the body is literal file content and command sequences, which is why it
     # tokenizes at 2.35 bytes/token — the densest SKILL.md in the repo, though
     # three of its own reference docs are denser still (2.04 to 2.12). See the
-    # outlier note below. Bound by its EXACT count; its estimate reads 1,764
+    # runbook note below. Bound by its EXACT count; its estimate reads 1,764
     # lower, the worst calibration gap of any SKILL.md. Came down from 17,100 by
     # demoting Phases 8, 10, 11 and 16's table into references/ (#190) — an
-    # interim pass at #96's problem, not the redesign the outlier note describes.
+    # interim pass at #96's problem, not the redesign the runbook note describes.
     "init-project-fastapi": 14_700,
     # Docker/Node preflight, plugin enablement, a project-adapted policy doc,
     # two hook wirings, and a blocking index verified by edge yield. Came down
@@ -286,38 +286,48 @@ SKILL_MD_RATCHETS = {
     # lost: 0 with 5 warranted rewrites on pass 2. The entry is deleted rather
     # than lowered: the file is held to
     # the same 6,000 every other skill is, and needs no exception at all.
-    # A ten-step orchestration procedure with scoring rubrics, conflict-zone
-    # analysis, and batch-plan templates. The largest file in the repo. See the
-    # outlier note below. Bound by its ESTIMATE, which reads 1,252 higher than
-    # count_tokens — the reason this file learned that "exact is the contract"
-    # does not survive contact with the gate that actually runs.
+    # A ten-step orchestration procedure: the interview, the scoring rubric, the
+    # conflict-zone and batch-design steps, and the design-doc and tracking-issue
+    # templates. See the runbook note below. Bound by its ESTIMATE, which read
+    # 642 higher than count_tokens at the #285 curation (9,767 vs 9,125) — the
+    # reason this file learned that "exact is the contract" does not survive
+    # contact with the gate that actually runs.
     #
-    # Raised once, from 22,900, and the raise is the record of what it bought:
-    # the skill's own Orchestrator step 2 ("check out `batch/<X>` before
-    # spawning agents") took production down in a repo whose deploy units carry
-    # a checkout guard, across three separate batches before anyone connected
-    # the outage to this file (#146). A ratchet that forces a runbook to omit
-    # the rule its own instruction needs is optimising the wrong quantity.
+    # Came down from 23,110 in that curation, which was the classification pass
+    # the runbook note asked for. What a run needs only on some backlogs moved
+    # verbatim into references/: the execution protocol (Agent Roles, Branch
+    # Hygiene Rules 1–6, Recovery), the issue-audit dispositions, the
+    # shared-file and shared-backing-service procedures, the batch-shape special
+    # cases and provenance priors, and the rule-provenance ledger. Each step
+    # kept its instruction plus a pointer. 22,995 -> 9,767 estimated, 21,775 ->
+    # 9,125 exact, and prove-no-loss.sh lost: 0 after eight warranted rewrites.
     #
-    # The session paid most of the way first, so the raise is the residue and
-    # not the bill: ~1,275 bytes of genuine double-writing removed — the
-    # stale-checkout paragraph told three times over (checklist item 0, Step
-    # 1–2, Rule 1), four Key Principles bullets restating Step 7 and the branch
-    # strategy, and nine provenance lines folded into the siblings that already
-    # named the same steps — against ~1,820 bytes of new rule. Net +207 tokens.
-    # Set at current size again: this file still cannot grow without someone
-    # arguing for it here.
-    "orchestrating-issue-backlog": 23_110,
+    # The ratchet had been raised once before, from 22,900, and that raise is
+    # still the record of what it bought: the skill's own Orchestrator step 2
+    # ("check out `batch/<X>` before spawning agents") took production down in a
+    # repo whose deploy units carry a checkout guard, across three separate
+    # batches before anyone connected the outage to this file (#146). A ratchet
+    # that forces a runbook to omit the rule its own instruction needs is
+    # optimising the wrong quantity. The curation kept that rule, and every
+    # other, by moving rather than cutting.
+    #
+    # 6,000 would mean demoting what every run executes — the footprint grep,
+    # the decide-then-rescore gate, the shape heuristic — which is the class-A
+    # line curating-context's Phase 4 says to report rather than cross.
+    "orchestrating-issue-backlog": 9_800,
 }
 
-# The two outliers, at 2.8x and 3.6x the standard, deserve more than one line.
+# The runbook note. Two long procedural runbooks, at ~2.5x and ~1.6x the
+# standard, deserve more than one line — set apart by their shape, not by the
+# multiple: init-socraticode sits at ~1.57x without needing this note.
 #
 # `init-project-fastapi` and `orchestrating-issue-backlog` are long procedural
 # runbooks, not policy files: read top-to-bottom once, in order, with each step
 # depending on the state the previous one left behind. That shape resists the
-# demotion move that got `curating-context` from 10,902 to ~7,350, because
-# demotion trades an always-loaded token for an on-demand one only when the
-# demoted block is genuinely optional. A step in the middle of a bootstrap is
+# demotion move that got `curating-context` from 10,902 to ~7,350 — resists,
+# not forbids, as the orchestrator bullet below shows — because demotion
+# trades an always-loaded token for an on-demand one only when the demoted
+# block is genuinely optional. A step in the middle of a bootstrap is
 # not optional, and a run that has to fetch it mid-sequence pays the tokens
 # anyway plus a round trip.
 #
@@ -329,13 +339,16 @@ SKILL_MD_RATCHETS = {
 #   forks to walk one. Conditional-block delimiters (docs/CONVENTIONS.md) or a
 #   split into a core bootstrap plus per-variant references would let a run load
 #   only its own path. That is a redesign, and it is #96's kind of work.
-# - `orchestrating-issue-backlog` would have to move its rubrics and templates
-#   out of the body. Unlike the bootstrap, much of its bulk IS optional per run:
-#   a session that never hits a conflict zone still loads the conflict-zone
-#   analysis. It already carries references/ and already demotes its process log
-#   there, so the mechanism exists and only the classification pass is missing.
+# - `orchestrating-issue-backlog` had to move its optional bulk out of the
+#   body, and #285 did. Unlike the bootstrap, much of it WAS optional per run:
+#   a session that never hits a conflict zone no longer loads the conflict-zone
+#   hazards, and a planning run cites a few Rules along the way but needs the
+#   execution protocol whole only from Step 8.
+#   What stayed inline is what every run executes, which is why it stops at
+#   ~1.6x rather than conforming.
 #
-# Neither trim belongs to #141. This gate stops growth; #96 reclaims size.
+# Neither trim belongs to #141. This gate stops growth; curation reclaims size —
+# #96's for the bootstrap, and #285's already for the orchestrator.
 
 # Reference docs are held to the repo's 10,000-token per-doc knob.
 #
@@ -530,11 +543,13 @@ class BudgetBlindSpotWarning(Warning):
     assert the worst case against the ratchet — #217's option 2, arrived at by
     accident, in the one place nobody is watching.
 
-    Option 2 is not wrong; it is unaffordable today. Asserting it fails seven
-    of nineteen skills and needs ~8,100 tokens of trimming, 3,410 of it from
-    `orchestrating-issue-backlog`, whose ratchet comment refuses exactly that
-    trade. When those seven come down on their own merits, promoting this
-    category is the whole change.
+    Option 2 is not wrong; it was unaffordable when #217 measured it. Asserting
+    it failed seven of nineteen skills and needed ~8,100 tokens of trimming,
+    3,410 of it from `orchestrating-issue-backlog` — whose ratchet comment then
+    refused to trim a runbook's rules to fit, and which #285 later cut by
+    demotion instead. The live warning names today's set and margins. When
+    those come down on their own merits, promoting this category is the whole
+    change.
     """
 
 
@@ -636,7 +651,7 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     caveat = (
         "This is the calibrated OFFLINE ESTIMATE at "
         f"{RATIO_KNOB.name} bytes/token, not an exact count — pre-commit has "
-        "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 6% high "
+        "no ANTHROPIC_API_KEY. Across this library it runs 13% low to 7% high "
         "on SKILL.md files and 24% low to 13% high on reference docs, and the "
         "budget binds BOTH readings — so clearing this one is necessary, not "
         "sufficient. The other:\n  " + exact_cmd(skill)
@@ -1452,9 +1467,10 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
 
     The warning is the verdict surfaced where a green run can see it. It is
     NOT the assertion: asserting `worst_case_exact` against the ratchet is
-    #217's option 2, which fails seven of nineteen skills today and needs
-    ~8,100 tokens of trimming — rejected on measured cost, not on merit, and
-    it becomes correct the moment those seven ratchets come down.
+    #217's option 2, which failed seven of nineteen skills when #217 measured
+    it and needed ~8,100 tokens of trimming — rejected on measured cost, not on
+    merit, and it becomes correct the moment the ratchets the warning names
+    come down.
     """
 
     SKILL = "init-project-fastapi"
