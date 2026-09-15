@@ -1708,6 +1708,10 @@ function cmdValidateStore(projectPath) {
     projectId: s.projectId,
     pathHash: s.pathHash,
     valid: defects.length === 0,
+    // The findings `valid` answers to. A sibling's defect sat in `findings`
+    // beside `valid: true`, rendered exactly like one that blocks, with
+    // nothing to tell them apart (#287 round 2, CR 45).
+    blocking: defects.map(renderFinding),
     findings: s.findings.map(renderFinding),
   }, null, 2) + '\n');
 
@@ -2360,13 +2364,18 @@ Commands:
            path resolves) and exit 0/1; no server, no network. Run before index.
   validate-store
            check the store and projectId a server launched here would use, and
-           exit 0/1; no server, no network. A defect: an external store with
-           no projectId (or with this checkout's own path hash as one); a
-           projectId outside [a-zA-Z0-9_-], or one a linked project also
-           declares; project settings declaring QDRANT_MODE=external that this
-           environment does not carry. index, status and verify refuse to
-           launch a server on any of them, and health-check reports them and
-           skips its server checks — a launch is itself a write.
+           exit 0/1; no server, no network. JSON verdict on stdout: "valid",
+           and "blocking" — the findings that decide it. A blocking defect: an
+           external store with no projectId (or with this checkout's own path
+           hash as one); a projectId outside [a-zA-Z0-9_-], or one a linked
+           project also resolves to; a store variable the project settings
+           declare that this environment does not carry, or carries with
+           another value (from a worktree, one only the main checkout's
+           settings.local.json holds); a project settings file that does not
+           parse. index, status and verify refuse to launch a server on any of
+           them, and health-check reports them and skips its server checks — a
+           launch is itself a write. A linked project's invalid projectId, or
+           two linked projects on one id, is reported and blocks nothing.
 
 projectPath defaults to the current working directory.
 

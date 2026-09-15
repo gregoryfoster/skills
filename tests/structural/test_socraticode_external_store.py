@@ -1576,6 +1576,8 @@ class TestValidateStore:
         verdict = json.loads(result.stdout)
         assert verdict["valid"] is False and verdict["store"] == "external", verdict
         assert verdict["pathHash"] == _hash(project), verdict
+        [blocking] = verdict["blocking"]
+        assert "declares no projectId" in blocking, verdict
         assert "  - this project uses an external store" in result.stderr, result.stderr
 
     @requires_node
@@ -1615,7 +1617,11 @@ class TestTheDriverDoesNotLaunchIntoTheWrongStore:
         _config(project, {"projectId": "broker", "linkedProjects": ["../archiver"]})
         gate = _driver(project, "validate-store", QDRANT_MODE="external")
         assert gate.returncode == 0, gate.stderr
-        assert json.loads(gate.stdout)["valid"] is True
+        verdict = json.loads(gate.stdout)
+        assert verdict["valid"] is True and verdict["blocking"] == [], verdict
+        assert any("bad id!" in f for f in verdict["findings"]), (
+            "reported, and told apart from a blocking one by `blocking` (CR 45)"
+        )
         assert "not ones that block a launch" in gate.stderr, gate.stderr
         entry, marker = _launch_marker(tmp_path)
         _driver(project, "status", QDRANT_MODE="external", SOCRATICODE_ENTRY=str(entry))
@@ -1951,6 +1957,13 @@ class TestTheSkillStatesTheOrder:
         help_text = subprocess.run(
             ["bash", str(HOOK), "--help"], capture_output=True, text=True, timeout=30
         ).stdout
+        usage = subprocess.run(
+            ["node", str(DRIVER), "--help"], capture_output=True, text=True, timeout=30
+        ).stdout
+        # Every defect the guard can raise, in both lists of them (CR 45).
+        for text in (" ".join(help_text.split()), " ".join(usage.split())):
+            for defect in ("carries with another value", "does not parse", "worktree"):
+                assert defect in text, (defect, text)
         flat_help = " ".join(help_text.split())
         assert "runs no docker command of its own" in flat_help
         # #287 round 2, CR 35: codebase_graph_status can create a collection,

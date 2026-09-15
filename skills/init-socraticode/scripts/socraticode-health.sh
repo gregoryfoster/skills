@@ -54,10 +54,12 @@ What it reports (to stdout, which Claude Code injects as session context):
     searches fewer repos than the configuration names.
   - A store the server must not be launched against (#287): an external store
     with no projectId, or with the checkout's own path hash as one; a
-    projectId outside [a-zA-Z0-9_-], or one a linked project shares; project
-    settings declaring an external store whose variables the session does not
-    carry. The driver then skips its server checks, since the launch is itself
-    a write, and says that nothing past the configuration was measured.
+    projectId outside [a-zA-Z0-9_-], or one a linked project shares; a store
+    variable the project settings declare that the session does not carry, or
+    carries with another value — or, in a worktree, a key only the main
+    checkout's settings.local.json holds; a project settings file that does
+    not parse. The driver then skips its server checks, since the launch is
+    itself a write, and says that nothing past the configuration was measured.
   - Linked projects that break includeLinked search without blocking the
     check: one whose projectId is invalid, or two that share one.
 
