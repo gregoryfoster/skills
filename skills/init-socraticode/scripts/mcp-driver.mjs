@@ -1521,7 +1521,8 @@ function storeConfig(projectPath, env = process.env, cwd = process.cwd()) {
 // launch itself is the write this exists to prevent, so there is nothing to
 // measure first.
 function guardStore(projectPath) {
-  const defects = storeConfig(projectPath).findings.filter(blocks);
+  const config = storeConfig(projectPath);
+  const defects = config.findings.filter(blocks);
   if (defects.length) {
     die(
       'refusing to launch a server — it would address the wrong store, or the wrong collections in it:\n'
@@ -1529,6 +1530,7 @@ function guardStore(projectPath) {
       + '\n  Check with: node mcp-driver.mjs validate-store <projectPath>'
     );
   }
+  return config;
 }
 
 // ── projectPath resolution (#226, generalizing #180) ────────────────────────
@@ -2217,8 +2219,23 @@ async function cmdHealthCheck(projectPath, probePath) {
 }
 
 async function cmdVerify(projectPath) {
-  guardStore(projectPath);
+  const { store } = guardStore(projectPath);
   await withClient(async (client) => {
+    // An external store is confirmed from the server's side (#287 round 2,
+    // CR 38): Phase 6 accepts "native tools, or verify" for a check that
+    // `codebase_health` reports `Qdrant mode: external`, and verify never made
+    // it. The store guard confirmed this process carries the block; this
+    // confirms the server read it as one.
+    let qdrantMode = null;
+    let healthError = null;
+    if (store === 'external') {
+      try {
+        const health = await client.callTool('codebase_health', {});
+        qdrantMode = (health.match(/^[ \t]*Qdrant mode\s*:\s*(\S+)/im) || [])[1] ?? null;
+      } catch (e) {
+        healthError = e.message;
+      }
+    }
     const list = await client.callTool('codebase_list_projects', {});
     // Keep the error rather than flattening it to '': "not-ready" would
     // misreport a failed call as a still-building graph.
@@ -2282,6 +2299,13 @@ async function cmdVerify(projectPath) {
         console.error('[driver] → write the DEGRADED Code Exploration Policy (variant B): route imports/dependents/blast-radius to grep, and warn that empty graph output is tool failure, not absence.');
       }
     }
+    if (store === 'external') {
+      console.error(`[driver] qdrant mode: ${qdrantMode === 'external' ? 'external'
+        : healthError ? `UNREADABLE — ${healthError}` : `${qdrantMode ?? 'not reported'}, not external`}`);
+      if (qdrantMode !== 'external') {
+        die('verification failed — the server does not report Qdrant mode: external, so it is not reaching the store');
+      }
+    }
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
@@ -2300,8 +2324,9 @@ Commands:
            graph is READY, and context artifacts are all indexed
   status   print codebase_status once and exit
   verify   sample codebase_search + graph_status + list_projects + a check that
-           the last recorded operation did not FAIL; exit 0/1. Reports graph
-           yield without gating on it.
+           the last recorded operation did not FAIL, and on an external store
+           that codebase_health reports Qdrant mode: external; exit 0/1.
+           Reports graph yield without gating on it.
   health-check
            infra triage on a cadence: codebase_health + codebase_status +
            codebase_graph_status, with the graph measured by EDGE YIELD rather

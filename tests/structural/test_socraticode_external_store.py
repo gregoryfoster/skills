@@ -1651,6 +1651,64 @@ class TestTheDriversOwnServerDoesNotWrite:
         assert seen == {"autoResume": "off", "watcher": None}, seen
 
 
+VERIFY_REPLIES = {
+    "codebase_list_projects": "Indexed projects:\n  /repo (broker)",
+    "codebase_graph_status": GRAPH_OK_HIGH_UNRESOLVED,
+    "codebase_search": "--- src/app.py (lines 10-20) [python] score: 0.51\nbody",
+    "codebase_status": STATUS_CLEAN,
+}
+HEALTH_EXTERNAL = (
+    "SocratiCode — Infrastructure Health Check:\n\n"
+    f"Qdrant mode: external\nQdrant endpoint: {STORE_URL}\n"
+)
+
+
+class TestVerifyConfirmsTheStoreFromTheServersSide:
+    """#287 round 2, CR 38: Phase 6 accepts "native tools, or verify" for a
+    check that codebase_health reports `Qdrant mode: external`, and verify
+    never called codebase_health."""
+
+    def _verify(self, tmp_path: Path, replies: dict, **env: str):
+        project = _project(tmp_path)
+        _config(project, {"projectId": "broker"})
+        stub = tmp_path / "stub-server.mjs"
+        stub.write_text(STUB_SERVER)
+        path = tmp_path / "replies.json"
+        path.write_text(json.dumps(replies))
+        return _driver(
+            project,
+            "verify",
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(path),
+            **env,
+        )
+
+    @requires_node
+    def test_an_external_server_passes(self, tmp_path: Path) -> None:
+        replies = {**VERIFY_REPLIES, "codebase_health": HEALTH_EXTERNAL}
+        result = self._verify(tmp_path, replies, QDRANT_MODE="external")
+        assert result.returncode == 0, result.stderr
+        assert "[driver] qdrant mode: external" in result.stderr, result.stderr
+
+    @requires_node
+    def test_a_server_that_runs_managed_fails(self, tmp_path: Path) -> None:
+        health = HEALTH_EXTERNAL.replace(
+            "Qdrant mode: external", "Qdrant mode: managed"
+        )
+        replies = {**VERIFY_REPLIES, "codebase_health": health}
+        result = self._verify(tmp_path, replies, QDRANT_MODE="external")
+        assert result.returncode == 1, result.stderr
+        assert "managed, not external" in result.stderr, result.stderr
+        assert "verification failed" in result.stderr, result.stderr
+
+    @requires_node
+    def test_a_managed_store_is_not_asked(self, tmp_path: Path) -> None:
+        """No codebase_health reply at all: a managed verify must not call it."""
+        result = self._verify(tmp_path, VERIFY_REPLIES)
+        assert result.returncode == 0, result.stderr
+        assert "qdrant mode" not in result.stderr, result.stderr
+
+
 class TestTheHookCarriesItIntoTheSession:
     @requires_node
     def test_a_store_defect_reaches_the_session(self, tmp_path: Path) -> None:

@@ -98,7 +98,8 @@ Run that preflight **bare**. The inline values of a first install would stand
 in for the block and pass the trust line whether or not the session carries
 it. Phase 6 then confirms from the server's side, where nothing stands in:
 `codebase_health` reports `Qdrant mode: external` and the store's endpoint, and
-no container.
+no container. On the fallback path `mcp-driver.mjs verify` makes that check
+and fails without it.
 
 Trust is checked by its effect because it cannot be read reliably from outside:
 it is inherited from a parent folder, and IDE and SDK sessions skip the prompt.
