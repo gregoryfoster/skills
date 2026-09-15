@@ -743,6 +743,44 @@ class TestTheExternalStoreGate:
         assert result.returncode == 0, result.stdout
 
     @requires_bash
+    @pytest.mark.parametrize(
+        "replies,expected",
+        [
+            # A typo'd OLLAMA_URL scheme: curl exit 1, unsupported protocol.
+            (
+                {
+                    f"{STORE_URL}/collections": ["200", 0],
+                    f"{OLLAMA_URL}/api/tags": ["000", 1],
+                },
+                "is not a URL curl can fetch",
+            ),
+            (
+                {
+                    f"{STORE_URL}/collections": ["200", 0],
+                    f"{OLLAMA_URL}/api/tags": ["000", 3],
+                },
+                "is not a URL curl can fetch",
+            ),
+            (
+                {
+                    f"{STORE_URL}/collections": ["000", 98],
+                    f"{OLLAMA_URL}/api/tags": ["200", 0],
+                },
+                "requires a client certificate",
+            ),
+        ],
+    )
+    def test_a_non_network_failure_is_not_called_no_answer(
+        self, tmp_path: Path, replies: dict, expected: str
+    ) -> None:
+        """#287 round 2, CR 41: each of these read "no answer from …" — a
+        network fault — where the fix is a URL or a certificate."""
+        binv = _host(tmp_path)
+        result = _preflight(tmp_path, _project(tmp_path), binv, replies, **EXTERNAL)
+        assert "✗" in _line(result.stdout, expected), result.stdout
+        assert "no answer" not in result.stdout, result.stdout
+
+    @requires_bash
     def test_a_dns_failure_names_the_acl(self, tmp_path: Path) -> None:
         """A peer the tailnet ACL does not admit presents as DNS, not a denial."""
         binv = _host(tmp_path)

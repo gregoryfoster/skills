@@ -247,6 +247,12 @@ unreachable() {
   local what="$1" url="$2" rc="$3" host
   host="$(url_host "$url")"
   case "$rc" in
+    1 | 3)
+      # Unsupported protocol, malformed URL (#287 round 2, CR 41): a typo, not
+      # a network fault. QDRANT_URL's shape is refused before any probe; this
+      # is OLLAMA_URL's.
+      fail "$what: $url is not a URL curl can fetch (curl exit $rc)"
+      ;;
     6)
       fail "$what: cannot resolve $host"
       hint "Check the host name. On a tailnet, a peer the ACL does not admit is invisible — it fails as DNS, not as a denial"
@@ -261,12 +267,16 @@ unreachable() {
       ;;
     51 | 60)
       # The certificate did not verify — and a name missing from its SAN is
-      # the usual reason on a tailnet.
+      # the usual reason on a tailnet. 51 is how curl before 7.62 said it.
       fail "$what: the certificate at $url did not verify (curl exit $rc)"
       case "$host" in
         *.* | \[*) ;;
         *) hint "A certificate names the full host name, and $host is a short one — use the FQDN (on a tailnet, the full MagicDNS name <host>.<tailnet>.ts.net)" ;;
       esac
+      ;;
+    98)
+      fail "$what: $url requires a client certificate (curl exit 98)"
+      hint "The server presents none either — an endpoint behind mutual TLS is out of its reach"
       ;;
     53 | 54 | 58 | 59 | 64 | 66 | 77 | 80 | 82 | 83 | 90 | 91)
       fail "$what: TLS failed at $url (curl exit $rc)"
