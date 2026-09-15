@@ -325,21 +325,31 @@ elif ! command -v docker >/dev/null 2>&1; then
   fail "Docker not installed (needed for $DOCKER_FOR)"
   hint "macOS: brew install --cask docker   Linux: https://docs.docker.com/engine/install/"
 else
-  if docker_socket_idle; then
-    # Not probed — but not assumed either (#287 CR 10). Socket activation
-    # cannot start a masked service, a failed one is retried by the first
-    # docker call and may fail again, and a socket this user cannot write to
-    # refuses every call. Each read below asks systemd or the filesystem; none
-    # connects to the socket.
+  # A masked unit first, and on every path (#287 round 2, CR 31): nothing
+  # starts it — not socket activation, not boot, not `systemctl start` — so a
+  # stopped one is a single ✗, followed by neither the probe's "start it" hint
+  # nor the boot line's ✓, which `masked` + an enabled socket used to earn.
+  # `masked-runtime` is the same state, set for this boot only.
+  DOCKER_MASKED=""
+  if command -v systemctl >/dev/null 2>&1; then
+    case "$(systemctl is-enabled docker.service 2>/dev/null || true)" in
+      masked | masked-runtime) DOCKER_MASKED=1 ;;
+    esac
+  fi
+  if [ -n "$DOCKER_MASKED" ] && ! systemctl is-active --quiet docker.service 2>/dev/null; then
+    fail "docker.service is masked — neither socket activation, boot, nor systemctl start can bring the daemon up (needed for $DOCKER_FOR)"
+    hint "sudo systemctl unmask docker.service"
+  elif docker_socket_idle; then
+    # Not probed — but not assumed either (#287 CR 10). A failed service is
+    # retried by the first docker call and may fail again, and a socket this
+    # user cannot write to refuses every call. Each read below asks systemd or
+    # the filesystem; none connects to the socket.
     DOCKER_SOCK="${DOCKER_HOST:-unix:///var/run/docker.sock}"
     case "$DOCKER_SOCK" in
       unix://*) DOCKER_SOCK="${DOCKER_SOCK#unix://}" ;;
       *) DOCKER_SOCK="" ;;
     esac
-    if [ "$(systemctl is-enabled docker.service 2>/dev/null || true)" = masked ]; then
-      fail "docker.socket is listening, but docker.service is masked — socket activation cannot start it (needed for $DOCKER_FOR)"
-      hint "sudo systemctl unmask docker.service"
-    elif systemctl is-failed --quiet docker.service 2>/dev/null; then
+    if systemctl is-failed --quiet docker.service 2>/dev/null; then
       fail "docker.socket is listening, but docker.service is failed — the first docker call retries it and may fail the same way (needed for $DOCKER_FOR)"
       hint "journalctl -u docker.service, then: sudo systemctl reset-failed docker.service"
     elif [ -n "$DOCKER_SOCK" ] && [ -e "$DOCKER_SOCK" ] && [ ! -w "$DOCKER_SOCK" ]; then
@@ -363,7 +373,14 @@ else
   # daemon that was never enabled at boot. Symptom if missed: search silently
   # returns nothing after a restart (troubleshooting gotcha L). `is-enabled`
   # reads unit files; like `is-active`, it never starts the daemon.
-  if command -v systemctl >/dev/null 2>&1; then
+  if [ -n "$DOCKER_MASKED" ]; then
+    # Stopped, the ✗ above has said it. Running — masked after it started —
+    # it serves now and nothing brings it back after a reboot.
+    if systemctl is-active --quiet docker.service 2>/dev/null; then
+      warn "docker.service is masked — the daemon runs now, but nothing starts it after a reboot, and $DOCKER_WHAT stays down with it"
+      hint "sudo systemctl unmask docker.service && sudo systemctl enable docker"
+    fi
+  elif command -v systemctl >/dev/null 2>&1; then
     DOCKER_BOOT="$(systemctl is-enabled docker 2>/dev/null || true)"
     DOCKER_SOCKET_BOOT="$(systemctl is-enabled docker.socket 2>/dev/null || true)"
     case "${DOCKER_BOOT}${DOCKER_SOCKET_BOOT}" in

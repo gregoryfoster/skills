@@ -356,6 +356,7 @@ class TestASocketActivatedDaemonIsNotStarted:
         "state,expected",
         [
             ({"SERVICE_ENABLED": "masked"}, "is masked"),
+            ({"SERVICE_ENABLED": "masked-runtime"}, "is masked"),
             ({"SERVICE_FAILED": "yes"}, "is failed"),
         ],
     )
@@ -363,7 +364,8 @@ class TestASocketActivatedDaemonIsNotStarted:
         self, tmp_path: Path, state: dict, expected: str
     ) -> None:
         """#287 CR 10: socket activation cannot start a masked service, and a
-        failed one is retried by the first call — neither earns the ✓."""
+        failed one is retried by the first call — neither earns the ✓. And a
+        masked one earns no boot ✓ after its ✗ either (round 2, CR 31)."""
         binv = _host(tmp_path, systemd=True)
         result = _preflight(
             tmp_path, _project(tmp_path), binv, SOCKET="active", **state
@@ -371,6 +373,40 @@ class TestASocketActivatedDaemonIsNotStarted:
         assert "✗" in _line(result.stdout, expected), result.stdout
         assert _log(binv, "docker") == "", "still no docker command"
         assert result.returncode == 1
+        if "SERVICE_ENABLED" in state:
+            assert "starts at boot" not in result.stdout, result.stdout
+
+    @requires_bash
+    def test_a_stopped_masked_service_is_not_told_to_start(
+        self, tmp_path: Path
+    ) -> None:
+        """No socket, daemon down: the probe's "systemctl start docker" hint
+        fails on a masked unit, so the mask is read before any probe."""
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path, _project(tmp_path), binv, SERVICE_ENABLED="masked"
+        )
+        assert "✗" in _line(result.stdout, "is masked"), result.stdout
+        assert "sudo systemctl start" not in result.stdout, result.stdout
+        assert "sudo systemctl unmask" in result.stdout, result.stdout
+        assert _log(binv, "docker") == "", _log(binv, "docker")
+
+    @requires_bash
+    def test_a_running_masked_service_warns_about_the_reboot(
+        self, tmp_path: Path
+    ) -> None:
+        binv = _host(tmp_path, systemd=True)
+        result = _preflight(
+            tmp_path,
+            _project(tmp_path),
+            binv,
+            SERVICE="active",
+            SERVICE_ENABLED="masked",
+        )
+        assert "daemon reachable" in result.stdout, result.stdout
+        assert "•" in _line(result.stdout, "after a reboot"), result.stdout
+        assert "starts at boot" not in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout
 
     @requires_bash
     @pytest.mark.skipif(os.geteuid() == 0, reason="root can write any file")
