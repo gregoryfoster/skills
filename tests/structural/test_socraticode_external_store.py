@@ -329,8 +329,9 @@ class TestDockerIsGatedOnlyWhenSomethingRunsInIt:
 
 
 class TestValuesUpstreamRefuses:
-    """#287 CR 9: upstream throws on these, so each is a server that will not
-    start — and the gates must not read a typo as a choice."""
+    """#287 CR 9: upstream throws on these — lazily, on the first call that
+    needs the embedder, so the server connects and every call fails (round 2,
+    CR 42) — and the gates must not read a typo as a choice."""
 
     @requires_bash
     @pytest.mark.parametrize(
@@ -344,7 +345,10 @@ class TestValuesUpstreamRefuses:
         env = {**EXTERNAL, variable: value}
         result = _preflight(tmp_path, _project(tmp_path), binv, STORE_OPEN, **env)
         line = _line(result.stdout, f"{variable}={value}")
-        assert "✗" in line and "throws at startup" in line, result.stdout
+        assert "✗" in line and "fails every index, search and health call" in line, (
+            result.stdout
+        )
+        assert "at startup" not in line, "loadEmbeddingConfig is lazy"
         assert result.returncode == 1
 
     @requires_bash

@@ -176,17 +176,19 @@ from_settings QDRANT_MODE project; DECL_MODE="$S_VAL" DECL_SRC="$S_SRC"
 
 # Values upstream refuses (#287 CR 9). loadEmbeddingConfig (1.13.3) throws on
 # an EMBEDDING_PROVIDER or OLLAMA_MODE outside these exact, case-sensitive sets
-# — OLLAMA_MODE whatever the provider — so a typo is a server that will not
-# start, which the gates below would otherwise read as a choice: `Ollama` as a
-# cloud embedder needing no Docker, `extern` as auto. QDRANT_MODE is never
-# refused, only read as managed, so a typo there is said aloud instead.
+# — OLLAMA_MODE whatever the provider — and runs lazily, on the first call that
+# needs the embedder, never at startup (#287 round 2, CR 42). So a typo is a
+# server that connects, shows Connected, and fails every index, search and
+# health call — which the gates below would otherwise read as a choice:
+# `Ollama` as a cloud embedder needing no Docker, `extern` as auto. QDRANT_MODE
+# is never refused, only read as managed, so a typo there is said aloud instead.
 case "$E_PROVIDER" in
   ollama | openai | google | lmstudio | litellm) ;;
-  *) fail "EMBEDDING_PROVIDER=$E_PROVIDER is not one upstream accepts (ollama, openai, google, lmstudio, litellm) — the server throws at startup" ;;
+  *) fail "EMBEDDING_PROVIDER=$E_PROVIDER is not one upstream accepts (ollama, openai, google, lmstudio, litellm) — the server connects, then fails every index, search and health call" ;;
 esac
 case "$O_MODE" in
   auto | docker | external) ;;
-  *) fail "OLLAMA_MODE=$O_MODE is not one upstream accepts (auto, docker, external) — the server throws at startup" ;;
+  *) fail "OLLAMA_MODE=$O_MODE is not one upstream accepts (auto, docker, external) — the server connects, then fails every index, search and health call" ;;
 esac
 case "$STORE_MODE" in
   '' | external | managed) ;;
