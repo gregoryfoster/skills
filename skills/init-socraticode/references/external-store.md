@@ -104,8 +104,21 @@ it is inherited from a parent folder, and IDE and SDK sessions skip the prompt.
 ## One host per `projectId`
 
 A shared store has no shared lock, so each `projectId` is indexed from one
-host — the repo's own. Other hosts reach it through `linkedProjects` and a
-one-file stub, never by indexing a clone:
+host — the repo's own. Nothing enforces that: it is a convention, and a clone
+on another host that holds the key breaks it without being asked, since its
+session's startup auto-resume updates the collection and its status and query
+calls start the watcher. A checkout that must exist there — a second VM, a
+laptop — opts out of both writers in its git-ignored
+`.claude/settings.local.json`:
+
+```json
+{ "env": { "SOCRATICODE_AUTO_RESUME": "off", "SOCRATICODE_WATCHER": "off" } }
+```
+
+It still searches. An explicit `codebase_index` from it is still a write; don't.
+
+Other hosts reach a project through `linkedProjects` and a one-file stub, never
+by indexing a clone:
 
 ```text
 ../<sibling>/.socraticode.json    →  {"projectId": "<sibling>"}
