@@ -26,13 +26,18 @@ Every project-level override **must** declare two fields in its `metadata` block
 - `overrides: <vendor>/<upstream-skill-name>` — the upstream skill being replaced, qualified by the vendor it comes from
 - `override-reason: <one-line rationale>` — why a full replacement was needed
 
+And **should** declare a third, `synced-from: "<repo> <version-or-tag> (<commit>)"` — the vendor commit last synced from:
+
 ```yaml
 metadata:
   author: gregoryfoster
   version: "1.0"
   overrides: gregoryfoster-skills/reviewing-code
   override-reason: Adds project-specific commit convention and systemctl restart step
+  synced-from: "gregoryfoster-skills 1.0 (178ec64)"
 ```
+
+`version:` records the vendor version last synced from, so the two look redundant and are not: `version:` only moves when the vendor bumps it, and a vendor that edits a `SKILL.md` without bumping leaves the stamps matching over changed text. Every versioned skill in this repo but one had changed since its last bump when [#286](https://github.com/gregoryfoster/skills/issues/286) measured it, so `synced-from:` is the comparand that actually tracks content — the doctor diffs that commit against the submodule's `HEAD`, scoped to the override's own real files. Bump both on every re-sync. Omitting it warns nothing (for a versioned vendor the stamps still compare); it only gives up the detection.
 
 The `<vendor>` token matches the submodule directory name under `skills-vendor/` (e.g. `gregoryfoster-skills`, `obra-superpowers`). This is the same `<owner>-<repo>` convention documented in [`managing-skills`](../skills/managing-skills/). When the same upstream skill name exists in two vendored sources (e.g. both `gregoryfoster-skills/writing-plans` and `obra-superpowers/writing-plans`), the vendor prefix is the only thing that disambiguates which parent the override is replacing — a reader (or audit tool) should never have to consult git history to figure that out.
 

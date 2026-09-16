@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.11"
+  version: "1.12"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -203,19 +203,19 @@ To override a symlinked skill with project-specific behavior:
 
 1. Remove the symlink: `rm skills/<skill-name>` (this removes only the symlink, not the target)
 2. Copy the global skill as a starting point: `cp -r skills-vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>`
-3. Edit `skills/<skill-name>/SKILL.md` — add `overrides`, `override-reason`, and `omits-required` to metadata; keep `version` as the vendor's (the vendor version last synced from)
-4. Keep real files only for what actually differs — re-symlink each unchanged script into the submodule so it tracks upstream ([references/local-overrides.md](references/local-overrides.md))
+3. Edit `skills/<skill-name>/SKILL.md` — add `overrides`, `override-reason`, `omits-required` and `synced-from` to metadata; keep `version` as the vendor's
+4. Keep real files only for what actually differs — re-symlink each unchanged script into the submodule so it tracks upstream, and cannot drift
 5. Commit the new directory
 
 ### Updating a local override
 
-`.skills/doctor.sh` warns when an override's recorded version falls behind its
-`overrides:` target. Re-sync by **reapplying the local deltas onto the newer
-upstream text** — never upstream changes onto the old fork — then bump
-`version`. Copy the override aside before merging: the last step diffs it
-against the result for every removed line, which a grep cannot see (#267).
-Procedure, that check, and the `synced-from:` fallback for unversioned
-vendors:
+`.skills/doctor.sh` warns when an override falls behind its `overrides:`
+target — on the `version` stamps, and on a diff of the `synced-from` commit
+against the vendor's `HEAD`, so an un-bumped change still
+reports (#286). Re-sync by **reapplying the local deltas onto the newer
+upstream text** — never upstream changes onto the old fork — then bump **both**
+keys. Copy the override aside first: the last step accounts for every line the
+merge removed, which a grep cannot see (#267). Procedure and both comparands:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

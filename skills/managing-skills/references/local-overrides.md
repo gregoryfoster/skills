@@ -39,39 +39,105 @@ scan is the only detector for this state.)
 `version:` in an override's frontmatter records **the vendor version last
 synced from** — not a version of the local file. Bump it on every re-sync, even
 when the local deltas are unchanged. The distinction is load-bearing: the
-doctor's drift warning is a comparison of this field against the vendor copy's
+doctor's drift warning compares this field against the vendor copy's
 `version:`, and the two readings diverge as soon as someone edits an override
 after syncing — which is an override's whole job.
+
+## Record `synced-from:` too, on every override
+
+`version:` is a comparand only while the vendor keeps bumping it, and vendors
+do not. Measured across this repo at the time
+[#286](https://github.com/gregoryfoster/skills/issues/286) was filed, **every
+versioned `SKILL.md` but one had changed since its last bump** — 34 commits for
+`orchestrating-issue-backlog`, 20 for `using-git-worktrees`, 10 for
+`shipping-work-python-fastapi`. Many of those changes did not warrant a bump;
+the point is narrower. `version:` does not track `SKILL.md` content, so a check
+keyed on it cannot see a content change, and the skills at the top of that list
+are the ones consumers actually override.
+
+So write **both** keys, whatever the vendor ships:
 
 ```yaml
 metadata:
   version: "1.4"
   overrides: <owner>-<repo>/shipping-work-python-fastapi
   override-reason: "Sources /etc/consumer/.env before delegating"
+  synced-from: "<owner>-<repo> 1.4 (662de71)"
 ```
 
 `overrides:` names `<submodule-dir-under-skills-vendor>/<skill-name>`; it is
-what the doctor uses to find the vendor copy.
+what the doctor uses to find the vendor copy. `synced-from:` is
+`"<repo> <tag-or-version> (<commit>)"` — the doctor reads the commit inside the
+parentheses and ignores the rest, which is there for people.
 
-## `synced-from:` — the fallback for unversioned vendors
+An override that omits `synced-from:` is not warned about (for a versioned
+vendor the stamps still compare), so nothing breaks by leaving it out. It just
+gives up the only comparand that can see an un-bumped change.
 
-Some upstreams (obra-superpowers, for one) ship no `version:` at all, so an
-override of their skills has nothing to compare. Record the vendor commit last
-synced from in a sibling key:
+## The two comparisons, and why both run
 
-```yaml
-metadata:
-  overrides: obra-superpowers/brainstorming
-  synced-from: "obra-superpowers v6.3.0 (b36e082)"
-```
+The doctor runs both and reports if **either** fires:
 
-The doctor reads the commit inside the parentheses and runs a diff between it
-and the submodule's `HEAD`, scoped to the skill's path — so a submodule bump
-that touches other skills stays silent, and only a change to the overridden
-skill itself warns. An override it cannot assess at all (no `version:` against
-a versioned vendor, no `synced-from:` against an unversioned one, a commit not
-in the vendor's history) is warned about too, never silently skipped — an
-override nothing can compare is the same failure as not detecting drift at all.
+| Comparison | Comparands | Catches |
+|---|---|---|
+| Version stamps | override `version:` vs vendor `version:` | an override left behind across a release the vendor bumped |
+| Recorded commit | `synced-from:` commit vs vendor `HEAD` | a vendor change at **any** version, bumped or not |
+
+The commit comparison used to be a *fallback*, reached only when the vendor
+shipped no `version:` at all. That left a third case neither comparand covered:
+**the vendor changes and `version:` does not.** CannObserv/archiver's
+`shipping-work-python-fastapi` override recorded `synced-from: 662de71` against
+a vendor also at `1.4`; four separate `SKILL.md` changes had landed at that same
+`1.4` since, and the doctor ran clean — correctly, by the contract it had. Its
+scripts were symlinks, so they already had the new behaviour; only the
+instructions fell behind, and the gap was found by reading a report rather than
+by the doctor. The comparand that would have caught it was already in the
+frontmatter, one `git diff` away.
+
+This is not a diff of the override against the vendor. That comparison is
+useless here — an override exists to differ, so divergence is the *expected*
+state and a warning on it says nothing. This compares **the vendor with
+itself**: the commit the override synced from against the vendor now. The
+override's own deltas never enter it, so it cannot fire on expected divergence.
+
+When the stamps match and the commit diff fires anyway, the warning **says
+so**. A reader told an override has fallen behind checks `version:` first, and
+finding it equal on both sides would reasonably conclude the doctor is wrong.
+
+### What the commit diff is scoped to
+
+The override's **own real files** — its `SKILL.md`, plus any script or
+reference it keeps as a regular file — named individually in the report, so the
+finding is a work order and not just a fact.
+
+Whole-skill-directory scope was a false-positive generator. In the case above it
+also reported `scripts/doc-check.sh`, a file the override follows through a
+symlink: upstream changed it, the consumer already had the change, and there was
+nothing to re-sync. A symlink cannot fall behind by construction, and a regular
+file is the only thing that can. That cuts both ways — a **forked** script keeps
+its signal here, and this is the only detector it has, because the doctor's
+silent-fork check skips a declared override wholesale (its drift is this
+check's business).
+
+### When it cannot be assessed
+
+An override the doctor cannot compare is warned about, never silently skipped —
+an override nothing can compare is the same failure as not detecting drift at
+all. Six ways to get there:
+
+1. **No vendor copy on disk** at all — an uninitialized submodule, or the skill
+   moved upstream. This is the likeliest of the six and the reason the report
+   batches: it makes *every* override unassessable at once.
+2. No `version:` in the override, against a versioned vendor.
+3. Neither key, against an unversioned vendor.
+4. A `synced-from:` with no `(commit)` in it.
+5. A recorded commit absent from the vendor's history — a shallow clone, or a
+   typo.
+6. The `git diff` itself failing.
+
+The last three are reported **even when the version stamps match and compare
+cleanly**: a comparand the operator wrote that quietly does not apply is its own
+defect, and matching stamps are no longer the end of the enquiry.
 
 ## When an override is *supposed* to omit something
 
@@ -154,8 +220,9 @@ override is that upstream text cannot be applied blindly. The re-sync is
 manual, and the **direction matters and is easy to get backwards**:
 
 1. Diff your override against the OLD vendor text it was synced from, to
-   enumerate the local deltas. (With `synced-from:`, that text is
-   `git -C skills-vendor/<repo> show <commit>:skills/<name>/SKILL.md`.)
+   enumerate the local deltas. `synced-from:` names that text exactly —
+   `git -C skills-vendor/<repo> show <commit>:skills/<name>/SKILL.md` — which
+   is the second reason to keep the key even when the vendor is versioned.
 2. Put the override where step 5 can still read it, then copy the NEW vendor
    file over it — `cp skills/<name>/SKILL.md /tmp/<name>.orig` and
    `cp skills-vendor/<repo>/skills/<name>/SKILL.md skills/<name>/SKILL.md`.
@@ -163,7 +230,12 @@ manual, and the **direction matters and is easy to get backwards**:
    newer upstream text**, never upstream changes onto the old fork, which
    silently discards every release between the two.
 4. Restore the override frontmatter: `overrides:`, `override-reason:`, and
-   `version:` (or `synced-from:`) bumped to what was just synced.
+   **both** `version:` and `synced-from:` bumped to what was just synced. The
+   commit for `synced-from:` is the submodule's `HEAD`, which is the text you
+   just merged from:
+   `git -C skills-vendor/<repo> rev-parse --short HEAD`. Leaving it at the old
+   commit re-reports the drift you just paid down; omitting it gives up the
+   comparand that catches the next un-bumped change.
 5. **Account for every removed line.** Diff the ORIGINAL override against the
    merged result: `diff /tmp/<name>.orig skills/<name>/SKILL.md`. Classify
    every removed line (the `<` side) as superseded by upstream, deliberately
