@@ -367,12 +367,19 @@ class TestWhoIsNotWarnedAbout:
         assert result.stderr.strip() == "", result.stderr
 
 
-class TestSyncedFromFallbackForUnversionedVendors:
+class TestSyncedFromForUnversionedVendors:
     """obra-superpowers ships no `version:` at all, so an override of one of
-    its skills has nothing to compare — the case the field cannot express. The
-    `synced-from:` sibling key pins the vendor commit last synced from, and
-    the comparison becomes a path-scoped diff between that commit and HEAD:
-    drift means the SKILL changed upstream, not that the submodule moved."""
+    its skills has nothing to compare on the stamps — the case the field
+    cannot express. The `synced-from:` sibling key pins the vendor commit last
+    synced from, and the comparison is a path-scoped diff between that commit
+    and HEAD: drift means the SKILL changed upstream, not that the submodule
+    moved.
+
+    Not a *fallback*, which is what this class was called until #286 — the
+    commit comparison runs for versioned vendors too, and the class named for
+    that is below. The old name is worth not restoring: it was the model that
+    hid four un-bumped changes, and a test name is where a superseded model is
+    least likely to be questioned (CR 4)."""
 
     def _vendor_git(self, consumer: Path, name: str) -> tuple[Path, str]:
         return _init_vendor_git(consumer, name, None)
