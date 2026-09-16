@@ -997,10 +997,16 @@ class TestOrchestratingIssueBacklog:
             "checkout — not by the local-main assumption Rules 1 and 3 reject "
             "(#288)."
         )
+        # Substring, so it catches the claim in EITHER polarity — including a
+        # denial ("agents never branch from local main"). That is deliberate
+        # but counter-intuitive, so the message says so: phrase a denial the
+        # way Rule 1 already does, leading with the ref that is true.
         assert "branch from local main" not in self.surface.lower(), (
-            "Nothing in this skill may assert that workers branch from the "
-            "orchestrator's local `main`. Rule 3 states the base as fact: "
-            "`origin/main`. Rule 1 may only name local `main` to deny it."
+            "Nothing in this skill may put the words `branch from local main` "
+            "together — not even to deny them. Rule 3 states the base as fact, "
+            "and Rule 1 shows the phrasing that survives this check: 'Agents "
+            "branch from `origin/main`, not local `main`', which leads with "
+            "the true ref instead of the false one."
         )
 
     def test_design_doc_authoring_intro_states_the_same_default(self):
@@ -1020,7 +1026,11 @@ class TestOrchestratingIssueBacklog:
         # against a reverted intro, because a later sentence mentioning the
         # push satisfied it while the default itself still read "directly to
         # `main`".
-        sentence = intro[intro.index("Step 8 of") :].split(". ")[0]
+        # Split on a period that ENDS a sentence — space then a capital — not
+        # on every ". ". A bare split truncates at the first "e.g." (verified:
+        # the sentence becomes "...commits the backlog design doc (e.g"),
+        # failing this pin on an edit that never touched the default.
+        sentence = re.split(r"\.\s+(?=[A-Z])", intro[intro.index("Step 8 of") :])[0]
         assert "push" in sentence, (
             "references/design-doc-authoring.md's opening sentence must state "
             "Step 8's default as commit-AND-push. It is the reference this "
@@ -1028,12 +1038,20 @@ class TestOrchestratingIssueBacklog:
             "stale copy of the default here outlives the fix in SKILL.md "
             f"(#288). Found:\n  {sentence}"
         )
-        assert "`origin/main`" in doc, (
-            "design-doc-authoring.md must name `origin/main` as the ref worker "
-            "worktrees are cut from. Route 1 previously justified itself with "
-            "workers' LOCAL `main` seeing the doc on disk — the same assumption "
+        # Route 1's OWN section, not the whole document. Asserting the file
+        # was the first draft's bug and it was vacuous: reverting route 1 to
+        # "Workers' local `main` sees the doc on disk" still left `origin/main`
+        # in the "Why the push" section above, so the pin passed over exactly
+        # the text it names. Same loose-scoping defect as the paragraph-scoped
+        # sentence check two asserts up — twice in one change, hence both
+        # comments.
+        route_1 = doc[doc.index("### 1. Merge the doc PR") : doc.index("### 2. ")]
+        assert "`origin/main`" in route_1, (
+            "Route 1 must justify itself by `origin/main` — the ref worker "
+            "worktrees are cut from. It previously justified itself with "
+            "workers' LOCAL `main` seeing the doc on disk: the same assumption "
             "Rule 3 rejects, in the file that is supposed to explain the "
-            "publish step (#288)."
+            f"publish step (#288). Found:\n  {route_1.strip()}"
         )
 
 
