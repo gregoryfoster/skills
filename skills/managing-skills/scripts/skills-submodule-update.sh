@@ -157,7 +157,7 @@ _reconcile_unpushed() {
   # and tells the operator nothing the first message did not.
   [ "$PUSH_BLOCKED" = "0" ] || return 0
 
-  local remote merge upstream_name ahead merges subject unknown rpath
+  local remote merge upstream_name ahead merges subject unknown seen rpath
   # Read from config rather than parsed out of `@{u}`: this yields the remote
   # name and the remote ref separately, which is exactly what an explicit push
   # refspec needs, and it stays unambiguous when a remote name contains a
@@ -182,12 +182,26 @@ _reconcile_unpushed() {
   # never this hook's to undo — and THIS guard, not the choice of reset mode,
   # is what makes the rollback below safe in general.
   unknown=0
+  seen=0
   while IFS= read -r subject; do
+    seen=$((seen + 1))
     case "$subject" in
       "$MSG_SUB"|"$MSG_DOC"|"$MSG_BOTH") : ;;
       *) unknown=$((unknown + 1)) ;;
     esac
   done < <(git log --format=%s '@{u}..HEAD' 2>/dev/null || true)
+
+  # The guard has to fail CLOSED, and without this it fails open. The `|| true`
+  # above turns a git that failed into empty output, and empty output through
+  # that loop leaves unknown=0 — the guard concluding "every one of them is
+  # mine" on no evidence at all, in the one direction that publishes an
+  # operator's unshared work. Every commit rev-list counted must be accounted
+  # for here. Same standard as the merge refusal below: a range this hook
+  # cannot fully read is a range it does not touch.
+  if [ "$seen" -ne "$ahead" ]; then
+    _log "unpushed: refusing to push — read $seen subject(s) for the $ahead commit(s) ahead of $upstream_name, so they cannot be confirmed as this hook's"
+    return 0
+  fi
 
   if [ "$unknown" -gt 0 ]; then
     # This run will not push, whatever the mix. A push from here is a push of
