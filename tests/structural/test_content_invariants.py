@@ -981,8 +981,11 @@ class TestOrchestratingIssueBacklog:
 
     def test_design_doc_default_pairs_the_commit_with_a_push(self):
         body = self.s.body
+        # Anchored on the label's stem, not its full text: the label grew a
+        # ", and when to push" clause in this same change and an exact-match
+        # anchor failed on it. The stem is what the paragraph is findable by.
         section = body[
-            body.index("**Where to commit.**") : body.index("**Commit format:**")
+            body.index("**Where to commit") : body.index("**Commit format:**")
         ]
         assert "push before launching" in section, (
             "Step 8's default must pair committing on `main` with pushing "
