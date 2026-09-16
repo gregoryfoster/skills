@@ -189,8 +189,16 @@ _reconcile_unpushed() {
       "$MSG_SUB"|"$MSG_DOC"|"$MSG_BOTH") : ;;
       *) unknown=$((unknown + 1)) ;;
     esac
-  done < <(git log --format=%s '@{u}..HEAD' 2>/dev/null || true)
+  done < <(git log --no-show-signature --format=%s '@{u}..HEAD' 2>/dev/null || true)
 
+  # `--no-show-signature` above, because this count is compared against
+  # rev-list's: with `log.showSignature = true` — an ordinary setting where
+  # signing is mandated — git prepends verification lines to each SIGNED
+  # commit, `seen` overshoots `ahead`, and the check below then refuses every
+  # session, forever, with one $LOG line as the only trace. Failing closed
+  # makes that safe rather than dangerous, but a guard that a formatting knob
+  # can switch off is not a guard.
+  #
   # The guard has to fail CLOSED, and without this it fails open. The `|| true`
   # above turns a git that failed into empty output, and empty output through
   # that loop leaves unknown=0 — the guard concluding "every one of them is
