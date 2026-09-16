@@ -199,6 +199,11 @@ _reconcile_unpushed() {
   # for here. Same standard as the merge refusal below: a range this hook
   # cannot fully read is a range it does not touch.
   if [ "$seen" -ne "$ahead" ]; then
+    # Blocked, not merely skipped. Every refusal in this function has to stop
+    # the commit step too: a run that has concluded it cannot share a commit
+    # and then makes one has manufactured the stranding this whole step exists
+    # to prevent, and call site 2 will only refuse it again.
+    PUSH_BLOCKED=1
     _log "unpushed: refusing to push — read $seen subject(s) for the $ahead commit(s) ahead of $upstream_name, so they cannot be confirmed as this hook's"
     return 0
   fi
@@ -231,6 +236,9 @@ _reconcile_unpushed() {
   # needs, and an empty count from a failed git reads as non-zero here.
   merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
   if [ "$merges" != "0" ]; then
+    # Same reasoning as the count mismatch above: refusing to push means
+    # refusing to commit, or the run strands what it makes.
+    PUSH_BLOCKED=1
     _log "unpushed: refusing to roll back — $merges merge commit(s) in @{u}..HEAD, so HEAD~$ahead is not this hook's own history"
     return 0
   fi

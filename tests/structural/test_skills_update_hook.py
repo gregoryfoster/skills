@@ -42,6 +42,8 @@ transport, since what matters is whether a push was actually accepted:
 - no upstream configured                     → silent no-op
 - work staged before the session             → not absorbed, not published
 - a gitignored .skills/                      → submodule bump still commits
+- a log the hook cannot read                 → refuses, and commits nothing
+- a merge inside @{u}..HEAD                  → refuses, and commits nothing
 
 Submodule pins (issue #100) get their own fixture, `pinned_repo`, because the
 property under test is which pointers actually move — a shimmed `git submodule`
@@ -1195,3 +1197,69 @@ class TestCommitScope:
         )
         assert _ahead(remote_repo) == 0
         assert not _tracked(remote_repo, ".skills/doctor.sh")
+
+
+class TestRefusalsBlockTheCommitToo:
+    """Every refusal inside the reconcile has to stop the commit step as well.
+    A run that concludes it cannot share a commit and then makes one has
+    manufactured the stranding #293 exists to prevent — call site 2 only
+    refuses it again, and it sits there until an operator intervenes."""
+
+    def test_a_log_it_cannot_read_refuses_and_commits_nothing(self, remote_repo):
+        """The guard fails closed, and closed means no new commit either. With
+        `git log` failing, the subject read returns nothing; scoring that as
+        "every one of them is mine" would publish an operator's unshared work,
+        and committing on top of it would strand a bump behind theirs."""
+        (remote_repo / "mine.txt").write_text("unshared\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "feat: my own work")
+        _write_git_shim(
+            remote_repo, extra_arms='if [ "$1" = "log" ]; then exit 128; fi\n'
+        )
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert "feat: my own work" not in _origin_subjects(remote_repo), (
+            "an unreadable log let the hook publish a commit it could not verify"
+        )
+        assert _head_message(remote_repo) == "feat: my own work", (
+            "the hook committed on top of a range it had just refused to read"
+        )
+        assert _ahead(remote_repo) == 1
+
+    def test_a_merge_in_the_range_refuses_and_commits_nothing(self, remote_repo):
+        """`HEAD~N` counts first-parent steps, so a merge in the range makes the
+        rollback arithmetic wrong and the reconcile refuses. That refusal has to
+        reach the commit step for the same reason as any other.
+
+        The MERGE carries a hook subject, which is what makes this a test of the
+        merge refusal at all: with an ordinary `Merge branch 'side'` subject the
+        `unknown > 0` branch fires first and this branch never runs — the shape
+        that let an earlier version of this test pass with the fix removed."""
+        _git(remote_repo, "checkout", "-q", "-b", "side")
+        (remote_repo / "side.txt").write_text("side\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "chore: update skills submodules")
+        _git(remote_repo, "checkout", "-q", "main")
+        _git(
+            remote_repo,
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "chore: update skills submodules",
+            "side",
+        )
+        before = _commit_count(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _commit_count(remote_repo) == before, (
+            "the hook added a commit to a range it had refused to reconcile"
+        )
+        assert not _tracked(remote_repo, ".skills/doctor.sh")
+        assert "refusing to roll back" in _log_text(remote_repo), (
+            "the merge refusal never ran — another branch caught this first"
+        )
