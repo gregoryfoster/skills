@@ -19,8 +19,10 @@ to local `main` and left unpushed is therefore on disk for the orchestrator and
 for nobody else — and the gap is invisible from the orchestrator's side, since
 it can read the very plan it is briefing from while every worker's tree lacks
 it. Committing on `main` is the cheap default only once the push is counted as
-part of it; without the push you are running route 2 below, whether or not you
-chose to (#288).
+part of it. Skip the push and you are running route 2 below at *best* — and
+only if you happened to brief the plan in every worker prompt anyway. Skip
+both and no route ran: the workers have neither the doc nor the brief, and
+nothing in the launch reports it (#288).
 
 Rule 1's pre-launch `git pull --ff-only` does not cover this. It syncs local
 `main` *from* `origin/main`; nothing about it moves a local commit outward. Push
