@@ -8,6 +8,8 @@ Worker-step numbers refer to [`execution.md`](execution.md).
 
 ## Before accepting a ceiling (Q5)
 
+The real ceiling is far more often in sub-question 2 than in 1. **Ask it explicitly — don't wait to rediscover it in Step 5.** But accept "none" as an answer: some repos have neither, and the accumulated positives make it tempting to keep hunting until a ceiling appears (process-log 2026-08-12: plain `git worktree` plus a hermetic suite → the cap was host CPU/RAM alone, confirmed by one grep for `docker|POSTGRES|DATABASE_URL|PORT_POOL`). A grep hit is not a ceiling until you read the path: in a repo whose product is templates, the escape greps hit its own documentation of the hazard (2026-08-18 skills).
+
 For a shared test database specifically: read the suite's session-scoped fixture and its DSN guard before accepting any ceiling.
 - If the fixture is destructive (`DROP SCHEMA … CASCADE`, `drop_all`, truncate-all), concurrent runs corrupt each other and the ceiling is 1 until slots are provisioned.
 - **Read the guard before accepting serialization.** If it validates a *base* DB name before a worker suffix is appended, per-agent databases pass it and the ceiling reverts to the host's CPU/RAM limit (process-log 2026-08-09: `observo_a1_test` passed the `endswith("_test")` assert *and* stayed xdist-compatible as `observo_a1_test_gw0`). **Then check the role can create the slots** — `SELECT rolcreatedb, rolsuper FROM pg_roles WHERE rolname = current_user`. A permissive guard plus a non-CREATEDB role reads as "rung 1 available" until provisioning fails; usually the role has neither, making rung 1 a one-time superuser step (2026-08-07, 2026-08-17 watcher, 2026-08-28 power-map).

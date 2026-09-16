@@ -89,10 +89,19 @@ tests/structural/test_demoted_blocks.py :: `### The Phase 0 preflight, in full`,
 # The #285 curation's destination docs name SKILL.md as the home of the Step and Q
 # numbers they cite, which stays true: every Step and Q is still in SKILL.md.
 skills/orchestrating-issue-backlog/references/batch-design.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites.
-skills/orchestrating-issue-backlog/references/design-doc-authoring.md :: Step 8 of [`SKILL.md`](../SKILL.md) commits the backlog design doc directly to
+# Re-judged in the #288 work, which rewrote the acknowledged line: it now says
+# Step 8 commits the design doc to `main` and pushes it before launching
+# workers. Still true of what it points at — Step 8's "Where to commit, and
+# when to push" paragraph is still in SKILL.md; the #288 curation demoted two
+# OTHER blocks (Steps 1-2 closed-in-fact, Q5 ceiling), not that one.
+skills/orchestrating-issue-backlog/references/design-doc-authoring.md :: Step 8 of [`SKILL.md`](../SKILL.md) commits the backlog design doc to `main`
 skills/orchestrating-issue-backlog/references/execution.md :: Loaded from [`SKILL.md`](../SKILL.md) at Step 8, whose design doc records the
 skills/orchestrating-issue-backlog/references/execution.md :: Step and Q numbers refer to `SKILL.md`; Rule, Orchestrator-step and Worker-step
 skills/orchestrating-issue-backlog/references/issue-audit.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 1–2 and 5 when an issue's claim
+# The #288 curation's own lead-in, added so the moved bullet has the antecedent
+# it lost in transit (CR 10). Both halves are true and stay true: SKILL.md did
+# carry the bullet inline until 7f9e881, and its Step 1–2 bullet routes here now.
+skills/orchestrating-issue-backlog/references/issue-audit.md :: `SKILL.md` carried inline before it routed here:
 skills/orchestrating-issue-backlog/references/issue-audit.md :: needs more than the basic grep. Step numbers refer to `SKILL.md`.
 skills/orchestrating-issue-backlog/references/process-log.md :: Session-specific institutional memory for the [`orchestrating-issue-backlog`](..
 skills/orchestrating-issue-backlog/references/process-log.md :: [`SKILL.md`](../SKILL.md) or one of its references. Moved here from its Process
