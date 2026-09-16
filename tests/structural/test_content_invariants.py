@@ -962,6 +962,80 @@ class TestOrchestratingIssueBacklog:
             "inherits the wrong repo's fact:\n  " + paragraph
         )
 
+    # -- Step 8's publish default (#288) -------------------------------------
+    #
+    # Step 8 justified committing the design doc on `main` with the
+    # orchestrator's "workers branch from local main" assumption — which Rule 3
+    # rejects outright: worktrees are cut from `origin/main`. A doc committed
+    # locally and never pushed is therefore on disk for the orchestrator and
+    # for no worker, and the default silently degraded into route 2 of
+    # design-doc-authoring.md (plan-in-the-prompt) without saying so. The
+    # default survived the fix; the reason and the missing push did not.
+    #
+    # Both halves are pinned here, and the reference doc's intro with them,
+    # because that is precisely the pair that drifted: SKILL.md, the reference
+    # doc and execution.md's rules disagreed for four releases and nothing
+    # could notice. The failure mode is silent by construction — the
+    # orchestrator can read the very plan it is briefing from while every
+    # worker's tree lacks it, so no run reports the gap.
+
+    def test_design_doc_default_pairs_the_commit_with_a_push(self):
+        body = self.s.body
+        section = body[
+            body.index("**Where to commit.**") : body.index("**Commit format:**")
+        ]
+        assert "push before launching" in section, (
+            "Step 8's default must pair committing on `main` with pushing "
+            "BEFORE workers launch. Worker worktrees are cut from "
+            "`origin/main` (Rule 3), so an unpushed doc reaches no worker — "
+            "the default degrades into plan-in-the-prompt without saying so "
+            "(#288)."
+        )
+        assert "`origin/main`" in section and "Rule 3" in section, (
+            "Step 8 must justify the default in Rule 3's terms — the worktree "
+            "base is `origin/main`, independent of the orchestrator's "
+            "checkout — not by the local-main assumption Rules 1 and 3 reject "
+            "(#288)."
+        )
+        assert "branch from local main" not in self.surface.lower(), (
+            "Nothing in this skill may assert that workers branch from the "
+            "orchestrator's local `main`. Rule 3 states the base as fact: "
+            "`origin/main`. Rule 1 may only name local `main` to deny it."
+        )
+
+    def test_design_doc_authoring_intro_states_the_same_default(self):
+        """The reference doc's intro restates Step 8's default to its readers.
+
+        A reader reaches this file *because* the default did not apply to
+        them, so its opening sentence is the last place the default is stated
+        — and #288 found it still saying "commits directly to `main`" with no
+        push, contradicting the body it introduces. Pinned against the same
+        `origin/main` fact rather than against SKILL.md's wording, so the two
+        can be phrased differently but cannot mean different things.
+        """
+        doc = (self.s.directory / "references" / "design-doc-authoring.md").read_text()
+        intro = " ".join(doc[: doc.index("\n## ")].split())
+        # The SENTENCE that states the default, not merely the paragraph around
+        # it — the first draft of this test asserted the paragraph and passed
+        # against a reverted intro, because a later sentence mentioning the
+        # push satisfied it while the default itself still read "directly to
+        # `main`".
+        sentence = intro[intro.index("Step 8 of") :].split(". ")[0]
+        assert "push" in sentence, (
+            "references/design-doc-authoring.md's opening sentence must state "
+            "Step 8's default as commit-AND-push. It is the reference this "
+            "skill hands a reader whose run did not take the default, so a "
+            "stale copy of the default here outlives the fix in SKILL.md "
+            f"(#288). Found:\n  {sentence}"
+        )
+        assert "`origin/main`" in doc, (
+            "design-doc-authoring.md must name `origin/main` as the ref worker "
+            "worktrees are cut from. Route 1 previously justified itself with "
+            "workers' LOCAL `main` seeing the doc on disk — the same assumption "
+            "Rule 3 rejects, in the file that is supposed to explain the "
+            "publish step (#288)."
+        )
+
 
 # ---------------------------------------------------------------------------
 # reviewing-code (baseline + variants)

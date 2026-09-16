@@ -30,7 +30,7 @@ Rule and Worker-step numbers cited in this file refer to [references/execution.m
 5. **Analyze conflict zones** — identify files touched by multiple issues; build dependency graph
 6. **Present dependency analysis** — get approval before batch design
 7. **Design batch plan** — assign issues to merge batches; get approval
-8. **Write design doc** — `docs/plans/YYYY-MM-DD-<topic>-backlog.md`; commit
+8. **Write design doc** — `docs/plans/YYYY-MM-DD-<topic>-backlog.md`; commit and push
 9. **Open GitHub tracking issue** — link to design doc; list batches
 10. **Capture session learnings** — journal the session via `references/process-log.md`; promote only what recurs or adds a rule
 
@@ -169,7 +169,7 @@ Sections:
 - **Deferred items** — what was explicitly excluded and why
 - **Out of scope** — anything that came up but was ruled out
 
-**Where to commit.** Default: directly on `main` — it matches the orchestrator's "workers branch from local main" assumption (Rule 1) and avoids an extra merge gate before launching agents. Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook naming "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint first; ask if the conventions aren't already clear. The three routes for that case — merge-then-launch, plan-in-the-prompt, and the docs-only worktree — are in [`references/design-doc-authoring.md`](references/design-doc-authoring.md).
+**Where to commit.** Default: commit on `main` and **push before launching** — worker worktrees are cut from `origin/main` (Rule 3), so an unpushed doc reaches no worker; the push is cheaper than a feature branch's merge gate. Use a feature branch + PR when the host project enforces filesystem isolation for plan creation (e.g. a workspace-isolation pre-commit hook naming "spec/plan creation" as an in-worktree activity), or when the user wants a review checkpoint first; ask if the conventions aren't already clear. The three routes for that case — merge-then-launch, plan-in-the-prompt, and the docs-only worktree — are in [`references/design-doc-authoring.md`](references/design-doc-authoring.md).
 
 **Commit format:** `#<n> docs: add <topic> backlog orchestration plan`, where `#<n>` is the Step 9 tracking issue — open it first, or commit unprefixed; don't block on the number.
 
@@ -234,7 +234,7 @@ The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules
 - [references/shared-files.md](references/shared-files.md) — two issues on one file: the test-surface grep, vacuous assertions, line-window ownership, where shared fixtures hide
 - [references/shared-backing-services.md](references/shared-backing-services.md) — a shared test database as the ceiling: fixture and guard checks, the resolution ladder, the escape grep
 - [references/batch-design.md](references/batch-design.md) — the special cases that force a batch shape, backlog-provenance priors, low-discovery mode
-- [references/design-doc-authoring.md](references/design-doc-authoring.md) — committing the plan when `main` is not writable
+- [references/design-doc-authoring.md](references/design-doc-authoring.md) — publishing the plan: why the push, and the routes when `main` is not writable
 - [references/recovery.md](references/recovery.md) — salvaging a worker that fell through into the main checkout
 - [references/process-log.md](references/process-log.md) — the session journal, and the rules promoted from it
 
