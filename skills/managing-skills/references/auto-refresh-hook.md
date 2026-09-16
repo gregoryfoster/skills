@@ -19,6 +19,42 @@ Two details in that merge are load-bearing, and `install-hook.sh` carries the fu
 
 </details>
 
+## Pushing what it commits ([#293](https://github.com/gregoryfoster/skills/issues/293))
+
+The hook commits pointer bumps **and pushes them**. It used to only commit.
+
+A commit that lands locally and is never pushed is functionally untracked for every consumer but the machine that wrote it: CI, fresh worktrees and every other clone see nothing, and the consumer's `main` silently diverges from `origin/main` until something reads it. Most repos never notice. A repo with a deployed service reading the checkout notices all at once, at the worst possible moment — `CannObserv/replicator`'s `systemd` unit refuses to start a checkout carrying unpushed commits, and a one-line bump from this hook stranded that service twice in two weeks: 13 hours on 2026-09-03, 56 minutes on 2026-09-16, neither recoverable without an operator.
+
+Committing to `main` was never the problem. A sibling workflow commits `chore: weekly context measurement` to `main` and pushes it, and it surfaces as a routine rebase.
+
+This is [#86](https://github.com/gregoryfoster/skills/issues/86)'s defect one level up. #86 made the hook commit the `.skills/doctor.sh` it installs, because without that it wrote a file nothing ever tracked: **four of twelve audited consumers had been reinstalling an untracked doctor for weeks**, so their fresh worktrees and CI clones had none and the Phase 1 preflight silently short-circuited. #86 stopped the doctor being untracked; this stops the commit being unshared.
+
+### The shape: reconcile, not commit-then-push
+
+The retry is a **reconcile pass that runs at every session start, ahead of the once-per-day lock and the `main` gate** — not a `git push` bolted onto the commit step. Three things a bolted-on push does not cover:
+
+- The lock is stamped *before* the work, deliberately, so a push that failed on the commit path would wait a whole UTC day to retry.
+- The harness can kill this hook between commit and push — a `timeout` SIGKILL, which the ERR-trap backstop cannot catch — leaving exactly the state the fix exists to prevent. A separate pass heals it at the next session.
+- Consumers stranded by an older vendored copy of the hook are healed with nobody visiting the machine.
+
+### The guards
+
+- **It only ever touches commits it wrote.** Before pushing, every commit in `@{u}..HEAD` must carry one of the three subjects the hook authors. Anything else and it pushes nothing *and commits nothing that run*: a push is a push of the whole branch, so it would publish work the operator chose not to share — a larger overreach than the stranding being fixed. A mix of theirs and ours says so on stderr; purely operator commits are logged and pass in silence, because unpushed work on a local `main` is normal in plenty of repos and a session-start warning there would train the reader to ignore the channel.
+- **A failed push is rolled back**, so the checkout never diverges: `git reset --soft` plus an unstage scoped to the paths those commits touched, matching what the commit step already does on a failed commit. **Never `--hard`**, which the issue originally proposed: `--hard` is whole-tree, is *not* bounded by this hook's add scope — that discipline is a property of `git add` — and discards uncommitted edits anywhere in the checkout. Measured, it also deleted the `.skills/doctor.sh` the same run had just installed, undoing #86's self-heal.
+- **It resets to `HEAD~N`, not to `@{u}`.** On a *diverged* `main` — ours ahead, origin also ahead — resetting to `@{u}` moves HEAD onto the remote's tree while the working tree stays on ours, so every file the remote added reads as deleted-by-us. `HEAD~N` stays on this checkout's own history; the authorship guard and a merge-commit refusal are what make that arithmetic sound.
+- **One refusal per run.** A rollback leaves the refreshed content dirty, so the commit step would otherwise re-stage it, re-commit it and re-attempt the push just refused — two network waits inside a 120s ceiling, and the same warning twice.
+- **It never pulls.** Landing a bump on a checkout that is behind would mean advancing local `main`, and on a deployed VM `main` *is* the running code; a SessionStart hook updating deployed application code is a far larger authority than moving a submodule pointer. A stale consumer gets no bump, loudly, until a human syncs.
+- **The commit is scoped to a pathspec**, not left to sweep the index. `SKILL.md`'s "matches diff scope to add scope" was true of the *add* and of unstaged dirty work, but `git commit` with no pathspec commits the whole index — so anything the operator had staged before the session began went into the hook's commit under the hook's own message. A local wart while the hook only committed; a published one now that it pushes. The pathspec is what is actually staged under the hook's paths, not the path list itself: `git commit -- <path>` fails outright on a path git does not know, and `.skills/doctor.sh` is exactly that where a consumer gitignores `.skills/`, so passing the list verbatim fails the whole commit there and strands the submodule bump too.
+- **It never force-pushes**, in any spelling, and uses an explicit refspec rather than a bare `git push` — under `push.default=matching` that pushes every matching branch.
+
+A rollback reverts only the *recorded pointer*. The refreshed submodule content stays in the working tree, so the skills themselves keep working and the next session retries. That is why the rollback is the fix here and the push is the optimization: the service was stranded by `ahead 1`, not by a stale skills pin.
+
+### What to expect where it cannot push
+
+Where `main` is protected, or the hook has no push credentials, every push is rejected and rolled back, so the pointer never advances and the skills freeze at the vendored commit — loudly, on stderr, every session. That is the intended degradation: a consumer that cannot share a bump should not be silently accumulating them.
+
+`.skills/doctor.sh` warns whenever `main` is ahead of its upstream, which is the only cohort-wide sensor that can exist for this — an unpushed commit lives on exactly one machine, so nothing reachable through the GitHub API can see it.
+
 ## Uninstalling by hand
 
 `install-refresh.sh --uninstall` does both halves. The manual equivalent:

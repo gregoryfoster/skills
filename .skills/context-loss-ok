@@ -188,3 +188,14 @@ skills/using-git-worktrees/SKILL.md :: tighten :: **`--dry-run`** reports the re
 # it as a fragment names a path now. The split that invalidated the line is the
 # same run that corrected it.
 skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-metrics.md#measuring-tokens),
+
+# #293 made the auto-refresh hook push what it commits, which changes what three
+# lines of managing-skills/SKILL.md assert. All three were rewritten in place
+# rather than moved, so whole-line matching reports them lost; --claims is clean
+# (88 atoms at base, 0 dropped), which is the evidence this warrant is gated on.
+# The one sentence genuinely removed — #86's "four of twelve audited consumers"
+# narrative — was demoted verbatim into references/auto-refresh-hook.md to pay
+# for the citation, and is found there by the same run.
+skills/managing-skills/SKILL.md :: tighten :: and auto-commits the pointer bumps. Designed for
+skills/managing-skills/SKILL.md :: tighten :: - **Commits the doctor it installed**
+skills/managing-skills/SKILL.md :: tighten :: details of that merge, and the manual uninstall equivalent:

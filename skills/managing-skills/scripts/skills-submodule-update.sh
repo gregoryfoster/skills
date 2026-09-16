@@ -39,6 +39,13 @@ Behaviour:
     (plans_dir, worktree_root, skills-pin).
   - Commit message names what changed: 'chore: update skills submodules',
     'chore: refresh .skills/doctor.sh', or both.
+  - Pushes the commits it makes, and retries at every session start for any
+    it left unpushed earlier. A commit that lands locally and is never
+    pushed is invisible to CI, to every other clone and to every fresh
+    worktree; where a service reads the checkout it can refuse to start.
+    If the push fails the commit is rolled back so the checkout matches the
+    remote, and the next session retries. Never pulls, never force-pushes,
+    and never touches a commit this hook did not write.
   - Logs to .git/skills-update.log (bounded to ~64 KiB / 200 lines).
   - Exits 0 on every non-fatal condition.
 
@@ -78,6 +85,195 @@ LOG="$gitdir/skills-update.log"
 # Nothing to refresh if the project doesn't use the skills-vendor/ pattern.
 [ -d skills-vendor ] || exit 0
 
+# One timestamped line to $LOG. $LOG is this hook's only diagnostic surface,
+# so every write to it is timestamped — an unattributed fragment there is hard
+# to pin to a session.
+#
+# Defined here rather than below the gates, where it used to live: the
+# reconcile step deliberately runs ahead of both of them (#293) and needs it.
+_log() {
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
+}
+
+# Resolved here, gated further down. The reconcile step is main-only for the
+# same reason the commit is, but it runs before the lock, so it cannot wait
+# for the `exit 0` gate to have computed this.
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+# The commit subjects this hook authors. Named once because two places read
+# them: the commit step at the bottom, and the reconcile step's authorship
+# guard. Let those drift and the guard either stops recognising this hook's
+# own commits (it silently stops rolling them back) or recognises too much
+# (it rolls back an operator's) — so they are constants, not literals.
+MSG_SUB='chore: update skills submodules'
+MSG_DOC='chore: refresh .skills/doctor.sh'
+MSG_BOTH='chore: update skills submodules and refresh .skills/doctor.sh'
+
+# Set when a push fails, and read for the rest of the run. A rollback leaves
+# the refreshed submodule content in the working tree, so the very next thing
+# this script would otherwise do is re-stage it, re-commit it, and re-attempt
+# the push it has just been refused — two network waits inside a hook with a
+# 120s ceiling, and the same warning twice. One refusal is enough information
+# for one run.
+PUSH_BLOCKED=0
+
+# ------------------------------------------------- unpushed reconcile (#293)
+# A commit that lands locally and is never pushed is functionally untracked
+# for every consumer but the machine that wrote it: CI, fresh worktrees and
+# every other clone see nothing. CannObserv/replicator's systemd unit refuses
+# to start a checkout carrying unpushed commits — main is the deployed code,
+# so unpushed is unshared — and a one-line pointer bump from this hook
+# stranded that service twice in two weeks (13h on 2026-09-03, 56min on
+# 2026-09-16), each time unrecoverable without an operator.
+#
+# This is #86's defect one level up. #86 committed the doctor this hook had
+# written, so it stopped being untracked; this pushes the commit, so it stops
+# being unshared. Committing to main was never the problem — a sibling
+# workflow commits `chore: weekly context measurement` to main and pushes it,
+# and it surfaces as a routine rebase.
+#
+# Runs on EVERY session, ahead of the once-per-day lock, rather than as a
+# `git push` bolted onto the commit below. Three things that shape buys:
+#   - the lock is stamped BEFORE the work, deliberately, so a push that
+#     failed on the commit path would wait a whole UTC day to retry;
+#   - the harness can kill this hook between commit and push — a timeout
+#     SIGKILL, which the ERR trap cannot catch — leaving exactly the state
+#     this exists to prevent. A separate pass heals it at the next session;
+#   - consumers are stranded today. This reaches them with nobody visiting
+#     the machine.
+#
+# Deliberately NEVER pulls. Landing a bump on a checkout that is behind would
+# mean advancing local main, and on a deployed VM main IS the running code:
+# a SessionStart hook updating deployed application code is a far larger
+# authority than moving a submodule pointer. A stale consumer gets no bump,
+# loudly, until a human syncs — and that is an acceptable trade because the
+# rollback is the fix here and the push is the optimization. The service was
+# stranded by `ahead 1`, not by a stale skills pin, and a rollback leaves the
+# refreshed submodule *content* in the working tree (only the recorded
+# pointer reverts), so the skills themselves keep working either way.
+_reconcile_unpushed() {
+  [ "$BRANCH" = "main" ] || return 0
+  # Already refused once this run. Asking again costs a second network wait
+  # and tells the operator nothing the first message did not.
+  [ "$PUSH_BLOCKED" = "0" ] || return 0
+
+  local remote merge upstream_name ahead merges subject unknown rpath
+  # Read from config rather than parsed out of `@{u}`: this yields the remote
+  # name and the remote ref separately, which is exactly what an explicit push
+  # refspec needs, and it stays unambiguous when a remote name contains a
+  # slash or the local branch tracks a differently-named remote branch.
+  remote="$(git config --get "branch.$BRANCH.remote" 2>/dev/null || true)"
+  merge="$(git config --get "branch.$BRANCH.merge" 2>/dev/null || true)"
+  # No upstream at all is a configuration (a remote-less checkout), not a
+  # fault. There is nothing to be ahead OF, so there is nothing to say.
+  if [ -z "$remote" ] || [ -z "$merge" ]; then
+    return 0
+  fi
+  upstream_name="$remote/${merge#refs/heads/}"
+
+  # @{u} is the remote-tracking ref — the last fetch, not the live remote.
+  # That is the right comparison anyway: it is this checkout's own record of
+  # what has been shared, and a push settles the question authoritatively.
+  ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || true)"
+  case "$ahead" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$ahead" -gt 0 ] || return 0
+
+  # Roll back only what this hook wrote. An operator's own unpushed commit is
+  # never this hook's to undo — and THIS guard, not the choice of reset mode,
+  # is what makes the rollback below safe in general.
+  unknown=0
+  while IFS= read -r subject; do
+    case "$subject" in
+      "$MSG_SUB"|"$MSG_DOC"|"$MSG_BOTH") : ;;
+      *) unknown=$((unknown + 1)) ;;
+    esac
+  done < <(git log --format=%s '@{u}..HEAD' 2>/dev/null || true)
+
+  if [ "$unknown" -gt 0 ]; then
+    # This run will not push, whatever the mix. A push from here is a push of
+    # the WHOLE branch, so it would carry commits the operator has not chosen
+    # to share — publishing someone's work for them is a larger overreach
+    # than the stranding this step exists to prevent. Blocking also stops the
+    # commit step adding another commit to a pile nothing here can share.
+    PUSH_BLOCKED=1
+    if [ "$unknown" -lt "$ahead" ]; then
+      # Mixed. One of ours is stranded behind commits we must not touch, and
+      # nothing here can fix it — so say so where someone will see it.
+      _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name and $unknown are not this hook's — leaving every one of them alone"
+      echo "skills update: this hook's pointer bump is unpushed behind $unknown commit(s) it did not write — push $BRANCH yourself (see $LOG)" >&2
+    else
+      # Purely the operator's own commits: logged, never warned. Working
+      # unpushed on a local main is normal in plenty of repos, and a stderr
+      # line at every session start there would train the reader to ignore
+      # this channel — the one channel the stranding case depends on.
+      _log "unpushed: $BRANCH is $ahead commit(s) ahead of $upstream_name, none of them this hook's — committing nothing this run rather than push work that was not shared"
+    fi
+    return 0
+  fi
+
+  # Merges refused, because the rollback below counts first-parent steps. With
+  # every subject in the range one of this hook's three, a merge commit is
+  # already close to impossible — but "close to" is not what the arithmetic
+  # needs, and an empty count from a failed git reads as non-zero here.
+  merges="$(git rev-list --count --merges '@{u}..HEAD' 2>/dev/null || true)"
+  if [ "$merges" != "0" ]; then
+    _log "unpushed: refusing to roll back — $merges merge commit(s) in @{u}..HEAD, so HEAD~$ahead is not this hook's own history"
+    return 0
+  fi
+
+  # Captured before the push, because after a rollback there is no range left
+  # to diff. Derived from the commits themselves rather than re-deriving
+  # COMMIT_PATHS, so the unstage covers exactly what the reset re-staged and
+  # nothing else — including a path some older version of this hook staged.
+  local paths
+  paths=()
+  while IFS= read -r -d '' rpath; do
+    paths+=("$rpath")
+  done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
+
+  if {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push $ahead unpushed commit(s) to $upstream_name:"
+    # Explicit refspec, never a bare `git push`: under push.default=matching
+    # that pushes every matching branch, which is not an authority an
+    # unattended SessionStart hook should be exercising. Never --force, in
+    # any spelling — a rejected push is information, not an obstacle.
+    git push "$remote" "HEAD:$merge" 2>&1
+  } >>"$LOG"; then
+    _log "unpushed: pushed $ahead commit(s) to $upstream_name"
+    return 0
+  fi
+
+  # --soft, and to HEAD~N rather than to @{u}. Both halves are load-bearing.
+  #
+  # --soft because --hard is whole-tree: it is NOT bounded by this hook's add
+  # scope, and it discards any uncommitted edit anywhere in the checkout.
+  # Measured on a repo with one unrelated dirty file, staged by nobody: the
+  # file was reverted. The add-scope discipline this script is careful about
+  # is a property of `git add`, and constrains `git reset --hard` not at all.
+  #
+  # HEAD~N rather than @{u} because a *diverged* main — ours ahead, origin
+  # also ahead — would move HEAD onto origin's tree while the working tree
+  # stayed on ours, so every file origin had added would then read as
+  # deleted-by-us. HEAD~N stays on this checkout's own history. The
+  # authorship and merge guards above are what make that arithmetic sound.
+  PUSH_BLOCKED=1
+  if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
+    if [ "${#paths[@]}" -gt 0 ]; then
+      # Same move as the commit step's failure path: leave the index as we
+      # found it. A .skills/doctor.sh that was untracked before the commit
+      # goes back to untracked rather than sitting staged in an index the
+      # operator never touched.
+      git reset -q -- "${paths[@]}" 2>>"$LOG" || true
+    fi
+    _log "unpushed: push failed — rolled $ahead commit(s) back; the refreshed content stays in the working tree and the next session retries"
+    echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
+  else
+    _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
+    echo "skills update: $BRANCH is $ahead unpushed commit(s) ahead of $upstream_name and could be neither pushed nor rolled back — fix by hand (see $LOG)" >&2
+  fi
+  return 0
+}
+
 # Opportunistically install/update .skills/doctor.sh — the backport path
 # for consumers added before doctor.sh existed. Runs on every session
 # (not gated by the once-per-day lock) so accidental deletions self-heal
@@ -96,13 +292,20 @@ for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.s
   break
 done
 
+# Call site 1 of 2: every session, ahead of both gates. This is the pass that
+# heals a checkout some earlier run left stranded — a push killed by the
+# harness timeout, a push that failed while the remote was unreachable, or a
+# commit made by a version of this hook that had no push step at all. Behind
+# the once-per-day lock it would retry at most once a day; behind the branch
+# gate it would never run at all on the sessions that matter.
+_reconcile_unpushed
+
 # Lock check: once per UTC day. UTC matches the log timestamp timezone so
 # "today" never disagrees between lock and log at the day boundary.
 if [ -f "$LOCK" ] && [ "$(cat "$LOCK" 2>/dev/null || true)" = "$(date -u +%Y%m%d)" ]; then
   exit 0
 fi
 
-BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 [ "$BRANCH" = "main" ] || exit 0
 
 # Bound the log: keep the last 200 lines once it crosses 64 KiB.
@@ -111,13 +314,6 @@ if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 65536 ]; then
     mv -f "$LOG.tmp" "$LOG" 2>/dev/null || rm -f "$LOG.tmp"
   fi
 fi
-
-# One timestamped line to $LOG. $LOG is this hook's only diagnostic surface,
-# so every write to it is timestamped — an unattributed fragment there is hard
-# to pin to a session.
-_log() {
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
-}
 
 # --------------------------------------------------------------- pins (#100)
 # A consumer may hold one skills-vendor/ submodule at a commit while the rest
@@ -328,6 +524,18 @@ if [ "${#COMMIT_PATHS[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# This run has already established it cannot share a commit — the remote
+# refused a push, or `main` carries commits this hook did not write and must
+# not publish on the operator's behalf. Committing anyway would manufacture
+# exactly the unpushed commit the reconcile step exists to prevent (#293).
+# Nothing is lost by waiting: the refreshed submodule content is already in
+# the working tree, so the skills themselves work today, and the pointer gets
+# recorded by the first session that can actually share it.
+if [ "$PUSH_BLOCKED" = "1" ]; then
+  _log "commit skipped — this run cannot share what it would commit; the pointer bump waits for a session that can"
+  exit 0
+fi
+
 # `git status --porcelain`, not `git diff HEAD`: a diff against HEAD does not
 # report an *untracked* file, which is exactly the state this is here to fix.
 #
@@ -372,22 +580,55 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
       git diff --cached --quiet -- skills-vendor/ 2>/dev/null || STAGED_SUB=1
       git diff --cached --quiet -- .skills/doctor.sh 2>/dev/null || STAGED_DOC=1
       if [ "$STAGED_SUB" = "1" ] && [ "$STAGED_DOC" = "1" ]; then
-        MSG='chore: update skills submodules and refresh .skills/doctor.sh'
+        MSG="$MSG_BOTH"
       elif [ "$STAGED_DOC" = "1" ]; then
-        MSG='chore: refresh .skills/doctor.sh'
+        MSG="$MSG_DOC"
       else
-        MSG='chore: update skills submodules'
+        MSG="$MSG_SUB"
+      fi
+      # The commit is scoped to a pathspec, not left to sweep the index. A
+      # bare `git commit` commits everything staged, so work the operator had
+      # staged before this session started was absorbed into the hook's commit
+      # — a local wart while the hook only committed, and a published one now
+      # that it pushes (#293). Measured: a staged file reached the remote
+      # under the hook's own commit message.
+      #
+      # The pathspec is what is actually STAGED under COMMIT_PATHS, not
+      # COMMIT_PATHS itself. `git commit -- <path>` fails outright on a path
+      # git does not know, and .skills/doctor.sh is exactly that for a
+      # consumer who gitignores `.skills/` — the `git add` above leaves it
+      # unstaged there by design. Passing COMMIT_PATHS verbatim made the whole
+      # commit fail for those consumers, stranding the submodule bump too,
+      # which is the hard failure the `|| true` on the add exists to avoid.
+      STAGED_PATHS=()
+      while IFS= read -r -d '' spath; do
+        STAGED_PATHS+=("$spath")
+      done < <(git diff --cached --name-only -z -- "${COMMIT_PATHS[@]}" 2>/dev/null || true)
+      # Non-empty by construction — this branch runs only when the same
+      # pathspec reported a staged change — but an empty array under `set -u`
+      # would expand to nothing and widen the commit back to the whole index,
+      # which is the defect this block is closing.
+      if [ "${#STAGED_PATHS[@]}" -eq 0 ]; then
+        echo "nothing staged under this hook's paths after all — no commit"
+        exit 0
       fi
       # On failure, unstage what we staged. `git add` above may have staged a
       # previously *untracked* .skills/doctor.sh, and leaving a file the
       # operator never touched sitting in their index is worse than leaving
       # the commit undone — the next run retries cleanly either way.
-      git commit -m "$MSG" 2>&1 || {
+      git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
         echo "commit failed — unstaging to leave the index as we found it"
         git reset -q -- "${COMMIT_PATHS[@]}" 2>&1 || true
       }
     fi
   } >>"$LOG" || true
 fi
+
+# Call site 2 of 2: push what this run just committed. Cheap when call site 1
+# already found nothing — it re-reads a count and returns. Separate from the
+# commit block above so a push failure is never reported into that block's
+# `>>"$LOG"` redirect, where the operator would never see it (the failure the
+# log-a-warning alternative was rejected for).
+_reconcile_unpushed
 
 exit 0
