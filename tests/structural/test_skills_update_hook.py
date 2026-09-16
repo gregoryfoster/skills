@@ -954,14 +954,6 @@ class TestCommitsGetPushed:
         make the wait for recovery a whole UTC day."""
         _run_hook(remote_repo)  # stamps .git/skills-update.lock
         _hook_commit(remote_repo)
-        _break_remote(remote_repo)
-        _git(
-            remote_repo,
-            "remote",
-            "set-url",
-            "origin",
-            str(remote_repo.parent / "origin.git"),
-        )
 
         result = _run_hook(remote_repo)
 
