@@ -5,6 +5,9 @@ needs more than the basic grep. Step numbers refer to `SKILL.md`.
 
 ## The closed-in-fact grep itself (Steps 1–2)
 
+One of the things Step 1–2 goes into the interview knowing, in the form
+`SKILL.md` carried inline before it routed here:
+
 - Which issues are already **closed-in-fact**. For *every* issue (not just the obviously-stale ones), grep at least one identifying symbol from its body, plus `Issue #<n>` in the files it names — module/template docstrings often credit the PR that retired a footgun. Don't trust the issue body's claim about current file state. Cross-reference recent commits. Surface any closed-in-fact issue in the score table so a batch slot isn't allocated to dead work (process-log 2026-05-11: the highest-scored issue in a backlog was already resolved). **Zero hits is ambiguous, not exculpatory** — it means "not done" *or* "done under another name". Disambiguate by reading the doc the issue names as its contract; a deliberately-deferred issue exists precisely to stay greppable while the architecture moves underneath it (2026-08-13 observo: #109's symbol had zero hits repo-wide, and its cited anchor had moved to a doc naming its approach as the *rejected* path). Docstrings cut both ways — one naming pending follow-ups by number confirms an issue is open in fact (2026-08-13 power-map).
 
 ## Dispositions the closed-in-fact grep cannot settle (Steps 1–2)

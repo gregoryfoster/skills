@@ -230,7 +230,7 @@ The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules
 ## Detail Docs
 
 - [references/execution.md](references/execution.md) — running the approved plan: branch strategy, orchestrator and worker protocols, Branch Hygiene Rules 1–6, recovery
-- [references/issue-audit.md](references/issue-audit.md) — what an issue body claims, checked: blocked on a finding, rescope-to-residual, generated artifacts, the footprint-grep refinements
+- [references/issue-audit.md](references/issue-audit.md) — what an issue body claims, checked: the closed-in-fact grep, blocked on a finding, rescope-to-residual, generated artifacts, the footprint-grep refinements
 - [references/shared-files.md](references/shared-files.md) — two issues on one file: the test-surface grep, vacuous assertions, line-window ownership, where shared fixtures hide
 - [references/shared-backing-services.md](references/shared-backing-services.md) — a shared test database as the ceiling: fixture and guard checks, the resolution ladder, the escape grep
 - [references/batch-design.md](references/batch-design.md) — the special cases that force a batch shape, backlog-provenance priors, low-discovery mode
