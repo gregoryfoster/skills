@@ -899,7 +899,8 @@ def _ahead(repo: Path) -> int:
 
 def _origin_subjects(repo: Path) -> list[str]:
     origin = repo.parent / "origin.git"
-    return _git(origin, "log", "--format=%s", "main", check=False).stdout.split("\n")
+    out = _git(origin, "log", "--format=%s", "main", check=False).stdout
+    return [line for line in out.split("\n") if line]
 
 
 def _break_remote(repo: Path) -> None:
