@@ -123,12 +123,21 @@ check's business).
 
 An override the doctor cannot compare is warned about, never silently skipped —
 an override nothing can compare is the same failure as not detecting drift at
-all. Four ways to get there: no `version:` against a versioned vendor; neither
-key against an unversioned one; a `synced-from:` with no `(commit)` in it; and a
-commit absent from the vendor's history (a shallow clone, or a typo). The last
-two are reported even when the version stamps match and compare cleanly — a
-comparand the operator wrote that quietly does not apply is its own defect, and
-matching stamps are no longer the end of the enquiry.
+all. Six ways to get there:
+
+1. **No vendor copy on disk** at all — an uninitialized submodule, or the skill
+   moved upstream. This is the likeliest of the six and the reason the report
+   batches: it makes *every* override unassessable at once.
+2. No `version:` in the override, against a versioned vendor.
+3. Neither key, against an unversioned vendor.
+4. A `synced-from:` with no `(commit)` in it.
+5. A recorded commit absent from the vendor's history — a shallow clone, or a
+   typo.
+6. The `git diff` itself failing.
+
+The last three are reported **even when the version stamps match and compare
+cleanly**: a comparand the operator wrote that quietly does not apply is its own
+defect, and matching stamps are no longer the end of the enquiry.
 
 ## When an override is *supposed* to omit something
 
