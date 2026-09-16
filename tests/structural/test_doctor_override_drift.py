@@ -547,8 +547,7 @@ class TestSyncedFromIsReadForVersionedVendorsToo:
 
     def test_no_change_since_the_recorded_commit_is_silent(self, consumer: Path):
         """The comparison must not fire merely because a commit is recorded."""
-        vendor, sha = _init_vendor_git(consumer, "shipping-work", "1.4")
-        del vendor
+        _, sha = _init_vendor_git(consumer, "shipping-work", "1.4")
         _override(
             consumer, "shipping-work", "1.4", synced_from=f"{VENDOR_REPO} 1.4 ({sha})"
         )
