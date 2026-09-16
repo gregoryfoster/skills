@@ -251,16 +251,7 @@ _reconcile_unpushed() {
     return 0
   fi
 
-  # Captured before the push, because after a rollback there is no range left
-  # to diff. Derived from the commits themselves rather than re-deriving
-  # COMMIT_PATHS, so the unstage covers exactly what the reset re-staged and
-  # nothing else — including a path some older version of this hook staged.
   local paths
-  paths=()
-  while IFS= read -r -d '' rpath; do
-    paths+=("$rpath")
-  done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
-
   if {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] push $ahead unpushed commit(s) to $upstream_name:"
     # Explicit refspec, never a bare `git push`: under push.default=matching
@@ -287,6 +278,17 @@ _reconcile_unpushed() {
   # deleted-by-us. HEAD~N stays on this checkout's own history. The
   # authorship and merge guards above are what make that arithmetic sound.
   PUSH_BLOCKED=1
+
+  # Captured here: before the RESET, which is what destroys the range — not
+  # before the push, which changes nothing when it fails. Deriving it from the
+  # commits themselves rather than re-deriving COMMIT_PATHS means the unstage
+  # covers exactly what the reset re-staged and nothing else, including a path
+  # some older version of this hook staged.
+  paths=()
+  while IFS= read -r -d '' rpath; do
+    paths+=("$rpath")
+  done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
+
   if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
     if [ "${#paths[@]}" -gt 0 ]; then
       # Same move as the commit step's failure path: leave the index as we
