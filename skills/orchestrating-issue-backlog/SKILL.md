@@ -80,6 +80,7 @@ Two sub-questions, both capping the per-batch agent count regardless of file-dis
 > 2. **What backing services do the worktrees NOT clone?** A shared test database, a shared Redis, a shared search index, a single dev-server port. Plain `git worktree` clones *none* of these, so a project with **no** worktree script can still have a hard ceiling of 1.
 
 The real ceiling is far more often in sub-question 2 than in 1. **Ask it explicitly — don't wait to rediscover it in Step 5**, but accept "none" as an answer — and a grep hit is not a ceiling until you read the path.
+
 For a shared test database, read the suite's fixture and DSN guard, and check the role can create slots, before accepting any ceiling — then choose from the provision / serialize / cap ladder: [references/shared-backing-services.md](references/shared-backing-services.md).
 
 Record agreements explicitly as you go — they feed the design doc.
