@@ -49,7 +49,7 @@ exec bash "$SELF_DIR/install-hook.sh" \
   --timeout 120 \
   --label install-refresh.sh \
   --note 'The hook runs at most once per UTC day, on main only, and auto-commits
-the pointer bumps -- then pushes them. An unpushed commit is invisible to CI,
+the pointer bumps — then pushes them. An unpushed commit is invisible to CI,
 to other clones and to every fresh worktree, and where a service reads the
 checkout it can refuse to start (#293). A push that fails is rolled back, so
 the checkout never diverges; the hook never pulls, never force-pushes, and
