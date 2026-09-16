@@ -157,6 +157,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
 - Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
 - Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
+- Pushes what it commits; a failed push is rolled back rather than left unpushed.
 - **Opportunistically installs/updates `.skills/doctor.sh`** on every session (not gated by the once-per-day lock) so the doctor self-heals if accidentally deleted, and so consumers added before the doctor existed pick it up automatically on the next session start.
 - **Commits the doctor it installed** ([#86](https://github.com/gregoryfoster/skills/issues/86)). The install is a working-tree repair and runs on every branch; the commit stays behind the `main`-only and once-per-day gates.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
