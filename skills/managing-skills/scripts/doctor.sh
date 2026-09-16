@@ -512,6 +512,13 @@ declare -a UNASSESSED=()
 # One formatter per class, so the call sites cannot word the same fact
 # differently: drift is recorded from the version comparison and from the
 # synced-from commit comparison, un-assessable from six distinct causes.
+#
+# Since #286 drift has ONE call site, which composes the two comparand
+# descriptions — `have` from what the override records, `now` from the vendor's
+# state — before handing them here. Deliberate, and the reason to keep it that
+# way: the two comparisons are one finding about one override, so wording them
+# apart would be the "same fact, two ways" this formatter exists to prevent,
+# and a SECOND call site is how that creeps back in (CR 5).
 record_override_drift() {
   local dir="$1" target="$2" have="$3" now="$4"
   DRIFTED+=("$dir overrides $target: last synced at $have, vendor now at $now")
