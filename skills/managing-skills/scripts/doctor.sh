@@ -1317,13 +1317,22 @@ EOF
     # behind checks `version:` first, finds it equal, and concludes the
     # doctor is wrong — which is the state #286 exists to report.
     if [ -n "$changed" ]; then
-      if [ "$ver_drift" = "1" ]; then
-        now="version $v_ver, with $changed changed since that commit"
-      elif [ -n "$v_ver" ] && [ "$o_ver" = "$v_ver" ]; then
+      # Branch on whether the VENDOR ships a version, not on whether the two
+      # stamps are EQUAL (CR 1). An override recording no version: at all made
+      # the equality false and fell through to the unversioned-vendor prose,
+      # so the line said "a vendor tree" about a vendor the doctor had just
+      # read 1.4 from — on the one line that is meant to be the work order.
+      # The version gap is its own un-assessable finding above; this line
+      # still names what is known.
+      if [ -z "$v_ver" ]; then
+        now="a vendor tree with $changed changed since that commit"
+      elif [ "$o_ver" = "$v_ver" ]; then
         now="version $v_ver still — the stamps match and $changed changed anyway (#286)"
       else
-        now="a vendor tree with $changed changed since that commit"
+        now="version $v_ver, with $changed changed since that commit"
       fi
+      # `have` describes what the OVERRIDE recorded, so it conditions on the
+      # override's own field rather than on the vendor's.
       have="commit $rec"
       [ -z "$o_ver" ] || have="version $o_ver (commit $rec)"
       record_override_drift "$dir" "$target" "$have" "$now"

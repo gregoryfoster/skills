@@ -511,6 +511,33 @@ class TestSyncedFromIsReadForVersionedVendorsToo:
             f"the message to have said so already:\n{flat}"
         )
 
+    def test_a_versioned_vendor_is_named_even_with_no_override_version(
+        self, consumer: Path
+    ):
+        """The doctor knows the vendor's version; the drift line must not
+        disown it.
+
+        The wording branched on whether the two stamps were EQUAL, so an
+        override recording no `version:` at all made that false and fell
+        through to the unversioned-vendor prose — reporting "a vendor tree"
+        about a vendor the doctor had just read 1.4 from, on the one line
+        meant to be the work order (CR 1). No test covered this combination,
+        which is why the branch survived a verification pass.
+        """
+        _, sha = self._vendor_changes_without_a_bump(consumer, "shipping-work", "1.4")
+        _override(
+            consumer, "shipping-work", None, synced_from=f"{VENDOR_REPO} 1.4 ({sha})"
+        )
+        result = _doctor(consumer)
+        assert DRIFT_MARKER in result.stderr, result.stderr
+        drift = [ln for ln in result.stderr.splitlines() if "last synced at" in ln]
+        assert len(drift) == 1, f"expected one drift line:\n{result.stderr}"
+        assert "1.4" in drift[0], (
+            "the vendor's version was read and must be named rather than "
+            f"generalised to 'a vendor tree':\n{drift[0]}"
+        )
+        assert "a vendor tree" not in drift[0], drift[0]
+
     def test_no_change_since_the_recorded_commit_is_silent(self, consumer: Path):
         """The comparison must not fire merely because a commit is recorded."""
         vendor, sha = _init_vendor_git(consumer, "shipping-work", "1.4")
