@@ -23,6 +23,28 @@ Coverage:
                                                commit skipped, scratch cleaned
 - `git commit` fails                         → index unstaged, install kept
 
+Pushing what it commits (issue #293) gets its own fixture, `remote_repo`,
+because the `repo` fixture has no upstream at all — a configuration the
+reconcile step returns on immediately, so none of the push behaviour is
+reachable there. These run against a real bare remote over the `file`
+transport, since what matters is whether a push was actually accepted:
+- a commit the hook makes                    → pushed, checkout not ahead
+- a commit stranded by an earlier run        → pushed at the next session
+- push fails                                 → commit rolled back
+- push fails with unrelated dirty work       → that work survives (NOT --hard)
+- push fails                                 → refreshed content stays on disk
+- push fails                                 → reported on stderr, not only $LOG
+- push fails                                 → no second attempt in the same run
+- an operator's unpushed commit              → never rolled back
+- an operator's unpushed commit              → never published, nothing committed
+- a mix of theirs and ours                   → reported, all of it left alone
+- diverged main                              → rollback stays on our own history
+- no upstream configured                     → silent no-op
+- work staged before the session             → not absorbed, not published
+- a gitignored .skills/                      → submodule bump still commits
+- a log the hook cannot read                 → refuses, and commits nothing
+- a merge inside @{u}..HEAD                  → refuses, and commits nothing
+
 Submodule pins (issue #100) get their own fixture, `pinned_repo`, because the
 property under test is which pointers actually move — a shimmed `git submodule`
 cannot show that. Those tests build real superproject/submodule pairs over the
@@ -830,3 +852,414 @@ class TestNothingRefreshedReadsAsAProblem:
         )
         assert "skills-vendor/acme-skills" in log, log
         assert "skills-vendor/acme-skills" in result.stderr, result.stderr
+
+
+# ------------------------------------------------------------------- #293
+# A commit that lands locally and is never pushed is functionally untracked
+# for every consumer but the machine that wrote it. On CannObserv/replicator,
+# whose systemd unit refuses to start a checkout carrying unpushed commits,
+# one pointer bump from this hook stranded the deployed service twice in two
+# weeks. These tests are about what the remote ends up holding, so they use a
+# real bare remote over the `file` transport rather than a shim — a shimmed
+# push that "succeeds" would pass every one of them while proving nothing.
+
+
+@pytest.fixture
+def remote_repo(tmp_path: Path) -> Path:
+    """A consumer repo on main tracking a real bare remote.
+
+    `repo` has no upstream, which the reconcile step treats as a legitimate
+    configuration and returns on at once — so the push path is unreachable
+    there and every existing test in this file is unaffected by #293.
+    """
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", "-b", "main", "-q", str(origin))
+
+    repo = tmp_path / "work"
+    (repo / VENDOR_REL).mkdir(parents=True)
+    shutil.copy2(DOCTOR, repo / VENDOR_REL / "doctor.sh")
+    shutil.copy2(INSTALLER, repo / VENDOR_REL / "install-doctor.sh")
+    (repo / VENDOR_REL / "install-doctor.sh").chmod(0o755)
+    (repo / "README.md").write_text("consumer\n")
+
+    _git(repo.parent, "init", "-b", "main", "-q", str(repo))
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    _git(repo, "push", "-q", "-u", "origin", "main")
+
+    _shim_dir(repo).mkdir()
+    _write_git_shim(repo)
+    return repo
+
+
+def _ahead(repo: Path) -> int:
+    """Commits on main that the upstream has not been told about."""
+    out = _git(repo, "rev-list", "--count", "@{u}..HEAD", check=False).stdout.strip()
+    return int(out) if out.isdigit() else -1
+
+
+def _origin_subjects(repo: Path) -> list[str]:
+    origin = repo.parent / "origin.git"
+    out = _git(origin, "log", "--format=%s", "main", check=False).stdout
+    return [line for line in out.split("\n") if line]
+
+
+def _break_remote(repo: Path) -> None:
+    """Point origin at a path that does not exist, so a push fails the way an
+    unreachable remote or a missing credential does — non-fatally, at push
+    time, after the commit has already been made."""
+    _git(repo, "remote", "set-url", "origin", str(repo.parent / "gone.git"))
+
+
+def _hook_commit(repo: Path, subject: str = "chore: update skills submodules") -> None:
+    """A commit indistinguishable from one an earlier run of this hook made."""
+    (repo / "skills-vendor" / "acme-skills" / "marker").write_text("bumped\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", subject)
+
+
+class TestCommitsGetPushed:
+    def test_a_commit_it_makes_is_pushed(self, remote_repo):
+        """The hook installs and commits the doctor (#86). That commit has to
+        reach the remote, or it is untracked for everyone but this machine."""
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _tracked(remote_repo, ".skills/doctor.sh")
+        assert _ahead(remote_repo) == 0, (
+            "the hook committed and left the commit unpushed — the state that "
+            "stranded replicator's service for 56 minutes"
+        )
+        assert any("doctor" in s for s in _origin_subjects(remote_repo)), (
+            f"nothing reached the remote: {_origin_subjects(remote_repo)}"
+        )
+
+    def test_a_commit_stranded_by_an_earlier_run_is_pushed(self, remote_repo):
+        """The reconcile pass runs ahead of the once-per-day lock, so a
+        checkout left diverged by a previous run — a push killed by the hook's
+        timeout, or a vendored copy from before #293 — heals at the next
+        session rather than the next UTC day."""
+        _hook_commit(remote_repo)
+        assert _ahead(remote_repo) == 1
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _ahead(remote_repo) == 0, (
+            "a commit stranded before this run was still stranded after it"
+        )
+        assert "chore: update skills submodules" in _origin_subjects(remote_repo)
+
+    def test_the_lock_does_not_gate_the_retry(self, remote_repo):
+        """Same-day second session: the lock skips the refresh, but a stranded
+        commit must still be reconciled. Gating the retry behind the lock would
+        make the wait for recovery a whole UTC day."""
+        _run_hook(remote_repo)  # stamps .git/skills-update.lock
+        _hook_commit(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert (remote_repo / ".git" / "skills-update.lock").exists()
+        assert _ahead(remote_repo) == 0, "the day lock swallowed the push retry"
+
+
+class TestFailedPushRollsBack:
+    def test_the_commit_is_rolled_back(self, remote_repo):
+        """Rolling back is what keeps the never-diverged property. Leaving the
+        commit is the failure mode; it is silent, and it persists."""
+        _break_remote(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _ahead(remote_repo) == 0, (
+            "a push that failed left the checkout ahead of its upstream"
+        )
+
+    def test_unrelated_dirty_work_survives(self, remote_repo):
+        """The regression test for `git reset --hard HEAD~1`, which #293
+        proposed. `--hard` is whole-tree: this hook's add-scope discipline is a
+        property of `git add` and constrains it not at all, so an uncommitted
+        edit anywhere in the checkout is discarded. Measured before the fix —
+        the file below was reverted to its committed content."""
+        (remote_repo / "README.md").write_text("OPERATOR WORK IN PROGRESS\n")
+        _break_remote(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert (
+            remote_repo / "README.md"
+        ).read_text() == "OPERATOR WORK IN PROGRESS\n", (
+            "the rollback discarded an uncommitted edit the hook never staged"
+        )
+
+    def test_the_refreshed_content_stays_on_disk(self, remote_repo):
+        """Only the recorded pointer reverts. The doctor this run installed is
+        still there, so the skills keep working and the next session retries
+        from a working tree that already holds the refresh."""
+        _break_remote(remote_repo)
+
+        _run_hook(remote_repo)
+
+        assert (remote_repo / ".skills" / "doctor.sh").exists(), (
+            "the rollback took the installed doctor with it"
+        )
+
+    def test_it_is_reported_on_stderr_not_only_the_log(self, remote_repo):
+        """$LOG is a file nobody reads until something has already gone wrong,
+        which is why #293 rejects log-a-warning as the whole fix. Every other
+        non-fatal failure in this hook also reaches stderr."""
+        _break_remote(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert "could not push" in result.stderr, (
+            f"a failed push was invisible to the operator:\n{result.stderr}"
+        )
+
+    def test_it_does_not_retry_within_the_same_run(self, remote_repo):
+        """A rollback leaves the refreshed content dirty, so the commit step
+        would otherwise re-stage it, re-commit it and re-attempt the push just
+        refused — two network waits inside a 120s ceiling, and the same warning
+        twice."""
+        _break_remote(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.stderr.count("could not push") == 1, (
+            f"the run attempted the refused push more than once:\n{result.stderr}"
+        )
+        assert _ahead(remote_repo) == 0
+
+
+class TestOperatorCommitsAreUntouchable:
+    def test_an_operator_commit_is_never_rolled_back(self, remote_repo):
+        """The authorship guard, not the choice of reset mode, is what makes
+        rolling back safe in general."""
+        (remote_repo / "mine.txt").write_text("unshared\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "feat: my own work")
+        _break_remote(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _head_message(remote_repo) == "feat: my own work", (
+            "the hook rolled back a commit it did not write"
+        )
+
+    def test_an_operator_commit_is_never_published(self, remote_repo):
+        """A push is a push of the whole branch. Committing a bump on top of
+        work the operator has not shared and pushing it would publish their
+        work for them — a larger overreach than the stranding being fixed, so
+        the run commits nothing instead."""
+        (remote_repo / "mine.txt").write_text("unshared\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "feat: unshared work")
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert "feat: unshared work" not in _origin_subjects(remote_repo), (
+            "the hook published a commit the operator had chosen not to share"
+        )
+        assert _head_message(remote_repo) == "feat: unshared work", (
+            "the hook added a commit on top of work it could not share"
+        )
+        assert "cannot share" in _log_text(remote_repo)
+
+    def test_purely_operator_commits_pass_in_silence(self, remote_repo):
+        """Working unpushed on a local main is normal in plenty of repos. A
+        stderr line at every session start there would train the reader to
+        ignore the one channel the stranding case depends on."""
+        (remote_repo / "mine.txt").write_text("unshared\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "feat: my own work")
+
+        result = _run_hook(remote_repo)
+
+        assert "unpushed" not in result.stderr, result.stderr
+
+    def test_a_mix_is_reported_and_left_alone(self, remote_repo):
+        """The hook's own bump stranded behind a commit it must not touch. It
+        cannot fix that from here, so it says so where someone will see it."""
+        _hook_commit(remote_repo)
+        (remote_repo / "mine.txt").write_text("unshared\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "feat: my own work")
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _ahead(remote_repo) == 2, "the hook touched a history it does not own"
+        assert "did not write" in result.stderr, result.stderr
+        assert result.stderr.count("did not write") == 1, (
+            f"the same finding was reported twice in one run:\n{result.stderr}"
+        )
+
+
+class TestReconcileEdgeCases:
+    def test_diverged_main_rolls_back_onto_its_own_history(self, remote_repo):
+        """Resetting to @{u} instead of HEAD~N would move HEAD onto the
+        remote's tree while the working tree stayed on ours, so every file the
+        remote had added would read as deleted-by-us. A sibling workflow
+        pushing `chore: weekly context measurement` to main makes this the
+        expected steady state on an unattended VM, not a corner case."""
+        origin = remote_repo.parent / "origin.git"
+        other = remote_repo.parent / "other"
+        _git(remote_repo.parent, "clone", "-q", str(origin), str(other))
+        (other / "measure.txt").write_text("weekly\n")
+        _git(other, "add", "-A")
+        _git(other, "commit", "-qm", "chore: weekly context measurement")
+        _git(other, "push", "-q", "origin", "main")
+
+        _hook_commit(remote_repo)
+        _git(remote_repo, "fetch", "-q", "origin")
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _ahead(remote_repo) == 0, "our side was not rolled back"
+        porcelain = _git(remote_repo, "status", "--porcelain").stdout
+        assert " D measure.txt" not in porcelain, (
+            f"the rollback made the remote's own file read as deleted:\n{porcelain}"
+        )
+
+    def test_no_upstream_is_a_silent_no_op(self, remote_repo):
+        """A remote-less checkout is a configuration, not a fault: there is
+        nothing to be ahead of, so there is nothing to say."""
+        _git(remote_repo, "branch", "--unset-upstream")
+        _git(remote_repo, "remote", "remove", "origin")
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert "push" not in result.stderr.lower(), result.stderr
+        assert _head_message(remote_repo).startswith("chore:"), (
+            "the hook stopped committing when there was no remote to push to"
+        )
+
+
+class TestCommitScope:
+    """What the commit is allowed to sweep up. The hook's add scope was always
+    narrow, but `git commit` with no pathspec commits the whole INDEX — so
+    anything the operator had staged before the session began went into the
+    hook's commit under the hook's own message. That was a local wart while the
+    hook only committed. Since it pushes (#293), it publishes."""
+
+    def test_pre_staged_operator_work_is_not_absorbed(self, remote_repo):
+        """Measured before the fix: a file the operator had staged and not
+        committed reached the remote inside `chore: update skills submodules`."""
+        (remote_repo / "secret.txt").write_text("staged, deliberately not shared\n")
+        _git(remote_repo, "add", "secret.txt")
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        committed = _git(
+            remote_repo, "show", "--stat", "--format=", "--name-only", "HEAD"
+        ).stdout
+        assert "secret.txt" not in committed, (
+            f"the hook's commit absorbed work it never staged:\n{committed}"
+        )
+        origin = remote_repo.parent / "origin.git"
+        assert (
+            _git(origin, "cat-file", "-e", "main:secret.txt", check=False).returncode
+            != 0
+        ), "the hook published work the operator had only staged"
+        assert (
+            _git(remote_repo, "diff", "--cached", "--name-only").stdout.strip()
+            == "secret.txt"
+        ), "the operator's index did not survive the hook's commit"
+
+    def test_a_gitignored_skills_dir_still_gets_its_submodule_bump(self, remote_repo):
+        """The regression guard on how that scope is expressed. `git commit --
+        <path>` fails outright on a path git does not know, and
+        `.skills/doctor.sh` is exactly that where a consumer gitignores
+        `.skills/` — the `git add` leaves it unstaged there by design. Scoping
+        the commit to the hook's whole path list made the commit fail for those
+        consumers and stranded the submodule bump with it, which is the hard
+        failure the `|| true` on the add exists to avoid."""
+        (remote_repo / ".gitignore").write_text(".skills/\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "chore: ignore .skills")
+        _git(remote_repo, "push", "-q", "origin", "main")
+        (remote_repo / VENDOR_REL / "doctor.sh").write_text("# bumped\n")
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _head_message(remote_repo) == "chore: update skills submodules", (
+            "the gitignored doctor took the submodule bump down with it"
+        )
+        assert _ahead(remote_repo) == 0
+        assert not _tracked(remote_repo, ".skills/doctor.sh")
+
+
+class TestRefusalsBlockTheCommitToo:
+    """Every refusal inside the reconcile has to stop the commit step as well.
+    A run that concludes it cannot share a commit and then makes one has
+    manufactured the stranding #293 exists to prevent — call site 2 only
+    refuses it again, and it sits there until an operator intervenes."""
+
+    def test_a_log_it_cannot_read_refuses_and_commits_nothing(self, remote_repo):
+        """The guard fails closed, and closed means no new commit either. With
+        `git log` failing, the subject read returns nothing; scoring that as
+        "every one of them is mine" would publish an operator's unshared work,
+        and committing on top of it would strand a bump behind theirs."""
+        (remote_repo / "mine.txt").write_text("unshared\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "feat: my own work")
+        _write_git_shim(
+            remote_repo, extra_arms='if [ "$1" = "log" ]; then exit 128; fi\n'
+        )
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert "feat: my own work" not in _origin_subjects(remote_repo), (
+            "an unreadable log let the hook publish a commit it could not verify"
+        )
+        assert _head_message(remote_repo) == "feat: my own work", (
+            "the hook committed on top of a range it had just refused to read"
+        )
+        assert _ahead(remote_repo) == 1
+
+    def test_a_merge_in_the_range_refuses_and_commits_nothing(self, remote_repo):
+        """`HEAD~N` counts first-parent steps, so a merge in the range makes the
+        rollback arithmetic wrong and the reconcile refuses. That refusal has to
+        reach the commit step for the same reason as any other.
+
+        The MERGE carries a hook subject, which is what makes this a test of the
+        merge refusal at all: with an ordinary `Merge branch 'side'` subject the
+        `unknown > 0` branch fires first and this branch never runs — the shape
+        that let an earlier version of this test pass with the fix removed."""
+        _git(remote_repo, "checkout", "-q", "-b", "side")
+        (remote_repo / "side.txt").write_text("side\n")
+        _git(remote_repo, "add", "-A")
+        _git(remote_repo, "commit", "-qm", "chore: update skills submodules")
+        _git(remote_repo, "checkout", "-q", "main")
+        _git(
+            remote_repo,
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "chore: update skills submodules",
+            "side",
+        )
+        before = _commit_count(remote_repo)
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _commit_count(remote_repo) == before, (
+            "the hook added a commit to a range it had refused to reconcile"
+        )
+        assert not _tracked(remote_repo, ".skills/doctor.sh")
+        assert "refusing to roll back" in _log_text(remote_repo), (
+            "the merge refusal never ran — another branch caught this first"
+        )

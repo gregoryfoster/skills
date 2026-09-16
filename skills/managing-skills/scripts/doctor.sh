@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-04-3"
+VERSION="2026-09-16-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -454,6 +454,65 @@ check_hook_registrations() {
 }
 
 check_hook_registrations
+
+# ----------------------------------------------------- unpushed commits (#293)
+# The sensor for the defect #293 fixed in skills-submodule-update.sh, and the
+# only cohort-wide one that can exist: an unpushed commit lives on exactly one
+# machine, so nothing reachable through the GitHub API can see it. A sweep can
+# see a stale submodule pointer and guess; only something running ON the
+# checkout can tell "the hook never ran" from "the hook's commits are stranded
+# here". This runs at every session start in every consumer, which is the one
+# place the question is answerable.
+#
+# Advisory and never fatal, like every other default-mode check here, and
+# deliberately NOT wired to REG_GAPS: --check-only is a CI probe, a fresh clone
+# is never ahead of its upstream, and the only population that gate would catch
+# is a developer with legitimate unpushed work on main.
+#
+# Reports regardless of who wrote the commits, unlike the hook, which may only
+# roll back its own. Naming the state is the whole job here, and the state that
+# stranded CannObserv/replicator's service for 56 minutes was `ahead 1` —
+# whoever put it there.
+check_unpushed() {
+  local branch remote merge ahead mine
+  branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+  # main only. Unpushed work on a feature branch is the normal way to use one.
+  [ "$branch" = "main" ] || return 0
+
+  remote="$(git config --get "branch.$branch.remote" 2>/dev/null || true)"
+  merge="$(git config --get "branch.$branch.merge" 2>/dev/null || true)"
+  # No upstream is a configuration, not a fault: there is nothing to be ahead
+  # of, and a remote-less checkout cannot strand anything.
+  if [ -z "$remote" ] || [ -z "$merge" ]; then
+    return 0
+  fi
+
+  ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || true)"
+  case "$ahead" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$ahead" -gt 0 ] || return 0
+
+  echo "doctor: main is $ahead commit(s) ahead of $remote/${merge#refs/heads/} — unpushed." >&2
+  echo "doctor:   Unpushed is unshared. CI, fresh worktrees and every other clone" >&2
+  echo "doctor:   see none of it, and a service reading this checkout may refuse to" >&2
+  echo "doctor:   start on it (#293). Push, or know why these stay local." >&2
+
+  # Name the auto-refresh hook's own commits when they are the cause, because
+  # the repair differs: a `git push` clears today's symptom, but a hook that
+  # keeps generating stranded commits wants its vendored copy bumped. Matched
+  # against the exact subjects skills-submodule-update.sh writes.
+  mine="$(git log --format=%s '@{u}..HEAD' 2>/dev/null |
+    grep -c -F -x -e 'chore: update skills submodules' \
+                  -e 'chore: refresh .skills/doctor.sh' \
+                  -e 'chore: update skills submodules and refresh .skills/doctor.sh' || true)"
+  case "$mine" in ''|*[!0-9]*) mine=0 ;; esac
+  if [ "$mine" -gt 0 ]; then
+    echo "doctor:   $mine of them the auto-refresh hook's. It pushes what it commits as" >&2
+    echo "doctor:   of #293; a vendored copy from before that does not — bump the pointer." >&2
+  fi
+  return 0
+}
+
+check_unpushed
 
 # frontmatter_value <file> <key> — the value of the first `<key>:` line inside
 # the file's YAML frontmatter, surrounding double quotes stripped; empty when

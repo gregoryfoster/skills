@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.12"
+  version: "1.13"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -147,7 +147,7 @@ bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.
 
 ### Installing the auto-refresh hook
 
-Pulls upstream submodule changes once per calendar day, on `main` only, and auto-commits the pointer bumps. Designed for invocation as a Claude Code `SessionStart` hook — exits `0` on every non-fatal condition so it can never block a session.
+Pulls upstream submodule changes once per calendar day, on `main` only, and auto-commits **and pushes** the pointer bumps. Designed for invocation as a Claude Code `SessionStart` hook — exits `0` on every non-fatal condition so it can never block a session.
 
 **Behaviour:**
 - Runs at most once per UTC day (single `.git/skills-update.lock` containing today's UTC date).
@@ -157,8 +157,9 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Logs to `.git/skills-update.log` (auto-truncated to the last 200 lines once it crosses 64 KiB).
 - Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
 - Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
+- Pushes what it commits; a failed push is rolled back rather than left unpushed.
 - **Opportunistically installs/updates `.skills/doctor.sh`** on every session (not gated by the once-per-day lock) so the doctor self-heals if accidentally deleted, and so consumers added before the doctor existed pick it up automatically on the next session start.
-- **Commits the doctor it installed** ([#86](https://github.com/gregoryfoster/skills/issues/86)). The install is a working-tree repair and runs on every branch; the commit stays behind the `main`-only and once-per-day gates. Without this the hook wrote a file nothing ever tracked — four of twelve audited consumers had been reinstalling an untracked doctor for weeks, so their fresh worktrees and CI clones had none and the Phase 1 preflight silently short-circuited.
+- **Commits the doctor it installed** ([#86](https://github.com/gregoryfoster/skills/issues/86)). The install is a working-tree repair and runs on every branch; the commit stays behind the `main`-only and once-per-day gates.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
 
 **Run the installer. Do not hand-execute the steps below.**
@@ -177,7 +178,9 @@ It is idempotent, repairs a partial install, and never commits. Check state with
 A repo carrying artifact 1 without artifact 2 looks installed to anyone who lists `.claude/hooks/` and refreshes nothing. Four of twelve audited consumers were in exactly that state — symlink present and tracked, registration absent — pinned at one commit for over a week while the rest of the cohort moved through four skill versions ([#167](https://github.com/gregoryfoster/skills/issues/167)). This procedure was prose and `install-doctor.sh` was a script, which is the only difference between them that predicts the failure population. `.skills/doctor.sh` now warns when it sees that half-installed state.
 
 What the installer does with `.claude/settings.json`, the two load-bearing
-details of that merge, and the manual uninstall equivalent:
+details of that merge, why it pushes what it commits and what happens where it
+cannot ([#293](https://github.com/gregoryfoster/skills/issues/293)), and the
+manual uninstall equivalent:
 [references/auto-refresh-hook.md](references/auto-refresh-hook.md).
 
 ### Uninstalling the auto-refresh hook
