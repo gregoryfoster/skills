@@ -107,7 +107,7 @@ The `isolation: "worktree"` parameter runs the agent in a temporary worktree. It
 
 **Operating rule: the orchestrator owns the merge** — reconcile, then merge explicitly, on every completion signal. The runtime checklist is **Orchestrator step 5**, the single authoritative copy; follow it there rather than duplicating it here — Rule 1 carries the sync, Orchestrator step 2 the branch creation and the never-move-a-deploying-checkout caveat.
 
-`main` moves only when the human merges the batch branch, via Rule 2's push sequence.
+*Batch work* moves `main` only when the human merges the batch branch, via Rule 2's push sequence. The one thing the orchestrator pushes on its own authority is the Step 8 design doc, before any batch branch exists — and it must, since worktrees are cut from `origin/main` and an unpushed plan reaches no worker.
 
 ### Rule 4 — Fix commit messages before continuing after a rebase conflict
 
