@@ -623,17 +623,23 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
       # would expand to nothing and widen the commit back to the whole index,
       # which is the defect this block is closing.
       if [ "${#STAGED_PATHS[@]}" -eq 0 ]; then
+        # Reported and fallen through, never `exit`. This is inside the
+        # `{ … } >>"$LOG"` group, which is not a subshell, so an exit here
+        # ends the whole run — skipping _reconcile_unpushed's second call
+        # site, the one that pushes what this run committed. The branch is
+        # unreachable by construction, which is exactly why a wrong
+        # construction here would go unnoticed.
         echo "nothing staged under this hook's paths after all — no commit"
-        exit 0
+      else
+        # On failure, unstage what we staged. `git add` above may have staged
+        # a previously *untracked* .skills/doctor.sh, and leaving a file the
+        # operator never touched sitting in their index is worse than leaving
+        # the commit undone — the next run retries cleanly either way.
+        git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
+          echo "commit failed — unstaging to leave the index as we found it"
+          git reset -q -- "${COMMIT_PATHS[@]}" 2>&1 || true
+        }
       fi
-      # On failure, unstage what we staged. `git add` above may have staged a
-      # previously *untracked* .skills/doctor.sh, and leaving a file the
-      # operator never touched sitting in their index is worse than leaving
-      # the commit undone — the next run retries cleanly either way.
-      git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
-        echo "commit failed — unstaging to leave the index as we found it"
-        git reset -q -- "${COMMIT_PATHS[@]}" 2>&1 || true
-      }
     fi
   } >>"$LOG" || true
 fi
