@@ -4,7 +4,7 @@ Loaded from [`SKILL.md`](../SKILL.md) when Q5's second sub-question finds a
 service the worktrees do not clone — a shared test database above all. Q and
 Step numbers refer to `SKILL.md`, so "item 2" below is its Step 5 item 2
 (procedure in [`shared-files.md`](shared-files.md));
-Worker-step numbers refer to [`execution.md`](execution.md).
+Rule and Worker-step numbers refer to [`execution.md`](execution.md).
 
 ## Before accepting a ceiling (Q5)
 
