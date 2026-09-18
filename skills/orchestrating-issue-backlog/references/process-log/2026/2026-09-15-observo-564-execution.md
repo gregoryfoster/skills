@@ -6,13 +6,16 @@ issues, fifteen workers, a 2-slot ceiling, one integration branch. Suite
 zero worktree fall-throughs**, and every gate's count equal to baseline plus
 the new tests the worker reported.
 
-**One count is unreconciled.** The planning entry records 18 issues → **16 work
-units**; this run produced fifteen workers and fifteen merges. #289 reports the
-fifteen and does not say what became of the sixteenth, and neither does this
-entry — recorded as open rather than smoothed, because an unexplained work-unit
-→ worker drop is the shape [#291](https://github.com/gregoryfoster/skills/issues/291)
-was filed about, and a count copied forward without a note is how the log would
-launder one.
+**This run corrected the plan's own work-unit count.** The planning entry and
+[#285](https://github.com/gregoryfoster/skills/issues/285)'s body both read 18
+issues → **16** work units. Sixteen is the wave grid — 8 waves × 2 wide — and
+the last wave holds only #551, so the grid was never full. Fifteen is the
+number, and the run is what settled it: fifteen workers, fifteen merges. The
+planning entry now carries the correction. Nothing at Step 7 reconciled the grid
+against the scored backlog, which is the check
+[#291](https://github.com/gregoryfoster/skills/issues/291) proposes; this is a
+second instance of that failure, reached from the execution side rather than at
+plan time, and it travelled into an upstream issue before anyone counted.
 
 Filed upstream as [#289](https://github.com/gregoryfoster/skills/issues/289).
 The skill is vendored here as a submodule, so it was drafted in the consuming
