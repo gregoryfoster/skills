@@ -2241,7 +2241,11 @@ async function cmdHealthCheck(projectPath, probePath) {
   // below can skip every server call, and a key that is sometimes absent and
   // sometimes null gives two spellings of 'not measured' in one contract —
   // `report.server === null` and `'server' in report` would disagree (#297).
-  const report = { projectPath, healthy: true, server: null, findings: [] };
+  // `pinDrift` for the same reason, and it has THREE ways of not being
+  // measured: no pin, a pin against a plugin that names an exact version, and
+  // a launch the store guard stopped. Null says all three the same way, and
+  // `launch.pinned` is what tells them apart (#295).
+  const report = { projectPath, healthy: true, server: null, pinDrift: null, findings: [] };
 
   // ── the store a launch would address (#287) ──────────────────────────────
   // Before the server, not after it: the launch is the write. With a defect
