@@ -6,6 +6,14 @@ issues, fifteen workers, a 2-slot ceiling, one integration branch. Suite
 zero worktree fall-throughs**, and every gate's count equal to baseline plus
 the new tests the worker reported.
 
+**One count is unreconciled.** The planning entry records 18 issues → **16 work
+units**; this run produced fifteen workers and fifteen merges. #289 reports the
+fifteen and does not say what became of the sixteenth, and neither does this
+entry — recorded as open rather than smoothed, because an unexplained work-unit
+→ worker drop is the shape [#291](https://github.com/gregoryfoster/skills/issues/291)
+was filed about, and a count copied forward without a note is how the log would
+launder one.
+
 Filed upstream as [#289](https://github.com/gregoryfoster/skills/issues/289).
 The skill is vendored here as a submodule, so it was drafted in the consuming
 repo and nothing in the vendored copy was edited — see lesson 7.
