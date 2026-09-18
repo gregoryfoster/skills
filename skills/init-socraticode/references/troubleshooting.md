@@ -13,7 +13,7 @@ symptom you'll see, why it happens, and the fix the skill bakes in.
 | **F** | (Not a failure) re-index/search is fast after the first run. | `socraticode-qdrant` + `socraticode-ollama` containers persist across runs and are reused; index data lives in Qdrant + on-disk graph, durable regardless of which server process built it. | Expected. Only the *first* index pays the full cost. |
 | **G** | A cleanup step exits 143/144 and kills the wrong thing. | `pkill -f "socraticode/dist/index.js"` matches the killing shell's own argv → it kills itself. | Never `pkill -f`. The driver **owns its child** and kills by `child.pid`; nothing pattern-matches a cmdline. |
 | **H** | Status parsing breaks between runs. | The `Context artifacts:` line changes shape: `2/7 indexed` vs `7 artifacts indexed (131 chunks)`. | Parse loosely (regex both shapes). The driver's `parseArtifacts()` handles both and treats "no line" as 0-expected. |
-| **I** | `mcp-driver.mjs` exits `Could not resolve the socraticode server entrypoint` on a host where the plugin is installed and Connected. | The plugin launches the server as `npx -y socraticode`, which unpacks to `~/.npm/_npx/<hash>/node_modules/socraticode/` — reachable by neither `require.resolve()` nor `npm root [-g]`, the driver's only two search paths before [#85](https://github.com/gregoryfoster/skills/issues/85). | `resolveServerLaunch()` now follows the plugin's own chain: `SOCRATICODE_ENTRY` → the plugin's `mcp.json` (authoritative — it carries the exact command, args, and PATH the session uses) → `require.resolve` → `npm root` → the npx cache → `npx -y socraticode`. Diagnose with `node "<SKILL_DIR>/scripts/mcp-driver.mjs" resolve`, which prints the launch command without starting anything. |
+| **I** | `mcp-driver.mjs` exits `Could not resolve the socraticode server entrypoint` on a host where the plugin is installed and Connected. | The plugin launches the server as `npx -y socraticode`, which unpacks to `~/.npm/_npx/<hash>/node_modules/socraticode/` — reachable by neither `require.resolve()` nor `npm root [-g]`, the driver's only two search paths before [#85](https://github.com/gregoryfoster/skills/issues/85). | `resolveServerLaunch()` now follows the plugin's own chain: `SOCRATICODE_ENTRY` → a pinned pre-install under `SOCRATICODE_PIN_DIR` (default `~/.socraticode/pin`, inert when absent — [#295](https://github.com/gregoryfoster/skills/issues/295), row U) → the plugin's `mcp.json` (it carries the exact command, args and PATH the session uses — authoritative over the *command*, not over the version, since that command is `socraticode@latest`) → `require.resolve` → `npm root` → the npx cache → `npx -y socraticode`. Diagnose with `node "<SKILL_DIR>/scripts/mcp-driver.mjs" resolve`, which prints the launch command without starting anything. |
 | **J** | `mcp-driver.mjs index` runs to the full `INDEX_TIMEOUT_MS` and dies with "index did not complete", even though `status`/`verify` both pass and the index is visibly green. Context artifacts never start. | The server prints `Progress: N/M chunks embedded (P%)` **only** inside its "indexing in progress" branch; when the run finishes, that line is replaced by `Last operation: Full index — completed`. So `parseEmbedPercent()` returns null from then on, and the driver's old `pct === 100` gates (completion *and* the `codebase_context_index` kick) could only ever fire by winning a race with the poll interval ([#85](https://github.com/gregoryfoster/skills/issues/85)). | Completion is keyed on `indexSettled()` — in-progress block gone **and** a completed run recorded — never on a parsed percentage, which is now display-only. The context-index kick uses the same signal. Deliberately not keyed on `Indexed chunks: N`: that count is durable in Qdrant and would read as done on the first poll of a re-index. `scripts/parser-selftest.mjs` pins all of this to fixtures. |
 | **K** | `codebase_index` completes and `codebase_status` looks green, but `codebase_context_search` finds nothing and status shows `artifacts 0/0` (or no artifact line at all). | The manifest was **rejected** — most often a legacy top-level array, which the server refuses (`must be a JSON object`). `codebase_status` wraps its artifact block in a `try/catch` marked "non-critical" and `getArtifactStatusSummary()` returns null when `artifacts` is missing, so a rejected manifest is indistinguishable from "none configured" ([#85](https://github.com/gregoryfoster/skills/issues/85)). | Phase 4 migrates a top-level array in place to `{"artifacts": [...]}`, then gates on `node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest <projectPath>` (shape, unique names, no globs, every path resolves) before indexing. The driver now aborts on a present-but-invalid manifest instead of degrading to "0 expected" — that degradation is what let a rejected manifest pass as green. |
 | **L** | Search worked yesterday; after a VM reboot `codebase_search` returns nothing and the index looks gone. | The Docker daemon was never enabled at boot (`systemctl is-enabled docker` → `disabled`), so nothing restarts Qdrant. The *data* is fine — it lives in the Qdrant volume — but with no daemon there is no Qdrant to serve it. | Preflight Gate 1 reports boot state on systemd hosts and instructs `sudo systemctl enable docker` (detect-and-instruct; it never enables anything itself). No container-level step is needed: SocratiCode creates both containers with `--restart unless-stopped`, so they return on their own once the daemon is up. Socket activation (`docker.socket` enabled) counts as enabled. The index works today and vanishes after the next reboot, so this is the advisory whose absence bites later rather than now. |
@@ -27,6 +27,51 @@ symptom you'll see, why it happens, and the fix the skill bakes in.
 | **T** | A repo configured for an external store starts Docker containers — or, on a host with no Docker, fails trying — instead of reaching the store. | A project's settings `env` block applies only to a session started in a trusted folder after the block was written. Without it `QDRANT_MODE` reverts to managed and `OLLAMA_MODE` to auto, and the server reports no missing configuration (CannObserv/broker#17, trap 6). | Checked by effect: when the project settings declare `QDRANT_MODE=external`, `preflight.sh --check` run from a session fails on every store variable the block declares that the session's environment lacks or carries with another value — the mode alone is not the block, since `OLLAMA_MODE` left behind still starts an Ollama container — and `validate-store` fails the same way in any process whose store is external, however the mode arrives, so the driver never launches that server. A missing value: restart Claude Code in the folder, trusting it if asked. A different one: the session predates the edit, in a folder already trusted; restart it. Re-check from the new session. |
 | **U** | A SocratiCode launch pushes the host past its memory, and **nothing is OOM-killed**: the kernel fails atomic allocations in unrelated processes (`tailscaled`, `ksoftirqd`), the host's production service is what goes down, and a cgroup cap on the launch **stalls** it instead of killing it. On `CannObserv/broker` the bus was effectively down 57m 48s and a downstream consumer failed to reconnect (CannObserv/replicator#94). | Two things compound. **(1) The launch installs.** The plugin's `mcp.json` is `npx -y --prefer-online socraticode@latest`, and `--prefer-online` revalidates against the registry on *every* launch — so a warm cache is not a warm path on any day the package moved. Measured on broker (8 GB, SocratiCode 1.14.0): a cold install plus server plus full index reached **1.2 G** at the cgroup (~610 MB process, ~519 MB npm page cache), and **all 126** `MemoryHigh` throttle events landed in the install — none in indexing. The same workload from a pinned, pre-installed entry peaked at **75 MB**, and a graph build plus context index at **86 MB**. **(2) The session cannot be OOM-killed.** exe.dev session processes inherit `oom_score_adj` **-1000** from `exe-init` and `sshd` — that covers VSCode Server, Claude Code, and every server they launch. The killer can never pick them, so under real exhaustion it takes the host's production service instead; earlyoom 1.7 floors a `--prefer` match at 300 while a service at adj 0 reads ~667. A cap on a process the killer will not touch therefore stalls it. | **Don't install at launch** — that is the measured peak, not the index ([#295](https://github.com/gregoryfoster/skills/issues/295)). `preflight.sh` reports total memory and swap, and under 4 GiB names the capped pre-install. Raising the score is unprivileged: `choom -n 500 -- <cmd>`. A capped scope from inside a session: `systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100% choom -n 500 -- <cmd>` — same PID, stdio and environment untouched, and the scope dies with the server when stdin closes. It needs linger plus `memory`/`cpu` delegation to `user@<uid>.service` and `XDG_RUNTIME_DIR` (which Claude Code's environment carries); without user systemd it fails `Failed to connect to bus`, exit 1. Host side, the half a cap cannot do: size it, give the production unit `MemoryLow=` and `OOMScoreAdjust=`, set `vm.min_free_kbytes`, run earlyoom (CannObserv/broker#21, #25). |
 
+
+## Don't install at launch: the pinned pre-install
+
+Row U's fix, as a procedure. The plugin's `mcp.json` is `npx -y
+--prefer-online socraticode@latest`, and `mcp-driver.mjs` reused that command
+verbatim — so the health hook, `index`, `status` and `verify` each installed a
+server before talking to one. `--prefer-online` revalidates against the
+registry on *every* launch, so a warm cache is not a warm path on any day the
+package moved.
+
+Install once, deliberately, under a cap:
+
+```bash
+# Linux with user systemd — the cap is the point; on a small host, run it here
+# and nowhere else.
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+  -- npm install --prefix ~/.socraticode/pin socraticode@1.14.0
+
+# Anywhere else (macOS, a host without user systemd): the install is the same,
+# just uncapped. Size the host for ~1.2 G rather than hoping.
+npm install --prefix ~/.socraticode/pin socraticode@1.14.0
+```
+
+`resolveServerLaunch()` prefers that build over the plugin's command, so no
+driver launch installs anything. Nothing else has to be configured: absent, the
+pin resolves nothing and the chain is exactly what it was.
+`SOCRATICODE_PIN_DIR` moves it; `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
+resolve` says which path won, without launching a server.
+
+**What the pin does not do, and why the hook now says so.** It does not pin the
+*session*. Claude Code cannot override a plugin's MCP server command, so the
+plugin keeps launching `@latest` — the driver becomes deterministic while the
+session goes on floating. That is a **new** divergence: before the pin both
+floated and agreed by coincidence of timing. `health-check` measures it, and
+splits on how wide the gap is, because a pin is *meant* to lag:
+
+| Gap between the pin and what `@latest` resolves to | Reported as |
+|---|---|
+| Same version, or a patch (`1.14.0` vs `1.14.3`) | **note** — the intended steady state; a daily defect here would be crying wolf about the design working |
+| A minor or major release (`1.13.2` vs `1.14.0`) | **defect** — two feature releases writing one store, which is the shape row S is about. Re-pin deliberately |
+| The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
+
+Re-pinning is the same `npm install --prefix` line with the new version. Do it
+as a decision, not on a schedule: the reason to pin was to stop an unattended
+launch from installing.
 
 ## Node 26: the build decides, not the version
 

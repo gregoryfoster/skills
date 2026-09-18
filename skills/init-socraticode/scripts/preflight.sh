@@ -294,6 +294,20 @@ unreachable() {
   esac
 }
 
+# The pinned pre-install, if this host has one. Read once: Gate 2 judges it as
+# a build that will launch, and the driver prefers it over the plugin's command
+# (#295). Absent, every consumer below behaves exactly as it did before.
+SC_PIN_DIR="${SOCRATICODE_PIN_DIR:-$HOME/.socraticode/pin}"
+SC_PIN_VER=""
+if [ -r "$SC_PIN_DIR/node_modules/socraticode/package.json" ]; then
+  # node, not jq: jq is not a dependency of this skill and node is already a
+  # hard gate in Gate 2 below. Failure leaves SC_PIN_VER empty, which every
+  # reader treats as "no pin" rather than as an error — a pin whose version
+  # cannot be read is not a pin anyone can reason about.
+  SC_PIN_VER="$(node -e 'try{const v=require(process.argv[1]).version;if(typeof v==="string")process.stdout.write(v.trim())}catch{}' \
+    "$SC_PIN_DIR/node_modules/socraticode/package.json" 2>/dev/null || true)"
+fi
+
 # ── Host capacity: the install is the peak, not the index ───────────────────
 # Advisory, never fatal. A small host CAN index — broker's 2 GB node did, under
 # a cap — so this reports the headroom and names the cap rather than refusing.
@@ -330,8 +344,8 @@ case "$MEM_KB" in
     MEM_HUMAN="$((MEM_GIB_X10 / 10)).$((MEM_GIB_X10 % 10)) GiB"
     if [ "$MEM_KB" -lt 4194304 ]; then         # < 4 GiB
       warn "Host memory $MEM_HUMAN — a cold server install peaks near 1.2 G, which is the largest thing this setup does"
-      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -- npm install -g socraticode@<version>"
-      hint "Then set SOCRATICODE_ENTRY to that build so no launch path installs anything"
+      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
+      hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/troubleshooting.md row U)"
       # The shared-host case, named only here. A cap on a session process
       # protects the host solely when the host's own service holds the
       # reservation, and this gate cannot tell a dev box from a production node
@@ -749,11 +763,24 @@ else
     warn "Node $NODE_RAW with SOCRATICODE_ENTRY set — that build is what launches, so the published version says nothing about it"
     hint "It must be socraticode >=$NODE26_SERVER_MIN to run on Node 26+; otherwise use Node 22"
   else
-    # Node 26+: resolve the build that will actually launch. Network read, never
-    # a mutation, and its failure is not this gate's business to escalate.
-    # Bounded: an offline host must reach the warn branch in seconds, not sit on
-    # npm's default retry ladder. `timeout(1)` is not on a stock macOS, so the
-    # budget is handed to npm itself.
+    # Node 26+: judge every build that will actually launch — which, since #295,
+    # can be TWO. A pinned pre-install is what mcp-driver.mjs runs (the health
+    # hook, index and verify runs); the plugin's own session server still
+    # launches `socraticode@latest` regardless, because Claude Code cannot
+    # override a plugin's MCP command. Judging only one of them would pass a
+    # host whose other server exits on start.
+    if [ -n "$SC_PIN_VER" ]; then
+      if version_ge "$SC_PIN_VER" "$NODE26_SERVER_MIN"; then
+        pass "Node $NODE_RAW with pinned socraticode $SC_PIN_VER (>=$NODE26_SERVER_MIN carries the Node 26 Qdrant transport bridge)"
+      else
+        fail "Node $NODE_RAW with pinned socraticode $SC_PIN_VER — the driver's server exits on start (undici 6 vs Node 26's undici 8)"
+        hint "Re-pin above $NODE26_SERVER_MIN: 'npm install --prefix $SC_PIN_DIR socraticode@latest', or use Node 22"
+      fi
+    fi
+    # Network read, never a mutation, and its failure is not this gate's
+    # business to escalate. Bounded: an offline host must reach the warn branch
+    # in seconds, not sit on npm's default retry ladder. `timeout(1)` is not on
+    # a stock macOS, so the budget is handed to npm itself.
     SC_LATEST="$(npm view socraticode version --silent \
       --fetch-timeout=5000 --fetch-retries=1 2>/dev/null || true)"
     # Last line, not `tr -d` over the whole reply: deleting newlines CONCATENATES
@@ -761,12 +788,16 @@ else
     # parse as a plausible 1.13.11. Every other reader in this skill degrades to
     # a stated unknown rather than to a wrong number.
     SC_LATEST="$(printf '%s' "$SC_LATEST" | tail -n 1 | tr -d '[:space:]')"
+    # Named for whose server it is, so two lines on a pinned host cannot be read
+    # as one answer given twice.
+    SC_WHOSE="socraticode"
+    [ -n "$SC_PIN_VER" ] && SC_WHOSE="the plugin session's socraticode"
     case "$SC_LATEST" in
       [0-9]*.[0-9]*.[0-9]*)
         if version_ge "$SC_LATEST" "$NODE26_SERVER_MIN"; then
-          pass "Node $NODE_RAW with socraticode $SC_LATEST (>=$NODE26_SERVER_MIN carries the Node 26 Qdrant transport bridge)"
+          pass "Node $NODE_RAW with $SC_WHOSE $SC_LATEST (>=$NODE26_SERVER_MIN carries the Node 26 Qdrant transport bridge)"
         else
-          fail "Node $NODE_RAW needs socraticode >=$NODE26_SERVER_MIN, but $SC_LATEST is what resolves — the server exits on start (undici 6 vs Node 26's undici 8)"
+          fail "Node $NODE_RAW needs socraticode >=$NODE26_SERVER_MIN, but $SC_LATEST is what $SC_WHOSE resolves to — the server exits on start (undici 6 vs Node 26's undici 8)"
           hint "Use Node 22 instead: 'nvm install 22 && nvm use 22'"
         fi
         ;;

@@ -29,4 +29,13 @@
 # the other network-touching hook, and sits above the 60s ceiling this hook
 # already exports to the driver (HEALTH_TIMEOUT_MS) so the inner bound is the
 # one that fires.
+#
+# The "a package download cold" half is what #295 removed on a host that has
+# pinned a pre-install: the driver prefers that build, so this hook stops
+# installing a server at SessionStart — which it had been doing once per UTC
+# day, concurrently with the plugin's own launch of the same
+# `npx -y --prefer-online socraticode@latest`. The constant does NOT come down
+# with it: unpinned hosts still pay the download, and a pinned one adds a
+# bounded 5s registry read (the pin-drift finding) in its place, so 120 remains
+# the budget both shapes fit in.
 --hook socraticode-health.sh --skill init-socraticode --marker socraticode-health --copy-fallback --timeout 120

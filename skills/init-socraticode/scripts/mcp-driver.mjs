@@ -34,7 +34,10 @@
 // Server entry resolution is NOT one path (#85/3b). The plugin launches the
 // server as `npx -y socraticode`, so on a plugin-only host the package lives in
 // the npx cache — reachable by neither require.resolve() nor `npm root`. See
-// resolveServerLaunch(), which follows the plugin's own launch chain.
+// resolveServerLaunch(), which follows the plugin's own launch chain, and
+// prefers a deliberately pinned pre-install over it when one exists (#295) —
+// that plugin command installs at every launch, which is the single most
+// expensive thing this skill does.
 //
 // Commands and environment variables are documented in one place — the USAGE
 // constant at the bottom of this file. Run `node mcp-driver.mjs --help`.
@@ -75,9 +78,18 @@ function subdirsNewestFirst(dir) {
     .map((e) => e.p);
 }
 
-// The plugin's own mcp.json is authoritative: it records the exact command,
-// args, and PATH the session uses to start this server. Reusing it verbatim is
-// the only resolution that cannot drift from what the plugin actually runs.
+// The plugin's own mcp.json records the exact command, args, and PATH the
+// session uses to start this server — the right thing to reuse when nothing has
+// been pinned deliberately.
+//
+// It is authoritative over the COMMAND, and #85 read that as authority over the
+// version too. It is not: the command it records is `npx -y --prefer-online
+// socraticode@latest`, so reusing it verbatim reproduces a spec that resolves
+// at launch. Driver and session then agree only because both float and both
+// launched in the same window, which is also why `graphVerdict` has to take the
+// running server's version rather than the one on disk (#297). A pin ahead of
+// this is what turns that coincidence into a decision; `pinDriftFinding` is
+// what keeps the resulting gap measured rather than silent (#295).
 function launchFromPluginConfig() {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || joinPath(homedir(), '.claude');
 
@@ -112,6 +124,124 @@ function launchFromPluginConfig() {
   return null;
 }
 
+// A deliberately pre-installed, pinned server — the one launch path that
+// installs nothing (#295).
+//
+// The measured reason this exists ahead of the plugin's own command: that
+// command is `npx -y --prefer-online socraticode@latest`, and `--prefer-online`
+// revalidates against the registry on EVERY launch. On broker a cold one
+// reached 1.2 G at the cgroup and carried all 126 MemoryHigh throttle events,
+// against 75 MB for the same workload from a pre-installed entry. The health
+// hook runs this driver from SessionStart once per UTC day, concurrently with
+// the plugin's own launch of the identical command, so on any day the package
+// moved that is two simultaneous installs — unattended.
+//
+// Absent, it resolves nothing and the chain below is unchanged, so this is
+// inert on every host that has not pre-installed. `npm install --prefix <dir>
+// socraticode@<version>` is the layout it expects.
+function pinDir() {
+  return process.env.SOCRATICODE_PIN_DIR || joinPath(homedir(), '.socraticode', 'pin');
+}
+
+// The pin's own version, read from the package it installed — never inferred
+// from the directory name, which records nothing and can be renamed.
+function pinVersion(dir) {
+  try {
+    const v = JSON.parse(readFileSync(joinPath(dir, 'node_modules', 'socraticode', 'package.json'), 'utf8'))?.version;
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  } catch { return null; }
+}
+
+function launchFromPin() {
+  const dir = pinDir();
+  const entry = joinPath(dir, 'node_modules', 'socraticode', 'dist', 'index.js');
+  if (!existsSync(entry)) return null;
+  const v = pinVersion(dir);
+  return { ...nodeLaunch(entry, `pinned install ${v ? `v${v} ` : ''}(${dir})`), pinned: true, pinVersion: v };
+}
+
+// Does the plugin's recorded command still resolve at LAUNCH time? A pin can
+// only diverge from something that moves: against a plugin whose mcp.json names
+// an exact version there is nothing to report, and saying so anyway would be a
+// daily finding about a host that is already consistent.
+//
+// Returns the floating spec, or null when the plugin is absent or pinned.
+function pluginSpecFloats() {
+  const p = launchFromPluginConfig();
+  if (!p) return null;
+  // Only an npx-style launch resolves late. A recorded interpreter-and-path is
+  // as fixed as a pin is, whatever version it happens to be.
+  if (!/(^|[\\/])npx(\.\w+)?$/.test(p.command)) return null;
+  const spec = p.args.find((a) => typeof a === 'string' && /^socraticode(@|$)/.test(a));
+  if (!spec) return null;
+  const tag = spec.includes('@') ? spec.slice(spec.indexOf('@') + 1) : '';
+  // A bare name and `@latest` both float; only a literal x.y.z is fixed. A
+  // range is deliberately counted as floating — it resolves at launch too.
+  return /^\d+\.\d+\.\d+$/.test(tag) ? null : spec;
+}
+
+// What that floating spec resolves to right now. Bounded to the same budget
+// preflight's Node gate uses, and a failure is a stated unknown rather than an
+// assumption in either direction.
+//
+// Last line only: deleting newlines from a multi-line reply CONCATENATES it, so
+// `1.13.1\n1.13.2` would read as a plausible 1.13.11 — the same trap preflight
+// documents at its own registry read.
+function registryLatest() {
+  const out = spawnSync(
+    'npm',
+    ['view', 'socraticode', 'version', '--silent', '--fetch-timeout=5000', '--fetch-retries=1'],
+    { encoding: 'utf8' }
+  );
+  if (out.status !== 0 || !out.stdout) return null;
+  const v = out.stdout.trim().split('\n').pop().trim();
+  return /^\d+\.\d+\.\d+/.test(v) ? v : null;
+}
+
+// 'same' | 'patch' | 'feature'. The split carries the finding's severity, and
+// it is the whole reason this check does not simply test inequality: a pin is
+// MEANT to lag, so "one patch behind" is the intended steady state and has to
+// stay silent or the daily hook cries wolf about working as designed. A minor
+// or major gap is different in kind — that is where two writers against one
+// shared store can hold different ideas of its format, the failure row S is
+// about.
+// The finding a pin's measured state earns, as one pure decision — separated
+// from the two impure readings that feed it (the filesystem's pin and the
+// registry's answer) so `parser-selftest.mjs` can pin every branch to a fixture
+// without a server, a network or a clock.
+//
+// Always returns a finding, never null: this is only reached when a pin and a
+// floating plugin both exist, and at that point "nothing printed" and "the
+// check never ran" would be the same report. Two spellings of not-measured is
+// the defect #297 removed.
+function pinDriftFinding({ running, floatingSpec, resolves, pinPath }) {
+  const note = (message) => ({ severity: SEVERITY.note, message });
+  if (!running) {
+    return note(`pinned launch, but no server version was recorded, so drift against '${floatingSpec}' was NOT measured`);
+  }
+  if (!resolves) {
+    return note(`pinned at ${running}; the registry did not answer, so drift against '${floatingSpec}' was NOT measured`);
+  }
+  if (versionGap(running, resolves) === 'feature') {
+    return {
+      severity: SEVERITY.defect,
+      message:
+        `pinned server ${running}, but the session's plugin launches '${floatingSpec}', which resolves to `
+        + `${resolves} — two different feature releases writing one store; re-pin deliberately with `
+        + `npm install --prefix ${pinPath} socraticode@${resolves}`,
+    };
+  }
+  return note(`pinned at ${running}; the plugin's '${floatingSpec}' resolves to ${resolves} — same feature release`);
+}
+
+function versionGap(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  if (pa[0] !== pb[0] || pa[1] !== pb[1]) return 'feature';
+  if (pa[2] !== pb[2]) return 'patch';
+  return 'same';
+}
+
 // `npx -y socraticode` unpacks into ~/.npm/_npx/<hash>/node_modules/. Neither
 // require.resolve() nor `npm root` sees it, so a plugin-only host resolves here.
 function launchFromNpxCache() {
@@ -130,17 +260,29 @@ function resolveServerLaunch() {
     return nodeLaunch(p, 'SOCRATICODE_ENTRY');
   }
 
-  // 1) The plugin's recorded launch command — the documented install path.
+  // 1) A pinned pre-install, when one exists. Ahead of the plugin's recorded
+  //    command on purpose, reversing the #85 ordering: that command was made
+  //    authoritative so the driver could not drift from the session, but the
+  //    command it records is `socraticode@latest`, so reading it faithfully
+  //    reproduces a spec whose resolution is time-dependent — the authority was
+  //    over the command, never over the version. What the pin changes is WHICH
+  //    kind of divergence you get: today both float and agree by coincidence of
+  //    timing; pinned, the driver is deterministic and the session still
+  //    floats. health-check measures that gap rather than leaving it silent.
+  const fromPin = launchFromPin();
+  if (fromPin) return fromPin;
+
+  // 2) The plugin's recorded launch command — the documented install path.
   const fromPlugin = launchFromPluginConfig();
   if (fromPlugin) return fromPlugin;
 
-  // 2) require.resolve from this module's context (works if socraticode is a dep).
+  // 3) require.resolve from this module's context (works if socraticode is a dep).
   try {
     const req = createRequire(import.meta.url);
     return nodeLaunch(req.resolve('socraticode'), 'require.resolve');
   } catch { /* fall through */ }
 
-  // 3) resolve the package root, then read its package.json "main"/"bin".
+  // 4) resolve the package root, then read its package.json "main"/"bin".
   for (const args of [['root', '-g'], ['root']]) {
     const out = spawnSync('npm', args, { encoding: 'utf8' });
     if (out.status === 0 && out.stdout) {
@@ -152,11 +294,11 @@ function resolveServerLaunch() {
     }
   }
 
-  // 4) npx cache, populated by any prior plugin run.
+  // 5) npx cache, populated by any prior plugin run.
   const fromNpx = launchFromNpxCache();
   if (fromNpx) return fromNpx;
 
-  // 5) Last resort: let npx fetch it, exactly as the plugin does. Costs a
+  // 6) Last resort: let npx fetch it, exactly as the plugin does. Costs a
   //    network round-trip on a cold cache but never fails to resolve.
   if (spawnSync('npx', ['--version'], { encoding: 'utf8' }).status === 0) {
     return { command: 'npx', args: ['-y', 'socraticode'], env: {}, source: 'npx -y (fallback)' };
@@ -164,8 +306,9 @@ function resolveServerLaunch() {
 
   die(
     'Could not resolve the socraticode server.\n' +
-    '  Set SOCRATICODE_ENTRY=/abs/path/to/socraticode/dist/index.js, or\n' +
-    '  install it first:  claude plugin install socraticode@socraticode\n' +
+    `  Pre-install a pinned one:  npm install --prefix ${pinDir()} socraticode@<version>, or\n` +
+    '  set SOCRATICODE_ENTRY=/abs/path/to/socraticode/dist/index.js, or\n' +
+    '  install the plugin:  claude plugin install socraticode@socraticode\n' +
     '  (locate a plugin-run server with: find ~/.npm/_npx -path "*socraticode/dist/index.js")'
   );
 }
@@ -182,6 +325,11 @@ class RpcClient {
       stdio: ['pipe', 'pipe', 'inherit'],
       env: { ...process.env, ...launch.env, ...overrides },
     });
+    // Kept so a caller can report WHICH launch answered, not just what it
+    // said: with a pin in play the driver and the session can be different
+    // builds, and a report that records the version without the path it came
+    // from cannot be re-read later to settle which one that was (#295).
+    this.launch = launch;
     this.nextId = 1;
     this.pending = new Map();
     this.buf = '';
@@ -2128,6 +2276,13 @@ async function cmdHealthCheck(projectPath, probePath) {
     if (client.serverInfo) {
       report.server = { name: client.serverInfo.name ?? null, version: client.serverVersion };
     }
+    // Which launch answered, recorded on every run for the same reason the
+    // version is: with a pin in play these are two different questions (#295).
+    report.launch = {
+      source: client.launch.source,
+      pinned: client.launch.pinned === true,
+      pinVersion: client.launch.pinVersion ?? null,
+    };
 
     const health = await call('codebase_health', {});
     if (health.error) {
@@ -2359,6 +2514,27 @@ async function cmdHealthCheck(projectPath, probePath) {
     }
   }, { readOnly: true });
 
+  // ── pinned driver vs floating session (#295) ─────────────────────────────
+  // Both halves must hold: this run launched from the pin, AND the plugin's
+  // recorded command still resolves at launch time. Pinning the driver does not
+  // pin the session — Claude Code cannot override a plugin's MCP command — so
+  // what the pin buys (no install at launch, a deterministic driver) is paid
+  // for in a divergence that did not exist while both floated and agreed by
+  // coincidence of timing. Leaving that unmeasured would trade a measured
+  // memory spike for an unmeasured correctness risk, so it is measured here.
+  //
+  // After the server checks, like the linked-project block below, so the
+  // infrastructure findings lead the list. No server call: the pin's version is
+  // the filesystem's and the floating one is the registry's.
+  const floatingSpec = report.launch?.pinned ? pluginSpecFloats() : null;
+  if (floatingSpec) {
+    const running = report.server?.version || report.launch.pinVersion;
+    const resolves = registryLatest();
+    report.pinDrift = { pinned: running ?? null, floatingSpec, resolves };
+    const f = pinDriftFinding({ running, floatingSpec, resolves, pinPath: pinDir() });
+    findings.push(f);
+  }
+
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
   // No server call: the resolution is the filesystem's, and is read the way
   // the server reads it. After the server checks rather than before, so the
@@ -2572,6 +2748,10 @@ Flags:
 
 Env:
   SOCRATICODE_ENTRY   explicit path to the socraticode server entry (skips resolution)
+  SOCRATICODE_PIN_DIR prefix holding a pre-installed, pinned server, preferred over
+                      the plugin's floating 'npx ... @latest' command and inert
+                      when absent (default ~/.socraticode/pin; populate with
+                      'npm install --prefix <dir> socraticode@<version>')
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
                       installed_plugins.json (default ~/.claude)
   npm_config_cache    npm cache dir whose _npx/ subtree is searched (default ~/.npm)
@@ -2762,6 +2942,8 @@ export {
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
   expectedArtifactCount, resolveServerLaunch,
+  // the pin, and the drift it trades the install spike for (#295)
+  pinDir, pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
   contextIndexComplete, indexedZeroChunks,

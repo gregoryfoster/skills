@@ -24,7 +24,7 @@
 //
 // No flags, no network, no server: pure string parsing.
 // <<< usage
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,6 +38,7 @@ import {
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
   compareVersions,
+  versionGap, pluginSpecFloats, pinDriftFinding, SEVERITY,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
@@ -658,6 +659,62 @@ try {
   eq('absent manifest is not an error', validateManifest(tmp).present, false);
 } finally {
   rmSync(tmp, { recursive: true, force: true });
+}
+
+// ── the pin, and the drift it trades the install spike for (#295) ───────────
+// The severity split is the contract worth pinning. A pin is MEANT to lag, so
+// a patch behind has to stay a note or the once-per-day hook cries wolf about
+// the design working; a feature gap is a defect because that is where two
+// writers can hold different ideas of one shared store's format. Both
+// not-measured branches are notes that SAY not-measured — silence there would
+// be indistinguishable from a check that never ran.
+{
+  eq('versionGap: identical', versionGap('1.13.2', '1.13.2'), 'same');
+  eq('versionGap: patch only', versionGap('1.13.2', '1.13.9'), 'patch');
+  eq('versionGap: minor bump', versionGap('1.13.9', '1.14.0'), 'feature');
+  eq('versionGap: major bump', versionGap('1.14.0', '2.0.0'), 'feature');
+  // The comparison this would get wrong as strings, and the one the plugin
+  // cache actually held while #295 was written.
+  eq('versionGap: 1.9 is below 1.13, not above', versionGap('1.9.0', '1.13.0'), 'feature');
+
+  const at = (o) => pinDriftFinding({ pinPath: '/PIN', floatingSpec: 'socraticode@latest', ...o });
+  eq('feature gap is a defect', at({ running: '1.13.2', resolves: '1.14.0' }).severity, SEVERITY.defect);
+  eq('…and names the re-pin command', /npm install --prefix \/PIN socraticode@1\.14\.0/.test(at({ running: '1.13.2', resolves: '1.14.0' }).message), true);
+  eq('patch gap is only a note', at({ running: '1.13.2', resolves: '1.13.9' }).severity, SEVERITY.note);
+  eq('no gap is still reported', at({ running: '1.14.0', resolves: '1.14.0' }).severity, SEVERITY.note);
+  eq('silent registry says NOT measured', /NOT measured/.test(at({ running: '1.13.2', resolves: null }).message), true);
+  eq('unknown server version says NOT measured', /NOT measured/.test(at({ running: null, resolves: '1.14.0' }).message), true);
+  // Never null: reached only when a pin and a floating plugin both exist, so
+  // "nothing printed" would read as "the check never ran".
+  eq('every branch returns a finding', [
+    at({ running: '1.13.2', resolves: '1.14.0' }), at({ running: '1.13.2', resolves: '1.13.9' }),
+    at({ running: '1.14.0', resolves: '1.14.0' }), at({ running: '1.13.2', resolves: null }),
+    at({ running: null, resolves: '1.14.0' }),
+  ].every((f) => f && f.severity && f.message), true);
+
+  // pluginSpecFloats reads a config tree, so it gets a written one rather than
+  // this host's. A pin only diverges from a spec that resolves LATE.
+  const cfg = (args, command = 'npx') => {
+    const d = mkdtempSync(join(tmpdir(), 'sc-cfg-'));
+    const v = join(d, 'plugins', 'cache', 'socraticode', 'socraticode', '9.9.9');
+    mkdirSync(v, { recursive: true });
+    writeFileSync(join(v, 'mcp.json'), JSON.stringify({ mcpServers: { socraticode: { command, args } } }));
+    return d;
+  };
+  const floatsWith = (args, command) => {
+    const d = cfg(args, command);
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = d;
+    try { return pluginSpecFloats(); } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+      rmSync(d, { recursive: true, force: true });
+    }
+  };
+  eq('@latest floats', floatsWith(['-y', '--prefer-online', 'socraticode@latest']), 'socraticode@latest');
+  eq('a bare name floats too', floatsWith(['-y', 'socraticode']), 'socraticode');
+  eq('a range floats', floatsWith(['-y', 'socraticode@^1.13.0']), 'socraticode@^1.13.0');
+  eq('an exact version does not', floatsWith(['-y', 'socraticode@1.14.0']), null);
+  eq('a recorded path does not', floatsWith(['/opt/socraticode/dist/index.js'], '/usr/bin/node'), null);
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
