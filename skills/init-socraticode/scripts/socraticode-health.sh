@@ -41,10 +41,22 @@ What it reports (to stdout, which Claude Code injects as session context):
   - codebase_status: a FAILED last operation, or an index marked INCOMPLETE.
     #107 found an 'Incremental update — FAILED (fetch failed)' sitting
     unreported for ~21h behind three green lights.
-  - codebase_graph_status measured by EDGE YIELD, not by status. READY is
+  - codebase_graph_status measured by YIELD, not by status. READY is
     reachable with 3 edges across 374 files; the policy this skill writes then
     sends every agent to codebase_graph_query first, where an empty answer
-    reads as 'no dependents' rather than 'the tool failed'.
+    reads as 'no dependents' rather than 'the tool failed'. Since 1.13.0 the
+    server states the resolution itself and that ruling is preferred; the
+    edges/file floor is the fallback where it is silent (#207).
+  - WHICH BUILD CUT THE GRAPH, against the running server's own version
+    (#297). A stored graph reports READY forever, whatever built it, so a
+    resolver fix shipped since is invisible from the status alone: in
+    CannObserv/cannabis.observer-wordpress a graph cut by v1.10.0 and served
+    by v1.11.0 sent three rounds of diagnosis to the conclusion that a PSR-4
+    composer.json declaration 'would not help' — PSR-4 resolution having
+    shipped in v1.11.0. A stale or unstamped builder is reported here as its
+    own defect, naming both versions and codebase_graph_build, so the hazard
+    no longer has to live as a hand-written working rule in each repo's
+    AGENTS.md.
   - A configured repo missing its toolchain on this machine (#281): no node,
     so the codebase_* tools cannot start, or no driver, so nothing was
     measured. Only past the manifest gate — see Behaviour.

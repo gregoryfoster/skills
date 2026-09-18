@@ -471,6 +471,323 @@ class TestTheServerStatementRules:
         )
 
 
+class TestStalenessIsOursToDecide:
+    """#297: a stale artifact reporting READY must be self-evident.
+
+    #207 taught the driver to read the server's `Built by:` stamp, and with it
+    the server's own `— STALE` annotation. That covered the case the server
+    volunteers, and only that case: `stale` meant *the server appended STALE*,
+    so every way of not appending it — a reformat, a build that stamps without
+    comparing, the 1.10/1.11 pair below that stamped nothing at all — landed on
+    `current` and certified a graph older than the resolvers answering queries
+    about it.
+
+    The cost is on the record. `CannObserv/cannabis.observer-wordpress#803`
+    spent three rounds on a wrong diagnosis: the graph reported READY, the yield
+    finding fired, and the conclusion — that a PSR-4 `composer.json` declaration
+    "would not help" — went into the issue and then into that repo's
+    `docs/SKILLS.md`. The graph had been cut by **v1.10.0**; PSR-4 resolution
+    shipped in **v1.11.0**. Nothing anywhere said the artifact predated the
+    feature being reasoned about, and it took a rebuild months later to notice.
+    The repo ended up writing the hazard into its own `AGENTS.md` as a working
+    rule, which is a tool's job leaking into thirteen consuming repos.
+
+    So the driver now keeps `serverInfo.version` from the MCP handshake — the
+    one fact that says what it is actually talking to — and does the comparison
+    itself. The server's word is still believed when it speaks; what is new is
+    that its silence is checked rather than trusted.
+
+    What this must NOT do is manufacture staleness, which would be the
+    accusation-on-a-healthy-repo failure #216 and #220 spent two issues
+    removing. Every refusal-to-guess case below is as load-bearing as the
+    detection.
+    """
+
+    # cannobserv after its rebuild, transcribed from a live 1.13.1.
+    REBUILT = TestTheServerStatementRules.REBUILT
+
+    @staticmethod
+    def _builder(graph_status: str, server_version) -> dict:
+        script = (
+            f"import {{ parseGraphBuilder, builderFinding }} from {json.dumps(str(DRIVER))};"
+            f"const b = parseGraphBuilder({json.dumps(graph_status)}, "
+            f"{json.dumps(server_version)});"
+            "process.stdout.write(JSON.stringify({...b, finding: builderFinding(b)}));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    @requires_node
+    def test_a_graph_older_than_the_server_is_stale_unprompted(self) -> None:
+        """The gap #207 left: staleness the server did not volunteer."""
+        b = self._builder(self.REBUILT, "1.14.0")
+        assert b["state"] == "stale", (
+            "a graph cut by v1.13.1 and served by v1.14.0 is stale whether or "
+            "not the server chose to say so — taking that on the server's word "
+            "is what let a v1.10.0 graph be reasoned about on a v1.11.0 server"
+        )
+
+    @requires_node
+    def test_the_finding_names_both_versions_and_the_repair(self) -> None:
+        """The bare phrase, without the numbers, is still a hunt.
+
+        The whole issue is that the reader should not have to go and find out
+        which two versions are in play. In the case on record, nobody did.
+        """
+        finding = self._builder(self.REBUILT, "1.14.0")["finding"]
+        assert "v1.13.1" in finding and "v1.14.0" in finding, finding
+        assert "codebase_graph_build" in finding, (
+            "a defect names the action that repairs it (#220)"
+        )
+
+    @requires_node
+    def test_the_servers_own_word_still_rules(self) -> None:
+        """#207's path must survive: STALE is believed even with nothing to compare."""
+        b = self._builder(
+            TestTheServerStatementRules.STALE.replace(
+                "Built by: unknown (persisted before the builder version was recorded)",
+                "Built by: v1.12.0 — STALE, this server is v1.13.1",
+            ),
+            None,
+        )
+        assert b["state"] == "stale", b
+        assert b["serverVersion"] == "1.13.1", (
+            "with no handshake version the STALE line names the server itself, "
+            "and the finding should still be able to print both numbers"
+        )
+
+    @requires_node
+    def test_the_handshake_version_outranks_the_printed_one(self) -> None:
+        """This host resolves the plugin to `npx socraticode@latest`.
+
+        The version cached under `plugins/cache` and the version that actually
+        answers can differ by a release — measured, not supposed: the cache held
+        1.13.2 while the handshake returned 1.14.0. What the driver is talking
+        to is the authority.
+        """
+        b = self._builder(
+            self.REBUILT.replace(
+                "Built by: v1.13.1", "Built by: v1.13.1 — STALE, this server is v1.13.2"
+            ),
+            "1.14.0",
+        )
+        assert b["serverVersion"] == "1.14.0", b
+
+    @requires_node
+    @pytest.mark.parametrize(
+        "server_version, why",
+        [
+            ("1.13.1", "a graph cut by the running server is not stale"),
+            (
+                "1.12.0",
+                "a builder NEWER than the server is a downgrade or a lagging "
+                "plugin cache: the artifact is at least as good as anything the "
+                "running resolvers would cut, and no action repairs it",
+            ),
+            ("nightly", "an unreadable server version compares to nothing"),
+            (None, "a server that declared no version compares to nothing"),
+        ],
+    )
+    def test_staleness_is_never_manufactured(self, server_version, why) -> None:
+        b = self._builder(self.REBUILT, server_version)
+        assert b["state"] == "current", f"{why}\n{b}"
+        assert b["finding"] is None, f"{why}\n{b}"
+
+    @requires_node
+    def test_staleness_does_not_decide_which_measure_rules(self) -> None:
+        """The regression #297 nearly shipped, and the reason the two are separate.
+
+        `graphVerdict` used to ask "can I trust the advisory's silence?" by
+        testing `builder.state === 'current'`. That worked only while `current`
+        meant *the server did not append STALE*. The moment #297 made staleness
+        ours to compute, every graph a release behind its server fell off the
+        server's ruling and onto our edges/file floor — and an orphan-heavy repo
+        the server had just certified trips that floor, earning `low`, which is
+        what writes the degraded Code Exploration Policy (variant B) into its
+        AGENTS.md. #207's own false accusation, re-entering through the door
+        #297 opened, and firing on every repo in the window between a
+        SocratiCode upgrade and the next rebuild.
+
+        So the trust predicate asks what the graph CARRIES — a builder stamp at
+        or past the release that records import counts — and staleness is
+        reported separately by `builderFinding`. Both facts, neither deciding
+        the other.
+        """
+        orphan_heavy = (
+            "Status: READY\nFiles (nodes): 400\nDependencies (edges): 12\n"
+            "Built by: v1.13.1"
+        )
+        script = (
+            f"import {{ graphVerdict, builderFinding }} from {json.dumps(str(DRIVER))};"
+            f"const v = graphVerdict({json.dumps(orphan_heavy)}, '1.14.0');"
+            "process.stdout.write(JSON.stringify("
+            "{verdict: v.verdict, source: v.source, finding: builderFinding(v.builder)}));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        got = json.loads(result.stdout)
+        assert (got["verdict"], got["source"]) == ("ok", "server"), (
+            "a graph one release behind still carries the import counts the "
+            "running server read, so its ruling stands — being older than the "
+            "server is a separate defect, not a reason to overrule it\n"
+            f"{got}"
+        )
+        assert got["finding"] and "codebase_graph_build" in got["finding"], (
+            "…and that separate defect must still be reported, or the split "
+            "loses the very finding #297 asked for\n"
+            f"{got}"
+        )
+
+    @requires_node
+    def test_a_builder_predating_the_advisory_still_falls_back(self) -> None:
+        """The other half of the split: #207's case 2, unchanged.
+
+        A graph cut before the advisory shipped records no import counts, so the
+        running server has nothing to compute a ratio from and its silence
+        proves nothing. That graph must still fall back to our arithmetic —
+        widening the server's authority to cover it would be the mirror-image
+        error.
+        """
+        pre_advisory = (
+            "Status: READY\nFiles (nodes): 400\nDependencies (edges): 12\n"
+            "Built by: v1.12.0 — STALE, this server is v1.13.1"
+        )
+        v = TestTheServerStatementRules._verdict(pre_advisory)
+        assert (v["verdict"], v["source"]) == ("low", "local"), v
+        assert "predates the import-resolution advisory" in v["reason"], (
+            "the reason must name why there was no advisory to read — a stamped "
+            "graph reaching the fallback did so because its BUILDER is too old, "
+            "not because the server is\n"
+            f"{v}"
+        )
+
+    @requires_node
+    def test_the_comparison_refuses_to_guess(self) -> None:
+        """`null`, never `0`.
+
+        "Could not compare" rendered as "same version" is the certificate this
+        exists to withhold — the assert-from-a-string-we-could-not-read error
+        `graphYield` and `parseImportResolution` both refuse to make.
+        """
+        script = (
+            f"import {{ compareVersions }} from {json.dumps(str(DRIVER))};"
+            "process.stdout.write(JSON.stringify(["
+            "compareVersions('1.12.0','1.13.1'), compareVersions('1.13.1','1.13.1'),"
+            "compareVersions('1.14.0','1.13.1'), compareVersions('1.9.0','1.10.0'),"
+            "compareVersions('nightly','1.13.1'), compareVersions('1.13.1',null),"
+            "compareVersions('1.14.0-rc.2','1.14.0')]));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == [-1, 0, 1, -1, None, None, 0], (
+            "`1.9.0 < 1.10.0` pins numeric ordering rather than string ordering; "
+            "the two nulls pin the refusal; the prerelease compares equal to its "
+            "release because ordering those is semver's problem, not this gate's"
+        )
+
+    @requires_node
+    def test_the_driver_keeps_the_handshakes_server_version(self) -> None:
+        """The plumbing, pinned where it would otherwise rot silently.
+
+        Every assertion above hands the version in by hand. If the handshake
+        stopped keeping it, they would all still pass and the live check would
+        compare against `null` forever — the pre-#297 behaviour, restored
+        invisibly.
+        """
+        src = DRIVER.read_text()
+        assert "res.serverInfo" in src, (
+            "RpcClient.handshake() must keep the initialize result's serverInfo; "
+            "it is the only place the running server names its own version"
+        )
+        assert "graphVerdict(graph.text, client.serverVersion)" in src, (
+            "health-check must hand the running server's version to the gate, "
+            "or the comparison never happens on the path that matters"
+        )
+        assert re.search(r"report\.server\s*=", src), (
+            "the JSON report must record the server it measured against — a "
+            "report carrying the graph's builder but not the server's version "
+            "cannot be re-read later to settle the question, which is exactly "
+            "what nobody could do in the case #297 records"
+        )
+
+
+class TestTheHookSaysWhatItReports:
+    """#297's other half: a contract that does not mention the check.
+
+    The consuming repo wrote "Rebuild the graph after a SocratiCode upgrade — a
+    stored graph has no version stamp and still reports READY" into its own
+    `AGENTS.md` because the tooling would not say it. The hook now does say it
+    when the defect fires — but a maintainer deciding whether that hand-written
+    rule is still needed reads `--help`, and `--help` enumerated everything the
+    hook reports except this. A check nobody knows about does not retire the
+    working rule it replaces.
+    """
+
+    @staticmethod
+    def _help(*cmd: str) -> str:
+        result = subprocess.run(
+            [*cmd, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, f"{cmd} --help exited {result.returncode}"
+        return result.stdout
+
+    def test_the_hook_help_names_the_builder_check(self) -> None:
+        flowed = _flowed(self._help("bash", str(HOOK)))
+        assert "codebase_graph_build" in flowed, (
+            "socraticode-health.sh --help lists what the hook reports; the "
+            "builder-staleness defect belongs on that list with the command "
+            "that repairs it (#297)"
+        )
+        assert "#297" in flowed, (
+            "every other finding in that block carries the issue that put it "
+            "there — the block is the record as much as the contract"
+        )
+
+    @requires_node
+    def test_the_driver_help_no_longer_says_edge_yield_alone(self) -> None:
+        """The contract drifted at #207 and nobody noticed for two months.
+
+        `health-check` stopped gating on our edges/file floor when the server
+        started stating the resolution itself; `--help` went on describing the
+        pre-#207 gate, so a reader debugging a verdict was told the wrong
+        measure had produced it.
+        """
+        flowed = _flowed(self._help("node", str(DRIVER)))
+        assert "measured by EDGE YIELD rather than by READY" not in flowed, (
+            "since #207 the server's import-resolution advisory rules where it "
+            "speaks and edges/file is the fallback; --help must not still "
+            "describe the old single-measure gate"
+        )
+        assert "import-resolution advisory" in flowed, flowed
+        assert "#297" in flowed, (
+            "the builder comparison is part of what health-check does, so it "
+            "belongs in the command's own description"
+        )
+
+
 class TestUnresolvedFindingIsVerdictAware:
     """#216: the corroboration wording, standing alone, reads as an accusation.
 

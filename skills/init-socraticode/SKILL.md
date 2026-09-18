@@ -311,9 +311,9 @@ Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PAT
   `Incremental update — FAILED (fetch failed)` sat unreported for ~21h behind
   three green lights ([#107](https://github.com/gregoryfoster/skills/issues/107)).
 
-**Graph yield — READY is a status, not a result.** READY is reachable with a
-graph that resolved almost nothing: usa-wa reported READY over **3 dependency
-edges across 374 files** — a src-layout resolver defect, fixed upstream in 1.13.0. Measure the yield:
+**Graph yield — READY is a status, not a result.** usa-wa reported READY over
+**3 edges across 374 files** (a src-layout resolver defect, fixed in 1.13.0).
+Measure it:
 
 ```bash
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
@@ -323,12 +323,14 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 | Verdict | Meaning | Do |
 |---|---|---|
 | `ok` | no server advisory, or ≥ 0.1 edges per file | nothing; keep policy **variant A** |
-| `low` | server advisory fired, or (absent one) < 0.1 edges per file; the probe returns *empty*, not an error | **return to Phase 3 and write policy variant B** — route imports/dependents/blast-radius to `grep`; empty graph output is tool failure, not absence. Do **not** fail the install |
+| `low` | server advisory fired, or (absent one) < 0.1 edges per file | **return to Phase 3 and write policy variant B** — route imports/dependents/blast-radius to `grep`; empty graph output is tool failure, not absence. Do **not** fail the install |
 | `unknown` | < 20 files, or the status string did not parse | report it; leave variant A |
 
-**A `STALE` or `unknown` `Built by:` line is its own defect** — since 1.13.0 the
-server states the yield itself and `health-check` prefers it (`source` says which
-ruled), but only for a graph *it* built. Rebuild before writing variant B ([#207](https://github.com/gregoryfoster/skills/issues/207)).
+**A stale or unstamped `Built by:` line is its own defect.** `health-check`
+compares the stamp against the running server rather than waiting for the
+server's own `STALE` token, and reports staleness *beside* the verdict above,
+never instead of it ([#297](https://github.com/gregoryfoster/skills/issues/297)).
+Rebuild, then re-measure before variant B.
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 

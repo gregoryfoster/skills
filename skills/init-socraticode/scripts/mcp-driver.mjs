@@ -185,6 +185,9 @@ class RpcClient {
     this.nextId = 1;
     this.pending = new Map();
     this.buf = '';
+    // Filled by handshake(); null until then, and null forever against a server
+    // that declares no serverInfo (#297).
+    this.serverInfo = null;
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk) => this.onData(chunk));
     // Swallow stdin EPIPE: if the server dies mid-index (gotcha B), a late write
@@ -239,12 +242,39 @@ class RpcClient {
   notify(method, params) { this.send({ jsonrpc: '2.0', method, params }); }
 
   async handshake() {
-    await this.request('initialize', {
+    const res = await this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: { name: 'init-socraticode-driver', version: '1.0.0' },
     });
+    // The initialize result was discarded until #297, and with it the one fact
+    // that says what this driver is actually talking to: `serverInfo.version`.
+    // Verified against a live server, which answers
+    // `{ name: 'socraticode', version: '1.14.0' }`.
+    //
+    // Without it, "is this graph older than the server" could only ever be
+    // taken on the server's own word — the `— STALE` token it appends to
+    // `Built by:` — so a stamp the server declines to annotate reads as
+    // current. That is the #297 failure arriving one build later: in
+    // CannObserv/cannabis.observer-wordpress#803 a graph cut by v1.10.0 and
+    // served by v1.11.0 reported READY throughout, three rounds of diagnosis
+    // concluded a PSR-4 `composer.json` declaration "would not help", and PSR-4
+    // resolution had shipped in the very version the artifact predated. Nothing
+    // anywhere said so.
+    //
+    // Read loosely, like every parser here: a server that sends no serverInfo,
+    // or names no version, leaves this null and the comparison simply does not
+    // happen. An absent fact must not become a manufactured one.
+    this.serverInfo = (res && typeof res === 'object' && res.serverInfo) || null;
     this.notify('notifications/initialized', {});
+  }
+
+  // The running server's version, or null when it declared none. A getter
+  // rather than a field so the "declared nothing" case has exactly one
+  // spelling at every call site.
+  get serverVersion() {
+    const v = this.serverInfo && this.serverInfo.version;
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
   }
 
   async callTool(name, args) {
@@ -744,7 +774,35 @@ function parseImportResolution(text) {
   return { resolved, captured, pct: Number(m[3]) };
 }
 
-// ── which build produced the graph being served (#207, upstream #120) ────────
+// ── release ordering, for the staleness comparison (#297) ───────────────────
+// The leading dotted-numeric run of a version string, `v` optional. A
+// prerelease identifier (`1.14.0-rc.2`) contributes its numbers and nothing
+// else: ordering prereleases against their release is semver's problem, not
+// this gate's, and treating `1.14.0-rc.2` as equal to `1.14.0` errs toward
+// saying nothing, which is the direction this whole file errs in.
+function versionParts(s) {
+  if (typeof s !== 'string') return null;
+  const m = s.trim().match(/^v?(\d+(?:\.\d+)*)/);
+  return m ? m[1].split('.').map(Number) : null;
+}
+
+// → -1 | 0 | 1, or NULL when either side cannot be read as a release.
+//
+// Null, never 0. "Could not compare" rendered as "same version" is precisely
+// the certificate this exists to withhold — the assert-from-a-string-we-could-
+// not-read error `graphYield` and `parseImportResolution` both refuse to make.
+function compareVersions(a, b) {
+  const x = versionParts(a);
+  const y = versionParts(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+// ── which build produced the graph being served (#207, #297, upstream #120) ──
 // 1.13.0 stamps the builder version beside the build time, in three shapes:
 //
 //   Built by: v1.13.1
@@ -760,11 +818,42 @@ function parseImportResolution(text) {
 // distinct from `unknown` (a 1.13+ server serving a graph older than itself):
 // the first says the signal was never available, the second says a rebuild
 // would produce it.
-function parseGraphBuilder(text) {
+//
+// `serverVersion` — the running server's own `serverInfo.version`, captured at
+// the handshake — makes the staleness OURS to decide rather than the server's
+// to volunteer (#297). Until it was threaded through, `stale` meant exactly
+// "the server appended STALE", so every way of not saying it — a reformat, a
+// build that stamps without comparing, the 1.10/1.11 pair in the issue that
+// stamped nothing at all — landed on `current` and certified a graph older than
+// the resolvers answering queries about it. The token is still believed when
+// present; what is new is that its ABSENCE is now checked rather than trusted.
+//
+// Optional, and null-tolerant, because the two other callers of this parser
+// hold no client: parser-selftest.mjs and the structural suite both exercise it
+// as pure text. With no version to compare against, the behaviour is exactly
+// what it was before #297.
+//
+// A builder NEWER than the running server (a downgrade, or a plugin cache
+// behind `socraticode@latest`) stays `current` on purpose: the artifact is then
+// at least as good as anything the running resolvers would cut, no action
+// repairs it, and a daily finding for it would be the accusation-on-a-healthy-
+// repo failure #216 and #220 spent two issues removing.
+function parseGraphBuilder(text, serverVersion = null) {
+  const running = typeof serverVersion === 'string' && serverVersion.trim()
+    ? serverVersion.trim().replace(/^v/, '')
+    : null;
   const m = text.match(/^[ \t]*Built by\s*:\s*(\S.*)$/im);
-  if (!m) return { state: 'absent', builtBy: null };
+  if (!m) return { state: 'absent', builtBy: null, serverVersion: running };
   const rest = m[1].trim();
-  if (/^unknown\b/i.test(rest)) return { state: 'unknown', builtBy: null };
+  // The server names itself on the STALE line ("— STALE, this server is v1.13.1").
+  // Second-best after the handshake, which says what we are actually talking to,
+  // but it keeps the finding able to print both versions when this parser is
+  // called without a client — which is how every test and the selftest call it.
+  const declared = (rest.match(/this server is\s+v?(\d+(?:\.\d+)*[^\s,)]*)/i) || [])[1] || null;
+  const against = running || declared;
+  if (/^unknown\b/i.test(rest)) {
+    return { state: 'unknown', builtBy: null, serverVersion: against };
+  }
   // The first delimited token, with an OPTIONAL `v`. Optional because a hard
   // `^v` turns a cosmetic reformat into a false daily "run codebase_graph_build"
   // against a current graph — the accusation-on-a-healthy-repo failure #216 and
@@ -774,8 +863,48 @@ function parseGraphBuilder(text) {
   // prose is where the `v` got load-bearing in the first place.
   const token = rest.split(/[\s,]/)[0];
   const builtBy = /^v?\d+\.\d+/.test(token) ? token.replace(/^v/, '') : null;
-  if (!builtBy) return { state: 'unknown', builtBy: null };
-  return { state: /\bSTALE\b/.test(rest) ? 'stale' : 'current', builtBy };
+  if (!builtBy) return { state: 'unknown', builtBy: null, serverVersion: against };
+  const older = compareVersions(builtBy, against) === -1;
+  return {
+    state: /\bSTALE\b/.test(rest) || older ? 'stale' : 'current',
+    builtBy,
+    serverVersion: against,
+  };
+}
+
+// The release that shipped BOTH the import-resolution advisory and the builder
+// stamp (upstream #112 / #120). A graph cut before it records no `importCount`,
+// so the running server has nothing to compute the ratio from and its silence
+// proves nothing.
+const ADVISORY_SINCE = '1.13.0';
+
+// Can the server's SILENCE be read as "measured and found nothing"? (#207)
+//
+// Keyed on what the graph CARRIES, not on whether the server called it stale.
+// Those were the same question only while `stale` meant "the server volunteered
+// the STALE token" — once #297 made staleness ours to compute, keying trust on
+// it flipped every graph a release behind its server onto the local edges/file
+// floor, and an orphan-heavy repo the server had just certified would trip that
+// floor and get variant B written into its AGENTS.md. That is #207's own
+// failure, re-entering through the door #297 opened; the two facts have to be
+// asked separately, and they are:
+//
+//   - THIS decides which measure rules.
+//   - `builderFinding` reports the staleness, independently, on every verdict.
+//
+// A graph whose builder is a release behind is still a graph the RUNNING server
+// read `importCount` out of, so its advisory — or its silence — is a real
+// ruling about resolution. That the resolvers have since moved on is a separate
+// defect with a separate repair, and it is reported as one.
+// `>= 0`, not `!== -1`: an unreadable version compares to `null`, and `null !==
+// -1` would hand the server's authority to a stamp we could not read. Not
+// reachable today — `builtBy` is only set when it matched a dotted release —
+// but "trust by default on an unparseable string" is the one default this file
+// never takes.
+function builderCarriesAdvisory(builder) {
+  if (builder.builtBy == null) return false;
+  const c = compareVersions(builder.builtBy, ADVISORY_SINCE);
+  return c === 0 || c === 1;
 }
 
 // ── the composed gate (#207) ─────────────────────────────────────────────────
@@ -812,10 +941,10 @@ function parseGraphBuilder(text) {
 // discarded — the disagreement is recorded without acting on it.
 //
 // → { verdict, source: 'server'|'local', reason, disagreement, local, advisory, builder }
-function graphVerdict(text) {
+function graphVerdict(text, serverVersion = null) {
   const local = graphYield(text);
   const advisory = parseImportResolution(text);
-  const builder = parseGraphBuilder(text);
+  const builder = parseGraphBuilder(text, serverVersion);
   const out = { local, advisory, builder, disagreement: null };
 
   if (advisory) {
@@ -839,7 +968,7 @@ function graphVerdict(text) {
     };
   }
 
-  if (builder.state === 'current') {
+  if (builderCarriesAdvisory(builder)) {
     // The server certifies RESOLUTION; it does not certify that we could read
     // the status it printed. When the counts did not parse, that IS the
     // parser-drift tripwire firing (gotcha H, #85) — the one `parseGraphCounts`
@@ -852,27 +981,35 @@ function graphVerdict(text) {
         ...out,
         verdict: 'unknown',
         source: 'local',
-        reason: `${local.reason} — the v${builder.builtBy} builder reported no advisory, `
-          + 'but an unreadable status is not a certificate of health',
+        reason: `${local.reason} — the server reported no advisory over the v${builder.builtBy} `
+          + 'graph, but an unreadable status is not a certificate of health',
       };
     }
     // The server measured this graph and said nothing, so it is the authority.
     if (local.verdict === 'low') {
       out.disagreement = `local edges/file reads LOW (${local.reason}) but the server, `
-        + `which built this graph at v${builder.builtBy}, reported no import-resolution `
-        + 'problem — expected on an orphan-heavy repo; the server\'s ratio is the better measure';
+        + `reading the import counts the v${builder.builtBy} builder recorded, reported no `
+        + 'import-resolution problem — expected on an orphan-heavy repo; the server\'s '
+        + 'ratio is the better measure';
     }
     // Worded as an absence of reported trouble, never as a positive
     // certificate. The server suppresses its advisory below 20 captured
     // imports, so on a small repo — exactly where `local.verdict` is already
     // `unknown` for too-few-files — its silence proves nothing, and "the
     // builder found no problem" would claim more than it said (#207).
+    //
+    // The staleness clause is not a hedge (#297): the ruling is real and it
+    // stands, but it is a ruling about what an OLDER builder managed to
+    // resolve, and the finding beside it says to rebuild. Saying only "ok"
+    // here is how a graph two minor versions behind kept its clean bill of
+    // health while the resolver fix it needed sat in the running server.
     return {
       ...out,
       verdict: 'ok',
       source: 'server',
-      reason: `the v${builder.builtBy} builder that cut this graph reported no `
-        + 'import-resolution problem'
+      reason: 'the server reported no import-resolution problem over the '
+        + `v${builder.builtBy} graph`
+        + (builder.state === 'stale' ? ', which the running server did not build' : '')
         + (local.verdict === 'unknown' ? `, though ${local.reason}` : ''),
     };
   }
@@ -888,12 +1025,18 @@ function graphVerdict(text) {
   // which is the first status a new user ever sees. Reading a fact out of an
   // absent line whose absence has several causes is the very error this gate
   // was written to remove, so it does not get to live inside it (#207).
+  //
+  // The second arm is no longer "the server called it stale" (#297). What puts
+  // a stamped graph here is a builder older than ADVISORY_SINCE — one that
+  // recorded no import counts, so there is nothing for the running server to
+  // compute a ratio from. Merely being a release behind does NOT: that graph
+  // carries counts, the server read them, and its ruling is above.
   const why = builder.state === 'absent'
     ? (graphReady(text)
       ? 'server predates the import-resolution advisory'
       : 'no built graph here to carry an advisory or a builder stamp')
-    : builder.state === 'stale'
-      ? `graph was cut by v${builder.builtBy}, older than this server`
+    : builder.builtBy
+      ? `graph was cut by v${builder.builtBy}, which predates the import-resolution advisory`
       : 'graph predates the builder-version stamp';
   return {
     ...out,
@@ -910,14 +1053,24 @@ function graphVerdict(text) {
 // `ok`, because "ok" from a graph an older resolver cut is a weaker claim than
 // "ok" from the current one, and because it is the standing explanation for a
 // yield finding the caller would otherwise read as a code problem.
+//
+// BOTH versions are printed when both are known (#297). The whole point of the
+// issue is that a stale artifact reporting READY should be self-evident, and
+// "older than the running server" without the two numbers still leaves the
+// reader to go and find them — which, in the case that prompted the issue, is
+// what nobody did for months. A consuming repo had to write the hazard into its
+// own AGENTS.md as a working rule because the tooling would not say it; this
+// line is the tooling saying it.
 function builderFinding(builder) {
+  const server = builder.serverVersion ? ` (v${builder.serverVersion})` : '';
   if (builder.state === 'stale') {
-    return `graph was built by v${builder.builtBy}, older than the running server — `
+    return `graph was built by v${builder.builtBy}, older than the running server${server} — `
       + 'any resolver fix since then is absent from it; run codebase_graph_build';
   }
   if (builder.state === 'unknown') {
     return 'graph was persisted before the builder version was recorded, so its edges '
-      + 'may predate the current resolvers; run codebase_graph_build';
+      + `may predate the current resolvers${server ? ` running here${server}` : ''}; `
+      + 'run codebase_graph_build';
   }
   return null;
 }
@@ -1962,6 +2115,15 @@ async function cmdHealthCheck(projectPath, probePath) {
       }
     };
 
+    // Recorded on every run, defect or not (#297). The graph's `Built by:` line
+    // is only half of "is this artifact older than what is answering queries
+    // about it"; this is the other half, and a JSON report that carries one
+    // without the other cannot be re-read later to settle the question — which
+    // is exactly what nobody could do in the case the issue records.
+    report.server = client.serverInfo
+      ? { name: client.serverInfo.name ?? null, version: client.serverVersion }
+      : null;
+
     const health = await call('codebase_health', {});
     if (health.error) {
       defect(`codebase_health failed: ${health.error}`);
@@ -2132,7 +2294,11 @@ async function cmdHealthCheck(projectPath, probePath) {
     if (graph.error) {
       defect(`codebase_graph_status failed: ${graph.error}`);
     } else {
-      const v = graphVerdict(graph.text);
+      // The running server's version, not a cached path's: this host resolves
+      // the plugin's mcp.json to `npx socraticode@latest`, so the version on
+      // disk under plugins/cache and the version that actually answered can
+      // differ by a release (#297).
+      const v = graphVerdict(graph.text, client.serverVersion);
       const y = v.local;
       report.graph = {
         ready: graphReady(graph.text),
@@ -2305,7 +2471,7 @@ async function cmdVerify(projectPath) {
     // is a policy that routes around the broken tool. Phase 6 reads this line
     // and writes variant B (#107).
     if (okGraph) {
-      const v = graphVerdict(graph);
+      const v = graphVerdict(graph, client.serverVersion);
       console.error(`[driver] graph yield: ${v.verdict.toUpperCase()} (per ${v.source}) — ${v.reason}`);
       const stamped = builderFinding(v.builder);
       // Printed here too, and before the policy line: a fresh install reading
@@ -2347,8 +2513,13 @@ Commands:
            Reports graph yield without gating on it.
   health-check
            infra triage on a cadence: codebase_health + codebase_status +
-           codebase_graph_status, with the graph measured by EDGE YIELD rather
-           than by READY. JSON verdict on stdout, findings on stderr.
+           codebase_graph_status, with the graph measured by YIELD rather than
+           by READY — the server's own import-resolution advisory where it
+           states one (1.13.0+), our edges/file floor where it is silent — and
+           with the BUILD THAT CUT the graph compared against the running
+           server's own version, so a stored graph older than the resolvers
+           answering queries about it is its own named defect rather than a
+           silent READY (#297). JSON verdict on stdout, findings on stderr.
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
            SOCRATICODE_LINKED_PROJECTS), which the server drops silently.
@@ -2571,6 +2742,10 @@ export {
   // the server's advisory, the builder stamp, and the gate that composes them
   // with the local arithmetic (#207)
   parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
+  // the ordering behind "older than the running server" — exported so the
+  // refuse-to-guess cases can be asserted directly, not only through a
+  // builder stamp that happens to exercise them (#297)
+  compareVersions,
   // finding severity (#220)
   SEVERITY, NOTE_PREFIX, renderFinding,
   // configured ≠ resolved linked projects (#281)

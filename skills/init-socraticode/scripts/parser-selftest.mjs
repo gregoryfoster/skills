@@ -37,6 +37,7 @@ import {
   searchHasHits, listHasProjects,
   parseGraphCounts, graphYield, graphQueryEmpty, healthProblems,
   parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
+  compareVersions,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
@@ -363,21 +364,85 @@ eq('a truncated advisory yields null, never resolved:0',
   parseImportResolution('Import resolution: 35 of'), null);
 
 eq('a current builder is recognised', parseGraphBuilder(GRAPH_REBUILT),
-  { state: 'current', builtBy: '1.13.1' });
+  { state: 'current', builtBy: '1.13.1', serverVersion: null });
 eq('an unstamped graph is `unknown`', parseGraphBuilder(GRAPH_STALE_BUILDER),
-  { state: 'unknown', builtBy: null });
+  { state: 'unknown', builtBy: null, serverVersion: null });
 eq('a stale builder keeps the version that cut the graph',
-  parseGraphBuilder(GRAPH_STALE_VERSION), { state: 'stale', builtBy: '1.12.0' });
+  parseGraphBuilder(GRAPH_STALE_VERSION),
+  { state: 'stale', builtBy: '1.12.0', serverVersion: '1.13.1' });
 eq('a pre-1.13.0 server prints no line at all', parseGraphBuilder(GRAPH_OK),
-  { state: 'absent', builtBy: null });
+  { state: 'absent', builtBy: null, serverVersion: null });
 // #207: the `v` must not be load-bearing. Dropping it is a cosmetic reformat;
 // reading it as `unknown` would nag a current graph to rebuild every day.
 eq('a version with no `v` prefix is still a version',
-  parseGraphBuilder('Built by: 1.13.1'), { state: 'current', builtBy: '1.13.1' });
+  parseGraphBuilder('Built by: 1.13.1'),
+  { state: 'current', builtBy: '1.13.1', serverVersion: null });
 eq('…and a prerelease keeps its identifier',
   parseGraphBuilder('Built by: v1.14.0-rc.2').builtBy, '1.14.0-rc.2');
 eq('…while genuinely unreadable text is still unknown',
   parseGraphBuilder('Built by: some future wording').state, 'unknown');
+
+// #297: the STALE token is believed when present and CHECKED when absent. The
+// server volunteering it was the only thing that ever made a graph `stale`, so
+// every way of not volunteering it certified an artifact older than the
+// resolvers answering queries about it.
+eq('a graph older than the running server is stale without the server saying so',
+  parseGraphBuilder(GRAPH_REBUILT, '1.14.0'),
+  { state: 'stale', builtBy: '1.13.1', serverVersion: '1.14.0' });
+eq('…and the handshake version outranks the one the STALE line names',
+  parseGraphBuilder(GRAPH_STALE_VERSION, '1.14.0').serverVersion, '1.14.0');
+eq('a graph cut by the running server is current',
+  parseGraphBuilder(GRAPH_REBUILT, '1.13.1').state, 'current');
+// A downgrade, or a plugin cache behind `socraticode@latest`. The artifact is
+// at least as good as anything the running resolvers would cut and no action
+// repairs it, so it is not a finding.
+eq('a builder NEWER than the server is not accused',
+  parseGraphBuilder(GRAPH_REBUILT, '1.12.0').state, 'current');
+// Null, never a guess: an unreadable version on either side must not
+// manufacture the staleness this comparison exists to find.
+eq('an unreadable server version compares to nothing',
+  parseGraphBuilder(GRAPH_REBUILT, 'nightly').state, 'current');
+eq('…and so does no server version at all',
+  parseGraphBuilder(GRAPH_REBUILT, null).state, 'current');
+eq('release ordering, where both sides are readable',
+  [compareVersions('1.12.0', '1.13.1'), compareVersions('1.13.1', '1.13.1'),
+    compareVersions('1.14.0', '1.13.1'), compareVersions('1.9.0', '1.10.0')],
+  [-1, 0, 1, -1]);
+eq('…and null, not 0, where either side is not',
+  [compareVersions('nightly', '1.13.1'), compareVersions('1.13.1', null)],
+  [null, null]);
+// Ordering prereleases against their release is semver's problem, not this
+// gate's; equal errs toward saying nothing, which is this file's direction.
+eq('a prerelease contributes its numbers and nothing else',
+  compareVersions('1.14.0-rc.2', '1.14.0'), 0);
+// The finding is what a reader actually sees, and #297 is about it saying
+// enough to be self-evident: both versions, and the command that repairs it.
+eq('the stale finding names both versions and the repair',
+  /v1\.13\.1.*v1\.14\.0.*codebase_graph_build/s.test(
+    builderFinding(parseGraphBuilder(GRAPH_REBUILT, '1.14.0'))), true);
+
+// #297's sharpest edge: staleness must not decide WHICH MEASURE RULES. Keying
+// the advisory's trustworthiness on `state === 'current'` worked only while
+// `current` meant "the server did not say STALE"; once staleness became ours to
+// compute, every graph a release behind fell onto our edges/file floor, and an
+// orphan-heavy repo the server had just certified would trip it and get variant
+// B written into its AGENTS.md. Trust asks what the graph CARRIES; staleness is
+// reported beside it.
+const ORPHAN_STALE = `Status: READY
+Files (nodes): 400
+Dependencies (edges): 12
+Built by: v1.13.1`;
+eq('a graph one release behind keeps the server’s ruling',
+  [graphVerdict(ORPHAN_STALE, '1.14.0').verdict, graphVerdict(ORPHAN_STALE, '1.14.0').source],
+  ['ok', 'server']);
+eq('…and is reported stale beside it, not instead of it',
+  /codebase_graph_build/.test(
+    builderFinding(graphVerdict(ORPHAN_STALE, '1.14.0').builder)), true);
+// The mirror image, which must NOT move: a builder from before the advisory
+// shipped recorded no import counts, so the server's silence proves nothing.
+eq('a builder predating the advisory still falls back to our arithmetic',
+  [graphVerdict(GRAPH_STALE_VERSION).verdict, graphVerdict(GRAPH_STALE_VERSION).source],
+  ['ok', 'local']);
 
 // The gate. Each branch is one of the three ways the advisory can be silent,
 // plus the case where it speaks.

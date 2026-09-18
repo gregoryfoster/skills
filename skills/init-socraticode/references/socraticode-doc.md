@@ -229,6 +229,35 @@ whose builder is stale or unstamped. `health-check` reports this as its own
 defect, and reports which measure ruled (`source: "server"` or `"local"`) in
 its JSON.
 
+**Read row 1 as *the server did not call it stale*, not as *it is current*.**
+The annotation is the server's to volunteer, and every way of not volunteering
+it used to land here: `CannObserv/cannabis.observer-wordpress#803` spent three
+rounds concluding a PSR-4 `composer.json` declaration "would not help", from a
+graph **v1.10.0 built and v1.11.0 served** — PSR-4 resolution having shipped in
+v1.11.0. READY throughout, and nothing said the artifact predated the feature
+under discussion. Since [#297](https://github.com/gregoryfoster/skills/issues/297)
+`health-check` keeps the running server's `serverInfo.version` from the MCP
+handshake and makes the comparison itself, so row 1 now means *both* parties
+checked. Reading the stamp **by hand**, you do not have that second opinion:
+compare it against the server you are running before you trust it. Both versions
+are in the health-check JSON, as `graph.builder.builtBy` and `server.version`.
+
+**Stale is not the same as unmeasured, and the two answer different
+questions.** A graph a release or two behind still carries the import counts its
+builder recorded, so the running server reads them and its advisory — or its
+silence — is a real ruling about resolution; `health-check` keeps that ruling
+(`source: "server"`) and reports the staleness *beside* it. Only a graph cut
+before **1.13.0**, which recorded no counts at all, leaves the server with
+nothing to measure and sends the verdict back to the edges/file fallback
+(`source: "local"`). Do not read "this graph is old" as "this graph is broken":
+on an orphan-heavy repo the local floor reads LOW on a graph that is perfectly
+fine, which is the reading that writes variant B.
+
+**Rebuild the graph after a SocratiCode upgrade.** A stored graph reports READY
+forever, whatever cut it, and every resolver fix shipped since is absent from
+it. That rule does not need to live in your `AGENTS.md` — the once-per-day hook
+reports it, names both versions and names `codebase_graph_build`.
+
 ## Index scope
 
 `.socraticodeignore` (repo root, gitignore syntax, layered on the built-in
