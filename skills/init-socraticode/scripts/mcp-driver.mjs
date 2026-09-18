@@ -896,6 +896,7 @@ const ADVISORY_SINCE = '1.13.0';
 // read `importCount` out of, so its advisory — or its silence — is a real
 // ruling about resolution. That the resolvers have since moved on is a separate
 // defect with a separate repair, and it is reported as one.
+//
 // `>= 0`, not `!== -1`: an unreadable version compares to `null`, and `null !==
 // -1` would hand the server's authority to a stamp we could not read. Not
 // reachable today — `builtBy` is only set when it matched a dotted release —
@@ -2083,7 +2084,11 @@ async function cmdHealthCheck(projectPath, probePath) {
   // where the evidence is rather than by a rule applied afterwards.
   const defect = (message) => findings.push({ severity: SEVERITY.defect, message });
   const note = (message) => findings.push({ severity: SEVERITY.note, message });
-  const report = { projectPath, healthy: true, findings: [] };
+  // `server: null` up front, not only on the measured path: the store guard
+  // below can skip every server call, and a key that is sometimes absent and
+  // sometimes null gives two spellings of 'not measured' in one contract —
+  // `report.server === null` and `'server' in report` would disagree (#297).
+  const report = { projectPath, healthy: true, server: null, findings: [] };
 
   // ── the store a launch would address (#287) ──────────────────────────────
   // Before the server, not after it: the launch is the write. With a defect
@@ -2120,9 +2125,9 @@ async function cmdHealthCheck(projectPath, probePath) {
     // about it"; this is the other half, and a JSON report that carries one
     // without the other cannot be re-read later to settle the question — which
     // is exactly what nobody could do in the case the issue records.
-    report.server = client.serverInfo
-      ? { name: client.serverInfo.name ?? null, version: client.serverVersion }
-      : null;
+    if (client.serverInfo) {
+      report.server = { name: client.serverInfo.name ?? null, version: client.serverVersion };
+    }
 
     const health = await call('codebase_health', {});
     if (health.error) {
