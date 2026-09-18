@@ -296,6 +296,59 @@ def _flowed(text: str) -> str:
     return " ".join(text.split())
 
 
+def _verdict(graph_status: str, server_version: str | None = None) -> dict:
+    """`graphVerdict` over one status string, as JSON.
+
+    Module level, beside `_flowed` and `_graph_health`, because two classes need
+    it: the #207 class that pins which measure rules, and the #297 class that
+    pins staleness not deciding that. A private staticmethod reached across a
+    class boundary makes renaming it break a test that never mentions it.
+    """
+    script = (
+        f"import {{ graphVerdict }} from {json.dumps(str(DRIVER))};"
+        "process.stdout.write(JSON.stringify(graphVerdict("
+        f"{json.dumps(graph_status)}, {json.dumps(server_version)})));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+# ── transcribed graph statuses, from a live socraticode 1.13.1 ──────────────
+# Module level because two classes read them: the #207 class that pins which
+# measure rules, and the #297 class that pins staleness not deciding that.
+# `cannobserv` before and after a rebuild, and its sibling
+# `cannabis.observer-wordpress`. That they are transcribed rather than
+# synthesized matters — the whole failure these gate is reading one of these
+# shapes as another.
+GRAPH_STALE = (
+    "Status: READY\nFiles (nodes): 621\nDependencies (edges): 37\n"
+    "Last built: 2026-08-31T03:42:35.508Z (761060s ago)\n"
+    "Built by: unknown (persisted before the builder version was recorded)\n"
+    "  Run codebase_graph_build to rebuild with v1.13.1 and confirm this "
+    "graph reflects the current resolvers.\nUnresolved: 79.3%"
+)
+GRAPH_REBUILT = (
+    "Status: READY\nFiles (nodes): 627\nDependencies (edges): 2156\n"
+    "Built by: v1.13.1\nUnresolved: 51.1%"
+)
+GRAPH_ADVISORY = (
+    "Status: READY\nFiles (nodes): 618\nDependencies (edges): 35\n"
+    "Import resolution: 35 of 2959 captured imports resolved to project "
+    "files (1.2%)\n"
+    "  Most imports did not resolve, so codebase_graph_query, "
+    "codebase_graph_stats and codebase_impact will under-report "
+    "dependencies — an empty answer there means unresolved, not "
+    "independent.\nBuilt by: v1.13.1"
+)
+
+
 class TestTheServerStatementRules:
     """#207: the server states the yield since 1.13.0, and it outranks ours.
 
@@ -310,59 +363,21 @@ class TestTheServerStatementRules:
     is what produced the live regression pinned below.
     """
 
-    @staticmethod
-    def _verdict(graph_status: str) -> dict:
-        script = (
-            f"import {{ graphVerdict }} from {json.dumps(str(DRIVER))};"
-            f"process.stdout.write(JSON.stringify(graphVerdict({json.dumps(graph_status)})));"
-        )
-        result = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=_clean_env(),
-        )
-        assert result.returncode == 0, result.stderr
-        return json.loads(result.stdout)
-
-    # Transcribed from a live socraticode 1.13.1 rather than synthesized.
-    STALE = (
-        "Status: READY\nFiles (nodes): 621\nDependencies (edges): 37\n"
-        "Last built: 2026-08-31T03:42:35.508Z (761060s ago)\n"
-        "Built by: unknown (persisted before the builder version was recorded)\n"
-        "  Run codebase_graph_build to rebuild with v1.13.1 and confirm this "
-        "graph reflects the current resolvers.\nUnresolved: 79.3%"
-    )
-    REBUILT = (
-        "Status: READY\nFiles (nodes): 627\nDependencies (edges): 2156\n"
-        "Built by: v1.13.1\nUnresolved: 51.1%"
-    )
-    ADVISORY = (
-        "Status: READY\nFiles (nodes): 618\nDependencies (edges): 35\n"
-        "Import resolution: 35 of 2959 captured imports resolved to project "
-        "files (1.2%)\n"
-        "  Most imports did not resolve, so codebase_graph_query, "
-        "codebase_graph_stats and codebase_impact will under-report "
-        "dependencies — an empty answer there means unresolved, not "
-        "independent.\nBuilt by: v1.13.1"
-    )
-
     @requires_node
     def test_the_advisory_rules_when_the_server_states_it(self) -> None:
-        v = self._verdict(self.ADVISORY)
+        v = _verdict(GRAPH_ADVISORY)
         assert v["verdict"] == "low", v
         assert v["source"] == "server", v
 
     @requires_node
     def test_a_certified_graph_is_ok_on_the_servers_authority(self) -> None:
-        v = self._verdict(self.REBUILT)
+        v = _verdict(GRAPH_REBUILT)
         assert (v["verdict"], v["source"]) == ("ok", "server"), v
 
     @requires_node
     def test_an_unstamped_graph_falls_back_to_our_arithmetic(self) -> None:
         """Cases 1 and 2: the silence carries no information."""
-        v = self._verdict(self.STALE)
+        v = _verdict(GRAPH_STALE)
         assert v["source"] == "local", v
         assert v["verdict"] == "low", v
 
@@ -376,12 +391,12 @@ class TestTheServerStatementRules:
         that the first now reads `ok`; it is that a rebuild changes the answer
         and that the staleness is reported as its own repairable defect.
         """
-        assert self._verdict(self.STALE)["verdict"] == "low"
-        assert self._verdict(self.REBUILT)["verdict"] == "ok"
+        assert _verdict(GRAPH_STALE)["verdict"] == "low"
+        assert _verdict(GRAPH_REBUILT)["verdict"] == "ok"
 
         script = (
             f"import {{ parseGraphBuilder, builderFinding }} from {json.dumps(str(DRIVER))};"
-            f"process.stdout.write(builderFinding(parseGraphBuilder({json.dumps(self.STALE)})) || '');"
+            f"process.stdout.write(builderFinding(parseGraphBuilder({json.dumps(GRAPH_STALE)})) || '');"
         )
         result = subprocess.run(
             ["node", "--input-type=module", "-e", script],
@@ -410,7 +425,7 @@ class TestTheServerStatementRules:
             "Status: READY\nFiles (nodes): 400\nDependencies (edges): 12\n"
             "Built by: v1.13.1"
         )
-        v = self._verdict(orphan_heavy)
+        v = _verdict(orphan_heavy)
         assert v["verdict"] == "ok", v
         assert v["local"]["verdict"] == "low", (
             "the fixture must actually trip the local floor, or this asserts nothing"
@@ -435,7 +450,7 @@ class TestTheServerStatementRules:
         relabelled = (
             "Status: READY\nFiles (nodes): 374\nCall edges: 23237\nBuilt by: v1.13.1"
         )
-        v = self._verdict(relabelled)
+        v = _verdict(relabelled)
         assert v["verdict"] == "unknown", v
         assert v["source"] == "local", (
             "an unreadable status must not be attributed to the server, which "
@@ -449,13 +464,13 @@ class TestTheServerStatementRules:
             "Status: READY\nFiles (nodes): 6\nDependencies (edges): 0\n"
             "Built by: v1.13.1"
         )
-        assert self._verdict(tiny)["verdict"] == "ok"
+        assert _verdict(tiny)["verdict"] == "ok"
 
     @requires_node
     def test_a_pre_advisory_server_behaves_exactly_as_before(self) -> None:
         """#107's gate must survive untouched where there is no server signal."""
         old_low = "Status: READY\nFiles (nodes): 374\nDependencies (edges): 3"
-        v = self._verdict(old_low)
+        v = _verdict(old_low)
         assert (v["verdict"], v["source"]) == ("low", "local"), v
         assert v["builder"]["state"] == "absent", v
 
@@ -478,7 +493,7 @@ class TestStalenessIsOursToDecide:
     the server's own `— STALE` annotation. That covered the case the server
     volunteers, and only that case: `stale` meant *the server appended STALE*,
     so every way of not appending it — a reformat, a build that stamps without
-    comparing, the 1.10/1.11 pair below that stamped nothing at all — landed on
+    comparing, the v1.10.0 graph below that carried no stamp at all — landed on
     `current` and certified a graph older than the resolvers answering queries
     about it.
 
@@ -504,7 +519,6 @@ class TestStalenessIsOursToDecide:
     """
 
     # cannobserv after its rebuild, transcribed from a live 1.13.1.
-    REBUILT = TestTheServerStatementRules.REBUILT
 
     @staticmethod
     def _builder(graph_status: str, server_version) -> dict:
@@ -527,7 +541,7 @@ class TestStalenessIsOursToDecide:
     @requires_node
     def test_a_graph_older_than_the_server_is_stale_unprompted(self) -> None:
         """The gap #207 left: staleness the server did not volunteer."""
-        b = self._builder(self.REBUILT, "1.14.0")
+        b = self._builder(GRAPH_REBUILT, "1.14.0")
         assert b["state"] == "stale", (
             "a graph cut by v1.13.1 and served by v1.14.0 is stale whether or "
             "not the server chose to say so — taking that on the server's word "
@@ -541,7 +555,7 @@ class TestStalenessIsOursToDecide:
         The whole issue is that the reader should not have to go and find out
         which two versions are in play. In the case on record, nobody did.
         """
-        finding = self._builder(self.REBUILT, "1.14.0")["finding"]
+        finding = self._builder(GRAPH_REBUILT, "1.14.0")["finding"]
         assert "v1.13.1" in finding and "v1.14.0" in finding, finding
         assert "codebase_graph_build" in finding, (
             "a defect names the action that repairs it (#220)"
@@ -551,7 +565,7 @@ class TestStalenessIsOursToDecide:
     def test_the_servers_own_word_still_rules(self) -> None:
         """#207's path must survive: STALE is believed even with nothing to compare."""
         b = self._builder(
-            TestTheServerStatementRules.STALE.replace(
+            GRAPH_STALE.replace(
                 "Built by: unknown (persisted before the builder version was recorded)",
                 "Built by: v1.12.0 — STALE, this server is v1.13.1",
             ),
@@ -573,7 +587,7 @@ class TestStalenessIsOursToDecide:
         to is the authority.
         """
         b = self._builder(
-            self.REBUILT.replace(
+            GRAPH_REBUILT.replace(
                 "Built by: v1.13.1", "Built by: v1.13.1 — STALE, this server is v1.13.2"
             ),
             "1.14.0",
@@ -596,7 +610,7 @@ class TestStalenessIsOursToDecide:
         ],
     )
     def test_staleness_is_never_manufactured(self, server_version, why) -> None:
-        b = self._builder(self.REBUILT, server_version)
+        b = self._builder(GRAPH_REBUILT, server_version)
         assert b["state"] == "current", f"{why}\n{b}"
         assert b["finding"] is None, f"{why}\n{b}"
 
@@ -665,7 +679,7 @@ class TestStalenessIsOursToDecide:
             "Status: READY\nFiles (nodes): 400\nDependencies (edges): 12\n"
             "Built by: v1.12.0 — STALE, this server is v1.13.1"
         )
-        v = TestTheServerStatementRules._verdict(pre_advisory)
+        v = _verdict(pre_advisory)
         assert (v["verdict"], v["source"]) == ("low", "local"), v
         assert "predates the import-resolution advisory" in v["reason"], (
             "the reason must name why there was no advisory to read — a stamped "
