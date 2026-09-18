@@ -119,6 +119,10 @@ marketplace separately from the connection.
 plugin's `mcp__plugin_socraticode_socraticode__*` is redundant — preflight Gate
 4 flags it; remove it with `claude mcp remove socraticode`.
 
+**On a small or shared host, pin the server here.** The plugin's command
+installs at every launch — 1.2 G, against 75 MB pinned:
+[`troubleshooting.md`](references/troubleshooting.md) row U.
+
 ### Phase 3 — Author the project's exploration policy (idempotent)
 
 Follow [`references/code-exploration-policy.md`](references/code-exploration-policy.md):
