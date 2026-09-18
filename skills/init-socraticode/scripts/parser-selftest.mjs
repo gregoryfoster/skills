@@ -420,6 +420,23 @@ eq('a prerelease contributes its numbers and nothing else',
 eq('the stale finding names both versions and the repair',
   /v1\.13\.1.*v1\.14\.0.*codebase_graph_build/s.test(
     builderFinding(parseGraphBuilder(GRAPH_REBUILT, '1.14.0'))), true);
+// The `unknown` arm renders a version too, and it renders it CONDITIONALLY —
+// a graph with no stamp still sits on a server that named itself. Both spellings
+// are pinned: an unreviewed string branch reaching a session's context daily is
+// what the fixtures exist to stop.
+eq('an unstamped graph names the server it is sitting on',
+  builderFinding(parseGraphBuilder(GRAPH_STALE_BUILDER, '1.14.0')),
+  'graph was persisted before the builder version was recorded, so its edges may '
+  + 'predate the current resolvers running here (v1.14.0); run codebase_graph_build');
+eq('…and says nothing about a server that named none',
+  builderFinding(parseGraphBuilder(GRAPH_STALE_BUILDER)),
+  'graph was persisted before the builder version was recorded, so its edges may '
+  + 'predate the current resolvers; run codebase_graph_build');
+// An un-indexed repo on a current server: the version is recorded, and the
+// absence of a graph is still not a defect.
+eq('a repo with no graph records the server without accusing anything',
+  [parseGraphBuilder(GRAPH_OK, '1.14.0'), builderFinding(parseGraphBuilder(GRAPH_OK, '1.14.0'))],
+  [{ state: 'absent', builtBy: null, serverVersion: '1.14.0' }, null]);
 
 // #297's sharpest edge: staleness must not decide WHICH MEASURE RULES. Keying
 // the advisory's trustworthiness on `state === 'current'` worked only while
