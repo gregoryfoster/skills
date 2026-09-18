@@ -95,7 +95,8 @@ clause each on the report-back slot and Orchestrator step 5.** The harvest
 point is the merge step, and the raw material is a list the report does not
 currently ask for: everything the worker *left alone* because it sat outside
 its window. The skill deals with the plan-time face of this (line-window
-ownership, `shared-files.md`) and had nothing for the runtime face. Six cases,
+ownership, [`shared-files.md`](../../shared-files.md)) and had nothing for the
+runtime face. Six cases,
 zero extra agents, is the measurement that earns it at one sighting; the
 alternative is a follow-up issue per case or stale prose shipping inside a
 green batch.
