@@ -810,6 +810,15 @@ if command -v claude >/dev/null 2>&1; then
   # auto-resume then runs an incremental update of the project at its cwd and,
   # in managed mode, probes Docker: a write to the index and, on a
   # socket-activated host, a daemon start — from a check that promises neither.
+  #
+  # That is version-bounded, and the guard below stays anyway (#295, finding 5).
+  # Claude Code's docs say the statuses are configuration-only from 2.1.238, and
+  # a 2.1.251 host did not start a project stdio server — but that server was
+  # pending approval, so an APPROVED one is still unverified, and the cohort
+  # spans the boundary in both directions (a workstation on 2.1.71 measured
+  # while writing this). One environment variable is the wrong thing to
+  # economise on when removing it regresses every host on an older CLI, and
+  # when the behaviour it guards is a write to a shared store.
   # Before a projectId exists that write lands in collections named by this
   # checkout's path hash (#287). Upstream reads SOCRATICODE_AUTO_RESUME=off
   # before any Docker or Qdrant access, so the probe stays a probe.
