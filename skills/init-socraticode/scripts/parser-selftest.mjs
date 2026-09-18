@@ -39,6 +39,7 @@ import {
   parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
   compareVersions,
   versionGap, pluginSpecFloats, pinDriftFinding, SEVERITY,
+  pinVersion, launchFromPin, resolveServerLaunch,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
@@ -715,6 +716,69 @@ try {
   eq('a range floats', floatsWith(['-y', 'socraticode@^1.13.0']), 'socraticode@^1.13.0');
   eq('an exact version does not', floatsWith(['-y', 'socraticode@1.14.0']), null);
   eq('a recorded path does not', floatsWith(['/opt/socraticode/dist/index.js'], '/usr/bin/node'), null);
+
+  // The REORDERING is the risky half of #295 — the pin sits ahead of the
+  // plugin's recorded command, reversing #85 — and it was the half with no
+  // fixture. A future edit could restore the old order and every assertion
+  // above would still pass, because they only test the decision the pin feeds.
+  const pinTree = (version) => {
+    const d = mkdtempSync(join(tmpdir(), 'sc-pin-'));
+    const pkg = join(d, 'node_modules', 'socraticode');
+    mkdirSync(join(pkg, 'dist'), { recursive: true });
+    writeFileSync(join(pkg, 'dist', 'index.js'), '');
+    if (version !== null) writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'socraticode', version }));
+    return d;
+  };
+  const withEnv = (vars, fn) => {
+    const prev = {};
+    for (const [k, v] of Object.entries(vars)) { prev[k] = process.env[k]; process.env[k] = v; }
+    try { return fn(); } finally {
+      for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  };
+
+  const pinned = pinTree('1.13.2');
+  const pluginCfg = cfg(['-y', '--prefer-online', 'socraticode@latest']);
+  try {
+    // SOCRATICODE_ENTRY is deliberately cleared: it outranks the pin, so a
+    // developer with it exported would otherwise see these pass for the wrong
+    // reason.
+    const launch = withEnv(
+      { SOCRATICODE_PIN_DIR: pinned, CLAUDE_CONFIG_DIR: pluginCfg, SOCRATICODE_ENTRY: '' },
+      () => resolveServerLaunch()
+    );
+    eq('the pin wins over a populated plugin config', launch.pinned, true);
+    eq('…and it launches the pin\'s entry, not npx', launch.args[0].startsWith(pinned), true);
+    eq('…carrying the version it read', launch.pinVersion, '1.13.2');
+    eq('…named in the source, for `resolve` to print', /^pinned install v1\.13\.2 /.test(launch.source), true);
+
+    // Same tree, pin removed: the plugin's command must come back. This is the
+    // assertion that fails if the pin ever stops being inert when absent.
+    const fallback = withEnv(
+      { SOCRATICODE_PIN_DIR: join(pinned, 'nope'), CLAUDE_CONFIG_DIR: pluginCfg, SOCRATICODE_ENTRY: '' },
+      () => resolveServerLaunch()
+    );
+    eq('no pin falls through to the plugin command', fallback.command, 'npx');
+    eq('…unchanged, args and all', fallback.args.join(' '), '-y --prefer-online socraticode@latest');
+  } finally {
+    rmSync(pinned, { recursive: true, force: true });
+    rmSync(pluginCfg, { recursive: true, force: true });
+  }
+
+  eq('an absent pin resolves nothing', withEnv({ SOCRATICODE_PIN_DIR: join(tmpdir(), 'sc-pin-absent') }, () => launchFromPin()), null);
+
+  // An unreadable version is not a missing pin: the build still launches, and
+  // the source says so without claiming a version it could not read.
+  const unversioned = pinTree(null);
+  try {
+    const l = withEnv({ SOCRATICODE_PIN_DIR: unversioned }, () => launchFromPin());
+    eq('a pin with no readable version still launches', l.pinned, true);
+    eq('…and claims no version', l.pinVersion, null);
+    eq('…so the source carries no v-prefix', / v\d/.test(l.source), false);
+    eq('pinVersion agrees', pinVersion(unversioned), null);
+  } finally {
+    rmSync(unversioned, { recursive: true, force: true });
+  }
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
