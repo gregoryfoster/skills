@@ -1,4 +1,4 @@
-# Session 2026-08-27 — gregoryfoster/skills (#239 execution)
+## Session 2026-08-27 — gregoryfoster/skills (#239 execution)
 
 ## Session 2026-08-27 (execution addendum)
 

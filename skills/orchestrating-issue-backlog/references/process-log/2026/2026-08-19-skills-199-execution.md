@@ -1,4 +1,4 @@
-# Session 2026-08-18/19 — gregoryfoster/skills (#199 execution)
+## Session 2026-08-18/19 — gregoryfoster/skills (#199 execution)
 
 Execution addendum to [2026-08-18-skills.md](2026-08-18-skills.md), which
 covers the planning half. Four batches, thirteen workers, five CR rounds,

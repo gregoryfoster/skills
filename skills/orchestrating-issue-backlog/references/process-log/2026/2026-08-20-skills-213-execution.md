@@ -1,4 +1,4 @@
-# Session 2026-08-20 — gregoryfoster/skills (#213 execution)
+## Session 2026-08-20 — gregoryfoster/skills (#213 execution)
 
 Execution addendum to `2026-08-20-skills.md`. Three batches (4/4/1), nine
 workers, twelve issues shipped, four follow-ups filed (#215–#218). Suite

@@ -1,4 +1,4 @@
-# Session 2026-08-27 — gregoryfoster/skills (selection surface, #240–#244)
+## Session 2026-08-27 — gregoryfoster/skills (selection surface, #240–#244)
 
 Second orchestration session on this repo the same day. The user named a range
 (`for GH 240-244`) rather than "the backlog", so the set was fixed up front and the

@@ -37,9 +37,26 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Step 4 measure an empirical decision at the gate rather than ask — 2026-08-21, 2026-08-27, 2026-09-14 observo
 - Step 5 item 2 ([`shared-files.md`](shared-files.md)) where a shared fixture hides — `conftest.py`, module-local fixtures, test fakes of a protocol the backlog changes — 2026-07-08, 2026-08-13 power-map, 2026-09-14 observo
 - Step 7 ([`batch-design.md`](batch-design.md)) a budget-tight file is single-writer — 2026-08-16, 2026-08-18, 2026-09-14 observo
+- Step 7 ([`batch-design.md`](batch-design.md)) exclusion groups plus a queue as the chunking form past a small ceiling, and the longest chain as the critical path — 2026-09-14 observo (held, pre-registered), 2026-09-15 observo execution (confirmed); the byte-for-byte bundle rule restated as **one regenerator per batch**, bundle *or* separate batches — 2026-08-10, 2026-09-16 wordpress
+- Q5 ([`shared-backing-services.md`](shared-backing-services.md)) the **capacity** half — what hardware runs the verification — plus the Rule 5 clause that the cheap re-verification confirms only the provisioning pool — 2026-08-12, 2026-09-14 observo, 2026-09-16 wordpress
+- Step 5 item 2 ([`shared-files.md`](shared-files.md)) an assertion vacuous **as filed**, by layer rather than by a moved column — 2026-08-14 observo, 2026-08-21, 2026-09-16 wordpress
+- Steps 1–2 ([`issue-audit.md`](issue-audit.md)) where the issue names no contract doc, the policy file does, and it is newer than the thread's last word — 2026-08-13 observo, 2026-09-16 wordpress
+- Branch strategy / Orchestrator step 5 / Worker step 1 ([`execution.md`](execution.md)) the batch branch as a **verification artifact** where the host ships per-item PRs (2026-09-16 wordpress); the `--no-merged` snapshot, `git branch -d` run where HEAD is the batch branch, and the handoff harvest (2026-09-15 observo execution); a worktree has no initialised submodules, so a vendored skill is read by absolute path from the main checkout (2026-09-15 observo execution)
+- Report-back slot ([`execution.md`](execution.md)) a decision taken at the gate is a hypothesis too — 2026-08-21 and 2026-08-27 recorded the converse, reversed 2026-09-15 observo execution
+- Step 10 ("Adding an entry", below) a vendored copy is not where the entry goes — 2026-09-14 observo, 2026-09-15 observo execution, 2026-09-16 wordpress
 
 ---
 ## Adding an entry
+
+**First: is this skill vendored here?** Where the host repo consumes it as a git
+submodule, the entry does **not** go in the vendored copy — draft it locally and
+file it upstream as an issue against the skill's own repo. Writing it in place
+leaves the host's main checkout reporting a modified submodule pointer, which is
+output from Rule 6's `git status --porcelain` and therefore a fall-through
+signal, and it survives into the next session's Step 1–2 stray sweep. The
+upstream maintainer adds the entry and adjudicates the promotions in one pass
+(2026-09-14 observo, 2026-09-15 observo, 2026-09-16 wordpress — all three filed
+this way).
 
 1. Write `process-log/<year>/<date>-<project>.md`, opening with a
    `## Session <date>` heading. Use the year the session ran; create the
