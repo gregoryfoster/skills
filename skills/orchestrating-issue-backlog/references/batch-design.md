@@ -11,16 +11,23 @@ Each overrides what the file map alone would suggest.
 - **A gate can be justified by design coherence with zero file overlap.** When one issue's own acceptance says "decide the seam once" and names another as a future consumer, gate it behind that consumer even if the file sets are verified disjoint — otherwise the seam ships with one consumer and a third connective issue becomes necessary (process-log 2026-08-10: the gated seam ended up serving **four** consumers, two of which did not exist as consumers until the gating issue merged). This is the one sanctioned way for Foundation to override a correctness-first ordering; the cost is one batch boundary, not an inverted priority.
 - **Foundation shared files are read-only for the follow-up batch.** The governing property is "one file every agent's verification depends on," regardless of file *kind* — a test harness bootstrap, a coverage index, a base class, or a config file such as `pyproject.toml`'s `addopts` (process-log 2026-08-11 observo). When a Batch A foundation issue ships or mutates one that downstream Batch B agents could plausibly want to extend, explicitly declare it read-only in the design doc's Key Decisions section and route necessary edits as small post-merge PRs after Batch B lands. Prevents the "three concurrent edits to one foundation file" failure mode by removing the temptation to amend it in flight.
 - **A budget-tight file is single-writer, however disjoint its sections.** At Step 5, measure every token-gated file the backlog edits; where headroom is under one agent's plausible edit, separated windows still merge clean and turn the gate red — one writer per batch, re-measured at each gate (2026-08-16, 2026-08-18, 2026-09-14 observo).
-- **Where N greatly exceeds a small ceiling, chunk as exclusion groups plus a queue.** Step 7's
-  sub-waves are the default and they are fixed; naming the **never-concurrent sets** instead — one
-  per hub file, one per shared doc — is what makes rolling fill safe, because the orchestrator can
-  pull a later item into a freed slot without re-deriving the conflict map. Run the gate suite
-  before each refill, which holds suite concurrency at the ceiling (2026-09-14/15 observo: 18
-  issues, 15 workers, 2 slots, zero merge conflicts and zero fall-throughs). Then name the
-  **longest exclusion chain as the critical path**: it sets the wall time, and fixed sub-waves hide
-  that because every wave boundary looks like a gate. Four function-disjoint items serialized on
-  one hub file there — they shared protocol test fakes — while the other slot drained early and
-  idled, so ask at planning time whether that shared surface can be split first.
+
+## Chunking past a small ceiling (Step 7)
+
+Step 7's sub-waves are the default and they are **fixed**. Where N greatly
+exceeds a small ceiling, name the **never-concurrent sets** instead — one per
+hub file, one per shared doc — and run the queue against them: that is what
+makes rolling fill safe, because the orchestrator can pull a later item into a
+freed slot without re-deriving the conflict map. Run the gate suite before each
+refill, which holds suite concurrency at the ceiling (process-log 2026-09-14/15
+observo: 18 issues, 15 workers, 2 slots, zero merge conflicts and zero
+fall-throughs).
+
+Then name the **longest exclusion chain as the critical path.** It sets the wall
+time, and fixed sub-waves hide that, because every wave boundary looks like a
+gate. Four function-disjoint items serialized on one hub file in that run — they
+shared protocol test fakes — while the other slot drained its queue early and
+idled. Ask at planning time whether that shared surface can be split first.
 
 ## Low-discovery backlog mode (Steps 5/6)
 
