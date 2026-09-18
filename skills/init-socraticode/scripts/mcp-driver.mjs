@@ -203,13 +203,6 @@ function registryLatest() {
   return /^\d+\.\d+\.\d+/.test(v) ? v : null;
 }
 
-// 'same' | 'patch' | 'feature'. The split carries the finding's severity, and
-// it is the whole reason this check does not simply test inequality: a pin is
-// MEANT to lag, so "one patch behind" is the intended steady state and has to
-// stay silent or the daily hook cries wolf about working as designed. A minor
-// or major gap is different in kind — that is where two writers against one
-// shared store can hold different ideas of its format, the failure row S is
-// about.
 // The finding a pin's measured state earns, as one pure decision — separated
 // from the two impure readings that feed it (the filesystem's pin and the
 // registry's answer) so `parser-selftest.mjs` can pin every branch to a fixture
@@ -239,6 +232,13 @@ function pinDriftFinding({ running, floatingSpec, resolves, pinPath }) {
   return note(`pinned at ${running}; the plugin's '${floatingSpec}' resolves to ${resolves} — same feature release`);
 }
 
+// 'same' | 'patch' | 'feature'. The split carries the finding's severity, and
+// it is the whole reason this check does not simply test inequality: a pin is
+// MEANT to lag, so "one patch behind" is the intended steady state and has to
+// stay silent or the daily hook cries wolf about working as designed. A minor
+// or major gap is different in kind — that is where two writers against one
+// shared store can hold different ideas of its format, the failure row S is
+// about.
 function versionGap(a, b) {
   const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
   const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
