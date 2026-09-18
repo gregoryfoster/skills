@@ -150,8 +150,8 @@ that belong to no worker — here `test/499-dormancy-audit`.
 
 **Promoted ([#289](https://github.com/gregoryfoster/skills/issues/289)), in one
 of the two forms the issue offered.** The issue's first remedy — filter on
-`worktree-agent-*` — is wrong for this skill, and the step says so two lines
-above the command: it exists to catch "both `worktree-agent-*` and
+`worktree-agent-*` — is wrong for this skill, and the step says so in the same
+sentence as the command: it exists to catch "both `worktree-agent-*` and
 custom-named branches", because `isolation: "worktree"` has produced
 agent-chosen branch names. Filtering on the prefix restores the false negative
 the command was written to remove, and trades a visible stray for an invisible
