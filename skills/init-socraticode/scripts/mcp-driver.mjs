@@ -2540,8 +2540,12 @@ async function cmdHealthCheck(projectPath, probePath) {
     const running = report.server?.version || report.launch.pinVersion;
     const resolves = registryLatest();
     report.pinDrift = { pinned: running ?? null, floatingSpec, resolves };
-    const f = pinDriftFinding({ running, floatingSpec, resolves, pinPath: pinDir() });
-    findings.push(f);
+    // The one push here that does not name its severity at the call site, and
+    // the exception is the point: which severity this earns IS the decision,
+    // so it lives in a pure function the selftest can pin to fixtures without
+    // a server, a network or a clock. Naming it here would put the rule in the
+    // one place no fixture can reach.
+    findings.push(pinDriftFinding({ running, floatingSpec, resolves, pinPath: pinDir() }));
   }
 
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
@@ -2951,8 +2955,10 @@ export {
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
   expectedArtifactCount, resolveServerLaunch,
-  // the pin, and the drift it trades the install spike for (#295)
-  pinDir, pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
+  // the pin, and the drift it trades the install spike for (#295) — the
+  // resolution half as well as the decision half, so a reordering fails a
+  // fixture rather than only a hand-run
+  pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
   contextIndexComplete, indexedZeroChunks,
