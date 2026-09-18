@@ -256,11 +256,11 @@ class RpcClient {
     // taken on the server's own word — the `— STALE` token it appends to
     // `Built by:` — so a stamp the server declines to annotate reads as
     // current. That is the #297 failure arriving one build later: in
-    // CannObserv/cannabis.observer-wordpress#803 a graph cut by v1.10.0 and
-    // served by v1.11.0 reported READY throughout, three rounds of diagnosis
-    // concluded a PSR-4 `composer.json` declaration "would not help", and PSR-4
-    // resolution had shipped in the very version the artifact predated. Nothing
-    // anywhere said so.
+    // CannObserv/cannabis.observer-wordpress#803 a graph cut by v1.10.0
+    // reported READY throughout, three rounds of diagnosis concluded a PSR-4
+    // `composer.json` declaration "would not help", and PSR-4 resolution had
+    // shipped in v1.11.0 — a version the graph predated. Nothing anywhere
+    // said so.
     //
     // Read loosely, like every parser here: a server that sends no serverInfo,
     // or names no version, leaves this null and the comparison simply does not

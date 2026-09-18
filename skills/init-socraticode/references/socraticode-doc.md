@@ -233,9 +233,9 @@ its JSON.
 The annotation is the server's to volunteer, and every way of not volunteering
 it used to land here: `CannObserv/cannabis.observer-wordpress#803` spent three
 rounds concluding a PSR-4 `composer.json` declaration "would not help", from a
-graph **v1.10.0 built and v1.11.0 served** — PSR-4 resolution having shipped in
-v1.11.0. READY throughout, and nothing said the artifact predated the feature
-under discussion. Since [#297](https://github.com/gregoryfoster/skills/issues/297)
+graph **cut by v1.10.0** — PSR-4 resolution having shipped in **v1.11.0**, so the
+graph predated the feature under discussion. READY throughout, and nothing said
+so. Since [#297](https://github.com/gregoryfoster/skills/issues/297)
 `health-check` keeps the running server's `serverInfo.version` from the MCP
 handshake and makes the comparison itself, so row 1 now means *both* parties
 checked. Reading the stamp **by hand**, you do not have that second opinion:

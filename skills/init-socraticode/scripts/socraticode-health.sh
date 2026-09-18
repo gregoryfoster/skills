@@ -50,13 +50,13 @@ What it reports (to stdout, which Claude Code injects as session context):
   - WHICH BUILD CUT THE GRAPH, against the running server's own version
     (#297). A stored graph reports READY forever, whatever built it, so a
     resolver fix shipped since is invisible from the status alone: in
-    CannObserv/cannabis.observer-wordpress a graph cut by v1.10.0 and served
-    by v1.11.0 sent three rounds of diagnosis to the conclusion that a PSR-4
-    composer.json declaration 'would not help' — PSR-4 resolution having
-    shipped in v1.11.0. A stale or unstamped builder is reported here as its
-    own defect, naming both versions and codebase_graph_build, so the hazard
-    no longer has to live as a hand-written working rule in each repo's
-    AGENTS.md.
+    CannObserv/cannabis.observer-wordpress a graph cut by v1.10.0 sent three
+    rounds of diagnosis to the conclusion that a PSR-4 composer.json
+    declaration 'would not help' — PSR-4 resolution having shipped in v1.11.0,
+    a version the graph predated. A stale or unstamped builder is reported
+    here as its own defect, naming both versions and codebase_graph_build, so
+    the hazard no longer has to live as a hand-written working rule in each
+    repo's AGENTS.md.
   - A configured repo missing its toolchain on this machine (#281): no node,
     so the codebase_* tools cannot start, or no driver, so nothing was
     measured. Only past the manifest gate — see Behaviour.
