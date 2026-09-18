@@ -712,13 +712,23 @@ class TestStalenessIsOursToDecide:
         stopped keeping it, they would all still pass and the live check would
         compare against `null` forever — the pre-#297 behaviour, restored
         invisibly.
+
+        Matched by shape, not by spelling. These are source-text assertions
+        standing in for a check that would otherwise need a live server, and a
+        literal `in src` on a whole call expression fails on a rewrap or an
+        argument rename while the behaviour is untouched. A tripwire that fires
+        on formatting teaches its reader to reach for `--no-verify`, so each
+        pattern below pins the fact (serverInfo is kept; the gate is handed a
+        server version) and tolerates how it is written.
         """
         src = DRIVER.read_text()
-        assert "res.serverInfo" in src, (
+        assert re.search(r"this\.serverInfo\s*=\s*\(?\s*res\b", src), (
             "RpcClient.handshake() must keep the initialize result's serverInfo; "
             "it is the only place the running server names its own version"
         )
-        assert "graphVerdict(graph.text, client.serverVersion)" in src, (
+        assert re.search(
+            r"graphVerdict\(\s*graph\.text\s*,\s*client\.serverVersion\s*\)", src
+        ), (
             "health-check must hand the running server's version to the gate, "
             "or the comparison never happens on the path that matters"
         )
