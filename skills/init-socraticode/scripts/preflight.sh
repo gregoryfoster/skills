@@ -294,6 +294,67 @@ unreachable() {
   esac
 }
 
+# ── Host capacity: the install is the peak, not the index ───────────────────
+# Advisory, never fatal. A small host CAN index — broker's 2 GB node did, under
+# a cap — so this reports the headroom and names the cap rather than refusing.
+#
+# What it is sized against is the measured launch, not the indexing run. On
+# CannObserv/broker (8 GB, SocratiCode 1.14.0) a cold `npx -y --prefer-online
+# socraticode@latest` reached 1.2 G at the cgroup — ~610 MB of process plus
+# ~519 MB of npm page cache — and every one of the 126 MemoryHigh throttle
+# events landed in that install. The same workload from a pre-installed, pinned
+# entry peaked at 75 MB, and a graph build plus a context index at 86 MB. The
+# install is two orders of magnitude above the server it installs (#295).
+#
+# That is why the warning fires on total RAM rather than on repo size, and why
+# the hint is a capped install rather than a smaller index: the index is not
+# what was measured to hurt.
+MEM_KB=""
+SWAP_KB=""
+if [ -r /proc/meminfo ]; then
+  # Field 2 of each line, in kB — the only place Linux states both.
+  MEM_KB="$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)"
+  SWAP_KB="$(awk '/^SwapTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)"
+elif [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+  MEM_B="$(sysctl -n hw.memsize 2>/dev/null || true)"
+  case "$MEM_B" in [0-9]*) MEM_KB="$((MEM_B / 1024))" ;; esac
+  # Deliberately left empty on macOS: swap is dynamic and grown on demand, so
+  # "0 configured" carries none of the meaning it carries on Linux, where it
+  # means there is no cushion at all. Reporting it would invite the same
+  # warning on a host that is not in that trouble.
+fi
+
+case "$MEM_KB" in
+  [0-9]*)
+    MEM_GIB_X10="$((MEM_KB * 10 / 1048576))"   # tenths of a GiB, integer math
+    MEM_HUMAN="$((MEM_GIB_X10 / 10)).$((MEM_GIB_X10 % 10)) GiB"
+    if [ "$MEM_KB" -lt 4194304 ]; then         # < 4 GiB
+      warn "Host memory $MEM_HUMAN — a cold server install peaks near 1.2 G, which is the largest thing this setup does"
+      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -- npm install -g socraticode@<version>"
+      hint "Then set SOCRATICODE_ENTRY to that build so no launch path installs anything"
+      # The shared-host case, named only here. A cap on a session process
+      # protects the host solely when the host's own service holds the
+      # reservation, and this gate cannot tell a dev box from a production node
+      # that is also ssh'd into — broker's VM was both. Saying it on every host
+      # would be a warning that always fires, which is the cry-wolf shape the
+      # health hook is tuned against; under 4 GiB it is the case that bites.
+      hint "If this host also runs a production service, give that service the reservation (MemoryLow=) first — a cgroup cap on a session process STALLS it rather than killing it (references/troubleshooting.md row U)"
+    else
+      pass "Host memory $MEM_HUMAN"
+    fi
+    ;;
+  *)
+    warn "Could not read this host's total memory — the install peak (~1.2 G) is unbudgeted here"
+    ;;
+esac
+
+case "$SWAP_KB" in
+  0)
+    warn "No swap configured — past the memory ceiling the kernel fails atomic allocations in unrelated processes rather than OOM-killing one"
+    hint "That is how broker's 2026-09-16 outage presented: nothing was killed, tailscaled and ksoftirqd failed allocations, and the bus was down 57m (#295)"
+    ;;
+esac
+
 # ── Gate 1: Docker — only when something will run in it ─────────────────────
 # A managed Qdrant is a container. So is an Ollama embedder in `docker` mode,
 # and one in `auto` mode (upstream's default) unless a native Ollama answers on
