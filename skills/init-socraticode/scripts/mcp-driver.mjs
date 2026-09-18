@@ -188,10 +188,15 @@ function pluginSpecFloats() {
 // `1.13.1\n1.13.2` would read as a plausible 1.13.11 — the same trap preflight
 // documents at its own registry read.
 function registryLatest() {
+  // `timeout` is the bound that matters, and it is not belt-and-braces with the
+  // npm flags below. spawnSync BLOCKS the event loop, and health-check's
+  // ceiling is a setTimeout — a blocked loop cannot fire it, so for however
+  // long this call runs, HEALTH_TIMEOUT_MS is deaf. npm's own flags are a
+  // request npm has to honour; this one is the kernel killing the child.
   const out = spawnSync(
     'npm',
     ['view', 'socraticode', 'version', '--silent', '--fetch-timeout=5000', '--fetch-retries=1'],
-    { encoding: 'utf8' }
+    { encoding: 'utf8', timeout: 8000 }
   );
   if (out.status !== 0 || !out.stdout) return null;
   const v = out.stdout.trim().split('\n').pop().trim();
