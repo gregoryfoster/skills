@@ -90,6 +90,83 @@ function subdirsNewestFirst(dir) {
 // running server's version rather than the one on disk (#297). A pin ahead of
 // this is what turns that coincidence into a decision; `pinDriftFinding` is
 // what keeps the resulting gap measured rather than silent (#295).
+// Claude Code expands `${VAR}` and `${VAR:-default}` in a server definition's
+// command, args and env before launching it. A definition this driver reads
+// straight off disk has NOT been through that, so it has to expand them here or
+// it spawns a command literally named `${SOCRATICODE_COMMAND:-npx}` (#309).
+//
+// An unset variable with no default is left verbatim rather than emptied. That
+// matches Claude Code, which loads the config and reports a missing-variable
+// warning, and it keeps a misconfiguration visible: an empty command fails with
+// nothing to grep for, where the literal `${VAR}` names itself in the error.
+const VAR_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
+
+function expandVars(value) {
+  if (typeof value === 'string') {
+    return value.replace(VAR_PATTERN, (whole, name, fallback) => {
+      const v = process.env[name];
+      if (v !== undefined && v !== '') return v;
+      return fallback !== undefined ? fallback : whole;
+    });
+  }
+  if (Array.isArray(value)) return value.map(expandVars);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expandVars(v)]));
+  }
+  return value;
+}
+
+// Where one plugin version directory declares its MCP servers.
+//
+// Claude Code reads `.claude-plugin/plugin.json` and follows its `mcpServers`
+// field, which the plugin reference types `string | array | object` — a path,
+// several paths, or an inline definition. Following that field is the whole
+// point: this driver used to read `mcp.json` while Claude Code read the dotted
+// `.mcp.json` named by that manifest. The two files are byte-identical in every
+// release so far, so the bug was invisible — and SocratiCode#180 is accepted
+// precisely to make them differ, giving Claude Code an overridable launcher
+// while Codex and Cursor keep the literal one (#309).
+//
+// Guessing either filename would then resolve the wrong host's launcher, or,
+// once the definition moves inline, resolve nothing at all and fall through to
+// the npx cache — a worse answer than the stale one, arrived at silently.
+function pluginServerFromVersionDir(versionDir) {
+  const manifest = joinPath(versionDir, '.claude-plugin', 'plugin.json');
+  let declared;
+  try {
+    declared = JSON.parse(readFileSync(manifest, 'utf8'))?.mcpServers;
+  } catch { /* no manifest, or unreadable — the filename fallback below */ }
+
+  const fromFile = (rel, why) => {
+    const path = resolvePath(versionDir, rel);
+    try {
+      const server = JSON.parse(readFileSync(path, 'utf8'))?.mcpServers?.socraticode;
+      return server ? { server, source: `plugin ${why} (${path})` } : null;
+    } catch { return null; }
+  };
+
+  if (typeof declared === 'string') {
+    const hit = fromFile(declared, `${declared} via plugin.json`);
+    if (hit) return hit;
+  } else if (Array.isArray(declared)) {
+    for (const rel of declared) {
+      if (typeof rel !== 'string') continue;
+      const hit = fromFile(rel, `${rel} via plugin.json`);
+      if (hit) return hit;
+    }
+  } else if (declared && typeof declared === 'object' && declared.socraticode) {
+    return { server: declared.socraticode, source: `plugin.json inline (${manifest})` };
+  }
+
+  // No usable manifest. The dotted name first: it is the one Claude Code's own
+  // manifest has always pointed at, so it is the better guess of the two.
+  for (const name of ['.mcp.json', 'mcp.json']) {
+    const hit = fromFile(name, name);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function launchFromPluginConfig() {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || joinPath(homedir(), '.claude');
 
@@ -107,19 +184,19 @@ function launchFromPluginConfig() {
 
   const cacheDir = joinPath(claudeDir, 'plugins', 'cache', 'socraticode', 'socraticode');
   for (const versionDir of [...installed, ...subdirsNewestFirst(cacheDir)]) {
-    const cfgPath = joinPath(versionDir, 'mcp.json');
-    if (!existsSync(cfgPath)) continue;
-    try {
-      const server = JSON.parse(readFileSync(cfgPath, 'utf8'))?.mcpServers?.socraticode;
-      if (server?.command && Array.isArray(server.args)) {
-        return {
-          command: server.command,
-          args: server.args,
-          env: server.env && typeof server.env === 'object' ? server.env : {},
-          source: `plugin mcp.json (${cfgPath})`,
-        };
-      }
-    } catch { /* malformed config — keep looking */ }
+    const hit = pluginServerFromVersionDir(versionDir);
+    if (!hit) continue;
+    // Expanded before validation, so a definition whose command is entirely a
+    // variable still has to produce a real command and an args array.
+    const server = expandVars(hit.server);
+    if (server?.command && Array.isArray(server.args)) {
+      return {
+        command: server.command,
+        args: server.args,
+        env: server.env && typeof server.env === 'object' ? server.env : {},
+        source: hit.source,
+      };
+    }
   }
   return null;
 }
@@ -2959,6 +3036,8 @@ export {
   // resolution half as well as the decision half, so a reordering fails a
   // fixture rather than only a hand-run
   pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
+  // following plugin.json rather than guessing a launcher filename (#309)
+  pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)
   indexStarted, indexAlreadyRunning, runningOperationIsFullIndex,
   contextIndexComplete, indexedZeroChunks,

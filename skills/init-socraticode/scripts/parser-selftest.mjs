@@ -40,6 +40,7 @@ import {
   compareVersions,
   versionGap, pluginSpecFloats, pinDriftFinding, SEVERITY,
   pinVersion, launchFromPin, resolveServerLaunch,
+  pluginServerFromVersionDir, expandVars,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
@@ -779,6 +780,62 @@ try {
   } finally {
     rmSync(unversioned, { recursive: true, force: true });
   }
+
+  // ── following plugin.json rather than guessing a filename (#309) ──────────
+  // The driver read `mcp.json` while Claude Code reads the dotted `.mcp.json`
+  // its own `.claude-plugin/plugin.json` names. Byte-identical in every release
+  // so far, which is why nothing caught it; SocratiCode#180 is accepted
+  // specifically to make them differ. `mcpServers` is typed
+  // `string | array | object`, so all three shapes are pinned here — the inline
+  // one is the form the accepted PR spec produces.
+  const versionDir = (mcpServers, files) => {
+    const d = mkdtempSync(join(tmpdir(), 'sc-vd-'));
+    mkdirSync(join(d, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(d, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'socraticode', mcpServers }));
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(d, name), JSON.stringify(body));
+    return d;
+  };
+  const LITERAL = { mcpServers: { socraticode: { command: 'npx', args: ['-y', '--prefer-online', 'socraticode@latest'] } } };
+  const DECOY = { mcpServers: { socraticode: { command: 'WRONG', args: [] } } };
+  const OVERRIDABLE = { socraticode: {
+    command: '${SOCRATICODE_COMMAND:-npx}',
+    args: ['-y', '--prefer-online', '${SOCRATICODE_SPEC:-socraticode@latest}'],
+  } };
+  const resolved = (d) => { const h = pluginServerFromVersionDir(d); return h ? expandVars(h.server) : null; };
+  const scrub = (d, fn) => { try { return fn(); } finally { rmSync(d, { recursive: true, force: true }); } };
+
+  let d = versionDir('./.mcp.json', { '.mcp.json': LITERAL, 'mcp.json': DECOY });
+  scrub(d, () => {
+    eq('a string mcpServers follows the named file', resolved(d).command, 'npx');
+    // The regression itself: the dotless file is a decoy, and reading it would
+    // have produced `WRONG` while Claude Code launched the real one.
+    eq('…and not the dotless decoy beside it', resolved(d).args.join(' '), '-y --prefer-online socraticode@latest');
+  });
+
+  d = versionDir(['./.mcp.json'], { '.mcp.json': LITERAL });
+  scrub(d, () => eq('an array mcpServers is followed too', resolved(d).command, 'npx'));
+
+  d = versionDir(OVERRIDABLE, {});
+  scrub(d, () => {
+    eq('an inline mcpServers needs no file at all', resolved(d).command, 'npx');
+    eq('…and unset overrides resolve to today\'s exact command',
+      resolved(d).args.join(' '), '-y --prefer-online socraticode@latest');
+  });
+
+  // An unreadable manifest falls back to the historical filenames, dotted
+  // first — the one Claude Code's manifest has always pointed at.
+  d = versionDir('./nope.json', { '.mcp.json': LITERAL, 'mcp.json': DECOY });
+  scrub(d, () => eq('no usable manifest prefers .mcp.json over mcp.json', resolved(d).command, 'npx'));
+
+  // Expansion, which a definition read off disk has not been through.
+  eq('an unset variable takes its default', expandVars('${SC_T_UNSET:-npx}'), 'npx');
+  eq('an unset variable with NO default stays literal', expandVars('${SC_T_UNSET}'), '${SC_T_UNSET}');
+  eq('expansion reaches into args', expandVars(['-y', '${SC_T_UNSET:-x}']).join(' '), '-y x');
+  eq('and into env values', expandVars({ Q: '${SC_T_UNSET:-u}' }).Q, 'u');
+  process.env.SC_T_SET = '/opt/node';
+  try {
+    eq('a set variable wins over the default', expandVars('${SC_T_SET:-npx}'), '/opt/node');
+  } finally { delete process.env.SC_T_SET; }
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');
