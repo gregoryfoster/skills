@@ -837,12 +837,15 @@ try {
   // Expansion, which a definition read off disk has not been through.
   eq('an unset variable takes its default', expandVars('${SC_T_UNSET:-npx}'), 'npx');
   eq('an unset variable with NO default stays literal', expandVars('${SC_T_UNSET}'), '${SC_T_UNSET}');
-  // The two forms part company on an empty value, which is why expandVars
-  // branches on whether a default was written rather than on the value (CR 16).
+  // `:-` is spelled like the shell and does not behave like it. Measured on
+  // Claude Code 2.1.71 with a throwaway plugin: a variable set to the empty
+  // string produced an EMPTY argv element, not the default. Absent means
+  // undefined here, never merely falsy — matching the host is the whole job,
+  // and the shell's reading would diverge from it on exactly this case.
   process.env.SC_T_EMPTY = '';
   try {
-    eq('`:-` treats empty as unset, like the shell', expandVars('${SC_T_EMPTY:-npx}'), 'npx');
-    eq('a bare ${VAR} set to empty expands to empty', expandVars('${SC_T_EMPTY}'), '');
+    eq('an empty value is a value, not an absence', expandVars('${SC_T_EMPTY:-npx}'), '');
+    eq('…and the bare form agrees', expandVars('${SC_T_EMPTY}'), '');
   } finally { delete process.env.SC_T_EMPTY; }
   // CLAUDE_PLUGIN_ROOT is supplied from the version directory, since that is
   // what the host sets it to and a plugin may name a bundled engine with it.

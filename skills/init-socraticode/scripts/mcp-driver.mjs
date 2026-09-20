@@ -106,17 +106,20 @@ function subdirsNewestFirst(dir) {
 const VAR_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
 //
-// The two forms do NOT treat an empty value alike, which is why this branches
-// on whether a default was written rather than on the value alone. `${VAR:-d}`
-// is shell `:-`: empty counts as unset and takes the default. A bare `${VAR}`
-// that is set to empty expands to empty — it was defined, and substituting the
-// literal back would claim it was not.
+// `${VAR:-d}` is spelled like shell `:-` but does NOT behave like it. Measured
+// against Claude Code 2.1.71 with a throwaway plugin whose manifest referenced
+// a file containing both forms: unset took the default, a set value won, and a
+// value set to the EMPTY STRING produced an empty argv element rather than the
+// default. So it is `-` semantics — absent means undefined, not falsy — and
+// only `undefined` may fall through here. Treating empty as absent would hand
+// the session one command and this driver another, on the exact host someone
+// pinned to stop that happening.
 function expandVars(value, extra = {}) {
   if (typeof value === 'string') {
     return value.replace(VAR_PATTERN, (whole, name, fallback) => {
       const v = extra[name] ?? process.env[name];
-      if (fallback !== undefined) return v !== undefined && v !== '' ? v : fallback;
-      return v !== undefined ? v : whole;
+      if (v !== undefined) return v;
+      return fallback !== undefined ? fallback : whole;
     });
   }
   if (Array.isArray(value)) return value.map((v) => expandVars(v, extra));
