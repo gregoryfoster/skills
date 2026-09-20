@@ -845,14 +845,18 @@ if command -v claude >/dev/null 2>&1; then
   # checkout's path hash (#287). Upstream reads SOCRATICODE_AUTO_RESUME=off
   # before any Docker or Qdrant access, so the probe stays a probe.
   #
-  # That is version-bounded, and the guard stays anyway (#295, finding 5).
-  # Claude Code's docs say the statuses are configuration-only from 2.1.238, and
-  # a 2.1.251 host did not start a project stdio server — but that server was
-  # pending approval, so an APPROVED one is still unverified, and the cohort
-  # spans the boundary in both directions (a workstation on 2.1.71 measured
-  # while writing this). One environment variable is the wrong thing to
-  # economise on when removing it regresses every host on an older CLI, and
-  # when the behaviour it guards is a write to a shared store.
+  # It is NOT version-bounded, and #295's finding 5 was wrong to suspect it was
+  # (#309). The docs put configuration-only statuses at 2.1.238, and a 2.1.251
+  # host did not start a project stdio server — but that server was pending
+  # approval, which is the likelier reason. Measured on 2.1.278 with a
+  # throwaway plugin whose MCP server recorded its own argv: `claude mcp list`
+  # STARTED it. A plugin-provided server is already trusted by virtue of the
+  # plugin being installed, so the approval gate that stops a project server
+  # does not apply to it.
+  #
+  # So this guard is load-bearing on current Claude Code, not a legacy
+  # precaution for old hosts, and the behaviour it prevents is a write to a
+  # shared store.
   #
   # How the variable gets there is inferred, not observed (#287 CR 24): it
   # rides claude's own environment into the server it starts, the route a
