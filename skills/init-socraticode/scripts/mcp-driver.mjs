@@ -90,6 +90,10 @@ function subdirsNewestFirst(dir) {
 // running server's version rather than the one on disk (#297). A pin ahead of
 // this is what turns that coincidence into a decision; `pinDriftFinding` is
 // what keeps the resulting gap measured rather than silent (#295).
+//
+// The chain that finds it is `pluginServerFromVersionDir` below; this function
+// is the loop over candidate version directories around it.
+
 // Claude Code expands `${VAR}` and `${VAR:-default}` in a server definition's
 // command, args and env before launching it. A definition this driver reads
 // straight off disk has NOT been through that, so it has to expand them here or
@@ -101,17 +105,23 @@ function subdirsNewestFirst(dir) {
 // nothing to grep for, where the literal `${VAR}` names itself in the error.
 const VAR_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
-function expandVars(value) {
+//
+// The two forms do NOT treat an empty value alike, which is why this branches
+// on whether a default was written rather than on the value alone. `${VAR:-d}`
+// is shell `:-`: empty counts as unset and takes the default. A bare `${VAR}`
+// that is set to empty expands to empty — it was defined, and substituting the
+// literal back would claim it was not.
+function expandVars(value, extra = {}) {
   if (typeof value === 'string') {
     return value.replace(VAR_PATTERN, (whole, name, fallback) => {
-      const v = process.env[name];
-      if (v !== undefined && v !== '') return v;
-      return fallback !== undefined ? fallback : whole;
+      const v = extra[name] ?? process.env[name];
+      if (fallback !== undefined) return v !== undefined && v !== '' ? v : fallback;
+      return v !== undefined ? v : whole;
     });
   }
-  if (Array.isArray(value)) return value.map(expandVars);
+  if (Array.isArray(value)) return value.map((v) => expandVars(v, extra));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expandVars(v)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expandVars(v, extra)]));
   }
   return value;
 }
@@ -149,6 +159,9 @@ function pluginServerFromVersionDir(versionDir) {
     const hit = fromFile(declared, `${declared} via plugin.json`);
     if (hit) return hit;
   } else if (Array.isArray(declared)) {
+    // First file that defines the server wins. Claude Code merges several
+    // sources and its rules may prefer the last; no shipped plugin uses the
+    // array form, so this is unobservable today and stated rather than guessed.
     for (const rel of declared) {
       if (typeof rel !== 'string') continue;
       const hit = fromFile(rel, `${rel} via plugin.json`);
@@ -188,7 +201,12 @@ function launchFromPluginConfig() {
     if (!hit) continue;
     // Expanded before validation, so a definition whose command is entirely a
     // variable still has to produce a real command and an args array.
-    const server = expandVars(hit.server);
+    // `${CLAUDE_PLUGIN_ROOT}` is the variable Claude Code's own inline example
+    // uses, and it is the natural way for a plugin to name a bundled engine.
+    // The host sets it to the plugin directory; we know that directory, so we
+    // supply it rather than leaving the literal to fail at spawn. A value
+    // already in the environment wins, since that is the host's own answer.
+    const server = expandVars(hit.server, { CLAUDE_PLUGIN_ROOT: versionDir });
     if (server?.command && Array.isArray(server.args)) {
       return {
         command: server.command,

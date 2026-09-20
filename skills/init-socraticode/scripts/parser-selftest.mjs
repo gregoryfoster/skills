@@ -827,9 +827,26 @@ try {
   d = versionDir('./nope.json', { '.mcp.json': LITERAL, 'mcp.json': DECOY });
   scrub(d, () => eq('no usable manifest prefers .mcp.json over mcp.json', resolved(d).command, 'npx'));
 
+  d = versionDir({ socraticode: { command: '${CLAUDE_PLUGIN_ROOT}/dist/index.js', args: [] } }, {});
+  scrub(d, () => {
+    const hit = pluginServerFromVersionDir(d);
+    eq('a bundled engine resolves against the version directory',
+      expandVars(hit.server, { CLAUDE_PLUGIN_ROOT: d }).command, `${d}/dist/index.js`);
+  });
+
   // Expansion, which a definition read off disk has not been through.
   eq('an unset variable takes its default', expandVars('${SC_T_UNSET:-npx}'), 'npx');
   eq('an unset variable with NO default stays literal', expandVars('${SC_T_UNSET}'), '${SC_T_UNSET}');
+  // The two forms part company on an empty value, which is why expandVars
+  // branches on whether a default was written rather than on the value (CR 16).
+  process.env.SC_T_EMPTY = '';
+  try {
+    eq('`:-` treats empty as unset, like the shell', expandVars('${SC_T_EMPTY:-npx}'), 'npx');
+    eq('a bare ${VAR} set to empty expands to empty', expandVars('${SC_T_EMPTY}'), '');
+  } finally { delete process.env.SC_T_EMPTY; }
+  // CLAUDE_PLUGIN_ROOT is supplied from the version directory, since that is
+  // what the host sets it to and a plugin may name a bundled engine with it.
+  eq('a supplied variable expands', expandVars('${CLAUDE_PLUGIN_ROOT}/dist/index.js', { CLAUDE_PLUGIN_ROOT: '/pkg' }), '/pkg/dist/index.js');
   eq('expansion reaches into args', expandVars(['-y', '${SC_T_UNSET:-x}']).join(' '), '-y x');
   eq('and into env values', expandVars({ Q: '${SC_T_UNSET:-u}' }).Q, 'u');
   process.env.SC_T_SET = '/opt/node';
