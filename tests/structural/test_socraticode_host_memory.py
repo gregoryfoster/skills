@@ -246,8 +246,69 @@ class TestPreflightReadsTheWholeChain:
         assert not _marked(lines, WARN), lines
         passed = _marked(lines, PASS)
         assert (
-            passed and "keeps 384 MiB" in passed[0] and "keeps 256 MiB" in passed[0]
+            passed
+            and "reserves up to 384 MiB" in passed[0]
+            and "reserves up to 256 MiB" in passed[0]
         ), lines
+
+    @requires_bash
+    def test_siblings_summing_past_their_grant_are_named(self, tmp_path: Path) -> None:
+        """Each within 512M, both together 768M: the kernel shares the 512M.
+
+        `effective_protection()` in mm/page_counter.c: when the children's used
+        claims exceed the parent's effective protection, each gets
+        `protected * parent_effective / siblings_protected`. Checking each claim
+        against its grant alone printed "a.service keeps 384 MiB, b.service
+        keeps 384 MiB" under a ✓ here.
+        """
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(512 * MIB),
+                    "system.slice/a.service": str(384 * MIB),
+                    "system.slice/b.service": str(384 * MIB),
+                },
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        for part in ("system.slice", "512 MiB", "768 MiB", "a.service", "b.service"):
+            assert part in warned[0], f"the warning must name {part!r}: {warned}"
+        assert not _marked(lines, PASS), lines
+        assert not any("keeps 384" in ln for ln in lines), lines
+
+    @requires_bash
+    def test_a_nested_slices_children_are_summed_too(self, tmp_path: Path) -> None:
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(1024 * MIB),
+                    "system.slice/app.slice": str(512 * MIB),
+                    "system.slice/app.slice/x.service": str(384 * MIB),
+                    "system.slice/app.slice/y.service": str(384 * MIB),
+                },
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        assert "under app.slice" in warned[0] and "768 MiB" in warned[0], warned
+        assert "512 MiB app.slice grants" in warned[0], warned
+
+    @requires_bash
+    def test_a_lone_claim_over_its_grant_is_warned_once(self, tmp_path: Path) -> None:
+        """One claimant over its grant is the clamp warning, not also a sum."""
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(128 * MIB),
+                    "system.slice/a.service": str(256 * MIB),
+                },
+            )
+        )
+        assert len(_marked(lines, WARN)) == 1, lines
 
     @requires_bash
     def test_a_unit_two_slices_down_is_read(self, tmp_path: Path) -> None:

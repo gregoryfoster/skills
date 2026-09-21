@@ -408,12 +408,12 @@ esac
 #
 # The mountinfo path is the one argument, and the cgroup mount point is read
 # out of it rather than assumed, so the whole reading follows from one file.
-# `claims`, `clamped` and `deep` are this function's locals, which
+# `claims`, `flagged` and `deep` are this function's locals, which
 # protection_walk and protection_line (called only from here) append to — bash
 # scopes a local to its callees.
 memory_protection() {
   local mountinfo="$1" found mnt opts rp slice low f i
-  local claims="" clamped=0 deep=""
+  local claims="" flagged=0 deep=""
   if [ ! -r "$mountinfo" ]; then
     warn "Memory protection not measured — no $mountinfo here (not Linux, or no /proc), and MemoryLow= is a Linux cgroup v2 setting"
     return 0
@@ -458,19 +458,18 @@ memory_protection() {
     warn "Memory protection not measured past $PROTECTION_DEPTH levels of slice — a MemoryLow= claimed under $deep is not checked"
   fi
 
-  if [ -z "$claims" ]; then
+  if [ "$flagged" -ne 0 ]; then
+    hint "Give system.slice — and every slice between it and the unit, such as a templated unit's system-<name>.slice — a MemoryLow= at least the sum of its children's, daemon-reload, then check the unit's EFFECTIVE value, not its own (references/host-memory.md). cgroup2 is mounted $rp"
+  elif [ -n "$claims" ]; then
+    pass "Memory protection: $claims — each within every slice's grant above it, alone and summed with its siblings (cgroup2 mounted $rp)"
+  elif [ -z "$deep" ]; then
     # "Nothing under it claims" is said only of a tree read to the bottom.
-    [ -z "$deep" ] || return 0
     if [ "$low" = 0 ]; then
       pass "Memory protection: nothing under system.slice claims MemoryLow=, and system.slice grants none (cgroup2 mounted $rp)"
       hint "A MemoryLow= given to a production unit here would be inert until every slice above it grants one (references/host-memory.md)"
     else
       pass "Memory protection: system.slice grants $(low_human "$low"), and nothing under it claims MemoryLow= (cgroup2 mounted $rp)"
     fi
-  elif [ "$clamped" -eq 0 ]; then
-    pass "Memory protection: $claims — each within what its slices grant (cgroup2 mounted $rp)"
-  else
-    hint "Give system.slice — and every slice between it and the unit, such as a templated unit's system-<name>.slice — a MemoryLow= at least the sum of its children's, daemon-reload, then check the unit's EFFECTIVE value, not its own (references/host-memory.md). cgroup2 is mounted $rp"
   fi
 }
 
@@ -514,13 +513,27 @@ PROTECTION_DEPTH=6
 # in a slice inside a slice went unread, and under a slice granting 0 that read
 # as "nothing under it claims MemoryLow=". Locals, globs and arithmetic only,
 # so it runs on bash 3.2.
+#
+# Then the children's claims TOGETHER, against the same grant. Each within it
+# is not enough: when the claims the siblings use add up past what their slice
+# can pass down, effective_protection() gives each a share of that grant in
+# proportion to its usage (mm/page_counter.c, "distribute shares in proportion
+# to utilization"), so two 384M units under a 512M grant are not each sure of
+# 384M. Read statically, as every claim in full use — the case a reservation
+# exists for. Only for two claimants or more: one alone over its grant is
+# already the clamp warning above, and at a grant of 0 every claimant is.
 protection_walk() {
   local dir="$1" prefix="$2" grant="$3" granter="$4" depth="$5" d name low
+  local sum=0 n=0 unbounded="" who="" here
   for d in "$dir"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}" name="${d##*/}"
     low="$(cat "$d/memory.low" 2>/dev/null || true)"
     case "$low" in max | [0-9]*) ;; *) continue ;; esac
+    case "$low" in
+      max) unbounded=1 n=$((n + 1)) who="${who:+$who, }$name max" ;;
+      [1-9]*) sum=$((sum + low)) n=$((n + 1)) who="${who:+$who, }$name $(low_human "$low")" ;;
+    esac
     case "$name" in
       *.slice)
         if [ "$depth" -ge "$PROTECTION_DEPTH" ]; then
@@ -537,18 +550,28 @@ protection_walk() {
         ;;
     esac
   done
+
+  case "$grant" in max | 0) return 0 ;; esac
+  [ "$n" -ge 2 ] || return 0
+  if [ -n "$unbounded" ] || [ "$sum" -gt "$grant" ]; then
+    if [ -n "$unbounded" ]; then sum=max; fi
+    here="${prefix%/}" here="${here##*/}"
+    flagged=1
+    warn "Memory protection: under ${here:-system.slice}, $n children claim $(low_human "$sum") together ($who), more than the $(low_human "$grant") $granter grants — once they use their claims, each keeps a share of it in proportion to its usage, not what it claims"
+  fi
 }
 
 # protection_line UNIT CLAIM EFFECTIVE GRANT GRANTER — one claiming unit:
-# tallied when it keeps its claim, a warning naming the slice that clamps it
-# when it does not.
+# tallied when every slice above grants its claim, a warning naming the slice
+# that clamps it when one does not. "Reserves up to", not "keeps": what it
+# keeps also depends on its siblings' claims, which protection_walk sums.
 protection_line() {
   local unit="$1" claim="$2" eff="$3" grant="$4" granter="$5" who
   if [ "$eff" = "$claim" ]; then
-    claims="${claims:+$claims, }$unit keeps $(low_human "$claim")"
+    claims="${claims:+$claims, }$unit reserves up to $(low_human "$claim")"
     return 0
   fi
-  clamped=1
+  flagged=1
   claims="${claims:+$claims, }$unit"
   if [ "$granter" = system.slice ]; then
     who="system.slice grants $(low_human "$grant")"
