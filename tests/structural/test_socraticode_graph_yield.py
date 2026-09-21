@@ -1454,9 +1454,15 @@ class TestTheBuilderIsJudgedAgainstTheSessionsServer:
     @requires_node
     def test_the_same_fixed_definition_takes_the_handshake(self) -> None:
         """When the check ran the session's own definition, the server said which."""
+        # One source: the same definition, read from the same file (#305 CR 42).
         s = _session_server(
             {"source": "plugin", "plugin": True},
-            {"command": "npx", "args": ["-y", "socraticode@1.14.0"], "plugin": True},
+            {
+                "command": "npx",
+                "args": ["-y", "socraticode@1.14.0"],
+                "plugin": True,
+                "source": "plugin",
+            },
             "1.14.0",
         )
         assert s["version"] == "1.14.0" and "launched too" in s["basis"], s

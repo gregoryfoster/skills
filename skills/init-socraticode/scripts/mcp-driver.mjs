@@ -401,7 +401,13 @@ function sessionServer({ launch, plugin, checkVersion }) {
     launches: npxSpec(plugin) ?? [plugin.command, ...plugin.args].join(' '),
   };
   const fixed = pluginLaunchVersion(plugin);
-  if (fixed && launch?.plugin === true) {
+  // `launch.plugin` says the check launched A plugin definition, not which:
+  // the check resolves its own from the entry applying at its project, and a
+  // caller that read the two at different projects had this branch report the
+  // check's handshake as the session's, beside a definition launching another
+  // version (#305 CR 42). The source names the file the definition was read
+  // from, so equal sources are one definition.
+  if (fixed && launch?.plugin === true && launch.source === plugin.source) {
     return {
       version: checkVersion || fixed,
       basis: 'the plugin\'s own definition, which this check launched too',
@@ -504,7 +510,11 @@ function launchFromNpxCache() {
   return null;
 }
 
-function resolveServerLaunch() {
+// `project` is the checkout being measured, handed on to the plugin read: the
+// definition this check launches has to be the one the session AT THE PROJECT
+// loads, not the one applying at the cwd, or `health-check /abs/B` run from A
+// judges B's graph with A's server (#305 CR 42). Omitted, it is the cwd.
+function resolveServerLaunch({ project } = {}) {
   if (process.env.SOCRATICODE_ENTRY) {
     const p = resolvePath(process.env.SOCRATICODE_ENTRY);
     if (!existsSync(p)) die(`SOCRATICODE_ENTRY does not exist: ${p}`);
@@ -524,7 +534,7 @@ function resolveServerLaunch() {
   if (fromPin) return fromPin;
 
   // 2) The plugin's recorded launch command — the documented install path.
-  const fromPlugin = launchFromPluginConfig();
+  const fromPlugin = launchFromPluginConfig({ project });
   if (fromPlugin) return fromPlugin;
 
   // 3) require.resolve from this module's context (works if socraticode is a dep).
@@ -2284,8 +2294,8 @@ function die(msg) { console.error(`ERROR: ${msg}`); process.exit(1); }
 // symbol-graph metadata collection when a graph lacks one, and verify's sample
 // search pulls a missing embedding model, onto the store's Ollama when it is
 // external.
-async function withClient(fn, { readOnly = false } = {}) {
-  const launch = resolveServerLaunch();
+async function withClient(fn, { readOnly = false, project } = {}) {
+  const launch = resolveServerLaunch({ project });
   console.error(`[driver] server launch (${launch.source}): ${launch.command} ${launch.args.join(' ')}`);
   const client = new RpcClient(launch, {
     SOCRATICODE_AUTO_RESUME: 'off',
@@ -2302,8 +2312,8 @@ async function withClient(fn, { readOnly = false } = {}) {
 // Print how the server would be launched, without launching it. The cheap probe
 // for #85/3b: it answers "can this host find the server at all" with no Docker,
 // no Qdrant, and no network.
-function cmdResolve() {
-  const launch = resolveServerLaunch();
+function cmdResolve(projectPath) {
+  const launch = resolveServerLaunch({ project: projectPath });
   process.stdout.write(JSON.stringify({
     source: launch.source,
     command: launch.command,
@@ -2380,7 +2390,7 @@ async function cmdStatus(projectPath) {
   await withClient(async (client) => {
     const text = await client.callTool('codebase_status', { projectPath });
     process.stdout.write(text + '\n');
-  }, { readOnly: true });
+  }, { readOnly: true, project: projectPath });
 }
 
 async function cmdIndex(projectPath) {
@@ -2554,7 +2564,7 @@ async function cmdIndex(projectPath) {
         return;
       }
     }
-  });
+  }, { project: projectPath });
 }
 
 // Yield gate + infra triage, for Phase 6 and for the once-per-day SessionStart
@@ -2886,7 +2896,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
     }
-  }, { readOnly: true });
+  }, { readOnly: true, project: projectPath });
 
   // ── pinned driver vs floating session (#295) ─────────────────────────────
   // Both halves must hold: this run launched from the pin, AND the plugin's
@@ -3060,7 +3070,7 @@ async function cmdVerify(projectPath) {
     if (!(okGraph && okSearch && okList)) die('verification failed — see lines above');
     if (lastOpFailed) die('verification failed — the last recorded operation FAILED; re-index before declaring this green');
     console.error('[driver] verify OK');
-  }, { readOnly: true });
+  }, { readOnly: true, project: projectPath });
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -3106,7 +3116,8 @@ Commands:
            nothing. Exit 0 when there is no defect — so a repo whose only
            finding is a note stays silent through socraticode-health.sh.
   resolve  print the resolved server launch command as JSON and exit — does not
-           start the server (no Docker, no network); use it to debug resolution
+           start the server (no Docker, no network); use it to debug resolution.
+           Every command launches the plugin definition applying at projectPath
   validate-manifest
            check .socraticodecontextartifacts.json (shape, unique names, every
            path resolves) and exit 0/1; no server, no network. Run before index.
@@ -3275,7 +3286,7 @@ async function runCli() {
       clearTimeout(bomb);
       break;
     }
-    case 'resolve': cmdResolve(); break;
+    case 'resolve': cmdResolve(projectPath); break;
     case 'validate-manifest': cmdValidateManifest(projectPath); break;
     case 'validate-store': cmdValidateStore(projectPath); break;
     case '--help': case '-h': console.log(USAGE); break;
