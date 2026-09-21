@@ -274,6 +274,21 @@ def test_pytest_addopts_is_honoured_too(project: Path) -> None:
     assert _ran(project) == {"plain"}, sorted(_ran(project))
 
 
+def test_a_config_pytest_cannot_read_fails_the_gate(project: Path) -> None:
+    """The gate reads no config, so it cannot silently drop a marker it failed
+    to read: pytest reads it, and refuses (a usage error, exit 4) — which the
+    gate passes through as a failure, having run nothing."""
+    (project / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\naddopts = \"-m 'not browser'\n"
+    )
+    r = _run(FASTAPI, project, UV_STUB_REAL_PYTEST="1")
+    assert r.returncode not in (0, 5), (
+        f"an unparseable pytest config passed the gate (exit {r.returncode})"
+    )
+    assert _ran(project) == set(), sorted(_ran(project))
+    assert "Pre-ship checks passed." not in r.stdout
+
+
 @pytest.mark.parametrize("variant", UV_VARIANTS)
 def test_no_marker_expression_reaches_the_command_line(
     variant: str, project: Path
