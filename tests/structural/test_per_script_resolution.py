@@ -9,9 +9,10 @@ printed `SKILL_SCRIPTS=<dir>`, and Steps 1.5, 2, 4, 5 and 6 ran
 That holds only while `scripts/` is all-or-nothing, and the supported override
 is not. docs/STYLE.md's "wrap, don't fork" recipe ([#105]) puts ONE file in a
 project's `scripts/` — a `pre-ship.sh` wrapper that loads env and delegates
-back to the vendored gate. Three of the thirteen cohort repos carry exactly
-that and nothing else beside it (CannObserv/watcher, usa-wa and power-map,
-listed 2026-09-21), so Step 1 printed `SKILL_SCRIPTS=scripts` and every later
+back to the vendored gate. Three of the thirteen cohort repos keep a
+`scripts/pre-ship.sh` and none of the skill's other five scripts
+(CannObserv/watcher and usa-wa a wrapper, power-map a fork; listed through the
+API 2026-09-21), so Step 1 printed `SKILL_SCRIPTS=scripts` and every later
 step exited 127 on "No such file or directory". No step anticipated 127, and
 the two that did not run were the two whose purpose is to refuse a silent pass:
 Step 1.5's doc check and Step 2's working-tree verdict ([#257]).

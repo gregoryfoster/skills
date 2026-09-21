@@ -46,9 +46,11 @@ KNOB = ".skills/pre-ship-uv-args"
 TOOLS = ("ruff", "python", "pytest")
 
 # argv recorder and, on request, a hand-off to a real pytest. Written in Python
-# so the hand-off can exec this interpreter, which has pytest installed.
-STUB_UV = """#!{python}
-import json, os, sys
+# so the hand-off can exec this interpreter, which has pytest installed; a
+# two-line sh launcher runs it, since a shebang naming a deep venv path can
+# outrun the kernel's shebang limit.
+STUB_LAUNCHER = '#!/bin/sh\nexec "$STUB_PYTHON" "$0.py" "$@"\n'
+STUB_UV = """import json, os, sys
 argv = sys.argv[1:]
 plugin = None
 for d in filter(None, os.environ.get("PYTHONPATH", "").split(os.pathsep)):
@@ -110,6 +112,7 @@ def _clean_env(project: Path, **extra: str) -> dict:
     env["PATH"] = f"{project.parent / 'fakebin'}{os.pathsep}{env.get('PATH', '')}"
     env["UV_LOG"] = str(project.parent / "uv.log")
     env["RAN_LOG"] = str(project.parent / "ran.log")
+    env["STUB_PYTHON"] = sys.executable
     env.update(extra)
     return env
 
@@ -134,8 +137,9 @@ def project(tmp_path: Path) -> Path:
     fakebin = tmp_path / "fakebin"
     fakebin.mkdir()
     uv = fakebin / "uv"
-    uv.write_text(STUB_UV.format(python=sys.executable, tools=TOOLS))
+    uv.write_text(STUB_LAUNCHER)
     uv.chmod(0o755)
+    (fakebin / "uv.py").write_text(STUB_UV.format(tools=TOOLS))
     return root
 
 
@@ -329,9 +333,7 @@ def test_the_knob_reaches_every_uv_call(variant: str, project: Path) -> None:
     r = _run(variant, project)
     assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
     calls = _calls(project)
-    tools = {
-        c["argv"][c["argv"].index(t)] for c in calls for t in TOOLS if t in c["argv"]
-    }
+    tools = {t for c in calls for t in TOOLS if t in c["argv"]}
     assert {"ruff", "python", "pytest"} <= tools, (
         f"{variant}: expected ruff, a python check and pytest; saw {calls}"
     )
