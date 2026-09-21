@@ -2,6 +2,27 @@
 # Once-per-day skills-vendor/ submodule refresh. Auto-commits only on main.
 # Designed for invocation as a Claude Code SessionStart hook — exits 0 on
 # every non-fatal condition so a failure here never blocks a session.
+#
+# The WHOLE script is one `{ … }` block, closed on the last line (#306). It is
+# normally run through a symlink into the very submodule its own `git
+# submodule update` rewrites, and bash does not read a script once: it reads
+# it in pieces as it goes, resuming by byte offset. Were the bytes under it to
+# change mid-run, everything after the update would resume at an old offset
+# into new content — mid-statement, in a different file — on the path that
+# commits and pushes. A brace group is parsed to its closing brace before any
+# of it runs, and the `exit` that ends it means bash never reads past that
+# brace. So: nothing may follow the closing brace, and the block ends in exit.
+#
+# Git itself is not the writer that breaks this today. Measured on git 2.39.3,
+# checkout unlinks a file and creates a new one rather than rewriting it in
+# place, so the running hook keeps the inode it opened and reads the old
+# bytes to the end — tests/structural/test_hook_self_replacement.py pins
+# that. The braces make it not matter: they cover any writer that DOES write
+# in place (cp, GNU install, a shell redirect) and a git that ever starts to.
+# Braces rather than a main() function because they change nothing else — no
+# function scope for anything below to acquire, and "$@" is still the
+# script's own.
+{
 set -euo pipefail
 
 # Backstop: any unhandled error must exit 0 (SessionStart hooks must not
@@ -716,3 +737,4 @@ fi
 _reconcile_unpushed
 
 exit 0
+}
