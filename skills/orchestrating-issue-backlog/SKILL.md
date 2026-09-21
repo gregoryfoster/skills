@@ -149,7 +149,7 @@ Present a table:
 
 Include a note for any intra-batch merge ordering (e.g. "F1 merges first; F2 rebases before merge").
 
-**Count the table's items before asking** — they must equal the issues in scope minus deferrals and closures, each Q0 bundle counting once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it. Write that number, not a re-derived one, into the design doc's Batch execution plan and the tracking issue's Summary: [references/batch-design.md](references/batch-design.md).
+**Count the table's items before asking** — they must equal the issues in scope minus deferrals and closures (Step 9's `<M>`), each Q0 bundle counting once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it. Write that number into the design doc's Batch execution plan and the tracking issue's Summary: [references/batch-design.md](references/batch-design.md).
 
 Get approval before writing the design doc.
 
@@ -167,7 +167,7 @@ Sections:
 - **Conflict zones** — contested files and their required merge order
 - **Dependency graph** — ASCII or text
 - **Batch execution plan** — per-batch table with agents, issues, files, gate condition
-- **Key decisions** — rationale for non-obvious choices (e.g. why a correctness fix leads a refactor batch); name any read-only shared files, the batch's single chain-appending agent, and any verification-mode asymmetry (an agent that changes the test runner's config verifies under the *old* mode in its own worktree, so the orchestrator's post-merge run is the first under the new one — say so, or a distribution-mode interaction gets misattributed to one agent's defect), including a guard that skips only in worktrees, which Rule 3's baseline finds when measured in both trees: [references/batch-design.md](references/batch-design.md)
+- **Key decisions** — rationale for non-obvious choices (e.g. why a correctness fix leads a refactor batch); name any read-only shared files, the batch's single chain-appending agent, and any verification-mode asymmetry (an agent that changes the test runner's config verifies under the *old* mode in its own worktree, so the orchestrator's post-merge run is the first under the new one — say so, or a distribution-mode interaction gets misattributed to one agent's defect), including a guard that skips only in worktrees: [references/batch-design.md](references/batch-design.md)
 - **Runtime note on issue-body decay** — the backlog is N sequential mutations of what the bodies describe, so re-verify the specifics of any issue whose files an earlier batch touched (Worker step 5); the later the batch, the staler the body
 - **Deferred items** — what was explicitly excluded and why
 - **Out of scope** — anything that came up but was ruled out
