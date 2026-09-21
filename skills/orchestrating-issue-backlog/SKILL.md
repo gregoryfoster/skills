@@ -4,7 +4,7 @@ description: Prioritize an open issue backlog using agreed rubrics, analyze conf
 compatibility: Designed for Claude. Requires git, gh CLI, and a project using git worktrees for branch isolation.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: "orchestrate backlog, prioritize issues, plan issue execution, clear backlog"
 ---
 
@@ -40,7 +40,7 @@ Rule and Worker-step numbers cited in this file refer to [references/execution.m
 
 ### Step 1–2: Context gathering
 
-**Sync `main` before analysing, not just before launching** (Rule 1, which carries both the commands and why a stale checkout corrupts the plan), then clear any untracked stray from the main checkout. The stray sweep is Rule 6 hygiene — its fall-through detection assumes a clean baseline, or it reports a dirty tree on every completion signal.
+**Sync `main` before analysing, not just before launching** (Rule 1 has the commands and why a stale checkout corrupts the plan), then clear any untracked stray from the main checkout — Rule 6's fall-through detection assumes a clean baseline, or reports a dirty tree on every completion signal.
 
 Then fetch issues and read project context before asking any questions. Go into the interview knowing:
 - Rough categories of issues (architectural, bug, feature, infra)
@@ -128,7 +128,7 @@ Group issues into **merge batches**. The core principle: within a batch, all age
 **Batch design rules:**
 - **Batch 0 / Batch A**: truly isolated issues — each touches files no other issue in this batch touches. Maximum agent count.
 - **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`.
-- **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free). Agents within a sub-wave run in parallel up to the ceiling; sub-waves themselves run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves. Where N greatly exceeds a small ceiling, write the chunking as **exclusion groups plus a queue** rather than fixed sub-waves, and name the longest chain as the critical path: [references/batch-design.md](references/batch-design.md).
+- **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free), run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves. Where N greatly exceeds a small ceiling, write the chunking as **exclusion groups plus a queue** rather than fixed sub-waves, and name the longest chain as the critical path: [references/batch-design.md](references/batch-design.md).
 - **Subsequent batches**: ordered by the dependency chain of contested files. One agent per batch on the critical path; parallelize only where file coverage is genuinely disjoint.
 - **Pick a shape for same-file issue pairs** — when two issues share a file (typically a small prerequisite + a larger dependent), there are two clean shapes:
   - **Shape A — bundle in one agent with sequential commits.** Touch the same file(s), both pieces small enough that reviewing together is the natural shape (e.g. define constants then use them; fix protocol then add config models). Lower ceremony — no gate, single review.
@@ -148,11 +148,13 @@ Present a table:
 
 Include a note for any intra-batch merge ordering (e.g. "F1 merges first; F2 rebases before merge").
 
+**Count the table's items before asking** — scored rows minus deferrals, each Q0 bundle once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it: [references/batch-design.md](references/batch-design.md).
+
 Get approval before writing the design doc.
 
 ### Step 8: Design doc
 
-The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The section structure below is specific to backlog orchestration and differs from the generic plan structure prescribed by `writing-plans` — share the directory, not the shape.
+The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The sections below are specific to backlog orchestration, not `writing-plans`' generic structure — share the directory, not the shape.
 
 Read [references/execution.md](references/execution.md) before writing it: the doc records the batch→main merge strategy that file has you ask for.
 
