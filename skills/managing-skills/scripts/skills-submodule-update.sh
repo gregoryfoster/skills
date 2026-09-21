@@ -25,9 +25,19 @@
 {
 set -euo pipefail
 
-# Backstop: any unhandled error must exit 0 (SessionStart hooks must not
-# block a session). Logs a one-line breadcrumb to LOG when LOG is already
-# defined, so unexpected failures remain debuggable.
+# Backstop: an unhandled error in a TOP-LEVEL statement exits 0 (SessionStart
+# hooks must not block a session), with a one-line breadcrumb to LOG when LOG
+# is already defined, so unexpected failures remain debuggable.
+#
+# Top-level statements only. Without `set -E` an ERR trap is not inherited by
+# functions, and `set -e` exits inside one with the failing command's own
+# status: measured on bash 3.2.57, a bare `false` in a function exits 1 with
+# no breadcrumb. So every function here (_reconcile_unpushed, _install_doctor
+# and the rest) must guard its own commands; this does not cover them.
+# `set -E` is NOT the fix: it carries the trap into command substitutions too,
+# where it fires and exits 0 in the subshell — measured, the checked
+# `$(git status …) || STATUS_RC=$?` below then reads rc 0, and a failed status
+# becomes "nothing to commit".
 _hook_panic() {
   local rc=$?
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] unexpected hook error (rc=$rc)" \
