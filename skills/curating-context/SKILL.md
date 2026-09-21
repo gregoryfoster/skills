@@ -88,9 +88,9 @@ unattended mode. Otherwise defaults apply.
 
 ## Script path resolution
 
-The skill's `scripts/` directory is not at the project root — it ships inside the
-skill. Resolve each script once, then substitute its printed path wherever its
-`<name.sh>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
+`scripts/` ships inside the skill, not at the project root: resolve each script
+once and substitute its printed path for its `<name.sh>` below
+([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
 <!-- skill:required id=skill-scripts -->
 ```bash
@@ -99,13 +99,14 @@ for S in measure-context.sh record-telemetry.sh verify-facts.sh prove-no-loss.sh
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
-  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
 done
 ```
 
 A project-local `scripts/<name>` wins for that script alone ([#301](https://github.com/gregoryfoster/skills/issues/301)).
-Each `<name.sh>` is a **placeholder**, not a shell variable — each Bash
-invocation is a fresh shell.
+Each `<name.sh>` is a **placeholder**, not a shell variable; every Bash call
+is a fresh shell.
 
 Every script reads the ratio, the archival matcher, the docs-dir knob and **both
 budgets** from `_context-lib.sh` — vendor the whole `scripts/` directory, never

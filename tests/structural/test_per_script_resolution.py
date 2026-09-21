@@ -33,6 +33,10 @@ What this file pins:
 - **A script found nowhere stops the block, naming it** — including when the
   script before it resolved from `scripts/`, which is the case a missing
   per-iteration `SD=` reset would silently answer with the wrong directory.
+  Under zsh as well as bash, since the Bash tool runs in zsh wherever that is
+  the login shell (macOS's default): zsh never expands the word of
+  `${SD:?word}`, so the name that used to live there printed as a literal
+  `$S` (CR 4). The single-script blocks (`reviewing-*`) are held to the same.
 - **Every placeholder has a published path, and every published path ships.**
 - **No directory placeholder survives** in a skill that carries a block.
 - **The steps that enumerate exit codes say what 127 means**, so "not found"
@@ -48,6 +52,7 @@ What this file pins:
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -153,13 +158,33 @@ def _project(
     return proj
 
 
-def _run(name: str, proj: Path) -> subprocess.CompletedProcess:
+# The shells a block must behave the same in. The Bash tool runs commands in
+# the user's login shell when that is bash or zsh, and zsh is macOS's default.
+SHELLS = ["bash", "zsh"]
+_ZSH_MISSING = (
+    "zsh is not on PATH, so the resolution blocks were NOT run under zsh — the "
+    "shell the Bash tool uses wherever it is the login shell, macOS's default. "
+    "Install zsh to get that coverage; set ZSH_REQUIRED=1 to make its absence "
+    "a failure instead of a skip."
+)
+
+
+def _argv(shell: str) -> list[str]:
+    if shell == "zsh" and not shutil.which("zsh"):
+        if os.environ.get("ZSH_REQUIRED", "") not in ("", "0"):
+            pytest.fail(_ZSH_MISSING)
+        pytest.skip(_ZSH_MISSING)
+    # -f: no startup files, so a developer's own .zshrc cannot decide the run.
+    return ["zsh", "-f", "-c"] if shell == "zsh" else ["bash", "-c"]
+
+
+def _run(name: str, proj: Path, shell: str = "bash") -> subprocess.CompletedProcess:
     # HOME is the fixture's, so the third probe cannot find a real user-level
     # install of the skill on the machine running the suite.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["HOME"] = str(proj.parent / "home")
     return subprocess.run(
-        ["bash", "-c", _block(name)],
+        [*_argv(shell), _block(name)],
         cwd=str(proj),
         capture_output=True,
         text=True,
@@ -181,9 +206,10 @@ def _skill_path(name: str, script: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("name", SHIPPING)
 def test_the_watcher_layout_keeps_its_wrapper_and_resolves_the_rest(
-    name: str, tmp_path: Path
+    name: str, shell: str, tmp_path: Path
 ) -> None:
     """The reported repro, and #105's override, in one fixture.
 
@@ -192,7 +218,8 @@ def test_the_watcher_layout_keeps_its_wrapper_and_resolves_the_rest(
     one script this block runs. Every other script must resolve to the skill:
     under the old block they all resolved to `scripts/` and exited 127.
     """
-    r = _run(name, _project(tmp_path, name, project_scripts=("pre-ship.sh",)))
+    proj = _project(tmp_path, name, project_scripts=("pre-ship.sh",))
+    r = _run(name, proj, shell)
     assert r.returncode == 0, f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
     resolved = _resolved(r.stdout)
     assert sorted(resolved) == sorted(_listed(name)), (
@@ -220,10 +247,13 @@ def test_the_watcher_layout_keeps_its_wrapper_and_resolves_the_rest(
     )
 
 
+@pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("name", PUBLISHERS)
-def test_a_project_copy_wins_for_its_own_script_only(name: str, tmp_path: Path) -> None:
+def test_a_project_copy_wins_for_its_own_script_only(
+    name: str, shell: str, tmp_path: Path
+) -> None:
     first = _listed(name)[0]
-    r = _run(name, _project(tmp_path, name, project_scripts=(first,)))
+    r = _run(name, _project(tmp_path, name, project_scripts=(first,)), shell)
     assert r.returncode == 0, f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
     resolved = _resolved(r.stdout)
     expected = {
@@ -237,9 +267,10 @@ def test_a_project_copy_wins_for_its_own_script_only(name: str, tmp_path: Path) 
     )
 
 
+@pytest.mark.parametrize("shell", SHELLS)
 @pytest.mark.parametrize("name", PUBLISHERS)
 def test_a_script_found_nowhere_stops_the_block_by_name(
-    name: str, tmp_path: Path
+    name: str, shell: str, tmp_path: Path
 ) -> None:
     """At Step 1, not as a 127 mid-procedure — and never with the previous
     script's directory.
@@ -247,6 +278,10 @@ def test_a_script_found_nowhere_stops_the_block_by_name(
     The script before the missing one resolves from `scripts/`, so a block
     that forgot to clear SD per script would print `scripts/<missing>` with
     exit 0 — #301 in miniature, reintroduced by the fix.
+
+    Named in zsh too. The name used to ride in `${SD:?$S not found in …}`,
+    whose word zsh prints verbatim: the block stopped, but on
+    `SD: $S not found in scripts/, .claude/skills/$N/scripts/, …`.
     """
     listed = _listed(name)
     if len(listed) > 1:
@@ -256,19 +291,54 @@ def test_a_script_found_nowhere_stops_the_block_by_name(
         # the found-nowhere half.
         missing, project_scripts = listed[0], ()
     proj = _project(tmp_path, name, project_scripts=project_scripts, missing=(missing,))
-    r = _run(name, proj)
+    r = _run(name, proj, shell)
     assert r.returncode != 0, (
-        f"{name}: {missing} exists nowhere, yet the block exited 0 and "
-        f"printed {_resolved(r.stdout)}. It must stop here, naming it."
+        f"{name} ({shell}): {missing} exists nowhere, yet the block exited 0 "
+        f"and printed {_resolved(r.stdout)}. It must stop here, naming it."
     )
-    assert missing in r.stderr, (
-        f"{name}: the failure must name the script that was not found; "
-        f"stderr={r.stderr!r}"
-    )
+    _assert_names_what_it_missed(name, shell, missing, r.stderr)
     assert missing not in _resolved(r.stdout), r.stdout
     assert "ran:" not in r.stdout, (
         f"{name}: a script ran although resolution had failed: {r.stdout!r}"
     )
+
+
+def _assert_names_what_it_missed(name: str, shell: str, missing: str, stderr: str):
+    assert missing in stderr, (
+        f"{name} ({shell}): the failure must name the script that was not "
+        f"found; stderr={stderr!r}"
+    )
+    assert f".claude/skills/{name}/scripts/" in stderr, (
+        f"{name} ({shell}): the failure must name where it looked, with the "
+        f"skill's name filled in; stderr={stderr!r}"
+    )
+
+
+# Every block that resolves one script and runs it, publishing nothing.
+SINGLES = sorted(
+    p.parent.name
+    for p in SKILLS_DIR.glob("*/SKILL.md")
+    if RESOLUTION_LOOP in p.read_text() and p.parent.name not in PUBLISHERS
+)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("name", SINGLES)
+def test_a_single_script_found_nowhere_stops_the_block_by_name(
+    name: str, shell: str, tmp_path: Path
+) -> None:
+    """The same promise in the one-script form: its guard carried the searched
+    paths in `${SD:?…}`'s word, which zsh printed with `$N` unexpanded."""
+    m = re.search(r"^N=\S+ S=(\S+\.sh) SD=$", _block(name), re.M)
+    assert m, f"{name}: no `N=… S=<script>.sh SD=` header in its block"
+    script = m.group(1)
+    r = _run(name, _project(tmp_path, name, missing=(script,)), shell)
+    assert r.returncode != 0, (
+        f"{name} ({shell}): {script} exists nowhere, yet the block exited 0: "
+        f"stdout={r.stdout!r}"
+    )
+    _assert_names_what_it_missed(name, shell, script, r.stderr)
+    assert "ran:" not in r.stdout, r.stdout
 
 
 # ---------------------------------------------------------------------------

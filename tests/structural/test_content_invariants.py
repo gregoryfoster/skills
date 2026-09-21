@@ -1948,15 +1948,21 @@ def _resolves_a_list(skill_name: str) -> bool:
     return skill_name.startswith("shipping-work")
 
 
-# The single-script block's guard, and the per-script loop's, which names the
-# script it could not find.
-RESOLUTION_GUARD = (
-    "${SD:?not found in scripts/, .claude/skills/$N/scripts/, "
-    "or ~/.claude/skills/$N/scripts/}"
+# The line both shapes share, naming the script found nowhere and where it was
+# looked for. It is a line of its own, and each guard after it a bare
+# `${SD:?}`, because zsh never expands the word of `${SD:?word}`: a name put
+# there printed as a literal `$S`, `$N` and all, wherever the Bash tool runs
+# in zsh — the macOS login-shell default (#301 CR 4).
+NOT_FOUND = (
+    '[ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, '
+    'or ~/.claude/skills/$N/scripts/" >&2'
 )
-LIST_GUARD = (
-    "${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, "
-    "or ~/.claude/skills/$N/scripts/}"
+# A guard carrying a word at all, in the fenced block a skill arms.
+# `test_guard_present` holds every block to none: the word is what zsh prints
+# unexpanded. Prose may still write `${SD:?…}` for the construct.
+WORDED_GUARD = re.compile(r"\$\{SD:\?[^}]")
+ARMED_BLOCK = re.compile(
+    r"^<!-- skill:required id=skill-scripts -->\n```[a-z]*\n(.*?)^```$", re.M | re.S
 )
 
 
@@ -2028,10 +2034,7 @@ class TestPhase1DoctorPreflight:
         #
         # The invocation guards at the call site rather than relying on an
         # earlier line having aborted first.
-        invocation = (
-            'bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, '
-            'or ~/.claude/skills/$N/scripts/}/$S"'
-        )
+        invocation = f'{NOT_FOUND}\nbash "${{SD:?}}/$S"\n'
         if _resolves_a_list(_skill_name):
             # Straight after the list loop, whose echo already stopped on any
             # script found nowhere: SD and S still hold the script resolved
@@ -2044,12 +2047,12 @@ class TestPhase1DoctorPreflight:
 
     def test_doctor_preflight_guards_unresolved_path(self, skill_and_script):
         body, _skill_name, _script_name = skill_and_script
-        # `${SD:?…}` is what turns "resolved nothing" into a loud failure
-        # naming the searched paths, rather than a silent no-op loop.
-        guard = LIST_GUARD if _resolves_a_list(_skill_name) else RESOLUTION_GUARD
-        assert guard in body, (
+        # NOT_FOUND then `${SD:?}` is what turns "resolved nothing" into a
+        # loud failure naming the script and the searched paths, rather than a
+        # silent no-op loop.
+        assert NOT_FOUND in body, (
             "SKILL.md Phase 1 must fail loudly when no candidate resolves. "
-            f"Expected the guard:\n  {guard}"
+            f"Expected the line naming what was not found:\n  {NOT_FOUND}"
         )
 
     def test_doctor_preflight_paragraph_present(self, skill_and_script):
@@ -2247,10 +2250,19 @@ class TestScriptResolutionBlock:
 
     def test_guard_present(self, skill_md):
         text = skill_md.read_text()
-        assert RESOLUTION_GUARD in text or LIST_GUARD in text, (
+        assert NOT_FOUND in text, (
             f"{skill_md.parent.name}/SKILL.md must fail loudly when no "
-            f"candidate resolves. Expected the guard:\n  {RESOLUTION_GUARD}\n"
-            f"or, in a per-script loop, the one naming the script:\n  {LIST_GUARD}"
+            f"candidate resolves, naming the script and where it looked:\n"
+            f"  {NOT_FOUND}"
+        )
+        block = ARMED_BLOCK.search(text)
+        assert block, f"{skill_md.parent.name}/SKILL.md arms no skill-scripts block"
+        worded = sorted(set(WORDED_GUARD.findall(block.group(1))))
+        assert not worded, (
+            f"{skill_md.parent.name}/SKILL.md carries a `${{SD:?word}}` guard "
+            f"({worded}). zsh prints the word unexpanded, so a `$S` or `$N` in "
+            "it never names anything; name the script on the line above and "
+            "guard with a bare `${SD:?}`."
         )
 
     def test_placeholder_uses_have_a_publisher(self, skill_md):
@@ -2269,7 +2281,7 @@ class TestScriptResolutionBlock:
         )
         if not uses:
             pytest.skip("skill has no <X.sh> substitution sites")
-        publisher = f'echo "<$S>={LIST_GUARD}/$S"'
+        publisher = f'{NOT_FOUND}\n  echo "<$S>=${{SD:?}}/$S"\n'
         assert publisher in skill_md.read_text(), (
             f'{skill_dir.name} has {uses} `bash "<X.sh>"` site(s) '
             "(SKILL.md + references/) but SKILL.md never prints the paths to "

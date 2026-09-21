@@ -6,44 +6,42 @@ carries the conventions that need a full template and a rationale.
 
 ## Invoking a skill's own scripts (per-script resolution)
 
-**Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path resolves to a file that doesn't exist — the invocation fails with "No such file or directory" in every project that doesn't happen to carry its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
+**Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path names a file that doesn't exist, failing with "No such file or directory" in every project without its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
 
 Instead, resolve and substitute — **per script, never per directory.** Each skill's SKILL.md carries one resolution block — for `shipping-*` it is folded into the Step 1 doctor preflight; `using-git-worktrees`, `writing-plans`, `curating-context` and `auditing-ci-cost` get a standalone "Script path resolution" section. It resolves **every script the skill's steps and references run** and prints one `<name.sh>=<path>` line each:
 
 ```bash
 N=<skill-name>
-
-# shipping-* only — resolution follows the doctor so a freshly healed
-# symlink chain is visible to the probe.
+# shipping-* only.
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
 
 for S in <script>.sh … <step-script>.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
-  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
 done
 
-# shipping-* only: runs the script resolved LAST, so the step's own
-# script (pre-ship.sh) ends the list.
+# shipping-* only: runs the last script resolved, so pre-ship.sh ends the list.
 bash "${SD:?}/$S"
 ```
 
-Later steps are written `bash "<doc-check.sh>"` and substitute the path printed for that script. `reviewing-*` run one script from one block and feed no later step, so theirs is the degenerate case: header `N=<skill-name> S=gather-context.sh SD=`, the doctor, the inner loop, then `bash "${SD:?not found in …}/$S"`, publishing nothing.
+Later steps are written `bash "<doc-check.sh>"` and substitute the path printed for that script. `reviewing-*` run one script from one block and feed no later step, so theirs is the degenerate case: header `N=<skill-name> S=gather-context.sh SD=`, the doctor, the inner loop and the not-found line, then `bash "${SD:?}/$S"`, publishing nothing.
 
 Notes on the shape:
 
 - **Resolve per script, never reuse a directory** ([#301](https://github.com/gregoryfoster/skills/issues/301)). The publishing block used to probe one anchor (`pre-ship.sh`), print its directory as `SKILL_SCRIPTS=`, and run every later step's *different* script from it. The wrapper override below breaks that: CannObserv/watcher and usa-wa keep a `pre-ship.sh` wrapper in `scripts/` (power-map a fork) and none of the skill's other five scripts, so Steps 1.5, 2, 4, 5 and 6 all exited 127 — a code no step anticipated, in the two steps whose purpose is to refuse a silent pass. Requiring `scripts/` to be complete instead would have taken `pre-ship.sh` off the wrapper and failed the gate on missing secrets.
 - **Every script up front.** One found nowhere stops the block at Step 1, by name, where the Iron Law can still act — not as a 127 five steps later.
-- **Clear `SD` on every pass** (`do SD=`; on the header line in the single form). Otherwise a script found nowhere inherits the previous one's directory and exits 0, and a value inherited from the environment defeats `${SD:?…}`.
+- **Clear `SD` on every pass** (`do SD=`; on the header line in the single form). Otherwise a script found nowhere inherits the previous one's directory and exits 0, and a value inherited from the environment defeats `${SD:?}`.
 - **Probe for the script file, not the directory.** `[ -d "$d" ]` would falsely match any project that has an unrelated root `scripts/` — this repo does.
-- **Guard at the call site.** Every expansion that feeds a path carries `${SD:?…}`; the loop's names the script, and the run line's bare `${SD:?}` is the backstop.
+- **Name the script on its own line, then guard each path with a bare `${SD:?}`.** zsh (the Bash tool's shell where it is the login shell, as on macOS) prints `${SD:?word}`'s *word* unexpanded — a literal `$S`.
 - **A project-local `scripts/<name>` wins, for that script alone.** Preserves consumers that worked around #63 with their own copies, and the wrapper override. A project script that merely shares a name wins too, and its printed `scripts/…` line is how that shows; no cohort repo had one when #301 was measured.
 - **`$HOME/.claude/skills/…` last** covers user-level and plugin installs.
 - **Resolution must run *after* `.skills/doctor.sh`,** so a freshly healed vendor symlink chain is visible to the probe.
 - **`<name.sh>` is a placeholder, not a shell variable** — same convention as `init-project-fastapi` Phase 0's `<SKILL_DIR>`. Each Bash tool call is a fresh shell. There is deliberately no directory placeholder: a directory is what leaked from one script's resolution to another's.
 
-`TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) pins the lines both shapes share. [tests/structural/test_per_script_resolution.py](../tests/structural/test_per_script_resolution.py) owns the list — every placeholder published, every published script shipped and used, no directory placeholder left — and runs each block against watcher's layout, a single project copy, and a missing script.
+`TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) pins the lines both shapes share. [tests/structural/test_per_script_resolution.py](../tests/structural/test_per_script_resolution.py) owns the list — every placeholder published, every published script shipped and used, no directory placeholder left — and runs each block against watcher's layout, a single project copy, and a missing script, in bash and zsh.
 
 ## Gate-script discipline
 
