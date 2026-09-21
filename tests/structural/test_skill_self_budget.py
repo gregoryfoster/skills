@@ -321,9 +321,11 @@ SKILL_MD_RATCHETS = {
     # pointer, per phase. Came down from 10,902 by demoting nine blocks into
     # references/. Reaching 6,000 means deleting procedure, and this skill's own
     # Phase 4 is explicit that a budget which cannot be met without touching
-    # class A is the wrong budget for that file. Unlike the others below, its
-    # ratchet sits above current size on purpose: the gap is the working room
-    # for the documented +250-per-round edit budget, reconciled in its prose.
+    # class A is the wrong budget for that file. Its ratchet sits at the module
+    # rule like the three below — 7,591 exact against 7,600 at #294's anchor
+    # refresh — so it holds no working room for the +250-per-round edit budget.
+    # Its prose caps that budget at the headroom left under the ratchet,
+    # "whichever is smaller", and for an exception the headroom always is.
     "curating-context": 7_600,
     # A bootstrap runbook that emits a whole project: pyproject, FastAPI
     # skeleton, structured logging, TDD scaffold, deploy key, systemd unit. Most
