@@ -488,13 +488,17 @@ SKILL_MD_RATCHETS = {
 # The next crossing came on the 38th, one day later, and this block's prediction
 # held: it was a ROW-LENGTH problem, not a signal to split finer. The 2026-08-19
 # row put the index 77 tokens over; trimming the eight longest historical rows
-# back to the headline the index's own footer asks for recovered ~2,660 and left
-# it at 7,416 / 2,584 of margin — the longest row down from 1,649 bytes to 975.
+# back to a headline recovered ~2,660 and left it at 7,416 / 2,584 of margin —
+# the longest row down from 1,649 bytes to 975.
 #
 # So the rule is now measured rather than predicted, and it is the one to apply
 # next time: trim rows, do not split the file. Splitting by half-year would buy
 # one more year and add a hop for every reader. The entry files are where the
-# detail belongs, which is what makes trimming a move rather than a loss.
+# detail belongs, which is what makes trimming a move rather than a loss. The
+# session that makes the next breach will read it in the "Adding an entry"
+# layout rules of skills/orchestrating-issue-backlog/references/process-log.md,
+# which state the headline row, its size, and this breach rule (#298 CR 11);
+# a year index carries no footer of its own.
 #
 # `None` would mean exempt; any other value is a hard ceiling. The mechanism is
 # kept, and proven by TestTheExemptionMechanism, because the next doc that needs
