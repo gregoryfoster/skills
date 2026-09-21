@@ -408,7 +408,7 @@ esac
 # `claims` and `clamped` are this function's locals, which protection_line
 # (called only from here) appends to — bash scopes a local to its callees.
 memory_protection() {
-  local mountinfo="$1" found mnt opts rp slice low d e name claim eff via
+  local mountinfo="$1" found mnt opts rp slice low d e name claim eff via f i
   local claims="" clamped=0
   if [ ! -r "$mountinfo" ]; then
     warn "Memory protection not measured — no $mountinfo here (not Linux), and MemoryLow= is a Linux cgroup v2 setting"
@@ -416,7 +416,18 @@ memory_protection() {
   fi
   # Field 5 is the mount point; after the lone '-' come the fs type, the
   # source and the superblock options, which is where memory_recursiveprot is.
-  found="$(awk '{ for (i = 7; i <= NF; i++) if ($i == "-") { if ($(i + 1) == "cgroup2") { print $5 " " $(i + 3); exit } break } }' "$mountinfo" 2>/dev/null || true)"
+  # Read with builtins, so no missing tool can turn "not measured" into a false
+  # "cgroup2 is not mounted".
+  found=""
+  while read -r -a f; do
+    for ((i = 6; i < ${#f[@]}; i++)); do
+      if [ "${f[i]}" = - ]; then
+        [ "${f[i + 1]:-}" = cgroup2 ] && found="${f[4]} ${f[i + 3]:-}"
+        break
+      fi
+    done
+    [ -z "$found" ] || break
+  done <"$mountinfo"
   if [ -z "$found" ]; then
     warn "Memory protection not measured — cgroup2 is not mounted, so there is no memory.low for a MemoryLow= to set"
     return 0

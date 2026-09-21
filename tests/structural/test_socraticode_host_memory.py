@@ -110,13 +110,19 @@ def _host(
     return mountinfo
 
 
-def _read(mountinfo: Path) -> tuple[list[str], str]:
-    """Run the lifted reading; return its output lines, and the whole stdout."""
+def _read(mountinfo: Path, path: str | None = None) -> tuple[list[str], str]:
+    """Run the lifted reading; return its output lines, and the whole stdout.
+
+    `path` replaces PATH for the run, to take tools away from it.
+    """
+    env = dict(os.environ) if path is None else {**os.environ, "PATH": path}
     result = subprocess.run(
-        ["bash", "-c", _lifted(), "memory-protection", str(mountinfo)],
+        [shutil.which("bash") or "/bin/bash", "-c", _lifted(), "memory-protection"]
+        + [str(mountinfo)],
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
     assert result.returncode == 0, (
         f"the memory-protection reading exited {result.returncode} — it is "
@@ -273,6 +279,21 @@ class TestPreflightReadsTheWholeChain:
             )
         )
         assert not _marked(lines, WARN), lines
+
+    @requires_bash
+    def test_a_missing_tool_is_not_read_as_no_cgroup2(self, tmp_path: Path) -> None:
+        """The mount is parsed with builtins; only the memory.low reads use cat.
+
+        test_socraticode_external_store.py runs preflight on a PATH of six
+        tools. There an awk-based parse came back empty and would have said
+        "cgroup2 is not mounted" on a host where it is — a false fact where
+        "not measured" is the truth.
+        """
+        empty = tmp_path / "empty-bin"
+        empty.mkdir()
+        lines, _ = _read(_host(tmp_path, {"system.slice": "0"}), path=str(empty))
+        assert not any("cgroup2 is not mounted" in ln for ln in lines), lines
+        assert any("not measured" in ln and "system.slice" in ln for ln in lines), lines
 
     @requires_bash
     def test_a_space_in_the_mount_point_is_decoded(self, tmp_path: Path) -> None:
