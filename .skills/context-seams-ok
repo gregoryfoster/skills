@@ -88,7 +88,9 @@ tests/structural/test_demoted_blocks.py :: `### The Phase 0 preflight, in full`,
 
 # The #285 curation's destination docs name SKILL.md as the home of the Step and Q
 # numbers they cite, which stays true: every Step and Q is still in SKILL.md.
-skills/orchestrating-issue-backlog/references/batch-design.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites.
+# Re-judged for #291 CR 39, which widened batch-design.md's range to Steps 5–8
+# once Step 8's Key decisions bullet began linking it: Step 8 is in SKILL.md too.
+skills/orchestrating-issue-backlog/references/batch-design.md :: Loaded from [`SKILL.md`](../SKILL.md) Steps 5–8, whose Step numbers it cites.
 # Re-judged in the #288 work, which rewrote the acknowledged line: it now says
 # Step 8 commits the design doc to `main` and pushes it before launching
 # workers. Still true of what it points at — Step 8's "Where to commit, and
