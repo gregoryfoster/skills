@@ -115,8 +115,10 @@ jobs:
       #
       # BudgetBlindSpotWarning is deliberately outside the UserWarning
       # hierarchy so this filter does not also escalate the always-on WARN
-      # into an assertion — that would be #217's option 2, which fails seven
-      # of nineteen skills today.
+      # into an assertion — that would be #217's option 2, which failed seven
+      # of nineteen skills when #217 measured it. What it would fail now is
+      # whatever that warning's latest run lists: since #294 only skills
+      # priced from the ratio, none once every SKILL.md is anchored.
       # Both budget surfaces, not just the skills one. test_policy_surface_budget.py
       # binds AGENTS.md and the docs/ tree through the same SKILL_BUDGET_EXACT
       # switch, so before this job it had the identical defect: nothing ever

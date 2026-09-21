@@ -78,11 +78,11 @@ already owns them and a second, weaker copy is worse than none:
 `SKILL_MD_STANDARD` is **6,000 tokens** — the same figure `curating-context`
 enforces on every repo's `AGENTS.md`, on the reasoning that an always-loaded
 policy file is an always-loaded policy file whether it is called `AGENTS.md` or
-`SKILL.md`. Fourteen of the nineteen skills meet it — this count moves whenever
-a skill is added, so it is `len(SKILLS) - len(SKILL_MD_RATCHETS)` and not a
+`SKILL.md`. Most skills meet it — how many moves whenever a skill is added or an
+exception retires, so it is `len(SKILLS) - len(SKILL_MD_RATCHETS)` and not a
 figure to trust from memory.
 
-The four that do not are named in `SKILL_MD_RATCHETS`, each with the reason it
+Those that do not are named in `SKILL_MD_RATCHETS`, each with the reason it
 cannot, because #141 chose *shared standard plus named exceptions* over a
 per-skill table. A table of eighteen numbers seeded at current size stops growth
 without ever creating pressure toward the standard, and buries the outliers; a
@@ -175,8 +175,10 @@ The ruling, and the three questions Batch A raised:
    each edge.
 
 Because the ratchet binds the higher reading, an exception's recorded size is
-`max(estimate, exact)` rounded up to the next 50 — which for two of the five is
-the *estimate*, not the exact count.
+`max(estimate, exact)` rounded up to the next 50. Priced from the ratio, the
+higher reading can be the *estimate* — it was for two of the five exceptions
+when this was written. Priced from its own anchor (#294), a skill's two
+readings coincide at the anchored size, so the higher one is the exact count.
 
 Note the 500-line body cap in `test_schema.py::TestBody` is a *different*
 constraint. `curating-context/SKILL.md` was 495 lines and 82% over budget at the
@@ -319,7 +321,7 @@ SKILL_MD_RATCHETS = {
     # pointer, per phase. Came down from 10,902 by demoting nine blocks into
     # references/. Reaching 6,000 means deleting procedure, and this skill's own
     # Phase 4 is explicit that a budget which cannot be met without touching
-    # class A is the wrong budget for that file. Unlike the four below, its
+    # class A is the wrong budget for that file. Unlike the others below, its
     # ratchet sits above current size on purpose: the gap is the working room
     # for the documented +250-per-round edit budget, reconciled in its prose.
     "curating-context": 7_600,
@@ -328,8 +330,10 @@ SKILL_MD_RATCHETS = {
     # of the body is literal file content and command sequences, which is why it
     # tokenizes at 2.35 bytes/token — the densest SKILL.md in the repo, though
     # three of its own reference docs are denser still (2.04 to 2.12). See the
-    # runbook note below. Bound by its EXACT count; its estimate reads 1,764
-    # lower, the worst calibration gap of any SKILL.md. Came down from 17,100 by
+    # runbook note below. Set against its EXACT count: priced from the ratio,
+    # its estimate read 1,764 lower at #190, the worst calibration gap of any
+    # SKILL.md then. Since #294 it is priced from its own anchor, so the two
+    # readings coincide until that lapses. Came down from 17,100 by
     # demoting Phases 8, 10, 11 and 16's table into references/ (#190) — an
     # interim pass at #96's problem, not the redesign the runbook note describes.
     "init-project-fastapi": 14_700,
@@ -379,10 +383,12 @@ SKILL_MD_RATCHETS = {
     # the same 6,000 every other skill is, and needs no exception at all.
     # A ten-step orchestration procedure: the interview, the scoring rubric, the
     # conflict-zone and batch-design steps, and the design-doc and tracking-issue
-    # templates. See the runbook note below. Bound by its ESTIMATE, which read
-    # 642 higher than count_tokens at the #285 curation (9,767 vs 9,125) — the
-    # reason this file learned that "exact is the contract" does not survive
-    # contact with the gate that actually runs.
+    # templates. See the runbook note below. Set against its ESTIMATE, which
+    # read 642 higher than count_tokens at the #285 curation (9,767 vs 9,125) —
+    # the reason this file learned that "exact is the contract" does not survive
+    # contact with the gate that actually runs. Since #294 it is priced from its
+    # own anchor, so the two readings coincide and the gate sees the exact
+    # count until that lapses.
     #
     # Came down from 23,110 in that curation, which was the classification pass
     # the runbook note asked for. What a run needs only on some backlogs moved
@@ -1827,11 +1833,11 @@ class TestTheOfflineFailureQuotesANumber:
     number anyone is shown.
 
     #190 proposed printing the exact margin in the offline failure. It could
-    not be built as proposed FOR THIS SKILL: `init-project-fastapi` has no row
-    in `.skills/context-token-counts`, so `ctx_est_tokens_for` has no per-file
-    anchor to fall back on and there is no exact figure offline to print. That
-    absence is also *why* the estimator runs ~12-13% low on this file with no
-    correction available.
+    not be built as proposed FOR THIS SKILL: `init-project-fastapi` had no row
+    in `.skills/context-token-counts` then, so `ctx_est_tokens_for` had no
+    per-file anchor to fall back on and there was no exact figure offline to
+    print. That absence was also *why* the estimator ran ~12-13% low on this
+    file with no correction available.
 
     `POLICY_ESTIMATE_BAND` is what does exist offline. An estimate plus the
     band's permissive edge is a worst case, and a worst case measured against the
