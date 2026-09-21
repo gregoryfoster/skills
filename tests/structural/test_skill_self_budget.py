@@ -44,10 +44,11 @@ Three things this gate deliberately is, and is not:
   exact reading. Three ratchets were breached past a green suite because the
   estimate is the only number a run is shown (#217), so the always-on gate now
   SAYS what it cannot see: `warn_about_the_blind_spot` reports, on every green
-  run, each skill whose worst permissible exact count exceeds its ratchet —
-  the warning names today's set. It warns and does not fail — asserting the
-  worst case is option 2 of #217, which is correct in principle and cost
-  ~8,100 tokens of trimming when #217 measured it.
+  run, each skill priced from the ratio whose worst permissible exact count
+  exceeds its ratchet — the warning names today's set, which the #294 refresh
+  empties until a skill is added or an anchor lapses. It warns and does not
+  fail — asserting the worst case is option 2 of #217, which is correct in
+  principle and cost ~8,100 tokens of trimming when #217 measured it.
 
   The band has a HIGH edge too, and until #294 nothing reported it: a skill
   squeezed against its ratchet by an estimate reading high got silence, and
@@ -267,6 +268,41 @@ def drift_pct() -> int:
         f"could not read CTX_DRIFT_PCT from {LIB}: {result.stderr}"
     )
     return int(result.stdout)
+
+
+def ratio_estimates(byte_counts: list[int], root: Path = REPO_ROOT) -> list[int]:
+    """What the repo-wide ratio alone prices each byte count at (#294 CR 5).
+
+    The offline estimate of an ANCHORED file is a rescale of its own last exact
+    count, so once every SKILL.md is anchored, comparing a measurement's
+    `tokens` against `count_tokens` compares the count with itself — a test
+    that cannot fail, over the one knob, `.skills/context-token-ratio`, that
+    still prices every new skill and every lapsed anchor. This is that knob's
+    reading, anchors ignored: the library's own `ctx_bytes_per_token_x100` and
+    `ctx_est_from_bytes`, run rather than restated, so it cannot price by a
+    different rule than the estimator does when an anchor is absent.
+    """
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            '. "$1"; CTX_BPT_X100="$(ctx_bytes_per_token_x100 "$2")"; shift 2; '
+            'for b in "$@"; do ctx_est_from_bytes "$b"; done',
+            "lib",
+            str(LIB),
+            str(root),
+            *(str(b) for b in byte_counts),
+        ],
+        capture_output=True,
+        text=True,
+        env=_env(exact=False),
+        timeout=30,
+    )
+    out = result.stdout.split()
+    assert result.returncode == 0 and len(out) == len(byte_counts), (
+        f"could not price {byte_counts} from the ratio via {LIB}: {result.stderr}"
+    )
+    return [int(n) for n in out]
 
 
 # The standard every SKILL.md is held to, under BOTH readings. Deliberately a
@@ -652,9 +688,10 @@ class BudgetBlindSpotWarning(Warning):
     it failed seven of nineteen skills and needed ~8,100 tokens of trimming,
     3,410 of it from `orchestrating-issue-backlog` — whose ratchet comment then
     refused to trim a runbook's rules to fit, and which #285 later cut by
-    demotion instead. The live warning names today's set and margins. When
-    those come down on their own merits, promoting this category is the whole
-    change.
+    demotion instead. The live warning names today's set and margins — since
+    #294 only skills priced from the ratio, so after the refresh it is silent
+    until a skill is added or an anchor lapses. Promoting this category is the
+    whole change, and what it would then fail is exactly that live set.
     """
 
 
@@ -666,10 +703,21 @@ def blind_spot_rows(surfaces: dict) -> list[tuple[str, int, int, int]]:
     the estimate is not a blind spot; it is a failure, and its own message
     already carries the caveat and the worst case. Warning about it as well
     would put the loudest signal on the one file the gate can see.
+
+    A skill priced from its own anchor is skipped, as `squeeze_rows` skips it
+    (#294). Its estimate is a rescale of its own last exact count, so the band
+    — which bounds the repo-ratio estimator — does not describe its error, and
+    a worst case computed from it is not a suspicion. Listing every anchored
+    skill made this a warning on every run, which is the failure the fixture's
+    docstring warns against. A lapsed anchor is priced from the ratio again, so
+    it returns here, and the ANCHORS report names it too.
     """
     rows = []
     for skill in sorted(surfaces):
-        estimate = surfaces[skill]["policy"]["tokens"]
+        policy = surfaces[skill]["policy"]
+        if priced_from_its_anchor(policy):
+            continue
+        estimate = policy["tokens"]
         ratchet = ratchet_for(skill)
         if estimate <= ratchet and not worst_case_clears(skill, estimate):
             rows.append((skill, estimate, worst_case_exact(estimate), ratchet))
@@ -687,37 +735,25 @@ def warn_about_the_blind_spot(surfaces: dict) -> None:
     agent cannot report its count honestly and leave the blind spot out.
 
     Silent when nothing qualifies. A warning that fires unconditionally is the
-    always-on gate's existing failure wearing a new costume.
+    always-on gate's existing failure wearing a new costume. That is why a
+    skill priced from its own anchor is not listed (`blind_spot_rows`): after
+    the #294 refresh every skill was, and the warning fired on every run about
+    worst cases it called "not a live suspicion" itself.
     """
     rows = blind_spot_rows(surfaces)
     if not rows:
         return
-
-    def anchored(skill: str) -> bool:
-        return priced_from_its_anchor(surfaces[skill]["policy"])
-
     warnings.warn(
         f"BUDGET BLIND SPOT: {len(rows)} of {len(surfaces)} skills PASS this "
-        "offline gate with an exact count it cannot vouch for. "
+        "offline gate with an exact count it cannot vouch for. Each is priced "
+        f"from the repo-wide ratio in {RATIO_KNOB.name}, and "
         f"{POLICY_ESTIMATE_BAND[0]:+.0%} is the permissive edge of "
         "POLICY_ESTIMATE_BAND, so each of these may already be over its "
         "ratchet:\n"
         + "\n".join(
             f"  {skill}: estimate {est:,} → worst case ~{worst:,} against a "
             f"{ratchet:,} ratchet ({worst - ratchet:,} over)"
-            + (" [ANCHORED — see below]" if anchored(skill) else "")
             for skill, est, worst, ratchet in rows
-        )
-        + (
-            "\n\nANCHORED means this run priced the skill from its own row in "
-            f"{COUNTS_KNOB.name}, so its estimate is a rescale of its own last "
-            "exact count and the band overstates the error — the worst case "
-            "shown is conservative, not a live suspicion. It is still shown "
-            "because the band is the only error bound this gate pins. A skill "
-            "whose anchor has lapsed is not tagged: it is priced from the ratio "
-            "again, and the ANCHORS warning names it (#294)."
-            if any(anchored(s) for s, *_ in rows)
-            else ""
         )
         + "\n\nThis is a WARNING and nothing is red: the worst case is what the "
         "band permits, not what the file measures. It is also not a licence to "
@@ -1482,7 +1518,7 @@ class TestTheContractMeasuredExactly:
 
     @pytest.mark.parametrize("skill", SKILLS)
     def test_the_offline_estimate_tracks_the_exact_count(
-        self, skill: str, surfaces: dict, exact_surfaces: dict
+        self, skill: str, exact_surfaces: dict
     ):
         """Pin the divergence the always-on gate is blind to.
 
@@ -1490,17 +1526,27 @@ class TestTheContractMeasuredExactly:
         `curating-context`'s ratchet — green offline, over in fact. That is
         tolerable only while the size of the gap is known and watched. This
         test is what makes it watched.
+
+        The estimate compared is the RATIO's (`ratio_estimates`), not the
+        measurement's `tokens`. Since #294 every SKILL.md is anchored, and an
+        anchored file's offline estimate is its own exact count rescaled, so
+        comparing that against count_tokens could never fail and left the
+        ratio — which prices every new skill and every lapsed anchor —
+        calibrated against nothing.
         """
-        est = surfaces[skill]["policy"]["tokens"]
-        exact = exact_surfaces[skill]["policy"]["tokens"]
+        policy = exact_surfaces[skill]["policy"]
+        exact = policy["tokens"]
+        (est,) = ratio_estimates([policy["bytes"]])
         drift = (est - exact) / exact
         low, high = POLICY_ESTIMATE_BAND
         assert low <= drift <= high, (
-            f"skills/{skill}/SKILL.md: offline estimate {est:,} vs exact "
-            f"{exact:,} is {drift:+.1%}, outside the pinned "
+            f"skills/{skill}/SKILL.md: the repo ratio prices it at {est:,} "
+            f"against exact {exact:,}, {drift:+.1%}, outside the pinned "
             f"{low:+.0%}..{high:+.0%} band.\n\n"
-            "Below the band means the always-on gate is passing files that are "
-            "over — recalibrate .skills/context-token-ratio (currently "
+            "Below the band means the ratio passes files that are over — every "
+            "SKILL.md it prices, which is any new skill and any lapsed anchor, "
+            "whatever this one's anchor says. Recalibrate "
+            ".skills/context-token-ratio (currently "
             f"{RATIO_KNOB.read_text().strip()} bytes/token) against this "
             "library rather than widening POLICY_ESTIMATE_BAND. Above it only "
             "wastes headroom, but is the same calibration drift."
@@ -1508,7 +1554,7 @@ class TestTheContractMeasuredExactly:
 
     @pytest.mark.parametrize("skill", SKILLS)
     def test_the_offline_estimate_tracks_the_exact_count_for_docs(
-        self, skill: str, surfaces: dict, exact_surfaces: dict
+        self, skill: str, exact_surfaces: dict
     ):
         """#159: the same pin, for the population it was never applied to.
 
@@ -1523,29 +1569,85 @@ class TestTheContractMeasuredExactly:
         overlap enough for one to describe both, and collapsing them would mean
         either failing four docs that are behaving normally or loosening the
         SKILL.md band by 15 points to accommodate them.
+
+        Priced from the ratio for the reason the SKILL.md pin above is: the
+        #294 refresh anchors every skill's references too.
         """
-        exact_rows = {d["path"]: d["tokens"] for d in exact_surfaces[skill]["docs"]}
+        docs = exact_surfaces[skill]["docs"]
+        priced = ratio_estimates([d["bytes"] for d in docs])
         low, high = DOC_ESTIMATE_BAND
         outside = []
-        for d in surfaces[skill]["docs"]:
-            exact = exact_rows[d["path"]]
-            drift = (d["tokens"] - exact) / exact
+        for d, est in zip(docs, priced):
+            exact = d["tokens"]
+            drift = (est - exact) / exact
             if not low <= drift <= high:
-                outside.append((d["path"], d["tokens"], exact, drift))
+                outside.append((d["path"], est, exact, drift))
         assert not outside, (
             f"skills/{skill} reference docs outside the pinned "
             f"{low:+.0%}..{high:+.0%} DOC band:\n"
             + "\n".join(
-                f"  {p} estimate {e:,} vs exact {x:,} is {dr:+.1%}"
+                f"  {p} priced by the repo ratio at {e:,} vs exact {x:,} is {dr:+.1%}"
                 for p, e, x, dr in outside
             )
-            + "\n\nBelow the band means the always-on gate is pricing this doc "
+            + "\n\nBelow the band means the ratio prices docs like this one "
             "well under what a run actually loads. Recalibrate "
             ".skills/context-token-ratio (currently "
-            f"{RATIO_KNOB.read_text().strip()} bytes/token), or give the file "
-            "its own anchor in .skills/context-token-counts, rather than "
+            f"{RATIO_KNOB.read_text().strip()} bytes/token) rather than "
             "widening DOC_ESTIMATE_BAND — this band is already 6-7 points wider "
-            "than the measured spread it was set from."
+            "than the measured spread it was set from. An anchor in "
+            f"{COUNTS_KNOB.name} protects the gate's reading of this one file, "
+            "not the ratio this pin calibrates."
+        )
+
+
+class TestTheCalibrationPinReadsTheRatio:
+    """#294 CR 5: the two pins above compare `ratio_estimates`, and this is
+    the proof that it is the ratio's reading — the number the estimator gives
+    a file with no anchor, and not the anchored number it gives one with.
+    Offline, so it runs on every commit although the pins it serves do not."""
+
+    def _measure(self, repo: Path) -> dict:
+        result = subprocess.run(
+            ["bash", str(MEASURE), "--no-write", "--file", "skills/x/SKILL.md"],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_env(exact=False),
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)["policy"]
+
+    def test_it_is_the_estimate_of_a_file_with_no_anchor_and_ignores_one(
+        self, tmp_path: Path
+    ):
+        repo = tmp_path / "repo"
+        (repo / "skills" / "x").mkdir(parents=True)
+        (repo / ".skills").mkdir()
+        subprocess.run(
+            ["git", "-C", str(repo), "init", "-q"],
+            check=True,
+            capture_output=True,
+            env=_env(exact=False),
+        )
+        (repo / ".skills" / "context-token-ratio").write_text("2.50\n")
+        (repo / "skills" / "x" / "SKILL.md").write_text("s" * 9_999 + "\n")
+
+        unanchored = self._measure(repo)
+        assert unanchored["tokens_source"] == "repo"
+        assert (
+            ratio_estimates([unanchored["bytes"]], root=repo)
+            == [unanchored["tokens"]]
+            == [4_000]
+        )
+
+        (repo / ".skills" / "context-token-counts").write_text(
+            "10000 2000 skills/x/SKILL.md\n"
+        )
+        anchored = self._measure(repo)
+        assert (anchored["tokens_source"], anchored["tokens"]) == ("file", 2_000)
+        assert ratio_estimates([anchored["bytes"]], root=repo) == [4_000], (
+            "the calibration pin would be reading the anchor again"
         )
 
 
@@ -1901,11 +2003,41 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
         expected = sorted(
             s
             for s in SKILLS
-            if surfaces[s]["policy"]["tokens"]
+            if not priced_from_its_anchor(surfaces[s]["policy"])
+            and surfaces[s]["policy"]["tokens"]
             <= ratchet_for(s)
             < worst_case_exact(surfaces[s]["policy"]["tokens"])
         )
         assert [r[0] for r in blind_spot_rows(surfaces)] == expected
+
+    def test_a_skill_priced_from_its_anchor_is_not_a_blind_spot(self):
+        """#294 CR 5. Its estimate is a rescale of its own exact count, so the
+        band's worst case is no suspicion about it. After the refresh anchored
+        every skill, listing them made this warning fire on every run — ten
+        rows its own footnote called "not a live suspicion"."""
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + 100
+        assert worst_case_exact(estimate) > ratchet, "a blind spot if ratio-priced"
+        anchored = _surfaces(
+            **{self.SKILL: _policy(self.SKILL, estimate, source="file")}
+        )
+        assert blind_spot_rows(anchored) == []
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warn_about_the_blind_spot(anchored)
+
+    def test_the_same_estimate_priced_from_the_ratio_still_is(self):
+        """The skip is the anchor's, not the figure's: a skill never anchored,
+        or whose anchor lapsed, is back on the list at the same estimate."""
+        ratchet = ratchet_for(self.SKILL)
+        estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + 100
+        priced = _surfaces(**{self.SKILL: _policy(self.SKILL, estimate)})
+        assert [r[0] for r in blind_spot_rows(priced)] == [self.SKILL]
+        with pytest.warns(BudgetBlindSpotWarning) as caught:
+            warn_about_the_blind_spot(priced)
+        message = str(caught[0].message)
+        assert RATIO_KNOB.name in message, "says what it was priced from"
+        assert "ANCHORED" not in message
 
 
 def _policy(
