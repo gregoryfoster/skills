@@ -458,7 +458,9 @@ class TestTheCadenceUsesIt:
         self, tmp_path: Path, repo: Path
     ) -> tuple[subprocess.CompletedProcess, str]:
         env = _clean_env()
-        env["SKILL_SCRIPTS"] = str(SCRIPTS)
+        # What the resolve step exports, one path per script (#301).
+        env["CHECK_SEAMS_SH"] = str(SCRIPTS / "check-seams.sh")
+        env["CHECK_COUNTS_SH"] = str(SCRIPTS / "check-counts.sh")
         gh_env = tmp_path / "gh_env"
         gh_env.write_text("")
         env["GITHUB_ENV"] = str(gh_env)

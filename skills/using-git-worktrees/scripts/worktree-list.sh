@@ -3,7 +3,7 @@
 # Lists all worktrees for the current repo. Thin wrapper around `git worktree list`
 # that ensures consistent invocation regardless of caller's working directory.
 #
-# Usage: bash <SKILL_SCRIPTS>/worktree-list.sh [--porcelain] [--help]
+# Usage: bash "<worktree-list.sh>" [--porcelain] [--help]
 set -euo pipefail
 
 usage() {
