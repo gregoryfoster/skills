@@ -421,11 +421,45 @@ def test_help_documents_the_knob(variant: str) -> None:
     )
 
 
-# A pytest command line that excludes a tier with its own `-m "not …"`. That
+# A pytest command line that excludes a tier with its own `-m "… not …"`. That
 # `-m` replaces the project's addopts expression rather than narrowing it, so
-# advice to run one reintroduces #304 by hand. Selecting a tier on purpose
-# (`-m integration`) is a different request and is not matched.
-EXCLUDING_MARKER = re.compile(r"pytest[^`\n]*\s-m\s*[\"']not\b")
+# advice to run one reintroduces #304 by hand — whether `not` leads the
+# expression or sits inside it (`unit and not integration`, `(not integration)`).
+# Selecting a tier on purpose (`-m integration`) is a different request and is
+# not matched.
+EXCLUDING_MARKER = re.compile(r"pytest[^`\n]*\s-m\s*[\"'][^\"'\n]*\bnot\b")
+
+# The process log records commands as they were run, in sessions that predate
+# #304; telling a record to "drop the -m" would falsify it (CR 57).
+RECORDS = "references/process-log/"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'uv run pytest -m "not integration" tests/x.py',
+        "uv run pytest -m 'not integration'",
+        'uv run pytest -m"not integration"',
+        'python -m pytest -m "not integration"',
+        'uv run pytest -m "unit and not integration"',
+        'uv run pytest -m "(not integration)"',
+    ],
+)
+def test_the_pattern_catches_every_tier_exclusion(line: str) -> None:
+    assert EXCLUDING_MARKER.search(line), line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "uv run pytest -m integration",
+        'uv run pytest -m "integration or smoke"',
+        "uv run pytest tests/ -x",
+        "python -m pytest --markers",
+    ],
+)
+def test_the_pattern_leaves_selection_alone(line: str) -> None:
+    assert not EXCLUDING_MARKER.search(line), line
 
 
 def test_no_skill_tells_the_reader_to_replace_the_projects_marker() -> None:
@@ -438,6 +472,7 @@ def test_no_skill_tells_the_reader_to_replace_the_projects_marker() -> None:
     offenders = [
         f"{p.relative_to(SKILLS_DIR)}:{n}: {m.group(0)}…"
         for p in sorted(SKILLS_DIR.glob("**/*.md"))
+        if RECORDS not in p.relative_to(SKILLS_DIR).as_posix()
         for n, line in enumerate(p.read_text().splitlines(), 1)
         for m in EXCLUDING_MARKER.finditer(line)
     ]
