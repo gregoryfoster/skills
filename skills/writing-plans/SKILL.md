@@ -4,7 +4,7 @@ description: A discipline for writing a short, reviewed plan before any non-triv
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git for plan-directory resolution; no other runtime dependencies.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: write a plan, plan this, let's plan
 ---
 
@@ -36,18 +36,20 @@ Trigger phrases may include the plan topic inline — e.g., `write a plan for au
 
 ## Script path resolution
 
-The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve it once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
+The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve its script once, then substitute the printed path wherever `<resolve-plans-dir.sh>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
 <!-- skill:required id=skill-scripts -->
 ```bash
-N=writing-plans S=resolve-plans-dir.sh SD=
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
+N=writing-plans
+for S in resolve-plans-dir.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 done
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
 ```
 
-A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a **placeholder** for the literal path printed here, not an inherited shell variable — each Bash invocation runs in a fresh shell.
+A project-local `scripts/resolve-plans-dir.sh` wins if one exists. `<resolve-plans-dir.sh>` is a **placeholder** for the literal path printed here, not an inherited shell variable — each Bash invocation runs in a fresh shell. The list resolves per script so that a second script cannot inherit the first one's directory ([#301](https://github.com/gregoryfoster/skills/issues/301)).
 
 ## Plans directory resolution
 
@@ -57,7 +59,7 @@ Every plan write resolves the target directory in this order (first match wins):
 2. **`.skills/plans_dir` file** — single-line file under the repo root; project's persistent default
 3. **`<repo-root>/docs/plans/`** — fallback when neither of the above is set
 
-Invoke `bash "<SKILL_SCRIPTS>/resolve-plans-dir.sh"` to print the resolved directory. The plan filename is `YYYY-MM-DD-<topic-slug>.md`, where `<topic-slug>` is the topic lowercased with non-alphanumerics replaced by `-`.
+Invoke `bash "<resolve-plans-dir.sh>"` to print the resolved directory. The plan filename is `YYYY-MM-DD-<topic-slug>.md`, where `<topic-slug>` is the topic lowercased with non-alphanumerics replaced by `-`.
 
 ## Procedure
 

@@ -4,7 +4,7 @@ description: "Finalizes work by ensuring everything is committed, pushed to the 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git and gh CLI.
 metadata:
   author: gregoryfoster
-  version: "1.3"
+  version: "1.4"
   triggers: ship it, push GH, close GH, wrap up
 ---
 
@@ -46,18 +46,20 @@ Determine which GitHub issue(s) to close (priority order):
 
 <!-- skill:required id=skill-scripts -->
 ```bash
-N=shipping-work S=pre-ship.sh SD=
+N=shipping-work
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
+for S in doc-check.sh check-status.sh push.sh comment-issue.sh close-issue.sh pre-ship.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 done
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
-bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
+bash "${SD:?}/$S"
 ```
 
-The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves the script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/` copy still wins if one exists; `${SD:?…}` fails loudly with the searched paths when no candidate resolves. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
+The first line is a preflight: when `.skills/doctor.sh` is present, it heals any dangling vendor symlinks (or reports an actionable error); when absent, the group is a no-op. `|| exit 1` skips `pre-ship.sh` if the doctor reports unrecoverable state so the original "No such file or directory" noise doesn't drown out the doctor's message. The loop then resolves each script against the skill directory rather than the cwd — a bare `scripts/` path resolves relative to the project root, where the script does not exist ([#63](https://github.com/gregoryfoster/skills/issues/63)). A project-local `scripts/<name>` still wins, for that script alone: a `scripts/pre-ship.sh` wrapper must not send the other five looking beside it ([#301](https://github.com/gregoryfoster/skills/issues/301)). A script found nowhere stops the block here, by name. `pre-ship.sh` is listed last, so the final line runs it. Resolution runs *after* the doctor so a freshly healed symlink chain is visible to it.
 
-Step 1 prints `SKILL_SCRIPTS=<path>`. In every later step `<SKILL_SCRIPTS>` is a **placeholder** for that literal path — substitute the value printed here (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so the shell variable itself is not inherited.
+In every later step a `<name.sh>` is a **placeholder** for the path printed for that script — substitute it literally (same convention as `init-project-fastapi` Phase 0). Each Bash invocation runs in a fresh shell, so the shell variable itself is not inherited.
 
 ```
 NO CONTINUATION IF CHECKS FAIL
@@ -68,20 +70,20 @@ If pre-ship fails: stop, report the failure, fix before proceeding. Do not push 
 ### Step 1.5 — Documentation spot-check
 
 ```bash
-bash "<SKILL_SCRIPTS>/doc-check.sh"
+bash "<doc-check.sh>"
 ```
 
 `doc-check.sh` lists files changed on this branch vs the upstream default branch and flags any that match the project's sensitive-path list (AGENTS.md, README.md, schema files, public-API directories, etc.). Entries match path *segments*, so `src/api/` also covers `packages/<pkg>/src/api/`. When sensitive paths change, the matching doc sections may need updates too. Projects tailor the list by committing `.skills/doc-sensitive-paths` at the repo root (one path per line, `#`-comments ignored); it replaces the defaults rather than extending them. The advice printed on a hit — which doc sections to spot-check — is tailored the same way, by committing `.skills/doc-sections` (one section per line, same grammar); it too replaces the defaults. Tailor both together: the list says what the gate watches and the sections say what to do about a hit, so a repo that tailors only the list gets advice written for a stack it may not have. A hit says so when exactly one of the two is tailored, naming the half that is still the default.
 
-If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2: an infra/tooling problem prevented the doc check from running — investigate the underlying error rather than proceeding. One exit-2 case is worth naming: when no entry in the list matches any tracked file, the script says so instead of passing, because a list that cannot hit anything would otherwise print the same clean green as a genuinely doc-neutral branch. Fix the list; do not wave the step through. The same goes for anything the project committed under `.skills/` that the script cannot use, the directory included: a tailoring never silently reverts to the built-in defaults, so an exit 2 there means the override is unusable, not absent. If the project doesn't ship a `doc-check.sh`, skip this step.
+If the script exits 1: review the listed files, decide whether each requires a doc update, and either commit the docs now or note them as deliberate skips. If the script exits 2 — or with any code not named here, such as 127 when its path did not resolve — the doc check did not run: investigate the underlying error rather than proceeding. One exit-2 case is worth naming: when no entry in the list matches any tracked file, the script says so instead of passing, because a list that cannot hit anything would otherwise print the same clean green as a genuinely doc-neutral branch. Fix the list; do not wave the step through. The same goes for anything the project committed under `.skills/` that the script cannot use, the directory included: a tailoring never silently reverts to the built-in defaults, so an exit 2 there means the override is unusable, not absent.
 
 ### Step 2 — Ensure a clean working tree
 
 ```bash
-bash "<SKILL_SCRIPTS>/check-status.sh"
+bash "<check-status.sh>"
 ```
 
-If the script exits 2, `git status` itself failed: the tree state is **unknown**, which is not the same as clean. Investigate git's error rather than proceeding ([#257](https://github.com/gregoryfoster/skills/issues/257)).
+If the script exits 2, `git status` itself failed: the tree state is **unknown**, which is not the same as clean. Any code but 0 or 1 is no verdict either (127: the script was not found). Investigate the error rather than proceeding ([#257](https://github.com/gregoryfoster/skills/issues/257)).
 
 If uncommitted changes exist, commit them following the project convention. Check AGENTS.md for project-specific overrides. Default format:
 
@@ -101,7 +103,7 @@ If on a feature branch, merge to `main` first. Then continue.
 ### Step 4 — Push
 
 ```bash
-bash "<SKILL_SCRIPTS>/push.sh"
+bash "<push.sh>"
 ```
 
 Confirm push succeeded before proceeding.
@@ -111,7 +113,7 @@ Confirm push succeeded before proceeding.
 For each issue in scope:
 
 ```bash
-bash "<SKILL_SCRIPTS>/comment-issue.sh" <number> "<summary>"
+bash "<comment-issue.sh>" <number> "<summary>"
 ```
 
 Comment must include:
@@ -129,7 +131,7 @@ Before closing any issue, verify the original requirements against what was impl
 </HARD-GATE>
 
 ```bash
-bash "<SKILL_SCRIPTS>/close-issue.sh" <number>
+bash "<close-issue.sh>" <number>
 ```
 
 ### Step 7 — Report

@@ -31,21 +31,21 @@ recorded as open is satisfied in fact:
 # surface — re-baselining every skill's estimate (the #230 incident). Never
 # add --calibrate here: it anchors this skill's files, which changes what the
 # gate measures (test_which_skills_are_anchored_is_declared).
-bash "<SKILL_SCRIPTS>/measure-context.sh" --exact --no-write --budget 7600 \
+bash "<measure-context.sh>" --exact --no-write --budget 7600 \
   --file skills/curating-context/SKILL.md \
   --docs-dir skills/curating-context/references \
   | tee /tmp/self-baseline.json \
-  | bash "<SKILL_SCRIPTS>/record-telemetry.sh" --baseline
+  | bash "<record-telemetry.sh>" --baseline
 
 # Phase 2 — verify facts. --also each live reference doc.
-bash "<SKILL_SCRIPTS>/verify-facts.sh" --issues \
+bash "<verify-facts.sh>" --issues \
   --file skills/curating-context/SKILL.md \
   --also skills/curating-context/references/telemetry.md   # ... and the rest
 
 # Phase 6 — prove no loss, the same flags the self-budget gate already uses.
 # --claims is not optional here: this pass is demote/tighten only, so every
 # round produces class-C rewrites, and `tighten` is refused without it.
-bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point> --claims \
+bash "<prove-no-loss.sh>" --base <branch-point> --claims \
   --file skills/curating-context/SKILL.md \
   --docs-dir skills/curating-context/references
 ```

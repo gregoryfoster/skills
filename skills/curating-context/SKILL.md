@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.27"
+  version: "1.28"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -89,20 +89,22 @@ unattended mode. Otherwise defaults apply.
 ## Script path resolution
 
 The skill's `scripts/` directory is not at the project root — it ships inside the
-skill. Resolve it once, then substitute the printed path wherever
-`<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
+skill. Resolve each script once, then substitute its printed path wherever its
+`<name.sh>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
 <!-- skill:required id=skill-scripts -->
 ```bash
-N=curating-context S=measure-context.sh SD=
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
+N=curating-context
+for S in measure-context.sh record-telemetry.sh verify-facts.sh prove-no-loss.sh check-seams.sh check-counts.sh install-cadence.sh install-guard.sh cohort-report.sh score-cohort.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 done
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
 ```
 
-A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a
-**placeholder** for the printed path, not a shell variable — each Bash
+A project-local `scripts/<name>` wins for that script alone ([#301](https://github.com/gregoryfoster/skills/issues/301)).
+Each `<name.sh>` is a **placeholder**, not a shell variable — each Bash
 invocation is a fresh shell.
 
 Every script reads the ratio, the archival matcher, the docs-dir knob and **both
@@ -112,7 +114,7 @@ individual files ([why](references/budget-and-metrics.md#the-library-the-chain-l
 ## Phase 0 — Preflight the credential
 
 ```bash
-bash "<SKILL_SCRIPTS>/measure-context.sh" --check-credential
+bash "<measure-context.sh>" --check-credential
 ```
 
 One command, before anything else. Exit 0 means `--exact` will work — it asks
@@ -124,9 +126,9 @@ toward a ledger row that `record-telemetry.sh` refuses at the very end.
 ## Phase 1 — Measure
 
 ```bash
-bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
+bash "<measure-context.sh>" --exact \
   | tee /tmp/context-baseline.json \
-  | bash "<SKILL_SCRIPTS>/record-telemetry.sh" --baseline
+  | bash "<record-telemetry.sh>" --baseline
 ```
 
 `--exact` counts via the Anthropic `count_tokens` endpoint — the only accurate
@@ -164,7 +166,7 @@ archival subtrees are excluded
 ## Phase 2 — Verify facts
 
 ```bash
-bash "<SKILL_SCRIPTS>/verify-facts.sh" --issues > /tmp/context-facts.tsv
+bash "<verify-facts.sh>" --issues > /tmp/context-facts.tsv
 ```
 
 Three verdicts, not interchangeable. **FALSE** — a command refuted the claim;
@@ -256,7 +258,7 @@ Re-run Phase 1 and assert, before committing:
 - **Nothing was dropped.** Run the check; do not eyeball it:
 
   ```bash
-  bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point>
+  bash "<prove-no-loss.sh>" --base <branch-point>
   ```
 
   Every non-blank line of the policy file as it was at `--base` must still be
@@ -290,7 +292,7 @@ Re-run Phase 1 and assert, before committing:
 ## Phase 6.5 — Sweep the seams
 
 ```bash
-bash "<SKILL_SCRIPTS>/check-seams.sh" --base <branch-point>
+bash "<check-seams.sh>" --base <branch-point>
 ```
 
 Then **once per doc you split**: `--file <that doc>`, as in Phase 6 — without it
@@ -309,7 +311,7 @@ legitimate in `.skills/context-seams-ok`, re-run, and carry both counts to Phase
 (`--seams N --seams-acked M`). Run this sweep *last*, and re-read any command
 beside a block that moved.
 
-Then the counts nothing else judges — `bash "<SKILL_SCRIPTS>/check-counts.sh"`.
+Then the counts nothing else judges — `bash "<check-counts.sh>"`.
 A number earns its place by carrying the command that re-derives it, by dropping
 the precision (the default), or by being gated — `--help` has the three. Warrant
 the rest in `.skills/context-counts-ok`.
@@ -317,8 +319,8 @@ the rest in `.skills/context-counts-ok`.
 ## Phase 7 — Record and ship
 
 ```bash
-bash "<SKILL_SCRIPTS>/measure-context.sh" --exact \
-  | bash "<SKILL_SCRIPTS>/record-telemetry.sh" \
+bash "<measure-context.sh>" --exact \
+  | bash "<record-telemetry.sh>" \
       --actions "demote:Project Layout,prune:Conventions,fix:dead-link" \
       --no-loss ok --no-loss-warrants <W> --seams <N> --seams-acked <M> \
       --counts <P> --counts-acked <Q> --print-trend

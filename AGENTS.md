@@ -138,9 +138,10 @@ These carry a full template and a rationale in
   and cwd, and git exports it to every hook, so a fixture's throwaway repo
   writes to the real one ([#189](https://github.com/gregoryfoster/skills/issues/189)).
   `extensions.worktreeConfig` was measured and **refused**.
-- **`<SKILL_SCRIPTS>` resolution.** Never write `bash scripts/X.sh` in a
+- **Per-script resolution.** Never write `bash scripts/X.sh` in a
   SKILL.md: the agent's cwd is the *project* root
-  ([#63](https://github.com/gregoryfoster/skills/issues/63)). `TestNoBareScriptPaths`.
+  ([#63](https://github.com/gregoryfoster/skills/issues/63)), and resolve
+  each script on its own (#301). `TestNoBareScriptPaths`.
 - **Gate-script discipline.** A script whose output drives a ship/skip decision
   must never silently swallow the stderr of the tool producing that output.
   `TestGateScriptHardening` binds every `shipping-work*` / `reviewing-code*`
@@ -290,7 +291,7 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 
 ## Detail Docs
 
-- [docs/STYLE.md](docs/STYLE.md) — the `<SKILL_SCRIPTS>` template, the gate-script rules and the scripts they bind, the `GIT_DIR` scrub, and the refused `extensions.worktreeConfig`
+- [docs/STYLE.md](docs/STYLE.md) — the per-script resolution template, the gate-script rules and the scripts they bind, the `GIT_DIR` scrub, and the refused `extensions.worktreeConfig`
 - [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the resolver helpers behind the three env-var knobs
 - [docs/KNOBS.md](docs/KNOBS.md) — every `.skills/` file a project may commit: grammar, reader, replaces-or-extends, and what absence means
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery

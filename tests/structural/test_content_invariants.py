@@ -1941,6 +1941,25 @@ SKILLS_REQUIRING_DOCTOR_PREFLIGHT = [
 ]
 
 
+def _resolves_a_list(skill_name: str) -> bool:
+    """shipping-* run later steps' scripts, so their block resolves one path
+    per script (#301); reviewing-* run one script in one block and publish
+    nothing."""
+    return skill_name.startswith("shipping-work")
+
+
+# The single-script block's guard, and the per-script loop's, which names the
+# script it could not find.
+RESOLUTION_GUARD = (
+    "${SD:?not found in scripts/, .claude/skills/$N/scripts/, "
+    "or ~/.claude/skills/$N/scripts/}"
+)
+LIST_GUARD = (
+    "${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, "
+    "or ~/.claude/skills/$N/scripts/}"
+)
+
+
 class TestPhase1DoctorPreflight:
     """Every reviewing-*/shipping-* SKILL.md must invoke `.skills/doctor.sh`
     as a guarded preflight before the gather/pre-ship script, chained with
@@ -1973,13 +1992,27 @@ class TestPhase1DoctorPreflight:
         # The shape of the loop itself belongs to TestScriptResolutionBlock,
         # which covers all 11 skills rather than only the 9 with a doctor.
         # The overlap here is deliberate: this pins ordering, that pins form.
-        expected = (
-            f"N={skill_name} S={script_name} SD=\n"
-            "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1\n"
-            'for d in scripts ".claude/skills/$N/scripts" '
-            '"$HOME/.claude/skills/$N/scripts"; do\n'
-        )
-        assert expected in body, (
+        #
+        # shipping-* resolve a LIST, one path per script their later steps run
+        # (#301), and run the last one resolved — so the step's own script
+        # must end the list. reviewing-* have one script and no later step.
+        doctor = "{ [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1\n"
+        if _resolves_a_list(skill_name):
+            expected_re = (
+                rf"N={re.escape(skill_name)}\n{re.escape(doctor)}"
+                rf"for S in [^;\n]* {re.escape(script_name)}; do SD=\n"
+            )
+            expected = f"N={skill_name}\n{doctor}for S in … {script_name}; do SD="
+            found = bool(re.search(expected_re, body))
+        else:
+            expected = (
+                f"N={skill_name} S={script_name} SD=\n"
+                f"{doctor}"
+                'for d in scripts ".claude/skills/$N/scripts" '
+                '"$HOME/.claude/skills/$N/scripts"; do\n'
+            )
+            found = expected in body
+        assert found, (
             f"SKILL.md Phase 1 must open with:\n  {expected}\n"
             "See skills/managing-skills/scripts/doctor.sh, "
             "https://github.com/gregoryfoster/skills/issues/46 and "
@@ -1993,15 +2026,17 @@ class TestPhase1DoctorPreflight:
         # leaving the Iron Law gating on a script that never executes, which
         # is the #63 failure class. Pin the invocation separately.
         #
-        # One canonical shape across both families. shipping-* additionally
-        # publish SKILL_SCRIPTS beforehand (so later steps can substitute it),
-        # but the invocation itself guards at the call site rather than
-        # relying on that earlier line having aborted first — so an `any()`
-        # over per-family variants is no longer needed here.
+        # The invocation guards at the call site rather than relying on an
+        # earlier line having aborted first.
         invocation = (
             'bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, '
             'or ~/.claude/skills/$N/scripts/}/$S"'
         )
+        if _resolves_a_list(_skill_name):
+            # Straight after the list loop, whose echo already stopped on any
+            # script found nowhere: SD and S still hold the script resolved
+            # last, which the chain test pins as this step's own (#301).
+            invocation = '/$S"\ndone\nbash "${SD:?}/$S"\n'
         assert invocation in body, (
             "SKILL.md Phase 1 resolves the script but never invokes it "
             f"(or invokes it unguarded). Expected:\n  {invocation}"
@@ -2011,26 +2046,25 @@ class TestPhase1DoctorPreflight:
         body, _skill_name, _script_name = skill_and_script
         # `${SD:?…}` is what turns "resolved nothing" into a loud failure
         # naming the searched paths, rather than a silent no-op loop.
-        guard = (
-            "${SD:?not found in scripts/, .claude/skills/$N/scripts/, "
-            "or ~/.claude/skills/$N/scripts/}"
-        )
+        guard = LIST_GUARD if _resolves_a_list(_skill_name) else RESOLUTION_GUARD
         assert guard in body, (
             "SKILL.md Phase 1 must fail loudly when no candidate resolves. "
             f"Expected the guard:\n  {guard}"
         )
 
     def test_doctor_preflight_paragraph_present(self, skill_and_script):
-        body, _skill_name, script_name = skill_and_script
+        body, skill_name, script_name = skill_and_script
         # Pin the explanatory paragraph that follows the block — same wording
-        # across the family with only the phase-1 script name varying.
+        # across the family with only the phase-1 script name varying, and
+        # "each script" where the block resolves a list.
+        which = "each script" if _resolves_a_list(skill_name) else "the script"
         expected = (
             "The first line is a preflight: when `.skills/doctor.sh` is present, "
             "it heals any dangling vendor symlinks (or reports an actionable "
             "error); when absent, the group is a no-op. `|| exit 1` skips "
             f"`{script_name}` if the doctor reports unrecoverable state so the "
             'original "No such file or directory" noise doesn\'t drown out the '
-            "doctor's message. The loop then resolves the script against the "
+            f"doctor's message. The loop then resolves {which} against the "
             "skill directory rather than the cwd"
         )
         assert expected in body, (
@@ -2055,9 +2089,10 @@ class TestNoBareScriptPaths:
     "No such file or directory" unless the consuming project happened to
     have its own scripts/ copy (issue #63).
 
-    The replacement is the `<SKILL_SCRIPTS>` placeholder: a resolution block
-    prints the resolved directory once, and later steps substitute the
-    literal path. This test pins the absence of the old form so a future
+    The replacement is a resolution block: it prints each script's resolved
+    path once, and later steps substitute the literal path for the matching
+    `"<name.sh>"` placeholder (#301 replaced the one-directory
+    `<SKILL_SCRIPTS>` form). This test pins the absence of the old form so a future
     edit can't quietly reintroduce it — the failure mode is invisible in
     any project that does have a root scripts/ directory.
 
@@ -2088,7 +2123,7 @@ class TestNoBareScriptPaths:
             f"{skill_md.relative_to(SKILLS_DIR)} invokes a script via a bare "
             "cwd-relative path:\n  "
             + "\n  ".join(offenders)
-            + '\n\nUse the resolved placeholder form instead: bash "<SKILL_SCRIPTS>/X.sh"'
+            + '\n\nUse the resolved placeholder form instead: bash "<X.sh>"'
             "\nSee https://github.com/gregoryfoster/skills/issues/63."
         )
 
@@ -2100,11 +2135,6 @@ class TestNoBareScriptPaths:
 
 RESOLUTION_LOOP = (
     'for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do'
-)
-
-RESOLUTION_GUARD = (
-    "${SD:?not found in scripts/, .claude/skills/$N/scripts/, "
-    "or ~/.claude/skills/$N/scripts/}"
 )
 
 
@@ -2171,10 +2201,15 @@ class TestScriptResolutionBlock:
 
     TestPhase1DoctorPreflight covers only the 9 skills with a doctor
     preflight, which left using-git-worktrees and writing-plans — 9 of the 30
-    <SKILL_SCRIPTS> substitution sites — with no coverage of their block at
+    substitution sites at the time — with no coverage of their block at
     all. They also hold the only copies of the sentinel-probe correction
     (`[ -f "$d/$S" ]` rather than `[ -d "$d" ]`), making the least-tested
     files the most-recently-changed ones.
+
+    Two shapes since #301. A block with one call site (reviewing-*) resolves
+    `S` and runs it. A block whose later steps run scripts resolves a LIST,
+    one printed path per script; test_per_script_resolution.py owns what that
+    list must contain and proves it behaviourally.
 
     Each assertion below pins a line whose deletion fails as #63's symptom —
     "No such file or directory" — rather than as anything self-explanatory.
@@ -2187,47 +2222,56 @@ class TestScriptResolutionBlock:
     def test_header_clears_sd(self, skill_md):
         # Without `SD=`, a value inherited from the environment or left by an
         # earlier block in the same shell survives the loop and defeats the
-        # guard, silently building a path from the stale value.
+        # guard, silently building a path from the stale value. In the list
+        # shape the reset is per pass: a script found nowhere would otherwise
+        # inherit the previous script's directory — #301 in miniature.
         name = skill_md.parent.name
-        pattern = rf"^N={re.escape(name)} S=\S+\.sh SD=$"
-        assert re.search(pattern, skill_md.read_text(), re.M), (
+        text = skill_md.read_text()
+        single = rf"^N={re.escape(name)} S=\S+\.sh SD=$"
+        listed = rf"^N={re.escape(name)}\n(?:.*\n)?for S in [^;\n]+; do SD=$"
+        assert re.search(single, text, re.M) or re.search(listed, text, re.M), (
             f"{name}/SKILL.md resolution block must open with "
-            f"`N={name} S=<sentinel>.sh SD=` — the trailing `SD=` is what "
-            "makes the ${SD:?…} guard reachable."
+            f"`N={name} S=<sentinel>.sh SD=`, or with `N={name}` and a "
+            "`for S in …; do SD=` loop — the `SD=` is what makes the "
+            "${SD:?…} guard reachable."
         )
 
     def test_probes_sentinel_file_not_directory(self, skill_md):
         # `[ -d "$d" ]` would falsely match any project with an unrelated
         # root scripts/ directory — this repo has one.
-        expected = '  [ -f "$d/$S" ] && { SD="$d"; break; }\ndone\n'
-        assert expected in skill_md.read_text(), (
-            f"{skill_md.parent.name}/SKILL.md must probe for the sentinel "
-            f"script file, not the directory:\n  {expected}"
+        expected = r'^ *\[ -f "\$d/\$S" \] && \{ SD="\$d"; break; \}\n *done$'
+        assert re.search(expected, skill_md.read_text(), re.M), (
+            f"{skill_md.parent.name}/SKILL.md must probe for the script "
+            'file, not the directory:\n  [ -f "$d/$S" ] && { SD="$d"; break; }'
         )
 
     def test_guard_present(self, skill_md):
-        assert RESOLUTION_GUARD in skill_md.read_text(), (
+        text = skill_md.read_text()
+        assert RESOLUTION_GUARD in text or LIST_GUARD in text, (
             f"{skill_md.parent.name}/SKILL.md must fail loudly when no "
-            f"candidate resolves. Expected the guard:\n  {RESOLUTION_GUARD}"
+            f"candidate resolves. Expected the guard:\n  {RESOLUTION_GUARD}\n"
+            f"or, in a per-script loop, the one naming the script:\n  {LIST_GUARD}"
         )
 
     def test_placeholder_uses_have_a_publisher(self, skill_md):
-        # Every `bash "<SKILL_SCRIPTS>/X.sh"` is meaningless unless some
-        # earlier step printed the path the reader substitutes. Six skills
-        # carry 30 such sites between them; deleting the single publishing
-        # line would strand all of them.
+        # Every `bash "<X.sh>"` is meaningless unless some earlier step printed
+        # the path the reader substitutes; deleting the single publishing line
+        # would strand every site. Which names the list must hold is
+        # test_per_script_resolution.py's business; this pins the publisher.
         #
         # references/**/*.md is scanned alongside SKILL.md (matching the surface
         # TestNoBareScriptPaths already covers): a reference file may carry a
         # substitution site, but only SKILL.md's block publishes the path.
         skill_dir = skill_md.parent
         docs = [skill_md, *sorted(skill_dir.glob("references/**/*.md"))]
-        uses = sum(p.read_text().count('bash "<SKILL_SCRIPTS>/') for p in docs)
+        uses = sum(
+            len(re.findall(r'bash "<[^"/>]+\.sh>"', p.read_text())) for p in docs
+        )
         if not uses:
-            pytest.skip("skill has no <SKILL_SCRIPTS> substitution sites")
-        assert 'echo "SKILL_SCRIPTS=' in skill_md.read_text(), (
-            f'{skill_dir.name} has {uses} `bash "<SKILL_SCRIPTS>/…"` site(s) '
-            "(SKILL.md + references/) but SKILL.md never prints the path to "
-            "substitute. The resolution block must publish it:\n  echo "
-            f'"SKILL_SCRIPTS={RESOLUTION_GUARD}"'
+            pytest.skip("skill has no <X.sh> substitution sites")
+        publisher = f'echo "<$S>={LIST_GUARD}/$S"'
+        assert publisher in skill_md.read_text(), (
+            f'{skill_dir.name} has {uses} `bash "<X.sh>"` site(s) '
+            "(SKILL.md + references/) but SKILL.md never prints the paths to "
+            f"substitute. The resolution block must publish them:\n  {publisher}"
         )

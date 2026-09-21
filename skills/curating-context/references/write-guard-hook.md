@@ -13,7 +13,7 @@ past the budget, or into the last stretch before one.
 ## Install
 
 ```bash
-bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
+bash "<install-guard.sh>" --budget 6000 --doc-budget 10000
 ```
 
 Idempotent — a re-run repairs partial state (symlink present, settings entry
@@ -23,8 +23,8 @@ budget flags to leave existing knobs alone.
 Three other modes:
 
 ```bash
-bash "<SKILL_SCRIPTS>/install-guard.sh" --check      # exit 0 installed, 3 not
-bash "<SKILL_SCRIPTS>/install-guard.sh" --uninstall  # removes entry + symlink
+bash "<install-guard.sh>" --check      # exit 0 installed, 3 not
+bash "<install-guard.sh>" --uninstall  # removes entry + symlink
 ```
 
 The installer does **not** commit. It prints the `git add` line; land the wiring
