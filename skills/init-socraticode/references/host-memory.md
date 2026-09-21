@@ -186,14 +186,19 @@ worth calibrating to.
 Set `vm.min_free_kbytes` so the kernel keeps headroom for atomic allocations —
 their failure, not an OOM kill, is how broker's outage presented
 (CannObserv/broker#21, #25). Then run earlyoom, which acts before the kernel
-has to. Three ways it silently runs something other than what you wrote:
+has to. Four ways it silently runs something other than what you wrote:
 
 - **No space inside a regex.** Debian's unit is
   `ExecStart=/usr/bin/earlyoom $EARLYOOM_ARGS`, expanded **unquoted**, so
-  systemd splits it on whitespace with no shell quoting. A space inside a
-  `--prefer` or `--avoid` regex becomes a second argument, and earlyoom does
-  not run the configuration you wrote — no early killer, under a unit that
-  looks active (#303).
+  systemd splits the value into words. The split honours quotes (systemd 255:
+  `EXTRACT_RELAX|EXTRACT_UNQUOTE`), but the file's own double quotes are gone
+  by then, so a bare space inside a `--prefer` or `--avoid` regex becomes a
+  second argument, and earlyoom does not run the configuration you wrote — no
+  early killer, under a unit that looks active (#303). Keep spaces out rather
+  than quoting around them.
+- **No backslash either.** The same split drops a backslash and keeps the
+  character after it, so `\.` reaches earlyoom as `.`, which matches anything,
+  with no error. A literal dot is `[.]`.
 - **Never `$`-anchor `--prefer`.** The regexes match `/proc/<pid>/comm`, which
   the kernel truncates to 15 characters: `npm exec socraticode@latest` is
   `npm exec socrat`, so `^(node|npm|npx)$` never matches the server, with no

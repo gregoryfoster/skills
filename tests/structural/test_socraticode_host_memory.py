@@ -476,22 +476,119 @@ def _fenced(text: str, lang: str) -> list[str]:
     return re.findall(rf"^```{lang}\n(.*?)^```", text, re.S | re.M)
 
 
+def _env_file_value(raw: str) -> str:
+    """A double-quoted `EnvironmentFile=` value as systemd 255 reads it.
+
+    src/basic/env-file.c: the quotes go, a backslash before one of
+    `"`, `\\`, `` ` `` or `$` yields that character, and any other backslash
+    is kept along with the character after it.
+    """
+    assert raw.startswith('"') and raw.endswith('"'), raw
+    out, escaped = [], False
+    for c in raw[1:-1]:
+        if escaped:
+            out.append(c if c in '"\\`$' else "\\" + c)
+            escaped = False
+        elif c == "\\":
+            escaped = True
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _systemd_split(value: str) -> list[str]:
+    """An unquoted `$VAR` in `ExecStart=`, split as systemd 255 splits it.
+
+    replace_env_argv() in src/basic/env-util.c calls strv_split_full(...,
+    WHITESPACE, EXTRACT_RELAX|EXTRACT_UNQUOTE), so extract_first_word() in
+    src/basic/extract-word.c: whitespace separates, single and double quotes
+    group and are removed, and a backslash — quoted or not — is dropped and the
+    character after it kept literally. #303 read this as a plain whitespace
+    split with no quoting; the quoting is real, and so is the lost backslash.
+    """
+    words: list[str] = []
+    word: list[str] = []
+    quote, escaped, started = None, False, False
+    for c in value:
+        if escaped:
+            word.append(c)
+            escaped = False
+        elif quote:
+            if c == quote:
+                quote = None
+            elif c == "\\":
+                escaped = True
+            else:
+                word.append(c)
+        elif c in "'\"":
+            quote, started = c, True
+        elif c == "\\":
+            escaped, started = True, True
+        elif c in " \t\n\r":
+            if started:
+                words.append("".join(word))
+                word, started = [], False
+        else:
+            word.append(c)
+            started = True
+    if started:
+        words.append("".join(word))
+    return words
+
+
 class TestTheDocsSnippetsWorkAsWritten:
     """The reference's commands are executed and parsed, not only read."""
 
     @staticmethod
-    def _earlyoom_args() -> list[str]:
+    def _earlyoom_value() -> str:
         line = next(
             ln
             for block in _fenced(HOST_MEMORY.read_text(), "sh")
             for ln in block.splitlines()
             if ln.startswith("EARLYOOM_ARGS=")
         )
-        value = line.split("=", 1)[1]
-        assert value.startswith('"') and value.endswith('"'), line
-        # What systemd hands earlyoom for an unquoted `$EARLYOOM_ARGS`: the
-        # EnvironmentFile's quotes removed, then split on whitespace, no shell.
-        return value[1:-1].split()
+        return line.split("=", 1)[1]
+
+    @classmethod
+    def _earlyoom_args(cls) -> list[str]:
+        """What systemd hands earlyoom for Debian's unquoted `$EARLYOOM_ARGS`."""
+        return _systemd_split(_env_file_value(cls._earlyoom_value()))
+
+    def test_the_split_is_modelled_as_systemd_splits(self) -> None:
+        """Quotes group and vanish; a backslash vanishes and its character stays."""
+        raw = "\"--prefer '^(npm exec)' --avoid ^a\\.b$\""
+        assert _systemd_split(_env_file_value(raw)) == [
+            "--prefer",
+            "^(npm exec)",
+            "--avoid",
+            "^a.b$",
+        ]
+
+    def test_the_earlyoom_traps_name_the_backslash(self) -> None:
+        """The doc's list of silent misconfigurations says what the split does."""
+        text = HOST_MEMORY.read_text()
+        found = re.search(
+            r"(\w+) ways it silently runs something other than what you wrote:"
+            r"\n\n((?:- .*\n(?:  .*\n)*)+)",
+            text,
+        )
+        assert found, "host-memory.md's list of earlyoom traps moved or was reworded"
+        traps = re.findall(r"^- \*\*(.+?)\*\*", found.group(2), re.M)
+        count = {"three": 3, "four": 4, "five": 5, "six": 6}[found.group(1).lower()]
+        assert count == len(traps), (found.group(1), traps)
+        assert any("backslash" in t.lower() for t in traps), traps
+        assert "no shell quoting" not in " ".join(text.split()), (
+            "systemd's split of $EARLYOOM_ARGS honours quotes "
+            "(EXTRACT_RELAX|EXTRACT_UNQUOTE); the doc must not say otherwise"
+        )
+
+    def test_no_regex_carries_a_backslash(self) -> None:
+        """`\\.` reaches earlyoom as `.`, a regex that matches any character."""
+        value = self._earlyoom_value()
+        assert "\\" not in value, (
+            "systemd's split of $EARLYOOM_ARGS drops a backslash and keeps the "
+            f"character after it, silently changing the regex: {value}"
+        )
 
     def test_no_regex_is_split_by_the_unquoted_expansion(self) -> None:
         args = self._earlyoom_args()
