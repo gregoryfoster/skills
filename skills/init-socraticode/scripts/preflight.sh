@@ -340,13 +340,18 @@ elif [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
   # warning on a host that is not in that trouble.
 fi
 
+# >>> host-capacity
 case "$MEM_KB" in
   [0-9]*)
     MEM_GIB_X10="$((MEM_KB * 10 / 1048576))"   # tenths of a GiB, integer math
     MEM_HUMAN="$((MEM_GIB_X10 / 10)).$((MEM_GIB_X10 % 10)) GiB"
     if [ "$MEM_KB" -lt 4194304 ]; then         # < 4 GiB
       warn "Host memory $MEM_HUMAN — a cold server install peaks near 1.2 G, which is the largest thing this setup does"
-      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
+      # Under choom, composed as row U's capped scope is: a session at -1000
+      # passes that score to the install, and at -1000 the cap stalls it
+      # rather than killing it. choom's `--` is not optional — it permutes its
+      # options, so `--prefix` would be read as one of its own.
+      hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M choom -n 500 -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
       hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
       # The shared-host case, named only here. A cap on a session process
       # protects the host solely when the host's own service holds the
@@ -358,9 +363,13 @@ case "$MEM_KB" in
       # Whether a cap on a session STALLS it depends on the host (#303): on
       # broker's VM session processes inherited oom_score_adj -1000, so the
       # killer could not pick them; on notifier's they sat at 0, where a cap
-      # kills instead. The advice is the same either way, so it is given
-      # either way, with the check that tells the two apart.
-      hint "If this host also runs a production service, give that service the reservation first — MemoryLow=, granted on every slice above it, and OOMScoreAdjust= — on any host: where session processes sit at oom_score_adj -1000 (cat /proc/<pid>/oom_score_adj), a cgroup cap on one STALLS it rather than killing it (references/host-memory.md)"
+      # kills instead. The service's half is the same either way, so it is
+      # given either way. It is not the whole answer at -1000: no killer takes
+      # a -1000 process, earlyoom included, so nothing on the service's side
+      # can put a session behind it, and the lever there is the session's own
+      # score (#307 CR 1) — named with the check that tells the hosts apart.
+      hint "If this host also runs a production service, give that service the reservation first — MemoryLow=, granted on every slice above it, and OOMScoreAdjust= — on any host (references/host-memory.md)"
+      hint "Where session processes sit at oom_score_adj -1000 (cat /proc/<pid>/oom_score_adj), no killer can take one and a cgroup cap STALLS it rather than killing it — launch it under choom -n 500 -- <cmd> (raising is unprivileged), as the capped install above does"
     else
       pass "Host memory $MEM_HUMAN"
     fi
@@ -369,6 +378,7 @@ case "$MEM_KB" in
     warn "Could not read this host's total memory — the install peak (~1.2 G) is unbudgeted here"
     ;;
 esac
+# <<< host-capacity
 
 case "$SWAP_KB" in
   0)

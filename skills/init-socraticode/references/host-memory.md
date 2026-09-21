@@ -23,9 +23,10 @@ Install once, deliberately, under a cap:
 npm view socraticode version
 
 # Linux with user systemd — the cap is the point; on a small host, run it here
-# and nowhere else.
+# and nowhere else. choom as in row U: a session at -1000 (below) hands that
+# score to the install, and at -1000 the cap stalls it instead of killing it.
 systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
-  -- npm install --prefix ~/.socraticode/pin socraticode@<version>
+  choom -n 500 -- npm install --prefix ~/.socraticode/pin socraticode@<version>
 
 # Anywhere else (macOS, a host without user systemd): the install is the same,
 # just uncapped. Size the host for ~1.2 G rather than hoping.

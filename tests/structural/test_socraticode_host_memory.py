@@ -28,6 +28,7 @@ which systemd reads as part of the value) that would have failed as written.
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -839,3 +840,183 @@ class TestTheOomPremiseIsConditional:
                 f"{doc.name} must name the lever that works at -1000 — raising "
                 f"the session's own score: {row}"
             )
+
+
+# Options of systemd-run's that take a value, as a separate word.
+SYSTEMD_RUN_VALUED = {
+    "-p",
+    "--property",
+    "-E",
+    "--setenv",
+    "-H",
+    "--host",
+    "-M",
+    "--machine",
+    "-u",
+    "--unit",
+    "--description",
+    "--slice",
+}
+
+
+def _systemd_run(argv: list[str]) -> tuple[list[str], list[str]]:
+    """systemd-run's options, and the command it runs.
+
+    It stops at the first word that is not an option: v255's optstring
+    starts with `+`, and main's parser is OPTION_PARSER_STOP_AT_FIRST_NONOPTION.
+    A `--` ends them early and is consumed, so `… -- choom` and `… choom`
+    run the same command.
+    """
+    assert argv[0] == "systemd-run", argv
+    i, opts = 1, []
+    while i < len(argv):
+        word = argv[i]
+        if word == "--":
+            i += 1
+            break
+        if not word.startswith("-"):
+            break
+        if word in SYSTEMD_RUN_VALUED:
+            opts += argv[i : i + 2]
+            i += 2
+        else:
+            opts.append(word)
+            i += 1
+    return opts, argv[i:]
+
+
+def _choom(argv: list[str]) -> tuple[dict[str, str], list[str]]:
+    """choom's options, and the command it runs.
+
+    util-linux choom.c parses with getopt_long("hn:p:V") — no `+`, so GNU
+    getopt permutes: until a `--`, every option-looking word is choom's
+    wherever it sits. `choom -n 500 npm install --prefix …` is an error, not
+    an install.
+    """
+    assert argv[0] == "choom", argv
+    opts: dict[str, str] = {}
+    rest: list[str] = []
+    i = 1
+    while i < len(argv):
+        word = argv[i]
+        if word == "--":
+            rest += argv[i + 1 :]
+            break
+        if word in ("-n", "-p"):
+            opts[word] = argv[i + 1]
+            i += 2
+            continue
+        assert not word.startswith("-"), f"choom rejects {word!r}: {argv}"
+        rest.append(word)
+        i += 1
+    return opts, rest
+
+
+def _host_capacity(mem_kb: int) -> list[str]:
+    """preflight.sh's host-capacity block, run for a host of `mem_kb`.
+
+    Lifted between its sentinels, as the memory-protection block is, because
+    the script reads total memory from /proc/meminfo or sysctl and no suite
+    host is small enough to reach the hints.
+    """
+    body = PREFLIGHT.read_text()
+    start = body.index("# >>> host-capacity\n")
+    end = body.index("# <<< host-capacity\n")
+    helpers = [
+        ln for ln in body.splitlines() if re.match(r"^(pass|warn|hint)\(\) \{", ln)
+    ]
+    program = (
+        "set -euo pipefail\n"
+        + "\n".join(helpers)
+        + f"\nMEM_KB={mem_kb}\nSC_PIN_DIR=/home/u/.socraticode/pin\n"
+        + body[start:end]
+    )
+    result = subprocess.run(
+        [shutil.which("bash") or "/bin/bash", "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.splitlines()
+
+
+class TestTheCappedInstallCanBeKilled:
+    """#307 CR 51: CR 1's -1000 lever reaches the capped pre-install too.
+
+    At oom_score_adj -1000 no killer takes a process, so a MemoryMax= cap on
+    one stalls it rather than killing it — row U's capped scope runs its
+    command under `choom -n 500` for that reason. The capped pre-install
+    preflight prints and host-memory.md shows did not, and preflight's
+    shared-host hint stopped at the service side on every host.
+    """
+
+    @staticmethod
+    def _preflight_command() -> str:
+        lines = _host_capacity(2 * 1024 * 1024)
+        line = next((ln for ln in lines if "Pre-install once under a cap" in ln), "")
+        assert "systemd-run" in line, lines
+        return line[line.index("systemd-run") :]
+
+    @staticmethod
+    def _doc_command() -> str:
+        block = next(
+            b for b in _fenced(HOST_MEMORY.read_text(), "bash") if "systemd-run" in b
+        )
+        joined = block.replace("\\\n", " ")
+        return next(ln for ln in joined.splitlines() if ln.startswith("systemd-run"))
+
+    @staticmethod
+    def _row_u_command() -> str:
+        row = next(
+            ln
+            for ln in TROUBLESHOOTING.read_text().splitlines()
+            if ln.startswith("| **U**")
+        )
+        found = re.search(r"`(systemd-run [^`]*)`", row)
+        assert found, row
+        return found.group(1)
+
+    @requires_bash
+    @pytest.mark.parametrize("where", ["preflight", "host-memory.md"])
+    def test_the_capped_install_runs_under_choom(self, where: str) -> None:
+        cmd = self._preflight_command() if where == "preflight" else self._doc_command()
+        opts, command = _systemd_run(shlex.split(cmd))
+        assert "MemoryMax=1536M" in opts, cmd
+        assert command and command[0] == "choom", (
+            f"{where}'s capped install runs {command[:1]}, not choom — at "
+            f"oom_score_adj -1000 the cap stalls it rather than killing it\n{cmd}"
+        )
+        adj, install = _choom(command)
+        assert adj == {"-n": "500"}, cmd
+        assert install[:3] == ["npm", "install", "--prefix"], install
+
+    @requires_bash
+    def test_every_capped_scope_is_composed_alike(self) -> None:
+        """Row U's scope, preflight's hint and the doc's block: one shape."""
+        shapes = set()
+        for cmd in (
+            self._row_u_command(),
+            self._preflight_command(),
+            self._doc_command(),
+        ):
+            words = shlex.split(cmd)
+            assert "choom" in words, f"a capped scope without choom: {cmd}"
+            at = words.index("choom")
+            shapes.add((words[at - 1] == "--", tuple(words[at : at + 4])))
+        assert len(shapes) == 1, shapes
+
+    @requires_bash
+    def test_the_shared_host_hint_names_choom_at_minus_1000(self) -> None:
+        lines = _host_capacity(2 * 1024 * 1024)
+        at_1000 = [ln for ln in lines if "-1000" in ln]
+        assert at_1000, lines
+        assert any("choom -n 500" in ln for ln in at_1000), (
+            "where sessions sit at -1000 nothing on the service's side makes "
+            f"one killable; the hint must name the session's own lever\n{at_1000}"
+        )
+
+    @requires_bash
+    def test_a_host_with_room_gets_no_hint(self) -> None:
+        lines = _host_capacity(8 * 1024 * 1024)
+        assert len(lines) == 1 and "Host memory 8.0 GiB" in lines[0], lines
