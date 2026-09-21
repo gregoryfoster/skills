@@ -795,6 +795,12 @@ def estimate_caveat(skill: str, estimate: int | None = None, *, anchored: bool) 
     error; the worst case stays band-derived, conservative rather than wrong,
     and says so. For an unanchored one the band has a high edge as well, and
     the caveat says what that edge implies about a red estimate (#294).
+
+    With no `estimate` the caller is the per-doc failure, and `anchored` is
+    about the docs it lists (`doc_budget_failure`), so the NOTE names them
+    rather than the SKILL.md. Until #294 CR 26 that caller passed the
+    SKILL.md's anchor state, so a doc priced from the ratio under an anchored
+    SKILL.md was never told to anchor before trimming.
     """
     caveat = (
         "This is the calibrated OFFLINE ESTIMATE at "
@@ -804,7 +810,14 @@ def estimate_caveat(skill: str, estimate: int | None = None, *, anchored: bool) 
         "budget binds BOTH readings — so clearing this one is necessary, not "
         "sufficient. The other:\n  " + exact_cmd(skill)
     )
-    if anchored:
+    if anchored and estimate is None:
+        caveat = (
+            "NOTE: every doc listed above was priced from its own row in "
+            f"{COUNTS_KNOB.name}, so each reading is a rescale of that doc's "
+            "last exact count, not the repo ratio, and the error ranges below "
+            "overstate it.\n\n"
+        ) + caveat
+    elif anchored:
         caveat = (
             f"NOTE: skills/{skill}/SKILL.md was priced from its own row in "
             f"{COUNTS_KNOB.name}, so this reading is a rescale of its last "
@@ -816,8 +829,9 @@ def estimate_caveat(skill: str, estimate: int | None = None, *, anchored: bool) 
         caveat += (
             "\n\nIt reads HIGH as well as low. If the exact reading clears, "
             "the overage is the estimator's and the fix is an anchor, not a "
-            "trim — this counts the skill exactly and prices it from that "
-            "count from then on (docs/STYLE.md):\n  " + anchor_cmd(skill)
+            "trim — this counts the skill's SKILL.md and references exactly "
+            "and prices each from its own count from then on "
+            "(docs/STYLE.md):\n  " + anchor_cmd(skill)
         )
     if estimate is None:
         return caveat
@@ -836,6 +850,26 @@ def estimate_caveat(skill: str, estimate: int | None = None, *, anchored: bool) 
         "estimator's error, and the observed range is only what it has cost so "
         "far. Deriving headroom from the smaller figure is how a ratchet gets "
         "breached past a green suite.\n\n" + caveat
+    )
+
+
+def doc_budget_failure(skill: str, over: list[dict], doc_budget: int) -> str:
+    """The offline per-doc failure, captioned by the docs that failed.
+
+    `anchored` is read off the failing rows, all of them: one doc priced from
+    the ratio is enough for the "anchor, don't trim" advice, since the ratio
+    reads a doc high as well as low. Until #294 CR 26 it was the SKILL.md's
+    state, which a reference doc's pricing need not share.
+    """
+    return (
+        f"skills/{skill} reference docs over the {doc_budget:,}-token "
+        "per-doc budget:\n"
+        + "\n".join(f"  {d['path']} ~{d['tokens']:,}" for d in over)
+        + "\n\nPast the per-doc budget, loading the doc stops costing less "
+        "than carrying it inline — split it on its top-level headings. A "
+        "demotion into an already-full doc moves the problem instead of "
+        "solving it.\n\n"
+        + estimate_caveat(skill, anchored=all(priced_from_its_anchor(d) for d in over))
     )
 
 
@@ -1460,18 +1494,7 @@ class TestEverySkillsOwnSurface:
     ):
         doc_budget = int(DOC_BUDGET_KNOB.read_text().strip())
         over = [d for d in surfaces[skill]["docs"] if _doc_over(d, doc_budget)]
-        assert not over, (
-            f"skills/{skill} reference docs over the {doc_budget:,}-token "
-            "per-doc budget:\n"
-            + "\n".join(f"  {d['path']} ~{d['tokens']:,}" for d in over)
-            + "\n\nPast the per-doc budget, loading the doc stops costing less "
-            "than carrying it inline — split it on its top-level headings. A "
-            "demotion into an already-full doc moves the problem instead of "
-            "solving it.\n\n"
-            + estimate_caveat(
-                skill, anchored=priced_from_its_anchor(surfaces[skill]["policy"])
-            )
-        )
+        assert not over, doc_budget_failure(skill, over, doc_budget)
 
 
 class TestTheContractMeasuredExactly:
@@ -2141,6 +2164,37 @@ class TestTheOtherEdgeIsReported:
         message = estimate_caveat(self.SKILL, 9_900, anchored=True)
         assert "priced from its own row" in message
         assert anchor_cmd(self.SKILL) not in message
+
+    @staticmethod
+    def _doc(source: str, name: str = "r.md") -> dict:
+        return {
+            "path": f"skills/x/references/{name}",
+            "tokens": 10_400,
+            "tokens_source": source,
+        }
+
+    def test_a_red_doc_from_the_ratio_is_told_to_anchor_whatever_its_skill_md(self):
+        """#294 CR 26. The per-doc failure was captioned with the SKILL.md's
+        anchor state, so a doc the ratio priced, under an anchored SKILL.md,
+        never got the advice. The docs decide it now — and one ratio-priced
+        doc among anchored ones is enough, since that one may read high."""
+        for over in (
+            [self._doc("repo")],
+            [self._doc("file"), self._doc("repo", "s.md")],
+        ):
+            message = doc_budget_failure("x", over, 10_000)
+            assert "reads HIGH as well as low" in message, message
+            assert anchor_cmd("x") in message
+
+    def test_an_anchored_red_doc_is_not_told_to_anchor_and_the_note_names_docs(
+        self,
+    ):
+        message = doc_budget_failure("x", [self._doc("file")], 10_000)
+        assert anchor_cmd("x") not in message
+        assert "every doc listed above was priced from its own row" in message
+        assert "SKILL.md was priced" not in message, (
+            "a per-doc failure captioned with the SKILL.md's anchor"
+        )
 
     @pytest.mark.parametrize(
         "category", ["EstimateSqueezeWarning", "AnchorCoverageWarning"]
