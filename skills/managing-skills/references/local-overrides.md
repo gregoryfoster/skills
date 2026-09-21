@@ -203,7 +203,7 @@ and the doctor warns when an override does not carry one. Sometimes it cannot:
 `CannObserv/cli` overrides `using-git-worktrees` and ships **no `scripts/`
 directory at all** — the project fixes the worktree root at
 `.worktrees/<branch-slug>/` and enforces it from its own script — so the
-`<SKILL_SCRIPTS>` resolution loop resolves nothing there. Neither offered remedy
+per-script resolution block resolves nothing there. Neither offered remedy
 fit. Pasting the fragment back puts a runnable-looking fence into a skill file
 where running it fails, which is #63 arriving through the remedy; and "drop the
 override in favour of per-file symlinks" has nothing to apply to when the whole
@@ -216,7 +216,7 @@ metadata:
   overrides: <owner>-<repo>/using-git-worktrees
   override-reason: "cli fixes the worktree root and enforces it locally"
   omits-required: "skill-scripts: cli ships none of the vendor's worktree
-    scripts, so <SKILL_SCRIPTS> resolution resolves nothing here"
+    scripts, so the per-script resolution block resolves nothing here"
 ```
 
 `"<id>[, <id>…]: <why>"` — **ids first**, because the doctor reads one

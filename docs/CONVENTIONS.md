@@ -80,7 +80,7 @@ Three rules for an override author:
   metadata:
     overrides: <owner>-<repo>/using-git-worktrees
     omits-required: "skill-scripts: this project ships none of the vendor's
-      worktree scripts, so <SKILL_SCRIPTS> resolution resolves nothing here"
+      worktree scripts, so the per-script resolution block resolves nothing here"
   ```
 
   The grammar is `"<id>[, <id>…]: <why>"`, ids **first** because the doctor reads one line and a reason worth writing gets folded across two. A declaration excuses the fragment it names and nothing else, so a fragment armed in a later release still reports against a file that already carries one — the property that keeps this from becoming a blanket mute. A declaration that matches no armed fragment (a renamed id, a fragment the override has since re-synced) is itself reported: a mute with nothing under it reads to the next reader as a decision taken.
