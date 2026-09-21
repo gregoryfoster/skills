@@ -170,8 +170,9 @@ fi
 
 "At most": if the children's grants add up past the parent's, each keeps a
 share in proportion to its usage, which is why the parent's grant is at least
-their sum. `preflight.sh` runs the same walk over every unit under
-`system.slice` that claims a `MemoryLow=`, and names the slice that clamps one.
+their sum. `preflight.sh` reads the same chain, top down, for every unit under
+`system.slice` that claims a `MemoryLow=`, through nested slices six levels
+deep, and names the slice that clamps one.
 On wslcb, after the fix, the service read 256 MiB effective. Its
 `OOMScoreAdjust=-700` (`oom_score` 208) was calibrated to sit below 300, the
 floor of an earlyoom `--prefer` match. That floor is a match whose own

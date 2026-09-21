@@ -250,6 +250,70 @@ class TestPreflightReadsTheWholeChain:
         ), lines
 
     @requires_bash
+    def test_a_unit_two_slices_down_is_read(self, tmp_path: Path) -> None:
+        """The walk once stopped one slice below system.slice.
+
+        A unit in a slice inside a slice, clamped to 0 there, got a ✓ reading
+        "nothing under it claims MemoryLow=" — #307's failure, reported as its
+        absence, one level further down than the templated case.
+        """
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(1024 * MIB),
+                    "system.slice/app.slice": str(1024 * MIB),
+                    "system.slice/app.slice/app-worker.slice": "0",
+                    "system.slice/app.slice/app-worker.slice/worker@1.service": str(
+                        256 * MIB
+                    ),
+                },
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        assert "app.slice/app-worker.slice/worker@1.service" in warned[0], warned
+        assert "app-worker.slice grants 0 MiB" in warned[0], (
+            f"the warning must name the slice that clamps it: {warned}"
+        )
+        assert not any("nothing under" in ln for ln in lines), lines
+
+    @requires_bash
+    def test_a_granted_nested_chain_passes(self, tmp_path: Path) -> None:
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(1024 * MIB),
+                    "system.slice/app.slice": str(512 * MIB),
+                    "system.slice/app.slice/app-worker.slice": str(256 * MIB),
+                    "system.slice/app.slice/app-worker.slice/worker@1.service": str(
+                        256 * MIB
+                    ),
+                },
+            )
+        )
+        assert not _marked(lines, WARN), lines
+        passed = _marked(lines, PASS)
+        assert passed and "worker@1.service" in passed[0], lines
+
+    @requires_bash
+    def test_the_depth_bound_is_named_not_dropped(self, tmp_path: Path) -> None:
+        """Past the bound nothing is read, so nothing may be called absent."""
+        tree = {"system.slice": str(1024 * MIB)}
+        path = "system.slice"
+        for n in range(8):
+            path += f"/n{n}.slice"
+            tree[path] = str(1024 * MIB)
+        tree[f"{path}/deep.service"] = str(256 * MIB)
+        lines, _ = _read(_host(tmp_path, tree))
+        warned = _marked(lines, WARN)
+        assert any("not measured past" in ln and "n5.slice" in ln for ln in warned), (
+            lines
+        )
+        assert not any("nothing under" in ln for ln in lines), lines
+
+    @requires_bash
     def test_recursiveprot_does_not_rescue_a_zero_parent(self, tmp_path: Path) -> None:
         """#307 read memory_recursiveprot as an escape hatch; the kernel does not.
 
@@ -310,6 +374,18 @@ class TestPreflightReadsTheWholeChain:
 
 class TestPreflightRunsTheReading:
     """The lifted block is only evidence if the script runs it."""
+
+    def test_the_doc_states_the_walks_real_depth(self) -> None:
+        """host-memory.md once said preflight "runs the same walk" at two levels."""
+        found = re.search(r"^PROTECTION_DEPTH=(\d+)$", PREFLIGHT.read_text(), re.M)
+        assert found, "preflight.sh no longer sets PROTECTION_DEPTH"
+        words = {4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+        depth = words.get(int(found.group(1)), found.group(1))
+        text = " ".join(HOST_MEMORY.read_text().split())
+        assert f"through nested slices {depth} levels deep" in text, (
+            "host-memory.md must state how deep preflight's walk goes — "
+            f"PROTECTION_DEPTH is {found.group(1)}"
+        )
 
     @requires_bash
     def test_this_host_gets_a_memory_protection_line(self, tmp_path: Path) -> None:
