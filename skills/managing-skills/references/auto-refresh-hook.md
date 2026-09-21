@@ -19,6 +19,17 @@ Two details in that merge are load-bearing, and `install-hook.sh` carries the fu
 
 </details>
 
+## Installing the doctor: twice, and from the first vendor that can
+
+The hook installs `.skills/doctor.sh` through `install-doctor.sh` — a no-op when the content already matches — from **two** call sites:
+
+- **Every session, ahead of the lock and the `main` gate.** This is the working-tree repair: a deleted doctor self-heals at the next session start, on any branch. Committing it stays behind both gates ([#86](https://github.com/gregoryfoster/skills/issues/86)).
+- **Again after a successful submodule update, ahead of the commit** ([#299](https://github.com/gregoryfoster/skills/issues/299)). The first call ran the *pre*-bump installer against the *pre*-bump doctor, so without the second, the session that advanced the pointer committed the old doctor beside the new pointer, and the refreshed one waited for the next session to reach the first call. Measured in CannObserv/observo: a committed doctor ten days stale, missing `check_unpushed()` entirely, so the "main is ahead of its upstream" sensor did not exist there.
+
+Neither call fires in a checkout whose `skills-vendor/*` are empty gitlinks — every fresh linked worktree, until something initializes them. The glob finds no installer, and there is no vendored doctor to install from anyway; the hook itself, a symlink into that same tree, does not start there either (`SKILL.md` covers that first session). So "every session" means every session in a checkout with its submodules populated.
+
+**The first installer that succeeds wins**, in glob order ([#300](https://github.com/gregoryfoster/skills/issues/300)). The glob spans every vendored repo, so a second one shipping `managing-skills` is the fallback when the first fails; the loop used to stop after the first attempt either way. Each failure is logged, naming the installer, and when every one fails the session hears it on stderr — the channel every other failure here uses — once per run, although the install runs twice. A failing install otherwise leaves a stale doctor with one log line as its only trace.
+
 ## Pushing what it commits ([#293](https://github.com/gregoryfoster/skills/issues/293))
 
 The hook commits pointer bumps **and pushes them**. It used to only commit.

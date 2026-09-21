@@ -33,6 +33,12 @@ Behaviour:
     logged as a bare success.
   - Honours per-submodule pins, so one vendored repo can be held at a
     commit while the rest keep refreshing (see Pin file below).
+  - Installs or refreshes .skills/doctor.sh every session, on any branch,
+    from the first vendored install-doctor.sh that succeeds — and again
+    after a refresh, so a pointer bump commits the doctor it ships. Every
+    installer failing is reported on stderr. A checkout whose
+    skills-vendor/ submodules are not populated (a fresh worktree) has no
+    installer to run.
   - Stages and commits exactly two kinds of path: the skills-vendor/
     submodules it just refreshed and, when it exists, .skills/doctor.sh.
     Never .skills/ wholesale, which would absorb operator config
@@ -307,22 +313,55 @@ _reconcile_unpushed() {
 }
 
 # Opportunistically install/update .skills/doctor.sh — the backport path
-# for consumers added before doctor.sh existed. Runs on every session
-# (not gated by the once-per-day lock) so accidental deletions self-heal
-# at the next session start. install-doctor.sh is a no-op when content
-# matches, so the cost is one file compare per session.
+# for consumers added before doctor.sh existed. install-doctor.sh is a no-op
+# when content matches, so the cost is one file compare per call.
 #
-# Deliberately ahead of the lock and main-branch gates: this is the
+# Called from two places. Call site 1, just below, runs on every session (not
+# gated by the once-per-day lock) so accidental deletions self-heal at the
+# next session start. Call site 2 runs after a successful submodule update,
+# because call site 1 ran the PRE-bump installer against the PRE-bump doctor
+# (#299): without it, the session that advances the pointer commits the old
+# doctor beside the new pointer, and the refreshed one waits for the next
+# session that reaches call site 1.
+#
+# Neither fires in a checkout whose skills-vendor/* are empty gitlinks — every
+# fresh linked worktree, until something initializes them. The glob matches no
+# installer there, and there is no vendored doctor to install from anyway, so
+# "every session" means every session in a checkout with its submodules
+# populated (#299).
+#
+# The first installer that SUCCEEDS wins, in glob order — not the first that
+# exists (#300). The glob spans every vendored repo, so a second one shipping
+# managing-skills is the fallback when the first fails; the loop used to break
+# after the first attempt either way, leaving a stale doctor with one $LOG line
+# as its only trace. When every installer fails that reaches stderr, the
+# channel every other failure here uses — once per run, though this is called
+# twice, since the second call would only repeat the first one's news.
+DOCTOR_INSTALL_WARNED=0
+_install_doctor() {
+  local installer tried=0
+  for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
+    [ -x "$installer" ] || continue
+    tried=$((tried + 1))
+    if bash "$installer" --quiet >>"$LOG" 2>&1; then
+      return 0
+    fi
+    _log "doctor install failed via $installer (see lines above) — trying the next vendor, if any"
+  done
+  [ "$tried" -gt 0 ] || return 0
+  _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was"
+  if [ "$DOCTOR_INSTALL_WARNED" = "0" ]; then
+    DOCTOR_INSTALL_WARNED=1
+    echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2
+  fi
+  return 0
+}
+
+# Call site 1 of 2: every session, ahead of both gates. This is the
 # working-tree repair, and it should happen on every branch and every
 # session. Committing the result is a separate concern and stays behind
 # both gates, further down (#86).
-for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
-  [ -x "$installer" ] || continue
-  if ! bash "$installer" --quiet >>"$LOG" 2>&1; then
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] doctor install failed (see lines above)" >>"$LOG"
-  fi
-  break
-done
+_install_doctor
 
 # Call site 1 of 2: every session, ahead of both gates. This is the pass that
 # heals a checkout some earlier run left stranded — a push killed by the
@@ -525,6 +564,13 @@ else
     _log "submodule refresh incomplete — still uninitialized after --init: ${UNINIT% }"
     echo "skills update: still uninitialized after refresh: ${UNINIT% } (see $LOG)" >&2
   fi
+
+  # Call site 2 of 2 (#299): the update may just have replaced the vendored
+  # install-doctor.sh and doctor.sh, so run the POST-bump installer. Here,
+  # before COMMIT_PATHS is built, so the doctor staged and committed below is
+  # the one that ships with the pointer this run records — and so the -f
+  # guard there sees a doctor this call has only just created.
+  _install_doctor
 fi
 
 # Paths this hook is allowed to stage. Enumerated explicitly, and NEVER
