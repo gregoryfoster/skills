@@ -74,11 +74,11 @@ Skip Q0 entirely if Step 1–2 flagged neither a candidate pair nor a partially-
 
 **Q5 — Concurrency ceiling: worktree provisioning *and* shared backing services?**
 
-Three sub-questions, each capping the per-batch agent count regardless of file-disjointness. Ask them together; any one can set the ceiling.
+Three sub-questions, each capping the per-batch agent count regardless of file-disjointness — the third through the second's capacity half, which it multiplies. Ask them together.
 
 > 1. Does the host project have a custom worktree-create script (e.g. `dev.sh worktree create`)? What concurrent ceiling does it support, and what does it provision beyond plain `git worktree add` — Nginx vhosts, DB clones, port pools, node_modules overlays? If the user doesn't know, ask them to grep the script for port-pool size or docker-compose port ranges first.
 > 2. **What backing services do the worktrees NOT clone?** A shared test database, a shared Redis, a shared search index, a single dev-server port — and, by *capacity* rather than by state, one machine running every worktree's suite. Plain `git worktree` clones *none* of these, so a project with **no** worktree script can still have a hard ceiling of 1.
-> 3. **Does the commit or push hook run the test suite, and at what parallelism?** Multiply that parallelism by the agent count before accepting a ceiling — the hook runs on every worker's every commit.
+> 3. **Does the commit hook run the test suite, and at what parallelism?** Multiply that by the agent count and weigh it against the host's cores before accepting a ceiling.
 
 The real ceiling is far more often in sub-question 2 than in 1. **Ask it explicitly — don't wait to rediscover it in Step 5**, but accept "none" as an answer — and a grep hit is not a ceiling until you read the path.
 
