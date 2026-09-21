@@ -58,10 +58,13 @@ launch from installing.
 ## A production service on the same host
 
 Measure, pin, reserve, and run an early killer — all four, whatever the first
-step finds. Everything below was measured on three CannObserv VMs (broker,
-notifier, wslcb-licensing-tracker) and corroborated on a fourth
-(address-validator); where the hosts disagreed, the disagreement is stated
-rather than resolved
+step finds. Four CannObserv VMs, and most findings rest on one of them:
+broker (the install peak, sessions at -1000), notifier (sessions at 0, the
+spaced earlyoom regex), wslcb-licensing-tracker (the inert `MemoryLow=`, the
+`$`-anchored `--prefer`, earlyoom on stock arguments) and address-validator
+(the templated-slice clamp, and -1000 with no `exe-init` — both measured
+there alone — plus the stock-arguments earlyoom again). Where the hosts
+disagreed, the disagreement is stated rather than resolved
 ([#295](https://github.com/gregoryfoster/skills/issues/295),
 [#303](https://github.com/gregoryfoster/skills/issues/303),
 [#307](https://github.com/gregoryfoster/skills/issues/307)).

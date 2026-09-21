@@ -713,6 +713,24 @@ class TestTheOomPremiseIsConditional:
             "and OOMScoreAdjust= (#303)"
         )
 
+    def test_each_host_is_named_with_what_was_measured_on_it(self) -> None:
+        """#307 CR 31: "corroborated on a fourth" hid two single-host findings.
+
+        The templated-slice clamp and the -1000 reading with no `exe-init`
+        were measured on address-validator and nowhere else, and a reader
+        weighing either needs to know that.
+        """
+        text = " ".join(HOST_MEMORY.read_text().split())
+        start = text.index("## A production service on the same host")
+        intro = text[start : text.index("### 1.", start)]
+        assert "corroborated on a fourth" not in intro, intro
+        for host in ("broker", "notifier", "wslcb-licensing-tracker"):
+            assert host in intro, f"{host} is not named: {intro}"
+        on_av = intro[intro.index("address-validator") :]
+        assert "templated-slice clamp" in on_av and "exe-init" in on_av, (
+            f"address-validator's own findings must be attributed to it: {intro}"
+        )
+
     def test_no_killer_is_promised_a_minus_1000_session(self) -> None:
         """earlyoom skips oom_score_adj -1000 exactly as the kernel does.
 
