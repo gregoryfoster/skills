@@ -29,8 +29,9 @@ recorded as open is satisfied in fact:
 # .skills/context-token-ratio nor -counts without --calibrate anyway; before
 # that, this run refit the ratio to this skill's files — not the repo's policy
 # surface — re-baselining every skill's estimate (the #230 incident). Never
-# add --calibrate here: it anchors this skill's files, which changes what the
-# gate measures (test_which_skills_are_anchored_is_declared).
+# add --calibrate here: it refits the repo-wide ratio to this skill's files.
+# Re-anchor after the pass instead, with --exact --anchor on the same --file
+# and --docs-dir: it persists this skill's rows and never the ratio (#294).
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact --no-write --budget 7600 \
   --file skills/curating-context/SKILL.md \
   --docs-dir skills/curating-context/references \

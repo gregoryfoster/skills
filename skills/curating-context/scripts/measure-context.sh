@@ -110,6 +110,15 @@ Options:
                      how they are made. A whole-surface --exact run (no --file,
                      no --docs-dir) persists both without it, and says so.
                      Refused with --no-write, and without --exact.
+  --anchor           Persist the per-file anchors from an --exact run and never
+                     the ratio: every file counted exactly gets its row in
+                     .skills/context-token-counts, merged as for --calibrate,
+                     and .skills/context-token-ratio is left as it stands,
+                     scoped run or not. Anchoring every SKILL.md of a skill
+                     library is one run per skill, and --calibrate there would
+                     refit the repo-wide ratio to each skill in turn, leaving
+                     it at whichever ran last (#294). Refused with --no-write,
+                     with --calibrate, and without --exact.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
@@ -193,6 +202,7 @@ EXACT=0
 CHECK_CRED=0
 NO_WRITE=0
 CALIBRATE=0
+ANCHOR=0
 NO_ENV_FILE=0
 ENV_FILES=".env env"
 # Whether --env-file was passed, not whether ENV_FILES differs from the default:
@@ -221,6 +231,7 @@ while [ $# -gt 0 ]; do
     --check-credential) CHECK_CRED=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
     --calibrate) CALIBRATE=1; shift ;;
+    --anchor) ANCHOR=1; shift ;;
     --no-env-file) NO_ENV_FILE=1; shift ;;
     --env-file) need_arg "$#" --env-file 'space-separated names, relative to the repo root'
                 ENV_FILES="$2"; ENV_FILE_EXPLICIT=1; shift 2 ;;
@@ -281,11 +292,23 @@ esac
 # it. Phase 7's `git add -A` then shipped both inside a commit about one file.
 # Neither is wrong to do; both are wrong to do by accident. So a scoped run
 # reads the calibration and writes it only on --calibrate.
+#
+# And the two writes are separate decisions (#294). An anchor re-prices the one
+# file it names; the ratio re-prices every file in the repo. Anchoring every
+# SKILL.md in a skill library is one scoped run per skill, and with --calibrate
+# each would refit the ratio to its own corner, leaving it at whichever skill
+# ran last. --anchor persists the anchors and never the ratio.
 SCOPED=0
 if [ -n "$POLICY" ] || [ -n "$DOCS_DIR" ]; then SCOPED=1; fi
-PERSIST=0
-if [ "$NO_WRITE" -eq 0 ] && { [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ]; }; then
-  PERSIST=1
+PERSIST_ANCHORS=0
+PERSIST_RATIO=0
+if [ "$NO_WRITE" -eq 0 ]; then
+  if [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ] || [ "$ANCHOR" -eq 1 ]; then
+    PERSIST_ANCHORS=1
+  fi
+  if [ "$ANCHOR" -eq 0 ] && { [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ]; }; then
+    PERSIST_RATIO=1
+  fi
 fi
 
 # --- shared library -------------------------------------------------------
@@ -757,6 +780,17 @@ if [ "$CALIBRATE" -eq 1 ] && [ "$NO_WRITE" -eq 1 ]; then
 fi
 if [ "$CALIBRATE" -eq 1 ] && [ "$EXACT" -eq 0 ]; then
   echo "ERROR --calibrate needs --exact: an estimate cannot calibrate the estimator" >&2; exit 1
+fi
+# --anchor on the same terms, plus one: it is --calibrate minus the ratio, so
+# asking for both is asking for the ratio and for leaving it alone.
+if [ "$ANCHOR" -eq 1 ] && [ "$NO_WRITE" -eq 1 ]; then
+  echo "ERROR --anchor and --no-write contradict each other" >&2; exit 1
+fi
+if [ "$ANCHOR" -eq 1 ] && [ "$CALIBRATE" -eq 1 ]; then
+  echo "ERROR --anchor persists the anchors alone, --calibrate the anchors and the ratio; pass one" >&2; exit 1
+fi
+if [ "$ANCHOR" -eq 1 ] && [ "$EXACT" -eq 0 ]; then
+  echo "ERROR --anchor needs --exact: an estimate cannot anchor the estimator" >&2; exit 1
 fi
 
 # Which version of the skill is producing this measurement — carried into the
@@ -1689,7 +1723,7 @@ RATIO_FILE="$ROOT/.skills/context-token-ratio"
 # scoped refusal names what it left standing (#263).
 PREV_RATIO="(none)"
 [ -f "$RATIO_FILE" ] && PREV_RATIO="$(tr -d '[:space:]' <"$RATIO_FILE" 2>/dev/null || echo unreadable)"
-if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST_RATIO" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   mkdir -p "$ROOT/.skills" 2>/dev/null || true
   if printf '%s\n' "$SURFACE_RATIO_FMT" >"$RATIO_FILE" 2>/dev/null; then
     # Said out loud because this is the write that re-prices every offline
@@ -1702,7 +1736,10 @@ if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST" -eq 1
   fi
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the observed surface ratio ($SURFACE_RATIO_FMT, policy-only was $POLICY_RATIO_FMT)" >&2
-elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+elif [ "$exact_flag" = true ] && [ "$PERSIST_RATIO" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+  # A write this run declined — scoped without --calibrate, or --anchor on any
+  # scope — since --no-write is the branch above.
+  #
   # What the repo prices from is the point of the line, and it is least obvious
   # exactly when there is no usable figure to quote — so say that, not "(none)".
   DEFAULT_RATIO_FMT="$(( CTX_BPT_DEFAULT_X100 / 100 )).$(printf '%02d' $(( CTX_BPT_DEFAULT_X100 % 100 )))"
@@ -1711,7 +1748,11 @@ elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ] && [ "$RATIO_PERSISTABLE" -
     ''|unreadable) standing=".skills/context-token-ratio is empty or unreadable, so offline estimates keep pricing at the $DEFAULT_RATIO_FMT library default" ;;
     *) standing=".skills/context-token-ratio stays $PREV_RATIO, the repo-wide figure" ;;
   esac
-  echo "INFO scoped run (--file/--docs-dir): measured $SURFACE_RATIO_FMT bytes/token over this corner; $standing" >&2
+  if [ "$ANCHOR" -eq 1 ]; then
+    echo "INFO --anchor: measured $SURFACE_RATIO_FMT bytes/token over the files this run counted; $standing" >&2
+  else
+    echo "INFO scoped run (--file/--docs-dir): measured $SURFACE_RATIO_FMT bytes/token over this corner; $standing" >&2
+  fi
 fi
 
 # --- per-file calibration (#145) ------------------------------------------
@@ -1723,9 +1764,11 @@ fi
 # so it writes them down: two integers per file, which the estimators divide
 # once in full precision rather than twice through a rounded ratio.
 #
-# Gated exactly as the ratio is, and for the same reason: a calibration derived
-# from an estimate re-records the divisor it was computed with, which is a
-# self-confirming measurement that then outranks the global for every later run.
+# Gated on exact_flag as the ratio is, and for the same reason: a calibration
+# derived from an estimate re-records the divisor it was computed with, which is
+# a self-confirming measurement that then outranks the global for every later
+# run. The scope gate is its own, PERSIST_ANCHORS, which --anchor opens without
+# opening the ratio's (#294).
 emit_count_row() {
   # <bytes> <tokens> <path> -> one persistable row, or a refusal on stderr.
   local b="$1" t="$2" p="$3" r
@@ -1746,7 +1789,7 @@ emit_count_row() {
 COUNTS_FILE="$ROOT/.skills/$CTX_COUNTS_BASENAME"
 # How many files this run counted exactly — the rows it would anchor.
 COUNTED=$(( 1 + $(awk 'NF { n++ } END { print n + 0 }' "$TMP/docs.tsv") ))
-if [ "$exact_flag" = true ] && [ "$PERSIST" -eq 1 ]; then
+if [ "$exact_flag" = true ] && [ "$PERSIST_ANCHORS" -eq 1 ]; then
   : >"$TMP/counts.new"
   : >"$TMP/counts.measured"
   emit_count_row "$P_BYTES" "$P_TOKENS" "$POLICY"
@@ -1798,7 +1841,7 @@ if [ "$exact_flag" = true ] && [ "$PERSIST" -eq 1 ]; then
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the per-file calibration" >&2
 elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ]; then
-  echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263)" >&2
+  echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263), or --anchor for the anchors alone (#294)" >&2
 fi
 
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s, "near_budget": %s},\n' \

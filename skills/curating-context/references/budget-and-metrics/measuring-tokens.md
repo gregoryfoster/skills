@@ -212,6 +212,12 @@ it is one: it persists both files from the scoped run, merged as before. The
 docs-dir *knob* configures the surface rather than scoping a run, so the
 flagless weekly cadence still calibrates.
 
+`--anchor` makes the other half of that decision alone: it persists the
+per-file anchors and never the ratio, on any scope (#294). A repo that anchors
+many corners — a skill library anchoring every SKILL.md — needs one run per
+corner, and `--calibrate` on each would refit the ratio to every corner in turn
+and leave it at whichever ran last.
+
 ### Keeping a ledger single-method
 
 `record-telemetry.sh` **refuses** to append a row whose method differs from the
