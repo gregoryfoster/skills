@@ -78,7 +78,7 @@ Three sub-questions, each capping the per-batch agent count regardless of file-d
 
 > 1. Does the host project have a custom worktree-create script (e.g. `dev.sh worktree create`)? What concurrent ceiling does it support, and what does it provision beyond plain `git worktree add` — Nginx vhosts, DB clones, port pools, node_modules overlays? If the user doesn't know, ask them to grep the script for port-pool size or docker-compose port ranges first.
 > 2. **What backing services do the worktrees NOT clone?** A shared test database, a shared Redis, a shared search index, a single dev-server port — and, by *capacity* rather than by state, one machine running every worktree's suite. Plain `git worktree` clones *none* of these, so a project with **no** worktree script can still have a hard ceiling of 1.
-> 3. **Does the commit or push hook run the test suite, and at what parallelism?** Multiply by the agent count before accepting a ceiling: three agents under a pre-commit `pytest -n 4` can mean twelve concurrent test processes.
+> 3. **Does the commit or push hook run the test suite, and at what parallelism?** Multiply that parallelism by the agent count before accepting a ceiling — the hook runs on every worker's every commit.
 
 The real ceiling is far more often in sub-question 2 than in 1. **Ask it explicitly — don't wait to rediscover it in Step 5**, but accept "none" as an answer — and a grep hit is not a ceiling until you read the path.
 
