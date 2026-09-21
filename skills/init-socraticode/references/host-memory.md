@@ -80,15 +80,15 @@ done
 
 | Sessions at | Measured on | What follows |
 |---|---|---|
-| **-1000** | broker; address-validator | Inherited from `sshd` and `exe-init` (on broker — address-validator has no `exe-init` process and lands there anyway). The killer can never pick a session, VSCode Server, Claude Code or any server they launch, so under real exhaustion it takes the production service; earlyoom 1.7 floors a `--prefer` match at 300 while a service at adj 0 reads ~667. A cgroup cap on a session **stalls** it rather than killing it. The reservation is what protects the service. |
-| **0** | notifier | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The killer *can* pick a session, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
+| **-1000** | broker; address-validator | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. The kernel's killer can never pick a session, VSCode Server, Claude Code or any server they launch, so under real exhaustion it takes the production service, and a cgroup cap on a session **stalls** it rather than killing it. earlyoom 1.7 floors a `--prefer` match at 300 while a service at adj 0 reads ~667, so the service's `OOMScoreAdjust=` is what compensates: it lets earlyoom take the session first. |
+| **0** | notifier | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
 
 What decides it was not determined, and `exe-init`'s presence is not it:
 notifier has one and sits at 0, address-validator has none and sits at -1000.
 **The actions below are the same either way.** Do not skip them after
-measuring a 0: there, `OOMScoreAdjust=` is doing the work the
-reservation does elsewhere, and the reservation still keeps reclaim off the
-service.
+measuring a 0: the reservation keeps reclaim off the service on any host, and
+`OOMScoreAdjust=` is what makes a session, not the service, the one that goes —
+on its own where sessions sit at 0, through earlyoom where they sit at -1000.
 
 ### 2. Pin
 

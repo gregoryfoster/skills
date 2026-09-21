@@ -360,7 +360,7 @@ case "$MEM_KB" in
       # killer could not pick them; on notifier's they sat at 0, where a cap
       # kills instead. The advice is the same either way, so it is given
       # either way, with the check that tells the two apart.
-      hint "If this host also runs a production service, give that service the reservation (MemoryLow= and OOMScoreAdjust=) first, whatever this check shows — a session process at oom_score_adj -1000 (cat /proc/<pid>/oom_score_adj) is one a cgroup cap STALLS rather than kills (references/host-memory.md)"
+      hint "If this host also runs a production service, give that service the reservation first — MemoryLow=, granted on every slice above it, and OOMScoreAdjust= — on any host: where session processes sit at oom_score_adj -1000 (cat /proc/<pid>/oom_score_adj), a cgroup cap on one STALLS it rather than killing it (references/host-memory.md)"
     else
       pass "Host memory $MEM_HUMAN"
     fi
@@ -413,7 +413,7 @@ memory_protection() {
   local mountinfo="$1" found mnt opts rp slice low d e name claim eff via f i
   local claims="" clamped=0
   if [ ! -r "$mountinfo" ]; then
-    warn "Memory protection not measured — no $mountinfo here (not Linux), and MemoryLow= is a Linux cgroup v2 setting"
+    warn "Memory protection not measured — no $mountinfo here (not Linux, or no /proc), and MemoryLow= is a Linux cgroup v2 setting"
     return 0
   fi
   # Field 5 is the mount point; after the lone '-' come the fs type, the
