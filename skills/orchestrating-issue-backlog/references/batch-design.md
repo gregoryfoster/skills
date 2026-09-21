@@ -32,7 +32,7 @@ idled. Ask at planning time whether that shared surface can be split first.
 
 ## Counting and pairing the table (Step 7)
 
-**Count the table's items against the scored backlog before asking for approval** —
+**Count the table's items before asking for approval** —
 they must equal the issues in scope minus deferrals and closures, each Q0 bundle
 counting once.
 Re-reading the table is no substitute, because the failure does not look wrong. Each

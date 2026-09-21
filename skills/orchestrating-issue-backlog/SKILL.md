@@ -166,7 +166,7 @@ Sections:
 - **Scored backlog** — full table
 - **Conflict zones** — contested files and their required merge order
 - **Dependency graph** — ASCII or text
-- **Batch execution plan** — per-batch table with agents, issues, files, gate condition
+- **Batch execution plan** — the Step 7 count, then a per-batch table with agents, issues, files, gate condition
 - **Key decisions** — rationale for non-obvious choices (e.g. why a correctness fix leads a refactor batch); name any read-only shared files, the batch's single chain-appending agent, and any verification-mode asymmetry (an agent that changes the test runner's config verifies under the *old* mode in its own worktree, so the orchestrator's post-merge run is the first under the new one — say so, or a distribution-mode interaction gets misattributed to one agent's defect), including a guard that skips only in worktrees: [references/batch-design.md](references/batch-design.md)
 - **Runtime note on issue-body decay** — the backlog is N sequential mutations of what the bodies describe, so re-verify the specifics of any issue whose files an earlier batch touched (Worker step 5); the later the batch, the staler the body
 - **Deferred items** — what was explicitly excluded and why
