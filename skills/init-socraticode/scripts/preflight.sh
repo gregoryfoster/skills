@@ -1001,9 +1001,14 @@ fi
 # Age, not a version comparison, because nothing may ask what is current:
 # `claude update` has no check-only mode — it installs — and this script never
 # mutates the host or makes a network call for this. The native installer keeps
-# one file per version under ~/.local/share/claude/versions/, with
-# ~/.local/bin/claude linked at the running one, and each file's mtime is its
-# install date; ~/.claude.json's installMethod says whether that layout applies.
+# one file per version under $XDG_DATA_HOME/claude/versions/ (default
+# ~/.local/share), with ~/.local/bin/claude linked at the running one, and each
+# file's mtime is its install date; .claude.json's installMethod says whether
+# that layout applies. Claude Code keeps that file in CLAUDE_CONFIG_DIR when it
+# is set and in HOME otherwise — not under ~/.claude, where settings.json lives —
+# and both locations are read the way 2.1.278 reads them:
+# join(CLAUDE_CONFIG_DIR || homedir(), ".claude.json"), and
+# XDG_DATA_HOME ?? join(home, ".local", "share") for the versions directory.
 # "Installed 195 days ago" reads on its own, where a bare version number needs
 # the current one beside it. Releases ran at about one a day between those two
 # versions (207 across 195 days), so 30 days is roughly 30 releases behind.
@@ -1011,7 +1016,7 @@ fi
 # Every path it cannot measure says so; none is skipped silently.
 CLAUDE_AGE_WARN_DAYS=30
 claude_version_age() {
-  local raw ver method link target mtime now days reason=""
+  local raw ver method link target mtime now days reason="" config versions
   raw="$(claude --version 2>/dev/null || true)"
   # "2.1.278 (Claude Code)" — the first word of the first line, when it is a
   # release number. Parameter expansion rather than awk: an advisory reading
@@ -1026,11 +1031,13 @@ claude_version_age() {
       return 0
       ;;
   esac
-  method="$(grep -oE '"installMethod"[[:space:]]*:[[:space:]]*"[^"]*"' "$HOME/.claude.json" 2>/dev/null \
+  config="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+  versions="${XDG_DATA_HOME:-$HOME/.local/share}/claude/versions"
+  method="$(grep -oE '"installMethod"[[:space:]]*:[[:space:]]*"[^"]*"' "$config" 2>/dev/null \
     | head -n 1 | sed -E 's/.*"([^"]*)"$/\1/' || true)"
   link="$HOME/.local/bin/claude"
   if [ -z "$method" ]; then
-    reason="$HOME/.claude.json records no installMethod"
+    reason="$config records no installMethod"
   elif [ "$method" != native ]; then
     reason="installMethod is '$method' — only the native installer keeps a dated file per version"
   else
@@ -1038,7 +1045,7 @@ claude_version_age() {
       target="$(readlink "$link" 2>/dev/null || true)"
       case "$target" in /*) ;; ?*) target="$HOME/.local/bin/$target" ;; esac
     else
-      target="$HOME/.local/share/claude/versions/$ver"
+      target="$versions/$ver"
     fi
     case "$target" in
       */claude/versions/"$ver")

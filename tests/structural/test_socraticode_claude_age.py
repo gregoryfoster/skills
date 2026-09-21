@@ -10,9 +10,11 @@ The check has one hard constraint, and this file pins it before anything else:
 `claude update` has no check-only mode — it installs — so preflight may never
 call it, and it makes no network call to learn what is current either. What it
 can read is on disk: the native installer keeps one file per version under
-`~/.local/share/claude/versions/`, links `~/.local/bin/claude` at the running
-one, and records `"installMethod": "native"` in `~/.claude.json`. The file's
-mtime is its install date.
+`$XDG_DATA_HOME/claude/versions/` (default `~/.local/share`), links
+`~/.local/bin/claude` at the running one, and records
+`"installMethod": "native"` in `.claude.json` — which lives in
+`CLAUDE_CONFIG_DIR` when that is set and in HOME otherwise. The file's mtime is
+its install date.
 
 Every case runs the whole script against a fake HOME and a stub `claude` that
 records each argv it is given, on a PATH with nothing else of the host's
@@ -72,26 +74,41 @@ def _stub_bin(tmp_path: Path, *, claude_version: str | None) -> Path:
     return binv
 
 
+def _config_dir(tmp_path: Path) -> Path:
+    """The CLAUDE_CONFIG_DIR `_run` exports unless told not to."""
+    return tmp_path / "claude-config"
+
+
 def _home(
     tmp_path: Path,
     *,
     method: str | None = "native",
     versions: dict[str, int] | None = None,
     link_to: str | None = None,
+    config_at: Path | None = None,
+    data_home: Path | None = None,
 ) -> Path:
     """A HOME laid out the way the native installer lays it out.
 
     `versions` maps a version to its age in days, applied as the file's mtime —
     the fact the check reads. `link_to` names the version `~/.local/bin/claude`
     points at; None leaves no link.
+
+    `.claude.json` goes where Claude Code keeps it: in CLAUDE_CONFIG_DIR, which
+    `_run` exports by default — not under `~/.claude`, and not in HOME, which
+    is only the fallback when CLAUDE_CONFIG_DIR is unset. `config_at` puts it
+    somewhere else. `data_home` stands in for XDG_DATA_HOME, the versions
+    directory's root; None is `~/.local/share`.
     """
     home = tmp_path / "home"
     home.mkdir()
     if method is not None:
-        (home / ".claude.json").write_text(
+        config = config_at or _config_dir(tmp_path)
+        config.mkdir(parents=True, exist_ok=True)
+        (config / ".claude.json").write_text(
             json.dumps({"numStartups": 3, "installMethod": method})
         )
-    store = home / ".local" / "share" / "claude" / "versions"
+    store = (data_home or home / ".local" / "share") / "claude" / "versions"
     store.mkdir(parents=True)
     now = time.time()
     for version, age in (versions or {}).items():
@@ -104,14 +121,30 @@ def _home(
     return home
 
 
-def _run(tmp_path: Path, binv: Path, home: Path) -> subprocess.CompletedProcess:
+def _run(
+    tmp_path: Path,
+    binv: Path,
+    home: Path,
+    *,
+    config_dir: bool = True,
+    data_home: Path | None = None,
+) -> subprocess.CompletedProcess:
+    """preflight.sh under HOME, with CLAUDE_CONFIG_DIR and XDG_DATA_HOME explicit.
+
+    Both are taken out of the inherited environment first: a host that sets
+    either would otherwise point the check at its own Claude Code.
+    """
     env = {k: v for k, v in os.environ.items() if k not in STORE_VARIABLES}
-    env.pop("SOCRATICODE_ENTRY", None)
+    for name in ("SOCRATICODE_ENTRY", "CLAUDE_CONFIG_DIR", "XDG_DATA_HOME"):
+        env.pop(name, None)
     # The stubs, then the system's own tools and nothing else: the host's real
     # `claude` — often in ~/.local/bin — must not answer for the stub.
     env["PATH"] = os.pathsep.join([str(binv), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
     env["HOME"] = str(home)
-    env["CLAUDE_CONFIG_DIR"] = str(tmp_path / "claude-config")
+    if config_dir:
+        env["CLAUDE_CONFIG_DIR"] = str(_config_dir(tmp_path))
+    if data_home is not None:
+        env["XDG_DATA_HOME"] = str(data_home)
     return subprocess.run(
         [BASH, str(PREFLIGHT)],
         capture_output=True,
@@ -174,6 +207,63 @@ class TestTheVersionIsAlwaysReported:
         home = _home(tmp_path, versions={"2.1.250": 30}, link_to="2.1.250")
         result = _run(tmp_path, _stub_bin(tmp_path, claude_version="2.1.250"), home)
         assert "✓" in _line(result), result.stdout
+
+
+class TestItReadsWhereClaudeCodeWrites:
+    """The two locations Claude Code moves with its environment (#310 CR 6).
+
+    `.claude.json` is `join(CLAUDE_CONFIG_DIR || homedir(), ".claude.json")` in
+    the 2.1.278 binary, and the versions directory is
+    `XDG_DATA_HOME ?? join(home, ".local", "share")`. Reading `$HOME` for
+    either told a host that sets them its native install was something else.
+    """
+
+    @requires_bash
+    def test_the_config_file_is_read_from_claude_config_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """Only CLAUDE_CONFIG_DIR has one — as on any host that sets it."""
+        home = _home(tmp_path, versions={"2.1.278": 2}, link_to="2.1.278")
+        assert not (home / ".claude.json").exists()
+        result = _run(tmp_path, _stub_bin(tmp_path, claude_version="2.1.278"), home)
+        line = _line(result)
+        assert "✓" in line and "installed 2 day" in line, (
+            "with CLAUDE_CONFIG_DIR set, Claude Code keeps .claude.json there, "
+            f"and $HOME/.claude.json is not its file\n{line!r}\n{result.stdout}"
+        )
+
+    @requires_bash
+    def test_without_claude_config_dir_it_is_read_from_home(
+        self, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        home = _home(
+            tmp_path, versions={"2.1.278": 2}, link_to="2.1.278", config_at=home
+        )
+        result = _run(
+            tmp_path,
+            _stub_bin(tmp_path, claude_version="2.1.278"),
+            home,
+            config_dir=False,
+        )
+        assert "installed 2 day" in _line(result), result.stdout
+
+    @requires_bash
+    def test_the_versions_directory_follows_xdg_data_home(self, tmp_path: Path) -> None:
+        """No link to follow, so the versions directory is the only witness."""
+        data = tmp_path / "xdg-data"
+        home = _home(tmp_path, versions={"2.1.278": 40}, data_home=data)
+        result = _run(
+            tmp_path,
+            _stub_bin(tmp_path, claude_version="2.1.278"),
+            home,
+            data_home=data,
+        )
+        line = _line(result)
+        assert "40 days" in line, (
+            "the native installer puts versions under $XDG_DATA_HOME/claude/"
+            f"versions when it is set\n{line!r}\n{result.stdout}"
+        )
 
 
 class TestItNeverUpdates:
