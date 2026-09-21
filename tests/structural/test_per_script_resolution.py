@@ -41,6 +41,9 @@ What this file pins:
 - **No directory placeholder survives** in a skill that carries a block.
 - **The steps that enumerate exit codes say what 127 means**, so "not found"
   cannot read as "nothing to check".
+- **using-git-worktrees says its root is set by its knobs**, because the
+  scripts that act on the root run the resolver beside them, not a project
+  `scripts/` copy the agent's printed root may have come from (CR 20).
 - **The cadence workflow, the same way.** curating-context's CI job exports
   one path per script (`MEASURE_CONTEXT_SH`, …) rather than one directory for
   all of them, and fails its resolve step naming a script found nowhere.
@@ -433,6 +436,43 @@ def test_no_directory_placeholder_survives(name: str) -> None:
             "<SKILL_SCRIPTS> directory; substitute the per-script "
             '`"<name.sh>"` placeholder its block prints (#301).'
         )
+
+
+def test_the_worktree_root_is_set_by_its_knobs_not_by_overriding_its_resolver() -> None:
+    """Per-script resolution lets a project `scripts/resolve-worktree-root.sh`
+    win for the root the agent PRINTS, but the scripts that create, destroy and
+    audit worktrees each run the resolver beside themselves. The two roots can
+    then disagree without a word, where the one-directory block failed loudly
+    on this layout. SKILL.md must say so and name the knobs that do move both
+    (#301 CR 20); this holds the claim to the scripts it describes."""
+    resolver = "resolve-worktree-root.sh"
+    scripts = SKILLS_DIR / "using-git-worktrees" / "scripts"
+    callers = {}
+    for p in sorted(scripts.glob("*.sh")):
+        lines = [
+            ln
+            for ln in p.read_text().splitlines()
+            if resolver in ln and not ln.lstrip().startswith("#") and "echo" not in ln
+        ]
+        if p.name != resolver and lines:
+            callers[p.name] = lines
+    assert callers, f"no using-git-worktrees script runs {resolver} any more"
+    for name, lines in callers.items():
+        for ln in lines:
+            assert f'"$SCRIPT_DIR/{resolver}"' in ln, (
+                f"{name} now runs {resolver} from somewhere other than beside "
+                f"itself ({ln.strip()!r}); SKILL.md's claim needs revisiting."
+            )
+    text = _skill_md("using-git-worktrees").read_text()
+    claim = f"Every other script that needs the root runs the `{resolver}` beside it"
+    said = [para for para in text.split("\n\n") if claim in para]
+    assert said, (
+        f"using-git-worktrees/SKILL.md must say so — {claim!r} — so that "
+        f"{sorted(callers)} are not expected to follow a {resolver} override "
+        "in scripts/."
+    )
+    for knob in ("`WORKTREE_ROOT`", "`.skills/worktree_root`"):
+        assert knob in said[0], f"the sentence does not name {knob}: {said[0]}"
 
 
 def _section(body: str, heading: str) -> str:
