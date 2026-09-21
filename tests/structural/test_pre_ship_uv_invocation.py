@@ -30,6 +30,7 @@ what is asserted is which tests ran, not which flags were passed.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -417,4 +418,32 @@ def test_help_documents_the_knob(variant: str) -> None:
     assert '-m "not integration"' not in r.stdout, (
         f"{variant} --help still describes the -m that replaced the project's "
         "marker expression"
+    )
+
+
+# A pytest command line that excludes a tier with its own `-m "not …"`. That
+# `-m` replaces the project's addopts expression rather than narrowing it, so
+# advice to run one reintroduces #304 by hand. Selecting a tier on purpose
+# (`-m integration`) is a different request and is not matched.
+EXCLUDING_MARKER = re.compile(r"pytest[^`\n]*\s-m\s*[\"']not\b")
+
+
+def test_no_skill_tells_the_reader_to_replace_the_projects_marker() -> None:
+    """reviewing-code-python-fastapi advised `uv run pytest -m "not
+    integration" <specific-test>` for a targeted run during review. On
+    CannObserv/power-map, pointed at a directory, that runs the browser tier
+    the project's `not integration and not browser` excludes. Measured with
+    pytest here: addopts `-m 'not integration and not browser'` plus a
+    command-line `-m "not integration"` ran the browser-marked test."""
+    offenders = [
+        f"{p.relative_to(SKILLS_DIR)}:{n}: {m.group(0)}…"
+        for p in sorted(SKILLS_DIR.glob("**/*.md"))
+        for n, line in enumerate(p.read_text().splitlines(), 1)
+        for m in EXCLUDING_MARKER.finditer(line)
+    ]
+    assert not offenders, (
+        "these recommend a pytest command line whose -m replaces the "
+        "project's own marker expression (#304); drop the -m, since the "
+        "project's addopts already excludes what it excludes:\n  "
+        + "\n  ".join(offenders)
     )

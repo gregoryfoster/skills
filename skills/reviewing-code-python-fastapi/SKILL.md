@@ -74,7 +74,7 @@ The first line is a preflight: when `.skills/doctor.sh` is present, it heals any
 
 The script runs `uv run ruff check .` informationally (output captured; lint failures become Phase 3 findings, not gather-context errors) alongside the standard git diff/status output.
 
-**Do not run pytest during a review.** Tests run at ship time via `pre-ship.sh`. If you need targeted test output during review (e.g., to confirm a specific behavior), use `uv run pytest -m "not integration" <specific-test>` — but full-suite runs belong in Phase 1 of `shipping-work-python-fastapi`, not here.
+**Do not run pytest during a review.** Tests run at ship time via `pre-ship.sh`. If you need targeted test output during review (e.g., to confirm a specific behavior), use `uv run pytest <specific-test>` with no `-m`, which would replace the project's own `addopts` marker expression rather than narrow it — but full-suite runs belong in Phase 1 of `shipping-work-python-fastapi`, not here.
 
 Also:
 - Read AGENTS.md conventions relevant to changed files
