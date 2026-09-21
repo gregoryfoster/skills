@@ -28,11 +28,18 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "[tool.pytest.ini_options].testpaths). Exits non-zero on any failure."
   echo "Must pass before committing or pushing."
   echo ""
+  echo "Extra uv arguments: .skills/pre-ship-uv-args at the repo root, when"
+  echo "present, lists arguments inserted after 'uv run' in every uv call"
+  echo "(e.g. --group seed, so the gate runs the suite the project's own hook"
+  echo "runs). Whitespace-separated, any number per line, '#'-comment lines"
+  echo "ignored."
+  echo ""
   echo "Exit codes:"
   echo "  0  All checks passed"
   echo "  1  Lint, import, or test failure"
   echo "  2  Tooling/infra failure (uv missing, helper script failed,"
-  echo "     git status failed, mktemp failed)"
+  echo "     git status failed, mktemp failed, .skills/pre-ship-uv-args"
+  echo "     present but unreadable)"
   echo ""
   echo "Skips pytest when HEAD hasn't changed AND working tree is clean (per-SHA stamp)."
   exit 0
@@ -135,8 +142,39 @@ fi
 IMPORT_OUT=""; TESTDIRS_OUT=""; STATUS_OUT=""; STATUS_ERR=""; REV_ERR=""
 trap 'rm -f "$IMPORT_OUT" "$TESTDIRS_OUT" "$STATUS_OUT" "$STATUS_ERR" "$REV_ERR"' EXIT
 
+# --- Extra `uv run` arguments (.skills/pre-ship-uv-args, optional) -----------
+# A project whose own hook runs `uv run --group seed pytest` got a narrower
+# suite from this gate's bare `uv run`: the missing group's tests importorskip
+# at module scope and register as skips, so the gate passed having run less
+# than the project's own gate does (#304). The file's arguments go after
+# `uv run` in EVERY uv call this script makes, so ruff, the import check and
+# pytest share one environment. The helper scripts' own `uv run` only parses
+# pyproject.toml, which no dependency group changes. A committed file rather
+# than an env var: the per-SHA stamp below is keyed on the commit, which a
+# committed knob moves with and an exported variable would not.
+UV_ARGS=()
+UV_ARGS_FILE=.skills/pre-ship-uv-args
+if [[ -e "$UV_ARGS_FILE" || -L "$UV_ARGS_FILE" ]]; then
+  # -f follows symlinks, so a dangling link, a directory or a FIFO lands here
+  # rather than silently running the gate without the project's arguments.
+  if [[ ! -f "$UV_ARGS_FILE" ]] || ! exec 3<"$UV_ARGS_FILE"; then
+    echo "ERROR: $UV_ARGS_FILE exists but cannot be read as a file of uv" >&2
+    echo "       arguments. Fix or remove it; the gate does not run without them." >&2
+    exit 2
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    read -r -a words <<<"$line"   # split on whitespace; never glob-expanded
+    [[ ${#words[@]} -eq 0 ]] || UV_ARGS+=("${words[@]}")
+  done <&3
+  exec 3<&-
+fi
+# The `+` form because an empty array expands as unbound under `set -u` on
+# stock-macOS bash 3.2.
+uv_run() { uv run ${UV_ARGS[@]+"${UV_ARGS[@]}"} "$@"; }
+
 echo "=== Lint (ruff) ==="
-uv run ruff check .
+uv_run ruff check .
 
 # --- Import check ------------------------------------------------------------
 # Resolution handled by detect-import-targets.sh (shared with gather-context.sh).
@@ -165,7 +203,7 @@ if [[ ${#IMPORT_TARGETS[@]} -eq 0 ]]; then
 else
   for pkg in "${IMPORT_TARGETS[@]}"; do
     echo "--- import $pkg ---"
-    uv run python -c "import $pkg"
+    uv_run python -c "import $pkg"
   done
 fi
 
@@ -247,7 +285,7 @@ else
     echo "Test suite already passed for commit ${CURRENT_SHA:0:7} with a clean working tree — skipping."
   else
     # Exit code 5 = no tests collected (acceptable on an empty suite).
-    uv run pytest "${TEST_DIRS[@]}" -v || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
+    uv_run pytest "${TEST_DIRS[@]}" -v || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
     if [[ -n "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
       touch "$STAMP_FILE"
     fi

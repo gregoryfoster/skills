@@ -67,6 +67,8 @@ NO CONTINUATION IF CHECKS FAIL
 
 If checks fail: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
+`pre-ship.sh` runs ruff, then `uv run pytest -x` with `integration`-marked tests deselected on top of the project's own `addopts` marker expression — never by passing `-m`, which would replace it ([#304](https://github.com/gregoryfoster/skills/issues/304)). A project whose own hook adds `uv run` arguments (`--group seed`) commits them to `.skills/pre-ship-uv-args` (whitespace-separated, `#`-comments ignored); every uv call in the gate gets them.
+
 ### Step 1.5 — Documentation spot-check
 
 ```bash

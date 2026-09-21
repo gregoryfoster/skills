@@ -15,15 +15,24 @@ if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash \"$0\""
   echo ""
   echo "Runs 'uv run ruff check .', 'uv run ruff format --check .', and"
-  echo "'uv run pytest -x -m \"not integration\"'"
-  echo "(with --no-cov auto-applied when pytest-cov is installed)."
+  echo "'uv run pytest -x' with integration-marked tests deselected ON TOP OF"
+  echo "the project's own marker expression (its addopts '-m' still applies;"
+  echo "a command-line -m would replace it), with --no-cov auto-applied when"
+  echo "pytest-cov is installed."
   echo "If package.json is present, also runs npm lint/format/test scripts."
   echo "Exits non-zero on any failure. Must pass before committing or pushing."
+  echo ""
+  echo "Extra uv arguments: .skills/pre-ship-uv-args at the repo root, when"
+  echo "present, lists arguments inserted after 'uv run' in every uv call"
+  echo "(e.g. --group seed, so the gate runs the suite the project's own hook"
+  echo "runs). Whitespace-separated, any number per line, '#'-comment lines"
+  echo "ignored."
   echo ""
   echo "Exit codes:"
   echo "  0  All checks passed"
   echo "  1  Lint or test failure"
-  echo "  2  Tooling/infra failure (uv missing, git status failed, mktemp failed)"
+  echo "  2  Tooling/infra failure (uv missing, git status failed, mktemp failed,"
+  echo "     .skills/pre-ship-uv-args present but unreadable)"
   echo ""
   echo "Skips pytest when HEAD hasn't changed AND working tree is clean (per-SHA stamp)."
   exit 0
@@ -115,19 +124,50 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # Single trap covers every tempfile created below (git status capture,
-# git rev-parse stderr). Scalars (not an array) for bash 3.2 + `set -u` —
-# an empty array expansion errors under set -u on stock-macOS bash.
-STATUS_OUT=""; STATUS_ERR=""; REV_ERR=""
-trap 'rm -f "$STATUS_OUT" "$STATUS_ERR" "$REV_ERR"' EXIT
+# git rev-parse stderr, the pytest plugin's directory). Scalars (not an
+# array) for bash 3.2 + `set -u` — an empty array expansion errors under
+# set -u on stock-macOS bash.
+STATUS_OUT=""; STATUS_ERR=""; REV_ERR=""; PLUGIN_DIR=""
+trap 'rm -f "$STATUS_OUT" "$STATUS_ERR" "$REV_ERR"; rm -rf "$PLUGIN_DIR"' EXIT
+
+# --- Extra `uv run` arguments (.skills/pre-ship-uv-args, optional) -----------
+# A project whose own hook runs `uv run --group seed pytest` got a narrower
+# suite from this gate's bare `uv run`: the missing group's tests importorskip
+# at module scope and register as skips, so the gate passed having run less
+# than the project's own gate does (#304). The file's arguments go after
+# `uv run` in EVERY uv call below, so the ruff runs, the pytest-cov probe and
+# pytest share one environment. A committed file rather than an env var: the
+# per-SHA stamp below is keyed on the commit, which a committed knob moves
+# with and an exported variable would not.
+UV_ARGS=()
+UV_ARGS_FILE=.skills/pre-ship-uv-args
+if [[ -e "$UV_ARGS_FILE" || -L "$UV_ARGS_FILE" ]]; then
+  # -f follows symlinks, so a dangling link, a directory or a FIFO lands here
+  # rather than silently running the gate without the project's arguments.
+  if [[ ! -f "$UV_ARGS_FILE" ]] || ! exec 3<"$UV_ARGS_FILE"; then
+    echo "ERROR: $UV_ARGS_FILE exists but cannot be read as a file of uv" >&2
+    echo "       arguments. Fix or remove it; the gate does not run without them." >&2
+    exit 2
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    read -r -a words <<<"$line"   # split on whitespace; never glob-expanded
+    [[ ${#words[@]} -eq 0 ]] || UV_ARGS+=("${words[@]}")
+  done <&3
+  exec 3<&-
+fi
+# The `+` form because an empty array expands as unbound under `set -u` on
+# stock-macOS bash 3.2.
+uv_run() { uv run ${UV_ARGS[@]+"${UV_ARGS[@]}"} "$@"; }
 
 echo "=== Lint (ruff) ==="
-uv run ruff check .
+uv_run ruff check .
 
 echo ""
 echo "=== Format check (ruff) ==="
 # Ship gate must match the review gate (Phase 3.5 runs ruff format --check);
 # without this, format violations land on main and surface later (power-map #166).
-uv run ruff format --check .
+uv_run ruff format --check .
 
 echo ""
 echo "=== Tests (Python) ==="
@@ -180,16 +220,46 @@ fi
 # pre-push gate). When absent, omit the flag — passing --no-cov to a pytest
 # install without the plugin is a hard usage error.
 PYTEST_COV_FLAG=""
-if uv run python -c "import pytest_cov" >/dev/null 2>&1; then
+if uv_run python -c "import pytest_cov" >/dev/null 2>&1; then
   PYTEST_COV_FLAG="--no-cov"
 fi
 
 if [[ -n "$STAMP_FILE" && -f "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
   echo "Test suite already passed for commit ${CURRENT_SHA:0:7} with a clean working tree — skipping."
 else
+  # Integration tests are excluded by a plugin, never by `-m`. A command-line
+  # `-m` REPLACES the marker expression in the project's addopts rather than
+  # intersecting with it: `-m "not integration"` here silently dropped
+  # power-map's `not browser` and ran a Playwright tier its config excludes
+  # (#304). The plugin deselects integration-marked items AFTER pytest has
+  # applied the project's own expression — `not integration and (<theirs>)`,
+  # with pytest resolving <theirs> by its own rules (whichever config file
+  # wins, plus PYTEST_ADDOPTS), so nothing here parses a config file and
+  # nothing can silently fail to. It is written per run, not shipped beside
+  # this script: a consumer vendoring by per-file symlinks carries only the
+  # files it linked, and `-p` fails loudly on a module that is not there.
+  PLUGIN_DIR=$(mktemp -d) || { echo "ERROR: mktemp failed (PLUGIN_DIR)" >&2; exit 2; }
+  if ! cat >"$PLUGIN_DIR/pre_ship_not_integration.py" <<'PY'
+import pytest
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    keep, drop = [], []
+    for item in items:
+        (drop if item.get_closest_marker("integration") else keep).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
+PY
+  then
+    echo "ERROR: could not write the pytest plugin under $PLUGIN_DIR" >&2
+    exit 2
+  fi
   # Exit code 5 = no tests collected (acceptable on an empty suite).
   # $PYTEST_COV_FLAG is intentionally unquoted: empty expansion → no arg.
-  uv run pytest $PYTEST_COV_FLAG -x -m "not integration" || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
+  PYTHONPATH="$PLUGIN_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    uv_run pytest $PYTEST_COV_FLAG -x -p pre_ship_not_integration || { EC=$?; [ $EC -eq 5 ] || exit $EC; }
   if [[ -n "$STAMP_FILE" && -z "$WORKING_TREE_DIRTY" ]]; then
     touch "$STAMP_FILE"
   fi

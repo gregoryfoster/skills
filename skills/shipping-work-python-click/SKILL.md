@@ -68,7 +68,7 @@ NO CONTINUATION IF CHECKS FAIL
 
 If checks fail: stop, report the failure, fix before proceeding. Do not push failing code under any circumstances.
 
-`pre-ship.sh` runs ruff, an import check (auto-detected from `pyproject.toml` or `.skills/import-targets`), and pytest. The test runner discovers the suite via (1) a top-level `tests/` directory, or (2) every entry in `pyproject.toml [tool.pytest.ini_options].testpaths`. Projects that nest tests elsewhere (e.g., `src/<pkg>/tests/`) should set `testpaths` in `pyproject.toml` — multi-path layouts are supported and every existing directory is passed to pytest. A missing test suite is acceptable — ruff and import check still gate the ship.
+`pre-ship.sh` runs ruff, an import check (auto-detected from `pyproject.toml` or `.skills/import-targets`), and pytest. The test runner discovers the suite via (1) a top-level `tests/` directory, or (2) every entry in `pyproject.toml [tool.pytest.ini_options].testpaths`. Projects that nest tests elsewhere (e.g., `src/<pkg>/tests/`) should set `testpaths` in `pyproject.toml` — multi-path layouts are supported and every existing directory is passed to pytest. A missing test suite is acceptable — ruff and import check still gate the ship. No `-m` is passed, so the project's own `addopts` marker expression decides the default suite. Arguments the project's own hook adds to `uv run` (`--group seed`) go in `.skills/pre-ship-uv-args` (whitespace-separated, `#`-comments ignored); every uv call in the gate gets them ([#304](https://github.com/gregoryfoster/skills/issues/304)).
 
 ### Step 1.5 — Documentation spot-check
 
