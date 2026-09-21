@@ -1031,6 +1031,29 @@ class TestAPinnedPointer:
         )
         assert _doctor(consumer).stderr.strip() == ""
 
+    def test_keeping_the_hold_names_every_key_to_resync(self, consumer: Path):
+        """The other repair, followed as printed: bring the override down to
+        the pinned commit and leave the pointer at the pin. The remedy named
+        "its text and synced-from: both" (CR 47), which over a bumped release
+        leaves `version:` at the newer stamp — and the next run reports the
+        two keys disagreeing. With all three re-synced it is silent."""
+        _, old, _ = TestWhichSideMoved()._pointer_behind(consumer, "1.4", "1.5")
+        pin = consumer / ".skills" / "skills-pin"
+        pin.parent.mkdir()
+        pin.write_text(f"skills-vendor/{VENDOR_REPO} {old}\n")
+        flat = _flat(_doctor(consumer).stderr)
+        assert "its text, version: and synced-from:" in flat, flat
+        md = consumer / "skills" / "sw" / "SKILL.md"
+        target = f"{VENDOR_REPO}/sw"
+        synced = f"{VENDOR_REPO} 1.4 ({old})"
+        md.write_text(_skill_md("sw", "1.5", overrides=target, synced_from=synced))
+        half = _flat(_doctor(consumer).stderr)
+        assert "the two keys disagree" in half, (
+            f"what re-syncing text and synced-from: alone leaves:\n{half}"
+        )
+        md.write_text(_skill_md("sw", "1.4", overrides=target, synced_from=synced))
+        assert _doctor(consumer).stderr.strip() == ""
+
     def _two_overrides(self, consumer: Path, diverged: bool = False):
         """Two overrides of one pinned vendor, each ahead of the pointer at a
         different recorded commit: `sa` at the NEWER one, sorting first, so

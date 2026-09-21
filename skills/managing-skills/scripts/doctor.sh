@@ -847,8 +847,8 @@ report_pointer_behind_overrides() {
   echo "doctor: and the auto-refresh hook then reports pin drift at every session." >&2
   echo "doctor: Either re-pin the line as shown and commit the pin file with the" >&2
   echo "doctor: pointer, or keep the hold and re-sync the override to the pinned" >&2
-  echo "doctor: commit instead — its text and synced-from: both — with the pointer" >&2
-  echo "doctor: at the pinned commit." >&2
+  echo "doctor: commit instead — its text, version: and synced-from: — with the" >&2
+  echo "doctor: pointer at the pinned commit." >&2
 }
 
 report_unassessed_overrides() {
