@@ -21,12 +21,13 @@ weeks while a 2-CPU / 4-GiB VM capped concurrent verification at **3**; it never
 the earlier session peaked at 3). The number and the resource are two facts, and the skill's own
 cheap re-verification confirms one of them.
 
-**Then ask what the commit (or push) hook runs, and at what parallelism** — Q5's third
+**Then ask what the commit hook runs, and at what parallelism** — Q5's third
 sub-question. Where worktrees are plain `git worktree add` plus a dependency sync over a
 hermetic suite, sub-questions 1 and 2 both answer "none", which reads as a ceiling set by host
 CPU/RAM alone. A hook that runs the suite multiplies every agent's CPU cost by its own
-parallelism on every commit, before any worker runs the suite on purpose (Worker step 7). Read
-the hook config and multiply by the agent count before accepting a ceiling (process-log
+parallelism on each commit it verifies, before any worker runs the suite on purpose (Worker
+step 7). Read the hook config, multiply by the agent count and weigh the product against the
+host's cores before accepting a ceiling (process-log
 2026-09-17 cli: the pre-commit hook runs `pytest tests/ -n 4` over a 3,319-test suite, so three
 agents can mean twelve concurrent pytest processes; the plan recorded a CPU-bound ceiling of 3
 with that multiplication as its reason, and took no contention measurement). The same read answers
