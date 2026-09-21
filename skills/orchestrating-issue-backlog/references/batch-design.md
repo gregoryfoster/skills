@@ -1,6 +1,6 @@
 # Batch geometry: special cases and priors
 
-Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites;
+Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites.
 Rule numbers refer to [`execution.md`](execution.md).
 
 ## Special cases that force a shape (Step 7)
@@ -32,10 +32,10 @@ idled. Ask at planning time whether that shared surface can be split first.
 
 ## Counting and pairing the table (Step 7)
 
-**Count the table's items against the scored backlog before asking for approval**:
-scored rows minus deferrals, with each Q0 bundle counting once. Re-reading the table
-is no substitute, because the failure does not look wrong. Each downstream artifact
-is written from the one before it — the design doc from this table, the tracking
+**Count the table's items against the scored backlog before asking for approval** —
+they must equal the scored rows minus deferrals, each Q0 bundle counting once.
+Re-reading the table is no substitute, because the failure does not look wrong. Each
+downstream artifact is written from the one before it — the design doc from this table, the tracking
 issue from the design doc, the briefs and per-issue comments from both — so an item
 the table drops reaches all of them unchallenged (process-log 2026-09-16 observo:
 twelve work items after four Q0 bundles; reshuffling two batches into score order
