@@ -435,6 +435,25 @@ class TestAMissedNameIsNamedWhenTheProfileAnswers:
         assert "missing.env not found" in r.stderr
         assert self.INSTEAD in r.stderr
 
+    def test_an_accepted_preflight_names_the_file(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        """#296 CR 55. The one oauth path CR 25 missed: the preflight's exit 0,
+        reachable once count_tokens accepts JWT. --help promises the names
+        "when ... only an `ant auth` profile" resolves, and an accepted profile
+        is still one the caller did not choose over the file they named."""
+        _, worktree = layout
+        env = _with_ant(tmp_path, _clean_env())
+        with _Stub() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _measure(worktree, env, "--check-credential", "--env-file", self.NAMES)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert r.stdout.startswith("ok: the `ant auth` profile"), r.stdout
+        assert "missing.env not found" in r.stderr, r.stderr
+        assert self.INSTEAD in r.stderr
+        assert "--env-file" not in r.stdout, "stdout stays the one verdict line"
+        assert stub.requests[0]["headers"]["authorization"].startswith("Bearer ")
+
     def test_the_default_names_are_still_not_itemised(
         self, layout: tuple[Path, Path], tmp_path: Path
     ):
@@ -444,6 +463,17 @@ class TestAMissedNameIsNamedWhenTheProfileAnswers:
             env["ANTHROPIC_BASE_URL"] = stub.url
             r = _measure(worktree, env, "--check-credential")
         assert r.returncode == 3, r.stderr
+        assert "--env-file names are searched" not in r.stderr
+
+    def test_an_accepted_preflight_on_the_default_names_stays_quiet(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        _, worktree = layout
+        env = _with_ant(tmp_path, _clean_env())
+        with _Stub() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _measure(worktree, env, "--check-credential")
+        assert r.returncode == 0, r.stdout + r.stderr
         assert "--env-file names are searched" not in r.stderr
 
 

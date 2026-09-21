@@ -790,6 +790,11 @@ if [ "$CHECK_CRED" -eq 1 ]; then
     _at=" at $_shown"
   fi
   if [ "$_rc" -eq 0 ]; then
+    # Accepted is still not chosen (#296 CR 55): once count_tokens takes JWT, a
+    # profile answering in place of a named file reaches this line, and --help
+    # promises the names whenever only the profile resolves. Stderr, a WARN as
+    # the measurement's is, so stdout stays the one verdict line.
+    if [ "$CRED_SOURCE" = oauth ]; then env_file_misses "WARN " "$OAUTH_INSTEAD"; fi
     echo "ok: $CRED_DESC, accepted by count_tokens for $MODEL$_at"
     exit 0
   fi
