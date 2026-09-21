@@ -26,6 +26,7 @@ Coverage:
 - the rebase-failure diagnostic still names its attribute lines after rendering
 - every path the workflow `git add`s carries a merge attribute the installer
   writes
+- the counts driver stores the resolved script's path quoted, and runs it
 - --check reports the calibration attributes independently of the ledger's
 - a repo installed before #173 gains the two missing attributes without a
   duplicated ledger line
@@ -215,7 +216,42 @@ class TestEveryStagedPathIsProtected:
         commit = dict(_run_blocks(rendered))["Commit the row"]
         assert "git config merge.ours.driver true" in commit
         assert "merge.context-counts.driver" in commit
-        assert "merge-token-counts.sh" in commit
+        assert "$MERGE_TOKEN_COUNTS_SH" in commit
+
+    def test_the_counts_driver_runs_the_resolved_script(
+        self, tmp_path: Path, rendered: dict
+    ):
+        """The one line that stores a resolved path rather than running it.
+        The resolve step exports MERGE_TOKEN_COUNTS_SH (#301); the driver
+        command must carry it through git config quoted, so a path with a
+        space still names one script when git later runs the driver."""
+        commit = dict(_run_blocks(rendered))["Commit the row"]
+        line = next(
+            ln.strip()
+            for ln in commit.splitlines()
+            if ln.strip().startswith("git config merge.context-counts.driver")
+        )
+        script = tmp_path / "a dir" / "merge-token-counts.sh"
+        script.parent.mkdir()
+        script.write_text('#!/usr/bin/env bash\necho "driver:$*"\n')
+        repo = _repo(tmp_path)
+        env = {**_clean_env(), "MERGE_TOKEN_COUNTS_SH": str(script)}
+        subprocess.run(["bash", "-e", "-c", line], cwd=repo, env=env, check=True)
+        stored = subprocess.run(
+            ["git", "config", "--get", "merge.context-counts.driver"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+        ).stdout.strip()
+        assert stored == f'bash "{script}" %O %A %B %P', stored
+        # Git runs a merge driver through the shell with the placeholders
+        # substituted; do the same.
+        invoked = stored
+        for placeholder, value in (("%O", "o"), ("%A", "a"), ("%B", "b"), ("%P", "p")):
+            invoked = invoked.replace(placeholder, value)
+        ran = subprocess.run(["sh", "-c", invoked], capture_output=True, text=True)
+        assert ran.stdout.strip() == "driver:o a b p", ran.stdout + ran.stderr
 
 
 class TestCheckAndRepair:

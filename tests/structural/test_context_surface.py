@@ -4508,7 +4508,7 @@ class TestCadenceInstaller:
         """What goes on the clock is a measurement. A curation needs judgement,
         and judgement on a timer is what this skill avoids everywhere else."""
         out = self._run(self._repo(tmp_path), "--print").stdout
-        assert 'record-telemetry.sh" --baseline' in out, out
+        assert '"$RECORD_TELEMETRY_SH" --baseline' in out, out
         # The two flags --baseline refuses. Their absence is the assertion: a
         # scheduled job that recorded a relocation verdict, or tagged edits it
         # never made, would be claiming a curation happened.
@@ -4638,7 +4638,9 @@ class TestCadenceShellActuallyRuns:
         _git(repo, "add", "-A")
         _git(repo, "commit", "-qm", "seed")
         env = _clean_env()
-        env["SKILL_SCRIPTS"] = str(SCRIPTS)
+        # What the resolve step exports, one path per script (#301).
+        env["CHECK_SEAMS_SH"] = str(SCRIPTS / "check-seams.sh")
+        env["CHECK_COUNTS_SH"] = str(SCRIPTS / "check-counts.sh")
         env["GITHUB_ENV"] = str(tmp_path / "gh_env")
         (tmp_path / "gh_env").write_text("")
         r = subprocess.run(

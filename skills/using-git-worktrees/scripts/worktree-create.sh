@@ -3,7 +3,7 @@
 # Creates a git worktree for <branch> under the resolved worktree root.
 # Refuses if <branch> is already checked out in another worktree (Iron Law).
 #
-# Usage: bash <SKILL_SCRIPTS>/worktree-create.sh [--new] <branch> [--help]
+# Usage: bash "<worktree-create.sh>" [--new] <branch> [--help]
 # Flags are position-independent: `--new <branch>` and `<branch> --new` are equivalent.
 set -euo pipefail
 

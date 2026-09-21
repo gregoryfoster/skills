@@ -784,13 +784,21 @@ jobs:
       - name: Heal vendored symlinks
         run: '[ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh'
 
+      # One path per script, each probed on its own and exported under its own
+      # name: measure-context.sh as MEASURE_CONTEXT_SH, and so on. Never one
+      # directory for all of them — a project scripts/ holding only
+      # measure-context.sh sent every other script to a directory that lacked
+      # it (#301). A script found nowhere fails this step, by name.
       - name: Resolve the skill scripts
         run: |
-          N=curating-context S=measure-context.sh SD=
-          for d in scripts ".claude/skills/\$N/scripts" "skills/\$N/scripts"; do
-            [ -f "\$d/\$S" ] && { SD="\$d"; break; }
+          N=curating-context
+          for S in measure-context.sh check-seams.sh check-counts.sh record-telemetry.sh merge-token-counts.sh; do SD=
+            for d in scripts ".claude/skills/\$N/scripts" "skills/\$N/scripts"; do
+              [ -f "\$d/\$S" ] && { SD="\$d"; break; }
+            done
+            V=\$(printf %s "\$S" | tr 'a-z.-' 'A-Z__')
+            echo "\$V=\${SD:?\$S not found in scripts/, .claude/skills/\$N/scripts/, or skills/\$N/scripts/}/\$S" >>"\$GITHUB_ENV"
           done
-          echo "SKILL_SCRIPTS=\${SD:?curating-context scripts not found}" >>"\$GITHUB_ENV"
 
       # FIRST, not last: without a credential every later step does its work and
       # the append is refused at the end. This asks the endpoint whether it
@@ -799,7 +807,7 @@ jobs:
       - name: Preflight the credential
         env:
           ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
-        run: bash "\$SKILL_SCRIPTS/measure-context.sh" --check-credential
+        run: bash "\$MEASURE_CONTEXT_SH" --check-credential
 
       # Exits 3 when there are new seams, which is a finding rather than a
       # failure here — the count goes on the row either way.
@@ -813,14 +821,14 @@ jobs:
       # empty rather than presenting a standing count as a week's accrual.
       - name: Sweep the seams and the counts
         run: |
-          bash "\$SKILL_SCRIPTS/check-seams.sh" --base-ledger "$LEDGER" >/tmp/seams.txt 2>&1 || true
+          bash "\$CHECK_SEAMS_SH" --base-ledger "$LEDGER" >/tmp/seams.txt 2>&1 || true
           tail -20 /tmp/seams.txt
           echo "SEAMS=\$(sed -n 's/^seams: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
           echo "SEAMS_ACKED=\$(sed -n 's/^seams_acked: \([0-9]*\)\$/\1/p' /tmp/seams.txt | tail -1)" >>"\$GITHUB_ENV"
           # Same step, same file, same shape (#258): without it the scheduled
           # row carries a null counts field forever and the class is recorded
           # only by hand-run curations — #169's shape, one field over.
-          bash "\$SKILL_SCRIPTS/check-counts.sh" >/tmp/counts.txt 2>&1 || true
+          bash "\$CHECK_COUNTS_SH" >/tmp/counts.txt 2>&1 || true
           tail -20 /tmp/counts.txt
           echo "COUNTS=\$(sed -n 's/^counts: \([0-9]*\)\$/\1/p' /tmp/counts.txt | tail -1)" >>"\$GITHUB_ENV"
           echo "COUNTS_ACKED=\$(sed -n 's/^counts_acked: \([0-9]*\)\$/\1/p' /tmp/counts.txt | tail -1)" >>"\$GITHUB_ENV"
@@ -831,8 +839,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          bash "\$SKILL_SCRIPTS/measure-context.sh" --exact >/tmp/ctx.json
-          bash "\$SKILL_SCRIPTS/record-telemetry.sh" --baseline=scheduled \\
+          bash "\$MEASURE_CONTEXT_SH" --exact >/tmp/ctx.json
+          bash "\$RECORD_TELEMETRY_SH" --baseline=scheduled \\
               --ledger "$LEDGER" \\
               \${SEAMS:+--seams "\$SEAMS"} \${SEAMS_ACKED:+--seams-acked "\$SEAMS_ACKED"} \\
               \${COUNTS:+--counts "\$COUNTS"} \${COUNTS_ACKED:+--counts-acked "\$COUNTS_ACKED"} \\
@@ -849,7 +857,7 @@ jobs:
           git config merge.ours.driver true
           # The counts file merges per row (#237): a collision keeps, per path,
           # the row whose bytes match the file in the tree.
-          git config $COUNTS_DRIVER_KEY "bash \\"\$SKILL_SCRIPTS/$MERGE_SCRIPT_NAME\\" %O %A %B %P"
+          git config $COUNTS_DRIVER_KEY "bash \\"\$MERGE_TOKEN_COUNTS_SH\\" %O %A %B %P"
           # Staged separately, and the row is NOT tolerant of failure. One
           # \`git add\` over both paths stages NOTHING when either is missing —
           # it exits 128 on the unmatched pathspec — so \`|| true\` turned a

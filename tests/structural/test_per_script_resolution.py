@@ -37,6 +37,9 @@ What this file pins:
 - **No directory placeholder survives** in a skill that carries a block.
 - **The steps that enumerate exit codes say what 127 means**, so "not found"
   cannot read as "nothing to check".
+- **The cadence workflow, the same way.** curating-context's CI job exports
+  one path per script (`MEASURE_CONTEXT_SH`, …) rather than one directory for
+  all of them, and fails its resolve step naming a script found nowhere.
 
 [#63]: https://github.com/gregoryfoster/skills/issues/63
 [#105]: https://github.com/gregoryfoster/skills/issues/105
@@ -49,6 +52,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 
@@ -132,15 +136,17 @@ def _project(
     name: str,
     project_scripts: tuple[str, ...] = (),
     missing: tuple[str, ...] = (),
+    vendored: str = "",
 ) -> Path:
-    """A consumer checkout: the skill vendored under .claude/skills/<name>/,
-    shipping stubs named exactly as the real skill's scripts, plus whatever
-    the project keeps in its own scripts/."""
+    """A consumer checkout: the skill vendored under .claude/skills/<name>/
+    (or `vendored`), shipping stubs named exactly as the real skill's scripts,
+    plus whatever the project keeps in its own scripts/."""
     proj = tmp_path / "proj"
     proj.mkdir()
+    skill_scripts = proj / (vendored or f".claude/skills/{name}/scripts")
     for script in _ships(name):
         if script not in missing:
-            _stub(proj / ".claude" / "skills" / name / "scripts" / script, "skill")
+            _stub(skill_scripts / script, "skill")
     for script in project_scripts:
         _stub(proj / "scripts" / script, "project")
     (tmp_path / "home").mkdir()
@@ -344,9 +350,8 @@ def test_no_directory_placeholder_survives(name: str) -> None:
     """`<SKILL_SCRIPTS>` named a directory, which is what made reuse possible.
 
     Scoped to the agent-facing placeholder. `curating-context`'s cadence
-    workflow template exports a real `SKILL_SCRIPTS` variable through
-    `$GITHUB_ENV` in CI — a different surface, spelled without angle brackets,
-    and not matched here.
+    workflow is a CI surface with no placeholders; the cadence tests below
+    hold it to the same rule.
     """
     assert 'echo "SKILL_SCRIPTS=' not in _skill_md(name).read_text(), (
         f"{name}/SKILL.md still publishes one directory for all its scripts. "
@@ -385,4 +390,161 @@ def test_steps_that_enumerate_exit_codes_say_127_is_no_verdict(
     assert "127" in section, (
         f"{name}/SKILL.md '{heading}' enumerates exit codes but not 127, so a "
         "script that never ran has no documented reading but 'not a failure'."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The cadence workflow: the same rule on a CI surface
+# ---------------------------------------------------------------------------
+#
+# curating-context's scheduled job kept the #301 shape after the SKILL.md fix:
+# its resolve step probed measure-context.sh, exported that directory as
+# SKILL_SCRIPTS through $GITHUB_ENV, and later steps ran check-seams.sh,
+# check-counts.sh, record-telemetry.sh and merge-token-counts.sh from it. A
+# project scripts/ holding measure-context.sh alone sent all four there.
+#
+# One render covers all three copies: references/cadence/workflow.md and this
+# repo's .github/workflows/context-cadence.yml are pinned byte-for-byte to
+# `install-cadence.sh --print` elsewhere in the suite.
+
+INSTALL_CADENCE = SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
+CADENCE = "curating-context"
+RESOLVE_STEP = "Resolve the skill scripts"
+
+# How a later step expands a path the resolve step exported: "$CHECK_SEAMS_SH".
+EXPORTED_PATH = re.compile(r"\$\{?([A-Z][A-Z0-9_]*_SH)\b")
+
+
+def _env_name(script: str) -> str:
+    """The variable a script's path is exported as: measure-context.sh ->
+    MEASURE_CONTEXT_SH."""
+    return re.sub(r"[.-]", "_", script).upper()
+
+
+def _cadence_steps(tmp_path: Path) -> dict[str, str]:
+    """Each named `run:` block of the workflow, as rendered."""
+    render = tmp_path / "render"
+    render.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "init", "-q"], cwd=render, check=True, env=env)
+    r = subprocess.run(
+        ["bash", str(INSTALL_CADENCE), "--print", "--cron", "0 15 * * 1"],
+        cwd=str(render),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    steps = yaml.safe_load(r.stdout)["jobs"]["measure"]["steps"]
+    return {s["name"]: s["run"] for s in steps if s.get("name") and s.get("run")}
+
+
+def _cadence_listed(steps: dict[str, str]) -> list[str]:
+    m = LIST_HEAD.search(steps[RESOLVE_STEP])
+    assert m, (
+        f"the cadence workflow's '{RESOLVE_STEP}' step does not iterate a "
+        "script list (`for S in a.sh b.sh; do SD=`). Resolving one script and "
+        "exporting its directory is the #301 shape: every later step then runs "
+        "a DIFFERENT script from a directory nobody checked holds it."
+    )
+    return m.group(1).split()
+
+
+def _resolve(
+    steps: dict[str, str], proj: Path
+) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+    """Run the rendered resolve step as Actions does (`bash -e`), and read
+    back what it exported for the later steps."""
+    gh_env = proj.parent / "github_env"
+    gh_env.write_text("")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GITHUB_ENV"] = str(gh_env)
+    r = subprocess.run(
+        ["bash", "-e", "-c", steps[RESOLVE_STEP]],
+        cwd=str(proj),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    exported = dict(
+        line.split("=", 1) for line in gh_env.read_text().splitlines() if "=" in line
+    )
+    return r, exported
+
+
+@pytest.mark.parametrize(
+    "vendored", [f".claude/skills/{CADENCE}/scripts", f"skills/{CADENCE}/scripts"]
+)
+def test_the_cadence_resolves_each_script_on_its_own(
+    vendored: str, tmp_path: Path
+) -> None:
+    """scripts/ holds measure-context.sh and nothing else. It wins for that
+    script alone; every other script resolves to the vendored skill, through
+    either of the workflow's two skill locations."""
+    steps = _cadence_steps(tmp_path)
+    listed = _cadence_listed(steps)
+    assert "measure-context.sh" in listed, listed
+    proj = _project(
+        tmp_path, CADENCE, project_scripts=("measure-context.sh",), vendored=vendored
+    )
+    r, exported = _resolve(steps, proj)
+    assert r.returncode == 0, f"stdout={r.stdout!r}\nstderr={r.stderr!r}"
+    expected = {
+        _env_name(s): (
+            f"scripts/{s}" if s == "measure-context.sh" else f"{vendored}/{s}"
+        )
+        for s in listed
+    }
+    assert exported == expected, (
+        "with only scripts/measure-context.sh in the project, the cadence must "
+        "export that one path from scripts/ and every other script's from the "
+        f"skill (#301).\nexpected {expected}\nexported {exported}"
+    )
+
+
+def test_a_cadence_script_found_nowhere_fails_the_resolve_step_by_name(
+    tmp_path: Path,
+) -> None:
+    """The script before the missing one resolves from scripts/, so a loop
+    that kept the previous pass's directory would export a path that does not
+    exist, exit 0, and fail steps later as a 127."""
+    steps = _cadence_steps(tmp_path)
+    listed = _cadence_listed(steps)
+    missing = listed[1]
+    proj = _project(tmp_path, CADENCE, project_scripts=(listed[0],), missing=(missing,))
+    r, exported = _resolve(steps, proj)
+    assert r.returncode != 0, (
+        f"{missing} exists nowhere, yet the resolve step exited 0 and "
+        f"exported {exported}. It must fail here, naming it."
+    )
+    assert missing in r.stderr, (
+        f"the failure must name the script that was not found; stderr={r.stderr!r}"
+    )
+    assert _env_name(missing) not in exported, exported
+
+
+def test_every_cadence_step_runs_a_path_the_resolve_step_exported(
+    tmp_path: Path,
+) -> None:
+    """The list is the contract between the resolve step and the rest. A step
+    expanding a name nobody exported runs `bash ""`; a listed script nothing
+    runs can still fail the job when absent. And no directory variable is
+    left for a step to join a different script onto."""
+    steps = _cadence_steps(tmp_path)
+    listed = _cadence_listed(steps)
+    assert len(listed) == len(set(listed)), f"a script is listed twice: {listed}"
+    absent = sorted(set(listed) - set(_ships(CADENCE)))
+    assert not absent, f"the cadence resolves {absent}, which {CADENCE} does not ship"
+    later = "\n".join(run for name, run in steps.items() if name != RESOLVE_STEP)
+    exported = {_env_name(s) for s in listed}
+    used = set(EXPORTED_PATH.findall(later))
+    assert used == exported, (
+        f"steps expand {sorted(used)}; the resolve step exports {sorted(exported)}"
+    )
+    joined = re.findall(r'"\$\{?[A-Za-z_]+\}?/[^"]*\.sh', "\n".join(steps.values()))
+    assert not joined, (
+        f"a step joins a script name onto a directory variable: {joined}. "
+        "One directory resolved for one script and reused for others is #301."
     )
