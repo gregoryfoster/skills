@@ -3054,8 +3054,9 @@ Commands:
            queries about it is its own named defect rather than a silent READY
            (#297). The server it is judged against is the one answering the
            session's queries wherever the plugin's definition fixes that
-           version, and this check's own launch where it floats or is absent,
-           said so in the finding (#305). A graph matching the session's
+           version, and this check's own launch where the definition floats
+           or there is none — the finding then says it could not tell which
+           (#305). A graph matching the session's
            server but older than this check's is a note, not a defect: a
            rebuild through the session re-stamps the same version, so the
            remedy is update the plugin, restart Claude Code, then rebuild.
@@ -3114,7 +3115,9 @@ Env:
                       when absent (default ~/.socraticode/pin; populate with
                       'npm install --prefix <dir> socraticode@<version>')
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
-                      installed_plugins.json (default ~/.claude)
+                      installed_plugins.json (default ~/.claude) — both to
+                      launch and, in health-check and verify, to read which
+                      server version the session runs (#305)
   npm_config_cache    npm cache dir whose _npx/ subtree is searched (default ~/.npm)
   POLL_INTERVAL_MS    status poll cadence (default 15000)
   INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)
