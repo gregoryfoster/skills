@@ -112,7 +112,8 @@ Options:
                      how they are made. A whole-surface --exact run (no --file,
                      no --docs-dir) persists both without it, and says so.
                      Refused with --no-write, and without --exact. A run in
-                     which any count fell back persists nothing and exits 2.
+                     which any count fell back persists nothing and exits 2;
+                     so does one whose write fails.
   --anchor           Persist the per-file anchors from an --exact run and never
                      the ratio: every file counted exactly gets its row in
                      .skills/context-token-counts, merged as for --calibrate,
@@ -122,8 +123,8 @@ Options:
                      refit the repo-wide ratio to each skill in turn, leaving
                      it at whichever ran last (#294). Refused with --no-write,
                      with --calibrate, and without --exact. Exits 2 as
-                     --calibrate does when a count fell back, so a loop of
-                     runs can `|| break` on it.
+                     --calibrate does when a count fell back or a write
+                     failed, so a loop of runs can `|| break` on it.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
@@ -187,8 +188,9 @@ Exit codes:
      --check-credential could not reach the endpoint at all — no python3 to
      address it with, or an ANTHROPIC_BASE_URL that cannot be parsed; none of
      these is a verdict on a credential), or --anchor/--calibrate persisted
-     nothing because a count fell back to the estimate — after the full
-     measurement has printed, and after --gate's verdict, which wins
+     nothing because a count fell back to the estimate, or could not write what
+     it was asked to persist — after the full measurement has printed, and
+     after --gate's verdict, which wins
   3  --check-credential only: no credential that count_tokens will accept —
      none resolved, or the one that did was refused
   4  --gate only: the policy file is over budget
@@ -1782,6 +1784,22 @@ fi
 SURFACE_RATIO_FMT="$(( SURFACE_RATIO_X100 / 100 )).$(printf '%02d' $(( SURFACE_RATIO_X100 % 100 )))"
 POLICY_RATIO_FMT="$(( RATIO_X100 / 100 )).$(printf '%02d' $(( RATIO_X100 % 100 )))"
 RATIO_FILE="$ROOT/.skills/context-token-ratio"
+
+# The flag that ASKED for a write, if one did, and each file it asked for that a
+# write then failed to reach (#294 CR 54). A failed printf or mv used to be a
+# WARN and exit 0, so the refresh loop's `|| break` carried on past a skill
+# whose anchor is not on disk. A flagless whole-surface run writes too, but
+# nothing asked it to, so its failure stays the WARN it was.
+PERSIST_FLAG=""
+if [ "$ANCHOR" -eq 1 ]; then PERSIST_FLAG="--anchor"; fi
+if [ "$CALIBRATE" -eq 1 ]; then PERSIST_FLAG="--calibrate"; fi
+PERSIST_UNWRITTEN=""
+persist_write_failed() {
+  if [ -n "$PERSIST_FLAG" ]; then
+    PERSIST_UNWRITTEN="${PERSIST_UNWRITTEN:+$PERSIST_UNWRITTEN and }$1"
+  fi
+}
+
 # The figure every offline estimate in the repo currently prices from, quoted
 # beside whatever this run does about it: a write names what it replaced, and a
 # scoped refusal names what it left standing (#263).
@@ -1797,6 +1815,7 @@ if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST_RATIO"
     echo "INFO wrote .skills/context-token-ratio: $SURFACE_RATIO_FMT (was $PREV_RATIO); every offline estimate in this repo now prices from it" >&2
   else
     echo "WARN could not write .skills/context-token-ratio" >&2
+    persist_write_failed ".skills/context-token-ratio"
   fi
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the observed surface ratio ($SURFACE_RATIO_FMT, policy-only was $POLICY_RATIO_FMT)" >&2
@@ -1900,6 +1919,7 @@ if [ "$exact_flag" = true ] && [ "$PERSIST_ANCHORS" -eq 1 ]; then
       echo "INFO wrote .skills/$CTX_COUNTS_BASENAME: $(wc -l <"$TMP/counts.new" | tr -d ' ') of $COUNTED counted file(s) anchored; rows outside this run's scope kept" >&2
     else
       echo "WARN could not write $COUNTS_FILE" >&2
+      persist_write_failed ".skills/$CTX_COUNTS_BASENAME"
     fi
   fi
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ]; then
@@ -1912,12 +1932,21 @@ fi
 # --calibrate persist nothing when any count fell back, correctly — but this
 # used to exit 0 and say nothing, so the documented refresh loop's `|| break`
 # never fired on the likeliest failure, a rate limit part-way through, and
-# moved on with this skill unanchored. Said here; the exit waits for the
-# measurement and the gate below, so a red run still prints both.
+# moved on with this skill unanchored. A write that was attempted and failed
+# is the same miss by a second road, recorded above (#294 CR 54). Said here;
+# the exit waits for the measurement and the gate below, so a red run still
+# prints both.
 PERSIST_REFUSED=""
-if [ "$exact_flag" != true ]; then
-  if [ "$ANCHOR" -eq 1 ]; then PERSIST_REFUSED="--anchor"; fi
-  if [ "$CALIBRATE" -eq 1 ]; then PERSIST_REFUSED="--calibrate"; fi
+persist_why=""
+persist_next=""
+if [ -n "$PERSIST_FLAG" ] && [ "$exact_flag" != true ]; then
+  PERSIST_REFUSED="$PERSIST_FLAG"
+  persist_why="persisted nothing: not every count reached count_tokens (see the WARN lines above), and an estimate cannot anchor the estimator"
+  persist_next="re-run once count_tokens answers"
+elif [ -n "$PERSIST_UNWRITTEN" ]; then
+  PERSIST_REFUSED="$PERSIST_FLAG"
+  persist_why="could not write $PERSIST_UNWRITTEN (see the WARN lines above), so what it was asked to persist is not on disk"
+  persist_next="re-run once the path is writable"
 fi
 if [ -n "$PERSIST_REFUSED" ]; then
   # The code named is the code returned (#294 CR 53): a red --gate below exits
@@ -1926,7 +1955,7 @@ if [ -n "$PERSIST_REFUSED" ]; then
   if [ "$GATE" -eq 1 ] && [ "$over_policy" = true ]; then
     persist_exit="Exit 4, not 2: --gate's verdict below outranks this refusal"
   fi
-  echo "ERROR $PERSIST_REFUSED persisted nothing: not every count reached count_tokens (see the WARN lines above), and an estimate cannot anchor the estimator. $persist_exit; re-run once count_tokens answers" >&2
+  echo "ERROR $PERSIST_REFUSED $persist_why. $persist_exit; $persist_next" >&2
 fi
 
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s, "near_budget": %s},\n' \

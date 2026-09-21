@@ -562,3 +562,94 @@ class TestAPersistThatDidNotHappenSaysSo:
         )
         text = " ".join(r.stdout.split())
         assert "--anchor/--calibrate persisted nothing" in text, text
+        assert "could not write what it was asked to persist" in text, text
+
+
+def _unwritable(tmp_path: Path) -> Path:
+    """The fixture repo with `.skills` a FILE, so every write under it fails
+    however the script makes it — `printf >`, `mv`, or `mkdir -p` first."""
+    repo = _repo(tmp_path)
+    (repo / ".skills").write_text("not a directory\n")
+    return repo
+
+
+class TestAWriteThatFailedSaysSo:
+    """#294 CR 54. CR 22 made a write that was ASKED for and did not happen
+    exit 2 — but only the fallback path. A write that was attempted and failed
+    printed `WARN could not write …` and exited 0 under --anchor/--calibrate,
+    so the refresh loop's `|| break` carried on past a skill whose anchor is
+    not on disk: the same silent miss, by a second road.
+    """
+
+    @pytest.mark.parametrize(
+        ("flag", "unwritten"),
+        [
+            ("--anchor", [".skills/context-token-counts"]),
+            (
+                "--calibrate",
+                [".skills/context-token-ratio", ".skills/context-token-counts"],
+            ),
+        ],
+    )
+    def test_a_failed_write_exits_2_and_names_the_file(
+        self, tmp_path: Path, exact_env: dict, flag: str, unwritten: list
+    ):
+        repo = _unwritable(tmp_path)
+        r = _run(repo, exact_env, "--exact", flag, *SCOPE)
+        assert r.returncode == 2, r.stderr
+        assert "WARN could not write" in r.stderr, "the cause is still on stderr"
+        line = next(
+            (ln for ln in r.stderr.splitlines() if ln.startswith(f"ERROR {flag}")),
+            "",
+        )
+        assert "could not write" in line, r.stderr
+        for name in unwritten:
+            assert name in line, line
+        assert "Exit 2" in line, line
+        assert "count_tokens" not in line, (
+            "every count reached count_tokens; the refusal must not blame it"
+        )
+        assert json.loads(r.stdout)["policy"]["tokens_exact"] is True, (
+            "the measurement still prints in full, and it was exact"
+        )
+
+    def test_the_refresh_loop_breaks_on_it(self, tmp_path: Path, exact_env: dict):
+        repo = _unwritable(tmp_path)
+        _second_corner(repo)
+        loop = (
+            'for s in skills/x/SKILL-dense.md skills/y/SKILL.md; do bash "$0" '
+            '--exact --anchor --file "$s" --docs-dir "${s%/*}/references" '
+            '>/dev/null || break; echo "anchored $s"; done'
+        )
+        r = subprocess.run(
+            ["bash", "-c", loop, str(MEASURE)],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=exact_env,
+            timeout=120,
+        )
+        assert "anchored" not in r.stdout, r.stdout + r.stderr
+
+    def test_an_over_budget_gate_still_wins(self, tmp_path: Path, exact_env: dict):
+        repo = _unwritable(tmp_path)
+        gate = ("--gate", "--budget", "1")
+        r = _run(repo, exact_env, "--exact", "--anchor", *gate, *SCOPE)
+        assert r.returncode == 4, r.stderr
+        assert "GATE" in r.stderr
+        line = next(
+            ln for ln in r.stderr.splitlines() if ln.startswith("ERROR --anchor")
+        )
+        assert "could not write" in line and "Exit 4" in line, line
+
+    def test_a_whole_surface_run_that_was_not_asked_still_exits_0(
+        self, tmp_path: Path, exact_env: dict
+    ):
+        """A flagless whole-surface run persists both by default, but nothing
+        asked it to, so a failed write stays the WARN it was — the same line
+        CR 22 drew for a fallback."""
+        repo = _unwritable(tmp_path)
+        r = _run(repo, exact_env, "--exact")
+        assert r.returncode == 0, r.stderr
+        assert "WARN could not write" in r.stderr
+        assert "ERROR" not in r.stderr, r.stderr
