@@ -90,9 +90,10 @@ Options:
                      name may climb out of it (../../.env). An absolute path is
                      refused, since it can never match, and the error names the
                      relative spelling that reaches the same file. When no
-                     credential resolves, the WARN names each file passed here
-                     that was missing or held no usable key (#296). An empty
-                     value is refused; --no-env-file searches no file.
+                     credential resolves, or only an `ant auth` profile does,
+                     the WARN names each file passed here that was missing or
+                     held no usable key (#296). An empty value is refused;
+                     --no-env-file searches no file.
   --no-write         Touch nothing. Suppresses the side effects an --exact run
                      otherwise has: writing the observed bytes-per-token ratio to
                      .skills/context-token-ratio, and the per-file calibration
@@ -470,6 +471,11 @@ fi
 # convention and the generic line already says ".env". Silent under
 # --no-env-file, which stops the files being searched at all. <prefix> carries
 # the caller's indentation, so the line sits inside the message it extends.
+#
+# Not only when nothing resolved. An `ant` profile resolves last and always, so
+# with one installed a mistyped name was never itemised and the run surfaced as
+# a JWT complaint about a credential the caller never chose (#296 CR 25). The
+# oauth branches call this too, with <suffix> saying what answered instead.
 env_file_misses() {
   local f out=""
   if [ "$ENV_FILE_EXPLICIT" -eq 0 ] || [ "$NO_ENV_FILE" -eq 1 ]; then
@@ -483,9 +489,10 @@ env_file_misses() {
     fi
   done
   [ -n "$out" ] || return 0
-  printf '%s--env-file names are searched under the repo root, %s: %s\n' \
-    "$1" "$ROOT" "$out" >&2
+  printf '%s--env-file names are searched under the repo root, %s: %s%s\n' \
+    "$1" "$ROOT" "$out" "${2:-}" >&2
 }
+OAUTH_INSTEAD="; none was used, so the \`ant auth\` profile answered instead"
 
 # The budgets, through the SAME chain as context-budget-guard.sh and
 # context-delta.sh: flag, then CONTEXT_BUDGET, then .skills/context-budget, then
@@ -814,6 +821,7 @@ if [ "$CHECK_CRED" -eq 1 ]; then
     echo "    Resolve this BEFORE starting the run; in autonomous mode, abort." >&2
     echo "    Every later phase would otherwise do its work and record-telemetry.sh" >&2
     echo "    would refuse the row at the end." >&2
+    if [ "$CRED_SOURCE" = oauth ]; then env_file_misses "    " "$OAUTH_INSTEAD"; fi
     exit 3
   fi
   echo "ERROR could not reach count_tokens$_at to test $CRED_DESC: $_why" >&2
@@ -821,6 +829,7 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   echo "      credential — an offline runner, and a base URL that cannot be" >&2
   echo "      addressed, both reach this line with a perfectly good key, so it" >&2
   echo "      exits 2 (infrastructure) rather than 3 (fix your credential)." >&2
+  if [ "$CRED_SOURCE" = oauth ]; then env_file_misses "      " "$OAUTH_INSTEAD"; fi
   exit 2
 fi
 
@@ -917,7 +926,8 @@ if [ "$EXACT" -eq 1 ]; then
         # rejects JWT auth today.
         echo "WARN --exact falling back to the \`ant auth\` profile; count_tokens does not" >&2
         echo "     yet accept JWT auth, so this will very likely 401 and degrade to the" >&2
-        echo "     offline estimate. Set ANTHROPIC_API_KEY or put it in .env instead." >&2 ;;
+        echo "     offline estimate. Set ANTHROPIC_API_KEY or put it in .env instead." >&2
+        env_file_misses "WARN " "$OAUTH_INSTEAD" ;;
     esac
   else
     echo "WARN --exact needs ANTHROPIC_API_KEY, the key in a repo-root .env, or an \`ant auth login\` profile; using offline estimate" >&2

@@ -63,7 +63,8 @@ any later, this failure costs eight phases of work toward a ledger row that
    the main checkout's `.env` is reached as `../../.env` or deeper. An absolute
    name used to be skipped like a missing file, silently; it is now refused
    with the relative spelling that reaches the same file, and a name that
-   misses is itemised in the no-credential message (#296).
+   misses is itemised in the no-credential message, or beside the `ant auth`
+   profile that answered in its place (#296).
 3. An `ant auth login` profile, sent as `Authorization: Bearer` with the
    `oauth-2025-04-20` beta header (OAuth tokens are rejected on `x-api-key`).
 

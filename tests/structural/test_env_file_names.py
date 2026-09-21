@@ -20,10 +20,12 @@ The rule this file pins, in two halves:
   root, and — when the file exists — the relative spelling that reaches it,
   checked rather than guessed. It is raised before the preflight and the
   measurement part ways, so both answer alike: the #271 property that
-  `--check-credential` answers for the run it precedes.
+  `--check-credential` answers for the run it precedes. An absolute path
+  holding a space is refused whole, and an empty value is refused too.
 - **Explain what merely missed.** When `--env-file` was passed and no credential
   resolved, the no-credential message names each file that was absent or held
-  no usable key, in both the preflight and the `--exact` WARN.
+  no usable key, in both the preflight and the `--exact` WARN — and so does
+  the `ant auth` profile's path, which an installed profile always reaches.
 
 Credential resolution itself — its order, and what the preflight asks the
 endpoint — belongs to `test_credential_preflight.py`, whose stub and fixtures
@@ -36,7 +38,14 @@ from pathlib import Path
 
 import pytest
 
-from .test_credential_preflight import KEY, MEASURE, _clean_env, _no_ant, _Stub
+from .test_credential_preflight import (
+    KEY,
+    MEASURE,
+    _clean_env,
+    _no_ant,
+    _Stub,
+    _with_ant,
+)
 
 # How a Claude Code agent worktree sits inside the checkout that owns the key —
 # three levels down, which is where the unobvious depth comes from.
@@ -361,6 +370,79 @@ class TestAMissedNameIsNamed:
             "--env-file",
             self._names(worktree),
         )
+        assert r.returncode == 3, r.stderr
+        assert "--env-file names are searched" not in r.stderr
+
+
+class TestAMissedNameIsNamedWhenTheProfileAnswers:
+    """#296 CR 25. An `ant` profile resolves last and, when installed, always,
+    so a mistyped --env-file name never reached the no-credential message that
+    itemises it: the run surfaced as a JWT refusal about a credential the
+    caller never chose. The names are itemised on the profile's paths too."""
+
+    NAMES = "missing.env"
+    INSTEAD = "none was used, so the `ant auth` profile answered instead"
+
+    @staticmethod
+    def _jwt_refusal() -> _Stub:
+        return _Stub(
+            status=401,
+            payload={
+                "type": "error",
+                "error": {
+                    "type": "authentication_error",
+                    "message": "jwt auth is not yet supported on count_tokens",
+                },
+            },
+        )
+
+    def test_a_refused_preflight_names_the_file(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        _, worktree = layout
+        env = _with_ant(tmp_path, _clean_env())
+        with self._jwt_refusal() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _measure(worktree, env, "--check-credential", "--env-file", self.NAMES)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "missing.env not found" in r.stderr, r.stderr
+        assert self.INSTEAD in r.stderr
+
+    def test_an_unreachable_preflight_names_the_file(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        _, worktree = layout
+        env = _with_ant(tmp_path, _clean_env())
+        # Port 1: nothing can listen there, as in test_credential_preflight.
+        env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:1"
+        r = _measure(worktree, env, "--check-credential", "--env-file", self.NAMES)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "missing.env not found" in r.stderr, r.stderr
+        assert self.INSTEAD in r.stderr
+
+    def test_the_measurement_names_the_file(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        _, worktree = layout
+        env = _with_ant(tmp_path, _clean_env())
+        with self._jwt_refusal() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _measure(
+                worktree, env, "--exact", "--no-write", "--env-file", self.NAMES
+            )
+        assert r.returncode == 0, r.stderr
+        assert "WARN --env-file names are searched" in r.stderr, r.stderr
+        assert "missing.env not found" in r.stderr
+        assert self.INSTEAD in r.stderr
+
+    def test_the_default_names_are_still_not_itemised(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        _, worktree = layout
+        env = _with_ant(tmp_path, _clean_env())
+        with self._jwt_refusal() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _measure(worktree, env, "--check-credential")
         assert r.returncode == 3, r.stderr
         assert "--env-file names are searched" not in r.stderr
 
