@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-21-1"
+VERSION="2026-09-21-2"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -113,7 +113,10 @@ That diff cannot tell which side moved, so the history decides (#290): a
 synced-from: commit AHEAD of the submodule's HEAD is reported as the
 pointer lagging, with a one-submodule bump as the remedy and the override
 left alone — the opposite of a re-sync; one on a diverged history (a
-rewritten vendor, a fork) is reported as unassessable.
+rewritten vendor, a fork) is reported as unassessable. Where no fetched
+synced-from: commit exists, the version stamps decide by direction: only
+an override version OLDER than the vendor's is drift, and a newer one is
+unassessable — most often a commit not fetched yet (fetch, then re-run).
 Drift is advisory in every mode including --check-only, and nothing is
 ever auto-merged: the point of an override is that upstream text cannot
 be applied blindly.
@@ -641,6 +644,45 @@ override_ancestry() {
     1) echo diverged ;;
     *) echo error ;;
   esac
+}
+
+# version_order <a> <b> — how version <a> stands to <b>, as one word: `older`,
+# `newer`, `same`, or `unordered` when either is not dotted numbers (a leading
+# v allowed). The version stamps' own direction, for when they are the only
+# verdict left (#290 CR 3): unequal stamps used to be drift whichever way they
+# differed, so an override synced from a release its pointer has not reached
+# yet — 1.5 over a checkout at 1.4 — got the re-sync remedy, onto older text.
+#
+# Field by field as numbers, never as strings: 1.14 is newer than 1.4, and the
+# library ships both. Not `sort -V`, which a stock macOS host lacks. A field
+# past 18 digits is `unordered` rather than an arithmetic overflow, and so is
+# anything else that is not plainly a number — a stamp nobody can order is
+# reported as such, never guessed at.
+version_order() {
+  local a="${1#[vV]}" b="${2#[vV]}" x y
+  case "$a" in ''|.*|*.|*..*|*[!0-9.]*) echo unordered; return 0 ;; esac
+  case "$b" in ''|.*|*.|*..*|*[!0-9.]*) echo unordered; return 0 ;; esac
+  while [ -n "$a$b" ]; do
+    x="${a%%.*}" y="${b%%.*}"
+    case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+    case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+    # Leading zeros off, so the arithmetic below never reads a field as octal;
+    # a field one side lacks, or one of zeros, is 0.
+    x="${x#"${x%%[!0]*}"}" y="${y#"${y%%[!0]*}"}"
+    x="${x:-0}" y="${y:-0}"
+    if [ "${#x}" -gt 18 ] || [ "${#y}" -gt 18 ]; then
+      echo unordered
+      return 0
+    fi
+    if [ "$x" -lt "$y" ]; then
+      echo older
+      return 0
+    elif [ "$x" -gt "$y" ]; then
+      echo newer
+      return 0
+    fi
+  done
+  echo same
 }
 
 report_drifted_overrides() {
@@ -1347,7 +1389,7 @@ check_override_drift() {
   MALFORMED_SEEN=" "
   UNCLOSED_FENCE=()
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
-  local ver_drift changed have now line moved head
+  local ver_drift changed have now line moved head rec_why ver_why
   local -a dpaths=()
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
@@ -1399,9 +1441,15 @@ check_override_drift() {
     # whenever the override records one, versioned vendor or not (#286): this
     # is the only comparison that can see an un-bumped change, and gating it
     # behind an absent `version:` is what hid four of them.
+    #
+    # Why the commit could not be compared, when it could not, is held in
+    # rec_why rather than recorded on the spot: a version comparison that
+    # cannot be ordered either joins it below as ONE entry for the override.
     changed=""
     moved=""
     rec=""
+    rec_why=""
+    ver_why=""
     if [ -z "$synced" ]; then
       # Absent is a finding only when nothing else can compare.
       if [ -z "$v_ver" ]; then
@@ -1412,12 +1460,14 @@ check_override_drift() {
       rec="${synced##*(}"
       rec="${rec%%)*}"
       if [ "$rec" = "$synced" ] || [ -z "$rec" ]; then
-        record_override_unassessed "$dir" "$target" \
-          "synced-from: \"$synced\" carries no (commit) to compare against"
+        rec_why="synced-from: \"$synced\" carries no (commit) to compare against"
         rec=""
       elif ! git -C "$repo_dir" rev-parse --verify --quiet "$rec^{commit}" >/dev/null 2>&1; then
-        record_override_unassessed "$dir" "$target" \
-          "the recorded commit $rec is not in the vendor's history (shallow clone?)"
+        # Not fetched yet leads (#290 CR 3): it is the likeliest cause and the
+        # one with a command. An override re-synced from upstream's newest
+        # text records a commit the consumer's submodule has not fetched until
+        # something does, and a re-run after the fetch reads the history.
+        rec_why="the recorded commit $rec is not in the local history of $repo_dir — not fetched yet: \`git -C $repo_dir fetch\`, then re-run (else a shallow clone, \`fetch --unshallow\`, or a typo)"
         rec=""
       else
         dpaths=()
@@ -1454,8 +1504,7 @@ EOF
           # diff above, unchanged.
           moved="$(override_ancestry "$repo_dir" "$rec")"
         elif [ "$rc" -ne 0 ]; then
-          record_override_unassessed "$dir" "$target" \
-            "'git diff $rec HEAD' over ${#dpaths[@]} path(s) under $skill_rel failed in $repo_dir"
+          rec_why="'git diff $rec HEAD' over ${#dpaths[@]} path(s) under $skill_rel failed in $repo_dir"
           rec=""
         fi
       fi
@@ -1509,7 +1558,45 @@ EOF
       [ -z "$o_ver" ] || have="version $o_ver (commit $rec)"
       record_override_drift "$dir" "$target" "$have" "$now"
     elif [ "$ver_drift" = "1" ]; then
-      record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+      # The stamps are the only verdict left — no synced-from:, one that could
+      # not be read, or a commit that has not been fetched — so they decide by
+      # DIRECTION (#290 CR 3). Only an older stamp is drift. A newer one is the
+      # pointer-lag state again, seen without the history that would prove it:
+      # an override re-synced from upstream's newest text, recording a commit
+      # its submodule has not fetched, read "last synced at version 1.5,
+      # vendor now at version 1.4" with the re-sync remedy — the opposite of
+      # the fix, which a fetch and a re-run then printed correctly. So it is
+      # un-assessable, with the reason and the likely cause, never drift.
+      case "$(version_order "$o_ver" "$v_ver")" in
+        older)
+          record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+          ;;
+        same)
+          # Spelled apart, numerically one release (1.4 and 1.4.0).
+          ;;
+        newer)
+          if [ -n "$rec" ]; then
+            # The commit WAS compared, and the override's files are the same
+            # at it as at the checkout: the stamp and the commit disagree.
+            ver_why="it records version $o_ver, NEWER than the $v_ver at the checkout of $repo_dir, yet its synced-from: commit $rec carries the same files as that checkout — the two keys disagree, so correct whichever is wrong; this is not drift"
+          else
+            ver_why="it records version $o_ver, NEWER than the $v_ver at the checkout of $repo_dir — its pointer most likely lags the release it was synced from, which is not drift: do not re-sync it onto the older text"
+            [ -n "$synced" ] ||
+              ver_why="$ver_why; record synced-from: (\"<repo> <tag> (<commit>)\") and the doctor names the commit to bump to"
+          fi
+          ;;
+        *)
+          ver_why="its version $o_ver and the vendor's $v_ver do not both read as dotted numbers, so which is newer — and which side moved — cannot be told"
+          ;;
+      esac
+    fi
+    # One un-assessable entry per override for the two comparisons: the
+    # commit's reason first, since fixing it (a fetch) is what lets the next
+    # run decide by history rather than by stamps.
+    if [ -n "$rec_why" ] && [ -n "$ver_why" ]; then
+      record_override_unassessed "$dir" "$target" "$rec_why; and $ver_why"
+    elif [ -n "$rec_why$ver_why" ]; then
+      record_override_unassessed "$dir" "$target" "$rec_why$ver_why"
     fi
   done
   # After the loop, so a repo with several overrides gets one remedy block per

@@ -55,6 +55,11 @@ What this file pins:
   behind HEAD is drift; HEAD behind the recorded commit is the POINTER
   lagging, remedied by one submodule bump and no edit to the override; a
   diverged history is un-assessable. Versioned and unversioned vendors alike.
+- **With no history to read, the stamps decide by direction** (#290 CR 3).
+  A recorded commit not fetched yet, or no `synced-from:` at all, leaves the
+  version stamps as the only verdict: only an OLDER override version is
+  drift, a newer one is un-assessable with the fetch that settles it, and the
+  stamps are ordered as numbers (1.14 is newer than 1.4).
 - **Who is NOT warned about.** A symlinked skill tracks upstream by
   construction, and a local directory without `overrides:` is a
   project-authored skill, not a fork of anything.
@@ -913,6 +918,127 @@ class TestWhichSideMoved:
             assert result.returncode == 0, result.stderr
             assert POINTER_MARKER in result.stderr, result.stderr
         assert _vendor_head(vendor).startswith(old), "the doctor moved the pointer"
+
+
+class TestStampsDecideByDirection:
+    """#290 CR 3 — when the version stamps are the only verdict, they decide
+    by direction, and a NEWER override version is never drift.
+
+    The ancestry check needs the recorded commit on disk. Without it — not
+    fetched yet, or no `synced-from:` at all — the stamps were compared for
+    equality alone, so an override re-synced from upstream's newest release
+    over a pointer still at the previous one read "last synced at version 1.5,
+    vendor now at version 1.4" with the re-sync remedy: the opposite of the fix
+    #290 exists to print, which a fetch and a re-run then printed correctly.
+    """
+
+    def _unfetched(self, consumer: Path, tmp_path: Path) -> tuple[Path, str]:
+        """The reviewer's fixture: upstream A (1.4), the consumer's vendor
+        cloned at A, upstream B (1.5) not fetched, the override recording B."""
+        up = tmp_path / "upstream"
+        (up / "skills" / "sw").mkdir(parents=True)
+        md = up / "skills" / "sw" / "SKILL.md"
+        md.write_text(_skill_md("sw", version="1.4"))
+        _git(up, "init", "-q", "-b", "main")
+        _git(up, "config", "user.email", "t@t.invalid")
+        _git(up, "config", "user.name", "t")
+        _vendor_commit(up, "A")
+        vendor = consumer / "skills-vendor" / VENDOR_REPO
+        shutil.rmtree(vendor)
+        _git(consumer, "clone", "-q", str(up), str(vendor))
+        md.write_text(
+            md.read_text().replace('version: "1.4"', 'version: "1.5"') + "\nB.\n"
+        )
+        new = _vendor_commit(up, "B")
+        _override(consumer, "sw", "1.5", synced_from=f"{VENDOR_REPO} 1.5 ({new})")
+        return vendor, new
+
+    def test_an_unfetched_commit_over_a_version_bump_is_not_drift(
+        self, consumer: Path, tmp_path: Path
+    ):
+        self._unfetched(consumer, tmp_path)
+        result = _doctor(consumer)
+        assert DRIFT_MARKER not in result.stderr, (
+            "the override's version is NEWER than the vendor's — calling that "
+            f"drift hands out the re-sync remedy onto older text:\n{result.stderr}"
+        )
+        assert RESYNC_REMEDY not in result.stderr, result.stderr
+        assert UNASSESSED_MARKER in result.stderr, result.stderr
+        listed = result.stderr.count(f"overrides {VENDOR_REPO}/sw")
+        assert listed == 1, f"one override, {listed} entries:\n{result.stderr}"
+
+    def test_the_printed_fetch_leads_to_the_pointer_finding(
+        self, consumer: Path, tmp_path: Path
+    ):
+        """Cause 5 leads with its likeliest cause and the command for it, and
+        that command is the whole way to the right diagnosis: run it, re-run
+        the doctor, and the history now says the pointer lags."""
+        vendor, new = self._unfetched(consumer, tmp_path)
+        flat = _flat(_doctor(consumer).stderr)
+        assert "not fetched yet" in flat, flat
+        fetch = re.search(r"`(git -C \S+ fetch)`", flat)
+        assert fetch, f"no fetch command printed:\n{flat}"
+        subprocess.run(
+            shlex.split(fetch.group(1)),
+            cwd=str(consumer),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
+        )
+        again = _doctor(consumer)
+        assert POINTER_MARKER in again.stderr, again.stderr
+        assert DRIFT_MARKER not in again.stderr, again.stderr
+        assert new in again.stderr, again.stderr
+
+    def test_no_synced_from_and_a_newer_version_is_not_drift(self, consumer: Path):
+        """No commit at all, so nothing but the stamps — and they say the
+        override is ahead of its vendor, not behind it."""
+        _vendor_skill(consumer, "sw", "1.4")
+        _override(consumer, "sw", "1.5")
+        result = _doctor(consumer)
+        assert DRIFT_MARKER not in result.stderr, result.stderr
+        assert RESYNC_REMEDY not in result.stderr, result.stderr
+        assert UNASSESSED_MARKER in result.stderr, result.stderr
+        flat = _flat(result.stderr)
+        assert "NEWER" in flat and "synced-from" in flat, (
+            "the reason names the direction, and the key that would let the "
+            f"doctor name the commit to bump to:\n{flat}"
+        )
+
+    @pytest.mark.parametrize(
+        ("override", "vendor", "drift"),
+        [
+            ("1.4", "1.14", True),
+            ("1.14", "1.4", False),
+            ("1.2", "1.4", True),
+            ("1.4.1", "1.4", False),
+        ],
+    )
+    def test_the_stamps_are_ordered_as_numbers(
+        self, consumer: Path, override: str, vendor: str, drift: bool
+    ):
+        """Field by field, never as strings: the library ships both 1.4 and
+        1.14, and a string compare puts them the wrong way round."""
+        _vendor_skill(consumer, "sw", vendor)
+        _override(consumer, "sw", override)
+        result = _doctor(consumer)
+        assert (DRIFT_MARKER in result.stderr) is drift, result.stderr
+
+    def test_the_same_release_spelled_twice_is_silent(self, consumer: Path):
+        _vendor_skill(consumer, "sw", "1.4.0")
+        _override(consumer, "sw", "1.4")
+        assert _doctor(consumer).stderr.strip() == ""
+
+    def test_stamps_that_cannot_be_ordered_are_unassessable(self, consumer: Path):
+        """A stamp nobody can order is reported as such, never guessed at in
+        either direction."""
+        _vendor_skill(consumer, "sw", "1.4")
+        _override(consumer, "sw", "1.5-rc1")
+        result = _doctor(consumer)
+        assert UNASSESSED_MARKER in result.stderr, result.stderr
+        assert DRIFT_MARKER not in result.stderr, result.stderr
 
 
 class TestDriftIsAdvisoryInEveryMode:

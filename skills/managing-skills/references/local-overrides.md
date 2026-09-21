@@ -131,6 +131,15 @@ also replaces the version comparison for that override rather than joining it:
 a pointer lagging a bumped release disagrees on the stamps too, and printing
 drift beside it would print both opposite remedies at once.
 
+The history needs the recorded commit **on disk**. Where it is not — not
+fetched yet, or no `synced-from:` at all — the version stamps are the only
+verdict, and they decide by direction, as numbers (1.14 is newer than 1.4):
+only an override `version:` **older** than the vendor's is drift. A newer one
+is the pointer-lag state seen without the history to prove it, so it is
+reported as un-assessable with that reason, never as drift. Unfetched, it read
+"last synced at version 1.5, vendor now at version 1.4" with the re-sync remedy
+until a fetch let the history speak.
+
 ### What the commit diff is scoped to
 
 The override's **own real files** — its `SKILL.md`, plus any script or
@@ -150,24 +159,28 @@ check's business).
 
 An override the doctor cannot compare is warned about, never silently skipped —
 an override nothing can compare is the same failure as not detecting drift at
-all. Seven ways to get there:
+all. Eight ways to get there:
 
 1. **No vendor copy on disk** at all — an uninitialized submodule, or the skill
-   moved upstream. This is the likeliest of the seven and the reason the report
+   moved upstream. This is the likeliest of the eight and the reason the report
    batches: it makes *every* override unassessable at once.
 2. No `version:` in the override, against a versioned vendor.
 3. Neither key, against an unversioned vendor.
 4. A `synced-from:` with no `(commit)` in it.
-5. A recorded commit absent from the vendor's history — a shallow clone, or a
-   typo.
+5. A recorded commit absent from the vendor's local history — **not fetched
+   yet**: `git -C skills-vendor/<repo> fetch`, then re-run. Otherwise a shallow
+   clone (`fetch --unshallow`) or a typo.
 6. A recorded commit whose history has diverged from the vendor's `HEAD` —
    neither contains the other — so [which side moved](#which-side-moved)
    cannot be read.
 7. The `git diff`, or the ancestry check after it, failing.
+8. With no fetched commit to decide, a `version:` **newer** than the vendor's,
+   or stamps that are not both dotted numbers.
 
-The last four are reported **even when the version stamps match and compare
+Causes 4–7 are reported **even when the version stamps match and compare
 cleanly**: a comparand the operator wrote that quietly does not apply is its own
-defect, and matching stamps are no longer the end of the enquiry.
+defect, and matching stamps are no longer the end of the enquiry. Where 5 and 8
+meet, they are one entry.
 
 ## When an override is *supposed* to omit something
 
