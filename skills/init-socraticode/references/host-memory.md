@@ -80,15 +80,16 @@ done
 
 | Sessions at | Measured on | What follows |
 |---|---|---|
-| **-1000** | broker; address-validator | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. The kernel's killer can never pick a session, VSCode Server, Claude Code or any server they launch, so under real exhaustion it takes the production service, and a cgroup cap on a session **stalls** it rather than killing it. earlyoom 1.7 floors a `--prefer` match at 300 while a service at adj 0 reads ~667, so the service's `OOMScoreAdjust=` is what compensates: it lets earlyoom take the session first. |
-| **0** | notifier | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
+| **-1000** | broker; address-validator | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
+| **0** | notifier | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, and so can earlyoom, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
 
 What decides it was not determined, and `exe-init`'s presence is not it:
 notifier has one and sits at 0, address-validator has none and sits at -1000.
-**The actions below are the same either way.** Do not skip them after
-measuring a 0: the reservation keeps reclaim off the service on any host, and
-`OOMScoreAdjust=` is what makes a session, not the service, the one that goes —
-on its own where sessions sit at 0, through earlyoom where they sit at -1000.
+**The service-side actions below are the same either way.** Do not skip them
+after measuring a 0: the reservation keeps reclaim off the service on any host,
+and `OOMScoreAdjust=` puts the service behind every process a killer can take —
+which, where sessions sit at 0, makes a session the one that goes. Where they
+sit at -1000 nothing on the service's side can: add the `choom` launch above.
 
 ### 2. Pin
 
@@ -104,8 +105,8 @@ Give the production unit a reservation and a lower OOM score:
 [Service]
 # wslcb's figure — size it to the service.
 MemoryLow=256M
-# A service at adj 0 read ~667 on broker; this takes it below the 300 an
-# earlyoom --prefer match floors at.
+# At adj 0 a service reads ~667 (broker), like any small process at 0;
+# -500 puts it behind them. It cannot make a -1000 session killable.
 OOMScoreAdjust=-500
 ```
 
@@ -171,8 +172,12 @@ fi
 share in proportion to its usage, which is why the parent's grant is at least
 their sum. `preflight.sh` runs the same walk over every unit under
 `system.slice` that claims a `MemoryLow=`, and names the slice that clamps one.
-On wslcb, after the fix, the service read 256 MiB effective and `oom_score`
-208 — below the 300 a `--prefer` match floors at.
+On wslcb, after the fix, the service read 256 MiB effective. Its
+`OOMScoreAdjust=-700` (`oom_score` 208) was calibrated to sit below 300, the
+floor of an earlyoom `--prefer` match. That floor is a match whose own
+`oom_score` is 0, which is a -1000 process, and earlyoom never takes one; a
+session at 0 reads ~667 or more, ~967 as a `--prefer` match. 300 is not a line
+worth calibrating to.
 
 ### 4. Keep the kernel ahead of exhaustion — `vm.min_free_kbytes`, and earlyoom
 

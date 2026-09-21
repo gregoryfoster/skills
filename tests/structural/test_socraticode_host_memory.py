@@ -474,7 +474,29 @@ class TestTheOomPremiseIsConditional:
 
     def test_the_actions_stand_either_way(self) -> None:
         text = " ".join(HOST_MEMORY.read_text().split())
-        assert "The actions below are the same either way." in text, (
+        assert "The service-side actions below are the same either way." in text, (
             "a reader who measures 0 must be told not to skip the reservation "
             "and OOMScoreAdjust= (#303)"
         )
+
+    def test_no_killer_is_promised_a_minus_1000_session(self) -> None:
+        """earlyoom skips oom_score_adj -1000 exactly as the kernel does.
+
+        `kill.c`, v1.7 and master: "Skip processes with oom_score_adj = -1000,
+        like the kernel oom killer would." The -1000 row once said the
+        service's OOMScoreAdjust= "lets earlyoom take the session first" there
+        — a promise nothing on the service's side can keep, on the hosts where
+        the service is most exposed. What does work is the session's own score.
+        """
+        for doc, marker in ((HOST_MEMORY, "| **-1000**"), (TROUBLESHOOTING, "| **U**")):
+            row = next(
+                ln for ln in doc.read_text().splitlines() if ln.startswith(marker)
+            )
+            assert "take the session first" not in row, row
+            assert "earlyoom" in row and "skips a -1000 process" in row, (
+                f"{doc.name} must say earlyoom cannot take a -1000 session: {row}"
+            )
+            assert "choom -n 500" in row, (
+                f"{doc.name} must name the lever that works at -1000 — raising "
+                f"the session's own score: {row}"
+            )
