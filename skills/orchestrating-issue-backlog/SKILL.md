@@ -246,7 +246,7 @@ The branch strategy, the orchestrator and worker protocols, Branch Hygiene Rules
 
 Session memory lives in [`references/process-log.md`](references/process-log.md), which also records which of this skill's rules originated there.
 
-**Self-budget:** held to a **9,800-token ratchet (estimate and exact)** by
+**Self-budget:** held to a **9,200-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
 6,000-token standard, set so this file cannot grow. Came down from 23,110
 when the #285 curation moved the execution protocol and the conditional

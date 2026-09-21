@@ -411,7 +411,12 @@ SKILL_MD_RATCHETS = {
     # 6,000 would mean demoting what every run executes — the footprint grep,
     # the decide-then-rescore gate, the shape heuristic — which is the class-A
     # line curating-context's Phase 4 says to report rather than cross.
-    "orchestrating-issue-backlog": 9_800,
+    #
+    # Lowered 9,800 -> 9,200 in #294's review round: anchored, the two readings
+    # coincide at 9,175 exact, and the module rule is max(estimate, exact)
+    # rounded up to the next 50. The 9,800 had been set against an estimate
+    # reading 642 high, so it carried ~600 tokens of room no rule granted.
+    "orchestrating-issue-backlog": 9_200,
 }
 
 # The runbook note. Two long procedural runbooks, at ~2.5x and ~1.6x the
@@ -2108,7 +2113,13 @@ class TestTheOtherEdgeIsReported:
         assert best_case_exact(9_766) == round(9_766 / (1 + high)) == 8_492
         assert best_case_exact(9_766) < 9_766 < worst_case_exact(9_766)
 
-    def test_the_case_294_was_filed_on_is_reported(self):
+    # The figures below replay #294 as filed, measured against the 9,800 ratchet
+    # then in force; the live one has since come down to the file's measured
+    # size, which would turn this estimate from a squeeze into a failure.
+    FILED_RATCHET = 9_800
+
+    def test_the_case_294_was_filed_on_is_reported(self, monkeypatch):
+        monkeypatch.setitem(SKILL_MD_RATCHETS, self.SKILL, self.FILED_RATCHET)
         surfaces = _surfaces(**{self.SKILL: _policy(self.SKILL, 9_766, near=True)})
         assert squeeze_rows(surfaces, counts={}) == [
             (self.SKILL, 9_766, 8_492, 9_800, None)
@@ -2122,10 +2133,11 @@ class TestTheOtherEdgeIsReported:
             "the report names a squeeze without the command that settles it"
         )
 
-    def test_a_lapsed_anchor_projects_from_its_own_count(self):
+    def test_a_lapsed_anchor_projects_from_its_own_count(self, monkeypatch):
         """The one offline evidence of direction: an exact count at an older
         size. 2.90 bytes/token then, against the 2.70 this fixture's estimate
         is priced at."""
+        monkeypatch.setitem(SKILL_MD_RATCHETS, self.SKILL, self.FILED_RATCHET)
         surfaces = _surfaces(
             **{self.SKILL: _policy(self.SKILL, 9_629, near=True, size=26_000)}
         )
