@@ -10,8 +10,8 @@ and that run rewrote both:
 - the ratio went 2.68 -> 2.63 — that one file's rate, applied to every file in
   the repo, which put two skills the run never touched over their budgets;
 - the counts file gained an anchor row for the file, which changed what the
-  self-budget gate measures for it (`test_which_skills_are_anchored_is_declared`
-  treats that as a decision needing justification in three places).
+  self-budget gate measures for it — a decision, which at the time needed
+  justifying in three places.
 
 Phase 7's `git add -A` then shipped both inside a commit about one file, and
 under `--autonomous` neither appeared in the PR body that is the audit trail.
@@ -21,6 +21,11 @@ run persists nothing unless it also passes `--calibrate`; a whole-surface run
 persists both, as before, and now says so on stderr. The docs-dir KNOB
 (`CONTEXT_DOCS_DIR`, `.skills/context-docs-dir`) configures what the surface
 is and does not scope a run, so a knob-configured weekly run still calibrates.
+
+Since #294 the two files are two decisions. `--anchor` persists the anchors
+and never the ratio, on any scope: anchoring every SKILL.md in a skill library
+is one scoped run per skill, and `--calibrate` on each would refit the ratio to
+every skill in turn and leave it at whichever ran last.
 """
 
 import subprocess
@@ -313,3 +318,107 @@ class TestAWholeSurfaceRunStillCalibratesAndSaysSo:
         b = _ok(repo, exact_env, "--exact", "--calibrate").stdout
         assert a == b
         assert (repo / RATIO).read_text() == ratio_a
+
+
+def _second_corner(repo: Path) -> tuple[str, ...]:
+    """A second skill at the repo's own 3.00, so a ratio refit to it lands on a
+    different figure from one refit to the dense corner."""
+    _sized(repo / "skills" / "y" / "SKILL.md", 3_000)
+    _sized(repo / "skills" / "y" / "references" / "prose.md", 3_000)
+    return ("--file", "skills/y/SKILL.md", "--docs-dir", "skills/y/references")
+
+
+class TestAnchorPersistsTheAnchorsAlone:
+    """#294: every SKILL.md anchored, by a refresh committed by hand.
+
+    The refresh is one scoped run per skill — `--file` takes one path — and
+    before this flag the only way a scoped run could persist an anchor was
+    `--calibrate`, which also refits the repo-wide ratio to that corner. Run
+    once per skill, that is #263's re-pricing once per skill, ending at
+    whichever ran last.
+    """
+
+    def test_a_scoped_run_anchors_the_corner_and_leaves_the_ratio(
+        self, tmp_path: Path, exact_env: dict
+    ):
+        repo = _calibrated(tmp_path, exact_env)
+        r = _ok(repo, exact_env, "--exact", "--anchor", *SCOPE)
+        assert (repo / RATIO).read_text().strip() == "3.00"
+        rows = _rows(repo)
+        assert rows["skills/x/SKILL-dense.md"] == (6_000, 3_000)
+        assert rows["skills/x/references/dense.md"] == (4_000, 2_000)
+        assert rows["AGENTS.md"] == (9_000, 3_000), "rows outside the scope kept"
+        assert "--anchor: measured 2.00" in r.stderr, r.stderr
+        assert "context-token-ratio stays 3.00" in r.stderr, r.stderr
+
+    def test_a_whole_surface_run_anchors_without_refitting(
+        self, tmp_path: Path, exact_env: dict
+    ):
+        """Not only a scoped-run switch: on the flagless surface, where the
+        ratio WOULD be written, it still is not."""
+        repo = _calibrated(tmp_path, exact_env)
+        _sized(repo / "docs" / "dense-extra.md", 6_000)
+        _ok(repo, exact_env, "--exact", "--anchor")
+        assert (repo / RATIO).read_text().strip() == "3.00"
+        assert _rows(repo)["docs/dense-extra.md"] == (6_000, 3_000)
+
+    def test_a_run_per_corner_leaves_the_ratio_where_it_was(
+        self, tmp_path: Path, exact_env: dict
+    ):
+        """The documented refresh in miniature, beside the loop it replaces."""
+        repo = _calibrated(tmp_path, exact_env)
+        other = _second_corner(repo)
+        for corner in (other, SCOPE):
+            _ok(repo, exact_env, "--exact", "--anchor", *corner)
+        assert (repo / RATIO).read_text().strip() == "3.00"
+        assert {"skills/x/SKILL-dense.md", "skills/y/SKILL.md"} <= set(_rows(repo))
+
+        for corner in (other, SCOPE):
+            _ok(repo, exact_env, "--exact", "--calibrate", *corner)
+        assert (repo / RATIO).read_text().strip() == "2.00", (
+            "the same loop under --calibrate should end at the last corner's "
+            "rate; if it no longer does, this flag's reason has changed"
+        )
+
+    @pytest.mark.parametrize(
+        "extra,message",
+        [
+            (("--no-write",), "--anchor and --no-write contradict"),
+            (("--calibrate",), "pass one"),
+        ],
+    )
+    def test_it_is_refused_with_a_contradicting_flag(
+        self, tmp_path: Path, exact_env: dict, extra: tuple[str, ...], message: str
+    ):
+        repo = _repo(tmp_path)
+        r = _run(repo, exact_env, "--exact", "--anchor", *extra, *SCOPE)
+        assert r.returncode == 1
+        assert message in r.stderr, r.stderr
+        assert not (repo / COUNTS).exists()
+        assert not (repo / RATIO).exists()
+
+    def test_it_is_refused_without_exact(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        r = _run(repo, _clean_env(), "--anchor", *SCOPE)
+        assert r.returncode == 1
+        assert "--anchor needs --exact" in r.stderr
+        assert not (repo / COUNTS).exists()
+
+    def test_check_credential_is_not_refused_by_it(self, tmp_path: Path):
+        repo = _repo(tmp_path)
+        r = _run(repo, _clean_env(), "--check-credential", "--anchor")
+        assert r.returncode == 3, r.stderr
+        assert "--anchor needs --exact" not in r.stderr
+
+    def test_a_scoped_run_without_it_names_it(self, tmp_path: Path, exact_env: dict):
+        repo = _calibrated(tmp_path, exact_env)
+        r = _ok(repo, exact_env, "--exact", *SCOPE)
+        assert "or --anchor for the anchors alone" in r.stderr, r.stderr
+
+    def test_the_help_documents_it(self):
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--help"], capture_output=True, text=True, timeout=30
+        )
+        assert r.returncode == 0
+        assert "--anchor" in r.stdout
+        assert "#294" in r.stdout

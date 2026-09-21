@@ -85,6 +85,13 @@ Options:
                      the repo root. Default: ".env env" (bare `env` is the name
                      this cohort used before 2026-08-05). Only
                      ANTHROPIC_API_KEY is read, by parsing — never by sourcing.
+                     The root is `git rev-parse --show-toplevel`, which in a
+                     linked worktree is the worktree, not the main checkout; a
+                     name may climb out of it (../../.env). An absolute path is
+                     refused, since it can never match, and the error names the
+                     relative spelling that reaches the same file. When no
+                     credential resolves, the WARN names each file passed here
+                     that was missing or held no usable key (#296).
   --no-write         Touch nothing. Suppresses the side effects an --exact run
                      otherwise has: writing the observed bytes-per-token ratio to
                      .skills/context-token-ratio, and the per-file calibration
@@ -103,6 +110,15 @@ Options:
                      how they are made. A whole-surface --exact run (no --file,
                      no --docs-dir) persists both without it, and says so.
                      Refused with --no-write, and without --exact.
+  --anchor           Persist the per-file anchors from an --exact run and never
+                     the ratio: every file counted exactly gets its row in
+                     .skills/context-token-counts, merged as for --calibrate,
+                     and .skills/context-token-ratio is left as it stands,
+                     scoped run or not. Anchoring every SKILL.md of a skill
+                     library is one run per skill, and --calibrate there would
+                     refit the repo-wide ratio to each skill in turn, leaving
+                     it at whichever ran last (#294). Refused with --no-write,
+                     with --calibrate, and without --exact.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
@@ -186,8 +202,12 @@ EXACT=0
 CHECK_CRED=0
 NO_WRITE=0
 CALIBRATE=0
+ANCHOR=0
 NO_ENV_FILE=0
 ENV_FILES=".env env"
+# Whether --env-file was passed, not whether ENV_FILES differs from the default:
+# only a name the caller chose is worth itemising when it misses (#296).
+ENV_FILE_EXPLICIT=0
 MODEL="claude-opus-5"
 
 # An option that legitimately accepts an EMPTY value cannot use ${2:?...} to
@@ -211,9 +231,10 @@ while [ $# -gt 0 ]; do
     --check-credential) CHECK_CRED=1; shift ;;
     --no-write) NO_WRITE=1; shift ;;
     --calibrate) CALIBRATE=1; shift ;;
+    --anchor) ANCHOR=1; shift ;;
     --no-env-file) NO_ENV_FILE=1; shift ;;
     --env-file) need_arg "$#" --env-file 'space-separated names, relative to the repo root'
-                ENV_FILES="$2"; shift 2 ;;
+                ENV_FILES="$2"; ENV_FILE_EXPLICIT=1; shift 2 ;;
     --model) MODEL="${2:?--model needs an id}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -271,11 +292,23 @@ esac
 # it. Phase 7's `git add -A` then shipped both inside a commit about one file.
 # Neither is wrong to do; both are wrong to do by accident. So a scoped run
 # reads the calibration and writes it only on --calibrate.
+#
+# And the two writes are separate decisions (#294). An anchor re-prices the one
+# file it names; the ratio re-prices every file in the repo. Anchoring every
+# SKILL.md in a skill library is one scoped run per skill, and with --calibrate
+# each would refit the ratio to its own corner, leaving it at whichever skill
+# ran last. --anchor persists the anchors and never the ratio.
 SCOPED=0
 if [ -n "$POLICY" ] || [ -n "$DOCS_DIR" ]; then SCOPED=1; fi
-PERSIST=0
-if [ "$NO_WRITE" -eq 0 ] && { [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ]; }; then
-  PERSIST=1
+PERSIST_ANCHORS=0
+PERSIST_RATIO=0
+if [ "$NO_WRITE" -eq 0 ]; then
+  if [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ] || [ "$ANCHOR" -eq 1 ]; then
+    PERSIST_ANCHORS=1
+  fi
+  if [ "$ANCHOR" -eq 0 ] && { [ "$SCOPED" -eq 0 ] || [ "$CALIBRATE" -eq 1 ]; }; then
+    PERSIST_RATIO=1
+  fi
 fi
 
 # --- shared library -------------------------------------------------------
@@ -311,6 +344,94 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 # fallback to cwd covers running outside a git repo at all.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
+
+# --- --env-file names are relative to the root (#296) ----------------------
+# ctx_api_key_from_env_file joins each name to the root as "$root/$f", so an
+# absolute name expands to <root>//Users/... and is skipped exactly as a missing
+# file is. The run fell back to the offline estimate, and its WARN listed three
+# credential sources without saying that the one file the caller named could
+# never have been read. So an absolute name is a usage error, refused here: once
+# the root is known, and before the preflight and the measurement part ways, so
+# --check-credential and --exact give one answer about the same argv — the
+# property #271 established for the request itself.
+#
+# The root is why an absolute path is the natural first attempt. In a linked
+# worktree `git rev-parse --show-toplevel` is the WORKTREE, so a key kept in the
+# main checkout's .env matches no name at the root, and the spelling that does
+# match climbs out of it — ../../.env or ../../../.env, depending on the layout.
+# The error computes that spelling rather than leave it to a guess.
+
+# rel_from_root <physical-root> <physical-path>: the path as a name joined to
+# the root — one `../` per root component the path does not share, then the
+# rest. Parameter expansion only; GNU `realpath --relative-to` is not on macOS.
+rel_from_root() {
+  local from="$1" to="$2" up=""
+  while :; do
+    case "$to" in "$from"/*) break ;; esac
+    from="${from%/*}"
+    up="../$up"
+    # Out of components: "" + "/" prefixes every absolute path, so stop here.
+    [ -n "$from" ] || break
+  done
+  printf '%s%s' "$up" "${to#"$from"/}"
+}
+
+_abs_seen=0
+_root_phys="$(pwd -P)"
+# Unquoted, as at the lookup: the value is a space-separated list of names.
+for _name in $ENV_FILES; do
+  case "$_name" in /*) ;; *) continue ;; esac
+  if [ "$_abs_seen" -eq 0 ]; then
+    echo "ERROR --env-file takes names relative to the repo root, joined to it rather than" >&2
+    echo "      opened as paths, so an absolute one can never be read: it would be skipped" >&2
+    echo "      exactly as a missing file is, with nothing to say why." >&2
+    echo "      The repo root is \`git rev-parse --show-toplevel\`, which in a linked" >&2
+    echo "      worktree is the worktree rather than the main checkout. Here it is:" >&2
+    echo "        $ROOT" >&2
+    _abs_seen=1
+  fi
+  # Physical on both sides: the kernel resolves the `..` in "$ROOT/../.env"
+  # against the real directory, so the arithmetic must too. Then -ef confirms
+  # the name reaches THIS file before it is offered, so the suggestion is a
+  # checked answer rather than a computed guess.
+  _rel=""
+  _dir="$(cd "$(dirname "$_name")" 2>/dev/null && pwd -P)" || _dir=""
+  # `${_dir%/}` so a file directly under / is "/.env", not "//.env".
+  if [ -n "$_dir" ]; then
+    _rel="$(rel_from_root "$_root_phys" "${_dir%/}/${_name##*/}")"
+  fi
+  if [ -n "$_rel" ] && [ -f "$ROOT/$_rel" ] && [ "$ROOT/$_rel" -ef "$_name" ]; then
+    echo "      $_name -> pass it as: --env-file $_rel" >&2
+  else
+    echo "      $_name -> no such file, so no name reaches it either" >&2
+  fi
+done
+[ "$_abs_seen" -eq 0 ] || exit 1
+
+# The other half of #296: a name that is well-formed and simply missed. Which of
+# the names --env-file passed were absent, and which were present but held no
+# usable ANTHROPIC_API_KEY — the part of "no credential found" a caller can act
+# on, whether the cause is a typo, the wrong directory, or a worktree root.
+# Only for an explicit --env-file: the default names are the documented
+# convention and the generic line already says ".env". Silent under
+# --no-env-file, which stops the files being searched at all. <prefix> carries
+# the caller's indentation, so the line sits inside the message it extends.
+env_file_misses() {
+  local f out=""
+  if [ "$ENV_FILE_EXPLICIT" -eq 0 ] || [ "$NO_ENV_FILE" -eq 1 ]; then
+    return 0
+  fi
+  for f in $ENV_FILES; do
+    if [ -f "$ROOT/$f" ]; then
+      out="${out:+$out; }$f holds no usable ANTHROPIC_API_KEY"
+    else
+      out="${out:+$out; }$f not found"
+    fi
+  done
+  [ -n "$out" ] || return 0
+  printf '%s--env-file names are searched under the repo root, %s: %s\n' \
+    "$1" "$ROOT" "$out" >&2
+}
 
 # The budgets, through the SAME chain as context-budget-guard.sh and
 # context-delta.sh: flag, then CONTEXT_BUDGET, then .skills/context-budget, then
@@ -567,6 +688,7 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   if ! ctx_resolve_credential; then
     echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2
     echo "    .env — resolve this BEFORE starting the run; in autonomous mode, abort." >&2
+    env_file_misses "    "
     exit 3
   fi
   _probe="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
@@ -659,6 +781,17 @@ fi
 if [ "$CALIBRATE" -eq 1 ] && [ "$EXACT" -eq 0 ]; then
   echo "ERROR --calibrate needs --exact: an estimate cannot calibrate the estimator" >&2; exit 1
 fi
+# --anchor on the same terms, plus one: it is --calibrate minus the ratio, so
+# asking for both is asking for the ratio and for leaving it alone.
+if [ "$ANCHOR" -eq 1 ] && [ "$NO_WRITE" -eq 1 ]; then
+  echo "ERROR --anchor and --no-write contradict each other" >&2; exit 1
+fi
+if [ "$ANCHOR" -eq 1 ] && [ "$CALIBRATE" -eq 1 ]; then
+  echo "ERROR --anchor persists the anchors alone, --calibrate the anchors and the ratio; pass one" >&2; exit 1
+fi
+if [ "$ANCHOR" -eq 1 ] && [ "$EXACT" -eq 0 ]; then
+  echo "ERROR --anchor needs --exact: an estimate cannot anchor the estimator" >&2; exit 1
+fi
 
 # Which version of the skill is producing this measurement — carried into the
 # ledger row so a later A/B can group by it.
@@ -734,6 +867,7 @@ if [ "$EXACT" -eq 1 ]; then
     esac
   else
     echo "WARN --exact needs ANTHROPIC_API_KEY, the key in a repo-root .env, or an \`ant auth login\` profile; using offline estimate" >&2
+    env_file_misses "WARN "
     echo "WARN the resulting row records tokens_exact=false, which suppresses every delta against an exact row" >&2
   fi
 fi
@@ -1589,7 +1723,7 @@ RATIO_FILE="$ROOT/.skills/context-token-ratio"
 # scoped refusal names what it left standing (#263).
 PREV_RATIO="(none)"
 [ -f "$RATIO_FILE" ] && PREV_RATIO="$(tr -d '[:space:]' <"$RATIO_FILE" 2>/dev/null || echo unreadable)"
-if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST_RATIO" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   mkdir -p "$ROOT/.skills" 2>/dev/null || true
   if printf '%s\n' "$SURFACE_RATIO_FMT" >"$RATIO_FILE" 2>/dev/null; then
     # Said out loud because this is the write that re-prices every offline
@@ -1602,7 +1736,10 @@ if [ "$exact_flag" = true ] && [ "$SURFACE_TOKENS" -gt 0 ] && [ "$PERSIST" -eq 1
   fi
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the observed surface ratio ($SURFACE_RATIO_FMT, policy-only was $POLICY_RATIO_FMT)" >&2
-elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+elif [ "$exact_flag" = true ] && [ "$PERSIST_RATIO" -eq 0 ] && [ "$RATIO_PERSISTABLE" -eq 1 ]; then
+  # A write this run declined — scoped without --calibrate, or --anchor on any
+  # scope — since --no-write is the branch above.
+  #
   # What the repo prices from is the point of the line, and it is least obvious
   # exactly when there is no usable figure to quote — so say that, not "(none)".
   DEFAULT_RATIO_FMT="$(( CTX_BPT_DEFAULT_X100 / 100 )).$(printf '%02d' $(( CTX_BPT_DEFAULT_X100 % 100 )))"
@@ -1611,7 +1748,11 @@ elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ] && [ "$RATIO_PERSISTABLE" -
     ''|unreadable) standing=".skills/context-token-ratio is empty or unreadable, so offline estimates keep pricing at the $DEFAULT_RATIO_FMT library default" ;;
     *) standing=".skills/context-token-ratio stays $PREV_RATIO, the repo-wide figure" ;;
   esac
-  echo "INFO scoped run (--file/--docs-dir): measured $SURFACE_RATIO_FMT bytes/token over this corner; $standing" >&2
+  if [ "$ANCHOR" -eq 1 ]; then
+    echo "INFO --anchor: measured $SURFACE_RATIO_FMT bytes/token over the files this run counted; $standing" >&2
+  else
+    echo "INFO scoped run (--file/--docs-dir): measured $SURFACE_RATIO_FMT bytes/token over this corner; $standing" >&2
+  fi
 fi
 
 # --- per-file calibration (#145) ------------------------------------------
@@ -1623,9 +1764,11 @@ fi
 # so it writes them down: two integers per file, which the estimators divide
 # once in full precision rather than twice through a rounded ratio.
 #
-# Gated exactly as the ratio is, and for the same reason: a calibration derived
-# from an estimate re-records the divisor it was computed with, which is a
-# self-confirming measurement that then outranks the global for every later run.
+# Gated on exact_flag as the ratio is, and for the same reason: a calibration
+# derived from an estimate re-records the divisor it was computed with, which is
+# a self-confirming measurement that then outranks the global for every later
+# run. The scope gate is its own, PERSIST_ANCHORS, which --anchor opens without
+# opening the ratio's (#294).
 emit_count_row() {
   # <bytes> <tokens> <path> -> one persistable row, or a refusal on stderr.
   local b="$1" t="$2" p="$3" r
@@ -1646,7 +1789,7 @@ emit_count_row() {
 COUNTS_FILE="$ROOT/.skills/$CTX_COUNTS_BASENAME"
 # How many files this run counted exactly — the rows it would anchor.
 COUNTED=$(( 1 + $(awk 'NF { n++ } END { print n + 0 }' "$TMP/docs.tsv") ))
-if [ "$exact_flag" = true ] && [ "$PERSIST" -eq 1 ]; then
+if [ "$exact_flag" = true ] && [ "$PERSIST_ANCHORS" -eq 1 ]; then
   : >"$TMP/counts.new"
   : >"$TMP/counts.measured"
   emit_count_row "$P_BYTES" "$P_TOKENS" "$POLICY"
@@ -1698,7 +1841,7 @@ if [ "$exact_flag" = true ] && [ "$PERSIST" -eq 1 ]; then
 elif [ "$exact_flag" = true ] && [ "$NO_WRITE" -eq 1 ]; then
   echo "INFO --no-write: not persisting the per-file calibration" >&2
 elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ]; then
-  echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263)" >&2
+  echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263), or --anchor for the anchors alone (#294)" >&2
 fi
 
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s, "near_budget": %s},\n' \

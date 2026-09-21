@@ -20,8 +20,10 @@ Three things this gate deliberately is, and is not:
   install run; `TestTheScheduledExactGate` records the full argument and pins
   the render.
 - **Always-on offline, exact on request.** The always-on tests read the
-  skill's calibrated offline estimate (`.skills/context-token-ratio`, 2.68
-  bytes/token since #172 refit it over the whole surface). A gate that only
+  skill's calibrated offline estimate: bytes over `.skills/context-token-ratio`,
+  a figure the weekly cadence refits and so not one to quote from here — `cat`
+  the file for today's — or, for an anchored file, a rescale of its own last
+  exact count (see `anchored_paths`). A gate that only
   fails when someone happens to hold a key is not a gate — but an estimate is
   not the contract either, so
   `TestTheContractMeasuredExactly` re-runs the same ratchets against
@@ -42,10 +44,17 @@ Three things this gate deliberately is, and is not:
   exact reading. Three ratchets were breached past a green suite because the
   estimate is the only number a run is shown (#217), so the always-on gate now
   SAYS what it cannot see: `warn_about_the_blind_spot` reports, on every green
-  run, each skill whose worst permissible exact count exceeds its ratchet.
-  Seven of nineteen qualify today. It warns and does not fail — asserting the
-  worst case is option 2 of #217, which is correct in principle and costs
-  ~8,100 tokens of trimming today.
+  run, each skill whose worst permissible exact count exceeds its ratchet —
+  the warning names today's set. It warns and does not fail — asserting the
+  worst case is option 2 of #217, which is correct in principle and cost
+  ~8,100 tokens of trimming when #217 measured it.
+
+  The band has a HIGH edge too, and until #294 nothing reported it: a skill
+  squeezed against its ratchet by an estimate reading high got silence, and
+  then a curation it never needed. `warn_about_the_other_edge` names those, and
+  `warn_about_the_anchors` names every SKILL.md with no anchor and every
+  measured file whose anchor has lapsed — the gap docs/STYLE.md's by-hand
+  refresh closes.
 - **The skill's own machinery.** The measurement shells out to
   `measure-context.sh` with the flags #95 named rather than reimplementing the
   estimator in Python, so the gate and the weekly run cannot disagree about a
@@ -111,9 +120,11 @@ by as much as -23.9% on a single reference doc
 The cause is visible in the per-file `bytes_per_token`, which ranges 2.32
 (`init-project-fastapi`) to 2.84 (`orchestrating-issue-backlog`) across the
 `SKILL.md` files, and 2.04 to 3.03 once the reference docs are included, against
-the single global 2.68 the estimator assumes: code-and-path-dense files tokenize
-denser than the prose the ratio was calibrated on. Low is the permissive
-direction, so the error #95 believed was impossible is the common case.
+the single global ratio the estimator assumed that day (2.68, #172's refit; the
+knob moves weekly, so today's is in the file, not here): code-and-path-dense
+files tokenize denser than the prose the ratio was calibrated on. Low is the
+permissive direction, so the error #95 believed was impossible is the common
+case.
 
 Those figures are a 2026-08-17 remeasurement of all 87 files, and they are NOT
 the ones this file carried before #159. #172 refit the ratio from 2.65 to 2.68,
@@ -171,6 +182,7 @@ constraint. `curating-context/SKILL.md` was 495 lines and 82% over budget at the
 same time. Lines are not tokens; neither cap substitutes for the other.
 """
 
+import functools
 import json
 import os
 import subprocess
@@ -183,6 +195,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 MEASURE = SKILLS_DIR / "curating-context" / "scripts" / "measure-context.sh"
+LIB = SKILLS_DIR / "curating-context" / "scripts" / "_context-lib.sh"
 INSTALL_CADENCE = SKILLS_DIR / "curating-context" / "scripts" / "install-cadence.sh"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 CADENCE_WORKFLOW = WORKFLOWS / "context-cadence.yml"
@@ -210,16 +223,50 @@ def anchored_paths() -> set[str]:
     long after #230's curation runs had added fifteen `skills/` rows, and the
     suite stayed green through the whole drift.
     """
-    return {
-        line.split()[2]
-        for line in COUNTS_KNOB.read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#") and len(line.split()) >= 3
-    }
+    return set(counts_rows())
 
 
-def skill_md_is_anchored(skill: str) -> bool:
-    """Is this skill's SKILL.md priced from its own exact count offline?"""
-    return f"skills/{skill}/SKILL.md" in anchored_paths()
+def counts_rows() -> dict[str, tuple[int, int]]:
+    """`path -> (recorded bytes, exact tokens)` for every usable row.
+
+    Parsed the way `ctx_est_tokens_for` reads the file: the path is the rest
+    of the line, a row whose counts are not positive integers is not an
+    anchor, and the first row for a path wins. A second reading of the file
+    that disagreed with the estimator's would report anchors it never uses.
+    """
+    rows: dict[str, tuple[int, int]] = {}
+    for line in COUNTS_KNOB.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        fields = line.split(maxsplit=2)
+        if len(fields) < 3 or not (fields[0].isdigit() and fields[1].isdigit()):
+            continue
+        if int(fields[0]) > 0 and int(fields[1]) > 0:
+            rows.setdefault(fields[2].strip(), (int(fields[0]), int(fields[1])))
+    return rows
+
+
+@functools.cache
+def drift_pct() -> int:
+    """How far a file may drift from its anchored size before the anchor lapses.
+
+    `CTX_DRIFT_PCT`, read out of the library that applies it rather than
+    restated here: a copy would go on describing a band the estimator had
+    stopped using. Only messages quote it. Whether an anchor HAS lapsed is read
+    off the measurement's own `tokens_source`, which is the estimator's
+    decision itself rather than a second computation of it.
+    """
+    result = subprocess.run(
+        ["bash", "-c", '. "$1" && printf %s "$CTX_DRIFT_PCT"', "lib", str(LIB)],
+        capture_output=True,
+        text=True,
+        env=_env(exact=False),
+        timeout=30,
+    )
+    assert result.returncode == 0 and result.stdout.isdigit(), (
+        f"could not read CTX_DRIFT_PCT from {LIB}: {result.stderr}"
+    )
+    return int(result.stdout)
 
 
 # The standard every SKILL.md is held to, under BOTH readings. Deliberately a
@@ -514,6 +561,45 @@ def exact_cmd(skill: str) -> str:
     )
 
 
+def anchor_cmd(skill: str) -> str:
+    """Count one skill exactly AND anchor it (#294).
+
+    `exact_cmd` with `--anchor` for `--no-write`, so the rows it writes describe
+    the surface this gate measures. `--anchor` persists the per-file rows and
+    never the repo-wide ratio. The run's JSON carries the exact count, so the
+    one command both settles a squeeze and, where the count has headroom,
+    removes it.
+    """
+    return (
+        "bash skills/curating-context/scripts/measure-context.sh --exact "
+        f"--anchor --file skills/{skill}/SKILL.md "
+        f"--docs-dir skills/{skill}/references"
+    )
+
+
+# Every skill at once: `anchor_cmd` in a loop, behind the preflight so a
+# missing key fails once rather than once per skill. docs/STYLE.md documents it
+# verbatim and TestTheAnchorsAreVisible holds the two together, because the
+# refresh is committed by hand and this is the text a hand copies.
+REFRESH_ALL_CMD = (
+    "bash skills/curating-context/scripts/measure-context.sh --check-credential "
+    "&& for s in skills/*/SKILL.md; do "
+    "bash skills/curating-context/scripts/measure-context.sh --exact --anchor "
+    '--file "$s" --docs-dir "${s%/SKILL.md}/references" >/dev/null || break; '
+    "done"
+)
+
+
+def priced_from_its_anchor(row: dict) -> bool:
+    """Did this run price the file from its own row in the counts file?
+
+    The measurement's `tokens_source` is the estimator's decision, so reading
+    it cannot disagree with how the number was made. A row in the file is not
+    enough: an anchor lapses once the file drifts past `drift_pct()`.
+    """
+    return row.get("tokens_source") == "file"
+
+
 def worst_case_exact(estimate: int) -> int:
     """The highest `count_tokens` reading POLICY_ESTIMATE_BAND still permits.
 
@@ -539,6 +625,17 @@ def worst_case_clears(skill: str, estimate: int) -> bool:
     another when it succeeds.
     """
     return worst_case_exact(estimate) <= ratchet_for(skill)
+
+
+def best_case_exact(estimate: int) -> int:
+    """The LOWEST `count_tokens` reading POLICY_ESTIMATE_BAND permits (#294).
+
+    `worst_case_exact` from the band's other edge: `estimate / (1 + high)`.
+    Where it sits well under the ratchet, the squeeze an estimate shows may be
+    the estimator's error rather than the file's size. Not a licence either —
+    it is the reason to measure before trimming, not a figure to spend to.
+    """
+    return round(estimate / (1 + POLICY_ESTIMATE_BAND[1]))
 
 
 class BudgetBlindSpotWarning(Warning):
@@ -595,6 +692,10 @@ def warn_about_the_blind_spot(surfaces: dict) -> None:
     rows = blind_spot_rows(surfaces)
     if not rows:
         return
+
+    def anchored(skill: str) -> bool:
+        return priced_from_its_anchor(surfaces[skill]["policy"])
+
     warnings.warn(
         f"BUDGET BLIND SPOT: {len(rows)} of {len(surfaces)} skills PASS this "
         "offline gate with an exact count it cannot vouch for. "
@@ -604,18 +705,18 @@ def warn_about_the_blind_spot(surfaces: dict) -> None:
         + "\n".join(
             f"  {skill}: estimate {est:,} → worst case ~{worst:,} against a "
             f"{ratchet:,} ratchet ({worst - ratchet:,} over)"
-            + (" [ANCHORED — see below]" if skill_md_is_anchored(skill) else "")
+            + (" [ANCHORED — see below]" if anchored(skill) else "")
             for skill, est, worst, ratchet in rows
         )
         + (
-            "\n\nANCHORED means the skill has its own row in "
+            "\n\nANCHORED means this run priced the skill from its own row in "
             f"{COUNTS_KNOB.name}, so its estimate is a rescale of its own last "
             "exact count and the band overstates the error — the worst case "
-            "shown is conservative, not a live suspicion. It is still shown, "
-            "because the anchor lapses silently once the file drifts far "
-            "enough from the recorded size and nothing here can see whether "
-            "that happened (#230 CR round 3)."
-            if any(skill_md_is_anchored(s) for s, *_ in rows)
+            "shown is conservative, not a live suspicion. It is still shown "
+            "because the band is the only error bound this gate pins. A skill "
+            "whose anchor has lapsed is not tagged: it is priced from the ratio "
+            "again, and the ANCHORS warning names it (#294)."
+            if any(anchored(s) for s, *_ in rows)
             else ""
         )
         + "\n\nThis is a WARNING and nothing is red: the worst case is what the "
@@ -631,7 +732,7 @@ def warn_about_the_blind_spot(surfaces: dict) -> None:
     )
 
 
-def estimate_caveat(skill: str, estimate: int | None = None) -> str:
+def estimate_caveat(skill: str, estimate: int | None = None, *, anchored: bool) -> str:
     """The offline caveat, with the band-derived worst case when one applies.
 
     `estimate` is optional because only the SKILL.md ratchet failure has a
@@ -641,21 +742,24 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     the wrong band.
 
     #190 asked for the exact margin here, on the assumption that an exact
-    figure is available offline. For most skills none is, and a run gets the
-    worst case the band permits instead. `init-project-fastapi` is why: it read
-    14,773 estimated against a 17,100 ratchet, which presents as 2,327 tokens
-    of headroom and was 43.
+    figure is available offline. For an unanchored skill none is, and a run
+    gets the worst case the band permits instead. `init-project-fastapi` is
+    why: it read 14,773 estimated against a 17,100 ratchet, which presents as
+    2,327 tokens of headroom and was 43.
 
-    For an ANCHORED skill it is available, and the caveat must not claim
-    otherwise. `.skills/context-token-counts` gained rows for
-    `init-socraticode` and `managing-skills` during #230, so those two are
-    priced from their own last `count_tokens` reading and the band — which
-    describes the repo-ratio estimator — overstates their error. The worst case
-    stays band-derived, because the anchor lapses once the file drifts far from
-    the recorded size and this function cannot see whether that happened; it is
-    conservative rather than wrong, and now says so.
+    `anchored` is whether THIS run priced the SKILL.md from its own row in the
+    counts file (`priced_from_its_anchor`), and it is required rather than
+    looked up. It used to be looked up — "does a row exist" — which both
+    ignored a lapsed anchor and made every caller's message depend on the
+    committed counts file: anchoring `init-project-fastapi` would have put the
+    NOTE's "worst case" into the message
+    `test_the_caveat_still_serves_a_caller_with_no_policy_estimate` requires
+    to have none. For an anchored skill an exact figure IS available offline, and
+    the band — which describes the repo-ratio estimator — overstates the
+    error; the worst case stays band-derived, conservative rather than wrong,
+    and says so. For an unanchored one the band has a high edge as well, and
+    the caveat says what that edge implies about a red estimate (#294).
     """
-    anchored = skill_md_is_anchored(skill)
     caveat = (
         "This is the calibrated OFFLINE ESTIMATE at "
         f"{RATIO_KNOB.name} bytes/token, not an exact count — pre-commit has "
@@ -666,13 +770,19 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     )
     if anchored:
         caveat = (
-            f"NOTE: skills/{skill}/SKILL.md has its own row in "
+            f"NOTE: skills/{skill}/SKILL.md was priced from its own row in "
             f"{COUNTS_KNOB.name}, so this reading is a rescale of its last "
-            "exact count, not the repo ratio — unless the file has drifted far "
-            "enough from the recorded size for the anchor to lapse. The band "
-            "below describes the repo-ratio estimator and overstates the error "
-            "here; treat any worst case as conservative.\n\n"
+            "exact count, not the repo ratio. The band below describes the "
+            "repo-ratio estimator and overstates the error here; treat any "
+            "worst case as conservative.\n\n"
         ) + caveat
+    else:
+        caveat += (
+            "\n\nIt reads HIGH as well as low. If the exact reading clears, "
+            "the overage is the estimator's and the fix is an anchor, not a "
+            "trim — this counts the skill exactly and prices it from that "
+            "count from then on (docs/STYLE.md):\n  " + anchor_cmd(skill)
+        )
     if estimate is None:
         return caveat
     ratchet = ratchet_for(skill)
@@ -693,10 +803,209 @@ def estimate_caveat(skill: str, estimate: int | None = None) -> str:
     )
 
 
+def _margin(tokens: int, ratchet: int) -> str:
+    return (
+        f"{ratchet - tokens:,} under"
+        if tokens <= ratchet
+        else f"{tokens - ratchet:,} over"
+    )
+
+
+class EstimateSqueezeWarning(Warning):
+    """A skill approaching its ratchet on an estimate that may be reading HIGH.
+
+    Not a `UserWarning`, for `BudgetBlindSpotWarning`'s reason: the weekly
+    exact job escalates one UserWarning, and a report must not become a gate
+    by inheritance.
+    """
+
+
+def squeeze_rows(
+    surfaces: dict, counts: dict | None = None
+) -> list[tuple[str, int, int, int, int | None]]:
+    """`(skill, estimate, best case, ratchet, projection)` for every skill
+    squeezed against its ratchet by an estimate priced from the repo ratio.
+
+    Squeezed means `near_budget`: the measurement's own approaching tier,
+    computed against the ratchet `_measure` passes as `--budget` — the tier at
+    which a reader starts planning a trim (#273). Priced from the ratio means
+    not from a live anchor: a skill priced from its own count is squeezed by
+    its content, and naming it here would be the false alarm this report
+    exists to end. A skill over its ratchet is excluded by `near_budget`
+    itself, the tiers being disjoint; its failure message carries the same
+    advice.
+
+    The projection is the one piece of offline evidence about direction. A
+    lapsed anchor is still an exact count at an older size, and
+    `tokens * bytes_now / bytes_then` is the estimator's own formula, applied
+    past the drift band it trusts. `None` for a skill never anchored, which
+    has the band and nothing else.
+    """
+    counts = counts_rows() if counts is None else counts
+    rows = []
+    for skill in sorted(surfaces):
+        policy = surfaces[skill]["policy"]
+        if priced_from_its_anchor(policy) or not policy["near_budget"]:
+            continue
+        estimate = policy["tokens"]
+        anchor = counts.get(policy["path"])
+        projected = anchor[1] * policy["bytes"] // anchor[0] if anchor else None
+        rows.append(
+            (skill, estimate, best_case_exact(estimate), ratchet_for(skill), projected)
+        )
+    return rows
+
+
+def warn_about_the_other_edge(surfaces: dict, counts: dict | None = None) -> None:
+    """The blind spot's mirror, on the same green run (#294).
+
+    `warn_about_the_blind_spot` names the skills the estimate may be reading
+    LOW on. Nothing named the other edge, so a skill the estimate read HIGH on
+    got silence and then a curation. `orchestrating-issue-backlog` read 9,766
+    estimated against a 9,800 ratchet — 34 tokens of apparent headroom — when
+    `count_tokens` read 9,125, 675 of real headroom, and was trimmed to fit.
+
+    Its remedy is not "run the exact pass" but "anchor the file": the anchor
+    command counts the skill exactly, and if the count has the headroom the
+    squeeze is gone for good, because the estimate is then a rescale of that
+    count. Silent when nothing qualifies, which after docs/STYLE.md's refresh
+    is the steady state — only a new skill or a lapsed anchor reappears here.
+    """
+    rows = squeeze_rows(surfaces, counts)
+    if not rows:
+        return
+    warnings.warn(
+        f"ESTIMATE SQUEEZE: {len(rows)} of {len(surfaces)} skills are "
+        "approaching their ratchet on an estimate priced from the repo-wide "
+        f"ratio in {RATIO_KNOB.name}. {POLICY_ESTIMATE_BAND[1]:+.0%} is the "
+        "other edge of POLICY_ESTIMATE_BAND — the ratio reads a SKILL.md high as "
+        "well as low — so each squeeze may be the estimator's, not the file's:\n"
+        + "\n".join(
+            f"  {skill}: estimate {est:,} against a {ratchet:,} ratchet "
+            f"({_margin(est, ratchet)}) → best case ~{best:,} "
+            f"({_margin(best, ratchet)})"
+            + (
+                f"; its lapsed anchor projects ~{projected:,} "
+                f"({_margin(projected, ratchet)})"
+                if projected is not None
+                else ""
+            )
+            for skill, est, best, ratchet, projected in rows
+        )
+        + "\n\nDo not trim a skill to fit an estimate. Anchor it first — this "
+        "counts it exactly (`policy.tokens` in its output) and prices it from "
+        "that count from then on:\n"
+        + "\n".join(f"  {anchor_cmd(skill)}" for skill, *_ in rows)
+        + f"\nTrim only if the exact count is still tight; otherwise commit "
+        f"{COUNTS_KNOB.name} and the squeeze is gone (docs/STYLE.md).",
+        EstimateSqueezeWarning,
+        stacklevel=2,
+    )
+
+
+class AnchorCoverageWarning(Warning):
+    """A measured file is priced from the repo ratio rather than its own count.
+
+    Not a `UserWarning`, for `BudgetBlindSpotWarning`'s reason.
+    """
+
+
+def lapsed_anchor_rows(
+    surfaces: dict, counts: dict | None = None
+) -> list[tuple[str, str, int, int]]:
+    """`(skill, path, anchored bytes, bytes now)` for every file this gate
+    measured that has a row in the counts file and was priced from the repo
+    ratio anyway (#294).
+
+    That is a lapsed anchor, and `ctx_est_tokens_for` lapses one silently by
+    design — a warning on every edit past the band would be the advisory
+    fatigue #145 was about. #230 CR round 3 recorded that nothing could see it
+    happen. The measurement can: `tokens_source` says `repo` for a file whose
+    row it declined, and reading that is reading the estimator's decision
+    rather than recomputing it. SKILL.md and reference docs both, since the
+    gate prices both and the refresh anchors both.
+    """
+    counts = counts_rows() if counts is None else counts
+    rows = []
+    for skill in sorted(surfaces):
+        for measured in [surfaces[skill]["policy"], *surfaces[skill].get("docs", [])]:
+            anchor = counts.get(measured["path"])
+            if anchor and not priced_from_its_anchor(measured):
+                rows.append((skill, measured["path"], anchor[0], measured["bytes"]))
+    return rows
+
+
+def unanchored_skills(surfaces: dict, counts: dict | None = None) -> list[str]:
+    """Skills whose SKILL.md has no row at all — the gap docs/STYLE.md's
+    refresh closes, and the state 17 of 19 were in when #294 was filed.
+
+    SKILL.md only. The refresh anchors each skill's references too, but the
+    policy is about the file the ratchet binds: a new reference doc is priced
+    by the ratio until the next refresh, which is how every reference doc
+    outside two skills was priced before this report existed.
+    """
+    counts = counts_rows() if counts is None else counts
+    return [s for s in sorted(surfaces) if f"skills/{s}/SKILL.md" not in counts]
+
+
+def warn_about_the_anchors(surfaces: dict, counts: dict | None = None) -> None:
+    """Name every file priced from the ratio that docs/STYLE.md says is anchored.
+
+    A warning, never a failure: the remedy needs a key, pre-commit holds none,
+    and a new skill cannot be anchored in the commit that adds it without one.
+    Silent once the refresh has run and no anchored file has drifted.
+    """
+    lapsed = lapsed_anchor_rows(surfaces, counts)
+    missing = unanchored_skills(surfaces, counts)
+    if not lapsed and not missing:
+        return
+    due = sorted(set(missing) | {skill for skill, *_ in lapsed})
+    parts = []
+    if missing:
+        parts.append(
+            f"  no anchor — {len(missing)} of {len(surfaces)} SKILL.md files: "
+            + ", ".join(missing)
+        )
+    if lapsed:
+        parts.append(
+            "  anchor LAPSED — a row the estimator no longer uses, because the "
+            f"file moved past the ±{drift_pct()}% drift band (CTX_DRIFT_PCT in "
+            "_context-lib.sh) or the row was refused as implausible:\n"
+            + "\n".join(
+                f"    {path}: anchored at {then:,} bytes, now {now:,} "
+                f"({(now - then) / then:+.0%})"
+                for _, path, then, now in lapsed
+            )
+        )
+    warnings.warn(
+        "ANCHORS: these files are priced from the repo-wide ratio in "
+        f"{RATIO_KNOB.name}, not from their own last exact count, and "
+        "docs/STYLE.md anchors every SKILL.md. POLICY_ESTIMATE_BAND lets the "
+        "ratio misprice a SKILL.md anywhere from "
+        f"{POLICY_ESTIMATE_BAND[0]:+.0%} to {POLICY_ESTIMATE_BAND[1]:+.0%}, and "
+        "a lapsed anchor looks like a live one to everything that does not read "
+        "`tokens_source`:\n"
+        + "\n".join(parts)
+        + "\n\nRefresh, and commit what it changes in "
+        f"{COUNTS_KNOB.name}:\n  "
+        + (anchor_cmd(due[0]) if len(due) == 1 else REFRESH_ALL_CMD)
+        + "\nA WARNING and nothing is red: pre-commit holds no key to anchor with.",
+        AnchorCoverageWarning,
+        stacklevel=2,
+    )
+
+
 def _env(*, exact: bool) -> dict:
     """Reproduce what pre-commit sees, plus a credential only when asked."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    for k in ("CONTEXT_BUDGET", "CONTEXT_DOC_BUDGET", "CONTEXT_DOCS_DIR"):
+    # CONTEXT_PROXIMITY_PCT too: `near_budget` decides the squeeze report, and
+    # an operator's exported tier must not move which skills it names.
+    for k in (
+        "CONTEXT_BUDGET",
+        "CONTEXT_DOC_BUDGET",
+        "CONTEXT_DOCS_DIR",
+        "CONTEXT_PROXIMITY_PCT",
+    ):
         env.pop(k, None)
     if not exact:
         env.pop("ANTHROPIC_API_KEY", None)
@@ -740,12 +1049,16 @@ def _measure(skill: str, *, exact: bool) -> dict:
 def surfaces() -> dict:
     """Every skill's surface, measured offline. ~3s for all nineteen.
 
-    Warns, once, about every skill this reading cannot vouch for (#217). The
-    fixture is the right place: it runs on every commit, before any assertion,
-    and it is not a test — so the report does not masquerade as a gate.
+    Warns, once each, about every skill this reading cannot vouch for (#217),
+    every squeeze it may be causing by reading high, and every file it prices
+    from the ratio although it should be anchored (#294). The fixture is the
+    right place: it runs on every commit, before any assertion, and it is not
+    a test — so the reports do not masquerade as gates.
     """
     measured = {name: _measure(name, exact=False) for name in SKILLS}
     warn_about_the_blind_spot(measured)
+    warn_about_the_other_edge(measured)
+    warn_about_the_anchors(measured)
     return measured
 
 
@@ -1066,7 +1379,9 @@ class TestEverySkillsOwnSurface:
                 "this skill cannot meet the standard the other "
                 f"{len(SKILLS) - 1} are held to.\n\n"
             )
-            + estimate_caveat(skill, policy["tokens"])
+            + estimate_caveat(
+                skill, policy["tokens"], anchored=priced_from_its_anchor(policy)
+            )
         )
 
     def test_skill_md_names_its_own_ratchet(self, skill: str):
@@ -1116,7 +1431,10 @@ class TestEverySkillsOwnSurface:
             + "\n\nPast the per-doc budget, loading the doc stops costing less "
             "than carrying it inline — split it on its top-level headings. A "
             "demotion into an already-full doc moves the problem instead of "
-            "solving it.\n\n" + estimate_caveat(skill)
+            "solving it.\n\n"
+            + estimate_caveat(
+                skill, anchored=priced_from_its_anchor(surfaces[skill]["policy"])
+            )
         )
 
 
@@ -1305,16 +1623,18 @@ class TestWhatTheCountsFileAnchors:
     """Which path classes `.skills/context-token-counts` prices from an anchor.
 
     Not an assertion about the numbers — those are regenerated by every
-    whole-surface or `--calibrate` `measure-context.sh --exact` run (#263) and
-    pinning them would fail on every curation. This pins the *shape*: which kinds of path are anchored, because
-    that is what changes the meaning of the always-on gate and what two
-    docstrings got wrong by not being pinned.
+    whole-surface, `--calibrate` or `--anchor` `measure-context.sh --exact` run
+    (#263, #294) and pinning them would fail on every curation. This pins the
+    *shape*: which kinds of path are anchored, because that is what changes the
+    meaning of the always-on gate and what two docstrings got wrong by not
+    being pinned.
 
     An anchored SKILL.md is priced offline from its own last exact count. That
     is strictly more accurate — it is the correction #217's blind spot asked
     for — but it also means "the budget binds BOTH readings" describes one
     measurement counted twice for that file rather than two independent ones.
-    Worth having, worth knowing, and worth failing loudly when the set changes.
+    Since #294 that is the policy for every SKILL.md (docs/STYLE.md), and a
+    skill the policy has not reached is reported rather than declared.
     """
 
     def test_the_repo_policy_surface_is_anchored(self) -> None:
@@ -1339,36 +1659,35 @@ class TestWhatTheCountsFileAnchors:
             + "\n  ".join(missing)
             + "\n\nDrop the rows, or re-run measure-context.sh --exact over "
             "the surface that owns them — flagless for the repo policy "
-            "surface, --calibrate with --file/--docs-dir for a skill's corner "
-            "(#263). (The command in exact_cmd() passes --no-write, so it will "
-            "not rewrite this file.) A stale row is not an error anywhere else."
+            "surface, --anchor with --file/--docs-dir for a skill's corner "
+            "(anchor_cmd(), #294). (The command in exact_cmd() passes "
+            "--no-write, so it will not rewrite this file.) A stale row is not "
+            "an error anywhere else."
         )
 
-    def test_which_skills_are_anchored_is_declared(self) -> None:
-        """The set that two docstrings described, and nothing checked.
+    def test_every_skill_md_off_its_anchor_is_named(self, surfaces: dict) -> None:
+        """Every SKILL.md this run priced from the ratio is in the ANCHORS report.
 
-        `estimate_caveat` and `TestTheOfflineFailureQuotesANumber` both reasoned
-        from "no `skills/*/SKILL.md` is anchored" — true when written, false
-        from #230's first curation onward, and green throughout. Adding a skill
-        to the counts file is a real change to what the offline gate measures;
-        it should cost one deliberate edit here, not zero.
-
-        Since #263 it also costs `--calibrate` on the run that anchors it: a
-        `--file`/`--docs-dir` run no longer writes a row as a side effect, so
-        this set can only change on purpose from both ends.
+        This test used to declare the anchored set by hand —
+        `{"init-socraticode", "managing-skills"}` — because two docstrings had
+        reasoned from "no `skills/*/SKILL.md` is anchored" for months after it
+        stopped being true, and adding a skill to the counts file should cost a
+        deliberate edit. #294 made the declaration "every SKILL.md", written in
+        docs/STYLE.md with the command that carries it out, and made the prose
+        that reasoned from the set read the measurement instead
+        (`priced_from_its_anchor`). What is left to pin is that a skill the
+        policy has not reached cannot go unreported: never anchored, or anchored
+        and lapsed, it is named on a green run with the refresh that fixes it.
         """
-        expected = {"init-socraticode", "managing-skills"}
-        actual = {s for s in SKILLS if skill_md_is_anchored(s)}
-        assert actual == expected, (
-            "The set of skills whose SKILL.md is priced from its own exact "
-            f"count changed.\n  expected: {sorted(expected)}\n  actual:   "
-            f"{sorted(actual)}\n\n"
-            "This is not a failure to route around. An anchored SKILL.md reads "
-            "its offline estimate off its own count_tokens result, so for that "
-            "file the always-on gate and the SKILL_BUDGET_EXACT gate are no "
-            "longer independent readings. Update this set AND the reasoning in "
-            "`estimate_caveat` and `TestTheOfflineFailureQuotesANumber`, which "
-            "both describe it in prose."
+        off = {s for s in SKILLS if not priced_from_its_anchor(surfaces[s]["policy"])}
+        named = set(unanchored_skills(surfaces)) | {
+            skill
+            for skill, path, *_ in lapsed_anchor_rows(surfaces)
+            if path == f"skills/{skill}/SKILL.md"
+        }
+        assert named == off, (
+            f"priced from the ratio: {sorted(off)}\nnamed by the ANCHORS "
+            f"report: {sorted(named)}"
         )
 
 
@@ -1395,13 +1714,13 @@ class TestTheOfflineFailureQuotesANumber:
 
     The premise is no longer universal, and the docstring that generalised it
     to "no `skills/*/SKILL.md`" was false for eight months of commits before
-    #230's CR round 3 read the file. `init-socraticode` and `managing-skills`
-    ARE anchored now, which means #190's original proposal is buildable for
-    them — print `anchor_tokens` rescaled to current bytes and call it what it
-    is. Deliberately NOT built here: this class pins the band-derived path that
-    every unanchored skill still needs, and a second path would need its own
-    tests. `TestWhatTheCountsFileAnchors` is what makes the choice reviewable
-    instead of silent.
+    #230's CR round 3 read the file. Since #294 every SKILL.md is meant to be
+    anchored, which makes #190's original proposal buildable for all of them —
+    print the anchored count rescaled to current bytes and call it what it is.
+    Deliberately NOT built here: this class pins the band-derived path, which
+    every skill priced from the ratio still needs, and passes `anchored=False`
+    so what it pins does not change when the counts file does. A second path
+    would need its own tests.
     """
 
     SKILL = "init-project-fastapi"
@@ -1423,7 +1742,7 @@ class TestTheOfflineFailureQuotesANumber:
     def test_the_failure_quotes_the_estimate_the_worst_case_and_the_ratchet(self):
         """All three, because any two of them leave the reader doing arithmetic."""
         estimate = 12_942
-        message = estimate_caveat(self.SKILL, estimate)
+        message = estimate_caveat(self.SKILL, estimate, anchored=False)
         for figure in (
             f"{estimate:,}",
             f"{worst_case_exact(estimate):,}",
@@ -1440,14 +1759,18 @@ class TestTheOfflineFailureQuotesANumber:
         estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) + 100
         assert estimate < ratchet, "the estimate must still read green offline"
         assert worst_case_exact(estimate) > ratchet
-        assert "may already be over" in estimate_caveat(self.SKILL, estimate)
+        assert "may already be over" in estimate_caveat(
+            self.SKILL, estimate, anchored=False
+        )
 
     def test_a_worst_case_under_the_ratchet_does_not_cry_wolf(self):
         """A warning on every failure is a warning nobody reads."""
         ratchet = ratchet_for(self.SKILL)
         estimate = round(ratchet * (1 + POLICY_ESTIMATE_BAND[0])) - 100
         assert worst_case_exact(estimate) <= ratchet
-        assert "may already be over" not in estimate_caveat(self.SKILL, estimate)
+        assert "may already be over" not in estimate_caveat(
+            self.SKILL, estimate, anchored=False
+        )
 
     def test_the_caveat_still_serves_a_caller_with_no_policy_estimate(self):
         """The per-doc failure has no policy estimate, and must not borrow one.
@@ -1458,7 +1781,7 @@ class TestTheOfflineFailureQuotesANumber:
         wrong population, so that call site passes no estimate and gets the prose
         caveat alone.
         """
-        message = estimate_caveat(self.SKILL)
+        message = estimate_caveat(self.SKILL, anchored=False)
         assert "worst case" not in message
         assert "OFFLINE ESTIMATE" in message
         assert exact_cmd(self.SKILL) in message
@@ -1552,7 +1875,9 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
             if estimate > ratchet:
                 continue
             warned = bool(blind_spot_rows(self._surfaces(**{self.SKILL: estimate})))
-            said = "may already be over" in estimate_caveat(self.SKILL, estimate)
+            said = "may already be over" in estimate_caveat(
+                self.SKILL, estimate, anchored=False
+            )
             assert warned == said, (
                 f"at estimate {estimate:,} the always-on warning says "
                 f"{warned} and the offline failure says {said}"
@@ -1581,6 +1906,260 @@ class TestTheAlwaysOnGateNamesItsBlindSpot:
             < worst_case_exact(surfaces[s]["policy"]["tokens"])
         )
         assert [r[0] for r in blind_spot_rows(surfaces)] == expected
+
+
+def _policy(
+    skill: str,
+    tokens: int,
+    *,
+    source: str = "repo",
+    near: bool = False,
+    size: int | None = None,
+) -> dict:
+    """A measurement's `policy` object, carrying only what the reports read."""
+    return {
+        "path": f"skills/{skill}/SKILL.md",
+        "tokens": tokens,
+        "bytes": size if size is not None else tokens * 27 // 10,
+        "tokens_source": source,
+        "near_budget": near,
+    }
+
+
+def _surfaces(**policies: dict) -> dict:
+    return {skill: {"policy": policy, "docs": []} for skill, policy in policies.items()}
+
+
+class TestTheOtherEdgeIsReported:
+    """#294: a squeeze the estimate may be causing by reading HIGH, named on a
+    green run — the mirror of `TestTheAlwaysOnGateNamesItsBlindSpot`.
+
+    `orchestrating-issue-backlog` read 9,766 estimated against its 9,800
+    ratchet when `count_tokens` read 9,125, and was curated to fit. Nothing in
+    the suite said the 34 tokens of apparent headroom were an artifact.
+    """
+
+    SKILL = "orchestrating-issue-backlog"
+
+    def test_the_best_case_inverts_the_high_edge(self):
+        """The same inversion as the worst case, from the band's other edge."""
+        high = POLICY_ESTIMATE_BAND[1]
+        assert best_case_exact(9_766) == round(9_766 / (1 + high)) == 8_492
+        assert best_case_exact(9_766) < 9_766 < worst_case_exact(9_766)
+
+    def test_the_case_294_was_filed_on_is_reported(self):
+        surfaces = _surfaces(**{self.SKILL: _policy(self.SKILL, 9_766, near=True)})
+        assert squeeze_rows(surfaces, counts={}) == [
+            (self.SKILL, 9_766, 8_492, 9_800, None)
+        ]
+        with pytest.warns(EstimateSqueezeWarning) as caught:
+            warn_about_the_other_edge(surfaces, counts={})
+        message = str(caught[0].message)
+        for text in ("estimate 9,766", "(34 under)", "~8,492", "(1,308 under)"):
+            assert text in message, message
+        assert anchor_cmd(self.SKILL) in message, (
+            "the report names a squeeze without the command that settles it"
+        )
+
+    def test_a_lapsed_anchor_projects_from_its_own_count(self):
+        """The one offline evidence of direction: an exact count at an older
+        size. 2.90 bytes/token then, against the 2.70 this fixture's estimate
+        is priced at."""
+        surfaces = _surfaces(
+            **{self.SKILL: _policy(self.SKILL, 9_629, near=True, size=26_000)}
+        )
+        counts = {f"skills/{self.SKILL}/SKILL.md": (20_000, 6_900)}
+        assert squeeze_rows(surfaces, counts)[0][4] == 6_900 * 26_000 // 20_000
+        with pytest.warns(EstimateSqueezeWarning) as caught:
+            warn_about_the_other_edge(surfaces, counts)
+        assert "its lapsed anchor projects ~8,970 (830 under)" in str(caught[0].message)
+
+    def test_a_skill_priced_from_its_anchor_is_not_reported(self):
+        """Its estimate is a rescale of its own count, so its squeeze is real.
+        Naming it would be the false alarm this report exists to end."""
+        surfaces = _surfaces(
+            **{self.SKILL: _policy(self.SKILL, 9_766, near=True, source="file")}
+        )
+        counts = {f"skills/{self.SKILL}/SKILL.md": (26_000, 9_700)}
+        assert squeeze_rows(surfaces, counts) == []
+
+    def test_a_skill_not_approaching_its_ratchet_is_silent(self):
+        """Silence has to be reachable, or the report is noise."""
+        surfaces = _surfaces(**{self.SKILL: _policy(self.SKILL, 8_000)})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warn_about_the_other_edge(surfaces, counts={})
+
+    def test_near_budget_is_measured_against_the_ratchet(self, surfaces: dict):
+        """The report reads the measurement's own approaching tier, which is
+        the ratchet's only while the ratchet is the budget the run was given."""
+        assert {s: surfaces[s]["policy"]["budget"] for s in SKILLS} == {
+            s: ratchet_for(s) for s in SKILLS
+        }
+
+    def test_a_red_estimate_from_the_ratio_says_anchor_before_trimming(self):
+        """The failure side of the same edge. The ratchet binds both readings,
+        so a red estimate is red — but if the exact count clears, the fix is
+        the anchor, and the message has to say so before someone trims."""
+        message = estimate_caveat(self.SKILL, 9_900, anchored=False)
+        assert "reads HIGH as well as low" in message
+        assert anchor_cmd(self.SKILL) in message
+
+    def test_an_anchored_red_estimate_is_not_told_to_anchor(self):
+        message = estimate_caveat(self.SKILL, 9_900, anchored=True)
+        assert "priced from its own row" in message
+        assert anchor_cmd(self.SKILL) not in message
+
+    @pytest.mark.parametrize(
+        "category", ["EstimateSqueezeWarning", "AnchorCoverageWarning"]
+    )
+    def test_no_report_is_a_user_warning(self, category: str):
+        """`BudgetBlindSpotWarning`'s reason: the weekly exact job escalates a
+        UserWarning, and a report must not become a gate by inheritance."""
+        cls = globals()[category]
+        assert issubclass(cls, Warning)
+        assert not issubclass(cls, UserWarning)
+
+
+class TestTheAnchorsAreVisible:
+    """#294: an anchor that lapsed, or a SKILL.md never anchored, named on a
+    green run with the command that fixes it.
+
+    #230 CR round 3 recorded that an anchor lapses silently — past the drift
+    band `ctx_est_tokens_for` reverts the file to the repo ratio, by design,
+    and nothing could see it happen. Anchoring every SKILL.md multiplies the
+    surface where it can, so the report came with the policy.
+    """
+
+    def test_drift_pct_is_the_band_the_estimator_applies(self, tmp_path: Path):
+        """Read out of the library, and proved to be the threshold
+        `ctx_est_tokens_for` enforces, at the edge where it switches."""
+        (tmp_path / ".skills").mkdir()
+        (tmp_path / ".skills" / "context-token-counts").write_text(
+            "20000 8000 docs/D.md\n"
+        )
+
+        def source(size: int) -> str:
+            result = subprocess.run(
+                ["bash", "-c", '. "$1"; shift; ctx_est_tokens_for "$@"', "lib"]
+                + [str(LIB), str(tmp_path), "docs/D.md", str(size)],
+                capture_output=True,
+                text=True,
+                env=_env(exact=False),
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            return result.stdout.split("\t")[1]
+
+        edge = 20_000 * (100 + drift_pct()) // 100
+        assert source(edge) == "file"
+        assert source(edge + 1) == "repo"
+
+    def test_a_real_measurement_decides_what_has_lapsed(self, tmp_path: Path):
+        """End to end: the estimator prices a file 30% past its anchor from the
+        ratio, and the report reads that decision rather than re-deriving it."""
+        repo = tmp_path / "repo"
+        (repo / "skills" / "x" / "references").mkdir(parents=True)
+        (repo / ".skills").mkdir()
+        subprocess.run(
+            ["git", "-C", str(repo), "init", "-q"],
+            check=True,
+            capture_output=True,
+            env=_env(exact=False),
+        )
+        (repo / "skills" / "x" / "references" / "ref.md").write_text("r" * 999 + "\n")
+        counts = {
+            "skills/x/SKILL.md": (20_000, 8_000),
+            "skills/x/references/ref.md": (900, 400),
+        }
+        (repo / ".skills" / "context-token-counts").write_text(
+            "".join(f"{b} {t} {p}\n" for p, (b, t) in counts.items())
+        )
+
+        def measured(size: int) -> dict:
+            (repo / "skills" / "x" / "SKILL.md").write_text("s" * (size - 1) + "\n")
+            result = subprocess.run(
+                ["bash", str(MEASURE), "--no-write", "--file", "skills/x/SKILL.md"]
+                + ["--docs-dir", "skills/x/references"],
+                capture_output=True,
+                text=True,
+                cwd=str(repo),
+                env=_env(exact=False),
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stderr
+            return {"x": json.loads(result.stdout)}
+
+        assert lapsed_anchor_rows(measured(26_000), counts) == [
+            ("x", "skills/x/SKILL.md", 20_000, 26_000)
+        ]
+        assert lapsed_anchor_rows(measured(22_000), counts) == []
+
+    def test_a_lapsed_anchor_is_reported_with_its_drift_and_the_band(self):
+        surfaces = _surfaces(x=_policy("x", 9_600, size=26_000))
+        counts = {"skills/x/SKILL.md": (20_000, 8_000)}
+        with pytest.warns(AnchorCoverageWarning) as caught:
+            warn_about_the_anchors(surfaces, counts)
+        message = str(caught[0].message)
+        assert "skills/x/SKILL.md: anchored at 20,000 bytes, now 26,000 (+30%)" in (
+            message
+        )
+        assert f"±{drift_pct()}% drift band" in message
+        assert anchor_cmd("x") in message, "one skill due: its own command"
+        assert REFRESH_ALL_CMD not in message
+
+    def test_a_lapsed_reference_doc_is_reported_too(self):
+        """The gate prices reference docs and the refresh anchors them, so a
+        doc's anchor can lapse and has to be seen when it does."""
+        doc = {
+            "path": "skills/x/references/r.md",
+            "bytes": 5_000,
+            "tokens_source": "repo",
+        }
+        surfaces = {"x": {"policy": _policy("x", 3_000, source="file"), "docs": [doc]}}
+        counts = {
+            "skills/x/SKILL.md": (8_100, 3_000),
+            "skills/x/references/r.md": (3_000, 1_000),
+        }
+        assert lapsed_anchor_rows(surfaces, counts) == [
+            ("x", "skills/x/references/r.md", 3_000, 5_000)
+        ]
+
+    def test_a_skill_md_with_no_row_is_reported(self):
+        surfaces = _surfaces(a=_policy("a", 3_000), b=_policy("b", 4_000))
+        assert unanchored_skills(surfaces, counts={}) == ["a", "b"]
+        with pytest.warns(AnchorCoverageWarning) as caught:
+            warn_about_the_anchors(surfaces, counts={})
+        message = str(caught[0].message)
+        assert "2 of 2 SKILL.md files: a, b" in message
+        assert REFRESH_ALL_CMD in message, "several skills due: the one loop"
+
+    def test_live_anchors_are_silent(self):
+        surfaces = _surfaces(x=_policy("x", 3_000, source="file"))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warn_about_the_anchors(surfaces, {"skills/x/SKILL.md": (8_100, 3_000)})
+
+    def test_the_refresh_is_anchor_cmd_for_every_skill(self):
+        """One command, two spellings: the loop must expand to exactly what a
+        single skill's report prints, or the two anchor different surfaces."""
+        body = REFRESH_ALL_CMD.split("; do ", 1)[1].split(" >/dev/null", 1)[0]
+        for skill in SKILLS:
+            expanded = body.replace('"$s"', f"skills/{skill}/SKILL.md").replace(
+                '"${s%/SKILL.md}/references"', f"skills/{skill}/references"
+            )
+            assert expanded == anchor_cmd(skill)
+
+    def test_the_refresh_parses_as_shell(self):
+        result = subprocess.run(
+            ["bash", "-n"], input=REFRESH_ALL_CMD, capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_docs_style_documents_the_refresh_verbatim(self):
+        """The refresh is committed by hand, so the doc is what a hand copies."""
+        style = " ".join((REPO_ROOT / "docs" / "STYLE.md").read_text().split())
+        assert " ".join(REFRESH_ALL_CMD.split()) in style
 
 
 class TestTheScheduledExactGate:

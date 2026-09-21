@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.27"
+  version: "1.28"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -136,7 +136,7 @@ tokenizer undercounts Claude badly.
 **Be on a branch before you run this.** It is the run's first write to a tracked
 file; an aborted run leaves a modified ledger on the branch you started from. A
 `--file`/`--docs-dir` run never writes the calibration files; `--calibrate` does
-(#263).
+(#263), and `--anchor` writes the anchors alone (#294).
 
 `--baseline` appends a measurement-only row for the surface **as found**.
 Without it the scored run is the one that can never be scored, and the

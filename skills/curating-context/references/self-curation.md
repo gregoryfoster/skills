@@ -26,11 +26,13 @@ recorded as open is satisfied in fact:
 # Phase 1 — measure. The budget is the 7,600 ratchet, not the repo's 6,000 knob.
 # --no-write stays, for parity with the self-budget gate's command in
 # exact_cmd(). Since #263 a run scoped by --file/--docs-dir writes neither
-# .skills/context-token-ratio nor -counts without --calibrate anyway; before
+# .skills/context-token-ratio nor -counts without --calibrate (or, for -counts
+# alone, --anchor) anyway; before
 # that, this run refit the ratio to this skill's files — not the repo's policy
 # surface — re-baselining every skill's estimate (the #230 incident). Never
-# add --calibrate here: it anchors this skill's files, which changes what the
-# gate measures (test_which_skills_are_anchored_is_declared).
+# add --calibrate here: it refits the repo-wide ratio to this skill's files.
+# Re-anchor after the pass instead, with --exact --anchor on the same --file
+# and --docs-dir: it persists this skill's rows and never the ratio (#294).
 bash "<SKILL_SCRIPTS>/measure-context.sh" --exact --no-write --budget 7600 \
   --file skills/curating-context/SKILL.md \
   --docs-dir skills/curating-context/references \
