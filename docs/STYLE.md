@@ -4,45 +4,46 @@ Conventions with a reference implementation. The short rules that apply to every
 script live inline in [AGENTS.md](../AGENTS.md) under `## Scripts`; this file
 carries the conventions that need a full template and a rationale.
 
-## Invoking a skill's own scripts (`<SKILL_SCRIPTS>`)
+## Invoking a skill's own scripts (per-script resolution)
 
 **Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path resolves to a file that doesn't exist — the invocation fails with "No such file or directory" in every project that doesn't happen to carry its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
 
-Instead, resolve once and substitute. Each skill's SKILL.md carries one resolution block — for `reviewing-*` / `shipping-*` this is folded into the Phase 1 / Step 1 doctor preflight; other skills get a standalone "Script path resolution" section. The header, loop, probe, and `done` are common to all 11 skills; the doctor preflight and the final two lines are conditional, as annotated:
+Instead, resolve and substitute — **per script, never per directory.** Each skill's SKILL.md carries one resolution block — for `shipping-*` it is folded into the Step 1 doctor preflight; `using-git-worktrees`, `writing-plans`, `curating-context` and `auditing-ci-cost` get a standalone "Script path resolution" section. It resolves **every script the skill's steps and references run** and prints one `<name.sh>=<path>` line each:
 
 ```bash
-N=<skill-name> S=<sentinel-script>.sh SD=
+N=<skill-name>
 
-# reviewing-* / shipping-* only — resolution follows the doctor so a freshly
-# healed symlink chain is visible to the probe.
+# shipping-* only — resolution follows the doctor so a freshly healed
+# symlink chain is visible to the probe.
 { [ ! -x .skills/doctor.sh ] || bash .skills/doctor.sh; } || exit 1
 
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
+for S in <script>.sh … <step-script>.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 done
 
-# Only when later steps substitute <SKILL_SCRIPTS> — shipping-*,
-# using-git-worktrees, writing-plans. Omit for reviewing-*, which has a
-# single call site and no later steps to feed.
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
-
-# Only when this block also runs the script — reviewing-*, shipping-*. Omit
-# for using-git-worktrees and writing-plans, which publish the path but
-# invoke their scripts from later steps.
-bash "${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
+# shipping-* only: runs the script resolved LAST, so the step's own
+# script (pre-ship.sh) ends the list.
+bash "${SD:?}/$S"
 ```
+
+Later steps are written `bash "<doc-check.sh>"` and substitute the path printed for that script. `reviewing-*` run one script from one block and feed no later step, so theirs is the degenerate case: header `N=<skill-name> S=gather-context.sh SD=`, the doctor, the inner loop, then `bash "${SD:?not found in …}/$S"`, publishing nothing.
 
 Notes on the shape:
 
-- **Probe for the sentinel file, not the directory.** `[ -d "$d" ]` would falsely match any project that has an unrelated root `scripts/` — this repo does.
-- **Clear `SD` on the header line.** Without it, a value inherited from the environment — or left by an earlier block in the same shell — survives the loop and defeats `${SD:?…}`, silently reproducing the #63 "No such file or directory" symptom against a misleading path.
-- **Guard at the call site, not just once.** Every expansion that feeds a path uses the full `${SD:?…}` form, so no invocation depends on an earlier line having aborted first.
-- **Project-local `scripts/` wins.** Preserves consumers that already worked around #63 with their own copy.
+- **Resolve per script, never reuse a directory** ([#301](https://github.com/gregoryfoster/skills/issues/301)). The publishing block used to probe one anchor (`pre-ship.sh`), print its directory as `SKILL_SCRIPTS=`, and run every later step's *different* script from it. The wrapper override below breaks that: CannObserv/watcher and usa-wa keep a `pre-ship.sh` wrapper in `scripts/` (power-map a fork) and none of the skill's other five scripts, so Steps 1.5, 2, 4, 5 and 6 all exited 127 — a code no step anticipated, in the two steps whose purpose is to refuse a silent pass. Requiring `scripts/` to be complete instead would have taken `pre-ship.sh` off the wrapper and failed the gate on missing secrets.
+- **Every script up front.** One found nowhere stops the block at Step 1, by name, where the Iron Law can still act — not as a 127 five steps later.
+- **Clear `SD` on every pass** (`do SD=`; on the header line in the single form). Otherwise a script found nowhere inherits the previous one's directory and exits 0, and a value inherited from the environment defeats `${SD:?…}`.
+- **Probe for the script file, not the directory.** `[ -d "$d" ]` would falsely match any project that has an unrelated root `scripts/` — this repo does.
+- **Guard at the call site.** Every expansion that feeds a path carries `${SD:?…}`; the loop's names the script, and the run line's bare `${SD:?}` is the backstop.
+- **A project-local `scripts/<name>` wins, for that script alone.** Preserves consumers that worked around #63 with their own copies, and the wrapper override. A project script that merely shares a name wins too, and its printed `scripts/…` line is how that shows; no cohort repo had one when #301 was measured.
 - **`$HOME/.claude/skills/…` last** covers user-level and plugin installs.
 - **Resolution must run *after* `.skills/doctor.sh`,** so a freshly healed vendor symlink chain is visible to the probe.
-- **`<SKILL_SCRIPTS>` is a placeholder, not a shell variable** — same convention as `init-project-fastapi` Phase 0's `<SKILL_DIR>`. Each Bash tool call is a fresh shell, so nothing is inherited between steps; later steps substitute the literal path printed above and are written `bash "<SKILL_SCRIPTS>/X.sh"`.
+- **`<name.sh>` is a placeholder, not a shell variable** — same convention as `init-project-fastapi` Phase 0's `<SKILL_DIR>`. Each Bash tool call is a fresh shell. There is deliberately no directory placeholder: a directory is what leaked from one script's resolution to another's.
 
-`TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) enforces the four common lines across every skill carrying a block, and fails the suite if a skill uses `<SKILL_SCRIPTS>` without publishing it.
+`TestScriptResolutionBlock` in [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) pins the lines both shapes share. [tests/structural/test_per_script_resolution.py](../tests/structural/test_per_script_resolution.py) owns the list — every placeholder published, every published script shipped and used, no directory placeholder left — and runs each block against watcher's layout, a single project copy, and a missing script.
 
 ## Gate-script discipline
 
@@ -77,7 +78,7 @@ Three classifications are worth stating, since none is obvious from the filename
 
 ## Project-local overrides: wrap, don't fork
 
-A gate script that invites project-local customization must name the mechanism, or every consumer invents its own. The supported mechanism is a **wrapper**, never a fork: the `<SKILL_SCRIPTS>` resolution block above probes `scripts/` first, so a project-local `scripts/<gate>.sh` wins, does its extra work, and `exec`s the vendored script through the `skills/…` symlink. A fork copies the whole gate to add a few lines and then drifts silently on every submodule update — the consumer keeps running a pre-fix script with no signal that it does.
+A gate script that invites project-local customization must name the mechanism, or every consumer invents its own. The supported mechanism is a **wrapper**, never a fork: the resolution block above probes `scripts/` first for each script, so a project-local `scripts/<gate>.sh` wins for the gate alone, does its extra work, and `exec`s the vendored script through the `skills/…` symlink. A fork copies the whole gate to add a few lines and then drifts silently on every submodule update — the consumer keeps running a pre-fix script with no signal that it does.
 
 Every `shipping-work*/scripts/pre-ship.sh` carries this as a commented `# --- Project-local env loading (optional override point) ---` block, the worked example being the env loading a conftest with a hard DSN requirement forces. Rules the recipe encodes, each a trap a lone consumer hits:
 

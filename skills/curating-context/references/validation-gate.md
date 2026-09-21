@@ -19,7 +19,7 @@ and any unpaired member for the safety gates alone. That is the thing most skill
 cannot manufacture, and it is the only reason this gate is buildable here.
 
 ```bash
-bash "<SKILL_SCRIPTS>/score-cohort.sh" --experiment NN
+bash "<score-cohort.sh>" --experiment NN
 ```
 
 The flags name the two **versions** being compared, and `--experiment NN` supplies

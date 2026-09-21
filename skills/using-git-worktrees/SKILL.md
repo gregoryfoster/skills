@@ -4,7 +4,7 @@ description: A workflow for parallel branch checkouts via `git worktree`. Standa
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git. `lsof` is used for port cleanup in Phase 5 when a worktree records its dev-server port; install if needed.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: create worktree, new worktree, destroy worktree, merge worktree, wt
 ---
 
@@ -40,18 +40,20 @@ Trigger phrases may include the target branch inline — e.g., `create worktree 
 
 ## Script path resolution
 
-The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve it once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
+The skill's `scripts/` directory is not at the project root — it ships inside the skill. Resolve each script once, then substitute its printed path wherever its `<name.sh>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63)):
 
 <!-- skill:required id=skill-scripts -->
 ```bash
-N=using-git-worktrees S=resolve-worktree-root.sh SD=
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
+N=using-git-worktrees
+for S in resolve-worktree-root.sh worktree-create.sh worktree-list.sh worktree-destroy.sh audit-worktree-zombies.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 done
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
 ```
 
-A project-local `scripts/` copy wins if one exists. `<SKILL_SCRIPTS>` is a **placeholder** for the literal path printed here, not an inherited shell variable — each Bash invocation runs in a fresh shell.
+A project-local `scripts/<name>` wins for that script alone ([#301](https://github.com/gregoryfoster/skills/issues/301)). Each `<name.sh>` is a **placeholder** for the literal path printed here, not an inherited shell variable — each Bash invocation runs in a fresh shell.
 
 ## Worktree root resolution
 
@@ -61,7 +63,7 @@ Every operation resolves the worktree directory in this order (first match wins)
 2. **`.skills/worktree_root` file** — single-line file under the repo root; project's persistent default
 3. **`<repo-root>/.worktrees/`** — fallback when neither of the above is set
 
-Invoke `bash "<SKILL_SCRIPTS>/resolve-worktree-root.sh"` to print the resolved root. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
+Invoke `bash "<resolve-worktree-root.sh>"` to print the resolved root. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
 
 ## Venv linking — `.skills/worktree_venv`
 
@@ -99,8 +101,8 @@ If none apply, stop. Don't create a worktree just because the trigger phrase fir
 ### Phase 2 — Create the worktree
 
 ```bash
-bash "<SKILL_SCRIPTS>/worktree-create.sh" <branch>          # existing branch
-bash "<SKILL_SCRIPTS>/worktree-create.sh" --new <branch>    # create the branch too
+bash "<worktree-create.sh>" <branch>          # existing branch
+bash "<worktree-create.sh>" --new <branch>    # create the branch too
 ```
 
 Flags are position-independent: `--new <branch>` and `<branch> --new` are equivalent. `--help` works anywhere and never provisions. A stray second word is an error, not a silent drop.
@@ -142,7 +144,7 @@ If any check fails, fix before proceeding. Work in the wrong checkout silently l
 When the branch is ready:
 
 1. Commit and push from inside the worktree
-2. `cd` to the main checkout — its path is the first row of `bash "<SKILL_SCRIPTS>/worktree-list.sh"` (or `git worktree list | head -n1 | awk '{print $1}'`)
+2. `cd` to the main checkout — its path is the first row of `bash "<worktree-list.sh>"` (or `git worktree list | head -n1 | awk '{print $1}'`)
 3. `git switch main` (or the project's default branch)
 4. `git merge <branch>` — or open a PR if the project requires review; consult AGENTS.md for the project's PR-vs-direct-merge policy
 5. Confirm the merge succeeded before Phase 5
@@ -152,12 +154,12 @@ If the branch is **descoped** (will not be merged), document why before Phase 5:
 ### Phase 5 — Destroy the worktree
 
 ```bash
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch>
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --descoped "<reason>"
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --base <ref>   # verify merge into <ref> instead of project default
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --force        # required when the worktree contains submodules
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --unlock       # only when the destroy reports a held lock
-bash "<SKILL_SCRIPTS>/worktree-destroy.sh" <branch> --dry-run      # preview the decision, change nothing
+bash "<worktree-destroy.sh>" <branch>
+bash "<worktree-destroy.sh>" <branch> --descoped "<reason>"
+bash "<worktree-destroy.sh>" <branch> --base <ref>   # verify merge into <ref> instead of project default
+bash "<worktree-destroy.sh>" <branch> --force        # required when the worktree contains submodules
+bash "<worktree-destroy.sh>" <branch> --unlock       # only when the destroy reports a held lock
+bash "<worktree-destroy.sh>" <branch> --dry-run      # preview the decision, change nothing
 ```
 
 Flags are position-independent here too, so `--force <branch>` works — the flag-first habit `worktree-create.sh` teaches carries over.
@@ -180,8 +182,8 @@ The branch ref itself is **not** deleted — that's a separate decision. Use `gi
 Operators sometimes bypass `worktree-destroy.sh` (raw `git worktree remove`, manual `rm -rf`), leaving behind processes spawned from inside the now-gone worktree. Run the audit script to surface them. From the consuming project's repo root:
 
 ```bash
-bash "<SKILL_SCRIPTS>/audit-worktree-zombies.sh"         # prints zombies, exits 1 if any
-bash "<SKILL_SCRIPTS>/audit-worktree-zombies.sh" --quiet # silent; exit code only — wire into pre-flight
+bash "<audit-worktree-zombies.sh>"         # prints zombies, exits 1 if any
+bash "<audit-worktree-zombies.sh>" --quiet # silent; exit code only — wire into pre-flight
 ```
 
 Detection-only — it does not kill anything. The operator decides whether to kill the listed PIDs.

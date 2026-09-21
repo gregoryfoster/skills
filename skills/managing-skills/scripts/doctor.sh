@@ -994,7 +994,7 @@ report_bare_script_paths() {
   echo "doctor: 'git rev-parse --show-toplevel' does not fix this: that" >&2
   echo "doctor: resolves the root it OPERATES on, not the path bash uses to" >&2
   echo "doctor: OPEN the file. Use the resolved placeholder form instead:" >&2
-  echo "doctor:   bash \"<SKILL_SCRIPTS>/X.sh\"" >&2
+  echo "doctor:   bash \"<X.sh>\"   (the path the resolution block printed, #301)" >&2
   echo "doctor: A path that EXISTS at the project root is the project's own" >&2
   echo "doctor: script, not the skill's, and is not listed here (#266)." >&2
   echo "doctor: The vendor's own suite gates this; nothing gated a consumer's" >&2

@@ -4,7 +4,7 @@ description: Audits a repository's GitHub Actions spend by measuring its cost sh
 compatibility: Designed for Claude. Requires gh (authenticated) and jq. Stack-agnostic — the billing model and every trap are GitHub behaviours, not language ones.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: audit CI, CI cost, Actions spend, optimize CI, why is CI so expensive, CI billing
 ---
 
@@ -67,17 +67,17 @@ survived two completed audits before anyone checked. Phase 1 names all three.
 
 ## Script path resolution
 
-Resolve once, then substitute the printed path wherever `<SKILL_SCRIPTS>` appears:
+Resolve once, then substitute the printed path wherever `<measure-ci-cost.sh>` appears — per script, so a second script never inherits this one's directory ([#301](https://github.com/gregoryfoster/skills/issues/301)):
 
 <!-- skill:required id=skill-scripts -->
 ```bash
-N=auditing-ci-cost S=measure-ci-cost.sh SD=
-
-for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
-  [ -f "$d/$S" ] && { SD="$d"; break; }
+N=auditing-ci-cost
+for S in measure-ci-cost.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  echo "<$S>=${SD:?$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}/$S"
 done
-
-echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/}"
 ```
 
 ## Procedure
@@ -85,7 +85,7 @@ echo "SKILL_SCRIPTS=${SD:?not found in scripts/, .claude/skills/$N/scripts/, or 
 ### Phase 1 — Measure the cost shape
 
 ```bash
-bash "<SKILL_SCRIPTS>/measure-ci-cost.sh" --repo <owner/name> --days 30 --cache /tmp/ci-cost.ndjson
+bash "<measure-ci-cost.sh>" --repo <owner/name> --days 30 --cache /tmp/ci-cost.ndjson
 ```
 
 One API call per run (200+ on a busy repo, a couple of minutes); `--cache`

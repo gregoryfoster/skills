@@ -73,7 +73,7 @@ Write the marker exactly: a near miss (`id=` with nothing after it, `id=two word
 Three rules for an override author:
 
 - **Carry every armed block verbatim.** Re-indent it if you must; do not rewrite it.
-- **Never write a bare `bash scripts/X.sh`.** The doctor reports that shape in an override regardless of any fence, because it needs no vendor cooperation and it is what the two occurrences of #63 had in common. Use the resolved `<SKILL_SCRIPTS>` placeholder. A path that *exists at the project root* is exempt — that is the project's own `scripts/`, not the skill's ([#266](https://github.com/gregoryfoster/skills/issues/266)).
+- **Never write a bare `bash scripts/X.sh`.** The doctor reports that shape in an override regardless of any fence, because it needs no vendor cooperation and it is what the two occurrences of #63 had in common. Use the per-script placeholder the resolution block prints, `bash "<X.sh>"`. A path that *exists at the project root* is exempt — that is the project's own `scripts/`, not the skill's ([#266](https://github.com/gregoryfoster/skills/issues/266)).
 - **Declare a fragment that genuinely cannot apply; do not paste it back dead** ([#265](https://github.com/gregoryfoster/skills/issues/265)). An override that ships none of the scripts a block resolves cannot satisfy it by carrying it — the fence would be a runnable-looking instruction that fails, which is the #63 shape arriving through the remedy. Say so in the frontmatter instead:
 
   ```yaml

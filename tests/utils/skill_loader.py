@@ -52,23 +52,27 @@ class Skill:
     def referenced_scripts(self) -> set[str]:
         """Extract script filenames the SKILL.md invokes from its own scripts/ dir.
 
-        Two forms are recognized, both scoped to the skill's own context (never
+        Three forms are recognized, all scoped to the skill's own context (never
         cross-skill references):
 
-        - `bash "<SKILL_SCRIPTS>/filename.sh"` — the canonical placeholder form
-          (see issue #63); `<SKILL_SCRIPTS>` is substituted with the literal path
-          printed by the skill's resolution block.
-        - `S=filename.sh` — the resolution block's target/sentinel script.
+        - `bash "<filename.sh>"` — the per-script placeholder (see issues #63
+          and #301), substituted with the path the resolution block printed
+          for that script.
+        - `S=filename.sh` — a single-script resolution block's target.
+        - `for S in a.sh b.sh; do` — a publishing block's script list.
 
         The legacy `bash scripts/filename.sh` form is deliberately NOT matched:
         TestNoBareScriptPaths forbids it outright, so matching it here would
         encode two opposing expectations about the same string.
         """
         patterns = (
-            r'bash\s+"<SKILL_SCRIPTS>/([^"\s]+\.sh)"',
+            r'bash\s+"<([^"/>\s]+\.sh)>"',
             r"(?m)^\s*(?:N=\S+\s+)?S=([^\s\n]+\.sh)\b",
         )
-        return {m.group(1) for p in patterns for m in re.finditer(p, self.body)}
+        found = {m.group(1) for p in patterns for m in re.finditer(p, self.body)}
+        for m in re.finditer(r"(?m)^for S in ([^;\n]+); do\b", self.body):
+            found.update(m.group(1).split())
+        return found
 
 
 def load_skill(skill_dir: Path) -> Skill:

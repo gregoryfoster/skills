@@ -14,7 +14,7 @@ the first successful curation:
 ### The cadence
 
 ```bash
-bash "<SKILL_SCRIPTS>/install-cadence.sh"
+bash "<install-cadence.sh>"
 ```
 
 What goes on the clock is a **measurement, not a curation** — regrowth, budget
@@ -70,7 +70,7 @@ As Phase 8 summarised it inline until v1.14:
 On yes:
 
 ```bash
-bash "<SKILL_SCRIPTS>/install-guard.sh" --budget 6000 --doc-budget 10000
+bash "<install-guard.sh>" --budget 6000 --doc-budget 10000
 ```
 
 Add `--proximity-pct N` only to move the approach band off its 90% default; all

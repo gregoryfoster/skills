@@ -97,7 +97,7 @@ So `tighten` is gated on evidence the rewrite cannot produce for itself, and is
 **refused** — not warned about — if claimed without it:
 
 ```bash
-bash "<SKILL_SCRIPTS>/prove-no-loss.sh" --base <branch-point> --claims
+bash "<prove-no-loss.sh>" --base <branch-point> --claims
 ```
 
 **Line matching proves the moves; atom matching proves the rewrites.** The atoms

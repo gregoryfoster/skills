@@ -160,7 +160,7 @@ So the row is backfilled after the commit, which is the rewrite-within-a-run the
 section above sanctions:
 
 ```bash
-bash "<SKILL_SCRIPTS>/record-telemetry.sh" --repo-commit HEAD
+bash "<record-telemetry.sh>" --repo-commit HEAD
 git commit -m "backfill repo_commit" .skills/context-metrics.jsonl
 ```
 
@@ -273,7 +273,7 @@ else as `unreadable` rather than silently as absent.
 For the cross-repo view:
 
 ```bash
-bash "<SKILL_SCRIPTS>/cohort-report.sh" --cohort-file .skills/cohort
+bash "<cohort-report.sh>" --cohort-file .skills/cohort
 ```
 
 The `best reduction` column names which optimisation actually paid, per repo.
