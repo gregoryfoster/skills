@@ -186,12 +186,12 @@ registration. Do it by hand only when debugging the installer:
 
 ### Holding one submodule at a commit
 
-Pin a repo to a specific vendored version — an experiment's control arm, a
-known-good release pending a breaking change — while its sibling submodules keep
+Pin a repo to one vendored version — an experiment's control arm, a
+known-good release pending a breaking change — while its siblings keep
 refreshing. Write `.skills/skills-pin`, one `<submodule-path> <commit-ish>` per
-line, and commit it. Uninstalling the auto-refresh hook also works but is blunt:
-it stops every other submodule's refresh and the `.skills/doctor.sh` self-heal
-too. Pin-file grammar, the four behaviours the hook applies to it, and the
+line, and commit it. Uninstalling the auto-refresh hook works too, but bluntly:
+it stops every other submodule's refresh and the `.skills/doctor.sh` self-heal.
+Pin-file grammar, the four behaviours the hook applies to it, and the
 `SKILLS_PIN_FILE` escape hatch:
 [references/pinning-submodules.md](references/pinning-submodules.md).
 
@@ -199,23 +199,23 @@ too. Pin-file grammar, the four behaviours the hook applies to it, and the
 
 To override a symlinked skill with project-specific behavior:
 
-1. Remove the symlink: `rm skills/<skill-name>` (this removes only the symlink, not the target)
+1. Remove the symlink: `rm skills/<skill-name>` (only the symlink, not its target)
 2. Copy the global skill as a starting point: `cp -r skills-vendor/<owner>-<repo>/skills/<skill-name> skills/<skill-name>`
 3. Edit `skills/<skill-name>/SKILL.md` — add `overrides`, `override-reason`, `omits-required` and `synced-from` to metadata; keep `version` as the vendor's
-4. Keep real files only for what actually differs — re-symlink each unchanged script into the submodule so it tracks upstream, and cannot drift
+4. Keep real files only for what differs — re-symlink each unchanged script into the submodule so it tracks upstream and cannot drift
 5. Commit the new directory
 
 ### Updating a local override
 
 `.skills/doctor.sh` warns when an override falls behind its `overrides:`
-target — on the `version` stamps, and on a diff of the `synced-from` commit
-against the vendor's `HEAD`, so an un-bumped change still
-reports (#286). Re-sync by **reapplying the local deltas onto the newer
-upstream text** — never upstream changes onto the old fork — then bump **both**
-keys. Copy the override aside first: the last step accounts for every line the
-merge removed, which a grep cannot see (#267). A `synced-from` *ahead* of
-`HEAD` is the pointer lagging, not the override: bump that submodule, never
-re-sync (#290). Procedure and comparands:
+target, on the `version` stamps and on a diff of the `synced-from` commit
+against the vendor's `HEAD`, catching un-bumped changes (#286). Re-sync
+by **reapplying the local deltas onto the newer upstream text** — never
+upstream changes onto the old fork — then bump **both** keys. Copy the
+override aside first, to account for every line the merge removed: a grep
+cannot (#267). A `synced-from` *ahead* of `HEAD` means the pointer lags, not
+the override: bump that submodule, never re-sync — unless pinned: re-pin,
+or re-sync to the pin (#290). Procedure and comparands:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

@@ -1054,6 +1054,18 @@ class TestAPinnedPointer:
         md.write_text(_skill_md("sw", "1.4", overrides=target, synced_from=synced))
         assert _doctor(consumer).stderr.strip() == ""
 
+    def test_the_skill_summary_carries_the_pinned_exception(self):
+        """SKILL.md is what an agent reads before any reference. Its "bump
+        that submodule, never re-sync" for a synced-from: ahead of HEAD
+        contradicted the re-pin or re-sync to the pin this class's remedy
+        offers for a held submodule (CR 48)."""
+        text = (REPO_ROOT / "skills" / "managing-skills" / "SKILL.md").read_text()
+        section = text.split("### Updating a local override", 1)[1]
+        section = section.split("\n### ", 1)[0]
+        assert re.search(r"pinned[^.]*re-pin[^.]*re-sync to the pin", section), (
+            f"the summary's pointer remedy omits the pinned exception:\n{section}"
+        )
+
     def _two_overrides(self, consumer: Path, diverged: bool = False):
         """Two overrides of one pinned vendor, each ahead of the pointer at a
         different recorded commit: `sa` at the NEWER one, sorting first, so
