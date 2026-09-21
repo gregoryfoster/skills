@@ -35,7 +35,7 @@ forking a skill.
 | `worktree_venv` | single word: `link` or `none` | `using-git-worktrees` | replaces the default | `link` — the primary checkout's `.venv` is symlinked in |
 | `default_branch` | single-line ref name | `using-git-worktrees` | first step of a 3-step resolution | falls to `origin/HEAD`, then `main` |
 | `plans_dir` | single-line path | `writing-plans`, `orchestrating-issue-backlog`, `init-project-fastapi` | env `PLANS_DIR` wins, then this file | `<repo-root>/docs/plans/` |
-| `skills-pin` | one `<submodule-path> <commit-ish>` per line, `#`-comments | `managing-skills` | env `SKILLS_PIN_FILE` wins, then this file | no pins — every submodule is refreshed |
+| `skills-pin` | one `<submodule-path> <commit-ish>` per line, `#`-comments | `managing-skills`' refresh hook, and its doctor's override pointer finding | env `SKILLS_PIN_FILE` wins, then this file | no pins — every submodule is refreshed |
 | `forked-ok` | one repo-relative path per line, `#`-comments | `managing-skills`' doctor | declares rather than configures — there is no default to replace | nothing is declared, so every divergence is reported (advisory in every mode, never healed) |
 | `doc-sensitive-paths` | one path per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `SENSITIVE_PATHS` wholesale | the variant's built-in path list; a hit says so when `doc-sections` is tailored ([#284](https://github.com/gregoryfoster/skills/issues/284)) |
 | `doc-sections` | one section per line, `#`-comments | `shipping-work*`' doc-check | **replaces** `DOC_SECTIONS` wholesale | the variant's built-in advice; a hit says so when `doc-sensitive-paths` is tailored (#284) |

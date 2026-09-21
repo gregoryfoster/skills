@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-21-2"
+VERSION="2026-09-21-3"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -112,9 +112,12 @@ them (#286); an override recording no synced-from: warns nothing new.
 That diff cannot tell which side moved, so the history decides (#290): a
 synced-from: commit AHEAD of the submodule's HEAD is reported as the
 pointer lagging, with a one-submodule bump as the remedy and the override
-left alone — the opposite of a re-sync; one on a diverged history (a
-rewritten vendor, a fork) is reported as unassessable. Where no fetched
-synced-from: commit exists, the version stamps decide by direction: only
+left alone — the opposite of a re-sync. Where \$SKILLS_PIN_FILE or
+.skills/skills-pin holds that submodule, the entry says so and offers a
+re-pin or a re-sync to the pinned commit instead, since a bump alone ends
+the hold. One on a diverged history (a rewritten vendor, a fork) is
+reported as unassessable. Where no fetched synced-from: commit exists,
+the version stamps decide by direction: only
 an override version OLDER than the vendor's is drift, and a newer one is
 unassessable — most often a commit not fetched yet (fetch, then re-run).
 Drift is advisory in every mode including --check-only, and nothing is
@@ -579,6 +582,9 @@ declare -a UNASSESSED=()
 # index-aligned, so the report can print each command under the entry it fixes.
 declare -a POINTER_BEHIND=()
 declare -a POINTER_BUMP=()
+# Index-aligned too: the pin holding that submodule, as a line for under the
+# entry, or empty when nothing holds it (#290 CR 13).
+declare -a POINTER_HELD=()
 
 # One formatter per class, so the call sites cannot word the same fact
 # differently: drift is recorded from the version comparison and from the
@@ -613,10 +619,49 @@ record_override_unassessed() {
 # backwards, so when two overrides of one vendor record different commits the
 # printed commands can be run in any order and the pointer ends at the newer —
 # `checkout` would leave it wherever the last command pointed.
+#
+# A pinned submodule changes the remedy (#290 CR 13). The bump alone ends a
+# hold the operator took on purpose — an experiment's control arm, a
+# known-good release — and the auto-refresh hook then reports pin drift at
+# every session, because a pin holds the recorded pointer still but cannot
+# move it back. So a held entry says so and offers the two repairs that keep
+# pin and pointer agreeing: re-pin the line to the recorded commit before the
+# bump, or keep the hold and bring the override down to the pinned commit.
 record_override_pointer_behind() {
-  local dir="$1" target="$2" repo_dir="$3" rec="$4" head="$5" changed="$6"
+  local dir="$1" target="$2" repo_dir="$3" rec="$4" head="$5" changed="$6" pin_file pin
   POINTER_BEHIND+=("$dir overrides $target: synced from commit $rec, AHEAD of the checkout of $repo_dir at $head ($changed differs between the two)")
   POINTER_BUMP+=("git -C $repo_dir merge --ff-only $rec")
+  pin_file="$(skills_pin_file)"
+  pin="$(skills_pin_for "$pin_file" "$repo_dir")"
+  if [ -n "$pin" ]; then
+    POINTER_HELD+=("pinned at $pin by $pin_file — re-pin that line to \"$repo_dir $rec\" before the bump, or keep the hold and re-sync the override to $pin instead")
+  else
+    POINTER_HELD+=("")
+  fi
+}
+
+# skills_pin_file — the pin file the auto-refresh hook reads, resolved the
+# way it resolves it: $SKILLS_PIN_FILE, then .skills/skills-pin (the hook's
+# PIN_FILE; docs/KNOBS.md). A relative path means the repo root in both, the
+# hook running from there and this script having cd'd to it. An absent file
+# means no pins, as it does there.
+skills_pin_file() {
+  printf '%s' "${SKILLS_PIN_FILE:-.skills/skills-pin}"
+}
+
+# skills_pin_for <pin-file> <submodule-path> — the commit-ish that file pins
+# the submodule at, as written, or nothing. Read with the hook's grammar: a
+# `#` starts a comment anywhere on the line, blank lines are skipped, and only
+# a line of exactly two words is an entry — a malformed one pins nothing (the
+# hook refuses the whole refresh over it and says so itself). A pin file that
+# cannot be read pins nothing here either: this only words advice.
+skills_pin_for() {
+  local file="$1" path="$2"
+  [ -f "$file" ] || return 0
+  awk -v p="$path" '
+    { sub(/\r$/, ""); sub(/#.*/, "") }
+    NF == 2 && $1 == p { print $2; exit }
+  ' "$file" 2>/dev/null || true
 }
 
 # override_ancestry <repo_dir> <commit> — which side of the symmetric synced-from
@@ -703,11 +748,15 @@ report_drifted_overrides() {
 }
 
 report_pointer_behind_overrides() {
-  local i
+  local i held=0
   echo "doctor: an override is AHEAD of its submodule pointer — the override is" >&2
   echo "doctor: not behind, the pointer is:" >&2
   for i in "${!POINTER_BEHIND[@]}"; do
     echo "  ${POINTER_BEHIND[$i]}" >&2
+    if [ -n "${POINTER_HELD[$i]}" ]; then
+      held=1
+      echo "    ${POINTER_HELD[$i]}" >&2
+    fi
     echo "    ${POINTER_BUMP[$i]}" >&2
   done
   echo "doctor: bump only that submodule pointer, to at least the recorded commit," >&2
@@ -716,6 +765,12 @@ report_pointer_behind_overrides() {
   echo "doctor: carries the newer text, and reapplying its deltas onto the" >&2
   echo "doctor: pointer's older text would undo that sync. Advisory: nothing is" >&2
   echo "doctor: changed for you." >&2
+  [ "$held" = "1" ] || return 0
+  echo "doctor: Except where an entry says pinned: a bump alone ends that hold, and" >&2
+  echo "doctor: the auto-refresh hook then reports pin drift at every session. Either" >&2
+  echo "doctor: re-pin the line as shown and commit the pin file with the pointer, or" >&2
+  echo "doctor: keep the hold and re-sync the override to the pinned commit instead —" >&2
+  echo "doctor: its text and synced-from: both — leaving the pointer where it is." >&2
 }
 
 report_unassessed_overrides() {
@@ -1379,6 +1434,7 @@ check_override_drift() {
   UNASSESSED=()
   POINTER_BEHIND=()
   POINTER_BUMP=()
+  POINTER_HELD=()
   MISSING_FRAGMENT=()
   MISSING_FRAGMENT_ID=()
   MISSING_FRAGMENT_TEXT=()

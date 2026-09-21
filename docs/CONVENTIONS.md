@@ -140,7 +140,7 @@ The helper `bash skills/writing-plans/scripts/resolve-plans-dir.sh` prints the r
 
 ## Submodule pin convention
 
-The auto-refresh hook resolves per-submodule pins via the same three-step lookup (see [`managing-skills`](../skills/managing-skills/)):
+The auto-refresh hook — and the doctor, when an override is ahead of a pinned pointer — resolves per-submodule pins via the same three-step lookup (see [`managing-skills`](../skills/managing-skills/)):
 
 1. `SKILLS_PIN_FILE` env var (highest priority — one-off overrides)
 2. `.skills/skills-pin` file under the repo root (one `<submodule-path> <commit-ish>` per line; `#` comments ignored)

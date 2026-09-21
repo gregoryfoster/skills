@@ -40,7 +40,11 @@ For a one-off hold without committing a file, point `SKILLS_PIN_FILE` at another
 path. Resolution is the usual three steps: `$SKILLS_PIN_FILE`, then
 `.skills/skills-pin`, then no pins.
 
-`.skills/doctor.sh` needs no pin awareness, but it does not substitute for one:
-its `--init --recursive` restores the *recorded* pointer, so it can never move a
-submodule past a pin — and equally can never restore a pointer that was already
-committed past one.
+`.skills/doctor.sh`'s heal needs no pin awareness, but it does not substitute
+for one: its `--init --recursive` restores the *recorded* pointer, so it can
+never move a submodule past a pin — and equally can never restore a pointer that
+was already committed past one. It does read the pin, by the same resolution, in
+one place: when a local override records a commit *ahead* of a held submodule,
+its "bump the pointer" finding says the submodule is pinned and offers a re-pin
+or a re-sync of the override to the pinned commit instead, because the bump
+alone would end the hold ([local-overrides.md](local-overrides.md#which-side-moved)).

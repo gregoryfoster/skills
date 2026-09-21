@@ -920,6 +920,119 @@ class TestWhichSideMoved:
         assert _vendor_head(vendor).startswith(old), "the doctor moved the pointer"
 
 
+class TestAPinnedPointer:
+    """#290 CR 13 — the pointer remedy reads the pin before prescribing a bump.
+
+    `.skills/skills-pin` (or `$SKILLS_PIN_FILE`) holds a submodule at a commit
+    on purpose. Bumping it alone ends that hold, and the auto-refresh hook
+    then reports pin drift at every session, because a pin holds the recorded
+    pointer still but cannot move it back. So a held entry says so and offers
+    the two repairs that keep pin and pointer agreeing.
+    """
+
+    def _pinned(self, consumer: Path, pin_text: str, pin_name: str = "skills-pin"):
+        vendor, old, new = TestWhichSideMoved()._pointer_behind(consumer)
+        pin = consumer / ".skills" / pin_name
+        pin.parent.mkdir(exist_ok=True)
+        pin.write_text(pin_text.format(old=old, new=new))
+        return vendor, old, new, pin
+
+    def test_a_pinned_submodule_is_named_with_both_repairs(self, consumer: Path):
+        _, old, new, _ = self._pinned(
+            consumer, "# control arm\nskills-vendor/acme-skills {old}\n"
+        )
+        result = _doctor(consumer)
+        assert POINTER_MARKER in result.stderr, result.stderr
+        flat = _flat(result.stderr)
+        assert f"pinned at {old} by .skills/skills-pin" in flat, (
+            "a bump alone ends the operator's hold — the entry has to say the "
+            f"submodule is held before prescribing one:\n{result.stderr}"
+        )
+        assert f'"skills-vendor/{VENDOR_REPO} {new}"' in flat, (
+            f"the re-pin names the exact line to write:\n{result.stderr}"
+        )
+        assert f"re-sync the override to {old}" in flat, (
+            f"keeping the hold is the other repair:\n{result.stderr}"
+        )
+        assert DRIFT_MARKER not in result.stderr, result.stderr
+
+    def test_the_repin_and_bump_leave_pin_and_pointer_agreeing(self, consumer: Path):
+        """Follow the first repair as printed: write the pin line, run the
+        bump. The pin then names the pointer — the comparison the hook's pin
+        drift check makes — and the doctor is silent."""
+        vendor, _, _, pin = self._pinned(consumer, "skills-vendor/acme-skills {old}\n")
+        result = _doctor(consumer)
+        line = re.search(r're-pin that line to "([^"]+)"', _flat(result.stderr))
+        assert line, result.stderr
+        pin.write_text(line.group(1) + "\n")
+        bump = [
+            ln.strip()
+            for ln in result.stderr.splitlines()
+            if ln.strip().startswith("git -C ")
+        ]
+        assert len(bump) == 1, result.stderr
+        subprocess.run(
+            shlex.split(bump[0]),
+            cwd=str(consumer),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
+        )
+        pinned_ish = line.group(1).split()[1]
+        resolved = subprocess.run(
+            ["git", "rev-parse", f"{pinned_ish}^{{commit}}"],
+            cwd=str(vendor),
+            capture_output=True,
+            text=True,
+            check=True,
+            env=_clean_env(),
+            timeout=60,
+        ).stdout.strip()
+        assert resolved == _vendor_head(vendor), "the pin and the pointer disagree"
+        assert _doctor(consumer).stderr.strip() == ""
+
+    def test_the_env_var_pin_file_is_read(self, consumer: Path):
+        """Same resolution as the hook: `$SKILLS_PIN_FILE` first."""
+        _, old, _, _ = self._pinned(
+            consumer, "skills-vendor/acme-skills {old}\n", pin_name="pin.override"
+        )
+        env = _clean_env()
+        env["SKILLS_PIN_FILE"] = ".skills/pin.override"
+        result = subprocess.run(
+            ["bash", str(DOCTOR), "--no-preflight"],
+            cwd=str(consumer),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        assert f"pinned at {old} by .skills/pin.override" in _flat(result.stderr), (
+            result.stderr
+        )
+
+    @pytest.mark.parametrize(
+        "pin_text",
+        [
+            "skills-vendor/other-skills {old}\n",
+            "# skills-vendor/acme-skills {old}\n",
+            "skills-vendor/acme-skills {old} extra\n",
+        ],
+        ids=["another-submodule", "commented-out", "malformed"],
+    )
+    def test_a_pin_that_does_not_hold_it_changes_nothing(
+        self, consumer: Path, pin_text: str
+    ):
+        """The hook's grammar: another path, a comment, or a line that is not
+        two words pins nothing here — the hook refuses a malformed line on
+        its own channel."""
+        self._pinned(consumer, pin_text)
+        result = _doctor(consumer)
+        assert POINTER_MARKER in result.stderr, result.stderr
+        assert "pinned" not in result.stderr, result.stderr
+
+
 class TestStampsDecideByDirection:
     """#290 CR 3 — when the version stamps are the only verdict, they decide
     by direction, and a NEWER override version is never drift.

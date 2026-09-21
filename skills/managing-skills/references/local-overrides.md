@@ -131,6 +131,13 @@ also replaces the version comparison for that override rather than joining it:
 a pointer lagging a bumped release disagrees on the stamps too, and printing
 drift beside it would print both opposite remedies at once.
 
+A submodule [held by a pin](pinning-submodules.md) is the exception. The bump
+alone ends the hold, and the auto-refresh hook then reports pin drift at every
+session, so the entry says it is pinned — reading `$SKILLS_PIN_FILE`, then
+`.skills/skills-pin`, as the hook does — and offers the two repairs that keep
+pin and pointer agreeing: re-pin the line to the recorded commit before the
+bump, or keep the hold and re-sync the override to the pinned commit instead.
+
 The history needs the recorded commit **on disk**. Where it is not — not
 fetched yet, or no `synced-from:` at all — the version stamps are the only
 verdict, and they decide by direction, as numbers (1.14 is newer than 1.4):
