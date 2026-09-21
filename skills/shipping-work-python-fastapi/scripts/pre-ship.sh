@@ -140,6 +140,11 @@ echo "=== Tests (Python) ==="
 REV_ERR=$(mktemp) || { echo "ERROR: mktemp failed (REV_ERR)" >&2; exit 2; }
 CURRENT_SHA=""
 if ! CURRENT_SHA=$(git rev-parse HEAD 2>"$REV_ERR"); then
+  # Cleared, not merely left: on a commit-less repo git prints the name it
+  # could not resolve ("HEAD") to stdout before exiting 128, so the capture
+  # holds it and the stamp below would be keyed on the literal word, shared
+  # by every commit-less checkout of the same basename.
+  CURRENT_SHA=""
   echo "WARN: could not resolve HEAD SHA; running pytest unconditionally (no stamp):" >&2
   cat "$REV_ERR" >&2
 fi
