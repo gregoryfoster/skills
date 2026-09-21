@@ -451,6 +451,15 @@ def partial_env(tmp_path: Path) -> dict:
     return env
 
 
+def _refusal(stderr: str, flag: str) -> str:
+    """The one ERROR line saying `flag` persisted nothing."""
+    lines = [
+        ln for ln in stderr.splitlines() if ln.startswith(f"ERROR {flag} persisted")
+    ]
+    assert len(lines) == 1, stderr
+    return lines[0]
+
+
 class TestAPersistThatDidNotHappenSaysSo:
     """#294 CR 22. `--anchor` and `--calibrate` ask for a write, and a run in
     which any count fell back persists nothing — correctly, since an estimate
@@ -468,6 +477,7 @@ class TestAPersistThatDidNotHappenSaysSo:
         r = _run(repo, partial_env, "--exact", flag, *SCOPE)
         assert r.returncode == 2, r.stderr
         assert f"ERROR {flag} persisted nothing" in r.stderr, r.stderr
+        assert "Exit 2" in _refusal(r.stderr, flag)
         assert "exact count failed" in r.stderr, "the cause is still on stderr"
         assert json.loads(r.stdout)["policy"]["tokens_exact"] is False, (
             "the measurement still prints in full"
@@ -520,13 +530,31 @@ class TestAPersistThatDidNotHappenSaysSo:
     def test_an_over_budget_gate_still_gives_its_verdict(
         self, tmp_path: Path, partial_env: dict
     ):
-        """Both are said; the gate's exit, the more specific verdict, wins."""
+        """Both are said; the gate's exit, the more specific verdict, wins —
+        and the refusal names the code the run returns, not the 2 it would
+        have returned alone (#294 CR 53). It said "Exit 2" above a run that
+        exited 4, so a reader of the log was told the wrong code."""
         repo = _repo(tmp_path)
         gate = ("--gate", "--budget", "1")
         r = _run(repo, partial_env, "--exact", "--anchor", *gate, *SCOPE)
         assert r.returncode == 4, r.stderr
         assert "GATE" in r.stderr
-        assert "ERROR --anchor persisted nothing" in r.stderr
+        line = _refusal(r.stderr, "--anchor")
+        assert "Exit 4" in line, line
+        assert "Exit 2" not in line, line
+
+    def test_an_under_budget_gate_leaves_the_refusal_its_own_exit(
+        self, tmp_path: Path, partial_env: dict
+    ):
+        """--gate alone is not the verdict: a gate that passes leaves exit 2,
+        and the refusal says 2."""
+        repo = _repo(tmp_path)
+        r = _run(repo, partial_env, "--exact", "--anchor", "--gate", *SCOPE)
+        assert r.returncode == 2, r.stderr
+        assert "GATE" not in r.stderr
+        line = _refusal(r.stderr, "--anchor")
+        assert "Exit 2" in line, line
+        assert "Exit 4" not in line, line
 
     def test_the_help_documents_it(self):
         r = subprocess.run(

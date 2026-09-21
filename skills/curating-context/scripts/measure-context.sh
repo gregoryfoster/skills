@@ -1920,7 +1920,13 @@ if [ "$exact_flag" != true ]; then
   if [ "$CALIBRATE" -eq 1 ]; then PERSIST_REFUSED="--calibrate"; fi
 fi
 if [ -n "$PERSIST_REFUSED" ]; then
-  echo "ERROR $PERSIST_REFUSED persisted nothing: not every count reached count_tokens (see the WARN lines above), and an estimate cannot anchor the estimator. Exit 2; re-run once count_tokens answers" >&2
+  # The code named is the code returned (#294 CR 53): a red --gate below exits
+  # 4, and this line said "Exit 2" above it. Both inputs are settled by now.
+  persist_exit="Exit 2"
+  if [ "$GATE" -eq 1 ] && [ "$over_policy" = true ]; then
+    persist_exit="Exit 4, not 2: --gate's verdict below outranks this refusal"
+  fi
+  echo "ERROR $PERSIST_REFUSED persisted nothing: not every count reached count_tokens (see the WARN lines above), and an estimate cannot anchor the estimator. $persist_exit; re-run once count_tokens answers" >&2
 fi
 
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s, "near_budget": %s},\n' \
