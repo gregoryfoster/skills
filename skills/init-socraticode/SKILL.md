@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running (or an external Qdrant and Ollama), Node >=18.17, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.6"
+  version: "1.7"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 
@@ -86,8 +86,9 @@ refused, and warns if the registry is unreachable —
 for `STORE=external`, the store's URL, TLS, key and answer, the external
 Ollama, and whether this session carries the settings `env` block (a first
 install passes the values inline, the key already in place); and advisory
-checks that Docker starts at boot (gotcha L), the `socraticode` marketplace is
-registered, and the plugin MCP server is Connected.
+readings — host memory and whether a `MemoryLow=` takes effect, Docker at boot
+(gotcha L), Claude Code's version and install age, the `socraticode`
+marketplace, the plugin MCP server Connected.
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
 non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix
@@ -119,9 +120,10 @@ marketplace separately from the connection.
 plugin's `mcp__plugin_socraticode_socraticode__*` is redundant — preflight Gate
 4 flags it; remove it with `claude mcp remove socraticode`.
 
-**On a small or shared host, pin the server here.** The plugin's command
-installs at every launch — 1.2 G, against 75 MB pinned:
-[`troubleshooting.md`](references/troubleshooting.md) row U.
+**On a small or shared host, pin the server here** — the plugin's command
+installs at every launch, 1.2 G against 75 MB pinned — and on a shared one
+reserve the production service's memory:
+[`host-memory.md`](references/host-memory.md).
 
 ### Phase 3 — Author the project's exploration policy (idempotent)
 
@@ -287,10 +289,9 @@ either:
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" index "<PROJECT_PATH>"
 ```
 
-The driver speaks JSON-RPC to the plugin's stdio server directly, keeps it alive
-during indexing (gotcha B), and blocks on the same three-signal predicate before
-returning. It **owns its child process and kills by PID** — no `pkill -f`
-self-match (gotcha G) — and parses status strings loosely (gotcha H).
+The driver speaks JSON-RPC to the plugin's server directly, keeps it alive while
+indexing (gotcha B) and blocks on the same three-signal predicate; it **owns its
+child process** — no `pkill -f` (gotcha G).
 
 > **If the driver can't find the server**, `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
 > resolve` prints the launch command it would use, starting nothing (gotcha I);
@@ -331,10 +332,11 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 | `unknown` | < 20 files, or the status string did not parse | report it; leave variant A |
 
 **A stale or unstamped `Built by:` line is its own defect.** `health-check`
-compares the stamp against the running server rather than waiting for the
-server's own `STALE` token, and reports staleness *beside* the verdict above,
-never instead of it ([#297](https://github.com/gregoryfoster/skills/issues/297)).
-Rebuild, then re-measure before variant B.
+compares the stamp against the session's server where the plugin fixes its
+version (else its own) rather than waiting for a `STALE` token, and reports
+staleness *beside* the verdict above, never instead of it
+([#297](https://github.com/gregoryfoster/skills/issues/297), #305). Rebuild,
+then re-measure before variant B.
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 
@@ -368,7 +370,8 @@ before Phase 3 replaces the span
 
 Seven further invariants are enforced by Phases 4–6 and recorded under
 *Invariants a phase already enforces* in
-[`references/troubleshooting.md`](references/troubleshooting.md): three
+[`references/troubleshooting.md`](references/troubleshooting.md), beside the
+gotcha matrix (A–U) and the native-vs-fallback decision tree: three
 completion signals, yield over `READY`, a FAILED last operation, the fenced
 driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
 
@@ -394,11 +397,7 @@ driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
   content in it. Move anything the template does not carry to
   `## Code Exploration Notes (repo-specific)` outside the markers, and say so.
 
-See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
-gotcha matrix (A–T) and the native-vs-fallback decision tree.
-
 **Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow. Came down
-from 10,050 by demoting Phase 0, Phase 4's index-scope and legacy-array
-guidance, and three phase-enforced invariants into `references/`.
+6,000-token standard, set at current size so this file cannot grow; how it came
+down from 10,050 is recorded beside the figure there.

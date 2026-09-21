@@ -4,7 +4,9 @@
 #
 # Detect-and-instruct only: every failing gate prints the exact fix command and
 # exits non-zero. This script NEVER installs or mutates the host toolchain
-# (no auto brew/apt/nvm, no docker pulls) — that is the operator's call.
+# (no auto brew/apt/nvm, no docker pulls, and no `claude update`, which has no
+# check-only mode — Claude Code's version and install age are reported
+# instead) — that is the operator's call.
 #
 # Usage:
 #   bash preflight.sh            # run all gates; exit 0 only if every gate passes
@@ -345,14 +347,20 @@ case "$MEM_KB" in
     if [ "$MEM_KB" -lt 4194304 ]; then         # < 4 GiB
       warn "Host memory $MEM_HUMAN — a cold server install peaks near 1.2 G, which is the largest thing this setup does"
       hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
-      hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/troubleshooting.md row U)"
+      hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
       # The shared-host case, named only here. A cap on a session process
       # protects the host solely when the host's own service holds the
       # reservation, and this gate cannot tell a dev box from a production node
       # that is also ssh'd into — broker's VM was both. Saying it on every host
       # would be a warning that always fires, which is the cry-wolf shape the
       # health hook is tuned against; under 4 GiB it is the case that bites.
-      hint "If this host also runs a production service, give that service the reservation (MemoryLow=) first — a cgroup cap on a session process STALLS it rather than killing it (references/troubleshooting.md row U)"
+      #
+      # Whether a cap on a session STALLS it depends on the host (#303): on
+      # broker's VM session processes inherited oom_score_adj -1000, so the
+      # killer could not pick them; on notifier's they sat at 0, where a cap
+      # kills instead. The advice is the same either way, so it is given
+      # either way, with the check that tells the two apart.
+      hint "If this host also runs a production service, give that service the reservation first — MemoryLow=, granted on every slice above it, and OOMScoreAdjust= — on any host: where session processes sit at oom_score_adj -1000 (cat /proc/<pid>/oom_score_adj), a cgroup cap on one STALLS it rather than killing it (references/host-memory.md)"
     else
       pass "Host memory $MEM_HUMAN"
     fi
@@ -368,6 +376,165 @@ case "$SWAP_KB" in
     hint "That is how broker's 2026-09-16 outage presented: nothing was killed, tailscaled and ksoftirqd failed allocations, and the bus was down 57m (#295)"
     ;;
 esac
+
+# >>> memory-protection
+# ── Memory protection: does a unit's MemoryLow= take effect here? (#307) ────
+# Advisory, never fatal, and read-only: files under /proc and the cgroup mount,
+# no systemctl call, nothing written.
+#
+# A production unit's MemoryLow= reserves memory only up to what EVERY ancestor
+# cgroup grants: the kernel scales a child's protection by its parent's
+# effective protection (effective_protection() in mm/page_counter.c), and
+# system.slice ships memory.low 0. On CannObserv/wslcb-licensing-tracker a unit
+# at MemoryLow=256M was protected by nothing, while `systemctl show`, the
+# unit's own memory.low, a clean daemon-reload and a healthy service all said
+# it worked (#307). A templated unit sits one slice deeper, in an implicit
+# system-<name>.slice that grants nothing either, so a system.slice grant is
+# necessary and not sufficient — measured on CannObserv/address-validator,
+# where postgres stayed unprotected under a working system.slice grant.
+#
+# So this reads the chain, not the slice alone: every unit under system.slice
+# (and one slice deeper) that CLAIMS protection, against the least its slices
+# grant. It warns only on a claim that is clamped. A stock host, where nothing
+# claims any, gets the reading and its consequence rather than a warning that
+# fires everywhere — the cry-wolf shape the hint above is careful about.
+#
+# memory_recursiveprot is reported beside it because #307 read that mount
+# option as an escape hatch. It is not one: it shares a parent's UNCLAIMED
+# protection among children that set none, and a parent at 0 has none to
+# share (systemd.resource-control(5): "it is generally required to set a
+# corresponding allocation on all ancestors").
+#
+# The mountinfo path is the one argument, and the cgroup mount point is read
+# out of it rather than assumed, so the whole reading follows from one file.
+# `claims` and `clamped` are this function's locals, which protection_line
+# (called only from here) appends to — bash scopes a local to its callees.
+memory_protection() {
+  local mountinfo="$1" found mnt opts rp slice low d e name claim eff via f i
+  local claims="" clamped=0
+  if [ ! -r "$mountinfo" ]; then
+    warn "Memory protection not measured — no $mountinfo here (not Linux, or no /proc), and MemoryLow= is a Linux cgroup v2 setting"
+    return 0
+  fi
+  # Field 5 is the mount point; after the lone '-' come the fs type, the
+  # source and the superblock options, which is where memory_recursiveprot is.
+  # Read with builtins, so no missing tool can turn "not measured" into a false
+  # "cgroup2 is not mounted".
+  found=""
+  while read -r -a f; do
+    for ((i = 6; i < ${#f[@]}; i++)); do
+      if [ "${f[i]}" = - ]; then
+        [ "${f[i + 1]:-}" = cgroup2 ] && found="${f[4]} ${f[i + 3]:-}"
+        break
+      fi
+    done
+    [ -z "$found" ] || break
+  done <"$mountinfo"
+  if [ -z "$found" ]; then
+    warn "Memory protection not measured — cgroup2 is not mounted, so there is no memory.low for a MemoryLow= to set"
+    return 0
+  fi
+  mnt="${found%% *}" opts="${found#* }"
+  # mountinfo escapes a space in a path as \040.
+  mnt="${mnt//\\040/ }"
+  case ",$opts," in
+    *,memory_recursiveprot,*) rp="with memory_recursiveprot, which shares a slice's grant but never lifts a child above it" ;;
+    *) rp="without memory_recursiveprot" ;;
+  esac
+  slice="$mnt/system.slice"
+  low="$(cat "$slice/memory.low" 2>/dev/null || true)"
+  case "$low" in
+    max | [0-9]*) ;;
+    *)
+      warn "Memory protection not measured — no readable memory.low for system.slice under $mnt (no systemd, a container's own cgroup, or the memory controller is off there)"
+      return 0
+      ;;
+  esac
+
+  for d in "$slice"/*/; do
+    [ -d "$d" ] || continue
+    name="${d%/}" name="${name##*/}"
+    case "$name" in
+      *.slice)
+        # A templated unit's implicit slice: its units are clamped by it too.
+        via="$(cat "$d/memory.low" 2>/dev/null || true)"
+        case "$via" in max | [0-9]*) ;; *) continue ;; esac
+        for e in "$d"*/; do
+          [ -d "$e" ] || continue
+          claim="$(cat "$e/memory.low" 2>/dev/null || true)"
+          case "$claim" in [1-9]* | max) ;; *) continue ;; esac
+          eff="$(low_min "$(low_min "$low" "$via")" "$claim")"
+          e="${e%/}"
+          protection_line "$name/${e##*/}" "$claim" "$eff" "$low" "$name" "$via"
+        done
+        ;;
+      *)
+        claim="$(cat "$d/memory.low" 2>/dev/null || true)"
+        case "$claim" in [1-9]* | max) ;; *) continue ;; esac
+        eff="$(low_min "$low" "$claim")"
+        protection_line "$name" "$claim" "$eff" "$low" "" ""
+        ;;
+    esac
+  done
+
+  if [ -z "$claims" ]; then
+    if [ "$low" = 0 ]; then
+      pass "Memory protection: nothing under system.slice claims MemoryLow=, and system.slice grants none (cgroup2 mounted $rp)"
+      hint "A MemoryLow= given to a production unit here would be inert until every slice above it grants one (references/host-memory.md)"
+    else
+      pass "Memory protection: system.slice grants $(low_human "$low"), and nothing under it claims MemoryLow= (cgroup2 mounted $rp)"
+    fi
+  elif [ "$clamped" -eq 0 ]; then
+    pass "Memory protection: $claims — each within what its slices grant (cgroup2 mounted $rp)"
+  else
+    hint "Give system.slice — and a templated unit's system-<name>.slice — a MemoryLow= at least the sum of its children's, daemon-reload, then check the unit's EFFECTIVE value, not its own (references/host-memory.md). cgroup2 is mounted $rp"
+  fi
+}
+
+# low_min A B — the smaller of two memory.low readings, where `max` is no limit.
+low_min() {
+  if [ "$1" = max ]; then
+    printf '%s' "$2"
+  elif [ "$2" = max ] || [ "$1" -le "$2" ]; then
+    printf '%s' "$1"
+  else
+    printf '%s' "$2"
+  fi
+}
+
+# low_human BYTES — a memory.low reading in MiB, the unit systemd's own
+# settings are usually written in.
+low_human() {
+  if [ "$1" = max ]; then
+    printf 'max'
+  elif [ "$1" -gt 0 ] && [ "$1" -lt 1048576 ]; then
+    printf '%s bytes' "$1"
+  else
+    printf '%s MiB' "$(($1 / 1048576))"
+  fi
+}
+
+# protection_line UNIT CLAIM EFFECTIVE SYSTEM_SLICE_LOW [SLICE SLICE_LOW] — one
+# claiming unit: tallied when it keeps its claim, a warning naming the slice
+# that clamps it when it does not.
+protection_line() {
+  local unit="$1" claim="$2" eff="$3" top="$4" mid="$5" midlow="$6" who
+  if [ "$eff" = "$claim" ]; then
+    claims="${claims:+$claims, }$unit keeps $(low_human "$claim")"
+    return 0
+  fi
+  clamped=1
+  claims="${claims:+$claims, }$unit"
+  if [ -n "$mid" ] && [ "$midlow" != "$top" ] && [ "$(low_min "$top" "$midlow")" = "$midlow" ]; then
+    who="its $mid grants $(low_human "$midlow")"
+  else
+    who="system.slice grants $(low_human "$top")"
+  fi
+  warn "Memory protection: $unit claims MemoryLow=$(low_human "$claim") but keeps at most $(low_human "$eff") — $who, and a unit keeps no more than every slice above it grants"
+}
+
+memory_protection /proc/self/mountinfo
+# <<< memory-protection
 
 # ── Gate 1: Docker — only when something will run in it ─────────────────────
 # A managed Qdrant is a container. So is an Ollama embedder in `docker` mode,
@@ -821,12 +988,103 @@ else
   pass "npx reachable"
 fi
 
+# ── Claude Code's own version and install age (advisory; #310) ──────────────
+# Everything else this skill depends on has its version reported — Node against
+# upstream's engines, the build that launches, the store, the plugin's
+# registration — except the host running all of it. A CannObserv workstation
+# sat on Claude Code 2.1.71 from March to September while 2.1.278 was current,
+# preflight green on every run, and #309 then reasoned from current
+# documentation about a six-month-old binary: two confidently wrong
+# conclusions reached shipped comments and one an upstream issue. The version
+# being invisible is what made the mistake invisible.
+#
+# Age, not a version comparison, because nothing may ask what is current:
+# `claude update` has no check-only mode — it installs — and this script never
+# mutates the host or makes a network call for this. The native installer keeps
+# one file per version under ~/.local/share/claude/versions/, with
+# ~/.local/bin/claude linked at the running one, and each file's mtime is its
+# install date; ~/.claude.json's installMethod says whether that layout applies.
+# "Installed 195 days ago" reads on its own, where a bare version number needs
+# the current one beside it. Releases ran at about one a day between those two
+# versions (207 across 195 days), so 30 days is roughly 30 releases behind.
+#
+# Every path it cannot measure says so; none is skipped silently.
+CLAUDE_AGE_WARN_DAYS=30
+claude_version_age() {
+  local raw ver method link target mtime now days reason=""
+  raw="$(claude --version 2>/dev/null || true)"
+  # "2.1.278 (Claude Code)" — the first word of the first line, when it is a
+  # release number. Parameter expansion rather than awk: an advisory reading
+  # must not be able to end the run, and under `set -e` a missing tool inside
+  # an assignment's command substitution does exactly that.
+  ver="${raw%%$'\n'*}"
+  ver="${ver%% *}"
+  case "$ver" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *)
+      warn "Claude Code: 'claude --version' ($(command -v claude)) reported no version, so its version and install age were not determined"
+      return 0
+      ;;
+  esac
+  method="$(grep -oE '"installMethod"[[:space:]]*:[[:space:]]*"[^"]*"' "$HOME/.claude.json" 2>/dev/null \
+    | head -n 1 | sed -E 's/.*"([^"]*)"$/\1/' || true)"
+  link="$HOME/.local/bin/claude"
+  if [ -z "$method" ]; then
+    reason="$HOME/.claude.json records no installMethod"
+  elif [ "$method" != native ]; then
+    reason="installMethod is '$method' — only the native installer keeps a dated file per version"
+  else
+    if [ -L "$link" ]; then
+      target="$(readlink "$link" 2>/dev/null || true)"
+      case "$target" in /*) ;; ?*) target="$HOME/.local/bin/$target" ;; esac
+    else
+      target="$HOME/.local/share/claude/versions/$ver"
+    fi
+    case "$target" in
+      */claude/versions/"$ver")
+        # GNU stat first, then BSD: `stat -c` is an illegal option on macOS,
+        # and on Linux `stat -f` means the filesystem rather than the file.
+        mtime="$(stat -c %Y "$target" 2>/dev/null || stat -f %m "$target" 2>/dev/null || true)"
+        if [ ! -e "$target" ]; then
+          reason="there is no $target"
+        else
+          case "$mtime" in
+            '' | *[!0-9]*) reason="the modification time of $target could not be read" ;;
+          esac
+        fi
+        ;;
+      *)
+        reason="$link points at ${target:-nothing}, not the $ver that 'claude --version' reports"
+        ;;
+    esac
+  fi
+  now="$(date +%s 2>/dev/null || true)"
+  case "$now" in
+    '' | *[!0-9]*) [ -n "$reason" ] || reason="the clock could not be read" ;;
+  esac
+  if [ -n "$reason" ]; then
+    warn "Claude Code $ver — install age not determined: $reason"
+    return 0
+  fi
+  days=$(((now - mtime) / 86400))
+  [ "$days" -ge 0 ] || days=0
+  if [ "$days" -gt "$CLAUDE_AGE_WARN_DAYS" ]; then
+    warn "Claude Code $ver — installed $days days ago, past the $CLAUDE_AGE_WARN_DAYS-day mark (releases have run at about one a day)"
+    hint "claude update — run it yourself: it installs, and has no check-only mode, so this check never calls it"
+  else
+    pass "Claude Code $ver — installed $days day(s) ago"
+  fi
+}
+
 # ── Gate 4 (advisory): plugin MCP server registered and Connected ───────────
 # Not fatal — the bundled mcp-driver.mjs fallback works without the plugin being
 # wired into the session (gotcha A). Reported so the operator knows which path
 # they are on. `claude` may be absent when preflight runs outside Claude Code.
 if command -v claude >/dev/null 2>&1; then
-  # Marketplace first: `socraticode@socraticode` is plugin@marketplace, so the
+  # The host first: every reading below is of something this binary does.
+  claude_version_age
+
+  # Then the marketplace: `socraticode@socraticode` is plugin@marketplace, so the
   # install in Phase 2 cannot resolve until the marketplace is registered.
   # Reported separately from the connection check so a fresh host doesn't read
   # its missing marketplace as "just needs a restart".
@@ -881,7 +1139,7 @@ if command -v claude >/dev/null 2>&1; then
     hint "Remove the standalone: claude mcp remove socraticode"
   fi
 else
-  printf '  \033[33m•\033[0m %s\n' "claude CLI not found — skipping plugin-connection check"
+  printf '  \033[33m•\033[0m %s\n' "claude CLI not found — Claude Code's version and install age were not determined, and the plugin-connection check is skipped"
 fi
 
 echo

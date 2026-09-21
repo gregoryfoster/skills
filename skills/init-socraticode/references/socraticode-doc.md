@@ -161,32 +161,39 @@ path is being measured.
 `verdict: "low"` means dependency questions must go to `grep`, and the
 `AGENTS.md` block should be on its degraded variant.
 
-**`unresolvedPct` is corroboration, not a verdict.** The same check — and the
-daily `socraticode-health.sh` run — report the figure whenever it clears the
-threshold, on a healthy graph too, and word it from the verdict. Beside `low`
-or `unknown`, where a yield finding is already on the list for it to back:
-`graph unresolved N% (> 50%) — corroborates a resolver problem`. Beside `ok`,
-where there is nothing for it to corroborate: `graph unresolved N% (> 50%) —
-share of call edges with no first-party callee; verdict is ok, so this is a
-statistic, not a defect`. Either way it is filed as a **note** — it appears as
-`note: graph unresolved N% …` and does not set the exit code, so a repo whose
-only finding is this one stays silent through the daily hook. It is a
-*call*-graph statistic: the share of **call
-edges** whose callee resolves to no first-party symbol. A repo that leans on
-frameworks and the stdlib runs high by construction, because those callees are
-not in the repo — no re-index brings them in and none lowers the figure.
-Judge the graph on `verdict` and on **edges/file**, which is what the gate
-keys on. A high `unresolvedPct` beside `verdict: "ok"` is normal; the
+**`unresolvedPct` is a statistic beside the verdict, never evidence for it.**
+The same check — and the daily `socraticode-health.sh` run — report the figure
+whenever it clears the threshold, on a healthy graph too, and word it from the
+verdict. Beside `ok`: `graph unresolved N% (> 50%) — share of captured symbol
+edges (calls, imports, re-exports, type or value references) matching no
+project symbol; edges into builtins and external libraries count by
+construction, so it runs high on healthy code — verdict is ok, so this is a
+statistic, not a defect`. Beside `low` or `unknown`, where the verdict already
+stands on the yield arithmetic and the server's advisory: `graph unresolved N%
+(> 50%) — share of captured symbol edges (calls, imports, re-exports, type or
+value references) matching no project symbol — reported beside the verdict,
+not as evidence for it, since edges into builtins and external libraries count
+by construction`. Either way it is filed as a **note** — it appears as `note:
+graph unresolved N% …` and does not set the exit code, so a repo whose only
+finding is this one stays silent through the daily hook. The denominator is
+the server's own: since v1.14.0 `codebase_graph_status` says the same thing
+and adds that the share "is not a resolver failure rate". A repo that leans on
+frameworks, the stdlib and SDKs runs high by construction, because those
+symbols are not in the repo — no re-index brings them in and none lowers the
+figure. Judge the graph on `verdict` and on **edges/file**, which is what the
+gate keys on. A high `unresolvedPct` beside `verdict: "ok"` is normal; the
 src-layout resolver defect it can be mistaken for
 (<https://github.com/giancarloerra/SocratiCode/issues/107>) shows up instead
-as near-zero edges/file.
+as near-zero edges/file. Do not cite the figure as the *cause* of an
+under-reporting graph query; test the import graph instead
+([#308](https://github.com/gregoryfoster/skills/issues/308)).
 
 **If you suspect the import graph, test the import graph.** Take a file you
 know has first-party importers, run `codebase_graph_query` on it, and compare
 the result against an `rg` sweep over every spelling that import could be
-written as. If the two sets match, the import graph is exact and
-`unresolvedPct` is telling you about call edges, not about imports. Prefer
-that differential to any figure written into this file, which is repo- and
+written as. If the two sets match, the import graph is exact, and whatever
+`unresolvedPct` counts, it is not your first-party imports. Prefer that
+differential to any figure written into this file, which is repo- and
 day-specific.
 
 **Since SocratiCode 1.13.0 the server states the yield itself, and that is the
@@ -203,7 +210,8 @@ Import resolution: 35 of 2959 captured imports resolved to project files (1.2%)
 That ratio is **resolved-over-captured**, which is a better measure than the
 edges/file floor this skill computes locally: it does not move with repo size,
 and it does not read as broken on a repo that is merely orphan-heavy. It is
-also not `unresolvedPct`, which is a call-graph statistic (see above).
+also not `unresolvedPct`, which counts every captured symbol edge, external
+ones included (see above).
 
 **Believe a present advisory when `Built by:` is current.** It reports what the
 builder that *cut* this graph resolved, so on a stale graph it judges an older
@@ -239,8 +247,21 @@ so. Since [#297](https://github.com/gregoryfoster/skills/issues/297)
 `health-check` keeps the running server's `serverInfo.version` from the MCP
 handshake and makes the comparison itself, so row 1 now means *both* parties
 checked. Reading the stamp **by hand**, you do not have that second opinion:
-compare it against the server you are running before you trust it. Both versions
-are in the health-check JSON, as `graph.builder.builtBy` and `server.version`.
+compare it against the server you are running before you trust it.
+
+**The server that matters is the one answering your queries.** A rebuild runs
+through the session's server — under Claude Code, the plugin's — which need
+not be the one `health-check` launched to measure. Where the plugin's
+definition fixes a version, the check judges the graph against that one, and a
+graph matching it while trailing the check's own server is a *note*: rebuilding
+would re-stamp the same version, so the fix is to update the plugin, restart
+Claude Code so its MCP server reloads, then rebuild. Where the definition
+floats (`socraticode@latest`) the session's version cannot be read, and the
+finding says so; if a rebuild leaves the stamp unchanged, restart and rebuild
+([#305](https://github.com/gregoryfoster/skills/issues/305)). The JSON records
+every version compared: `graph.builderCheck` holds the builder, `checkServer`,
+`sessionServer` and which of the two ruled; `server` is the check's own launch
+and `sessionServer` says how the session's version was known.
 
 **Stale is not the same as unmeasured, and the two answer different
 questions.** A graph a release or two behind still carries the import counts its

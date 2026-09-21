@@ -49,7 +49,9 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve as resolvePath, join as joinPath, isAbsolute as isAbsolutePath } from 'node:path';
+import {
+  resolve as resolvePath, join as joinPath, isAbsolute as isAbsolutePath, dirname as dirnamePath,
+} from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15000);
@@ -146,15 +148,21 @@ function expandVars(value, extra = {}) {
 function pluginServerFromVersionDir(versionDir) {
   const manifest = joinPath(versionDir, '.claude-plugin', 'plugin.json');
   let declared;
+  // The PLUGIN's version, carried alongside for the report (#305). It names the
+  // plugin, not the server: a definition that launches `socraticode@latest`
+  // runs whatever that resolved to when the session started.
+  let pluginVersion = null;
   try {
-    declared = JSON.parse(readFileSync(manifest, 'utf8'))?.mcpServers;
+    const parsed = JSON.parse(readFileSync(manifest, 'utf8'));
+    declared = parsed?.mcpServers;
+    if (typeof parsed?.version === 'string' && parsed.version.trim()) pluginVersion = parsed.version.trim();
   } catch { /* no manifest, or unreadable — the filename fallback below */ }
 
   const fromFile = (rel, why) => {
     const path = resolvePath(versionDir, rel);
     try {
       const server = JSON.parse(readFileSync(path, 'utf8'))?.mcpServers?.socraticode;
-      return server ? { server, source: `plugin ${why} (${path})` } : null;
+      return server ? { server, source: `plugin ${why} (${path})`, pluginVersion } : null;
     } catch { return null; }
   };
 
@@ -171,7 +179,7 @@ function pluginServerFromVersionDir(versionDir) {
       if (hit) return hit;
     }
   } else if (declared && typeof declared === 'object' && declared.socraticode) {
-    return { server: declared.socraticode, source: `plugin.json inline (${manifest})` };
+    return { server: declared.socraticode, source: `plugin.json inline (${manifest})`, pluginVersion };
   }
 
   // No usable manifest. The dotted name first: it is the one Claude Code's own
@@ -216,6 +224,11 @@ function launchFromPluginConfig() {
         args: server.args,
         env: server.env && typeof server.env === 'object' ? server.env : {},
         source: hit.source,
+        // Marks the one launch that IS the session's own definition, so the
+        // builder check can tell "this check ran what the session runs" from
+        // "this check ran something else" without parsing `source` (#305).
+        plugin: true,
+        pluginVersion: hit.pluginVersion ?? null,
       };
     }
   }
@@ -264,18 +277,121 @@ function launchFromPin() {
 // daily finding about a host that is already consistent.
 //
 // Returns the floating spec, or null when the plugin is absent or pinned.
-function pluginSpecFloats() {
-  const p = launchFromPluginConfig();
-  if (!p) return null;
-  // Only an npx-style launch resolves late. A recorded interpreter-and-path is
-  // as fixed as a pin is, whatever version it happens to be.
-  if (!/(^|[\\/])npx(\.\w+)?$/.test(p.command)) return null;
-  const spec = p.args.find((a) => typeof a === 'string' && /^socraticode(@|$)/.test(a));
+// `p` defaults to a fresh read; a caller that already holds the plugin's
+// definition passes it, so one run reads the config tree once.
+function pluginSpecFloats(p = launchFromPluginConfig()) {
+  const spec = npxSpec(p);
   if (!spec) return null;
   const tag = spec.includes('@') ? spec.slice(spec.indexOf('@') + 1) : '';
   // A bare name and `@latest` both float; only a literal x.y.z is fixed. A
   // range is deliberately counted as floating — it resolves at launch too.
   return /^\d+\.\d+\.\d+$/.test(tag) ? null : spec;
+}
+
+// The `socraticode[@…]` argument of an npx-style launch, or null for any other.
+// Only an npx-style launch resolves late. A recorded interpreter-and-path is as
+// fixed as a pin is, whatever version it happens to be.
+function npxSpec(p) {
+  if (!p || !/(^|[\\/])npx(\.\w+)?$/.test(p.command)) return null;
+  return p.args.find((a) => typeof a === 'string' && /^socraticode(@|$)/.test(a)) || null;
+}
+
+// The version a plugin definition FIXES, or null when it fixes none (#305).
+//
+// Two shapes fix one, and both are read rather than inferred. An npx launch of
+// a literal `socraticode@x.y.z` names it. An interpreter-and-path launch runs
+// whatever package that path sits in, so the version is that package's own
+// package.json — the same rule pinVersion() applies to the pin, walked up from
+// each absolute argument because the path may name `dist/index.js` or a `bin`
+// shim. A floating spec fixes nothing, and neither does a path whose package
+// cannot be read: null, never the plugin's own version, which names the plugin
+// and not what its definition launches.
+function pluginLaunchVersion(p) {
+  if (!p) return null;
+  const spec = npxSpec(p);
+  if (spec) {
+    const tag = spec.includes('@') ? spec.slice(spec.indexOf('@') + 1) : '';
+    return /^\d+\.\d+\.\d+$/.test(tag) ? tag : null;
+  }
+  if (/(^|[\\/])npx(\.\w+)?$/.test(p.command)) return null;
+  for (const arg of [p.command, ...p.args]) {
+    if (typeof arg !== 'string' || !isAbsolutePath(arg)) continue;
+    // Bounded: a package's entry sits a few levels below its package.json, and
+    // an unbounded walk from `/usr/bin/node` would read every ancestor for
+    // nothing.
+    let dir = arg;
+    for (let depth = 0; depth < 6; depth += 1) {
+      const up = dirnamePath(dir);
+      if (up === dir) break;
+      dir = up;
+      try {
+        const pkg = JSON.parse(readFileSync(joinPath(dir, 'package.json'), 'utf8'));
+        if (pkg?.name === 'socraticode' && typeof pkg.version === 'string' && pkg.version.trim()) {
+          return pkg.version.trim();
+        }
+      } catch { /* no package.json here — keep walking */ }
+    }
+  }
+  return null;
+}
+
+// ── which server answers the SESSION's queries (#305) ───────────────────────
+// The graph is persisted, and whichever server rebuilds it stamps its own
+// version on it. Under Claude Code that is the plugin's session server — the
+// one every native `codebase_*` call and every `codebase_graph_build` goes to —
+// and it need not be the server this driver launched. On CannObserv/power-map
+// the check compared a graph the session's server had built at v1.13.1 against
+// the driver's own v1.14.0 launch, called it stale, and prescribed
+// codebase_graph_build; the rebuild ran through the session's server, re-stamped
+// v1.13.1 in 5.8s, and the finding came back byte-identical.
+//
+// So the builder is judged against the session's server wherever this driver
+// can KNOW its version, and the answer says how it knows:
+//
+//   - the plugin's definition fixes a version (pluginLaunchVersion) — read
+//     from the definition, or, when this driver ran that same definition, from
+//     the handshake, which is the better witness of the two;
+//   - the definition floats (`npx … socraticode@latest`) — the session
+//     resolved it when it started, which this driver cannot see, so the
+//     version is null and the basis says why. #305 read the plugin cache's
+//     directory name as the session's server version; that directory names the
+//     PLUGIN, and the 1.13.1 plugin it named launches `socraticode@latest`.
+//   - no plugin definition at all — nothing records which server that is.
+//
+// Pure over its inputs, so every branch is a fixture without a server.
+// → { version: string|null, basis: string, plugin: { version, launches }|null }
+function sessionServer({ launch, plugin, checkVersion }) {
+  if (!plugin) {
+    return { version: null, basis: 'no Claude Code plugin definition was found', plugin: null };
+  }
+  const described = {
+    version: plugin.pluginVersion ?? null,
+    launches: npxSpec(plugin) ?? [plugin.command, ...plugin.args].join(' '),
+  };
+  const fixed = pluginLaunchVersion(plugin);
+  if (fixed && launch?.plugin === true) {
+    return {
+      version: checkVersion || fixed,
+      basis: 'the plugin\'s own definition, which this check launched too',
+      plugin: described,
+    };
+  }
+  if (fixed) {
+    return { version: fixed, basis: `the plugin's definition fixes it: ${described.launches}`, plugin: described };
+  }
+  const floating = pluginSpecFloats(plugin);
+  if (floating) {
+    return {
+      version: null,
+      basis: `the plugin launches '${floating}', which the session resolved when it started`,
+      plugin: described,
+    };
+  }
+  return {
+    version: null,
+    basis: `the plugin's definition (${described.launches}) names no version this check can read`,
+    plugin: described,
+  };
 }
 
 // What that floating spec resolves to right now. Bounded to the same budget
@@ -956,8 +1072,9 @@ function parseGraphCounts(text) {
 // Rejected: "Average dependencies per file rounds to 0.0" is the same metric at
 // a threshold of 0.05, but read off a *printed, rounded* string — exactly the
 // server-formatting dependency gotcha H exists to avoid. Rejected as a gate:
-// `Unresolved %`, which is a call-graph statistic and is legitimately high in
-// dynamic code; it is reported as corroboration, never as the verdict.
+// `Unresolved %`, the share of captured symbol edges matching no project
+// symbol, which counts edges into builtins and external libraries by
+// construction; it is reported beside the verdict, never as it (#308).
 //
 // MIN_NODES — below 20 files, 0.1 edges/node is under two edges and noise
 // dominates; a repo that small is also one where grep is fine. Verdict
@@ -1327,36 +1444,126 @@ function builderFinding(builder) {
   return null;
 }
 
-// The unresolvedPct finding, worded from the verdict (#216).
+// The builder finding health-check and verify report: judged against the
+// server answering the SESSION's queries where that is known, and severed from
+// a remedy that cannot work where it is not (#305).
+//
+// `builderFinding` above compares the graph with the server THIS DRIVER
+// launched, and names codebase_graph_build. That remedy runs through the
+// session's server, so it clears the finding only when the session's server is
+// at least as new as ours. Three cases, three answers:
+//
+//   1. The session's version is known and the graph is OLDER than it — a real
+//      #297 defect, repaired by codebase_graph_build. Judged against the
+//      session even where our own server would call the graph current (a pin
+//      behind the session): the session is what answers queries about it.
+//   2. The session's version is known and the graph is NOT older than it, but
+//      is older than ours — the graph is exactly what the session's server
+//      would cut, so a rebuild re-stamps the same version and nothing moves. A
+//      NOTE, costing no exit code, naming the remedy that does move it: update
+//      the plugin, restart Claude Code so its MCP server reloads, then rebuild.
+//      Before #305 this was a daily defect whenever the plugin lagged, and the
+//      hook stopped being silent-when-clean over a state no rebuild changes.
+//   3. The session's version is unknown and the graph is older than ours — a
+//      DEFECT that says it could not tell which. Demoting it would regress #297
+//      on today's common host, whose plugin floats: there a graph cut long ago
+//      is exactly this shape. The remedy is the sequence #305 ran, completed:
+//      rebuild, and if the stamp does not move, restart so the session's
+//      server reloads — a floating definition resolves anew — and rebuild.
+//
+// An unstamped graph stays a defect everywhere: any server that rebuilds it
+// stamps it, the session's included.
+//
+// → { severity, message, against: 'session'|'check' } | null
+function graphBuilderFinding(builder, session) {
+  if (builder.state === 'absent') return null;
+  if (builder.state === 'unknown') {
+    return { severity: SEVERITY.defect, message: builderFinding(builder), against: 'check' };
+  }
+  const built = builder.builtBy;
+  const ours = builder.serverVersion ? ` (v${builder.serverVersion})` : '';
+  const theirs = session?.version ?? null;
+  const vsSession = theirs ? compareVersions(built, theirs) : null;
+  if (vsSession === -1) {
+    return {
+      severity: SEVERITY.defect,
+      against: 'session',
+      message: `graph was built by v${built}, older than the server answering this session's queries `
+        + `(v${theirs}; ${session.basis}) — any resolver fix since then is absent from it; `
+        + 'run codebase_graph_build',
+    };
+  }
+  if (builder.state !== 'stale') return null;
+  if (vsSession === 0 || vsSession === 1) {
+    return {
+      severity: SEVERITY.note,
+      against: 'session',
+      message: `graph was built by v${built}, ${vsSession === 0 ? 'the version of' : 'newer than'} the `
+        + `server answering this session's queries (v${theirs}; ${session.basis}); only this `
+        + `check's own server${ours} is newer, so codebase_graph_build through the session would `
+        + `re-stamp v${theirs} — update the plugin, restart Claude Code so its MCP server reloads, `
+        + 'then run codebase_graph_build',
+    };
+  }
+  return {
+    severity: SEVERITY.defect,
+    against: 'check',
+    message: `graph was built by v${built}, older than this check's own server${ours}, and which `
+      + `server answers the session's queries could not be determined (${session?.basis ?? 'not measured'}) `
+      + '— run codebase_graph_build from the session; if the rebuild still stamps '
+      + `v${built}, that server is behind this one: restart Claude Code so its MCP server reloads, `
+      + 'then rebuild',
+  };
+}
+
+// The unresolvedPct finding, worded from the verdict (#216, #308).
 //
 // The line itself is unconditional — it is reported whenever the figure clears
 // the threshold, on healthy graphs too, because the statistic is worth having
 // either way and the alternative (moving it inside the verdict branches) hides
 // it from every repo that is fine. Only the gloss moves.
 //
-// Why it has to: beside `low` or `unknown` there is a yield finding already in
-// the list for this to corroborate. Beside `ok` there is nothing, and
-// "corroborates a resolver problem" standing alone parses as an accusation —
-// one cohort repo distrusted a provably exact import graph for weeks on the
-// strength of it, paying an `rg` round-trip on every dependency question.
+// The denominator is the server's own, not a paraphrase of it (#308). Since
+// v1.14.0 `codebase_graph_status` explains the figure itself: the share of
+// CAPTURED SYMBOL EDGES — calls, imports, re-exports, type or value references
+// — that matched no project symbol. This gloss used to say "call edges", which
+// undercounts what is being counted, and on a non-`ok` verdict it said
+// "corroborates a resolver problem", which is the reading v1.14.0 added its
+// paragraph to prevent: edges into runtime builtins and external libraries
+// land in the share by construction, so it "is not a resolver failure rate".
+// A cohort repo cited the 70% figure as the CAUSE of a codebase_impact
+// under-report in its own docs, and it was the server's paragraph, not this
+// line, that showed the causal claim was nobody's but the reader's.
+//
+// So neither branch offers it as evidence. Beside `ok` it says why it runs
+// high on healthy code, so it is not read as a failure rate (#216: standing
+// alone, the corroboration wording had one repo distrusting a provably exact
+// import graph for weeks). Beside `low` or `unknown` the verdict already
+// stands on the yield arithmetic and the server's advisory, and the figure is
+// reported next to it — a second witness it cannot be would read, on a healthy
+// repo with a lot of external surface, as one against the resolver.
 //
 // It is pushed at SEVERITY.note on EVERY verdict, not only on `ok` (#220). The
 // figure is never independently actionable — no re-index lowers it, because the
-// unresolved callees are framework and stdlib symbols that are not in the repo.
-// Beside `low` or `unknown` the yield finding it corroborates is already a
-// defect and already sets the exit code, so the severity here changes nothing
-// there; beside `ok` it is the difference between a silent healthy repo and a
-// daily accusation.
+// unmatched edges point at symbols that are not in the repo. Beside `low` or
+// `unknown` the yield finding is already a defect and already sets the exit
+// code, so the severity here changes nothing there; beside `ok` it is the
+// difference between a silent healthy repo and a daily accusation.
 //
 // Exported, and rendered from one place, because the generated doc quotes it
 // verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
 // agree, so a reword cannot leave the doc behind. The returned string carries
 // no severity prefix — renderFinding() adds it — so the doc quotes the message
 // and not the envelope.
+const UNRESOLVED_COUNTS = 'share of captured symbol edges (calls, imports, re-exports, type or '
+  + 'value references) matching no project symbol';
+const UNRESOLVED_BY_CONSTRUCTION = 'edges into builtins and external libraries count by construction';
 function unresolvedFinding(unresolvedPct, verdict) {
   const gloss = verdict === 'ok'
-    ? 'share of call edges with no first-party callee; verdict is ok, so this is a statistic, not a defect'
-    : 'corroborates a resolver problem';
+    ? `${UNRESOLVED_COUNTS}; ${UNRESOLVED_BY_CONSTRUCTION}, so it runs high on healthy code — `
+      + 'verdict is ok, so this is a statistic, not a defect'
+    : `${UNRESOLVED_COUNTS} — reported beside the verdict, not as evidence for it, since `
+      + UNRESOLVED_BY_CONSTRUCTION;
   return `graph unresolved ${unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — ${gloss}`;
 }
 
@@ -2342,8 +2549,12 @@ async function cmdHealthCheck(projectPath, probePath) {
   // `pinDrift` for the same reason, and it has THREE ways of not being
   // measured: no pin, a pin against a plugin that names an exact version, and
   // a launch the store guard stopped. Null says all three the same way, and
-  // `launch.pinned` is what tells them apart (#295).
-  const report = { projectPath, healthy: true, server: null, pinDrift: null, findings: [] };
+  // `launch.pinned` is what tells them apart (#295). `sessionServer` likewise:
+  // null when no server was launched, an object with a null `version` and a
+  // `basis` saying why when one was and the session's could not be read (#305).
+  const report = {
+    projectPath, healthy: true, server: null, sessionServer: null, pinDrift: null, findings: [],
+  };
 
   // ── the store a launch would address (#287) ──────────────────────────────
   // Before the server, not after it: the launch is the write. With a defect
@@ -2390,6 +2601,15 @@ async function cmdHealthCheck(projectPath, probePath) {
       pinned: client.launch.pinned === true,
       pinVersion: client.launch.pinVersion ?? null,
     };
+    // `server` above is the server THIS CHECK launched. The graph is rebuilt by
+    // the one answering the session's queries, which under Claude Code is the
+    // plugin's, and the two need not agree (#305). Recorded beside it, with how
+    // its version was known or why it was not, so the JSON says which server
+    // the builder was judged against.
+    const session = sessionServer({
+      launch: client.launch, plugin: launchFromPluginConfig(), checkVersion: client.serverVersion,
+    });
+    report.sessionServer = session;
 
     const health = await call('codebase_health', {});
     if (health.error) {
@@ -2586,8 +2806,23 @@ async function cmdHealthCheck(projectPath, probePath) {
         importResolution: v.advisory,
       };
       if (!report.graph.ready) defect('graph is not READY');
-      const stamped = builderFinding(v.builder);
-      if (stamped) defect(stamped);
+      // Which versions the builder was compared against, named rather than
+      // implied: `builder.serverVersion` is this check's own server, and
+      // `ruledBy` says which of the two decided (#305). The session's rules
+      // wherever both it and the stamp are readable — the same condition
+      // graphBuilderFinding branches on.
+      const stamped = graphBuilderFinding(v.builder, session);
+      report.graph.builderCheck = {
+        builtBy: v.builder.builtBy,
+        checkServer: v.builder.serverVersion,
+        sessionServer: session.version,
+        ruledBy: compareVersions(v.builder.builtBy, session.version) === null
+          ? 'checkServer' : 'sessionServer',
+      };
+      // Pushed with the severity the function decided, like pinDriftFinding
+      // below: which severity a builder gap earns IS the #305 decision, so it
+      // lives where the fixtures reach it.
+      if (stamped) findings.push({ severity: stamped.severity, message: stamped.message });
       if (v.disagreement) note(v.disagreement);
       if (v.verdict === 'low') {
         defect(`graph yield LOW — ${v.reason}; install the degraded Code Exploration Policy (variant B)`);
@@ -2611,10 +2846,10 @@ async function cmdHealthCheck(projectPath, probePath) {
         defect(`graph yield UNKNOWN — ${v.reason}`);
       }
       // Worded from the COMPOSED verdict, not the local one: the gloss turns on
-      // whether a yield finding is on the list for this to corroborate, and
+      // whether a yield finding is on the list for this to sit beside, and
       // since #207 that is what `graphVerdict` decides. Reading `y.verdict`
-      // here would call the figure a corroborating symptom on exactly the repo
-      // the server just certified — the accusation #216 removed.
+      // here would word the figure for a failing graph on exactly the repo the
+      // server just certified — the accusation #216 removed.
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }
@@ -2765,11 +3000,17 @@ async function cmdVerify(projectPath) {
     if (okGraph) {
       const v = graphVerdict(graph, client.serverVersion);
       console.error(`[driver] graph yield: ${v.verdict.toUpperCase()} (per ${v.source}) — ${v.reason}`);
-      const stamped = builderFinding(v.builder);
+      // Judged against the session's server where it is known, exactly as
+      // health-check judges it (#305) — a fresh install told to rebuild by a
+      // remedy that re-stamps the same version would conclude the tool is
+      // broken, which is the reading #305 records.
+      const stamped = graphBuilderFinding(v.builder, sessionServer({
+        launch: client.launch, plugin: launchFromPluginConfig(), checkVersion: client.serverVersion,
+      }));
       // Printed here too, and before the policy line: a fresh install reading
       // STALE knows to rebuild rather than to accept variant B for a graph that
       // only needs recutting (#207).
-      if (stamped) console.error(`[driver] graph builder: ${stamped}`);
+      if (stamped) console.error(`[driver] graph builder: ${renderFinding(stamped)}`);
       if (v.disagreement) console.error(`[driver] note: ${v.disagreement}`);
       if (v.verdict === 'low') {
         console.error('[driver] → write the DEGRADED Code Exploration Policy (variant B): route imports/dependents/blast-radius to grep, and warn that empty graph output is tool failure, not absence.');
@@ -2808,10 +3049,20 @@ Commands:
            codebase_graph_status, with the graph measured by YIELD rather than
            by READY — the server's own import-resolution advisory where it
            states one (1.13.0+), our edges/file floor where it is silent — and
-           with the BUILD THAT CUT the graph compared against the running
-           server's own version, so a stored graph older than the resolvers
-           answering queries about it is its own named defect rather than a
-           silent READY (#297). JSON verdict on stdout, findings on stderr.
+           with the BUILD THAT CUT the graph compared against a server's own
+           version, so a stored graph older than the resolvers answering
+           queries about it is its own named defect rather than a silent READY
+           (#297). The server it is judged against is the one answering the
+           session's queries wherever the plugin's definition fixes that
+           version, and this check's own launch where the definition floats
+           or there is none — the finding then says it could not tell which
+           (#305). A graph matching the session's
+           server but older than this check's is a note, not a defect: a
+           rebuild through the session re-stamps the same version, so the
+           remedy is update the plugin, restart Claude Code, then rebuild.
+           JSON "server" is this check's own launch, "sessionServer" the
+           session's and how it was known, "graph.builderCheck" which ruled.
+           JSON verdict on stdout, findings on stderr.
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
            SOCRATICODE_LINKED_PROJECTS), which the server drops silently.
@@ -2864,7 +3115,9 @@ Env:
                       when absent (default ~/.socraticode/pin; populate with
                       'npm install --prefix <dir> socraticode@<version>')
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
-                      installed_plugins.json (default ~/.claude)
+                      installed_plugins.json (default ~/.claude) — both to
+                      launch and, in health-check and verify, to read which
+                      server version the session runs (#305)
   npm_config_cache    npm cache dir whose _npx/ subtree is searched (default ~/.npm)
   POLL_INTERVAL_MS    status poll cadence (default 15000)
   INDEX_TIMEOUT_MS    overall ceiling (default 7200000 = 2h)
@@ -3038,6 +3291,9 @@ export {
   // the server's advisory, the builder stamp, and the gate that composes them
   // with the local arithmetic (#207)
   parseImportResolution, parseGraphBuilder, graphVerdict, builderFinding,
+  // the builder judged against the server answering the session, and how
+  // that server's version is known (#305)
+  graphBuilderFinding, sessionServer, pluginLaunchVersion,
   // the ordering behind "older than the running server" — exported so the
   // refuse-to-guess cases can be asserted directly, not only through a
   // builder stamp that happens to exercise them (#297)

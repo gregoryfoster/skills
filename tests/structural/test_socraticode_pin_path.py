@@ -9,8 +9,10 @@ no import or symlink binds together:
   driver actually looks;
 * `scripts/preflight.sh`, as `SC_PIN_DIR`'s fallback, which decides which build
   the Node 26 gate judges and which path the low-memory hint prints;
-* `references/troubleshooting.md`, in the `npm install --prefix` line an
-  operator copies.
+* `references/host-memory.md`, in the `npm install --prefix` line an
+  operator copies (in `troubleshooting.md` until
+  [#307](https://github.com/gregoryfoster/skills/issues/307) moved row U's
+  procedures into their own reference).
 
 Drift is silent and asymmetric: an operator installs where the doc says, the
 driver looks somewhere else, and the result is not an error but a host that
@@ -32,7 +34,7 @@ import pytest
 SKILL = Path(__file__).resolve().parents[2] / "skills" / "init-socraticode"
 DRIVER = SKILL / "scripts" / "mcp-driver.mjs"
 PREFLIGHT = SKILL / "scripts" / "preflight.sh"
-DOC = SKILL / "references" / "troubleshooting.md"
+DOC = SKILL / "references" / "host-memory.md"
 
 # The one value under test. A change here is a deliberate move of the default,
 # and it must land in all three files in the same commit.
@@ -83,19 +85,19 @@ def test_the_documented_install_writes_where_the_driver_looks(
     sources: dict[str, str],
 ) -> None:
     """Every `npm install --prefix` in the doc targets the same default."""
-    prefixes = re.findall(r"npm install --prefix (\S+)", sources["troubleshooting.md"])
+    prefixes = re.findall(r"npm install --prefix (\S+)", sources[DOC.name])
     assert prefixes, (
-        "troubleshooting.md no longer shows an `npm install --prefix` line. "
+        f"{DOC.name} no longer shows an `npm install --prefix` line. "
         "That command is how an operator creates the pin; without it the "
         "feature is undiscoverable from the docs."
     )
     expected = "~/" + "/".join(DEFAULT_TAIL)
     # A `<dir>`/`$SC_PIN_DIR` placeholder is fine — it names no competing path.
     literal = [p for p in prefixes if not p.startswith(("<", "$"))]
-    assert literal, f"no concrete install path in troubleshooting.md among {prefixes}"
+    assert literal, f"no concrete install path in {DOC.name} among {prefixes}"
     for got in literal:
         assert got == expected, (
-            f"troubleshooting.md tells the operator to install into {got}, but "
+            f"{DOC.name} tells the operator to install into {got}, but "
             f"the driver looks in {expected}. Following the doc would leave the "
             "pin unused and the host still installing at every launch."
         )

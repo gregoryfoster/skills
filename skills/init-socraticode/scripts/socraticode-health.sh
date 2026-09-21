@@ -56,7 +56,11 @@ What it reports (to stdout, which Claude Code injects as session context):
     a version the graph predated. A stale or unstamped builder is reported
     here as its own defect, naming both versions and codebase_graph_build, so
     the hazard no longer has to live as a hand-written working rule in each
-    repo's AGENTS.md.
+    repo's AGENTS.md. The graph is judged against the server answering the
+    session's queries where the plugin's definition fixes its version (#305):
+    a graph that matches it but trails the driver's own server is a note, not
+    reported here, because a rebuild through the session re-stamps the same
+    version — update the plugin, restart Claude Code, then rebuild.
   - A configured repo missing its toolchain on this machine (#281): no node,
     so the codebase_* tools cannot start, or no driver, so nothing was
     measured. Only past the manifest gate — see Behaviour.
