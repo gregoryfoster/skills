@@ -1237,9 +1237,18 @@ def _plugin_config(tmp_path: Path, definition: dict, version: str = "1.13.1") ->
             }
         )
     )
+    # A user-scope entry, as `claude plugin install` writes by default: one
+    # without a scope applies nowhere, which is Claude Code's rule (#305 CR 28).
     (config / "plugins" / "installed_plugins.json").write_text(
         json.dumps(
-            {"plugins": {"socraticode@socraticode": [{"installPath": str(install)}]}}
+            {
+                "version": 2,
+                "plugins": {
+                    "socraticode@socraticode": [
+                        {"scope": "user", "installPath": str(install)}
+                    ]
+                },
+            }
         )
     )
     return config

@@ -191,20 +191,52 @@ function pluginServerFromVersionDir(versionDir) {
   return null;
 }
 
-function launchFromPluginConfig() {
+// Does an installed_plugins.json entry load in a session at `project`? Claude
+// Code's own rule, read from the 2.1.278 binary: a `user` or `managed` entry
+// applies everywhere; a `project` or `local` one only where its projectPath is
+// the project, or names the same repository — so a worktree of it matches.
+// Each install APPENDS an entry, and the loader takes the first applicable one
+// in registry order whose install is present; there is no scope precedence to
+// apply beyond that order (#305 CR 28).
+//
+// It matters because #305 made the entry decide severity: sessionServer()
+// reads the version the session's server runs from it, and a project entry
+// for some other checkout, taken first-found, judged this project's graph
+// against a server its session never loads.
+function registryEntryApplies(entry, project) {
+  if (entry?.scope === 'user' || entry?.scope === 'managed') return true;
+  if (typeof entry?.projectPath !== 'string' || !entry.projectPath) return false;
+  const here = realOrSelf(resolvePath(project));
+  if (realOrSelf(resolvePath(entry.projectPath)) === here) return true;
+  const repo = mainCheckoutOf(here);
+  return repo !== null && mainCheckoutOf(resolvePath(entry.projectPath)) === repo;
+}
+
+// `project` is the checkout whose session is in question: the project being
+// checked where there is one, else the cwd, which is the session's own when
+// the health hook runs this.
+function launchFromPluginConfig({ project = process.cwd() } = {}) {
   const claudeDir = process.env.CLAUDE_CONFIG_DIR || joinPath(homedir(), '.claude');
 
   // installed_plugins.json records the install path of the version actually
   // enabled. Prefer it over scanning the cache: with two versions cached, an
   // mtime scan can pick the one the session ISN'T running, which is precisely
   // the drift reading the plugin's own config exists to avoid.
+  //
+  // Only the entries that load at `project` count. When the registry lists
+  // the plugin and none of them does, the session there has no plugin, and a
+  // cache scan would find the other project's version and report it as this
+  // one's — so that is an answer, not a reason to scan.
   const installed = [];
+  let listed = false;
   try {
     const registry = JSON.parse(readFileSync(joinPath(claudeDir, 'plugins', 'installed_plugins.json'), 'utf8'));
     for (const entry of registry?.plugins?.['socraticode@socraticode'] ?? []) {
-      if (entry?.installPath) installed.push(entry.installPath);
+      listed = true;
+      if (entry?.installPath && registryEntryApplies(entry, project)) installed.push(entry.installPath);
     }
   } catch { /* no registry, or unreadable — fall back to the cache scan */ }
+  if (listed && installed.length === 0) return null;
 
   const cacheDir = joinPath(claudeDir, 'plugins', 'cache', 'socraticode', 'socraticode');
   for (const versionDir of [...installed, ...subdirsNewestFirst(cacheDir)]) {
@@ -2607,7 +2639,7 @@ async function cmdHealthCheck(projectPath, probePath) {
     // its version was known or why it was not, so the JSON says which server
     // the builder was judged against.
     const session = sessionServer({
-      launch: client.launch, plugin: launchFromPluginConfig(), checkVersion: client.serverVersion,
+      launch: client.launch, plugin: launchFromPluginConfig({ project: projectPath }), checkVersion: client.serverVersion,
     });
     report.sessionServer = session;
 
@@ -2868,7 +2900,9 @@ async function cmdHealthCheck(projectPath, probePath) {
   // After the server checks, like the linked-project block below, so the
   // infrastructure findings lead the list. No server call: the pin's version is
   // the filesystem's and the floating one is the registry's.
-  const floatingSpec = report.launch?.pinned ? pluginSpecFloats() : null;
+  const floatingSpec = report.launch?.pinned
+    ? pluginSpecFloats(launchFromPluginConfig({ project: projectPath }))
+    : null;
   if (floatingSpec) {
     const running = report.server?.version || report.launch.pinVersion;
     const resolves = registryLatest();
@@ -3005,7 +3039,7 @@ async function cmdVerify(projectPath) {
       // remedy that re-stamps the same version would conclude the tool is
       // broken, which is the reading #305 records.
       const stamped = graphBuilderFinding(v.builder, sessionServer({
-        launch: client.launch, plugin: launchFromPluginConfig(), checkVersion: client.serverVersion,
+        launch: client.launch, plugin: launchFromPluginConfig({ project: projectPath }), checkVersion: client.serverVersion,
       }));
       // Printed here too, and before the policy line: a fresh install reading
       // STALE knows to rebuild rather than to accept variant B for a graph that
@@ -3309,6 +3343,8 @@ export {
   indexingInProgress, lastOperationCompleted, lastOperationFailed,
   parseLastOpError, indexIncomplete, anotherProcessIndexing, indexSettled,
   expectedArtifactCount, resolveServerLaunch,
+  // which registry entry the session at a project loads (#305 CR 28)
+  launchFromPluginConfig, registryEntryApplies,
   // the pin, and the drift it trades the install spike for (#295) — the
   // resolution half as well as the decision half, so a reordering fails a
   // fixture rather than only a hand-run
