@@ -163,6 +163,8 @@ if [[ -e "$UV_ARGS_FILE" || -L "$UV_ARGS_FILE" ]]; then
     exit 2
   fi
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # A CRLF file: IFS splitting leaves the \r on the last word (`seed\r`).
+    line=${line%$'\r'}
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     read -r -a words <<<"$line"   # split on whitespace; never glob-expanded
     [[ ${#words[@]} -eq 0 ]] || UV_ARGS+=("${words[@]}")

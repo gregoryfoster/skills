@@ -359,6 +359,29 @@ def test_the_knob_reaches_every_uv_call(variant: str, project: Path) -> None:
 
 
 @pytest.mark.parametrize("variant", UV_VARIANTS)
+def test_a_crlf_knob_reaches_uv_without_its_carriage_returns(
+    variant: str, project: Path
+) -> None:
+    """A knob saved with Windows line endings. `read -r -a` splits on IFS
+    whitespace, which does not include `\\r`, so `--group seed\\r\\n` used to
+    reach uv as `seed\\r` and a blank CRLF line as an argument of its own — a
+    uv error about a group nobody wrote, with the cause invisible in the
+    terminal."""
+    (project / KNOB).write_bytes(
+        b"# power-map's own hook\r\n\r\n--group   seed\r\n  # indented\r\n--extra dev\r"
+    )
+    r = _run(variant, project)
+    assert r.returncode == 0, f"stdout={r.stdout}\nstderr={r.stderr}"
+    calls = _calls(project)
+    assert calls, f"{variant}: uv never ran"
+    for call in calls:
+        assert _uv_args(call["argv"]) == ["--group", "seed", "--extra", "dev"], (
+            f"{variant}: a CRLF {KNOB} reached uv with its carriage returns: "
+            f"{call['argv']}"
+        )
+
+
+@pytest.mark.parametrize("variant", UV_VARIANTS)
 @pytest.mark.parametrize("shape", ["directory", "dangling-symlink"])
 def test_an_unusable_knob_stops_the_gate(
     variant: str, shape: str, project: Path
