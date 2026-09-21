@@ -4,7 +4,9 @@
 #
 # Detect-and-instruct only: every failing gate prints the exact fix command and
 # exits non-zero. This script NEVER installs or mutates the host toolchain
-# (no auto brew/apt/nvm, no docker pulls) — that is the operator's call.
+# (no auto brew/apt/nvm, no docker pulls, and no `claude update`, which has no
+# check-only mode — Claude Code's version and install age are reported
+# instead) — that is the operator's call.
 #
 # Usage:
 #   bash preflight.sh            # run all gates; exit 0 only if every gate passes
@@ -986,12 +988,103 @@ else
   pass "npx reachable"
 fi
 
+# ── Claude Code's own version and install age (advisory; #310) ──────────────
+# Everything else this skill depends on has its version reported — Node against
+# upstream's engines, the build that launches, the store, the plugin's
+# registration — except the host running all of it. A CannObserv workstation
+# sat on Claude Code 2.1.71 from March to September while 2.1.278 was current,
+# preflight green on every run, and #309 then reasoned from current
+# documentation about a six-month-old binary: two confidently wrong
+# conclusions reached shipped comments and one an upstream issue. The version
+# being invisible is what made the mistake invisible.
+#
+# Age, not a version comparison, because nothing may ask what is current:
+# `claude update` has no check-only mode — it installs — and this script never
+# mutates the host or makes a network call for this. The native installer keeps
+# one file per version under ~/.local/share/claude/versions/, with
+# ~/.local/bin/claude linked at the running one, and each file's mtime is its
+# install date; ~/.claude.json's installMethod says whether that layout applies.
+# "Installed 195 days ago" reads on its own, where a bare version number needs
+# the current one beside it. Releases ran at about one a day between those two
+# versions (207 across 195 days), so 30 days is roughly 30 releases behind.
+#
+# Every path it cannot measure says so; none is skipped silently.
+CLAUDE_AGE_WARN_DAYS=30
+claude_version_age() {
+  local raw ver method link target mtime now days reason=""
+  raw="$(claude --version 2>/dev/null || true)"
+  # "2.1.278 (Claude Code)" — the first word of the first line, when it is a
+  # release number. Parameter expansion rather than awk: an advisory reading
+  # must not be able to end the run, and under `set -e` a missing tool inside
+  # an assignment's command substitution does exactly that.
+  ver="${raw%%$'\n'*}"
+  ver="${ver%% *}"
+  case "$ver" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *)
+      warn "Claude Code: 'claude --version' ($(command -v claude)) reported no version, so its version and install age were not determined"
+      return 0
+      ;;
+  esac
+  method="$(grep -oE '"installMethod"[[:space:]]*:[[:space:]]*"[^"]*"' "$HOME/.claude.json" 2>/dev/null \
+    | head -n 1 | sed -E 's/.*"([^"]*)"$/\1/' || true)"
+  link="$HOME/.local/bin/claude"
+  if [ -z "$method" ]; then
+    reason="$HOME/.claude.json records no installMethod"
+  elif [ "$method" != native ]; then
+    reason="installMethod is '$method' — only the native installer keeps a dated file per version"
+  else
+    if [ -L "$link" ]; then
+      target="$(readlink "$link" 2>/dev/null || true)"
+      case "$target" in /*) ;; ?*) target="$HOME/.local/bin/$target" ;; esac
+    else
+      target="$HOME/.local/share/claude/versions/$ver"
+    fi
+    case "$target" in
+      */claude/versions/"$ver")
+        # GNU stat first, then BSD: `stat -c` is an illegal option on macOS,
+        # and on Linux `stat -f` means the filesystem rather than the file.
+        mtime="$(stat -c %Y "$target" 2>/dev/null || stat -f %m "$target" 2>/dev/null || true)"
+        if [ ! -e "$target" ]; then
+          reason="there is no $target"
+        else
+          case "$mtime" in
+            '' | *[!0-9]*) reason="the modification time of $target could not be read" ;;
+          esac
+        fi
+        ;;
+      *)
+        reason="$link points at ${target:-nothing}, not the $ver that 'claude --version' reports"
+        ;;
+    esac
+  fi
+  now="$(date +%s 2>/dev/null || true)"
+  case "$now" in
+    '' | *[!0-9]*) [ -n "$reason" ] || reason="the clock could not be read" ;;
+  esac
+  if [ -n "$reason" ]; then
+    warn "Claude Code $ver — install age not determined: $reason"
+    return 0
+  fi
+  days=$(((now - mtime) / 86400))
+  [ "$days" -ge 0 ] || days=0
+  if [ "$days" -gt "$CLAUDE_AGE_WARN_DAYS" ]; then
+    warn "Claude Code $ver — installed $days days ago, past the $CLAUDE_AGE_WARN_DAYS-day mark (releases have run at about one a day)"
+    hint "claude update — run it yourself: it installs, and has no check-only mode, so this check never calls it"
+  else
+    pass "Claude Code $ver — installed $days day(s) ago"
+  fi
+}
+
 # ── Gate 4 (advisory): plugin MCP server registered and Connected ───────────
 # Not fatal — the bundled mcp-driver.mjs fallback works without the plugin being
 # wired into the session (gotcha A). Reported so the operator knows which path
 # they are on. `claude` may be absent when preflight runs outside Claude Code.
 if command -v claude >/dev/null 2>&1; then
-  # Marketplace first: `socraticode@socraticode` is plugin@marketplace, so the
+  # The host first: every reading below is of something this binary does.
+  claude_version_age
+
+  # Then the marketplace: `socraticode@socraticode` is plugin@marketplace, so the
   # install in Phase 2 cannot resolve until the marketplace is registered.
   # Reported separately from the connection check so a fresh host doesn't read
   # its missing marketplace as "just needs a restart".
@@ -1046,7 +1139,7 @@ if command -v claude >/dev/null 2>&1; then
     hint "Remove the standalone: claude mcp remove socraticode"
   fi
 else
-  printf '  \033[33m•\033[0m %s\n' "claude CLI not found — skipping plugin-connection check"
+  printf '  \033[33m•\033[0m %s\n' "claude CLI not found — Claude Code's version and install age were not determined, and the plugin-connection check is skipped"
 fi
 
 echo

@@ -86,8 +86,9 @@ refused, and warns if the registry is unreachable —
 for `STORE=external`, the store's URL, TLS, key and answer, the external
 Ollama, and whether this session carries the settings `env` block (a first
 install passes the values inline, the key already in place); and advisory
-checks that Docker starts at boot (gotcha L), the `socraticode` marketplace is
-registered, and the plugin MCP server is Connected.
+readings — host memory and whether a `MemoryLow=` takes effect, Docker at boot
+(gotcha L), Claude Code's version and install age, the `socraticode`
+marketplace, the plugin MCP server Connected.
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
 non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix
@@ -288,10 +289,9 @@ either:
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" index "<PROJECT_PATH>"
 ```
 
-The driver speaks JSON-RPC to the plugin's stdio server directly, keeps it alive
-during indexing (gotcha B), and blocks on the same three-signal predicate before
-returning. It **owns its child process and kills by PID** — no `pkill -f`
-self-match (gotcha G) — and parses status strings loosely (gotcha H).
+The driver speaks JSON-RPC to the plugin's server directly, keeps it alive while
+indexing (gotcha B) and blocks on the same three-signal predicate; it **owns its
+child process** — no `pkill -f` (gotcha G).
 
 > **If the driver can't find the server**, `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
 > resolve` prints the launch command it would use, starting nothing (gotcha I);
