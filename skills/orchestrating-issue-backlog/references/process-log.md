@@ -82,6 +82,8 @@ the repo's 10,000-token per-doc budget, and a year index is the one doc every
 session of that year appends to. Splitting by year (#183/#197) bounded the file;
 it did not create headroom, because 2026's first five months already fill it. At
 ~7 sessions a month the affordable row is about **400 bytes** — the length of the
-shortest rows in the 2026 index, not the 1,500-byte rows further down it. Write
-the row that size, and put the rest in the entry file, which is what the entry
-file is for.
+shorter rows in the 2026 index, not the 700-plus-byte rows it also holds. Write
+the row that size, and put the rest in the entry file. **When a new row would put
+the index over budget, trim the longest older rows back to about 400 bytes** —
+their detail is in the entry files — **and do not split the year**: the answer the
+2026-08-19 crossing measured (`tests/structural/test_skill_self_budget.py`).
