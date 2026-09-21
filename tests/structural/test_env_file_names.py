@@ -215,6 +215,58 @@ class TestAnAbsoluteNameIsRefused:
         assert (pre.returncode, pre.stderr) == (run.returncode, run.stderr)
 
 
+class TestAnAbsolutePathHoldingASpace:
+    """#296 CR 23. The value is a space-separated list of names, so an absolute
+    path with a space in it was split like any list and refused as its first
+    fragment — "/…/my -> no such file", which is false — while the file the
+    caller actually named went unmentioned. The whole value is now tried as
+    the one path it may be before it is split."""
+
+    def test_the_whole_path_is_refused_with_the_spelling_that_reaches_it(
+        self, tmp_path: Path
+    ):
+        spaced = tmp_path / "my repo"
+        spaced.mkdir()
+        main, worktree = _checkout_with_worktree(spaced)
+        env = _no_ant(tmp_path, _clean_env())
+        r = _measure(
+            worktree, env, "--check-credential", "--env-file", str(main / ".env")
+        )
+        assert r.returncode == 1, r.stderr
+        assert f"{main / '.env'} -> pass it as: --env-file ../../../.env" in (
+            r.stderr
+        ), r.stderr
+        assert "no such file" not in r.stderr, r.stderr
+
+    def test_a_spelling_that_would_itself_be_split_is_not_offered(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        """Outside the root, the space lands in the relative spelling too, and
+        offering it would be offering the next refusal."""
+        _, worktree = layout
+        elsewhere = tmp_path / "key dir" / ".env"
+        elsewhere.parent.mkdir()
+        elsewhere.write_text(f"ANTHROPIC_API_KEY={KEY}\n")
+        env = _no_ant(tmp_path, _clean_env())
+        r = _measure(worktree, env, "--check-credential", "--env-file", str(elsewhere))
+        assert r.returncode == 1, r.stderr
+        assert "holds a space" in r.stderr, r.stderr
+        assert "pass it as" not in r.stderr
+        assert "no such file" not in r.stderr
+        assert KEY not in r.stderr
+
+    def test_a_missing_one_is_split_and_says_that_it_was(
+        self, layout: tuple[Path, Path], tmp_path: Path
+    ):
+        _, worktree = layout
+        missing = tmp_path / "no such dir" / ".env"
+        env = _no_ant(tmp_path, _clean_env())
+        r = _measure(worktree, env, "--check-credential", "--env-file", str(missing))
+        assert r.returncode == 1, r.stderr
+        assert f"{tmp_path / 'no'} -> no such file" in r.stderr, r.stderr
+        assert "splits its value on spaces" in r.stderr, r.stderr
+
+
 class TestAMissedNameIsNamed:
     """The #296 reproduction's other half: the WARN listed three sources and
     not the file the caller passed. A typo, a wrong directory and a worktree

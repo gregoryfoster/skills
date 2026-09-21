@@ -383,34 +383,67 @@ rel_from_root() {
 
 _abs_seen=0
 _root_phys="$(pwd -P)"
-# Unquoted, as at the lookup: the value is a space-separated list of names.
-for _name in $ENV_FILES; do
-  case "$_name" in /*) ;; *) continue ;; esac
-  if [ "$_abs_seen" -eq 0 ]; then
-    echo "ERROR --env-file takes names relative to the repo root, joined to it rather than" >&2
-    echo "      opened as paths, so an absolute one can never be read: it would be skipped" >&2
-    echo "      exactly as a missing file is, with nothing to say why." >&2
-    echo "      The repo root is \`git rev-parse --show-toplevel\`, which in a linked" >&2
-    echo "      worktree is the worktree rather than the main checkout. Here it is:" >&2
-    echo "        $ROOT" >&2
-    _abs_seen=1
-  fi
+
+refuse_abs_header() {
+  [ "$_abs_seen" -eq 0 ] || return 0
+  echo "ERROR --env-file takes names relative to the repo root, joined to it rather than" >&2
+  echo "      opened as paths, so an absolute one can never be read: it would be skipped" >&2
+  echo "      exactly as a missing file is, with nothing to say why." >&2
+  echo "      The repo root is \`git rev-parse --show-toplevel\`, which in a linked" >&2
+  echo "      worktree is the worktree rather than the main checkout. Here it is:" >&2
+  echo "        $ROOT" >&2
+  _abs_seen=1
+}
+
+# refuse_abs <absolute-name>: one line naming the relative spelling that reaches
+# it, or why none does.
+refuse_abs() {
+  local name="$1" dir rel=""
+  refuse_abs_header
   # Physical on both sides: the kernel resolves the `..` in "$ROOT/../.env"
   # against the real directory, so the arithmetic must too. Then -ef confirms
   # the name reaches THIS file before it is offered, so the suggestion is a
   # checked answer rather than a computed guess.
-  _rel=""
-  _dir="$(cd "$(dirname "$_name")" 2>/dev/null && pwd -P)" || _dir=""
-  # `${_dir%/}` so a file directly under / is "/.env", not "//.env".
-  if [ -n "$_dir" ]; then
-    _rel="$(rel_from_root "$_root_phys" "${_dir%/}/${_name##*/}")"
+  dir="$(cd "$(dirname "$name")" 2>/dev/null && pwd -P)" || dir=""
+  # `${dir%/}` so a file directly under / is "/.env", not "//.env".
+  if [ -n "$dir" ]; then
+    rel="$(rel_from_root "$_root_phys" "${dir%/}/${name##*/}")"
   fi
-  if [ -n "$_rel" ] && [ -f "$ROOT/$_rel" ] && [ "$ROOT/$_rel" -ef "$_name" ]; then
-    echo "      $_name -> pass it as: --env-file $_rel" >&2
-  else
-    echo "      $_name -> no such file, so no name reaches it either" >&2
+  if [ -z "$rel" ] || [ ! -f "$ROOT/$rel" ] || [ ! "$ROOT/$rel" -ef "$name" ]; then
+    echo "      $name -> no such file, so no name reaches it either" >&2
+    return 0
   fi
-done
+  # The value is split on whitespace, so a spelling that holds some is not one
+  # name either, and offering it would be offering the next refusal.
+  case "$rel" in
+    *[[:space:]]*)
+      echo "      $name -> its relative spelling, $rel, holds a space, and --env-file" >&2
+      echo "      splits on spaces, so no name reaches it: export ANTHROPIC_API_KEY instead" >&2 ;;
+    *) echo "      $name -> pass it as: --env-file $rel" >&2 ;;
+  esac
+}
+
+# A space in an absolute path used to be split like any other: "/Users/me/My
+# Repo/.env" was refused as "/Users/me/My -> no such file", which is false, and
+# the file the caller named went unmentioned (#296 CR 23). So the WHOLE value is
+# tried first, as the one path it may be; only if it is not an existing file is
+# it split, and then the refusal says that it was.
+case "$ENV_FILES" in
+  /*[[:space:]]*) if [ -f "$ENV_FILES" ]; then refuse_abs "$ENV_FILES"; fi ;;
+esac
+if [ "$_abs_seen" -eq 0 ]; then
+  # Unquoted, as at the lookup: the value is a space-separated list of names.
+  for _name in $ENV_FILES; do
+    case "$_name" in /*) refuse_abs "$_name" ;; esac
+  done
+  if [ "$_abs_seen" -eq 1 ]; then
+    case "$ENV_FILES" in
+      *[[:space:]]*)
+        echo "      (--env-file splits its value on spaces into names, and the names above" >&2
+        echo "      are what it read: a path holding a space is not one name.)" >&2 ;;
+    esac
+  fi
+fi
 [ "$_abs_seen" -eq 0 ] || exit 1
 
 # The other half of #296: a name that is well-formed and simply missed. Which of
