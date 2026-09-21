@@ -473,6 +473,16 @@ def test_the_worktree_root_is_set_by_its_knobs_not_by_overriding_its_resolver() 
     )
     for knob in ("`WORKTREE_ROOT`", "`.skills/worktree_root`"):
         assert knob in said[0], f"the sentence does not name {knob}: {said[0]}"
+    # "Beside it" is the project's scripts/ when the CALLER is a project copy:
+    # its $SCRIPT_DIR is scripts/, so a lone copied worktree-create.sh runs a
+    # project resolver or none at all (CR 56). The rule that keeps the two
+    # roots in step is whole-directory copies, as curating-context says of
+    # _context-lib.sh.
+    for text_ in (
+        "unless that script is itself a project `scripts/` copy",
+        "the whole `scripts/` directory, never single files",
+    ):
+        assert text_ in said[0], f"the sentence does not say {text_!r}: {said[0]}"
 
 
 def _section(body: str, heading: str) -> str:

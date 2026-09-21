@@ -64,7 +64,7 @@ Every operation resolves the worktree directory in this order (first match wins)
 2. **`.skills/worktree_root` file** — single-line file under the repo root; project's persistent default
 3. **`<repo-root>/.worktrees/`** — fallback when neither of the above is set
 
-Invoke `bash "<resolve-worktree-root.sh>"` to print the resolved root. Every other script that needs the root runs the `resolve-worktree-root.sh` beside it, never a project `scripts/` copy, so set the root with `WORKTREE_ROOT` or `.skills/worktree_root` — overriding the script changes only what this prints. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
+Invoke `bash "<resolve-worktree-root.sh>"` to print the resolved root. Every other script that needs the root runs the `resolve-worktree-root.sh` beside it — the skill's own, unless that script is itself a project `scripts/` copy — so set the root with `WORKTREE_ROOT` or `.skills/worktree_root`: overriding the resolver changes only what this prints. A project that copies any of these scripts copies the whole `scripts/` directory, never single files. The final worktree path is always `<resolved-root>/<branch-slug>`, where `<branch-slug>` is the branch name with `/` replaced by `-` (e.g., `feature/foo` → `feature-foo`).
 
 ## Venv linking — `.skills/worktree_venv`
 
