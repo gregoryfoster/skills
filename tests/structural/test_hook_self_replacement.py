@@ -17,11 +17,11 @@ that brace. What this file pins, and why each is shaped the way it is:
   `git submodule update`, and the run must still commit and push. The
   replacement is contrived on purpose: every byte offset the old parse
   position could resume at is a `:` no-op line, followed by one line that
-  records it ran. A realistic edit would do — #293's grew the file by 16 KB —
-  but where its offsets land depends on the layout of the day, so whether the
-  pre-fix hook garbles, re-runs a stretch of itself or happens to land on a
-  statement boundary would change as the script is edited. This way the
-  unprotected outcome is always the same one.
+  records it ran. A realistic edit would do — the range above grew the file
+  by 16 KB — but where its offsets land depends on the layout of the day, so
+  whether the pre-fix hook garbles, re-runs a stretch of itself or happens to
+  land on a statement boundary would change as the script is edited. This way
+  the unprotected outcome is always the same one.
 - **The fixture reaches the hazard.** The same run against a copy with the
   braces stripped out must execute the replacement's bytes and never commit.
   Without this control the first test could pass because the shim stopped

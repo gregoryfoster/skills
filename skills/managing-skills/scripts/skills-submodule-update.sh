@@ -355,9 +355,9 @@ _reconcile_unpushed() {
 # exists (#300). The glob spans every vendored repo, so a second one shipping
 # managing-skills is the fallback when the first fails; the loop used to break
 # after the first attempt either way, leaving a stale doctor with one $LOG line
-# as its only trace. When every installer fails that reaches stderr, the
-# channel every other failure here uses — once per run, though this is called
-# twice, since the second call would only repeat the first one's news.
+# as its only trace. When every installer fails, that reaches stderr — the
+# channel every other failure here uses — once per run although this is called
+# twice: the second call's failure would only repeat the first's news.
 DOCTOR_INSTALL_WARNED=0
 _install_doctor() {
   local installer tried=0
@@ -378,8 +378,8 @@ _install_doctor() {
   return 0
 }
 
-# Call site 1 of 2: every session, ahead of both gates. This is the
-# working-tree repair, and it should happen on every branch and every
+# _install_doctor, call site 1 of 2: every session, ahead of both gates. This
+# is the working-tree repair, and it should happen on every branch and every
 # session. Committing the result is a separate concern and stays behind
 # both gates, further down (#86).
 _install_doctor
@@ -586,11 +586,12 @@ else
     echo "skills update: still uninitialized after refresh: ${UNINIT% } (see $LOG)" >&2
   fi
 
-  # Call site 2 of 2 (#299): the update may just have replaced the vendored
-  # install-doctor.sh and doctor.sh, so run the POST-bump installer. Here,
-  # before COMMIT_PATHS is built, so the doctor staged and committed below is
-  # the one that ships with the pointer this run records — and so the -f
-  # guard there sees a doctor this call has only just created.
+  # _install_doctor, call site 2 of 2 (#299): the update may just have
+  # replaced the vendored install-doctor.sh and doctor.sh, so run the
+  # POST-bump installer. Here, before COMMIT_PATHS is built, so the doctor
+  # staged and committed below is the one that ships with the pointer this run
+  # records — and so the -f guard there sees a doctor this call has only just
+  # created.
   _install_doctor
 fi
 
