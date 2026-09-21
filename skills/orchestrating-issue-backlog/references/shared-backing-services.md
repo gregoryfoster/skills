@@ -29,7 +29,7 @@ parallelism on every commit, before any worker runs the suite on purpose (Worker
 the hook config and multiply by the agent count before accepting a ceiling (process-log
 2026-09-17 cli: the pre-commit hook runs `pytest tests/ -n 4` over a 3,319-test suite, so three
 agents can mean twelve concurrent pytest processes; the plan recorded a CPU-bound ceiling of 3
-with that multiplication as its reason, and measured no contention). The same read answers
+with that multiplication as its reason, and took no contention measurement). The same read answers
 Worker step 6 — where the hook runs the suite, the TDD red-phase commit needs `--no-verify` — so
 put the answer in every brief rather than leaving each worker to find it.
 
