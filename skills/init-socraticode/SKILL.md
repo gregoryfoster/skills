@@ -331,10 +331,11 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 | `unknown` | < 20 files, or the status string did not parse | report it; leave variant A |
 
 **A stale or unstamped `Built by:` line is its own defect.** `health-check`
-compares the stamp against the running server rather than waiting for the
-server's own `STALE` token, and reports staleness *beside* the verdict above,
-never instead of it ([#297](https://github.com/gregoryfoster/skills/issues/297)).
-Rebuild, then re-measure before variant B.
+compares the stamp against the session's server where the plugin fixes its
+version (else its own) rather than waiting for a `STALE` token, and reports
+staleness *beside* the verdict above, never instead of it
+([#297](https://github.com/gregoryfoster/skills/issues/297), #305). Rebuild,
+then re-measure before variant B.
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 
@@ -368,7 +369,8 @@ before Phase 3 replaces the span
 
 Seven further invariants are enforced by Phases 4–6 and recorded under
 *Invariants a phase already enforces* in
-[`references/troubleshooting.md`](references/troubleshooting.md): three
+[`references/troubleshooting.md`](references/troubleshooting.md), beside the
+gotcha matrix (A–U) and the native-vs-fallback decision tree: three
 completion signals, yield over `READY`, a FAILED last operation, the fenced
 driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
 
@@ -393,9 +395,6 @@ driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
   replaced.** The unmarked branch replaces a whole span, and repos grow real
   content in it. Move anything the template does not carry to
   `## Code Exploration Notes (repo-specific)` outside the markers, and say so.
-
-See [`references/troubleshooting.md`](references/troubleshooting.md) for the full
-gotcha matrix (A–T) and the native-vs-fallback decision tree.
 
 **Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's

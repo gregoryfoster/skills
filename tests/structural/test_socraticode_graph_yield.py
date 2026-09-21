@@ -977,6 +977,11 @@ process.stdin.on('data', (chunk) => {
     let msg;
     try { msg = JSON.parse(line); } catch { continue; }
     if (msg.id == null) continue;
+    if (msg.method === 'initialize' && process.env.STUB_SERVER_VERSION) {
+      send({ jsonrpc: '2.0', id: msg.id, result: {
+        serverInfo: { name: 'socraticode', version: process.env.STUB_SERVER_VERSION } } });
+      continue;
+    }
     if (msg.method !== 'tools/call') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); continue; }
     const text = replies[msg.params.name];
     if (text == null) {
@@ -1012,8 +1017,13 @@ Unresolved: 61.7%
 """
 
 
-def _health_check(tmp_path: Path, project: Path, replies: dict) -> tuple:
-    """Run `mcp-driver.mjs health-check` against a scripted stub server."""
+def _health_check(tmp_path: Path, project: Path, replies: dict, **env: str) -> tuple:
+    """Run `mcp-driver.mjs health-check` against a scripted stub server.
+
+    `STUB_SERVER_VERSION` in `env` makes the stub name itself in the
+    handshake, as a real server does; without it the stub declares no
+    serverInfo, which is the shape every caller before #305 relied on.
+    """
     stub = tmp_path / "stub-server.mjs"
     stub.write_text(STUB_SERVER)
     reply_file = tmp_path / "replies.json"
@@ -1027,6 +1037,7 @@ def _health_check(tmp_path: Path, project: Path, replies: dict) -> tuple:
             SOCRATICODE_ENTRY=str(stub),
             STUB_REPLIES=str(reply_file),
             HEALTH_TIMEOUT_MS="30000",
+            **env,
         ),
     )
     try:
@@ -1203,6 +1214,379 @@ class TestANeutralFindingDoesNotFailTheCheck:
             "costs nothing — so a reader still cannot tell whether the daily "
             "hook will report it (#220)"
         )
+
+
+# ── the builder, judged against the server answering the session (#305) ─────
+
+
+def _plugin_config(tmp_path: Path, definition: dict, version: str = "1.13.1") -> Path:
+    """A CLAUDE_CONFIG_DIR whose installed socraticode plugin has `definition`.
+
+    Inline in plugin.json, the shape #309 follows and SocratiCode#180 will
+    ship, so there is no second file for the fixture to keep in step.
+    """
+    config = tmp_path / "claude-config"
+    install = config / "plugins" / "cache" / "socraticode" / "socraticode" / version
+    (install / ".claude-plugin").mkdir(parents=True)
+    (install / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": "socraticode",
+                "version": version,
+                "mcpServers": {"socraticode": definition},
+            }
+        )
+    )
+    (config / "plugins" / "installed_plugins.json").write_text(
+        json.dumps(
+            {"plugins": {"socraticode@socraticode": [{"installPath": str(install)}]}}
+        )
+    )
+    return config
+
+
+def _graph_built_by(version: str) -> str:
+    """GRAPH_REBUILT's healthy yield, stamped by `version`."""
+    return GRAPH_REBUILT.replace("Built by: v1.13.1", f"Built by: v{version}")
+
+
+def _builder_finding(
+    graph_status: str, check: str | None, session: dict
+) -> dict | None:
+    """`graphBuilderFinding` over one status, a check-server version and a session."""
+    script = (
+        "import { parseGraphBuilder, graphBuilderFinding } from "
+        f"{json.dumps(str(DRIVER))};"
+        "process.stdout.write(JSON.stringify(graphBuilderFinding("
+        f"parseGraphBuilder({json.dumps(graph_status)}, {json.dumps(check)}), "
+        f"{json.dumps(session)})));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def _session_server(
+    launch: dict | None, plugin: dict | None, check: str | None
+) -> dict:
+    """`sessionServer` over a launch, a plugin definition and a handshake version."""
+    script = (
+        f"import {{ sessionServer }} from {json.dumps(str(DRIVER))};"
+        "process.stdout.write(JSON.stringify(sessionServer({"
+        f"launch: {json.dumps(launch)}, plugin: {json.dumps(plugin)}, "
+        f"checkVersion: {json.dumps(check)}}})));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+FIXED_1131 = {"version": "1.13.1", "basis": "the plugin's definition fixes it"}
+UNKNOWN = {"version": None, "basis": "the plugin launches 'socraticode@latest'"}
+REPLIES_OK = {"codebase_health": HEALTH_OK, "codebase_status": STATUS_CLEAN}
+
+
+class TestTheBuilderIsJudgedAgainstTheSessionsServer:
+    """#305: the graph is rebuilt by the session's server, not by the driver's.
+
+    #297's check compared the graph's builder against the server
+    `mcp-driver.mjs` had just launched itself, and named `codebase_graph_build`.
+    Under Claude Code that rebuild runs through the plugin's server, the one
+    answering every `codebase_*` call in the session. On CannObserv/power-map
+    the check read a graph that server had built at v1.13.1 against the
+    driver's own v1.14.0 launch, called it a defect, and the rebuild — READY in
+    5.8s — re-stamped v1.13.1, leaving the finding byte-identical.
+    `socraticode-health.sh` keys on that exit code, so the hook stopped being
+    silent-when-clean over a state no rebuild changes, and a reader who followed
+    the remedy concluded the tool was broken.
+
+    Three answers now, keyed on whether the session's server version is KNOWN:
+    older than it is a defect with the rebuild; not older than it but older
+    than the driver's is a note naming update → restart → rebuild; unknowable
+    is a defect that says so and names the sequence that clears it either way.
+    The last one must not be demoted — on today's common host the plugin's
+    definition floats, and a graph cut long ago looks exactly like that.
+    """
+
+    @requires_node
+    def test_plugin_lag_is_a_note_naming_the_real_remedy(self) -> None:
+        """The power-map case, with the session's version known."""
+        f = _builder_finding(_graph_built_by("1.13.1"), "1.14.0", FIXED_1131)
+        assert f is not None and f["severity"] == "note", (
+            "a graph built at exactly the session server's version is what that "
+            "server would cut again: a rebuild re-stamps it, so a defect here can "
+            f"never clear (#305)\n{f}"
+        )
+        for step in (
+            "update the plugin",
+            "restart Claude Code",
+            "codebase_graph_build",
+        ):
+            assert step in f["message"], f"the note must name {step!r}: {f['message']}"
+        assert "v1.13.1" in f["message"] and "v1.14.0" in f["message"], f["message"]
+
+    @requires_node
+    def test_a_graph_newer_than_the_session_is_not_a_defect_either(self) -> None:
+        """Built by something newer than the session: a rebuild would go BACKWARD."""
+        f = _builder_finding(_graph_built_by("1.13.2"), "1.14.0", FIXED_1131)
+        assert f is not None and f["severity"] == "note", f
+
+    @requires_node
+    def test_a_graph_older_than_the_session_stays_a_defect(self) -> None:
+        """#297's own case must survive: the rebuild repairs this one."""
+        f = _builder_finding(_graph_built_by("1.12.0"), "1.14.0", FIXED_1131)
+        assert f is not None and f["severity"] == "defect", f
+        assert "codebase_graph_build" in f["message"], f["message"]
+        assert "v1.13.1" in f["message"], (
+            "the defect must name the version it was judged against — the "
+            f"session's, not this check's: {f['message']}"
+        )
+
+    @requires_node
+    def test_the_session_rules_even_where_the_check_server_is_behind(self) -> None:
+        """A pin behind the session would call the graph current; the session does not.
+
+        The check's own server is not what answers queries about the graph, so
+        its opinion cannot certify one the session's server has moved past.
+        """
+        f = _builder_finding(
+            _graph_built_by("1.13.1"),
+            "1.13.1",
+            {"version": "1.14.0", "basis": "the plugin's definition fixes it"},
+        )
+        assert f is not None and f["severity"] == "defect", f
+
+    @requires_node
+    def test_an_unknown_session_says_so_and_stays_a_defect(self) -> None:
+        f = _builder_finding(_graph_built_by("1.13.1"), "1.14.0", UNKNOWN)
+        assert f is not None and f["severity"] == "defect", (
+            "demoting the undeterminable case would regress #297 wherever the "
+            f"plugin floats, which is today's common host\n{f}"
+        )
+        assert "could not be determined" in f["message"], (
+            "the finding asserts which server holds the graph without knowing: "
+            f"{f['message']}"
+        )
+        assert "restart Claude Code" in f["message"], (
+            "a rebuild alone cannot clear it when the session's server is the "
+            f"lagging one — the sequence that can must be named: {f['message']}"
+        )
+
+    @requires_node
+    @pytest.mark.parametrize(
+        "built, check, session",
+        [
+            ("1.13.1", "1.13.1", FIXED_1131),
+            ("1.13.1", "1.13.1", UNKNOWN),
+            ("1.14.0", "1.13.1", FIXED_1131),
+        ],
+    )
+    def test_a_current_graph_says_nothing(self, built, check, session) -> None:
+        assert _builder_finding(_graph_built_by(built), check, session) is None
+
+    @requires_node
+    def test_an_exact_npx_spec_fixes_the_sessions_version(self) -> None:
+        s = _session_server(
+            {"source": "SOCRATICODE_ENTRY"},
+            {"command": "npx", "args": ["-y", "socraticode@1.13.1"], "plugin": True},
+            "1.14.0",
+        )
+        assert s["version"] == "1.13.1", s
+
+    @requires_node
+    def test_a_floating_spec_fixes_nothing(self) -> None:
+        """The plugin's own version names the plugin, not what it launches."""
+        s = _session_server(
+            {"source": "plugin", "plugin": True},
+            {
+                "command": "npx",
+                "args": ["-y", "--prefer-online", "socraticode@latest"],
+                "plugin": True,
+                "pluginVersion": "1.13.1",
+            },
+            "1.14.0",
+        )
+        assert s["version"] is None, (
+            "a definition launching socraticode@latest runs whatever that "
+            "resolved to when the session started — reading the plugin's "
+            f"version as the server's is the misreading #305 was built on\n{s}"
+        )
+        assert "socraticode@latest" in s["basis"], s
+        assert s["plugin"]["version"] == "1.13.1", "…still reported, as the plugin's"
+
+    @requires_node
+    def test_an_interpreter_and_path_reads_its_package(self, tmp_path: Path) -> None:
+        """The pin's rule, applied to the session: the version is the package's own."""
+        pkg = tmp_path / "engine" / "node_modules" / "socraticode"
+        (pkg / "dist").mkdir(parents=True)
+        (pkg / "dist" / "index.js").write_text("")
+        (pkg / "package.json").write_text(
+            json.dumps({"name": "socraticode", "version": "1.12.3"})
+        )
+        s = _session_server(
+            {"source": "pinned install"},
+            {"command": "/usr/bin/node", "args": [str(pkg / "dist" / "index.js")]},
+            "1.14.0",
+        )
+        assert s["version"] == "1.12.3", s
+
+    @requires_node
+    def test_the_same_fixed_definition_takes_the_handshake(self) -> None:
+        """When the check ran the session's own definition, the server said which."""
+        s = _session_server(
+            {"source": "plugin", "plugin": True},
+            {"command": "npx", "args": ["-y", "socraticode@1.14.0"], "plugin": True},
+            "1.14.0",
+        )
+        assert s["version"] == "1.14.0" and "launched too" in s["basis"], s
+
+    @requires_node
+    def test_no_plugin_is_stated_not_guessed(self) -> None:
+        s = _session_server({"source": "SOCRATICODE_ENTRY"}, None, "1.14.0")
+        assert s["version"] is None and "no Claude Code plugin" in s["basis"], s
+
+    # ── end to end: the exit code, the JSON, and the hook ────────────────────
+
+    @requires_node
+    def test_plugin_lag_does_not_set_the_exit_code(self, tmp_path: Path) -> None:
+        project = tmp_path / "repo"
+        project.mkdir()
+        config = _plugin_config(
+            tmp_path, {"command": "npx", "args": ["-y", "socraticode@1.13.1"]}
+        )
+        result, report = _health_check(
+            tmp_path,
+            project,
+            {**REPLIES_OK, "codebase_graph_status": _graph_built_by("1.13.1")},
+            STUB_SERVER_VERSION="1.14.0",
+            CLAUDE_CONFIG_DIR=str(config),
+        )
+        assert report is not None, result.stdout + result.stderr
+        assert result.returncode == 0, (
+            "a graph built by the session's own server version, behind only the "
+            "driver's, still exits 1 — so socraticode-health.sh reports it every "
+            f"day and no rebuild clears it (#305)\n{result.stderr}"
+        )
+        assert report["healthy"] is True, report
+        note = next((f for f in report["findings"] if "built by v1.13.1" in f), None)
+        assert note and note.startswith("note: "), report["findings"]
+
+    @requires_node
+    def test_the_json_names_both_servers_and_which_ruled(self, tmp_path: Path) -> None:
+        project = tmp_path / "repo"
+        project.mkdir()
+        config = _plugin_config(
+            tmp_path, {"command": "npx", "args": ["-y", "socraticode@1.13.1"]}
+        )
+        _, report = _health_check(
+            tmp_path,
+            project,
+            {**REPLIES_OK, "codebase_graph_status": _graph_built_by("1.13.1")},
+            STUB_SERVER_VERSION="1.14.0",
+            CLAUDE_CONFIG_DIR=str(config),
+        )
+        assert report["server"]["version"] == "1.14.0", report["server"]
+        assert report["sessionServer"]["version"] == "1.13.1", report["sessionServer"]
+        assert report["graph"]["builderCheck"] == {
+            "builtBy": "1.13.1",
+            "checkServer": "1.14.0",
+            "sessionServer": "1.13.1",
+            "ruledBy": "sessionServer",
+        }, report["graph"]
+
+    @requires_node
+    def test_a_genuinely_stale_graph_still_exits_one(self, tmp_path: Path) -> None:
+        project = tmp_path / "repo"
+        project.mkdir()
+        config = _plugin_config(
+            tmp_path, {"command": "npx", "args": ["-y", "socraticode@1.14.0"]}
+        )
+        result, report = _health_check(
+            tmp_path,
+            project,
+            {**REPLIES_OK, "codebase_graph_status": _graph_built_by("1.13.1")},
+            STUB_SERVER_VERSION="1.14.0",
+            CLAUDE_CONFIG_DIR=str(config),
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert report["healthy"] is False, report
+
+    @requires_node
+    @pytest.mark.parametrize("lagging", [True, False], ids=["plugin-lag", "stale"])
+    def test_the_hook_is_silent_on_plugin_lag_only(
+        self, tmp_path: Path, lagging: bool
+    ) -> None:
+        """What #305 is about, measured at the surface an operator sees.
+
+        `socraticode-health.sh` injects findings into the session only when the
+        driver reports a defect. A plugin that lags the driver is a note, so the
+        hook says nothing; a graph older than the session's own server is still
+        reported, so the split has not silenced #297.
+        """
+        repo = _repo(tmp_path)
+        # A manifest the real driver accepts, with its one artifact indexed and
+        # fresh: `_repo`'s empty list is enough for the hook's gate but is a
+        # defect of its own to the driver, which would speak for it.
+        (repo / "README.md").write_text("readme\n")
+        (repo / ".socraticodecontextartifacts.json").write_text(
+            json.dumps(
+                {
+                    "artifacts": [
+                        {"name": "readme", "path": "README.md", "description": "d"}
+                    ]
+                }
+            )
+        )
+        stub = tmp_path / "stub-server.mjs"
+        stub.write_text(STUB_SERVER)
+        replies = tmp_path / "replies.json"
+        replies.write_text(
+            json.dumps(
+                {
+                    **REPLIES_OK,
+                    "codebase_graph_status": _graph_built_by("1.13.1"),
+                    "codebase_context": (
+                        "━━━ readme ━━━\n  Path: ./README.md\n  Description: d\n"
+                        "  Status: ✓ indexed (1 chunks, 2099-01-01T00:00:00.000Z)\n"
+                    ),
+                }
+            )
+        )
+        session = "1.13.1" if lagging else "1.14.0"
+        config = _plugin_config(
+            tmp_path, {"command": "npx", "args": ["-y", f"socraticode@{session}"]}
+        )
+        result = _run_hook(
+            repo,
+            SOCRATICODE_DRIVER=str(DRIVER),
+            SOCRATICODE_ENTRY=str(stub),
+            STUB_REPLIES=str(replies),
+            STUB_SERVER_VERSION="1.14.0",
+            CLAUDE_CONFIG_DIR=str(config),
+        )
+        assert result.returncode == 0, result.stderr
+        if lagging:
+            assert result.stdout == "", (
+                "the hook injected a plugin-lag note into the session as a "
+                f"finding (#305):\n{result.stdout}"
+            )
+        else:
+            assert "built by v1.13.1" in result.stdout, (
+                "a graph older than the session's own server must still reach "
+                f"the session (#297):\n{result.stdout}\n{result.stderr}"
+            )
 
 
 class TestSkillGatesOnYield:

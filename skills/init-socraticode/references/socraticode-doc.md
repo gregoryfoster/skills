@@ -247,8 +247,21 @@ so. Since [#297](https://github.com/gregoryfoster/skills/issues/297)
 `health-check` keeps the running server's `serverInfo.version` from the MCP
 handshake and makes the comparison itself, so row 1 now means *both* parties
 checked. Reading the stamp **by hand**, you do not have that second opinion:
-compare it against the server you are running before you trust it. Both versions
-are in the health-check JSON, as `graph.builder.builtBy` and `server.version`.
+compare it against the server you are running before you trust it.
+
+**The server that matters is the one answering your queries.** A rebuild runs
+through the session's server — under Claude Code, the plugin's — which need
+not be the one `health-check` launched to measure. Where the plugin's
+definition fixes a version, the check judges the graph against that one, and a
+graph matching it while trailing the check's own server is a *note*: rebuilding
+would re-stamp the same version, so the fix is to update the plugin, restart
+Claude Code so its MCP server reloads, then rebuild. Where the definition
+floats (`socraticode@latest`) the session's version cannot be read, and the
+finding says so; if a rebuild leaves the stamp unchanged, restart and rebuild
+([#305](https://github.com/gregoryfoster/skills/issues/305)). The JSON records
+every version compared: `graph.builderCheck` holds the builder, `checkServer`,
+`sessionServer` and which of the two ruled; `server` is the check's own launch
+and `sessionServer` says how the session's version was known.
 
 **Stale is not the same as unmeasured, and the two answer different
 questions.** A graph a release or two behind still carries the import counts its
