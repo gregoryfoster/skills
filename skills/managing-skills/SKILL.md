@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.13"
+  version: "1.14"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -139,11 +139,7 @@ git commit -m "chore: update skill submodules"
 
 `--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
-No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
-
-```bash
-bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh
-```
+No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Re-run Step 2c's installer only to collapse the one-run lag when iterating on the doctor itself.
 
 ### Installing the auto-refresh hook
 
@@ -218,7 +214,9 @@ against the vendor's `HEAD`, so an un-bumped change still
 reports (#286). Re-sync by **reapplying the local deltas onto the newer
 upstream text** — never upstream changes onto the old fork — then bump **both**
 keys. Copy the override aside first: the last step accounts for every line the
-merge removed, which a grep cannot see (#267). Procedure and both comparands:
+merge removed, which a grep cannot see (#267). A `synced-from` *ahead* of
+`HEAD` is the pointer lagging, not the override: bump that submodule, never
+re-sync (#290). Procedure and comparands:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

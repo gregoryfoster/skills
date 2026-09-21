@@ -104,6 +104,33 @@ When the stamps match and the commit diff fires anyway, the warning **says
 so**. A reader told an override has fallen behind checks `version:` first, and
 finding it equal on both sides would reasonably conclude the doctor is wrong.
 
+### Which side moved
+
+The commit diff is symmetric: it reports a difference whether the recorded
+commit is *behind* the submodule's `HEAD` or *ahead* of it, and the two call for
+opposite remedies. Ahead is a real state — the one #286's advice produces when
+it is followed halfway: re-sync the override from upstream's newest text, stamp
+that commit, leave the pointer where it was. CannObserv/archiver's override did
+exactly that, recording `178ec64` while its pointer sat 26 commits back at
+`980a0d1`, and the drift report sent its operator to reapply local deltas onto
+*older* text ([#290](https://github.com/gregoryfoster/skills/issues/290)).
+
+So the doctor reads the history before it words the finding — for a versioned
+vendor and an unversioned one alike:
+
+| The recorded commit is… | Finding | Remedy |
+|---|---|---|
+| an ancestor of `HEAD` | the override has fallen behind | re-sync it ([below](#re-syncing-a-drifted-override)) |
+| a descendant of `HEAD` | the **pointer** is behind the override | bump that one submodule — `git -C skills-vendor/<repo> merge --ff-only <commit>`, then `git add` and commit it — and leave the override alone |
+| neither | cannot be assessed | none: a rewritten vendor history or a fork, so no direction can be read |
+
+The pointer finding prints that command under each entry. `--ff-only` never
+moves a pointer backwards, so where two overrides of one vendor record
+different commits the commands can run in any order and land on the newer. It
+also replaces the version comparison for that override rather than joining it:
+a pointer lagging a bumped release disagrees on the stamps too, and printing
+drift beside it would print both opposite remedies at once.
+
 ### What the commit diff is scoped to
 
 The override's **own real files** — its `SKILL.md`, plus any script or
@@ -123,19 +150,22 @@ check's business).
 
 An override the doctor cannot compare is warned about, never silently skipped —
 an override nothing can compare is the same failure as not detecting drift at
-all. Six ways to get there:
+all. Seven ways to get there:
 
 1. **No vendor copy on disk** at all — an uninitialized submodule, or the skill
-   moved upstream. This is the likeliest of the six and the reason the report
+   moved upstream. This is the likeliest of the seven and the reason the report
    batches: it makes *every* override unassessable at once.
 2. No `version:` in the override, against a versioned vendor.
 3. Neither key, against an unversioned vendor.
 4. A `synced-from:` with no `(commit)` in it.
 5. A recorded commit absent from the vendor's history — a shallow clone, or a
    typo.
-6. The `git diff` itself failing.
+6. A recorded commit whose history has diverged from the vendor's `HEAD` —
+   neither contains the other — so [which side moved](#which-side-moved)
+   cannot be read.
+7. The `git diff`, or the ancestry check after it, failing.
 
-The last three are reported **even when the version stamps match and compare
+The last four are reported **even when the version stamps match and compare
 cleanly**: a comparand the operator wrote that quietly does not apply is its own
 defect, and matching stamps are no longer the end of the enquiry.
 
@@ -235,7 +265,10 @@ manual, and the **direction matters and is easy to get backwards**:
    just merged from:
    `git -C skills-vendor/<repo> rev-parse --short HEAD`. Leaving it at the old
    commit re-reports the drift you just paid down; omitting it gives up the
-   comparand that catches the next un-bumped change.
+   comparand that catches the next un-bumped change. If you merged from a
+   newer commit than the checkout — `origin/main`, say — bump the pointer to
+   it in the same commit, or the doctor reports
+   [the pointer lagging](#which-side-moved) instead.
 5. **Account for every removed line.** Diff the ORIGINAL override against the
    merged result: `diff /tmp/<name>.orig skills/<name>/SKILL.md`. Classify
    every removed line (the `<` side) as superseded by upstream, deliberately

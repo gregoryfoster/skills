@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-16-1"
+VERSION="2026-09-21-1"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -109,6 +109,11 @@ re-sync), and a diff of the synced-from: commit against the vendor now,
 scoped to the override's own real files. The second is the only one that
 sees a vendor SKILL.md changed WITHOUT a version bump, which is most of
 them (#286); an override recording no synced-from: warns nothing new.
+That diff cannot tell which side moved, so the history decides (#290): a
+synced-from: commit AHEAD of the submodule's HEAD is reported as the
+pointer lagging, with a one-submodule bump as the remedy and the override
+left alone — the opposite of a re-sync; one on a diverged history (a
+rewritten vendor, a fork) is reported as unassessable.
 Drift is advisory in every mode including --check-only, and nothing is
 ever auto-merged: the point of an override is that upstream text cannot
 be applied blindly.
@@ -567,10 +572,15 @@ frontmatter_value() {
 # spliced into a hand-wrapped sentence.
 declare -a DRIFTED=()
 declare -a UNASSESSED=()
+# #290's third voice, and the bump command that goes with each entry — kept
+# index-aligned, so the report can print each command under the entry it fixes.
+declare -a POINTER_BEHIND=()
+declare -a POINTER_BUMP=()
 
 # One formatter per class, so the call sites cannot word the same fact
 # differently: drift is recorded from the version comparison and from the
-# synced-from commit comparison, un-assessable from six distinct causes.
+# synced-from commit comparison, un-assessable from every cause
+# references/local-overrides.md lists.
 #
 # Since #286 drift has ONE call site, which composes the two comparand
 # descriptions — `have` from what the override records, `now` from the vendor's
@@ -588,6 +598,51 @@ record_override_unassessed() {
   UNASSESSED+=("$dir overrides $target: $why")
 }
 
+# #290 — the recorded commit is AHEAD of the submodule's HEAD. Not drift, and
+# deliberately not a variant of drift's wording: the two remedies are
+# opposites. Drift says re-sync the override onto newer upstream text; here the
+# override already carries the newer text and it is the POINTER that lags, so
+# the fix is one submodule bump and no edit to the override at all. The entry
+# names the submodule path because "your submodule is behind" sends a reader to
+# the auto-refresh hook, when the repair is one directory.
+#
+# `merge --ff-only` rather than `checkout <commit>`: it never moves a pointer
+# backwards, so when two overrides of one vendor record different commits the
+# printed commands can be run in any order and the pointer ends at the newer —
+# `checkout` would leave it wherever the last command pointed.
+record_override_pointer_behind() {
+  local dir="$1" target="$2" repo_dir="$3" rec="$4" head="$5" changed="$6"
+  POINTER_BEHIND+=("$dir overrides $target: synced from commit $rec, AHEAD of the checkout of $repo_dir at $head ($changed differs between the two)")
+  POINTER_BUMP+=("git -C $repo_dir merge --ff-only $rec")
+}
+
+# override_ancestry <repo_dir> <commit> — which side of the symmetric synced-from
+# diff moved, printed as one word: `behind` (the commit is an ancestor of the
+# vendor's HEAD — the override fell behind), `ahead` (HEAD is an ancestor of the
+# commit — the pointer is behind the override), `diverged` (neither), or
+# `error` (git could not answer).
+#
+# Equal commits read `behind`, which never reaches a report: the diff that
+# calls this has already found the two trees different.
+override_ancestry() {
+  local repo_dir="$1" rec="$2" rc=0
+  # --is-ancestor: 0 yes, 1 no, anything else an error — which must not be
+  # read as "no" and fall through to a verdict it did not earn.
+  git -C "$repo_dir" merge-base --is-ancestor "$rec" HEAD 2>/dev/null || rc=$?
+  case "$rc" in
+    0) echo behind; return 0 ;;
+    1) ;;
+    *) echo error; return 0 ;;
+  esac
+  rc=0
+  git -C "$repo_dir" merge-base --is-ancestor HEAD "$rec" 2>/dev/null || rc=$?
+  case "$rc" in
+    0) echo ahead ;;
+    1) echo diverged ;;
+    *) echo error ;;
+  esac
+}
+
 report_drifted_overrides() {
   local i
   echo "doctor: an override has fallen behind its vendor:" >&2
@@ -603,6 +658,22 @@ report_drifted_overrides() {
   echo "doctor: Last, diff that copy against the merged file and account for" >&2
   echo "doctor: every removed line: a presence-only check cannot see a local" >&2
   echo "doctor: delta the merge dropped. Advisory: nothing is auto-merged." >&2
+}
+
+report_pointer_behind_overrides() {
+  local i
+  echo "doctor: an override is AHEAD of its submodule pointer — the override is" >&2
+  echo "doctor: not behind, the pointer is:" >&2
+  for i in "${!POINTER_BEHIND[@]}"; do
+    echo "  ${POINTER_BEHIND[$i]}" >&2
+    echo "    ${POINTER_BUMP[$i]}" >&2
+  done
+  echo "doctor: bump only that submodule pointer, to at least the recorded commit," >&2
+  echo "doctor: with the command under each entry — then \`git add\` the submodule" >&2
+  echo "doctor: path and commit it. Do NOT re-sync or edit the override: it already" >&2
+  echo "doctor: carries the newer text, and reapplying its deltas onto the" >&2
+  echo "doctor: pointer's older text would undo that sync. Advisory: nothing is" >&2
+  echo "doctor: changed for you." >&2
 }
 
 report_unassessed_overrides() {
@@ -1264,6 +1335,8 @@ check_override_drift() {
   [ -d skills ] || return 0
   DRIFTED=()
   UNASSESSED=()
+  POINTER_BEHIND=()
+  POINTER_BUMP=()
   MISSING_FRAGMENT=()
   MISSING_FRAGMENT_ID=()
   MISSING_FRAGMENT_TEXT=()
@@ -1274,7 +1347,7 @@ check_override_drift() {
   MALFORMED_SEEN=" "
   UNCLOSED_FENCE=()
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
-  local ver_drift changed have now line
+  local ver_drift changed have now line moved head
   local -a dpaths=()
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
@@ -1327,6 +1400,7 @@ check_override_drift() {
     # is the only comparison that can see an un-bumped change, and gating it
     # behind an absent `version:` is what hid four of them.
     changed=""
+    moved=""
     rec=""
     if [ -z "$synced" ]; then
       # Absent is a finding only when nothing else can compare.
@@ -1370,6 +1444,15 @@ EOF
             sed "s|^$skill_rel/||" |
             awk '{ printf "%s%s", sep, $0; sep = ", " } END { print "" }' || true)"
           [ -n "$changed" ] || changed="$skill_rel"
+          # #290 — the diff is symmetric, so it cannot say WHICH side moved,
+          # and the two answers call for opposite remedies. A synced-from:
+          # commit ahead of the pointer is the state #286's own consumer-side
+          # fix left behind: CannObserv/archiver re-synced its override text,
+          # stamped 178ec64, and left the pointer 26 commits back at 980a0d1.
+          # Reported as drift, that sent the operator to reapply local deltas
+          # onto OLDER text. Only the diagnosis branches; detection is the
+          # diff above, unchanged.
+          moved="$(override_ancestry "$repo_dir" "$rec")"
         elif [ "$rc" -ne 0 ]; then
           record_override_unassessed "$dir" "$target" \
             "'git diff $rec HEAD' over ${#dpaths[@]} path(s) under $skill_rel failed in $repo_dir"
@@ -1378,11 +1461,34 @@ EOF
       fi
     fi
 
-    # One drift entry per override, naming whichever comparison fired. The
-    # matching-stamps case says SO: a reader told an override has fallen
-    # behind checks `version:` first, finds it equal, and concludes the
-    # doctor is wrong — which is the state #286 exists to report.
-    if [ -n "$changed" ]; then
+    # One entry per override, naming whichever comparison fired.
+    #
+    # A commit comparison that fired is diagnosed by ancestry first (#290),
+    # for the versioned and unversioned vendor alike — both reach it through
+    # the one diff above. Only `behind` is drift. The other answers take the
+    # version comparison's place rather than joining it: the stamps disagree
+    # too whenever the pointer lags a bumped release, and a drift line beside
+    # the pointer finding would print both opposite remedies for one override.
+    if [ -n "$changed" ] && [ "$moved" != "behind" ]; then
+      head="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo HEAD)"
+      case "$moved" in
+        ahead)
+          record_override_pointer_behind "$dir" "$target" "$repo_dir" "$rec" "$head" "$changed"
+          ;;
+        diverged)
+          record_override_unassessed "$dir" "$target" \
+            "the recorded commit $rec and the checkout of $repo_dir at $head are on diverged histories — neither contains the other (a rewritten vendor history, or a fork), so which side moved cannot be told"
+          ;;
+        *)
+          record_override_unassessed "$dir" "$target" \
+            "'git merge-base --is-ancestor' could not relate $rec to $repo_dir's HEAD, so which side moved cannot be told"
+          ;;
+      esac
+    elif [ -n "$changed" ]; then
+      # The matching-stamps case says SO: a reader told an override has fallen
+      # behind checks `version:` first, finds it equal, and concludes the
+      # doctor is wrong — which is the state #286 exists to report.
+      #
       # Branch on whether the VENDOR ships a version, not on whether the two
       # stamps are EQUAL (CR 1). An override recording no version: at all made
       # the equality false and fell through to the unversioned-vendor prose,
@@ -1409,6 +1515,7 @@ EOF
   # After the loop, so a repo with several overrides gets one remedy block per
   # class rather than one per file — the shape check_silent_forks settled on.
   [ "${#DRIFTED[@]}" -eq 0 ] || report_drifted_overrides
+  [ "${#POINTER_BEHIND[@]}" -eq 0 ] || report_pointer_behind_overrides
   [ "${#UNASSESSED[@]}" -eq 0 ] || report_unassessed_overrides
   [ "${#MISSING_FRAGMENT[@]}" -eq 0 ] || report_missing_fragments
   [ "${#STALE_DECLARATION[@]}" -eq 0 ] || report_stale_declarations
