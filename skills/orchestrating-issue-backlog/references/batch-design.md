@@ -72,10 +72,13 @@ whose acceptance guard is on that list cannot be verified in its own worktree: i
 worker sees the guard skip and reports green without the check ever running. That is
 a verification-mode asymmetry in Step 8's sense — name it in Key decisions, tell the
 worker a green run there is not evidence for that issue, and re-run the guard at the
-gate in a tree that has both the batch's changes and the guard's precondition — the
-main checkout only while it holds `batch/<X>`; where Orchestrator step 2 keeps it on
-`main`, the first such tree is `main` after the batch merges, so say that in Key
-decisions (process-log 2026-09-16 observo: one issue's guard was one
+gate in a tree that has both the batch's changes and the guard's precondition. The
+main checkout is one only while it holds `batch/<X>`; where Orchestrator step 2 keeps it
+on `main`, give the integration worktree the precondition (a
+`git submodule update --init` there clones into that worktree's own
+`.git/worktrees/<name>/modules/` and leaves the main checkout untouched), and fall back
+to `main` after the merge only when it cannot be supplied — say which in Key decisions
+(process-log 2026-09-16 observo: one issue's guard was one
 of the two tests that skip wherever the vendored-skill submodules are uninitialised,
 which is every worktree; the investigation into the baseline gap found it, not the
 issue body). Step 8's own example is a worker changing the runner's config, and
