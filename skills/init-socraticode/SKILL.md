@@ -119,9 +119,10 @@ marketplace separately from the connection.
 plugin's `mcp__plugin_socraticode_socraticode__*` is redundant — preflight Gate
 4 flags it; remove it with `claude mcp remove socraticode`.
 
-**On a small or shared host, pin the server here.** The plugin's command
-installs at every launch — 1.2 G, against 75 MB pinned:
-[`troubleshooting.md`](references/troubleshooting.md) row U.
+**On a small or shared host, pin the server here** — the plugin's command
+installs at every launch, 1.2 G against 75 MB pinned — and on a shared one
+reserve the production service's memory:
+[`host-memory.md`](references/host-memory.md).
 
 ### Phase 3 — Author the project's exploration policy (idempotent)
 
@@ -398,6 +399,5 @@ driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
 
 **Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
 `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow. Came down
-from 10,050 by demoting Phase 0, Phase 4's index-scope and legacy-array
-guidance, and three phase-enforced invariants into `references/`.
+6,000-token standard, set at current size so this file cannot grow; how it came
+down from 10,050 is recorded beside the figure there.

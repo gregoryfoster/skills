@@ -25,56 +25,7 @@ symptom you'll see, why it happens, and the fix the skill bakes in.
 | **R** | A check that only *reads* leaves `dockerd` and `containerd` running: on `CannObserv/broker`'s 2 GB, no-swap node, ~120 MB RSS beside the cohort's production Redis, after one `docker ps`. | `docker.service` is disabled and `docker.socket` enabled. Every docker command, `docker info` included, connects to the socket, and connecting starts the daemon. | Preflight asks systemd — `systemctl is-active docker.socket` / `docker.service` — and reports a listening socket over a stopped daemon without probing it. It gates Docker only when something will run in it, so an external store with an external embedder never touches it. Its plugin check runs `claude mcp list` under `SOCRATICODE_AUTO_RESUME=off`: that command starts the server, whose startup auto-resume probes Docker in managed mode ([#287](https://github.com/gregoryfoster/skills/issues/287)). |
 | **S** | Two hosts write one project's collections in a shared store while every health check stays green; `codebase_list_projects` shows a 12-hex-character id no repo declares. | No `projectId`, so the id is `sha256(<absolute path>)[:12]`, and hosts that check repos out at the same path share it — broker's VM and notifier's clone of broker both built `d4eab3ecb321`. The index lock is host-local, and startup auto-resume writes to any collection that already exists. | `.socraticode.json` carries `projectId` before the `env` block exists ([`external-store.md`](external-store.md)). `mcp-driver.mjs validate-store` fails an external store with no `projectId`, with the checkout's own path hash as one, or with one a linked project also declares; `index`, `status` and `verify` refuse to launch on those, and `health-check` reports them without launching. |
 | **T** | A repo configured for an external store starts Docker containers — or, on a host with no Docker, fails trying — instead of reaching the store. | A project's settings `env` block applies only to a session started in a trusted folder after the block was written. Without it `QDRANT_MODE` reverts to managed and `OLLAMA_MODE` to auto, and the server reports no missing configuration (CannObserv/broker#17, trap 6). | Checked by effect: when the project settings declare `QDRANT_MODE=external`, `preflight.sh --check` run from a session fails on every store variable the block declares that the session's environment lacks or carries with another value — the mode alone is not the block, since `OLLAMA_MODE` left behind still starts an Ollama container — and `validate-store` fails the same way in any process whose store is external, however the mode arrives, so the driver never launches that server. A missing value: restart Claude Code in the folder, trusting it if asked. A different one: the session predates the edit, in a folder already trusted; restart it. Re-check from the new session. |
-| **U** | A SocratiCode launch pushes the host past its memory, and **nothing is OOM-killed**: the kernel fails atomic allocations in unrelated processes (`tailscaled`, `ksoftirqd`), the host's production service is what goes down, and a cgroup cap on the launch **stalls** it instead of killing it. On `CannObserv/broker` the bus was effectively down 57m 48s and a downstream consumer failed to reconnect (CannObserv/replicator#94). | Two things compound. **(1) The launch installs.** The plugin's `mcp.json` is `npx -y --prefer-online socraticode@latest`, and `--prefer-online` revalidates against the registry on *every* launch — so a warm cache is not a warm path on any day the package moved. Measured on broker (8 GB, SocratiCode 1.14.0): a cold install plus server plus full index reached **1.2 G** at the cgroup (~610 MB process, ~519 MB npm page cache), and **all 126** `MemoryHigh` throttle events landed in the install — none in indexing. The same workload from a pinned, pre-installed entry peaked at **75 MB**, and a graph build plus context index at **86 MB**. **(2) The session cannot be OOM-killed.** exe.dev session processes inherit `oom_score_adj` **-1000** from `exe-init` and `sshd` — that covers VSCode Server, Claude Code, and every server they launch. The killer can never pick them, so under real exhaustion it takes the host's production service instead; earlyoom 1.7 floors a `--prefer` match at 300 while a service at adj 0 reads ~667. A cap on a process the killer will not touch therefore stalls it. | **Don't install at launch** — that is the measured peak, not the index ([#295](https://github.com/gregoryfoster/skills/issues/295)). `preflight.sh` reports total memory and swap, and under 4 GiB names the capped pre-install. Raising the score is unprivileged: `choom -n 500 -- <cmd>`. A capped scope from inside a session: `systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100% choom -n 500 -- <cmd>` — same PID, stdio and environment untouched, and the scope dies with the server when stdin closes. It needs linger plus `memory`/`cpu` delegation to `user@<uid>.service` and `XDG_RUNTIME_DIR` (which Claude Code's environment carries); without user systemd it fails `Failed to connect to bus`, exit 1. Host side, the half a cap cannot do: size it, give the production unit `MemoryLow=` and `OOMScoreAdjust=`, set `vm.min_free_kbytes`, run earlyoom (CannObserv/broker#21, #25). |
-
-## Don't install at launch: the pinned pre-install
-
-Row U's fix, as a procedure. The plugin's `mcp.json` is `npx -y
---prefer-online socraticode@latest`, and `mcp-driver.mjs` reused that command
-verbatim — so the health hook, `index`, `status` and `verify` each installed a
-server before talking to one. `--prefer-online` revalidates against the
-registry on *every* launch, so a warm cache is not a warm path on any day the
-package moved.
-
-Install once, deliberately, under a cap:
-
-```bash
-# Pick the version deliberately — a literal, never `latest`, or the pin floats
-# and buys nothing. This is what the plugin's own command would have resolved:
-npm view socraticode version
-
-# Linux with user systemd — the cap is the point; on a small host, run it here
-# and nowhere else.
-systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
-  -- npm install --prefix ~/.socraticode/pin socraticode@<version>
-
-# Anywhere else (macOS, a host without user systemd): the install is the same,
-# just uncapped. Size the host for ~1.2 G rather than hoping.
-npm install --prefix ~/.socraticode/pin socraticode@<version>
-```
-
-`resolveServerLaunch()` prefers that build over the plugin's command, so no
-driver launch installs anything. Nothing else has to be configured: absent, the
-pin resolves nothing and the chain is exactly what it was.
-`SOCRATICODE_PIN_DIR` moves it; `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
-resolve` says which path won, without launching a server.
-
-**What the pin does not do, and why the hook now says so.** It does not pin the
-*session*. Claude Code cannot override a plugin's MCP server command, so the
-plugin keeps launching `@latest` — the driver becomes deterministic while the
-session goes on floating. That is a **new** divergence: before the pin both
-floated and agreed by coincidence of timing. `health-check` measures it, and
-splits on how wide the gap is, because a pin is *meant* to lag:
-
-| Gap between the pin and what `@latest` resolves to | Reported as |
-|---|---|
-| Same version, or a patch (`1.14.0` vs `1.14.3`) | **note** — the intended steady state; a daily defect here would be crying wolf about the design working |
-| A minor or major release (`1.13.2` vs `1.14.0`) | **defect** — two feature releases writing one store, which is the shape row S is about. Re-pin deliberately |
-| The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
-
-Re-pinning is the same `npm install --prefix` line with the new version. Do it
-as a decision, not on a schedule: the reason to pin was to stop an unattended
-launch from installing.
+| **U** | A SocratiCode launch pushes the host past its memory, and **nothing is OOM-killed**: the kernel fails atomic allocations in unrelated processes (`tailscaled`, `ksoftirqd`), the host's production service is what goes down, and a cgroup cap on the launch **stalls** it instead of killing it. On `CannObserv/broker` the bus was effectively down 57m 48s and a downstream consumer failed to reconnect (CannObserv/replicator#94). | Two things compound. **(1) The launch installs.** The plugin's `mcp.json` is `npx -y --prefer-online socraticode@latest`, and `--prefer-online` revalidates against the registry on *every* launch — so a warm cache is not a warm path on any day the package moved. Measured on broker (8 GB, SocratiCode 1.14.0): a cold install plus server plus full index reached **1.2 G** at the cgroup (~610 MB process, ~519 MB npm page cache), and **all 126** `MemoryHigh` throttle events landed in the install — none in indexing. The same workload from a pinned, pre-installed entry peaked at **75 MB**, and a graph build plus context index at **86 MB**. **(2) On some hosts the session cannot be OOM-killed.** On broker, session processes inherit `oom_score_adj` **-1000** from `exe-init` and `sshd` — VSCode Server, Claude Code, and every server they launch — so under real exhaustion the killer takes the production service instead, and a cap on a session stalls it rather than killing it. It varies by host: on notifier they sit at 0, where a cap kills and the production unit's `OOMScoreAdjust=` is what creates the gap ([#303](https://github.com/gregoryfoster/skills/issues/303)). Check: `cat /proc/<pid>/oom_score_adj`. | **Don't install at launch** — that is the measured peak, not the index ([#295](https://github.com/gregoryfoster/skills/issues/295)). `preflight.sh` reports total memory and swap, and whether a unit's `MemoryLow=` under `system.slice` takes effect; under 4 GiB it names the capped pre-install. Raising the score is unprivileged: `choom -n 500 -- <cmd>`. A capped scope from inside a session: `systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M -p CPUQuota=100% choom -n 500 -- <cmd>` — same PID, stdio and environment untouched, and the scope dies with the server when stdin closes. It needs linger plus `memory`/`cpu` delegation to `user@<uid>.service` and `XDG_RUNTIME_DIR` (which Claude Code's environment carries); without user systemd it fails `Failed to connect to bus`, exit 1. Host side, the half a cap cannot do, whichever kind of host this is: the production unit's `MemoryLow=` and `OOMScoreAdjust=` — with a `MemoryLow=` on every slice above it, or the unit's is inert however `systemctl show` reads ([#307](https://github.com/gregoryfoster/skills/issues/307)) — `vm.min_free_kbytes`, and an earlyoom actually running its configuration. The procedure, the pin included: [`host-memory.md`](host-memory.md). |
 
 ## Node 26: the build decides, not the version
 

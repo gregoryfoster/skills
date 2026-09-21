@@ -345,14 +345,20 @@ case "$MEM_KB" in
     if [ "$MEM_KB" -lt 4194304 ]; then         # < 4 GiB
       warn "Host memory $MEM_HUMAN — a cold server install peaks near 1.2 G, which is the largest thing this setup does"
       hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
-      hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/troubleshooting.md row U)"
+      hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
       # The shared-host case, named only here. A cap on a session process
       # protects the host solely when the host's own service holds the
       # reservation, and this gate cannot tell a dev box from a production node
       # that is also ssh'd into — broker's VM was both. Saying it on every host
       # would be a warning that always fires, which is the cry-wolf shape the
       # health hook is tuned against; under 4 GiB it is the case that bites.
-      hint "If this host also runs a production service, give that service the reservation (MemoryLow=) first — a cgroup cap on a session process STALLS it rather than killing it (references/troubleshooting.md row U)"
+      #
+      # Whether a cap on a session STALLS it depends on the host (#303): on
+      # broker's VM session processes inherited oom_score_adj -1000, so the
+      # killer could not pick them; on notifier's they sat at 0, where a cap
+      # kills instead. The advice is the same either way, so it is given
+      # either way, with the check that tells the two apart.
+      hint "If this host also runs a production service, give that service the reservation (MemoryLow= and OOMScoreAdjust=) first, whatever this check shows — a session process at oom_score_adj -1000 (cat /proc/<pid>/oom_score_adj) is one a cgroup cap STALLS rather than kills (references/host-memory.md)"
     else
       pass "Host memory $MEM_HUMAN"
     fi
@@ -368,6 +374,154 @@ case "$SWAP_KB" in
     hint "That is how broker's 2026-09-16 outage presented: nothing was killed, tailscaled and ksoftirqd failed allocations, and the bus was down 57m (#295)"
     ;;
 esac
+
+# >>> memory-protection
+# ── Memory protection: does a unit's MemoryLow= take effect here? (#307) ────
+# Advisory, never fatal, and read-only: files under /proc and the cgroup mount,
+# no systemctl call, nothing written.
+#
+# A production unit's MemoryLow= reserves memory only up to what EVERY ancestor
+# cgroup grants: the kernel scales a child's protection by its parent's
+# effective protection (effective_protection() in mm/page_counter.c), and
+# system.slice ships memory.low 0. On CannObserv/wslcb-licensing-tracker a unit
+# at MemoryLow=256M was protected by nothing, while `systemctl show`, the
+# unit's own memory.low, a clean daemon-reload and a healthy service all said
+# it worked (#307). A templated unit sits one slice deeper, in an implicit
+# system-<name>.slice that grants nothing either, so a system.slice grant is
+# necessary and not sufficient — measured on CannObserv/address-validator,
+# where postgres stayed unprotected under a working system.slice grant.
+#
+# So this reads the chain, not the slice alone: every unit under system.slice
+# (and one slice deeper) that CLAIMS protection, against the least its slices
+# grant. It warns only on a claim that is clamped. A stock host, where nothing
+# claims any, gets the reading and its consequence rather than a warning that
+# fires everywhere — the cry-wolf shape the hint above is careful about.
+#
+# memory_recursiveprot is reported beside it because #307 read that mount
+# option as an escape hatch. It is not one: it shares a parent's UNCLAIMED
+# protection among children that set none, and a parent at 0 has none to
+# share (systemd.resource-control(5): "it is generally required to set a
+# corresponding allocation on all ancestors").
+#
+# The mountinfo path is the one argument, and the cgroup mount point is read
+# out of it rather than assumed, so the whole reading follows from one file.
+# `claims` and `clamped` are this function's locals, which protection_line
+# (called only from here) appends to — bash scopes a local to its callees.
+memory_protection() {
+  local mountinfo="$1" found mnt opts rp slice low d e name claim eff via
+  local claims="" clamped=0
+  if [ ! -r "$mountinfo" ]; then
+    warn "Memory protection not measured — no $mountinfo here (not Linux), and MemoryLow= is a Linux cgroup v2 setting"
+    return 0
+  fi
+  # Field 5 is the mount point; after the lone '-' come the fs type, the
+  # source and the superblock options, which is where memory_recursiveprot is.
+  found="$(awk '{ for (i = 7; i <= NF; i++) if ($i == "-") { if ($(i + 1) == "cgroup2") { print $5 " " $(i + 3); exit } break } }' "$mountinfo" 2>/dev/null || true)"
+  if [ -z "$found" ]; then
+    warn "Memory protection not measured — cgroup2 is not mounted, so there is no memory.low for a MemoryLow= to set"
+    return 0
+  fi
+  mnt="${found%% *}" opts="${found#* }"
+  # mountinfo escapes a space in a path as \040.
+  mnt="${mnt//\\040/ }"
+  case ",$opts," in
+    *,memory_recursiveprot,*) rp="with memory_recursiveprot, which shares a slice's grant but never lifts a child above it" ;;
+    *) rp="without memory_recursiveprot" ;;
+  esac
+  slice="$mnt/system.slice"
+  low="$(cat "$slice/memory.low" 2>/dev/null || true)"
+  case "$low" in
+    max | [0-9]*) ;;
+    *)
+      warn "Memory protection not measured — no readable memory.low for system.slice under $mnt (no systemd, a container's own cgroup, or the memory controller is off there)"
+      return 0
+      ;;
+  esac
+
+  for d in "$slice"/*/; do
+    [ -d "$d" ] || continue
+    name="${d%/}" name="${name##*/}"
+    case "$name" in
+      *.slice)
+        # A templated unit's implicit slice: its units are clamped by it too.
+        via="$(cat "$d/memory.low" 2>/dev/null || true)"
+        case "$via" in max | [0-9]*) ;; *) continue ;; esac
+        for e in "$d"*/; do
+          [ -d "$e" ] || continue
+          claim="$(cat "$e/memory.low" 2>/dev/null || true)"
+          case "$claim" in [1-9]* | max) ;; *) continue ;; esac
+          eff="$(low_min "$(low_min "$low" "$via")" "$claim")"
+          e="${e%/}"
+          protection_line "$name/${e##*/}" "$claim" "$eff" "$low" "$name" "$via"
+        done
+        ;;
+      *)
+        claim="$(cat "$d/memory.low" 2>/dev/null || true)"
+        case "$claim" in [1-9]* | max) ;; *) continue ;; esac
+        eff="$(low_min "$low" "$claim")"
+        protection_line "$name" "$claim" "$eff" "$low" "" ""
+        ;;
+    esac
+  done
+
+  if [ -z "$claims" ]; then
+    if [ "$low" = 0 ]; then
+      pass "Memory protection: nothing under system.slice claims MemoryLow=, and system.slice grants none (cgroup2 mounted $rp)"
+      hint "A MemoryLow= given to a production unit here would be inert until every slice above it grants one (references/host-memory.md)"
+    else
+      pass "Memory protection: system.slice grants $(low_human "$low"), and nothing under it claims MemoryLow= (cgroup2 mounted $rp)"
+    fi
+  elif [ "$clamped" -eq 0 ]; then
+    pass "Memory protection: $claims — each within what its slices grant (cgroup2 mounted $rp)"
+  else
+    hint "Give system.slice — and a templated unit's system-<name>.slice — a MemoryLow= at least the sum of its children's, daemon-reload, then check the unit's EFFECTIVE value, not its own (references/host-memory.md). cgroup2 is mounted $rp"
+  fi
+}
+
+# low_min A B — the smaller of two memory.low readings, where `max` is no limit.
+low_min() {
+  if [ "$1" = max ]; then
+    printf '%s' "$2"
+  elif [ "$2" = max ] || [ "$1" -le "$2" ]; then
+    printf '%s' "$1"
+  else
+    printf '%s' "$2"
+  fi
+}
+
+# low_human BYTES — a memory.low reading in MiB, the unit systemd's own
+# settings are usually written in.
+low_human() {
+  if [ "$1" = max ]; then
+    printf 'max'
+  elif [ "$1" -gt 0 ] && [ "$1" -lt 1048576 ]; then
+    printf '%s bytes' "$1"
+  else
+    printf '%s MiB' "$(($1 / 1048576))"
+  fi
+}
+
+# protection_line UNIT CLAIM EFFECTIVE SYSTEM_SLICE_LOW [SLICE SLICE_LOW] — one
+# claiming unit: tallied when it keeps its claim, a warning naming the slice
+# that clamps it when it does not.
+protection_line() {
+  local unit="$1" claim="$2" eff="$3" top="$4" mid="$5" midlow="$6" who
+  if [ "$eff" = "$claim" ]; then
+    claims="${claims:+$claims, }$unit keeps $(low_human "$claim")"
+    return 0
+  fi
+  clamped=1
+  claims="${claims:+$claims, }$unit"
+  if [ -n "$mid" ] && [ "$midlow" != "$top" ] && [ "$(low_min "$top" "$midlow")" = "$midlow" ]; then
+    who="its $mid grants $(low_human "$midlow")"
+  else
+    who="system.slice grants $(low_human "$top")"
+  fi
+  warn "Memory protection: $unit claims MemoryLow=$(low_human "$claim") but keeps at most $(low_human "$eff") — $who, and a unit keeps no more than every slice above it grants"
+}
+
+memory_protection /proc/self/mountinfo
+# <<< memory-protection
 
 # ── Gate 1: Docker — only when something will run in it ─────────────────────
 # A managed Qdrant is a container. So is an Ollama embedder in `docker` mode,
