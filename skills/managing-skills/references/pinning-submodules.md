@@ -47,4 +47,6 @@ was already committed past one. It does read the pin, by the same resolution, in
 one place: when a local override records a commit *ahead* of a held submodule,
 its "bump the pointer" finding says the submodule is pinned and offers a re-pin
 or a re-sync of the override to the pinned commit instead, because the bump
-alone would end the hold ([local-overrides.md](local-overrides.md#which-side-moved)).
+alone would end the hold — unless the pin already resolves to the commit the
+bump reaches, which the bump then completes
+([local-overrides.md](local-overrides.md#which-side-moved)).

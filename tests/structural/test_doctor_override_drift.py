@@ -734,6 +734,38 @@ def _vendor_head(vendor: Path) -> str:
     ).stdout.strip()
 
 
+def _bumps(stderr: str) -> list[str]:
+    """The `git -C … merge --ff-only …` commands the pointer finding prints."""
+    return [
+        ln.strip() for ln in stderr.splitlines() if ln.strip().startswith("git -C ")
+    ]
+
+
+def _run(consumer: Path, cmd: str) -> None:
+    """Run a command exactly as the doctor printed it."""
+    subprocess.run(
+        shlex.split(cmd),
+        cwd=str(consumer),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+        timeout=60,
+    )
+
+
+def _resolve(vendor: Path, commitish: str) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", f"{commitish}^{{commit}}"],
+        cwd=str(vendor),
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_clean_env(),
+        timeout=60,
+    ).stdout.strip()
+
+
 class TestWhichSideMoved:
     """#290 — the commit diff cannot say which side moved; the history can.
 
@@ -932,6 +964,11 @@ class TestAPinnedPointer:
     then reports pin drift at every session, because a pin holds the recorded
     pointer still but cannot move it back. So a held entry says so and offers
     the two repairs that keep pin and pointer agreeing.
+
+    CR 41 — the pin is resolved and settled per submodule. A pin that already
+    names the recorded commit is not re-pinned to itself (the bump completes
+    it), and several overrides of one held submodule get one re-pin, to the
+    commit their bumps converge on.
     """
 
     def _pinned(self, consumer: Path, pin_text: str, pin_name: str = "skills-pin"):
@@ -962,40 +999,103 @@ class TestAPinnedPointer:
 
     def test_the_repin_and_bump_leave_pin_and_pointer_agreeing(self, consumer: Path):
         """Follow the first repair as printed: write the pin line, run the
-        bump. The pin then names the pointer — the comparison the hook's pin
-        drift check makes — and the doctor is silent."""
-        vendor, _, _, pin = self._pinned(consumer, "skills-vendor/acme-skills {old}\n")
+        doctor again, run the bump. The pin then names the pointer — the
+        comparison the hook's pin drift check makes — and the doctor is silent.
+
+        The run BETWEEN the two steps is the one CR 41 found wrong. The pin
+        already names the recorded commit there, so re-pinning to it is
+        advice to do what was just done, and "a bump alone ends that hold" is
+        false: the bump is what puts the hold into effect."""
+        vendor, _, new, pin = self._pinned(
+            consumer, "skills-vendor/acme-skills {old}\n"
+        )
         result = _doctor(consumer)
         line = re.search(r're-pin that line to "([^"]+)"', _flat(result.stderr))
         assert line, result.stderr
         pin.write_text(line.group(1) + "\n")
-        bump = [
-            ln.strip()
-            for ln in result.stderr.splitlines()
-            if ln.strip().startswith("git -C ")
-        ]
-        assert len(bump) == 1, result.stderr
-        subprocess.run(
-            shlex.split(bump[0]),
-            cwd=str(consumer),
-            check=True,
-            capture_output=True,
-            text=True,
-            env=_clean_env(),
-            timeout=60,
+        between = _doctor(consumer)
+        flat = _flat(between.stderr)
+        assert POINTER_MARKER in between.stderr, between.stderr
+        assert "re-pin" not in flat, (
+            f"the pin already names {new}; there is nothing to re-pin:\n{flat}"
         )
-        pinned_ish = line.group(1).split()[1]
-        resolved = subprocess.run(
-            ["git", "rev-parse", f"{pinned_ish}^{{commit}}"],
-            cwd=str(vendor),
-            capture_output=True,
-            text=True,
-            check=True,
-            env=_clean_env(),
-            timeout=60,
-        ).stdout.strip()
-        assert resolved == _vendor_head(vendor), "the pin and the pointer disagree"
+        assert "a bump alone ends" not in flat, (
+            f"the bump completes this hold rather than ending it:\n{flat}"
+        )
+        assert "the bump completes the hold" in flat, flat
+        bump = _bumps(between.stderr)
+        assert len(bump) == 1, between.stderr
+        _run(consumer, bump[0])
+        assert _resolve(vendor, line.group(1).split()[1]) == _vendor_head(vendor), (
+            "the pin and the pointer disagree"
+        )
         assert _doctor(consumer).stderr.strip() == ""
+
+    def _two_overrides(self, consumer: Path, diverged: bool = False):
+        """Two overrides of one pinned vendor, each ahead of the pointer at a
+        different recorded commit: `sa` at the NEWER one, sorting first, so
+        re-pinning entry by entry would leave the pin at the older one while
+        the ff-only bumps converge on the newer. `sb` is unchanged between the
+        two, so once the pointer reaches the newer both are current. `diverged`
+        puts the two commits on separate lines of history instead."""
+        vendor = consumer / "skills-vendor" / VENDOR_REPO
+        for name in ("sa", "sb"):
+            _vendor_skill(consumer, name, "1.4")
+        _git(vendor, "init", "-q", "-b", "main")
+        _git(vendor, "config", "user.email", "t@t.invalid")
+        _git(vendor, "config", "user.name", "t")
+        base = _vendor_commit(vendor, "A")
+        commits = []
+        for step, names in (("B", ("sa", "sb")), ("C", ("sa",))):
+            if diverged:
+                _git(vendor, "checkout", "-q", "-B", f"line-{step}", base)
+            for name in names:
+                md = vendor / "skills" / name / "SKILL.md"
+                md.write_text(md.read_text() + f"\n{step}.\n")
+            commits.append(_vendor_commit(vendor, step))
+        _git(vendor, "checkout", "-q", base)
+        older, newer = commits
+        _override(consumer, "sa", "1.4", synced_from=f"{VENDOR_REPO} x ({newer})")
+        _override(consumer, "sb", "1.4", synced_from=f"{VENDOR_REPO} x ({older})")
+        pin = consumer / ".skills" / "skills-pin"
+        pin.parent.mkdir()
+        pin.write_text(f"skills-vendor/{VENDOR_REPO} {base}\n")
+        return vendor, base, older, newer, pin
+
+    def test_two_overrides_of_one_held_submodule_get_one_repin(self, consumer: Path):
+        """One pin-file line, so one re-pin, to the commit the bumps converge
+        on. Two re-pin lines for one line contradict each other, and followed
+        entry by entry they left the pin at the OLDER commit while the bumps
+        took the pointer to the newer — the pin drift the note exists to
+        prevent (CR 41)."""
+        vendor, base, _, newer, pin = self._two_overrides(consumer)
+        result = _doctor(consumer)
+        flat = _flat(result.stderr)
+        repins = re.findall(r're-pin that line to "([^"]+)"', flat)
+        assert repins == [f"skills-vendor/{VENDOR_REPO} {newer}"], (
+            f"one re-pin, to the newest recorded commit:\n{result.stderr}"
+        )
+        assert flat.count(f"pinned at {base}") == 1, result.stderr
+        pin.write_text(repins[0] + "\n")
+        between = _flat(_doctor(consumer).stderr)
+        assert "re-pin" not in between, between
+        assert "a bump alone ends" not in between, between
+        for cmd in _bumps(result.stderr):
+            _run(consumer, cmd)
+        assert _resolve(vendor, newer) == _vendor_head(vendor), (
+            "the pin and the pointer disagree"
+        )
+        assert _doctor(consumer).stderr.strip() == ""
+
+    def test_overrides_on_diverged_lines_get_no_repin(self, consumer: Path):
+        """No recorded commit contains the other, so no one pin serves both
+        and the bumps cannot converge. Naming either would be a guess; the
+        hold is the repair left."""
+        _, base, _, _, _ = self._two_overrides(consumer, diverged=True)
+        flat = _flat(_doctor(consumer).stderr)
+        assert "re-pin that line" not in flat, flat
+        assert flat.count(f"pinned at {base}") == 1, flat
+        assert f"re-sync each of them to {base}" in flat, flat
 
     def test_the_env_var_pin_file_is_read(self, consumer: Path):
         """Same resolution as the hook: `$SKILLS_PIN_FILE` first."""

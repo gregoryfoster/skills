@@ -137,6 +137,11 @@ session, so the entry says it is pinned — reading `$SKILLS_PIN_FILE`, then
 `.skills/skills-pin`, as the hook does — and offers the two repairs that keep
 pin and pointer agreeing: re-pin the line to the recorded commit before the
 bump, or keep the hold and re-sync the override to the pinned commit instead.
+The pin is resolved, not read as text: once it names that commit, the entry
+says the bump completes the hold. A pin is one line per submodule, so several
+overrides of one held submodule get one re-pin, to the newest commit they
+record — where their bumps converge — or none, if none of those commits
+contains the others.
 
 The history needs the recorded commit **on disk**. Where it is not — not
 fetched yet, or no `synced-from:` at all — the version stamps are the only
