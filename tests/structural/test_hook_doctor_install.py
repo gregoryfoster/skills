@@ -33,6 +33,9 @@ Coverage:
 - the fall-through is logged, naming the installer that failed
 - every installer failing is logged and reaches stderr
 - ...once per run, though both call sites fail
+- ...and only when the run's LAST install failed: a broken pre-bump installer
+  the bump repairs says nothing, a working one the bump breaks still warns
+  (#300 CR 14)
 - a succeeding first installer still ends the search — one doctor wins
 
 Keep this list current — it is the file's index.
@@ -132,10 +135,26 @@ def _doctor_text(stamp: str) -> str:
 # ------------------------------------------------------------------- #299
 
 
-@pytest.fixture
-def bumped(tmp_path: Path):
+FAILING = '#!/usr/bin/env bash\necho "install-doctor: simulated failure" >&2\nexit 1\n'
+
+
+def _write_installer(path: Path, body: str | None) -> None:
+    """The real installer, or `body` in its place."""
+    if body is None:
+        shutil.copy2(INSTALLER, path)
+    else:
+        path.write_text(body)
+    path.chmod(0o755)
+
+
+def _make_bumped(
+    tmp_path: Path, pre_installer: str | None = None, post_installer: str | None = None
+):
     """A consumer recording its vendor one commit behind an upstream whose
     newer commit ships a different doctor — the state every pointer bump is.
+    Each commit's installer is the real one unless a body is given, which is
+    how #300 CR 14's two orderings are built: a broken installer fixed by the
+    bump, and a working one the bump breaks.
 
     The consumer's own doctor is written by each test, since #299 has two
     shapes: tracked already (observo's), or first installed in the very
@@ -148,8 +167,7 @@ def bumped(tmp_path: Path):
     scripts.mkdir(parents=True)
     old, new = _doctor_text("pre-bump"), _doctor_text("post-bump")
     (scripts / "doctor.sh").write_text(old)
-    shutil.copy2(INSTALLER, scripts / "install-doctor.sh")
-    (scripts / "install-doctor.sh").chmod(0o755)
+    _write_installer(scripts / "install-doctor.sh", pre_installer)
     _git(tmp_path, "init", "-q", "-b", "main", str(up))
     _git(up, "add", "-A")
     _git(up, "commit", "-qm", "vendor at the recorded pointer")
@@ -171,8 +189,26 @@ def bumped(tmp_path: Path):
     _git(repo, "commit", "-qm", "vendor")
 
     (scripts / "doctor.sh").write_text(new)
+    _write_installer(scripts / "install-doctor.sh", post_installer)
     _git(up, "commit", "-qam", "the vendor ships a newer doctor")
     return SimpleNamespace(path=repo, old=old, new=new)
+
+
+@pytest.fixture
+def bumped(tmp_path: Path):
+    return _make_bumped(tmp_path)
+
+
+@pytest.fixture
+def broken_then_fixed(tmp_path: Path):
+    """The installer at the recorded pointer fails; the bump fixes it."""
+    return _make_bumped(tmp_path, pre_installer=FAILING)
+
+
+@pytest.fixture
+def fixed_then_broken(tmp_path: Path):
+    """The installer at the recorded pointer works; the bump breaks it."""
+    return _make_bumped(tmp_path, post_installer=FAILING)
 
 
 def _committed(repo: Path, path: str) -> str:
@@ -224,15 +260,8 @@ def _vendor(repo: Path, name: str, installer_body: str | None = None) -> Path:
     scripts.mkdir(parents=True)
     shutil.copy2(DOCTOR, scripts / "doctor.sh")
     installer = scripts / "install-doctor.sh"
-    if installer_body is None:
-        shutil.copy2(INSTALLER, installer)
-    else:
-        installer.write_text(installer_body)
-    installer.chmod(0o755)
+    _write_installer(installer, installer_body)
     return installer
-
-
-FAILING = '#!/usr/bin/env bash\necho "install-doctor: simulated failure" >&2\nexit 1\n'
 
 
 @pytest.fixture
@@ -334,6 +363,43 @@ class TestTheFirstInstallerThatSucceedsWins:
             "the post-update install did not run — this test would then prove "
             f"nothing about the dedupe:\n{_log(repo)}"
         )
+        assert result.stderr.count(NO_INSTALL) == 1, result.stderr
+
+    def test_a_post_bump_install_that_succeeds_withdraws_the_warning(
+        self, broken_then_fixed
+    ):
+        """#300 CR 14. The pre-bump installer fails, the update brings one that
+        works, and call site 2 installs and commits the new doctor. Saying
+        "every vendored installer failed, so it was left as it was" on that
+        run would be false on both counts: only the LAST install of a run
+        decides what the doctor is."""
+        result = _run_hook(broken_then_fixed.path, env_extra=FILE_TRANSPORT)
+
+        assert (
+            _log(broken_then_fixed.path).count("vendored installer(s) failed") == 1
+        ), (
+            "call site 1 did not fail — the fixture proves nothing:\n"
+            f"{_log(broken_then_fixed.path)}"
+        )
+        assert (
+            _committed(broken_then_fixed.path, ".skills/doctor.sh")
+            == broken_then_fixed.new
+        ), f"call site 2 did not install:\n{_log(broken_then_fixed.path)}"
+        assert NO_INSTALL not in result.stderr, (
+            "the run installed and committed a doctor, and told the session "
+            f"it had not:\n{result.stderr}"
+        )
+
+    def test_a_post_bump_install_that_fails_still_warns(self, fixed_then_broken):
+        """The mirror: call site 1 succeeds, the update ships a broken
+        installer, and call site 2 fails. The doctor on disk is now older
+        than the pointer being committed, so the run's last word is the
+        failure."""
+        result = _run_hook(fixed_then_broken.path, env_extra=FILE_TRANSPORT)
+
+        assert (
+            _log(fixed_then_broken.path).count("vendored installer(s) failed") == 1
+        ), f"call site 2 did not run and fail:\n{_log(fixed_then_broken.path)}"
         assert result.stderr.count(NO_INSTALL) == 1, result.stderr
 
     def test_a_succeeding_first_installer_ends_the_search(self, repo):

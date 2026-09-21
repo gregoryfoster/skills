@@ -57,7 +57,8 @@ Behaviour:
   - Installs or refreshes .skills/doctor.sh every session, on any branch,
     from the first vendored install-doctor.sh that succeeds — and again
     after a refresh, so a pointer bump commits the doctor it ships. Every
-    installer failing is reported on stderr. A checkout whose
+    installer failing is reported on stderr, once, when the run's last
+    install is the one that failed. A checkout whose
     skills-vendor/ submodules are not populated (a fresh worktree) has no
     installer to run.
   - Stages and commits exactly two kinds of path: the skills-vendor/
@@ -357,26 +358,36 @@ _reconcile_unpushed() {
 # after the first attempt either way, leaving a stale doctor with one $LOG line
 # as its only trace. When every installer fails, that reaches stderr — the
 # channel every other failure here uses — once per run although this is called
-# twice: the second call's failure would only repeat the first's news.
-DOCTOR_INSTALL_WARNED=0
+# twice, and only when the run's LAST call failed (#300 CR 14). Warning from
+# call site 1 on the spot was false whenever call site 2 then succeeded: a
+# broken pre-bump installer that the bump replaces with a working one leaves a
+# freshly installed and committed doctor, which "left as it was" denies. So
+# each call records its outcome and the EXIT trap below reports the last one —
+# every way out of this block, the ERR backstop's exit included, passes it.
+DOCTOR_INSTALL_FAILED=0
 _install_doctor() {
   local installer tried=0
   for installer in skills-vendor/*/skills/managing-skills/scripts/install-doctor.sh; do
     [ -x "$installer" ] || continue
     tried=$((tried + 1))
     if bash "$installer" --quiet >>"$LOG" 2>&1; then
+      DOCTOR_INSTALL_FAILED=0
       return 0
     fi
     _log "doctor install failed via $installer (see lines above) — trying the next vendor, if any"
   done
+  # No installer this time leaves the last verdict standing: a call that
+  # installed nothing has not repaired an earlier failure.
   [ "$tried" -gt 0 ] || return 0
   _log "doctor install failed: all $tried vendored installer(s) failed — .skills/doctor.sh left as it was"
-  if [ "$DOCTOR_INSTALL_WARNED" = "0" ]; then
-    DOCTOR_INSTALL_WARNED=1
-    echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2
-  fi
+  DOCTOR_INSTALL_FAILED=1
   return 0
 }
+_report_doctor_install() {
+  [ "$DOCTOR_INSTALL_FAILED" = "1" ] || return 0
+  echo "skills update: could not install .skills/doctor.sh — every vendored installer failed, so it was left as it was (see $LOG)" >&2 || true
+}
+trap _report_doctor_install EXIT
 
 # _install_doctor, call site 1 of 2: every session, ahead of both gates. This
 # is the working-tree repair, and it should happen on every branch and every
