@@ -4,7 +4,7 @@ description: Installs, configures, and indexes SocratiCode semantic code search 
 compatibility: Designed for Claude Code (SocratiCode ships as the socraticode@socraticode plugin). Requires Docker running (or an external Qdrant and Ollama), Node >=18.17, and npx. Run from the target repo's root.
 metadata:
   author: gregoryfoster
-  version: "1.6"
+  version: "1.7"
   triggers: init socraticode, set up code search, index this project, socraticode setup
 ---
 

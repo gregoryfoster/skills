@@ -388,15 +388,26 @@ class TestOverflowDocTemplate:
         to what the driver renders, which is the check this one cannot be.
 
         Pinned as concepts, not as a sentence: the section has to say what the
-        statistic counts (call edges), what it is for (corroboration, not the
-        verdict), and that a re-index does not move it. A sentence-level pin
-        here would fight every legitimate rewording.
+        statistic counts, why it runs high, that it sits beside the verdict,
+        and that a re-index does not move it. A sentence-level pin here would
+        fight every legitimate rewording. The denominator is SocratiCode
+        v1.14.0's own — captured symbol edges, not the "call edges" this pin
+        used to demand — and "corroboration" is gone from the concepts because
+        the server says the share is not a resolver failure rate (#308).
         """
         section = _graph_health(doc_text)
         for concept, why in (
             ("unresolved", "the statistic the daily finding names"),
-            ("call edge", "what it actually counts — not import edges"),
-            ("corrobo", "it is reported beside the verdict, never as it"),
+            (
+                "captured symbol edge",
+                "what it actually counts — calls, imports, re-exports and "
+                "type or value references, per the server",
+            ),
+            (
+                "external librar",
+                "why it runs high on healthy code, by construction",
+            ),
+            ("beside the verdict", "reported beside the verdict, never as it"),
             ("re-index", "a framework-heavy repo's figure does not come down"),
         ):
             assert concept in section.lower(), (

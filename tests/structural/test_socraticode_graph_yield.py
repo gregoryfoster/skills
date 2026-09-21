@@ -813,14 +813,25 @@ class TestTheHookSaysWhatItReports:
 
 
 class TestUnresolvedFindingIsVerdictAware:
-    """#216: the corroboration wording, standing alone, reads as an accusation.
+    """#216, #308: the figure is worded for what it counts, on every verdict.
 
     The finding fires whenever the figure exceeds the threshold, *outside* the
     verdict branches — correct, because the statistic is worth reporting either
-    way. But `corroborates a resolver problem` beside `verdict: "ok"` has no
+    way. But `corroborates a resolver problem` beside `verdict: "ok"` had no
     verdict to corroborate, and one cohort repo read it as a standing accusation
     against a provably exact import graph, paying an `rg` round-trip on every
-    dependency question for weeks.
+    dependency question for weeks (#216).
+
+    #308 took the other branch too. Since v1.14.0 the server explains the
+    number itself: the share of *captured symbol edges* — calls, imports,
+    re-exports, type or value references — that matched no project symbol,
+    with edges into builtins and external libraries counted by construction,
+    so that it "is not a resolver failure rate". The gloss said "call edges",
+    which undercounts the denominator, and beside `low`/`unknown` it still
+    offered the figure as a corroborating witness — the reading that let a
+    cohort repo cite 70% as the cause of a `codebase_impact` under-report in
+    its own docs. The verdict stands on the yield arithmetic and the server's
+    advisory; the figure is reported beside it.
 
     So the text is selected from the verdict while the line itself stays
     unconditional: data is never suppressed, only worded for what it is.
@@ -845,19 +856,54 @@ class TestUnresolvedFindingIsVerdictAware:
 
     @requires_node
     @pytest.mark.parametrize("verdict", ["low", "unknown"])
-    def test_an_unhealthy_verdict_still_corroborates(self, verdict: str) -> None:
-        """`low`/`unknown` push a yield finding of their own for this to back."""
-        assert "corrobo" in self._finding("61.7", verdict), (
-            f"beside verdict {verdict!r} the unresolvedPct line is corroborating "
-            "evidence for a finding that was already pushed; it must still say so"
+    def test_an_unhealthy_verdict_is_not_offered_evidence(self, verdict: str) -> None:
+        """`low`/`unknown` stand on the yield arithmetic and the advisory (#308).
+
+        The figure cannot corroborate a resolver failure: builtins and external
+        libraries land in it by construction, so on a healthy repo with a lot
+        of external surface it would read as a second witness against the
+        resolver. It is reported beside the verdict, and says so.
+        """
+        finding = self._finding("61.7", verdict)
+        assert "corrobo" not in finding, (
+            f"beside verdict {verdict!r} the unresolvedPct line still offers "
+            "itself as corroboration — the reading SocratiCode v1.14.0 added a "
+            f"paragraph to prevent (#308): {finding!r}"
+        )
+        assert "not as evidence" in finding, (
+            "the line must say it is reported beside the verdict, not for it, "
+            f"or a reader supplies the causal claim themselves: {finding!r}"
         )
 
     @requires_node
     def test_an_ok_verdict_does_not_accuse(self) -> None:
-        assert "corrobo" not in self._finding("61.7", "ok"), (
+        finding = self._finding("61.7", "ok")
+        assert "corrobo" not in finding, (
             'beside `verdict: "ok"` there is no finding for the statistic to '
             "corroborate, and the corroboration wording is then read as the "
             "accusation #216 was filed about"
+        )
+        assert "statistic, not a defect" in finding, finding
+        assert "builtins and external libraries" in finding, (
+            "the ok gloss must say WHY the share runs high on healthy code, or "
+            f"the number is read as a failure rate (#308): {finding!r}"
+        )
+
+    @requires_node
+    @pytest.mark.parametrize("verdict", ["low", "unknown", "ok"])
+    def test_the_denominator_is_the_servers(self, verdict: str) -> None:
+        """Captured symbol edges, not call edges (#308).
+
+        v1.14.0 states its denominator as calls, imports, re-exports and type
+        or value references. Saying "call edges" undercounts what is counted,
+        and an operator reading the daily hook — the surface most of them read
+        — gets a smaller number in their head than the one on the screen.
+        """
+        finding = self._finding("61.7", verdict)
+        assert "captured symbol edges" in finding, finding
+        assert "call edges" not in finding, (
+            f"the {verdict!r} gloss still names the pre-v1.14.0 denominator: "
+            f"{finding!r}"
         )
 
     @requires_node

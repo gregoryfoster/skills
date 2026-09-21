@@ -956,8 +956,9 @@ function parseGraphCounts(text) {
 // Rejected: "Average dependencies per file rounds to 0.0" is the same metric at
 // a threshold of 0.05, but read off a *printed, rounded* string — exactly the
 // server-formatting dependency gotcha H exists to avoid. Rejected as a gate:
-// `Unresolved %`, which is a call-graph statistic and is legitimately high in
-// dynamic code; it is reported as corroboration, never as the verdict.
+// `Unresolved %`, the share of captured symbol edges matching no project
+// symbol, which counts edges into builtins and external libraries by
+// construction; it is reported beside the verdict, never as it (#308).
 //
 // MIN_NODES — below 20 files, 0.1 edges/node is under two edges and noise
 // dominates; a repo that small is also one where grep is fine. Verdict
@@ -1327,36 +1328,54 @@ function builderFinding(builder) {
   return null;
 }
 
-// The unresolvedPct finding, worded from the verdict (#216).
+// The unresolvedPct finding, worded from the verdict (#216, #308).
 //
 // The line itself is unconditional — it is reported whenever the figure clears
 // the threshold, on healthy graphs too, because the statistic is worth having
 // either way and the alternative (moving it inside the verdict branches) hides
 // it from every repo that is fine. Only the gloss moves.
 //
-// Why it has to: beside `low` or `unknown` there is a yield finding already in
-// the list for this to corroborate. Beside `ok` there is nothing, and
-// "corroborates a resolver problem" standing alone parses as an accusation —
-// one cohort repo distrusted a provably exact import graph for weeks on the
-// strength of it, paying an `rg` round-trip on every dependency question.
+// The denominator is the server's own, not a paraphrase of it (#308). Since
+// v1.14.0 `codebase_graph_status` explains the figure itself: the share of
+// CAPTURED SYMBOL EDGES — calls, imports, re-exports, type or value references
+// — that matched no project symbol. This gloss used to say "call edges", which
+// undercounts what is being counted, and on a non-`ok` verdict it said
+// "corroborates a resolver problem", which is the reading v1.14.0 added its
+// paragraph to prevent: edges into runtime builtins and external libraries
+// land in the share by construction, so it "is not a resolver failure rate".
+// A cohort repo cited the 70% figure as the CAUSE of a codebase_impact
+// under-report in its own docs, and it was the server's paragraph, not this
+// line, that showed the causal claim was nobody's but the reader's.
+//
+// So neither branch offers it as evidence. Beside `ok` it says why it runs
+// high on healthy code, so it is not read as a failure rate (#216: standing
+// alone, the corroboration wording had one repo distrusting a provably exact
+// import graph for weeks). Beside `low` or `unknown` the verdict already
+// stands on the yield arithmetic and the server's advisory, and the figure is
+// reported next to it — a second witness it cannot be would read, on a healthy
+// repo with a lot of external surface, as one against the resolver.
 //
 // It is pushed at SEVERITY.note on EVERY verdict, not only on `ok` (#220). The
 // figure is never independently actionable — no re-index lowers it, because the
-// unresolved callees are framework and stdlib symbols that are not in the repo.
-// Beside `low` or `unknown` the yield finding it corroborates is already a
-// defect and already sets the exit code, so the severity here changes nothing
-// there; beside `ok` it is the difference between a silent healthy repo and a
-// daily accusation.
+// unmatched edges point at symbols that are not in the repo. Beside `low` or
+// `unknown` the yield finding is already a defect and already sets the exit
+// code, so the severity here changes nothing there; beside `ok` it is the
+// difference between a silent healthy repo and a daily accusation.
 //
 // Exported, and rendered from one place, because the generated doc quotes it
 // verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
 // agree, so a reword cannot leave the doc behind. The returned string carries
 // no severity prefix — renderFinding() adds it — so the doc quotes the message
 // and not the envelope.
+const UNRESOLVED_COUNTS = 'share of captured symbol edges (calls, imports, re-exports, type or '
+  + 'value references) matching no project symbol';
+const UNRESOLVED_BY_CONSTRUCTION = 'edges into builtins and external libraries count by construction';
 function unresolvedFinding(unresolvedPct, verdict) {
   const gloss = verdict === 'ok'
-    ? 'share of call edges with no first-party callee; verdict is ok, so this is a statistic, not a defect'
-    : 'corroborates a resolver problem';
+    ? `${UNRESOLVED_COUNTS}; ${UNRESOLVED_BY_CONSTRUCTION}, so it runs high on healthy code — `
+      + 'verdict is ok, so this is a statistic, not a defect'
+    : `${UNRESOLVED_COUNTS} — reported beside the verdict, not as evidence for it, since `
+      + UNRESOLVED_BY_CONSTRUCTION;
   return `graph unresolved ${unresolvedPct}% (> ${GRAPH_UNRESOLVED_WARN_PCT}%) — ${gloss}`;
 }
 
@@ -2611,10 +2630,10 @@ async function cmdHealthCheck(projectPath, probePath) {
         defect(`graph yield UNKNOWN — ${v.reason}`);
       }
       // Worded from the COMPOSED verdict, not the local one: the gloss turns on
-      // whether a yield finding is on the list for this to corroborate, and
+      // whether a yield finding is on the list for this to sit beside, and
       // since #207 that is what `graphVerdict` decides. Reading `y.verdict`
-      // here would call the figure a corroborating symptom on exactly the repo
-      // the server just certified — the accusation #216 removed.
+      // here would word the figure for a failing graph on exactly the repo the
+      // server just certified — the accusation #216 removed.
       if (y.unresolvedPct != null && y.unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT) {
         note(unresolvedFinding(y.unresolvedPct, v.verdict));
       }

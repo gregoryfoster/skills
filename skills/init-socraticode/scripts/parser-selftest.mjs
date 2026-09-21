@@ -299,10 +299,17 @@ eq('an unparseable status is UNKNOWN, not LOW',
   graphYield('Code Graph Status\n\nStatus: BUILDING').verdict, 'unknown');
 eq('the threshold is edges/node, and it is stated once',
   graphYield(GRAPH_LOW).edgesPerNode < GRAPH_YIELD_MIN_EDGES_PER_NODE, true);
-// The corroborating signal, never the verdict — call-graph unresolution is
-// legitimately high in dynamic code.
-eq('unresolved% is parsed for corroboration',
+// Reported beside the verdict, never as it: the share counts every captured
+// symbol edge that matched no project symbol, edges into builtins and external
+// libraries included, so it runs high on healthy code (#308).
+eq('unresolved% is parsed, to report beside the verdict',
   graphYield(GRAPH_LOW).unresolvedPct > GRAPH_UNRESOLVED_WARN_PCT, true);
+// v1.14.0 explains the figure on the same line, transcribed from
+// CannObserv/cannabis.observer-wordpress. The number must still parse.
+eq('…including v1.14.0\'s self-explaining line',
+  graphYield('Unresolved: 70.0% of captured symbol edges did not match a project symbol\n'
+    + '  Symbol edges are calls, imports, re-exports and type or value references.').unresolvedPct,
+  70);
 eq('a small graph is not judged by node count alone', GRAPH_YIELD_MIN_NODES, 20);
 
 console.log('— the server-stated advisory and the builder stamp (#207) —');
