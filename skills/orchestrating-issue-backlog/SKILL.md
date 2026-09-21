@@ -46,7 +46,7 @@ Then fetch issues and read project context before asking any questions. Go into 
 - Rough categories of issues (architectural, bug, feature, infra)
 - Which files are most frequently touched across issues
 - Which issues are already **closed-in-fact** — grep *every* issue, not just the obviously-stale ones, and surface any hit in the score table so a batch slot isn't allocated to dead work. The grep, why zero hits is ambiguous rather than exculpatory, and what a docstring proves in each direction: [references/issue-audit.md](references/issue-audit.md).
-- **Dispositions that need more than that grep** — an issue blocked on a *finding inside* another issue, a partially-shipped issue (**rescope-to-residual**, a fourth disposition beside keep / close / defer), and a claim about a **generated** artifact: [references/issue-audit.md](references/issue-audit.md).
+- **Dispositions that need more than that grep** — an issue blocked on a *finding inside* another issue, one gated on an **upstream change that is closed but in no release at the pin**, a partially-shipped issue (**rescope-to-residual**, a fourth disposition beside keep / close / defer), and a claim about a **generated** artifact: [references/issue-audit.md](references/issue-audit.md).
 - Pairs of issues that may describe the same underlying bug or fix, **or a deliberate prerequisite relationship** — check title overlap, body keywords, and **files/symbols mentioned** (files/symbols catches pairs that don't share title language). If a candidate pair is found, surface as Q0 in Step 3 — resolving before scoring avoids redundant ranking and accidental two-agent overlap, and lets the batch design inherit the pair's shape rather than re-derive it.
 
 ### Step 3: Interview (one question at a time)
@@ -74,10 +74,11 @@ Skip Q0 entirely if Step 1–2 flagged neither a candidate pair nor a partially-
 
 **Q5 — Concurrency ceiling: worktree provisioning *and* shared backing services?**
 
-Two sub-questions, both capping the per-batch agent count regardless of file-disjointness. Ask them together; either can independently set the ceiling.
+Three sub-questions, each capping the per-batch agent count regardless of file-disjointness. Ask them together; any one can set the ceiling.
 
 > 1. Does the host project have a custom worktree-create script (e.g. `dev.sh worktree create`)? What concurrent ceiling does it support, and what does it provision beyond plain `git worktree add` — Nginx vhosts, DB clones, port pools, node_modules overlays? If the user doesn't know, ask them to grep the script for port-pool size or docker-compose port ranges first.
 > 2. **What backing services do the worktrees NOT clone?** A shared test database, a shared Redis, a shared search index, a single dev-server port — and, by *capacity* rather than by state, one machine running every worktree's suite. Plain `git worktree` clones *none* of these, so a project with **no** worktree script can still have a hard ceiling of 1.
+> 3. **Does the commit or push hook run the test suite, and at what parallelism?** Multiply by the agent count before accepting a ceiling: three agents under a pre-commit `pytest -n 4` can mean twelve concurrent test processes.
 
 The real ceiling is far more often in sub-question 2 than in 1. **Ask it explicitly — don't wait to rediscover it in Step 5**, but accept "none" as an answer — and a grep hit is not a ceiling until you read the path.
 
@@ -210,7 +211,7 @@ Report the issue number.
 
 After the plan is approved and committed, capture this session's adjustments: rubric weights the user changed (document the new formula), standard questions skipped or reordered (note why), surprises the conflict analysis surfaced (record the pattern), and rubric dimensions that proved inadequate for this project type (flag for skill revision).
 
-**Where to capture them.** Write a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in that year's own `index.md` beside it — the layout rules are in [`references/process-log.md`](references/process-log.md). The log is the default destination — it preserves chronology and session-specific context. Promote a pattern into this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime — into the body only if every run executes it, otherwise into the reference that owns its step. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the skill now carries the load.
+**Where to capture them.** In the log by default, which preserves chronology and session-specific context: a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in that year's own `index.md` beside it, laid out as [`references/process-log.md`](references/process-log.md) says. Promote a pattern into this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime — into the body only if every run executes it, otherwise into the reference that owns its step. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the skill now carries the load.
 
 ---
 

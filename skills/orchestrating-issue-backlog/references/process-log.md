@@ -46,6 +46,8 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Step 10 ("Adding an entry", below) a vendored copy is not where the entry goes — 2026-09-14 observo, 2026-09-15 observo execution, 2026-09-16 wordpress
 - Step 7 count the table's items before approval, and quote that count ([`batch-design.md`](batch-design.md)) — 2026-09-14 observo (found by 2026-09-15 observo execution), 2026-09-16 observo; pairing as a constraint problem once the conflict matrix is dense — 2026-09-16 observo
 - Rule 3 ([`execution.md`](execution.md)) measure the briefed baseline in a tree cut the way the workers' are, and name the delta; that delta's skipped tests as a finder for a verification-mode asymmetry ([`batch-design.md`](batch-design.md)) — 2026-09-16 observo
+- Steps 1–2 ([`issue-audit.md`](issue-audit.md)) a closed upstream prerequisite is not a landed one: resolve the gate against the pinned version's changelog, not the issue's state — 2026-08-20, 2026-09-17 cli
+- Q5's third sub-question, the commit hook's own parallelism ([`shared-backing-services.md`](shared-backing-services.md)), and Worker step 6's pointer to it — 2026-09-17 cli
 
 ---
 ## Adding an entry
