@@ -49,8 +49,8 @@ read 16 work units, which is its wave grid — eight waves two wide — while it
 wave description, with the last wave holding one item, gives fifteen, and fifteen is
 what the run produced (2026-09-15 observo execution). That number reached an upstream
 issue before anyone counted. A check that only asserts equality with the table can
-pass beside a wrong summary; a count the design doc's shape line and the tracking
-issue then quote cannot.
+pass beside a wrong summary; a count that the design doc's Batch execution plan and
+the tracking issue's Summary then quote cannot.
 
 **Once the conflict matrix is dense, pairing is a constraint problem, not a
 score-order pass.** A greedy pass fills slots by score, so an item with conflict edges

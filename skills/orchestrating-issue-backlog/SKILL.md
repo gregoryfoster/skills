@@ -149,7 +149,7 @@ Present a table:
 
 Include a note for any intra-batch merge ordering (e.g. "F1 merges first; F2 rebases before merge").
 
-**Count the table's items before asking** — they must equal the issues in scope minus deferrals and closures, each Q0 bundle counting once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it: [references/batch-design.md](references/batch-design.md).
+**Count the table's items before asking** — they must equal the issues in scope minus deferrals and closures, each Q0 bundle counting once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it. Write that number, not a re-derived one, into the design doc's Batch execution plan and the tracking issue's Summary: [references/batch-design.md](references/batch-design.md).
 
 Get approval before writing the design doc.
 
@@ -183,6 +183,7 @@ Write the body to a temp file and pass `--body-file`. Apostrophes in the body br
 ```bash
 cat > /tmp/<topic>-tracking-body.md <<'EOF'
 ## Summary
+<M> issues → <W> work items → <N> batches
 <2–3 sentences>
 
 ## Design doc
