@@ -4,7 +4,7 @@ description: Prioritize an open issue backlog using agreed rubrics, analyze conf
 compatibility: Designed for Claude. Requires git, gh CLI, and a project using git worktrees for branch isolation.
 metadata:
   author: gregoryfoster
-  version: "1.0"
+  version: "1.1"
   triggers: "orchestrate backlog, prioritize issues, plan issue execution, clear backlog"
 ---
 
@@ -40,13 +40,13 @@ Rule and Worker-step numbers cited in this file refer to [references/execution.m
 
 ### Step 1–2: Context gathering
 
-**Sync `main` before analysing, not just before launching** (Rule 1, which carries both the commands and why a stale checkout corrupts the plan), then clear any untracked stray from the main checkout. The stray sweep is Rule 6 hygiene — its fall-through detection assumes a clean baseline, or it reports a dirty tree on every completion signal.
+**Sync `main` before analysing, not just before launching** (Rule 1 has the commands and why a stale checkout corrupts the plan), then clear any untracked stray from the main checkout — Rule 6's fall-through detection assumes a clean baseline, or reports a dirty tree on every completion signal.
 
 Then fetch issues and read project context before asking any questions. Go into the interview knowing:
 - Rough categories of issues (architectural, bug, feature, infra)
 - Which files are most frequently touched across issues
 - Which issues are already **closed-in-fact** — grep *every* issue, not just the obviously-stale ones, and surface any hit in the score table so a batch slot isn't allocated to dead work. The grep, why zero hits is ambiguous rather than exculpatory, and what a docstring proves in each direction: [references/issue-audit.md](references/issue-audit.md).
-- **Dispositions that need more than that grep** — an issue blocked on a *finding inside* another issue, a partially-shipped issue (**rescope-to-residual**, a fourth disposition beside keep / close / defer), and a claim about a **generated** artifact: [references/issue-audit.md](references/issue-audit.md).
+- **Dispositions that need more than that grep** — an issue blocked on a *finding inside* another issue, one gated on an **upstream change that is closed but in no release at the pin**, a partially-shipped issue (**rescope-to-residual**, a fourth disposition beside keep / close / defer), and a claim about a **generated** artifact: [references/issue-audit.md](references/issue-audit.md).
 - Pairs of issues that may describe the same underlying bug or fix, **or a deliberate prerequisite relationship** — check title overlap, body keywords, and **files/symbols mentioned** (files/symbols catches pairs that don't share title language). If a candidate pair is found, surface as Q0 in Step 3 — resolving before scoring avoids redundant ranking and accidental two-agent overlap, and lets the batch design inherit the pair's shape rather than re-derive it.
 
 ### Step 3: Interview (one question at a time)
@@ -74,10 +74,11 @@ Skip Q0 entirely if Step 1–2 flagged neither a candidate pair nor a partially-
 
 **Q5 — Concurrency ceiling: worktree provisioning *and* shared backing services?**
 
-Two sub-questions, both capping the per-batch agent count regardless of file-disjointness. Ask them together; either can independently set the ceiling.
+Three sub-questions, each capping the per-batch agent count regardless of file-disjointness. Ask them together; any one can set the ceiling.
 
 > 1. Does the host project have a custom worktree-create script (e.g. `dev.sh worktree create`)? What concurrent ceiling does it support, and what does it provision beyond plain `git worktree add` — Nginx vhosts, DB clones, port pools, node_modules overlays? If the user doesn't know, ask them to grep the script for port-pool size or docker-compose port ranges first.
 > 2. **What backing services do the worktrees NOT clone?** A shared test database, a shared Redis, a shared search index, a single dev-server port — and, by *capacity* rather than by state, one machine running every worktree's suite. Plain `git worktree` clones *none* of these, so a project with **no** worktree script can still have a hard ceiling of 1.
+> 3. **Does the commit or push hook run the test suite, and at what parallelism?** Multiply that parallelism by the agent count before accepting a ceiling — the hook runs on every worker's every commit.
 
 The real ceiling is far more often in sub-question 2 than in 1. **Ask it explicitly — don't wait to rediscover it in Step 5**, but accept "none" as an answer — and a grep hit is not a ceiling until you read the path.
 
@@ -128,7 +129,7 @@ Group issues into **merge batches**. The core principle: within a batch, all age
 **Batch design rules:**
 - **Batch 0 / Batch A**: truly isolated issues — each touches files no other issue in this batch touches. Maximum agent count.
 - **Cap parallel agents at the project's worktree provisioning ceiling** (Q5 / Rule 5). The effective per-batch parallelism is `min(file-disjoint count, project worktree ceiling)`.
-- **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free). Agents within a sub-wave run in parallel up to the ceiling; sub-waves themselves run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves. Where N greatly exceeds a small ceiling, write the chunking as **exclusion groups plus a queue** rather than fixed sub-waves, and name the longest chain as the critical path: [references/batch-design.md](references/batch-design.md).
+- **Chunk when N > ceiling**: if a batch has more file-disjoint agents than the ceiling permits, split it into sub-waves (A1 ≤ ceiling, A2 launches after A1's worktrees free), run sequentially, each merging into the same `batch/<X>` branch. Narrowing the batch (dropping issues) is the fallback only when chunking would create new file conflicts across sub-waves. Where N greatly exceeds a small ceiling, write the chunking as **exclusion groups plus a queue** rather than fixed sub-waves, and name the longest chain as the critical path: [references/batch-design.md](references/batch-design.md).
 - **Subsequent batches**: ordered by the dependency chain of contested files. One agent per batch on the critical path; parallelize only where file coverage is genuinely disjoint.
 - **Pick a shape for same-file issue pairs** — when two issues share a file (typically a small prerequisite + a larger dependent), there are two clean shapes:
   - **Shape A — bundle in one agent with sequential commits.** Touch the same file(s), both pieces small enough that reviewing together is the natural shape (e.g. define constants then use them; fix protocol then add config models). Lower ceremony — no gate, single review.
@@ -148,11 +149,13 @@ Present a table:
 
 Include a note for any intra-batch merge ordering (e.g. "F1 merges first; F2 rebases before merge").
 
+**Count the table's items before asking** — they must equal the scored rows minus deferrals, each Q0 bundle once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it: [references/batch-design.md](references/batch-design.md).
+
 Get approval before writing the design doc.
 
 ### Step 8: Design doc
 
-The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The section structure below is specific to backlog orchestration and differs from the generic plan structure prescribed by `writing-plans` — share the directory, not the shape.
+The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The sections below are specific to backlog orchestration, not `writing-plans`' generic structure — share the directory, not the shape.
 
 Read [references/execution.md](references/execution.md) before writing it: the doc records the batch→main merge strategy that file has you ask for.
 
@@ -208,7 +211,7 @@ Report the issue number.
 
 After the plan is approved and committed, capture this session's adjustments: rubric weights the user changed (document the new formula), standard questions skipped or reordered (note why), surprises the conflict analysis surfaced (record the pattern), and rubric dimensions that proved inadequate for this project type (flag for skill revision).
 
-**Where to capture them.** Write a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in that year's own `index.md` beside it — the layout rules are in [`references/process-log.md`](references/process-log.md). The log is the default destination — it preserves chronology and session-specific context. Promote a pattern into this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime — into the body only if every run executes it, otherwise into the reference that owns its step. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the skill now carries the load.
+**Where to capture them.** In the log by default, which preserves chronology and session-specific context: a session entry file under `references/process-log/<year>/`, plus one row (date, project, headline) in that year's own `index.md` beside it, laid out as [`references/process-log.md`](references/process-log.md) says. Promote a pattern into this skill only when it has recurred across sessions OR introduces a new rule/step that future orchestrators need at runtime — into the body only if every run executes it, otherwise into the reference that owns its step. Don't double-write: once promoted, leave the originating log entry intact as the historical record, but trim it if the skill now carries the load.
 
 ---
 

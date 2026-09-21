@@ -1,6 +1,7 @@
 # Batch geometry: special cases and priors
 
 Loaded from [`SKILL.md`](../SKILL.md) Steps 5–7, whose Step numbers it cites.
+Rule numbers refer to [`execution.md`](execution.md).
 
 ## Special cases that force a shape (Step 7)
 
@@ -28,6 +29,55 @@ time, and fixed sub-waves hide that, because every wave boundary looks like a
 gate. Four function-disjoint items serialized on one hub file in that run — they
 shared protocol test fakes — while the other slot drained its queue early and
 idled. Ask at planning time whether that shared surface can be split first.
+
+## Counting and pairing the table (Step 7)
+
+**Count the table's items against the scored backlog before asking for approval** —
+they must equal the scored rows minus deferrals, each Q0 bundle counting once.
+Re-reading the table is no substitute, because the failure does not look wrong. Each
+downstream artifact is written from the one before it — the design doc from this table, the tracking
+issue from the design doc, the briefs and per-issue comments from both — so an item
+the table drops reaches all of them unchallenged (process-log 2026-09-16 observo:
+twelve work items after four Q0 bundles; reshuffling two batches into score order
+left eleven slots, and six two-wide batches with plausible gates read as complete
+until the orchestrator enumerated the items by hand, after the tracking issue had
+been filed).
+
+**Then quote that count; don't re-derive it.** The 2026-09-14 observo plan's summary
+read 16 work units, which is its wave grid — eight waves two wide — while its own
+wave description, with the last wave holding one item, gives fifteen, and fifteen is
+what the run produced (2026-09-15 observo execution). That number reached an upstream
+issue before anyone counted. A check that only asserts equality with the table can
+pass beside a wrong summary; a count the design doc's shape line and the tracking
+issue then quote cannot.
+
+**Once the conflict matrix is dense, pairing is a constraint problem, not a
+score-order pass.** A greedy pass fills slots by score, so an item with conflict edges
+to much of the backlog is the one it reaches last, with no valid partner left. That
+is how the item above was dropped: it shared a source or test file with 4 of the
+other 11, so after the reshuffle no slot could take it. Where an item has edges to
+more than about a third of the backlog, assign its slot **first** and fill the rest
+around it. "First" orders the assignment, not the batches — re-solving the whole
+assignment as "every pair file-disjoint under the gates" put that item in the third
+of six batches, and placed all twelve in the same six with no extra boundary.
+
+## The baseline delta is also a finder (Steps 7–8)
+
+Rule 3 has the briefed baseline measured in a tree cut the way the workers' are.
+Where that count differs from the main checkout's, the difference is a list of tests
+that **skip where the work happens** (`pytest -rs` in each tree, diffed), and it is
+worth more than a correction to the brief. **Grep the backlog against it.** An issue
+whose acceptance guard is on that list cannot be verified in its own worktree: its
+worker sees the guard skip and reports green without the check ever running. That is
+a verification-mode asymmetry in Step 8's sense — name it in Key decisions, tell the
+worker a green run there is not evidence for that issue, and re-run the guard in the
+main checkout at the gate (process-log 2026-09-16 observo: one issue's guard was one
+of the two tests that skip wherever the vendored-skill submodules are uninitialised,
+which is every worktree; the investigation into the baseline gap found it, not the
+issue body). Step 8's own example is a worker changing the runner's config, and
+2026-08-27 (#240–#244) logged a guard an opt-in tier skips everywhere. This one runs in
+the main checkout and skips only in worktrees, which is why measuring both trees is
+what finds it.
 
 ## Low-discovery backlog mode (Steps 5/6)
 

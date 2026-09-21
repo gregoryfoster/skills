@@ -44,6 +44,10 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Branch strategy / Orchestrator step 5 / Worker step 1 ([`execution.md`](execution.md)) the batch branch as a **verification artifact** where the host ships per-item PRs (2026-09-16 wordpress); the `--no-merged` snapshot, `git branch -d` run where HEAD is the batch branch, and the handoff harvest (2026-09-15 observo execution); a worktree has no initialised submodules, so a vendored skill is read by absolute path from the main checkout (2026-09-15 observo execution)
 - Report-back slot ([`execution.md`](execution.md)) a decision taken at the gate is a hypothesis too — 2026-08-21 and 2026-08-27 recorded the converse, reversed 2026-09-15 observo execution
 - Step 10 ("Adding an entry", below) a vendored copy is not where the entry goes — 2026-09-14 observo, 2026-09-15 observo execution, 2026-09-16 wordpress
+- Step 7 count the table's items before approval, and quote that count ([`batch-design.md`](batch-design.md)) — 2026-09-14 observo (found by 2026-09-15 observo execution), 2026-09-16 observo; pairing as a constraint problem once the conflict matrix is dense — 2026-09-16 observo
+- Rule 3 ([`execution.md`](execution.md)) measure the briefed baseline in a tree cut the way the workers' are, and name the delta; that delta's skipped tests as a finder for a verification-mode asymmetry ([`batch-design.md`](batch-design.md)) — 2026-09-16 observo
+- Steps 1–2 ([`issue-audit.md`](issue-audit.md)) a closed upstream prerequisite is not a landed one: resolve the gate against the pinned version's changelog, not the issue's state — 2026-08-20, 2026-09-17 cli
+- Q5's third sub-question, the commit hook's own parallelism ([`shared-backing-services.md`](shared-backing-services.md)), and Worker step 6's pointer to it — 2026-09-17 cli
 
 ---
 ## Adding an entry

@@ -1,7 +1,8 @@
 # Shared backing services as the ceiling
 
 Loaded from [`SKILL.md`](../SKILL.md) when Q5's second sub-question finds a
-service the worktrees do not clone — a shared test database above all. Q and
+service the worktrees do not clone — a shared test database above all — or its
+third finds a commit hook that runs the suite. Q and
 Step numbers refer to `SKILL.md`, so "item 2" below is its Step 5 item 2
 (procedure in [`shared-files.md`](shared-files.md));
 Rule and Worker-step numbers refer to [`execution.md`](execution.md).
@@ -19,6 +20,18 @@ the provisioning pool (process-log 2026-09-16 wordpress: "9 (dev.sh port pool)" 
 weeks while a 2-CPU / 4-GiB VM capped concurrent verification at **3**; it never bit only because
 the earlier session peaked at 3). The number and the resource are two facts, and the skill's own
 cheap re-verification confirms one of them.
+
+**Then ask what the commit (or push) hook runs, and at what parallelism** — Q5's third
+sub-question. Where worktrees are plain `git worktree add` plus a dependency sync over a
+hermetic suite, sub-questions 1 and 2 both answer "none", which reads as a ceiling set by host
+CPU/RAM alone. A hook that runs the suite multiplies every agent's CPU cost by its own
+parallelism on every commit, before any worker runs the suite on purpose (Worker step 7). Read
+the hook config and multiply by the agent count before accepting a ceiling (process-log
+2026-09-17 cli: the pre-commit hook runs `pytest tests/ -n 4` over a 3,319-test suite, so three
+agents can mean twelve concurrent pytest processes; the plan recorded a CPU-bound ceiling of 3
+with that multiplication as its reason, and measured no contention). The same read answers
+Worker step 6 — where the hook runs the suite, the TDD red-phase commit needs `--no-verify` — so
+put the answer in every brief rather than leaving each worker to find it.
 
 For a shared test database specifically: read the suite's session-scoped fixture and its DSN guard before accepting any ceiling.
 - If the fixture is destructive (`DROP SCHEMA … CASCADE`, `drop_all`, truncate-all), concurrent runs corrupt each other and the ceiling is 1 until slots are provisioned.

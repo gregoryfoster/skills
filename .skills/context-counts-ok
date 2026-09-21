@@ -74,7 +74,9 @@ skills/using-git-worktrees/SKILL.md :: enumerated :: Three responsibilities the 
 # The counts this run introduced dropped their precision instead: the file's own
 # "Three refinements:" over four sub-bullets was this check's defect, live. The
 # entries below carried over from before the run and were judged in place.
-skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: Two sub-questions, both capping
+# Re-judged for #298, which added Q5's third sub-question: the count still
+# introduces the numbered list directly below it.
+skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: Three sub-questions, each capping
 skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: Use this three-dimension rubric
 skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: there are two clean shapes
 skills/orchestrating-issue-backlog/SKILL.md :: enumerated :: The three routes for that case
