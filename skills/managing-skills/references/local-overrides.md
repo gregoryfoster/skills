@@ -147,6 +147,13 @@ reported as un-assessable with that reason, never as drift. Unfetched, it read
 "last synced at version 1.5, vendor now at version 1.4" with the re-sync remedy
 until a fetch let the history speak.
 
+Where the commit **is** on disk and the override's files are unchanged since it,
+the stamps get no verdict in either direction. The diff always covers the
+vendor's `SKILL.md`, which carries `version:`, so a clean diff means the vendor's
+version at that commit is the one at `HEAD`, and a stamp that disagrees is
+stale: the override's two keys disagree — most often a re-sync that bumped
+`synced-from:` and not `version:`. It is reported as un-assessable, never drift.
+
 ### What the commit diff is scoped to
 
 The override's **own real files** — its `SKILL.md`, plus any script or
@@ -181,8 +188,9 @@ all. Eight ways to get there:
    neither contains the other — so [which side moved](#which-side-moved)
    cannot be read.
 7. The `git diff`, or the ancestry check after it, failing.
-8. With no fetched commit to decide, a `version:` **newer** than the vendor's,
-   or stamps that are not both dotted numbers.
+8. Stamps the history cannot settle: with no fetched commit, a `version:`
+   **newer** than the vendor's, or stamps that are not both dotted numbers;
+   with the commit fetched and its files unchanged since, **any** mismatch.
 
 Causes 4–7 are reported **even when the version stamps match and compare
 cleanly**: a comparand the operator wrote that quietly does not apply is its own

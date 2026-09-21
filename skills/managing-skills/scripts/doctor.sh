@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-21-3"
+VERSION="2026-09-21-4"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -120,6 +120,8 @@ reported as unassessable. Where no fetched synced-from: commit exists,
 the version stamps decide by direction: only
 an override version OLDER than the vendor's is drift, and a newer one is
 unassessable — most often a commit not fetched yet (fetch, then re-run).
+Where one exists and the diff is clean, any stamp mismatch is a stale
+key, unassessable in either direction and never drift.
 Drift is advisory in every mode including --check-only, and nothing is
 ever auto-merged: the point of an override is that upstream text cannot
 be applied blindly.
@@ -1445,7 +1447,7 @@ check_override_drift() {
   MALFORMED_SEEN=" "
   UNCLOSED_FENCE=()
   local dir md target repo_dir skill_rel vendor_md o_ver v_ver synced rec rc
-  local ver_drift changed have now line moved head rec_why ver_why
+  local ver_drift changed have now line moved head rec_why ver_why order
   local -a dpaths=()
   for dir in skills/*; do
     # A regular directory carrying a SKILL.md whose frontmatter names an
@@ -1614,37 +1616,51 @@ EOF
       [ -z "$o_ver" ] || have="version $o_ver (commit $rec)"
       record_override_drift "$dir" "$target" "$have" "$now"
     elif [ "$ver_drift" = "1" ]; then
-      # The stamps are the only verdict left — no synced-from:, one that could
-      # not be read, or a commit that has not been fetched — so they decide by
-      # DIRECTION (#290 CR 3). Only an older stamp is drift. A newer one is the
-      # pointer-lag state again, seen without the history that would prove it:
-      # an override re-synced from upstream's newest text, recording a commit
-      # its submodule has not fetched, read "last synced at version 1.5,
-      # vendor now at version 1.4" with the re-sync remedy — the opposite of
-      # the fix, which a fetch and a re-run then printed correctly. So it is
-      # un-assessable, with the reason and the likely cause, never drift.
-      case "$(version_order "$o_ver" "$v_ver")" in
-        older)
-          record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
-          ;;
-        same)
-          # Spelled apart, numerically one release (1.4 and 1.4.0).
-          ;;
-        newer)
-          if [ -n "$rec" ]; then
-            # The commit WAS compared, and the override's files are the same
-            # at it as at the checkout: the stamp and the commit disagree.
-            ver_why="it records version $o_ver, NEWER than the $v_ver at the checkout of $repo_dir, yet its synced-from: commit $rec carries the same files as that checkout — the two keys disagree, so correct whichever is wrong; this is not drift"
-          else
+      # The stamps disagree and the commit comparison fired no finding. Four
+      # ways to get here: no synced-from:, one that could not be read, a
+      # commit not fetched — and a commit fetched and compared CLEAN, which
+      # `rec` still holding it marks (every other way empties it above).
+      #
+      # Compared clean, the stamps get no verdict at all (#290 CR 40). The
+      # diff always covers the vendor's SKILL.md, which carries version:, so
+      # a clean diff means the vendor's version at the recorded commit IS the
+      # one at HEAD: history has just shown nothing moved, and a stamp that
+      # disagrees is stale whichever way it points. Only a newer stamp used
+      # to be told so. An older one read "last synced at version 1.4, vendor
+      # now at version 1.5" with the full re-sync remedy over unchanged files
+      # — the common case being a re-sync that bumped synced-from: and forgot
+      # version: — and an unordered one "which side moved cannot be told".
+      #
+      # With no compared commit the stamps are the only verdict, so they
+      # decide by DIRECTION (#290 CR 3). Only an older stamp is drift. A
+      # newer one is the pointer-lag state again, seen without the history
+      # that would prove it: an override re-synced from upstream's newest
+      # text, recording a commit its submodule has not fetched, read "last
+      # synced at version 1.5, vendor now at version 1.4" with the re-sync
+      # remedy — the opposite of the fix, which a fetch and a re-run then
+      # printed correctly. So it is un-assessable, with the reason and the
+      # likely cause, never drift.
+      order="$(version_order "$o_ver" "$v_ver")"
+      if [ "$order" = same ]; then
+        # Spelled apart, numerically one release (1.4 and 1.4.0).
+        :
+      elif [ -n "$rec" ]; then
+        ver_why="its version: $o_ver is not the $v_ver its synced-from: commit $rec carries, yet that commit's files are the same as the checkout of $repo_dir — nothing moved since it, so this is not drift: the two keys disagree, so correct whichever is wrong (a re-sync that bumped synced-from: and not version: leaves exactly this)"
+      else
+        case "$order" in
+          older)
+            record_override_drift "$dir" "$target" "version $o_ver" "version $v_ver"
+            ;;
+          newer)
             ver_why="it records version $o_ver, NEWER than the $v_ver at the checkout of $repo_dir — its pointer most likely lags the release it was synced from, which is not drift: do not re-sync it onto the older text"
             [ -n "$synced" ] ||
               ver_why="$ver_why; record synced-from: (\"<repo> <tag> (<commit>)\") and the doctor names the commit to bump to"
-          fi
-          ;;
-        *)
-          ver_why="its version $o_ver and the vendor's $v_ver do not both read as dotted numbers, so which is newer — and which side moved — cannot be told"
-          ;;
-      esac
+            ;;
+          *)
+            ver_why="its version $o_ver and the vendor's $v_ver do not both read as dotted numbers, so which is newer — and which side moved — cannot be told"
+            ;;
+        esac
+      fi
     fi
     # One un-assessable entry per override for the two comparisons: the
     # commit's reason first, since fixing it (a fetch) is what lets the next

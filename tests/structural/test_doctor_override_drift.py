@@ -60,6 +60,10 @@ What this file pins:
   version stamps as the only verdict: only an OLDER override version is
   drift, a newer one is un-assessable with the fetch that settles it, and the
   stamps are ordered as numbers (1.14 is newer than 1.4).
+- **A commit compared clean leaves the stamps no verdict** (#290 CR 40). The
+  diff covers the vendor's `SKILL.md`, `version:` included, so a stamp that
+  disagrees over a clean diff is a stale key whichever way it points —
+  un-assessable in every direction, never drift.
 - **Who is NOT warned about.** A symlinked skill tracks upstream by
   construction, and a local directory without `overrides:` is a
   project-authored skill, not a fork of anything.
@@ -1152,6 +1156,54 @@ class TestStampsDecideByDirection:
         result = _doctor(consumer)
         assert UNASSESSED_MARKER in result.stderr, result.stderr
         assert DRIFT_MARKER not in result.stderr, result.stderr
+
+
+class TestACleanCommitLeavesTheStampsNoVerdict:
+    """#290 CR 40 — a recorded commit fetched and compared CLEAN outranks the
+    stamps in every direction, not only the newer one.
+
+    The commit diff always covers the vendor's `SKILL.md`, which carries
+    `version:`, so a clean diff means the vendor's version at the recorded
+    commit IS the one at `HEAD`. A stamp that disagrees is then a stale stamp
+    whichever way it points. Only the newer arm said so; an older stamp still
+    read "last synced at version 1.4, vendor now at version 1.5" with the full
+    re-sync remedy over files history had just shown unchanged — the common
+    case being a re-sync that bumped `synced-from:` and forgot `version:`.
+    """
+
+    @pytest.mark.parametrize(
+        ("override", "vendor"),
+        [("1.4", "1.5"), ("1.6", "1.5"), ("1.5-rc1", "1.4")],
+        ids=["older", "newer", "unordered"],
+    )
+    def test_a_stamp_mismatch_over_a_clean_commit_is_one_reason(
+        self, consumer: Path, override: str, vendor: str
+    ):
+        _, sha = _init_vendor_git(consumer, "sw", vendor)
+        _override(consumer, "sw", override, synced_from=f"{VENDOR_REPO} x ({sha})")
+        result = _doctor(consumer)
+        assert DRIFT_MARKER not in result.stderr, (
+            "history shows nothing moved since the recorded commit — the "
+            f"stamp is stale, not the override:\n{result.stderr}"
+        )
+        assert RESYNC_REMEDY not in result.stderr, result.stderr
+        assert UNASSESSED_MARKER in result.stderr, result.stderr
+        flat = _flat(result.stderr)
+        assert "the two keys disagree" in flat, (
+            f"every direction gets the one reason that fits it:\n{flat}"
+        )
+        assert "cannot be told" not in flat, (
+            f"the history already told which side moved — neither:\n{flat}"
+        )
+        listed = result.stderr.count(f"overrides {VENDOR_REPO}/sw")
+        assert listed == 1, f"one override, {listed} entries:\n{result.stderr}"
+
+    def test_the_same_release_spelled_twice_over_a_clean_commit_is_silent(
+        self, consumer: Path
+    ):
+        _, sha = _init_vendor_git(consumer, "sw", "1.5.0")
+        _override(consumer, "sw", "1.5", synced_from=f"{VENDOR_REPO} x ({sha})")
+        assert _doctor(consumer).stderr.strip() == ""
 
 
 class TestDriftIsAdvisoryInEveryMode:
