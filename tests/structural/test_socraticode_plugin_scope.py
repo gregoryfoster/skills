@@ -207,6 +207,58 @@ class TestTheRegistryEntryIsTheSessions:
         p = _loaded(config, worktree)
         assert p is not None and p["pluginVersion"] == "1.13.1", p
 
+    @staticmethod
+    def _bare_with_worktrees(tmp_path: Path, name: str) -> tuple[Path, Path]:
+        """A bare repository `name`.git and two worktrees of it."""
+        origin = _dir(tmp_path, f"{name}-origin")
+        subprocess.run(
+            ["git", "-C", str(origin), "init", "-q"],
+            check=True,
+            capture_output=True,
+            env=_clean_env(),
+        )
+        (origin / "README.md").write_text("x\n")
+        _git(origin, "add", "-A")
+        _git(origin, "commit", "-qm", "init")
+        bare = tmp_path / f"{name}.git"
+        _git(tmp_path, "clone", "-q", "--bare", str(origin), str(bare))
+        a, b = tmp_path / f"{name}-a", tmp_path / f"{name}-b"
+        _git(bare, "worktree", "add", "-q", "-b", "a", str(a))
+        _git(bare, "worktree", "add", "-q", "-b", "b", str(b))
+        return a, b
+
+    @requires_node
+    def test_worktrees_of_a_bare_repository_are_one_repository(
+        self, tmp_path: Path
+    ) -> None:
+        """#305 CR 50: the binary's canonical root for them is the bare dir.
+
+        The driver asked for a main checkout, and a bare repository has none,
+        so an entry recorded at one worktree applied at the other for Claude
+        Code and not for the driver. The entry is spelled through /var on
+        macOS, where tmp_path is /private/var, so the realpath is exercised.
+        """
+        a, b = self._bare_with_worktrees(tmp_path, "repo")
+        recorded = str(a).replace("/private/var/", "/var/", 1)
+        config = _config(
+            tmp_path,
+            [{"scope": "local", "projectPath": recorded, "version": "1.13.1"}],
+        )
+        p = _loaded(config, b)
+        assert p is not None and p["pluginVersion"] == "1.13.1", p
+
+    @requires_node
+    def test_another_bare_repositorys_worktree_does_not_match(
+        self, tmp_path: Path
+    ) -> None:
+        a, _ = self._bare_with_worktrees(tmp_path, "one")
+        _, b = self._bare_with_worktrees(tmp_path, "two")
+        config = _config(
+            tmp_path,
+            [{"scope": "local", "projectPath": str(a), "version": "1.13.1"}],
+        )
+        assert _loaded(config, b) is None
+
 
 class TestTheEntryDecidesSeverity:
     """Why the choice matters: the builder check is judged against it."""

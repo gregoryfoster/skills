@@ -203,13 +203,23 @@ function pluginServerFromVersionDir(versionDir) {
 // reads the version the session's server runs from it, and a project entry
 // for some other checkout, taken first-found, judged this project's graph
 // against a server its session never loads.
+//
+// "The same repository" is the shared git dir, not the main checkout: a bare
+// repository's worktrees have no main checkout, so mainCheckoutOf() is null
+// for every one of them, while the binary's canonical root for them is the
+// bare dir — an entry recorded at one worktree applied at another for Claude
+// Code and not here (#305 CR 50). --git-common-dir is that dir for a bare
+// repo's worktrees, and <main>/.git for an ordinary repo's, so comparing it
+// agrees with the binary for both.
 function registryEntryApplies(entry, project) {
   if (entry?.scope === 'user' || entry?.scope === 'managed') return true;
   if (typeof entry?.projectPath !== 'string' || !entry.projectPath) return false;
   const here = realOrSelf(resolvePath(project));
   if (realOrSelf(resolvePath(entry.projectPath)) === here) return true;
-  const repo = mainCheckoutOf(here);
-  return repo !== null && mainCheckoutOf(resolvePath(entry.projectPath)) === repo;
+  const repo = gitCommonDir(here);
+  if (repo === null) return false;
+  const theirs = gitCommonDir(resolvePath(entry.projectPath));
+  return theirs !== null && realOrSelf(theirs) === realOrSelf(repo);
 }
 
 // `project` is the checkout whose session is in question: the project being
