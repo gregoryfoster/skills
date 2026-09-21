@@ -28,6 +28,7 @@ is one scoped run per skill, and `--calibrate` on each would refit the ratio to
 every skill in turn and leave it at whichever ran last.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -243,7 +244,9 @@ class TestCalibrateIsTheDecision:
         env["PATH"] = str(bin_dir)
         env["ANTHROPIC_API_KEY"] = "sk-ant-test-offline"
         repo = _repo(tmp_path)
-        _ok(repo, env, "--exact", "--calibrate", *SCOPE)
+        # Exit 2, not 0, since #294 CR 22: see TestAPersistThatDidNotHappenSaysSo.
+        r = _run(repo, env, "--exact", "--calibrate", *SCOPE)
+        assert r.returncode == 2, r.stderr
         assert not (repo / RATIO).exists()
         assert not (repo / COUNTS).exists()
 
@@ -422,3 +425,112 @@ class TestAnchorPersistsTheAnchorsAlone:
         assert r.returncode == 0
         assert "--anchor" in r.stdout
         assert "#294" in r.stdout
+
+
+# count_tokens answering for the SKILL.md and failing for everything under
+# references/: a rate limit arriving part-way through one skill, which is the
+# likeliest way a count in the documented refresh loop falls back.
+PARTIAL_COUNTER = """#!/bin/sh
+case "$2" in
+  *references*) echo "HTTP 429: rate limited" >&2; exit 1 ;;
+esac
+b=$(wc -c <"$2" | tr -d ' ')
+echo $(( b * 100 / 300 ))
+"""
+
+
+@pytest.fixture
+def partial_env(tmp_path: Path) -> dict:
+    bin_dir = _bin_with_real_tools(tmp_path / "partial-bin")
+    (bin_dir / "python3").unlink()
+    (bin_dir / "python3").write_text(PARTIAL_COUNTER)
+    (bin_dir / "python3").chmod(0o755)
+    env = _clean_env()
+    env["PATH"] = str(bin_dir)
+    env["ANTHROPIC_API_KEY"] = "sk-ant-test-offline"
+    return env
+
+
+class TestAPersistThatDidNotHappenSaysSo:
+    """#294 CR 22. `--anchor` and `--calibrate` ask for a write, and a run in
+    which any count fell back persists nothing — correctly, since an estimate
+    cannot anchor the estimator. It used to exit 0 saying nothing about it, so
+    docs/STYLE.md's refresh loop, `… --anchor … || break`, never broke on the
+    likeliest failure and moved on to the next skill with this one unanchored.
+    Now it names what was not written and exits 2, after the measurement.
+    """
+
+    @pytest.mark.parametrize("flag", ["--anchor", "--calibrate"])
+    def test_a_count_that_fell_back_exits_2_and_writes_nothing(
+        self, tmp_path: Path, partial_env: dict, flag: str
+    ):
+        repo = _repo(tmp_path)
+        r = _run(repo, partial_env, "--exact", flag, *SCOPE)
+        assert r.returncode == 2, r.stderr
+        assert f"ERROR {flag} persisted nothing" in r.stderr, r.stderr
+        assert "exact count failed" in r.stderr, "the cause is still on stderr"
+        assert json.loads(r.stdout)["policy"]["tokens_exact"] is False, (
+            "the measurement still prints in full"
+        )
+        assert not (repo / COUNTS).exists()
+        assert not (repo / RATIO).exists()
+
+    def test_no_credential_at_all_is_the_same_refusal(self, tmp_path: Path):
+        """The preflight in the documented loop catches this one, but a bare
+        `--exact --anchor` must not rely on having been preceded by it."""
+        bin_dir = _bin_with_real_tools(tmp_path / "keyless-bin")
+        env = _clean_env()
+        env["PATH"] = str(bin_dir)
+        repo = _repo(tmp_path)
+        r = _run(repo, env, "--exact", "--anchor", "--no-env-file", *SCOPE)
+        assert r.returncode == 2, r.stderr
+        assert "ERROR --anchor persisted nothing" in r.stderr, r.stderr
+        assert not (repo / COUNTS).exists()
+
+    def test_a_plain_measurement_that_fell_back_still_exits_0(
+        self, tmp_path: Path, partial_env: dict
+    ):
+        """Nothing was asked to be written, so nothing failed to be: the
+        fallback is reported as tokens_exact=false, as it always was."""
+        repo = _repo(tmp_path)
+        r = _run(repo, partial_env, "--exact", *SCOPE)
+        assert r.returncode == 0, r.stderr
+        assert "persisted nothing" not in r.stderr
+
+    def test_the_refresh_loop_breaks_on_it(self, tmp_path: Path, partial_env: dict):
+        """The loop docs/STYLE.md documents, in miniature: it stops at the
+        first skill whose anchor could not be written."""
+        repo = _repo(tmp_path)
+        _second_corner(repo)
+        loop = (
+            'for s in skills/x/SKILL-dense.md skills/y/SKILL.md; do bash "$0" '
+            '--exact --anchor --file "$s" --docs-dir "${s%/*}/references" '
+            '>/dev/null || break; echo "anchored $s"; done'
+        )
+        r = subprocess.run(
+            ["bash", "-c", loop, str(MEASURE)],
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=partial_env,
+            timeout=120,
+        )
+        assert "anchored" not in r.stdout, r.stdout + r.stderr
+
+    def test_an_over_budget_gate_still_gives_its_verdict(
+        self, tmp_path: Path, partial_env: dict
+    ):
+        """Both are said; the gate's exit, the more specific verdict, wins."""
+        repo = _repo(tmp_path)
+        gate = ("--gate", "--budget", "1")
+        r = _run(repo, partial_env, "--exact", "--anchor", *gate, *SCOPE)
+        assert r.returncode == 4, r.stderr
+        assert "GATE" in r.stderr
+        assert "ERROR --anchor persisted nothing" in r.stderr
+
+    def test_the_help_documents_it(self):
+        r = subprocess.run(
+            ["bash", str(MEASURE), "--help"], capture_output=True, text=True, timeout=30
+        )
+        text = " ".join(r.stdout.split())
+        assert "--anchor/--calibrate persisted nothing" in text, text

@@ -216,7 +216,8 @@ flagless weekly cadence still calibrates.
 per-file anchors and never the ratio, on any scope (#294). A repo that anchors
 many corners — a skill library anchoring every SKILL.md — needs one run per
 corner, and `--calibrate` on each would refit the ratio to every corner in turn
-and leave it at whichever ran last.
+and leave it at whichever ran last. Either flag, on a run where any count fell
+back, persists nothing and exits 2, so a loop of them stops at that corner.
 
 ### Keeping a ledger single-method
 

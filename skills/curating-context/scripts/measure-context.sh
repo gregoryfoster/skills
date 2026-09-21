@@ -109,7 +109,8 @@ Options:
                      estimate measures. Both are decisions, and this flag is
                      how they are made. A whole-surface --exact run (no --file,
                      no --docs-dir) persists both without it, and says so.
-                     Refused with --no-write, and without --exact.
+                     Refused with --no-write, and without --exact. A run in
+                     which any count fell back persists nothing and exits 2.
   --anchor           Persist the per-file anchors from an --exact run and never
                      the ratio: every file counted exactly gets its row in
                      .skills/context-token-counts, merged as for --calibrate,
@@ -118,7 +119,9 @@ Options:
                      library is one run per skill, and --calibrate there would
                      refit the repo-wide ratio to each skill in turn, leaving
                      it at whichever ran last (#294). Refused with --no-write,
-                     with --calibrate, and without --exact.
+                     with --calibrate, and without --exact. Exits 2 as
+                     --calibrate does when a count fell back, so a loop of
+                     runs can `|| break` on it.
   -h, --help         Show this help and exit 0.
 
 Output (stdout, JSON):
@@ -181,7 +184,9 @@ Exit codes:
   2  infrastructure failure (unreadable file, awk/find failure, or
      --check-credential could not reach the endpoint at all — no python3 to
      address it with, or an ANTHROPIC_BASE_URL that cannot be parsed; none of
-     these is a verdict on a credential)
+     these is a verdict on a credential), or --anchor/--calibrate persisted
+     nothing because a count fell back to the estimate — after the full
+     measurement has printed, and after --gate's verdict, which wins
   3  --check-credential only: no credential that count_tokens will accept —
      none resolved, or the one that did was refused
   4  --gate only: the policy file is over budget
@@ -1844,6 +1849,21 @@ elif [ "$exact_flag" = true ] && [ "$SCOPED" -eq 1 ]; then
   echo "INFO scoped run: not anchoring the $COUNTED counted file(s) in .skills/$CTX_COUNTS_BASENAME; an anchor prices a file's offline estimate from its own count. Pass --calibrate to persist the ratio and the anchors from this corner (#263), or --anchor for the anchors alone (#294)" >&2
 fi
 
+# A write that was ASKED for and did not happen (#294 CR 22). --anchor and
+# --calibrate persist nothing when any count fell back, correctly — but this
+# used to exit 0 and say nothing, so the documented refresh loop's `|| break`
+# never fired on the likeliest failure, a rate limit part-way through, and
+# moved on with this skill unanchored. Said here; the exit waits for the
+# measurement and the gate below, so a red run still prints both.
+PERSIST_REFUSED=""
+if [ "$exact_flag" != true ]; then
+  if [ "$ANCHOR" -eq 1 ]; then PERSIST_REFUSED="--anchor"; fi
+  if [ "$CALIBRATE" -eq 1 ]; then PERSIST_REFUSED="--calibrate"; fi
+fi
+if [ -n "$PERSIST_REFUSED" ]; then
+  echo "ERROR $PERSIST_REFUSED persisted nothing: not every count reached count_tokens (see the WARN lines above), and an estimate cannot anchor the estimator. Exit 2; re-run once count_tokens answers" >&2
+fi
+
 printf '  "policy": {"path": "%s", "lines": %s, "bytes": %s, "tokens": %s, "tokens_exact": %s, "tokens_source": "%s", "bytes_per_token": %d.%02d, "budget": %s, "over_budget": %s, "near_budget": %s},\n' \
   "$(jesc "$POLICY")" "$P_LINES" "$P_BYTES" "$P_TOKENS" "$exact_flag" \
   "$(jesc "$P_SOURCE")" \
@@ -1949,4 +1969,7 @@ if [ "$GATE" -eq 1 ] && [ "$over_policy" = true ]; then
   echo "     The fix is a demotion, not a rewrite — move a section to a reference doc" >&2
   echo "     and leave one pointer (curating-context Phase 3 class B)." >&2
   exit 4
+fi
+if [ -n "$PERSIST_REFUSED" ]; then
+  exit 2
 fi
