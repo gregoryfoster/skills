@@ -91,7 +91,8 @@ Options:
                      refused, since it can never match, and the error names the
                      relative spelling that reaches the same file. When no
                      credential resolves, the WARN names each file passed here
-                     that was missing or held no usable key (#296).
+                     that was missing or held no usable key (#296). An empty
+                     value is refused; --no-env-file searches no file.
   --no-write         Touch nothing. Suppresses the side effects an --exact run
                      otherwise has: writing the observed bytes-per-token ratio to
                      .skills/context-token-ratio, and the per-file calibration
@@ -217,7 +218,9 @@ MODEL="claude-opus-5"
 
 # An option that legitimately accepts an EMPTY value cannot use ${2:?...} to
 # check arity, and a bare `shift 2` at the end of the argv fails under `set -e`
-# with no message at all. Check the count explicitly.
+# with no message at all. Check the count explicitly. --env-file uses it for
+# arity only: an empty value is refused below, by a message naming the flag
+# that does what it looks like it asks for.
 need_arg() {
   [ "$1" -ge 2 ] || { echo "ERROR $2 needs a value${3:+ ($3)}" >&2; exit 1; }
 }
@@ -263,6 +266,19 @@ for _pair in "--budget=$BUDGET_OVERRIDE" "--doc-budget=$DOC_BUDGET_OVERRIDE" \
       exit 1 ;;
   esac
 done
+# `--env-file ""` split to no names, and the library's lookup, given none,
+# searched its defaults — so it silently meant `.env env`, while the messages
+# said "secrets file ()" and itemised nothing though two files were searched
+# (#296 CR 24). An empty --env-file was never documented, and the likelier
+# intent, "no secrets file", is --no-env-file's. Refused, whatever the mode, so
+# the preflight and the run agree about the argv.
+if [ "$ENV_FILE_EXPLICIT" -eq 1 ]; then
+  case "$ENV_FILES" in
+    *[![:space:]]*) ;;
+    *) echo "ERROR --env-file needs at least one name; to search no secrets file, pass --no-env-file" >&2
+       exit 1 ;;
+  esac
+fi
 # The same FLAG-versus-FILE rule one level up. A percentage is the one knob here
 # with a meaningful range, and both ends fail silently: above 100 the band is
 # empty and the tier turns itself off, at 0 every file is in it. The library

@@ -267,6 +267,35 @@ class TestAnAbsolutePathHoldingASpace:
         assert "splits its value on spaces" in r.stderr, r.stderr
 
 
+class TestAnEmptyValueIsRefused:
+    """#296 CR 24. `--env-file ""` split to no names, the library searched its
+    defaults for want of any, and the messages said "secrets file ()" while
+    itemising nothing — so it silently meant `.env env`, the opposite of what
+    an empty list most plausibly asks for. Neither --help nor the arity
+    helper ever documented an empty value, so it is a usage error naming the
+    flag that searches no file."""
+
+    @pytest.mark.parametrize("value", ["", "  "], ids=["empty", "blank"])
+    @pytest.mark.parametrize("mode", MODES, ids=["preflight", "measurement"])
+    def test_it_is_a_usage_error_naming_no_env_file(
+        self,
+        layout: tuple[Path, Path],
+        tmp_path: Path,
+        mode: tuple[str, ...],
+        value: str,
+    ):
+        main, _ = layout
+        env = _no_ant(tmp_path, _clean_env())
+        with _Stub() as stub:
+            env["ANTHROPIC_BASE_URL"] = stub.url
+            r = _measure(main, env, *mode, "--env-file", value)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert r.stdout == ""
+        assert "--env-file needs at least one name" in r.stderr, r.stderr
+        assert "--no-env-file" in r.stderr
+        assert stub.requests == [], "the .env the defaults would find was used"
+
+
 class TestAMissedNameIsNamed:
     """The #296 reproduction's other half: the WARN listed three sources and
     not the file the caller passed. A typo, a wrong directory and a worktree
@@ -345,3 +374,4 @@ def test_the_help_states_the_contract():
     assert "An absolute path is refused" in text
     assert "linked worktree is the worktree" in text
     assert "#296" in text
+    assert "An empty value is refused; --no-env-file searches no file" in text
