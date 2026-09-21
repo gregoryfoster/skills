@@ -134,11 +134,15 @@ MemoryLow=512M
 ```
 
 **A templated unit needs one more.** `foo@bar.service` lives in an implicit
-`system.slice/system-foo.slice/`, created with no settings, so it grants 0 and
-clamps the unit exactly as `system.slice` did. On address-validator
+`system.slice/system-foo.slice/`, created with no settings, so it grants 0.
+Without `memory_recursiveprot` (address-validator's bare `rw` mount) that
+clamps the unit exactly as `system.slice` did: there
 `postgresql@16-main.service` stayed unprotected under a working `system.slice`
 grant until `system-postgresql.slice.d/` had its own; the chain then read
-1G / 384M / 384M. A plain unit needs only the `system.slice` grant.
+1G / 384M / 384M. With it — systemd's mount wherever the kernel supports it —
+the slice passes down a share of `system.slice`'s unclaimed grant in
+proportion to usage: no clamp, and no reservation either, so grant it anyway.
+A plain unit needs only the `system.slice` grant.
 
 `systemctl daemon-reload` applies the slice grants with no restart.
 `OOMScoreAdjust=` is set on the service's process when it starts, so restart
@@ -148,9 +152,12 @@ the service for that half, then check its `oom_score`.
 wslcb-licensing-tracker a unit at `MemoryLow=256M` was protected by nothing
 while `systemctl show -p MemoryLow`, the unit's own `memory.low`, a clean
 `daemon-reload` and a healthy service all agreed it worked. The effective value
-is at most the smallest `memory.low` on the way up from the unit, and how many
-links that is depends on whether the unit is templated, so walk its real
-`ControlGroup` rather than a path you assume:
+is at most the smallest `memory.low` on the way up from the unit — without
+`memory_recursiveprot`; with it, a link granting less passes a usage-dependent
+share this walk cannot read — so grant every link, which makes its figure the
+unit's reservation either way. How many links there are depends on whether the
+unit is templated, so walk its real `ControlGroup` rather than a path you
+assume:
 
 ```bash
 unit=<unit>
@@ -175,8 +182,9 @@ fi
 share in proportion to its usage, which is why the parent's grant is at least
 their sum. `preflight.sh` reads the same chain, top down, for every unit under
 `system.slice` that claims a `MemoryLow=`, through nested slices six levels
-deep; it names the slice that clamps one, and the slice whose children's
-claims add up past its grant.
+deep; it names the slice that clamps one (with `memory_recursiveprot`, that
+passes it only a share), and the slice whose children's claims add up past its
+grant.
 On wslcb, after the fix, the service read 256 MiB effective. Its
 `OOMScoreAdjust=-700` (`oom_score` 208) was calibrated to sit below 300, the
 floor of an earlyoom `--prefer` match. That floor is a match whose own

@@ -392,6 +392,93 @@ class TestPreflightReadsTheWholeChain:
         assert len(_marked(lines, WARN)) == 1, lines
         assert any("with memory_recursiveprot" in ln for ln in lines), lines
 
+    # The templated case again, with the option systemd mounts cgroup2 with
+    # where the kernel has it. address-validator's clamp was measured on a bare
+    # `rw` mount, which the test above without the option still holds.
+    RECURSIVEPROT = "rw,nsdelegate,memory_recursiveprot"
+
+    @requires_bash
+    def test_recursiveprot_makes_a_zero_slice_a_share_not_a_clamp(
+        self, tmp_path: Path
+    ) -> None:
+        """#307 CR 43: under a granting parent, a slice at 0 passes down a share.
+
+        effective_protection()'s recursive branch gives a child that claims
+        less than its parent affords a share of the parent's unclaimed
+        protection in proportion to its unprotected usage, "without requiring
+        explicit downward propagation into leaf cgroups". The walk passed down
+        min(grant, memory.low) regardless, and told this host the unit keeps
+        at most 0 MiB.
+        """
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(1024 * MIB),
+                    "system.slice/system-postgresql.slice": "0",
+                    "system.slice/system-postgresql.slice/postgresql@16-main.service": str(
+                        384 * MIB
+                    ),
+                },
+                opts=self.RECURSIVEPROT,
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        assert "postgresql@16-main.service" in warned[0], warned
+        assert "at most 0 MiB" not in warned[0], (
+            "under memory_recursiveprot a slice granting 0 below a 1024 MiB "
+            f"system.slice is not a clamp to 0: {warned}"
+        )
+        for part in ("usage", "up to 384 MiB", "1024 MiB system.slice grants"):
+            assert part in warned[0], f"the warning must say {part!r}: {warned}"
+
+    @requires_bash
+    def test_the_share_is_bounded_by_the_siblings_claims(self, tmp_path: Path) -> None:
+        """The unclaimed part is the grant less what the siblings claim."""
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(512 * MIB),
+                    "system.slice/a.service": str(384 * MIB),
+                    "system.slice/system-postgresql.slice": "0",
+                    "system.slice/system-postgresql.slice/postgresql@16-main.service": str(
+                        384 * MIB
+                    ),
+                },
+                opts=self.RECURSIVEPROT,
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        assert "up to 128 MiB" in warned[0], warned
+        assert "384 MiB its siblings claim" in warned[0], warned
+
+    @requires_bash
+    def test_siblings_claiming_the_whole_grant_leave_no_share(
+        self, tmp_path: Path
+    ) -> None:
+        """Nothing unclaimed, nothing to share: the static reading is the clamp."""
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(512 * MIB),
+                    "system.slice/a.service": str(512 * MIB),
+                    "system.slice/system-postgresql.slice": "0",
+                    "system.slice/system-postgresql.slice/postgresql@16-main.service": str(
+                        384 * MIB
+                    ),
+                },
+                opts=self.RECURSIVEPROT,
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        assert "at most 0 MiB" in warned[0], warned
+        assert "system-postgresql.slice grants 0 MiB" in warned[0], warned
+
     @requires_bash
     def test_max_is_no_limit(self, tmp_path: Path) -> None:
         lines, _ = _read(
