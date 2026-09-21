@@ -52,9 +52,9 @@ Three things this gate deliberately is, and is not:
   The band has a HIGH edge too, and until #294 nothing reported it: a skill
   squeezed against its ratchet by an estimate reading high got silence, and
   then a curation it never needed. `warn_about_the_other_edge` names those, and
-  `warn_about_the_anchors` names every file priced from the repo ratio because
-  its anchor lapsed or never existed — the gap docs/STYLE.md's by-hand refresh
-  closes.
+  `warn_about_the_anchors` names every SKILL.md with no anchor and every
+  measured file whose anchor has lapsed — the gap docs/STYLE.md's by-hand
+  refresh closes.
 - **The skill's own machinery.** The measurement shells out to
   `measure-context.sh` with the flags #95 named rather than reimplementing the
   estimator in Python, so the gate and the weekly run cannot disagree about a
