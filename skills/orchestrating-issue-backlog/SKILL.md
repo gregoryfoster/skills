@@ -149,7 +149,7 @@ Present a table:
 
 Include a note for any intra-batch merge ordering (e.g. "F1 merges first; F2 rebases before merge").
 
-**Count the table's items before asking** — they must equal the scored rows minus deferrals, each Q0 bundle once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it: [references/batch-design.md](references/batch-design.md).
+**Count the table's items before asking** — they must equal the issues in scope minus deferrals and closures, each Q0 bundle counting once — because every later artifact is written from this table and a dropped item does not look wrong; only the count shows it: [references/batch-design.md](references/batch-design.md).
 
 Get approval before writing the design doc.
 

@@ -33,7 +33,8 @@ idled. Ask at planning time whether that shared surface can be split first.
 ## Counting and pairing the table (Step 7)
 
 **Count the table's items against the scored backlog before asking for approval** —
-they must equal the scored rows minus deferrals, each Q0 bundle counting once.
+they must equal the issues in scope minus deferrals and closures, each Q0 bundle
+counting once.
 Re-reading the table is no substitute, because the failure does not look wrong. Each
 downstream artifact is written from the one before it — the design doc from this table, the tracking
 issue from the design doc, the briefs and per-issue comments from both — so an item
