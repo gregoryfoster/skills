@@ -131,6 +131,31 @@ class TestTheRegistryEntryIsTheSessions:
         assert _loaded(config, here) is None
 
     @requires_node
+    def test_an_applying_entry_whose_install_is_gone_is_not_a_cache_scan(
+        self, tmp_path: Path
+    ) -> None:
+        """#305 CR 49: the cache holds other projects' versions, too.
+
+        Claude Code's loader takes an applying entry or nothing; it never scans
+        the cache. The driver fell through to the newest cached version when no
+        applying entry's install loaded — here, the other project's 1.14.0.
+        """
+        here, elsewhere = _dir(tmp_path, "here"), _dir(tmp_path, "elsewhere")
+        config = _config(
+            tmp_path,
+            [
+                {"scope": "local", "projectPath": str(here), "version": "1.13.1"},
+                {"scope": "local", "projectPath": str(elsewhere), "version": "1.14.0"},
+            ],
+        )
+        shutil.rmtree(
+            config / "plugins" / "cache" / "socraticode" / "socraticode" / "1.13.1"
+        )
+        assert _loaded(config, here) is None
+        p = _loaded(config, elsewhere)
+        assert p is not None and p["pluginVersion"] == "1.14.0", p
+
+    @requires_node
     def test_this_projects_entry_applies(self, tmp_path: Path) -> None:
         here = _dir(tmp_path, "here")
         config = _config(

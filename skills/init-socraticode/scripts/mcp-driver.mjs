@@ -226,7 +226,10 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
   // Only the entries that load at `project` count. When the registry lists
   // the plugin and none of them does, the session there has no plugin, and a
   // cache scan would find the other project's version and report it as this
-  // one's — so that is an answer, not a reason to scan.
+  // one's — so that is an answer, not a reason to scan. The same holds when
+  // entries apply and none of their installs loads: Claude Code's loader
+  // takes an applying entry or nothing, and never scans the cache (#305 CR
+  // 49). The scan is for a host with no registry record at all.
   const installed = [];
   let listed = false;
   try {
@@ -236,10 +239,9 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
       if (entry?.installPath && registryEntryApplies(entry, project)) installed.push(entry.installPath);
     }
   } catch { /* no registry, or unreadable — fall back to the cache scan */ }
-  if (listed && installed.length === 0) return null;
 
   const cacheDir = joinPath(claudeDir, 'plugins', 'cache', 'socraticode', 'socraticode');
-  for (const versionDir of [...installed, ...subdirsNewestFirst(cacheDir)]) {
+  for (const versionDir of listed ? installed : subdirsNewestFirst(cacheDir)) {
     const hit = pluginServerFromVersionDir(versionDir);
     if (!hit) continue;
     // Expanded before validation, so a definition whose command is entirely a
