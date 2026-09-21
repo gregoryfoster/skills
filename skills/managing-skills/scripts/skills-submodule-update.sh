@@ -18,7 +18,9 @@
 # place, so the running hook keeps the inode it opened and reads the old
 # bytes to the end — tests/structural/test_hook_self_replacement.py pins
 # that. The braces make it not matter: they cover any writer that DOES write
-# in place (cp, GNU install, a shell redirect) and a git that ever starts to.
+# in place (cp onto an existing file, a shell redirect) and a git that ever
+# starts to. `install` is not one: BSD's and GNU's alike give the path a new
+# inode (measured, coreutils 9.1).
 # Braces rather than a main() function because they change nothing else — no
 # function scope for anything below to acquire, and "$@" is still the
 # script's own.

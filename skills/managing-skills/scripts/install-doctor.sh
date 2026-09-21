@@ -123,8 +123,12 @@ fi
 # within a filesystem and leaves the running instance holding the old inode,
 # which it reads to completion undisturbed.
 #
-# `install -m 755` is NOT a safe substitute here: BSD install (macOS) renames,
-# but GNU coreutils install opens the destination O_TRUNC. Consumers run both.
+# The in-place writers are `cp` onto an existing file and a shell redirect —
+# which is why this copies to a NEW path and never onto $DEST. `install -m 755`
+# is not one: measured, BSD install (macOS) and GNU coreutils 9.1 install both
+# give $DEST a new inode, so either would spare the running instance too. The
+# rename stays because it promises what install does not: one atomic swap, so
+# a doctor starting mid-install never opens a half-written file.
 TMP="$DEST_DIR/.doctor.sh.tmp.$$"
 # Trap covers the window between cp and mv; after a successful mv the rm is a
 # harmless no-op on a path that no longer exists.

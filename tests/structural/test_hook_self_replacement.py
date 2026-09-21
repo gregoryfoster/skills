@@ -30,8 +30,8 @@ that brace. What this file pins, and why each is shaped the way it is:
   through a real submodule update, an unprotected copy of the hook still runs
   its original tail, because git's checkout unlinks the old file and creates
   a new one, so the running bash keeps reading the inode it opened. That is
-  why the braces are defence in depth against other writers (cp, GNU install,
-  a redirect) rather than the fix for an observed git corruption, and why the
+  why the braces are defence in depth against other writers (cp onto an
+  existing file, a redirect) rather than the fix for an observed git corruption, and why the
   hook's own comment says so. Pinned here so that claim cannot go stale in
   prose: a git that starts rewriting in place turns this red.
 
