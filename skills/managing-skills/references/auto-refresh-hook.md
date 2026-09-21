@@ -19,6 +19,25 @@ Two details in that merge are load-bearing, and `install-hook.sh` carries the fu
 
 </details>
 
+## Installing the doctor: twice, and from the first vendor that can
+
+The hook installs `.skills/doctor.sh` through `install-doctor.sh` — a no-op when the content already matches — from **two** call sites:
+
+- **Every session, ahead of the lock and the `main` gate.** This is the working-tree repair: a deleted doctor self-heals at the next session start, on any branch. Committing it stays behind both gates ([#86](https://github.com/gregoryfoster/skills/issues/86)).
+- **Again after a successful submodule update, ahead of the commit** ([#299](https://github.com/gregoryfoster/skills/issues/299)). The first call ran the *pre*-bump installer against the *pre*-bump doctor, so without the second, the session that advanced the pointer committed the old doctor beside the new pointer, and the refreshed one waited for the next session to reach the first call. Measured in CannObserv/observo: a committed doctor ten days stale, missing `check_unpushed()` entirely, so the "main is ahead of its upstream" sensor did not exist there.
+
+Neither call fires in a checkout whose `skills-vendor/*` are empty gitlinks — every fresh linked worktree, until something initializes them. The glob finds no installer, and there is no vendored doctor to install from anyway; the hook itself, a symlink into that same tree, does not start there either (`SKILL.md` covers that first session). So "every session" means every session in a checkout with its submodules populated.
+
+**The first installer that succeeds wins**, in glob order ([#300](https://github.com/gregoryfoster/skills/issues/300)). The glob spans every vendored repo, so a second one shipping `managing-skills` is the fallback when the first fails; the loop used to stop after the first attempt either way. Each failure is logged, naming the installer, and when every one fails the session hears it on stderr — the channel every other failure here uses — once per run, although the install runs twice. A failing install otherwise leaves a stale doctor with one log line as its only trace.
+
+## Why the whole script is one `{ … }` block ([#306](https://github.com/gregoryfoster/skills/issues/306))
+
+The hook is normally a symlink into the submodule its own `git submodule update` rewrites, and bash reads a script incrementally, resuming by byte offset. Were the file's bytes to change under a running hook, everything after the update would resume at an old offset into new content — mid-statement, on the path that commits and pushes. So the script is one brace group ending in `exit`: bash parses it to the closing brace before running any of it, and never reads past that brace. **Nothing may follow the brace, and the block must end in `exit`.** An edit that breaks either fails `tests/structural/test_hook_self_replacement.py`, which rewrites the running hook in place at the update and requires the rest of the run to commit and push as written.
+
+That is defence in depth rather than the fix for a measured corruption. Git's checkout unlinks a file and creates a new one instead of rewriting it in place (measured on git 2.39.3), so the running hook keeps the inode it opened and git's update alone cannot garble it — the same test file pins that, by putting an unprotected copy through a real update. The braces cover the writers that do write in place — `cp`, GNU `install`, a shell redirect — and a git that ever starts to. Braces rather than a `main()` function, because they change nothing else about how the script runs.
+
+`.skills/doctor.sh` is replaced under a running doctor too, by its own self-sync, and needs no braces: `install-doctor.sh` writes a temp file and renames it into place, so the running doctor keeps its inode — the reason a refresh applies from the doctor's *next* run.
+
 ## Pushing what it commits ([#293](https://github.com/gregoryfoster/skills/issues/293))
 
 The hook commits pointer bumps **and pushes them**. It used to only commit.

@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.13"
+  version: "1.14"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -83,7 +83,7 @@ bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.
 
 This is idempotent — re-running is a no-op when the destination already matches. The installer refuses to clobber a file at `.skills/doctor.sh` that doesn't look like a doctor, so a user-authored file at that path is never silently overwritten.
 
-**The doctor is a copy, not a symlink** — deliberately, because a symlink into `skills-vendor/` would dangle in exactly the state the doctor exists to repair. It keeps itself current instead: it re-syncs from the vendored source on every mutating run, and the auto-refresh hook re-installs it every session.
+**The doctor is a copy, not a symlink** — deliberately, because a symlink into `skills-vendor/` would dangle in exactly the state the doctor exists to repair. It keeps itself current instead: it re-syncs from the vendored source on every mutating run, and the auto-refresh hook re-installs it wherever the submodule is checked out.
 
 **If your skill installs a hook, ship a `<hook>.install` manifest beside it** — one line of `install-hook.sh` arguments, which the doctor prints as the repair when it finds that hook registered nowhere ([#224](https://github.com/gregoryfoster/skills/issues/224)). A skill adding a hook adds a manifest, never an edit to `doctor.sh`.
 
@@ -139,11 +139,7 @@ git commit -m "chore: update skill submodules"
 
 `--init` is not optional. Without it, a submodule missing from `.git/config` — vendored content on disk, nothing registered — is skipped in silence and git still exits `0`, so the run reports success with the pointer unmoved ([#176](https://github.com/gregoryfoster/skills/issues/176)).
 
-No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Run the installer explicitly only to collapse the one-run lag when iterating on the doctor itself:
-
-```bash
-bash skills-vendor/<owner>-<repo>/skills/managing-skills/scripts/install-doctor.sh
-```
+No follow-up step is needed to refresh `.skills/doctor.sh` — it re-syncs itself on its next run and the auto-refresh hook re-installs it on session start. Re-run Step 2c's installer only to collapse the one-run lag when iterating on the doctor itself.
 
 ### Installing the auto-refresh hook
 
@@ -158,8 +154,7 @@ Pulls upstream submodule changes once per calendar day, on `main` only, and auto
 - Matches diff scope to add scope, so unrelated dirty work cannot be absorbed and empty commits cannot be created. Exactly two paths are ever staged: `skills-vendor/` and, when present, `.skills/doctor.sh` — never `.skills/` wholesale, which would sweep in operator config like `.skills/plans_dir` and `.skills/worktree_root`.
 - Commit message names what changed: `chore: update skills submodules`, `chore: refresh .skills/doctor.sh`, or both.
 - Pushes what it commits; a failed push is rolled back rather than left unpushed.
-- **Opportunistically installs/updates `.skills/doctor.sh`** on every session (not gated by the once-per-day lock) so the doctor self-heals if accidentally deleted, and so consumers added before the doctor existed pick it up automatically on the next session start.
-- **Commits the doctor it installed** ([#86](https://github.com/gregoryfoster/skills/issues/86)). The install is a working-tree repair and runs on every branch; the commit stays behind the `main`-only and once-per-day gates.
+- **Installs/updates `.skills/doctor.sh`** every session on any branch, so a deleted doctor self-heals, and again after a refresh so a bump commits the doctor it ships (#299); **commits it** only past the `main` and once-per-day gates (#86). The first vendored installer to succeed wins; all failing reaches stderr (#300). Not in a fresh worktree, whose `skills-vendor/*` is empty.
 - To verify the hook is running, check `.git/skills-update.log` after a session start on `main`. Lines beginning `unexpected hook error` come from the ERR-trap backstop and mark an unanticipated failure path; the hook still exits 0.
 
 **Run the installer. Do not hand-execute the steps below.**
@@ -218,7 +213,9 @@ against the vendor's `HEAD`, so an un-bumped change still
 reports (#286). Re-sync by **reapplying the local deltas onto the newer
 upstream text** — never upstream changes onto the old fork — then bump **both**
 keys. Copy the override aside first: the last step accounts for every line the
-merge removed, which a grep cannot see (#267). Procedure and both comparands:
+merge removed, which a grep cannot see (#267). A `synced-from` *ahead* of
+`HEAD` is the pointer lagging, not the override: bump that submodule, never
+re-sync (#290). Procedure and comparands:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

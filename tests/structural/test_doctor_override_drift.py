@@ -48,6 +48,13 @@ What this file pins:
   whole-directory scope was a false-positive generator; a forked file is the
   only thing that can, and it keeps its signal because `check_silent_forks`
   skips declared overrides wholesale.
+- **Which side moved decides the finding** (#290). The commit diff is
+  symmetric, so a recorded commit AHEAD of the submodule's HEAD used to be
+  reported as the override having fallen behind — with the re-sync remedy,
+  the opposite of the right one. The history decides now: recorded commit
+  behind HEAD is drift; HEAD behind the recorded commit is the POINTER
+  lagging, remedied by one submodule bump and no edit to the override; a
+  diverged history is un-assessable. Versioned and unversioned vendors alike.
 - **Who is NOT warned about.** A symlinked skill tracks upstream by
   construction, and a local directory without `overrides:` is a
   project-authored skill, not a fork of anything.
@@ -57,6 +64,8 @@ Keep this list current — it is the file's index.
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -68,6 +77,10 @@ DOCTOR = REPO_ROOT / "skills" / "managing-skills" / "scripts" / "doctor.sh"
 VENDOR_REPO = "acme-skills"
 DRIFT_MARKER = "has fallen behind"
 UNASSESSED_MARKER = "cannot be assessed"
+POINTER_MARKER = "is AHEAD of its submodule pointer"
+# Drift's remedy, which a pointer finding must never print — the two are
+# opposites (#290).
+RESYNC_REMEDY = "local deltas onto"
 
 
 def _clean_env() -> dict:
@@ -698,6 +711,208 @@ class TestSyncedFromIsReadForVersionedVendorsToo:
         )
         result = _doctor(consumer)
         assert UNASSESSED_MARKER in result.stderr, result.stderr
+
+
+def _vendor_head(vendor: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(vendor),
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_clean_env(),
+        timeout=60,
+    ).stdout.strip()
+
+
+class TestWhichSideMoved:
+    """#290 — the commit diff cannot say which side moved; the history can.
+
+    `git diff <recorded> HEAD` is symmetric, so an override whose
+    `synced-from:` records a commit AHEAD of the submodule's HEAD was reported
+    exactly like one that had fallen behind — and handed the re-sync remedy,
+    which there means reapplying local deltas onto OLDER text. The live case
+    was the first consumer to do the right thing by #286: CannObserv/archiver
+    re-synced its override, stamped `178ec64`, and left its pointer 26 commits
+    back at `980a0d1`. The repair is one submodule bump and no edit to the
+    override at all — the opposite remedy, so it gets its own voice.
+
+    Detection is unchanged; only the diagnosis branches. Three states, one
+    per `merge-base --is-ancestor` answer, and each reachable from both the
+    versioned and the unversioned vendor, since #286 routes both through the
+    same diff.
+    """
+
+    def _two_commits(
+        self, consumer: Path, name: str, old_ver: str | None, new_ver: str | None
+    ) -> tuple[Path, str, str]:
+        """The vendor at OLD then NEW, each a real SKILL.md change."""
+        vendor, old = _init_vendor_git(consumer, name, old_ver)
+        skill_md = vendor / "skills" / name / "SKILL.md"
+        text = skill_md.read_text() + "\nNew upstream text.\n"
+        if old_ver is not None and new_ver is not None:
+            text = text.replace(f'version: "{old_ver}"', f'version: "{new_ver}"')
+        skill_md.write_text(text)
+        return vendor, old, _vendor_commit(vendor, "upstream moves")
+
+    def _pointer_behind(
+        self, consumer: Path, ver: str | None = "1.4", new_ver: str | None = "1.4"
+    ) -> tuple[Path, str, str]:
+        """The issue's reproduction: two vendor commits, the submodule checked
+        out at the OLDER one, the override recording the NEWER one."""
+        vendor, old, new = self._two_commits(consumer, "sw", ver, new_ver)
+        _git(vendor, "checkout", "-q", old)
+        _override(consumer, "sw", new_ver, synced_from=f"{VENDOR_REPO} 1.4 ({new})")
+        return vendor, old, new
+
+    @pytest.mark.parametrize("ver", ["1.4", None], ids=["versioned", "unversioned"])
+    def test_a_recorded_commit_ahead_of_the_pointer_is_not_drift(
+        self, consumer: Path, ver: str | None
+    ):
+        """The reproduction, for both vendor shapes. Every clause of the drift
+        report is wrong here in the same direction, so none of it may print."""
+        _, _, new = self._pointer_behind(consumer, ver, ver)
+        result = _doctor(consumer)
+        assert DRIFT_MARKER not in result.stderr, (
+            "the override is AHEAD of the pointer, not behind the vendor — the "
+            f"drift voice is the wrong diagnosis:\n{result.stderr}"
+        )
+        assert RESYNC_REMEDY not in result.stderr, (
+            "the re-sync remedy would reapply local deltas onto OLDER text; it "
+            f"is the opposite of the repair here:\n{result.stderr}"
+        )
+        assert POINTER_MARKER in result.stderr, result.stderr
+        assert UNASSESSED_MARKER not in result.stderr, result.stderr
+        entry = [ln for ln in result.stderr.splitlines() if "overrides " in ln]
+        assert len(entry) == 1, f"expected one entry:\n{result.stderr}"
+        assert f"skills-vendor/{VENDOR_REPO}" in entry[0] and new in entry[0], (
+            "the entry names the one submodule to bump and the commit to reach "
+            f"— 'your submodule is behind' sends a reader to the hook:\n{entry[0]}"
+        )
+
+    def test_the_printed_bump_clears_the_finding(self, consumer: Path):
+        """The remedy is executable, and it is the whole repair.
+
+        Run exactly what the doctor printed, touch nothing else: the pointer
+        reaches the recorded commit and the next run is silent — the override
+        was never the thing out of date."""
+        vendor, _, new = self._pointer_behind(consumer)
+        override_md = consumer / "skills" / "sw" / "SKILL.md"
+        before = override_md.read_text()
+        result = _doctor(consumer)
+        commands = [
+            ln.strip()
+            for ln in result.stderr.splitlines()
+            if ln.strip().startswith("git -C ")
+        ]
+        assert len(commands) == 1, f"expected one bump command:\n{result.stderr}"
+        subprocess.run(
+            shlex.split(commands[0]),
+            cwd=str(consumer),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            timeout=60,
+        )
+        assert _vendor_head(vendor).startswith(new), (
+            f"the printed command did not reach the recorded commit: {commands[0]}"
+        )
+        again = _doctor(consumer)
+        assert again.stderr.strip() == "", (
+            f"the bump should have been the whole repair:\n{again.stderr}"
+        )
+        assert override_md.read_text() == before
+
+    def test_a_bump_that_moves_the_stamps_too_is_one_finding(self, consumer: Path):
+        """The pointer lags a BUMPED release, so the version stamps disagree as
+        well (override 1.5, vendor HEAD 1.4). That is the same fact, and a
+        drift line beside the pointer finding would print both opposite
+        remedies for one override."""
+        self._pointer_behind(consumer, "1.4", "1.5")
+        result = _doctor(consumer)
+        assert POINTER_MARKER in result.stderr, result.stderr
+        assert DRIFT_MARKER not in result.stderr, result.stderr
+        listed = result.stderr.count(f"overrides {VENDOR_REPO}/sw")
+        assert listed == 1, f"one override, {listed} entries:\n{result.stderr}"
+
+    def test_a_recorded_commit_behind_the_pointer_is_still_drift(self, consumer: Path):
+        """The first state, unchanged: HEAD descends from the recorded commit,
+        so upstream moved and the override has fallen behind."""
+        _, old, _ = self._two_commits(consumer, "sw", "1.4", "1.4")
+        _override(consumer, "sw", "1.4", synced_from=f"{VENDOR_REPO} 1.4 ({old})")
+        result = _doctor(consumer)
+        assert DRIFT_MARKER in result.stderr, result.stderr
+        assert RESYNC_REMEDY in result.stderr, result.stderr
+        assert POINTER_MARKER not in result.stderr, result.stderr
+
+    @pytest.mark.parametrize("ver", ["1.4", None], ids=["versioned", "unversioned"])
+    def test_a_diverged_history_is_unassessable(self, consumer: Path, ver: str | None):
+        """Neither commit contains the other — a vendor whose history was
+        rewritten, or a fork. `--is-ancestor` reads false in both directions,
+        and "bump the pointer" is as wrong there as "re-sync" is: no direction
+        can be read, so neither remedy may print."""
+        vendor, base = _init_vendor_git(consumer, "sw", ver)
+        skill_md = vendor / "skills" / "sw" / "SKILL.md"
+        original = skill_md.read_text()
+        skill_md.write_text(original + "\nOne side of the fork.\n")
+        theirs = _vendor_commit(vendor, "one line of history")
+        _git(vendor, "checkout", "-q", "-b", "rewritten", base)
+        skill_md.write_text(original + "\nThe other side.\n")
+        _vendor_commit(vendor, "the other line of history")
+        _override(consumer, "sw", ver, synced_from=f"{VENDOR_REPO} 1.4 ({theirs})")
+        result = _doctor(consumer)
+        assert UNASSESSED_MARKER in result.stderr, result.stderr
+        assert "diverged" in result.stderr, (
+            f"the reason must say which state this is:\n{result.stderr}"
+        )
+        assert DRIFT_MARKER not in result.stderr, result.stderr
+        assert POINTER_MARKER not in result.stderr, result.stderr
+
+    def test_an_ancestry_check_that_fails_is_unassessable(
+        self, consumer: Path, tmp_path: Path
+    ):
+        """`--is-ancestor` exits 1 for "no" and anything else for an error.
+        Read as "no", a failure would fall through both questions to
+        `diverged` — or, with the order reversed, to a verdict it never
+        earned. It is its own un-assessable reason instead."""
+        self._pointer_behind(consumer)
+        real_git = shutil.which("git") or "/usr/bin/git"
+        shim_dir = tmp_path / "bin"
+        shim_dir.mkdir()
+        shim = shim_dir / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'for a in "$@"; do [ "$a" = merge-base ] && exit 128; done\n'
+            f'exec {real_git} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = _clean_env()
+        env["PATH"] = f"{shim_dir}:{env.get('PATH', '/usr/bin:/bin')}"
+        result = subprocess.run(
+            ["bash", str(DOCTOR), "--no-preflight"],
+            cwd=str(consumer),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+        assert UNASSESSED_MARKER in result.stderr, result.stderr
+        assert "merge-base" in result.stderr, result.stderr
+        for marker in (DRIFT_MARKER, POINTER_MARKER, "diverged"):
+            assert marker not in result.stderr, result.stderr
+
+    def test_the_pointer_finding_is_advisory_and_changes_nothing(self, consumer: Path):
+        """Same contract as drift: exit 0 in every mode, and the doctor never
+        moves the pointer itself — which commit a consumer vendors is the
+        operator's decision, and an automatic bump is the auto-refresh hook's
+        job, not a preflight's."""
+        vendor, old, _ = self._pointer_behind(consumer)
+        for args in ((), ("--check-only",)):
+            result = _doctor(consumer, *args)
+            assert result.returncode == 0, result.stderr
+            assert POINTER_MARKER in result.stderr, result.stderr
+        assert _vendor_head(vendor).startswith(old), "the doctor moved the pointer"
 
 
 class TestDriftIsAdvisoryInEveryMode:
