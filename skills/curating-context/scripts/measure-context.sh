@@ -85,6 +85,13 @@ Options:
                      the repo root. Default: ".env env" (bare `env` is the name
                      this cohort used before 2026-08-05). Only
                      ANTHROPIC_API_KEY is read, by parsing — never by sourcing.
+                     The root is `git rev-parse --show-toplevel`, which in a
+                     linked worktree is the worktree, not the main checkout; a
+                     name may climb out of it (../../.env). An absolute path is
+                     refused, since it can never match, and the error names the
+                     relative spelling that reaches the same file. When no
+                     credential resolves, the WARN names each file passed here
+                     that was missing or held no usable key (#296).
   --no-write         Touch nothing. Suppresses the side effects an --exact run
                      otherwise has: writing the observed bytes-per-token ratio to
                      .skills/context-token-ratio, and the per-file calibration
@@ -188,6 +195,9 @@ NO_WRITE=0
 CALIBRATE=0
 NO_ENV_FILE=0
 ENV_FILES=".env env"
+# Whether --env-file was passed, not whether ENV_FILES differs from the default:
+# only a name the caller chose is worth itemising when it misses (#296).
+ENV_FILE_EXPLICIT=0
 MODEL="claude-opus-5"
 
 # An option that legitimately accepts an EMPTY value cannot use ${2:?...} to
@@ -213,7 +223,7 @@ while [ $# -gt 0 ]; do
     --calibrate) CALIBRATE=1; shift ;;
     --no-env-file) NO_ENV_FILE=1; shift ;;
     --env-file) need_arg "$#" --env-file 'space-separated names, relative to the repo root'
-                ENV_FILES="$2"; shift 2 ;;
+                ENV_FILES="$2"; ENV_FILE_EXPLICIT=1; shift 2 ;;
     --model) MODEL="${2:?--model needs an id}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR unknown argument: $1" >&2; usage >&2; exit 1 ;;
@@ -311,6 +321,94 @@ _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
 # fallback to cwd covers running outside a git repo at all.
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || { echo "ERROR cannot cd to $ROOT" >&2; exit 2; }
+
+# --- --env-file names are relative to the root (#296) ----------------------
+# ctx_api_key_from_env_file joins each name to the root as "$root/$f", so an
+# absolute name expands to <root>//Users/... and is skipped exactly as a missing
+# file is. The run fell back to the offline estimate, and its WARN listed three
+# credential sources without saying that the one file the caller named could
+# never have been read. So an absolute name is a usage error, refused here: once
+# the root is known, and before the preflight and the measurement part ways, so
+# --check-credential and --exact give one answer about the same argv — the
+# property #271 established for the request itself.
+#
+# The root is why an absolute path is the natural first attempt. In a linked
+# worktree `git rev-parse --show-toplevel` is the WORKTREE, so a key kept in the
+# main checkout's .env matches no name at the root, and the spelling that does
+# match climbs out of it — ../../.env or ../../../.env, depending on the layout.
+# The error computes that spelling rather than leave it to a guess.
+
+# rel_from_root <physical-root> <physical-path>: the path as a name joined to
+# the root — one `../` per root component the path does not share, then the
+# rest. Parameter expansion only; GNU `realpath --relative-to` is not on macOS.
+rel_from_root() {
+  local from="$1" to="$2" up=""
+  while :; do
+    case "$to" in "$from"/*) break ;; esac
+    from="${from%/*}"
+    up="../$up"
+    # Out of components: "" + "/" prefixes every absolute path, so stop here.
+    [ -n "$from" ] || break
+  done
+  printf '%s%s' "$up" "${to#"$from"/}"
+}
+
+_abs_seen=0
+_root_phys="$(pwd -P)"
+# Unquoted, as at the lookup: the value is a space-separated list of names.
+for _name in $ENV_FILES; do
+  case "$_name" in /*) ;; *) continue ;; esac
+  if [ "$_abs_seen" -eq 0 ]; then
+    echo "ERROR --env-file takes names relative to the repo root, joined to it rather than" >&2
+    echo "      opened as paths, so an absolute one can never be read: it would be skipped" >&2
+    echo "      exactly as a missing file is, with nothing to say why." >&2
+    echo "      The repo root is \`git rev-parse --show-toplevel\`, which in a linked" >&2
+    echo "      worktree is the worktree rather than the main checkout. Here it is:" >&2
+    echo "        $ROOT" >&2
+    _abs_seen=1
+  fi
+  # Physical on both sides: the kernel resolves the `..` in "$ROOT/../.env"
+  # against the real directory, so the arithmetic must too. Then -ef confirms
+  # the name reaches THIS file before it is offered, so the suggestion is a
+  # checked answer rather than a computed guess.
+  _rel=""
+  _dir="$(cd "$(dirname "$_name")" 2>/dev/null && pwd -P)" || _dir=""
+  # `${_dir%/}` so a file directly under / is "/.env", not "//.env".
+  if [ -n "$_dir" ]; then
+    _rel="$(rel_from_root "$_root_phys" "${_dir%/}/${_name##*/}")"
+  fi
+  if [ -n "$_rel" ] && [ -f "$ROOT/$_rel" ] && [ "$ROOT/$_rel" -ef "$_name" ]; then
+    echo "      $_name -> pass it as: --env-file $_rel" >&2
+  else
+    echo "      $_name -> no such file, so no name reaches it either" >&2
+  fi
+done
+[ "$_abs_seen" -eq 0 ] || exit 1
+
+# The other half of #296: a name that is well-formed and simply missed. Which of
+# the names --env-file passed were absent, and which were present but held no
+# usable ANTHROPIC_API_KEY — the part of "no credential found" a caller can act
+# on, whether the cause is a typo, the wrong directory, or a worktree root.
+# Only for an explicit --env-file: the default names are the documented
+# convention and the generic line already says ".env". Silent under
+# --no-env-file, which stops the files being searched at all. <prefix> carries
+# the caller's indentation, so the line sits inside the message it extends.
+env_file_misses() {
+  local f out=""
+  if [ "$ENV_FILE_EXPLICIT" -eq 0 ] || [ "$NO_ENV_FILE" -eq 1 ]; then
+    return 0
+  fi
+  for f in $ENV_FILES; do
+    if [ -f "$ROOT/$f" ]; then
+      out="${out:+$out; }$f holds no usable ANTHROPIC_API_KEY"
+    else
+      out="${out:+$out; }$f not found"
+    fi
+  done
+  [ -n "$out" ] || return 0
+  printf '%s--env-file names are searched under the repo root, %s: %s\n' \
+    "$1" "$ROOT" "$out" >&2
+}
 
 # The budgets, through the SAME chain as context-budget-guard.sh and
 # context-delta.sh: flag, then CONTEXT_BUDGET, then .skills/context-budget, then
@@ -567,6 +665,7 @@ if [ "$CHECK_CRED" -eq 1 ]; then
   if ! ctx_resolve_credential; then
     echo "no: no credential found. Set ANTHROPIC_API_KEY, or put it in a repo-root" >&2
     echo "    .env — resolve this BEFORE starting the run; in autonomous mode, abort." >&2
+    env_file_misses "    "
     exit 3
   fi
   _probe="$(mktemp -d)" || { echo "ERROR mktemp failed" >&2; exit 2; }
@@ -734,6 +833,7 @@ if [ "$EXACT" -eq 1 ]; then
     esac
   else
     echo "WARN --exact needs ANTHROPIC_API_KEY, the key in a repo-root .env, or an \`ant auth login\` profile; using offline estimate" >&2
+    env_file_misses "WARN "
     echo "WARN the resulting row records tokens_exact=false, which suppresses every delta against an exact row" >&2
   fi
 fi

@@ -58,7 +58,12 @@ any later, this failure costs eight phases of work toward a ledger row that
    cohort's pre-2026-08-05 name). Parsed rather than sourced: sourcing a secrets
    file executes whatever it contains, which is not a thing a measurement script
    should do to obtain a token count. `--no-env-file` declines this source;
-   `--env-file NAMES` changes which files are searched.
+   `--env-file NAMES` changes which files are searched. A name is joined to the
+   repo root, and in a linked worktree the root is the worktree, so a key in
+   the main checkout's `.env` is reached as `../../.env` or deeper. An absolute
+   name used to be skipped like a missing file, silently; it is now refused
+   with the relative spelling that reaches the same file, and a name that
+   misses is itemised in the no-credential message (#296).
 3. An `ant auth login` profile, sent as `Authorization: Bearer` with the
    `oauth-2025-04-20` beta header (OAuth tokens are rejected on `x-api-key`).
 
