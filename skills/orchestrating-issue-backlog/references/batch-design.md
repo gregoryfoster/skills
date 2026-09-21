@@ -40,7 +40,7 @@ downstream artifact is written from the one before it — the design doc from th
 issue from the design doc, the briefs and per-issue comments from both — so an item
 the table drops reaches all of them unchallenged (process-log 2026-09-16 observo:
 twelve work items after four Q0 bundles; reshuffling two batches into score order
-left eleven slots, and six two-wide batches with plausible gates read as complete
+left eleven slots, and six batches with plausible gates read as complete
 until the orchestrator enumerated the items by hand, after the tracking issue had
 been filed).
 
