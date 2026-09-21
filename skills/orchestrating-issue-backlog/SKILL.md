@@ -53,11 +53,11 @@ Then fetch issues and read project context before asking any questions. Go into 
 
 These questions establish everything needed. Ask them in order; do not stack multiple questions.
 
-**Q0 (conditional) — Resolve any candidate pairs surfaced in Step 1–2 (duplicate *or* prerequisite), plus any rescope-to-residual verdicts.**
+**Q0 (conditional) — Resolve any candidate pairs surfaced in Step 1–2 (duplicate *or* prerequisite), plus any rescope-to-residual verdicts or upstream-gated deferrals.**
 > For each candidate pair: **bundle** (one agent handles both — Shape A in Step 7), **close one as dup**, or **score independently** (two separate work items — Step 7 decides batch shape)?
 > For each partially-shipped issue: **rescope to the verified residual** (rewrite the body down to what is genuinely still open, then re-score it as the smaller item it now is), **close as done**, or **defer**?
 
-Skip Q0 entirely if Step 1–2 flagged neither a candidate pair nor a partially-shipped issue. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close <issue> --comment 'duplicate of #<survivor>'` before moving to Q1 so the scored backlog reflects the resolved state and the closed issue records the dup link.
+Skip Q0 entirely if Step 1–2 flagged neither a candidate pair nor a partially-shipped issue nor an upstream-gated one. The HARD-GATE permits this question because it gates *priorities*, not clarifying questions. Close any agreed-upon dups via `gh issue close <issue> --comment 'duplicate of #<survivor>'` before moving to Q1 so the scored backlog reflects the resolved state and the closed issue records the dup link.
 
 **Q1 — What does "quality" mean here?**
 > Which matters most: testability, correctness, maintainability, or all roughly equally?
