@@ -4,7 +4,7 @@
 # changes, 2 if git could not tell us which (#257).
 # Detects the git project root automatically; safe to invoke from any directory.
 #
-# Usage: bash <SKILL_SCRIPTS>/check-status.sh [--help]
+# Usage: bash "<check-status.sh>" [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

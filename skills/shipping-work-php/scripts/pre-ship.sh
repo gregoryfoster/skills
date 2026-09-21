@@ -11,7 +11,7 @@
 #
 # Exits non-zero if any check fails.
 #
-# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
+# Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

@@ -14,7 +14,7 @@
 # if no sensitive paths changed, 1 if any did, or 2 on an infra/tooling
 # failure that prevented the check from running.
 #
-# Usage: bash <SKILL_SCRIPTS>/doc-check.sh [--help] [--base <ref>]
+# Usage: bash "<doc-check.sh>" [--help] [--base <ref>]
 set -euo pipefail
 
 # --- Project-configurable section ---------------------------------------------

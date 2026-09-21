@@ -3,7 +3,7 @@
 # Pushes the current branch to origin.
 # Detects the git project root automatically; safe to invoke from any directory.
 #
-# Usage: bash <SKILL_SCRIPTS>/push.sh [--help]
+# Usage: bash "<push.sh>" [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

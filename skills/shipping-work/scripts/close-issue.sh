@@ -2,8 +2,8 @@
 # close-issue.sh <issue-number>
 # Closes a GitHub issue via gh CLI.
 #
-# Usage: bash <SKILL_SCRIPTS>/close-issue.sh [--help]
-#        bash <SKILL_SCRIPTS>/close-issue.sh <number>
+# Usage: bash "<close-issue.sh>" [--help]
+#        bash "<close-issue.sh>" <number>
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

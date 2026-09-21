@@ -12,7 +12,7 @@
 # so a single canonical pre-ship.sh works across every consumer without per-
 # project substitution.
 #
-# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
+# Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
 
 # Capture the script's own directory *before* any cd, so helper lookups

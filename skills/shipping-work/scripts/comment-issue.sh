@@ -2,8 +2,8 @@
 # comment-issue.sh <issue-number> <comment-body>
 # Posts a comment to a GitHub issue via gh CLI.
 #
-# Usage: bash <SKILL_SCRIPTS>/comment-issue.sh [--help]
-#        bash <SKILL_SCRIPTS>/comment-issue.sh <number> <body>
+# Usage: bash "<comment-issue.sh>" [--help]
+#        bash "<comment-issue.sh>" <number> <body>
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

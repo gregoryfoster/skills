@@ -3,7 +3,7 @@
 # Prints the resolved plans directory for the current repo on stdout.
 # Resolution order: PLANS_DIR env var → .skills/plans_dir file → <repo>/docs/plans/
 #
-# Usage: bash <SKILL_SCRIPTS>/resolve-plans-dir.sh [--help]
+# Usage: bash "<resolve-plans-dir.sh>" [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

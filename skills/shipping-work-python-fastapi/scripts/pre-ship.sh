@@ -8,7 +8,7 @@
 # project substitution. (Eliminates the historical copy-paste bug class where
 # a stamp like `/tmp/watcher-tests-clean-<sha>` leaked into a sibling repo.)
 #
-# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
+# Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then

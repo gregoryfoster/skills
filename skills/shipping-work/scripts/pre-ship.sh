@@ -5,7 +5,7 @@
 # This script must be overridden by the consuming project's local skill override.
 # The global shipping-work skill cannot know the project's test runner.
 #
-# Usage: bash <SKILL_SCRIPTS>/pre-ship.sh [--help]
+# Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
