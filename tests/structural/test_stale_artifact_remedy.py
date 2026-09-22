@@ -73,6 +73,12 @@ RERUN_FULL = re.compile(
 )
 RUN_INCREMENTAL = re.compile(r"\brun +`?codebase_update", re.I)
 
+# The 1800 s figure with its unit attached. A bare `"1800" in text` passed only
+# because nothing else in these files happens to use those four digits — it
+# would survive the timeout sentence being deleted and an unrelated 1800
+# arriving.
+IDLE_TIMEOUT = re.compile(r"\b1800\s?s\b")
+
 # The claim itself, not just the handle for checking it. Each file words it
 # differently ("not evidence it failed", "not evidence the index failed"), so
 # the pattern spans the verb rather than pinning one phrasing.
@@ -148,7 +154,7 @@ class TestTheFullReEmbedIsDocumentedWithItsCost:
                 f"{path.name} stopped documenting `codebase_context_index`; if "
                 "that is deliberate, drop it from this test's sources"
             )
-            assert "1800" in text, (
+            assert IDLE_TIMEOUT.search(text), (
                 f"{path.name} hands a reader `codebase_context_index` without "
                 "saying the run can outlast Claude Code's 1800 s tool idle "
                 "timeout (#317)"
