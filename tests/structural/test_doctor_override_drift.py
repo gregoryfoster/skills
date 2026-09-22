@@ -1261,6 +1261,34 @@ class TestOneBumpPerSubmodule:
             )
         assert _vendor_head(vendor).startswith(base), "the doctor moved the pointer"
 
+    def test_resyncing_onto_one_line_leads_to_the_one_bump(self, consumer: Path):
+        """The unpinned remedy, followed as printed (CR 6): re-sync one override
+        onto the commit the other records, and the next run prints the one bump
+        the closing paragraph promises, which is then the whole repair."""
+        _, _, _, newer, _ = TestAPinnedPointer()._two_overrides(
+            consumer, diverged=True, pinned=False
+        )
+        assert _bumps(_doctor(consumer).stderr) == []
+        # `sb` onto `sa`'s line. Its vendor text is unchanged there, so the
+        # re-sync is the synced-from: stamp alone.
+        (consumer / "skills" / "sb" / "SKILL.md").write_text(
+            _skill_md(
+                "sb",
+                "1.4",
+                overrides=f"{VENDOR_REPO}/sb",
+                synced_from=f"{VENDOR_REPO} x ({newer})",
+            )
+        )
+        result = _doctor(consumer)
+        bumps = _bumps(result.stderr)
+        assert bumps == [
+            f"git -C skills-vendor/{VENDOR_REPO} merge --ff-only {newer}"
+        ], f"one line of history should now get its one bump:\n{result.stderr}"
+        _run(consumer, bumps[0])
+        assert _doctor(consumer).stderr.strip() == "", (
+            "the re-sync and the bump should have been the whole repair"
+        )
+
     def test_the_skill_summary_carries_the_diverged_exception(self):
         """SKILL.md's "bump that submodule, never re-sync" is the advice this
         class's diverged case contradicts — the same gap CR 48 closed for the
