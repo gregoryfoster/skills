@@ -1,6 +1,6 @@
 ## Session 2026-09-16 — cannabis.observer-wordpress (0915-wave follow-ups)
 
-Tracking issue `#908`; plan `docs/plans/2026-09-16-0915-wave-followups-backlog.md`. Named set:
+Tracking issue `#908`; plan: a design doc in the consumer repo. Named set:
 803, 829, 832, 889-899, 904. Mostly CR follow-ups from the four branches merged 2026-09-15
 (#900-#903). Filed upstream as
 [#292](https://github.com/gregoryfoster/skills/issues/292); the skill is vendored here as a
@@ -9,7 +9,7 @@ submodule, so it was drafted in the consuming repo and nothing in the vendored c
 **Interview answers:**
 - Q0:
   - #803 rescoped to its residual. The headline had shipped; see finding 1.
-  - #895c bundled into #899: both edit `OpenApiGenerator::responses()`.
+  - #895c bundled into #899: both edit the same method of the consumer's OpenAPI document generator.
   - #896 → #893 bundled, #896 first: #893's refusals strand exactly the rows #896's cleanup strips.
   - #891 and #892 scored independently.
   - No duplicates.
@@ -32,7 +32,7 @@ Two of them overruled the recommendation: D1 publish rather than drop, and D4b e
 ### 1. A thread's last word can be superseded by a doc the issue never links back to
 
 #803's final comment declared the PSR-4 option "dead". The reversal lived only in
-`docs/SKILLS.md`: PSR-4 resolution had shipped upstream in v1.11.0, and the graph had never been
+the consumer's tool-reference doc: PSR-4 resolution had shipped upstream in v1.11.0, and the graph had never been
 rebuilt since v1.10.0. `AGENTS.md`'s policy line was the tell, because it contradicted the thread
 ("PHP file edges resolve only where a composer PSR-4 map is declared"). Reading the issue alone
 would have closed it as done, or re-filed a disproven option. Same family as 2026-08-13 observo's
@@ -73,8 +73,8 @@ one sighting (2026-08-17 #161). The host-CPU ceiling itself is not new: 2026-08-
 
 ### 3. A prescribed test location can be vacuous by layer
 
-#891's body says to pin `page=-3 → 1` in `CoRestCollectionPaginationTest`. That test builds
-`new WP_REST_Request(null, $params)` and calls `co_rest_page()` directly, so WordPress core's
+#891's body says to pin `page=-3 → 1` in a named unit test. That test builds
+`new WP_REST_Request(null, $params)` and calls the plugin's pagination helper directly, so WordPress core's
 `sanitize_callback` (`absint`, the defect) never runs, and the pin passes **before** the fix. The
 same file also pins `'absint'` literally, which does go red. This is the vacuous-assertion half of
 Step 5 item 2, reached differently: not a *changed column* degrading an assertion, but a test that
@@ -140,8 +140,8 @@ commit-and-push-before-launch. This session used Step 8 route 3 and pushed `main
 - **Blast ≠ priority, isolate the multi-agent intersector.** #898 rewrites `permission_callback`
   lines in about 20 REST files that five smaller items also edit. It shares its batch only with
   other tiers, and the five follow on a `main` that already has it. **Carried** — Key Principles.
-- **Footprint grep overstated a body** (#897 named `InformationTransformer`, which reads
-  `get_post_meta`, not ACF). It also **understated** one: #897 omitted `TranscriptTransformer`,
+- **Footprint grep overstated a body** (#897 named an ETL transformer that reads
+  `get_post_meta`, not ACF). It also **understated** one: #897 omitted another transformer,
   the deferred #829's file. The overstatement is what freed the two ETL items to run in parallel.
   **Carried** — Step 5 item 1, both directions, in one issue.
 - **Bare `isolation: "worktree"` is insufficient here.** `dev.sh worktree create` provisions the

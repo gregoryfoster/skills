@@ -21,7 +21,7 @@ When you recognize you're in followup-backlog mode (issues filed in the same ses
 
 **Non-obvious decision: "prerequisite in parallel batch, dependent in own batch" vs. "bundle in one agent with sequential commits".**
 
-When two issues share a single file (here #326 touches `CptRowProvisioningIntegrationTest.php` to fill the skipped test; #329 refactors the same file to use a new trait), there are two clean shapes:
+When two issues share a single file (here #326 touches one integration test file to fill its skipped test; #329 refactors the same file to use a new trait), there are two clean shapes:
 
 - **Shape A: bundle in one agent, sequential commits.** Used in the 2026-05-25 #41+#43+#44 batch. Lower ceremony — no gate between the two pieces, single review. Better when both pieces are small and reviewed together is the natural shape.
 - **Shape B: prerequisite in the parallel batch, dependent in its own batch.** Used here. Better when the two pieces have wildly different sizes (here: #326 is ~50 lines, #329 is ~13 new files / ~1500 lines) or when bundling would force one big reviewer context-switch. The cost is one extra batch boundary; the gain is that the smaller prerequisite ships in parallel with three other unrelated issues and the larger dependent gets reviewed on its own merits.

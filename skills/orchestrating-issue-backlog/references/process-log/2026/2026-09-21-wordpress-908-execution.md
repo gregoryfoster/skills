@@ -125,7 +125,8 @@ fine; issue references go in backticks so they don't autolink here.
 at the head of "Adding an entry" in [`process-log.md`](../../process-log.md).** One sighting,
 promoted because the failure is irreversible and nothing else in the procedure asks: the first
 check there already sends every vendoring consumer's entry upstream to this repo, which is what
-makes the question reachable. The four existing entries it counts are untouched by this landing.
+makes the question reachable. The four entries it counts were scrubbed in a follow-up commit,
+with the 2026-06-08 entry's link into the consumer repo; their earlier text stays in git history.
 
 ## Other notes
 

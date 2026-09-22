@@ -2,7 +2,7 @@
 
 **Project:** `CannObserv/cannabis.observer-wordpress` (Bedrock + Sage 11 + Lima VM monorepo)
 
-**Backlog:** issues #320, #321, #322, #323 — all four filed in the same session, derived from the just-merged `#311` spec ([docs/specs/2026-06-08-311-wp-integration-test-harness-design.md](https://github.com/CannObserv/cannabis.observer-wordpress/blob/main/docs/specs/2026-06-08-311-wp-integration-test-harness-design.md)). Spec recommended wp-phpunit as a new integration tier alongside the existing bootstrap-stub unit tier; the four issues split that work into a foundation (#320) and three downstream test suites (#321 hooks / #322 ETL / #323 REST).
+**Backlog:** issues #320, #321, #322, #323 — all four filed in the same session, derived from the just-merged `#311` spec (a design doc in the consumer repo). Spec recommended wp-phpunit as a new integration tier alongside the existing bootstrap-stub unit tier; the four issues split that work into a foundation (#320) and three downstream test suites (#321 hooks / #322 ETL / #323 REST).
 
 **Interview answers:**
 - Q1 Quality: All three dimensions equal → standard formula `(Foundation × 2) + (Correctness × 2) + Scope`, max 15.
@@ -11,7 +11,7 @@
 - Q4 Parallelism: Maximum (3 parallel in Batch B).
 - Q5 Ceiling: 9-slot port pool (8001–8009) unchanged from 2026-05-22 — verified by reading the worktree-create output of an in-session worktree (got port 8004). The skill's prior-session ceiling data is reusable for repeat-projects when re-verified cheaply.
 
-**Shape:** two batches. Batch A is #320 alone (foundation, large blast — wires `composer.json`, `phpunit.xml`, `.github/workflows/validate-pr.yml`, `dev.sh`, `AGENTS.md`, `docs/TESTING.md`, new `tests/integration/bootstrap.php`). Batch B is #321/#322/#323 in parallel, all file-disjoint under `tests/integration/`. Tracking issue: `#324`.
+**Shape:** two batches. Batch A is #320 alone (foundation, large blast — wires `composer.json`, `phpunit.xml`, `.github/workflows/validate-pr.yml`, `dev.sh`, `AGENTS.md`, the testing doc, new `tests/integration/bootstrap.php`). Batch B is #321/#322/#323 in parallel, all file-disjoint under `tests/integration/`. Tracking issue: `#324`.
 
 **Spec-derived backlog: low-discovery, high-formalization mode.**
 
@@ -56,6 +56,6 @@ The pattern works because cannabis.observer-wordpress's `dev.sh worktree create`
 - **#320 alone in Batch A despite scoring third** — the two #13-scored issues (#321, #322) have a hard dependency on #320's harness existing. Sequencing follows dependency, not score, per the skill's "blast drives sequencing, not score" rule.
 - **No bundling within Batch B** — the three test suites target wholly distinct surfaces (hook dispatcher / WP-CLI lifecycle / REST router). Bundling would force a single reviewer to context-switch across unrelated codebases.
 - **`tests/integration/bootstrap.php` is read-only after #320** — if a Batch B agent finds it needs a bootstrap helper, file a small followup PR rather than mutating the foundation file inside an unrelated test branch.
-- **`docs/TESTING.md` updates stay with #320** — each Batch B issue could plausibly add a line to TESTING.md's coverage table. Routing those updates as small post-merge doc PRs (rather than three concurrent edits) avoids a contested file appearing in Batch B's diff.
+- **Testing-doc updates stay with #320** — each Batch B issue could plausibly add a line to the testing doc's coverage table. Routing those updates as small post-merge doc PRs (rather than three concurrent edits) avoids a contested file appearing in Batch B's diff.
 
-These patterns generalize: when a foundation issue ships a new shared file (here: `tests/integration/bootstrap.php`, `docs/TESTING.md` coverage section), explicitly declare it read-only for the follow-up batch and route necessary edits as separate small PRs after the batch lands. Concurrent edits to a "foundation shared file" by multiple Batch B agents is the failure mode this avoids.
+These patterns generalize: when a foundation issue ships a new shared file (here: `tests/integration/bootstrap.php`, the testing doc's coverage section), explicitly declare it read-only for the follow-up batch and route necessary edits as separate small PRs after the batch lands. Concurrent edits to a "foundation shared file" by multiple Batch B agents is the failure mode this avoids.

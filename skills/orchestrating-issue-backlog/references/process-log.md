@@ -73,7 +73,7 @@ pagination gate"). Its name and issue numbers are fine; put the issue
 references in backticks so they do not autolink to this repo's. Check before
 drafting, since a leak cannot be edited away: an issue body keeps a public
 revision history, and a landed entry stays in git history (2026-09-16/21
-wordpress, which counted four such entries already here).
+wordpress, which counted four such entries here, since scrubbed).
 
 1. Write `process-log/<year>/<date>-<project>.md`, opening with a
    `## Session <date>` heading. Use the year the session ran; create the
