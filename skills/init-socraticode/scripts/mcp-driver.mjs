@@ -2814,11 +2814,23 @@ async function cmdHealthCheck(projectPath, probePath) {
         if (stale.length) {
           // A DEFECT, not a note, and the severity is the interesting call
           // (#220 made it one). An unindexed artifact is ABSENT from search:
-          // the caller gets nothing back and knows to look elsewhere. A stale
-          // one is worse in kind — codebase_context_search answers
-          // confidently from superseded chunks, and there is no signal at all.
-          // It is also repaired by one named call, which is the line between
-          // the two severities: a note is a measurement no action changes.
+          // the caller gets nothing back and knows to look elsewhere.
+          //
+          // #225 filed the stale case here as worse in kind, on the reading
+          // that codebase_context_search answers confidently from superseded
+          // chunks. Read against the 1.13.1 and 1.14.0 dists, it does not: the
+          // search handler calls ensureArtifactsIndexed before searching
+          // (tools/context-tools.js), so the FIRST search re-embeds the
+          // artifact inline and then answers from current chunks. Old chunks
+          // reach an answer only when that staleness check itself errors.
+          //
+          // The severity stands on what survives that correction. Nothing
+          // SURFACES the gap: codebase_context — what this check and any
+          // listing read — does not re-index, so a listing sits at N/N while
+          // artifacts are behind. And the repair is billed, unannounced, to
+          // whichever search next touches the artifact. It is repaired by one
+          // named call, which is the line between the two severities: a note
+          // is a measurement no action changes.
           //
           // Its own finding rather than a qualifier on the parity line,
           // because the parity line only exists on a shortfall and staleness

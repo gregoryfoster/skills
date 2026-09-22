@@ -133,15 +133,22 @@ silently — the hook's output cannot drift from itself.
   and never a name — then run `codebase_update`. The once-per-day health
   check reports this gap too, and names the artifact.
   A third diagnosis has no empty result to warn you at all: the artifact is
-  indexed, the answer arrives, and it is **stale**. Nothing guarantees a
-  re-index when the source changes, so an edited file — or a new file under a
-  directory artifact like `docs/plans/` — leaves the count at N/N while search
-  answers from the old chunks. Measured: three of one repo's fourteen artifacts
-  were behind their sources at a moment this check reported `14/14`.
-  `codebase_context` prints each artifact's index time beside its status;
-  compare it against the source, and for a directory against its **newest
-  file**, not the directory's own timestamp. The daily check does exactly that
-  and names the stale artifacts; the remedy is `codebase_update`.
+  indexed, the answer arrives, and it is **stale** — behind its source. An
+  edited file, or a new file under a directory artifact like `docs/plans/`,
+  leaves the count at N/N with the superseded chunks still embedded. Measured:
+  three of one repo's fourteen artifacts were behind their sources at a moment
+  this check reported `14/14`.
+  What that costs is usually a **wait, not a wrong answer**:
+  `codebase_context_search` re-indexes changed artifacts before it searches, so
+  the first search after an edit pays that re-embed inline and then answers
+  from current chunks. Old chunks reach an answer only when that staleness
+  check itself errors — it is logged and the search proceeds anyway.
+  `codebase_context` does **not** re-index, which is why a listing can sit at
+  N/N while artifacts are behind. It prints each artifact's index time beside
+  its status; compare it against the source, and for a directory against its
+  **newest file**, not the directory's own timestamp. The daily check does
+  exactly that and names the stale artifacts. `codebase_update` repairs them
+  out of band, so the next search is not the one that pays.
   And every artifact competes in **one ranking**: a large directory of dated
   prose outranks a small current file, and a plan answers with the value it
   was written against. Set `artifactName` to search one artifact.
