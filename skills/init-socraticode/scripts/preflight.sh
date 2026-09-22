@@ -5,9 +5,10 @@
 # Detect-and-instruct only: every failing gate prints the exact fix command and
 # exits non-zero. This script NEVER installs or mutates the host toolchain
 # (no auto brew/apt/nvm, no docker pulls, and no `claude update` or
-# `exeuntu update claude`, neither of which can only check — the version and
-# install age of the Claude Code running this session are reported instead,
-# and PATH's beside it where the two differ) — that is the operator's call.
+# `exeuntu update claude`, neither of which has a check-only mode — the version
+# and install age of the Claude Code running this session are reported
+# instead, and PATH's beside it where the two differ) — that is the operator's
+# call.
 #
 # Usage:
 #   bash preflight.sh            # run all gates; exit 0 only if every gate passes
