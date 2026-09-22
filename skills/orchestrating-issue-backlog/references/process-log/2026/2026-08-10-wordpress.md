@@ -45,8 +45,8 @@ state.
 ### 3. Design-gate vs file-gate
 
 **[Promotion candidate → Step 7 / Key Principles.]** #669 was gated behind #667 despite
-**verified-disjoint file sets** (#667: the event-type taxonomy, the event archive and the event post type;
-#669: the event model, the front-page template and three repository/service files). The gate came from #669's own
+**verified-disjoint file sets** (#667: the event-type model, the event archive's view composer and the event post type;
+#669: the event model, the front page's view composer and three repository/service files). The gate came from #669's own
 acceptance — "decide the seam once", naming #667 as a future consumer.
 
 The payoff was larger than predicted: #669 built one prefetch seam serving **four** consumers, and two
