@@ -581,20 +581,23 @@ frontmatter_value() {
 # spliced into a hand-wrapped sentence.
 declare -a DRIFTED=()
 declare -a UNASSESSED=()
-# #290's third voice, and the bump command that goes with each entry — kept
-# index-aligned, so the report can print each command under the entry it fixes.
+# #290's third voice. Index-aligned with it: each entry's submodule and
+# recorded commit, which the report reads to settle the bump and any pin once
+# per submodule (#290 CR 41, #312), and what that settling leaves to print
+# under the entry — a note and a bump command, each empty under every entry of
+# a submodule but the first, and the bump empty where no one pointer serves
+# them all.
 declare -a POINTER_BEHIND=()
-declare -a POINTER_BUMP=()
-# Index-aligned too: each entry's submodule and recorded commit, which the
-# report reads to settle a pin once per submodule (#290 CR 41), and the note
-# that settling leaves for under the entry — empty where nothing holds the
-# submodule, and under every entry of it but the first (#290 CR 13).
 declare -a POINTER_REPO=()
 declare -a POINTER_REC=()
-declare -a POINTER_HELD=()
+declare -a POINTER_NOTE=()
+declare -a POINTER_BUMP=()
 # 1 when some held submodule's note asks the operator to choose between a
 # re-pin and keeping the hold — the only case the remedy's pin paragraph is for.
 HOLD_TO_SETTLE=0
+# 1 when some unheld submodule's entries record commits on diverged lines, so
+# it gets no bump — the only case the remedy's diverged paragraph is for.
+LINES_TO_SETTLE=0
 
 # One formatter per class, so the call sites cannot word the same fact
 # differently: drift is recorded from the version comparison and from the
@@ -625,10 +628,14 @@ record_override_unassessed() {
 # names the submodule path because "your submodule is behind" sends a reader to
 # the auto-refresh hook, when the repair is one directory.
 #
-# `merge --ff-only` rather than `checkout <commit>`: it never moves a pointer
-# backwards, so when two overrides of one vendor record different commits the
-# printed commands can be run in any order and the pointer ends at the newer —
-# `checkout` would leave it wherever the last command pointed.
+# `merge --ff-only` rather than `checkout <commit>`: it only ever moves a
+# pointer forwards, so a bump run against a pointer that has since passed its
+# commit is a no-op rather than a step back — `checkout` would leave it
+# wherever the command pointed. That is NOT what makes several overrides of one
+# vendor safe, which this comment used to claim ("any order … ends at the
+# newer"): their recorded commits need not lie on one line of history, and no
+# fast-forward reaches two lines (#312). The bump is settled per submodule at
+# report time instead: see settle_pointer_entries.
 #
 # A pinned submodule changes the remedy (#290 CR 13). The bump alone ends a
 # hold the operator took on purpose — an experiment's control arm, a
@@ -637,28 +644,35 @@ record_override_unassessed() {
 # move it back. So a held entry says so and offers the two repairs that keep
 # pin and pointer agreeing: re-pin the line to the recorded commit before the
 # bump, or keep the hold and bring the override down to the pinned commit.
-# Settled per submodule at report time, not here: see settle_pointer_holds.
 record_override_pointer_behind() {
   local dir="$1" target="$2" repo_dir="$3" rec="$4" head="$5" changed="$6"
   POINTER_BEHIND+=("$dir overrides $target: synced from commit $rec, AHEAD of the checkout of $repo_dir at $head ($changed differs between the two)")
-  POINTER_BUMP+=("git -C $repo_dir merge --ff-only $rec")
   POINTER_REPO+=("$repo_dir")
   POINTER_REC+=("$rec")
 }
 
-# settle_pointer_holds — fills POINTER_HELD from the pin file, one note per
-# held submodule, and sets HOLD_TO_SETTLE (#290 CR 41).
+# settle_pointer_entries — fills POINTER_BUMP and POINTER_NOTE, one of each
+# per submodule, and sets HOLD_TO_SETTLE and LINES_TO_SETTLE (#290 CR 41,
+# #312).
 #
-# Per SUBMODULE, not per entry, because a pin is one line per submodule. Two
-# overrides of one held vendor at different recorded commits used to get two
-# re-pin lines for that one line, contradicting each other; followed entry by
-# entry they left whichever came last, and when that was the older commit the
-# ff-only bumps still took the pointer to the newer — the pin drift the note
-# exists to prevent. So the note names the TIP, the recorded commit every
-# other one of that submodule's entries is an ancestor of, which is where the
-# bumps converge. Where no entry is that (commits on diverged lines, or an
-# ancestry git could not answer) no one pin serves them all, and only the
-# hold is offered.
+# Per SUBMODULE, not per entry, because a pointer is one commit per submodule
+# and a pin one line. Both used to be settled entry by entry. Two overrides of
+# one vendor at different recorded commits got a bump each; where the two lay
+# on one line the second was redundant, and where they lay on diverged lines —
+# overrides re-synced from different vendor branches, a history rewritten
+# between two syncs, a fork — whichever ran second failed, and left its
+# override reading as diverged from the pointer (#312). Held, they also got two
+# re-pin lines for the one pin line, contradicting each other: followed entry
+# by entry they left whichever came last, and when that was the older commit
+# the bumps still took the pointer to the newer — the pin drift the note exists
+# to prevent (#290 CR 41).
+#
+# So both name the TIP, the recorded commit every other one of that
+# submodule's entries is an ancestor of: one bump reaches it, and it is the
+# one re-pin. Where no entry is that (commits on diverged lines, or an
+# ancestry git could not answer), no single pointer serves them all, so NO
+# bump is printed: an unheld submodule's note says to put its overrides on one
+# line first, and a held one's offers only the hold.
 #
 # The pin is RESOLVED, never compared as text: the state the note's own
 # first repair produces — the line re-pinned to the recorded commit, the bump
@@ -667,21 +681,22 @@ record_override_pointer_behind() {
 # into effect. A pin that resolves to the tip gets a note saying so, which
 # asks for no choice. One that resolves to nothing (a typo, a ref not
 # fetched) is compared as unequal: the choice is still the operator's.
-settle_pointer_holds() {
+settle_pointer_entries() {
   local i j k repo pin pin_file tip n pin_sha tip_sha these
   pin_file="$(skills_pin_file)"
-  POINTER_HELD=()
+  POINTER_NOTE=()
+  POINTER_BUMP=()
   HOLD_TO_SETTLE=0
+  LINES_TO_SETTLE=0
   for i in "${!POINTER_BEHIND[@]}"; do
-    POINTER_HELD[i]=""
+    POINTER_NOTE[i]=""
+    POINTER_BUMP[i]=""
     repo="${POINTER_REPO[$i]}"
     # Under the first of the submodule's entries only.
     for j in "${!POINTER_BEHIND[@]}"; do
       [ "$j" -lt "$i" ] || break
       [ "${POINTER_REPO[$j]}" != "$repo" ] || continue 2
     done
-    pin="$(skills_pin_for "$pin_file" "$repo")"
-    [ -n "$pin" ] || continue
     tip=""
     n=0
     for j in "${!POINTER_BEHIND[@]}"; do
@@ -689,32 +704,46 @@ settle_pointer_holds() {
       n=$((n + 1))
       [ -z "$tip" ] || continue
       for k in "${!POINTER_BEHIND[@]}"; do
+        # Every commit contains itself, so a lone entry is its own tip without
+        # asking git — which could otherwise fail and leave it with no bump.
+        [ "$k" != "$j" ] || continue
         [ "${POINTER_REPO[$k]}" = "$repo" ] || continue
         git -C "$repo" merge-base --is-ancestor "${POINTER_REC[$k]}" "${POINTER_REC[$j]}" 2>/dev/null ||
           continue 2
       done
       tip="${POINTER_REC[$j]}"
     done
+    [ -z "$tip" ] || POINTER_BUMP[i]="git -C $repo merge --ff-only $tip"
     these="the $n overrides of $repo listed here"
+    pin="$(skills_pin_for "$pin_file" "$repo")"
+    if [ -z "$pin" ]; then
+      if [ -z "$tip" ]; then
+        LINES_TO_SETTLE=1
+        POINTER_NOTE[i]="none of the commits $these record can be shown to contain the others, so no one pointer serves them all and no bump is printed — re-sync them onto one line of the vendor's history first"
+      elif [ "$n" -gt 1 ]; then
+        POINTER_NOTE[i]="one bump serves $these: $tip, the newest commit they record, contains the others"
+      fi
+      continue
+    fi
     if [ -z "$tip" ]; then
       HOLD_TO_SETTLE=1
-      POINTER_HELD[i]="pinned at $pin by $pin_file, but none of the commits $these record can be shown to contain the others, so no single re-pin serves them all — keep the hold and re-sync each of them to $pin instead"
+      POINTER_NOTE[i]="pinned at $pin by $pin_file, but none of the commits $these record can be shown to contain the others, so no single re-pin serves them all and no bump is printed — keep the hold and re-sync each of them to $pin instead"
       continue
     fi
     pin_sha="$(git -C "$repo" rev-parse --verify --quiet "$pin^{commit}" 2>/dev/null || true)"
     tip_sha="$(git -C "$repo" rev-parse --verify --quiet "$tip^{commit}" 2>/dev/null || true)"
     if [ -n "$pin_sha" ] && [ "$pin_sha" = "$tip_sha" ]; then
       if [ "$n" -gt 1 ]; then
-        POINTER_HELD[i]="pinned at $pin by $pin_file, which already names $tip, the newest commit $these record — their bumps complete the hold rather than ending it"
+        POINTER_NOTE[i]="pinned at $pin by $pin_file, which already names $tip, the newest commit $these record — the one bump, to it, completes the hold rather than ending it"
       else
-        POINTER_HELD[i]="pinned at $pin by $pin_file, which already names this commit — the bump completes the hold rather than ending it"
+        POINTER_NOTE[i]="pinned at $pin by $pin_file, which already names this commit — the bump completes the hold rather than ending it"
       fi
     elif [ "$n" -gt 1 ]; then
       HOLD_TO_SETTLE=1
-      POINTER_HELD[i]="pinned at $pin by $pin_file — re-pin that line to \"$repo $tip\", the newest commit $these record and where their bumps converge, before the bumps, or keep the hold and re-sync each of them to $pin instead"
+      POINTER_NOTE[i]="pinned at $pin by $pin_file — re-pin that line to \"$repo $tip\", the newest commit $these record and the one bump's target, before the bump, or keep the hold and re-sync each of them to $pin instead"
     else
       HOLD_TO_SETTLE=1
-      POINTER_HELD[i]="pinned at $pin by $pin_file — re-pin that line to \"$repo $tip\" before the bump, or keep the hold and re-sync the override to $pin instead"
+      POINTER_NOTE[i]="pinned at $pin by $pin_file — re-pin that line to \"$repo $tip\" before the bump, or keep the hold and re-sync the override to $pin instead"
     fi
   done
 }
@@ -828,20 +857,30 @@ report_drifted_overrides() {
 
 report_pointer_behind_overrides() {
   local i
-  settle_pointer_holds
+  settle_pointer_entries
   echo "doctor: an override is AHEAD of its submodule pointer — the override is" >&2
   echo "doctor: not behind, the pointer is:" >&2
   for i in "${!POINTER_BEHIND[@]}"; do
     echo "  ${POINTER_BEHIND[$i]}" >&2
-    [ -z "${POINTER_HELD[$i]}" ] || echo "    ${POINTER_HELD[$i]}" >&2
-    echo "    ${POINTER_BUMP[$i]}" >&2
+    [ -z "${POINTER_NOTE[$i]}" ] || echo "    ${POINTER_NOTE[$i]}" >&2
+    [ -z "${POINTER_BUMP[$i]}" ] || echo "    ${POINTER_BUMP[$i]}" >&2
   done
-  echo "doctor: bump only that submodule pointer, to at least the recorded commit," >&2
-  echo "doctor: with the command under each entry — then \`git add\` the submodule" >&2
-  echo "doctor: path and commit it. Do NOT re-sync or edit the override: it already" >&2
-  echo "doctor: carries the newer text, and reapplying its deltas onto the" >&2
-  echo "doctor: pointer's older text would undo that sync. Advisory: nothing is" >&2
-  echo "doctor: changed for you." >&2
+  echo "doctor: bump only that submodule pointer, with the one command printed for" >&2
+  echo "doctor: it — to the newest commit any of its entries records — then" >&2
+  echo "doctor: \`git add\` the submodule path and commit it. Do NOT re-sync or edit" >&2
+  echo "doctor: the override: it already carries the newer text, and reapplying" >&2
+  echo "doctor: its deltas onto the pointer's older text would undo that sync." >&2
+  echo "doctor: Advisory: nothing is changed for you." >&2
+  if [ "$LINES_TO_SETTLE" = "1" ]; then
+    # The one case the paragraph above is wrong about: no command is printed,
+    # because the one each entry would have got fails for all but the first
+    # to run (#312).
+    echo "doctor: Except where an entry prints no bump: the commits its submodule's" >&2
+    echo "doctor: entries record lie on diverged lines, and no pointer contains them" >&2
+    echo "doctor: all. Re-sync those overrides onto one line first — onto a commit one" >&2
+    echo "doctor: of them records, or one descending from each — their text, version:" >&2
+    echo "doctor: and synced-from: all; the next run then prints the one bump." >&2
+  fi
   [ "$HOLD_TO_SETTLE" = "1" ] || return 0
   # "Where an entry shows one": on diverged lines the note offers no re-pin,
   # and this paragraph used to offer it "as shown" beneath it (#290 CR 67).
@@ -1516,8 +1555,9 @@ check_override_drift() {
   POINTER_BUMP=()
   POINTER_REPO=()
   POINTER_REC=()
-  POINTER_HELD=()
+  POINTER_NOTE=()
   HOLD_TO_SETTLE=0
+  LINES_TO_SETTLE=0
   MISSING_FRAGMENT=()
   MISSING_FRAGMENT_ID=()
   MISSING_FRAGMENT_TEXT=()

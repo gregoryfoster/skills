@@ -4,7 +4,7 @@ description: "Manages external skill repos in a project using the git submodule 
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git CLI.
 metadata:
   author: gregoryfoster
-  version: "1.14"
+  version: "1.15"
   triggers: add skill repo, add external skills, manage skills, update vendor skills, install skills hook, enable auto-refresh
 ---
 
@@ -214,8 +214,9 @@ by **reapplying the local deltas onto the newer upstream text** — never
 upstream changes onto the old fork — then bump **both** keys. Copy the
 override aside first, to account for every line the merge removed: a grep
 cannot (#267). A `synced-from` *ahead* of `HEAD` means the pointer lags, not
-the override: bump that submodule, never re-sync — unless pinned: re-pin,
-or re-sync to the pin (#290). Procedure and comparands:
+the override: bump that submodule, never re-sync — unless pinned (re-pin,
+or re-sync to the pin: #290) or on diverged lines (re-sync onto one: #312).
+Procedure and comparands:
 [references/local-overrides.md](references/local-overrides.md).
 
 ### Removing a skill

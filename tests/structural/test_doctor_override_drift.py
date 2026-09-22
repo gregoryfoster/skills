@@ -60,6 +60,13 @@ What this file pins:
   version stamps as the only verdict: only an OLDER override version is
   drift, a newer one is un-assessable with the fetch that settles it, and the
   stamps are ordered as numbers (1.14 is newer than 1.4).
+- **One bump per submodule** (#312). Every pointer entry used to print its
+  own `--ff-only` bump, on the claim that they run in any order and land on
+  the newer. Two overrides synced from diverged lines of one vendor are both
+  ahead of its HEAD, so each got a bump and the second always failed. The bump
+  is settled per submodule now, as the pin was: one, to the newest recorded
+  commit, where they lie on one line; none, and the conflict named, where they
+  do not — pinned or not.
 - **A commit compared clean leaves the stamps no verdict** (#290 CR 40). The
   diff covers the vendor's `SKILL.md`, `version:` included, so a stamp that
   disagrees over a clean diff is a stale key whichever way it points —
@@ -1066,13 +1073,16 @@ class TestAPinnedPointer:
             f"the summary's pointer remedy omits the pinned exception:\n{section}"
         )
 
-    def _two_overrides(self, consumer: Path, diverged: bool = False):
+    def _two_overrides(
+        self, consumer: Path, diverged: bool = False, pinned: bool = True
+    ):
         """Two overrides of one pinned vendor, each ahead of the pointer at a
         different recorded commit: `sa` at the NEWER one, sorting first, so
         re-pinning entry by entry would leave the pin at the older one while
         the ff-only bumps converge on the newer. `sb` is unchanged between the
         two, so once the pointer reaches the newer both are current. `diverged`
-        puts the two commits on separate lines of history instead."""
+        puts the two commits on separate lines of history instead, and
+        `pinned=False` writes no pin file (#312)."""
         vendor = consumer / "skills-vendor" / VENDOR_REPO
         for name in ("sa", "sb"):
             _vendor_skill(consumer, name, "1.4")
@@ -1093,8 +1103,9 @@ class TestAPinnedPointer:
         _override(consumer, "sa", "1.4", synced_from=f"{VENDOR_REPO} x ({newer})")
         _override(consumer, "sb", "1.4", synced_from=f"{VENDOR_REPO} x ({older})")
         pin = consumer / ".skills" / "skills-pin"
-        pin.parent.mkdir()
-        pin.write_text(f"skills-vendor/{VENDOR_REPO} {base}\n")
+        if pinned:
+            pin.parent.mkdir()
+            pin.write_text(f"skills-vendor/{VENDOR_REPO} {base}\n")
         return vendor, base, older, newer, pin
 
     def test_two_overrides_of_one_held_submodule_get_one_repin(self, consumer: Path):
@@ -1111,12 +1122,15 @@ class TestAPinnedPointer:
             f"one re-pin, to the newest recorded commit:\n{result.stderr}"
         )
         assert flat.count(f"pinned at {base}") == 1, result.stderr
+        bumps = _bumps(result.stderr)
+        assert bumps == [
+            f"git -C skills-vendor/{VENDOR_REPO} merge --ff-only {newer}"
+        ], f"one bump, to the commit the one re-pin names (#312):\n{result.stderr}"
         pin.write_text(repins[0] + "\n")
         between = _flat(_doctor(consumer).stderr)
         assert "re-pin" not in between, between
         assert "a bump alone ends" not in between, between
-        for cmd in _bumps(result.stderr):
-            _run(consumer, cmd)
+        _run(consumer, bumps[0])
         assert _resolve(vendor, newer) == _vendor_head(vendor), (
             "the pin and the pointer disagree"
         )
@@ -1175,6 +1189,88 @@ class TestAPinnedPointer:
         result = _doctor(consumer)
         assert POINTER_MARKER in result.stderr, result.stderr
         assert "pinned" not in result.stderr, result.stderr
+
+
+class TestOneBumpPerSubmodule:
+    """#312 — the bump is settled per submodule, as the pin already was.
+
+    Each pointer entry used to print its own `--ff-only` bump, and the doctor
+    and the reference both said the bumps could run in any order and land on
+    the newer. That holds only where the recorded commits lie on one line of
+    history. Two overrides synced from diverged lines are both descendants of
+    the pointer, so each read "ahead" and got a bump: the first ran, the second
+    failed with "Not possible to fast-forward", and the next run reported its
+    override as diverged from the pointer. No order satisfies both, pinned or
+    not — the pin note had been settled per submodule since #290 CR 41, and
+    the bumps beneath it had not.
+    """
+
+    def test_one_line_of_history_gets_one_bump_to_the_newest(self, consumer: Path):
+        """Where the commits are ordered, one bump reaches all of them. The
+        second one it used to print was redundant, and it named the OLDER
+        commit under an entry of its own."""
+        vendor, _, _, newer, _ = TestAPinnedPointer()._two_overrides(
+            consumer, pinned=False
+        )
+        result = _doctor(consumer)
+        bumps = _bumps(result.stderr)
+        assert bumps == [
+            f"git -C skills-vendor/{VENDOR_REPO} merge --ff-only {newer}"
+        ], f"one bump, to the newest recorded commit:\n{result.stderr}"
+        flat = _flat(result.stderr)
+        assert (
+            f"one bump serves the 2 overrides of skills-vendor/{VENDOR_REPO}" in flat
+        ), f"an entry whose own commit is not the one bumped to needs saying:\n{flat}"
+        _run(consumer, bumps[0])
+        assert _resolve(vendor, newer) == _vendor_head(vendor)
+        assert _doctor(consumer).stderr.strip() == "", (
+            "the one bump should have been the whole repair"
+        )
+
+    @pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
+    def test_diverged_lines_get_no_bump(self, consumer: Path, pinned: bool):
+        """The issue's reproduction, and its pinned twin from the issue's
+        comment. No bump is printed, since every printed pair ended in a failed
+        command, and the one note sits under the first entry."""
+        vendor, base, _, _, _ = TestAPinnedPointer()._two_overrides(
+            consumer, diverged=True, pinned=pinned
+        )
+        result = _doctor(consumer)
+        assert POINTER_MARKER in result.stderr, result.stderr
+        assert _bumps(result.stderr) == [], (
+            "no single pointer contains commits on two lines, so any bump pair "
+            f"ends in a failed --ff-only:\n{result.stderr}"
+        )
+        lines = [ln.strip() for ln in result.stderr.splitlines()]
+        first = next(i for i, ln in enumerate(lines) if ln.startswith("skills/sa "))
+        assert "no bump is printed" in lines[first + 1], (
+            f"the conflict is named under the first entry:\n{result.stderr}"
+        )
+        assert result.stderr.count("no bump is printed") == 1, result.stderr
+        flat = _flat(result.stderr)
+        if pinned:
+            assert f"re-sync each of them to {base}" in flat, flat
+            assert "Except where an entry prints no bump" not in flat, (
+                f"the hold is this entry's repair, not a re-sync onto a line:\n{flat}"
+            )
+        else:
+            assert "re-sync them onto one line of the vendor's history" in flat, flat
+            assert "Except where an entry prints no bump" in flat, (
+                "the closing paragraph says bump and never re-sync; it has to "
+                f"name the entry that is the exception:\n{flat}"
+            )
+        assert _vendor_head(vendor).startswith(base), "the doctor moved the pointer"
+
+    def test_the_skill_summary_carries_the_diverged_exception(self):
+        """SKILL.md's "bump that submodule, never re-sync" is the advice this
+        class's diverged case contradicts — the same gap CR 48 closed for the
+        pinned exception."""
+        text = (REPO_ROOT / "skills" / "managing-skills" / "SKILL.md").read_text()
+        section = text.split("### Updating a local override", 1)[1]
+        section = section.split("\n### ", 1)[0]
+        assert re.search(r"diverged lines[^.]*re-sync onto one", section), (
+            f"the summary's pointer remedy omits the diverged exception:\n{section}"
+        )
 
 
 class TestStampsDecideByDirection:

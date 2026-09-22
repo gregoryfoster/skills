@@ -124,12 +124,20 @@ vendor and an unversioned one alike:
 | a descendant of `HEAD` | the **pointer** is behind the override | bump that one submodule — `git -C skills-vendor/<repo> merge --ff-only <commit>`, then `git add` and commit it — and leave the override alone |
 | neither | cannot be assessed | none: a rewritten vendor history or a fork, so no direction can be read |
 
-The pointer finding prints that command under each entry. `--ff-only` never
-moves a pointer backwards, so where two overrides of one vendor record
-different commits the commands can run in any order and land on the newer. It
-also replaces the version comparison for that override rather than joining it:
-a pointer lagging a bumped release disagrees on the stamps too, and printing
-drift beside it would print both opposite remedies at once.
+The pointer finding prints that command **once per submodule**, under its first
+entry, to the newest commit its overrides record — the one every other recorded
+commit is an ancestor of, so one fast-forward reaches them all. It used to print
+one per entry, on the claim that `--ff-only` never moves a pointer backwards, so
+the commands could run in any order and land on the newer. That holds only on
+one line of history. Overrides re-synced from different vendor branches, or
+across a history rewrite, record commits that are each ahead of the pointer and
+on diverged lines: whichever bump ran second failed, and left its override
+reading as diverged ([#312](https://github.com/gregoryfoster/skills/issues/312)).
+There no single pointer serves them, so no bump is printed; the entry says so,
+and the overrides are re-synced onto one line first. The finding also replaces
+the version comparison for that override rather than joining it: a pointer
+lagging a bumped release disagrees on the stamps too, and printing drift beside
+it would print both opposite remedies at once.
 
 A submodule [held by a pin](pinning-submodules.md) is the exception. The bump
 alone ends the hold, and the auto-refresh hook then reports pin drift at every
@@ -140,8 +148,8 @@ bump, or keep the hold and re-sync the override to the pinned commit instead.
 The pin is resolved, not read as text: once it names that commit, the entry
 says the bump completes the hold. A pin is one line per submodule, so several
 overrides of one held submodule get one re-pin, to the newest commit they
-record — where their bumps converge — or none, if none of those commits
-contains the others.
+record — the one bump's target — or, if none of those commits contains the
+others, no re-pin and no bump, only the hold.
 
 The history needs the recorded commit **on disk**. Where it is not — not
 fetched yet, or no `synced-from:` at all — the version stamps are the only
