@@ -313,12 +313,15 @@ way.
 
 The case for asking, measured on `CannObserv/address-validator` (socraticode
 1.14.0, [#315](https://github.com/gregoryfoster/skills/issues/315)): its plans
-and research were **981 of 2,677 code-index chunks (36.6%)** and **52% of
-everything embedded across both stores**, and they outranked first-party source
-on questions the plans answer wrongly — a search about a `CHECK` constraint
-returned a value a later migration had dropped. After excluding both
-directories the code index fell to 1,672 chunks, and the context store stayed at
-1,112 with `design-plans` at 983. Crowd-out and staleness go together: plans
+alone were **981 of 2,677 code-index chunks (36.6%)**, outranking first-party
+source on questions the plans answer wrongly, and dated prose was **52% of
+everything embedded across both stores**. After excluding plans and research
+the code index fell to 1,672 chunks, and the context store stayed at 1,112 with
+`design-plans` at 983. Kept in the context store, plans still answer an
+unscoped context search: one about a `CHECK` constraint returned a value a
+later migration had dropped, which is why the generated doc's schema row
+scopes that search with `artifactName`
+([`socraticode-doc.md`](socraticode-doc.md)). Crowd-out and staleness go together: plans
 are voluminous where the design was iterated, which is where they are most
 likely superseded.
 
