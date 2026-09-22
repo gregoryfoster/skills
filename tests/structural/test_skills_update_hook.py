@@ -432,9 +432,10 @@ class TestAFailedUnstageIsReported:
         assert "index.lock" in log, f"git's own reason must reach the log:\n{log}"
 
     def test_the_index_is_read_back_not_the_reset_status(self, repo):
-        """The issue's other hypothesis: the reset ran and exited 0, yet the
-        paths were staged afterwards. A check on the exit status passes here;
-        only reading the index catches it."""
+        """A reset that exits 0 having unstaged nothing. A check on the exit
+        status passes here; only reading the index catches it. The issue's
+        other hypothesis, something re-staging AFTER the reset, is past any
+        check the hook can make, and _unstage says so."""
         _write_git_shim(
             repo,
             extra_arms=self.COMMIT_REFUSED
