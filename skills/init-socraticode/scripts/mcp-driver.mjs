@@ -2854,7 +2854,7 @@ async function cmdHealthCheck(projectPath, probePath) {
           defect(
             `context artifacts ${indexed}/${declared} indexed, ${stale.length} stale — `
             + `${stale.map((s) => s.name).join(', ')}; run codebase_update `
-            + `(incremental — codebase_context_index re-embeds every artifact)`
+            + `(incremental; NOT codebase_context_index, which re-embeds every artifact)`
           );
         }
       }
