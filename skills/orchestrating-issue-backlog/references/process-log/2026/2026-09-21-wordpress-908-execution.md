@@ -128,6 +128,8 @@ promoted because the failure is irreversible and nothing else in the procedure a
 check there already sends every vendoring consumer's entry upstream to this repo, which is what
 makes the question reachable. The four entries it counts were scrubbed in a follow-up commit,
 with the 2026-06-08 entry's link into the consumer repo; their earlier text stays in git history.
+The same cleanup then covered the two other private consumers with entries here, cli and
+cannobserv, and three places elsewhere in this repo that cited cannobserv's code.
 
 ## Other notes
 
