@@ -54,11 +54,23 @@ from .test_context_artifact_parity import (
 
 SKILL_MD = SKILL_DIR / "SKILL.md"
 
-# "run codebase_context_index", "re-run codebase_context_index", "running …" —
-# every spelling that reads as an INSTRUCTION to start a full re-embed. Naming
+# Every spelling that reads as an INSTRUCTION to start a full re-embed. Naming
 # the tool to say what it costs is the point of the fix, so a bare mention must
 # stay legal; only the imperative is the regression.
-RERUN_FULL = re.compile(r"\b(?:re-)?run(?:ning|s)? +`?codebase_context_index", re.I)
+#
+# Three things the first draft of this pattern got wrong, each verified against
+# the string it let through:
+#   - `\b(?:re-)?run` cannot match the unhyphenated "rerun": the boundary is
+#     consumed by "re", and there is no boundary before the inner "run".
+#   - a single ` +` between verb and tool rejects "re-run the full
+#     codebase_context_index", which is the same instruction with two words in
+#     it. Up to three intervening words are allowed instead.
+#   - it is applied to the FINDING and the generated doc, never to SKILL.md,
+#     where `codebase_context_index { projectPath }` is the correct
+#     install-time imperative and must stay one.
+RERUN_FULL = re.compile(
+    r"(?:re-? ?)?run(?:ning|s)?\b(?:\s+\w+){0,3}\s+`?codebase_context_index", re.I
+)
 RUN_INCREMENTAL = re.compile(r"\brun +`?codebase_update", re.I)
 
 
