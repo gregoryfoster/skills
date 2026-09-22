@@ -10,7 +10,8 @@ thirteen from the batches plus three post-merge docs corrections. Plugin unit te
 Filed upstream as [#314](https://github.com/gregoryfoster/skills/issues/314), drafted in the
 consuming repo; nothing in the vendored submodule was edited. The consumer is private and this
 log is public, so **no identifiers from the consuming repo appear below** (finding 6). Its issue
-references are in backticks so they do not autolink here.
+numbers are in backticks, as in the filed issue, where GitHub would have linked them to this
+repo's.
 
 ## Lessons
 
