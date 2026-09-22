@@ -82,7 +82,7 @@ database-shaped; the property is "a store outside the worktree that a worker wri
 ### Same-function overlap is **not** always a Shape-A bundle signal
 
 2026-08-13 cannobserv logged *"same-function overlap is the sharpest Shape-A signal yet"* (two
-issues editing `test_write_bodies.py:22-23`). Four days later the same geometry took the
+issues editing adjacent lines of one test function). Four days later the same geometry took the
 opposite verdict, and the discriminator is clean:
 
 #17 and #25 both edit `_raise_for_status` (`src/worker/handler.py:638-657`, 20 lines). Verdict

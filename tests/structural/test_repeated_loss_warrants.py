@@ -28,51 +28,52 @@ from pathlib import Path
 from .test_claim_warrants import CLAIM_ACK, FAITHFUL, TIGHTEN, _tightened
 from .test_loss_warrants import _ack, _prove, _repo
 
-# cannobserv#414's three examples, reduced to the lines they shared. The second
+# cannobserv#414's three examples, reduced to the lines they shared, with that
+# private repo's names swapped for neutral ones of the same shape. The second
 # is a class-body excerpt, indented one level deeper: a copy is a copy wherever
 # it sits, because the report compares lines with their indentation stripped.
 FIRST = (
-    "def __init__(self, metadata: WordPressMetadata):\n"
+    "def __init__(self, metadata: SourceMetadata):\n"
     "    self.metadata = metadata\n"
-    "    self.client = WordPressClient(metadata)\n"
+    "    self.client = SourceClient(metadata)\n"
 )
 SECOND = (
-    "    def __init__(self, metadata: WordPressMetadata):\n"
+    "    def __init__(self, metadata: SourceMetadata):\n"
     "        self.metadata = metadata\n"
-    "        self.client = WordPressClient(metadata)\n"
+    "        self.client = SourceClient(metadata)\n"
     "\n"
     "    @cached_property\n"
-    "    def _co_core_config(self) -> WordPressConfig:\n"
-    "        return metadata_to_config(self.metadata)\n"
+    "    def _core_config(self) -> SourceConfig:\n"
+    "        return to_config(self.metadata)\n"
     "\n"
     "    @cached_property\n"
-    "    def _co_core_drivers(self) -> Drivers:\n"
-    "        return make_legacy_drivers()\n"
+    "    def _core_drivers(self) -> Drivers:\n"
+    "        return make_default_drivers()\n"
 )
 THIRD = (
-    "def __init__(self, metadata: WordPressMetadata):\n"
+    "def __init__(self, metadata: SourceMetadata):\n"
     "    self.metadata = metadata\n"
     "\n"
     "@cached_property\n"
-    "def _co_core_config(self) -> WordPressConfig:\n"
-    "    return metadata_to_config(self.metadata)\n"
+    "def _core_config(self) -> SourceConfig:\n"
+    "    return to_config(self.metadata)\n"
     "\n"
     "@cached_property\n"
-    "def _co_core_drivers(self) -> Drivers:\n"
-    "    return make_legacy_drivers()\n"
+    "def _core_drivers(self) -> Drivers:\n"
+    "    return make_default_drivers()\n"
 )
 
 # Each distinct text and how many times the three examples carry it — the
 # table the issue opens with.
 COPIES = {
     "@cached_property": 4,
-    "def __init__(self, metadata: WordPressMetadata):": 3,
+    "def __init__(self, metadata: SourceMetadata):": 3,
     "self.metadata = metadata": 3,
-    "def _co_core_config(self) -> WordPressConfig:": 2,
-    "return metadata_to_config(self.metadata)": 2,
-    "def _co_core_drivers(self) -> Drivers:": 2,
-    "return make_legacy_drivers()": 2,
-    "self.client = WordPressClient(metadata)": 2,
+    "def _core_config(self) -> SourceConfig:": 2,
+    "return to_config(self.metadata)": 2,
+    "def _core_drivers(self) -> Drivers:": 2,
+    "return make_default_drivers()": 2,
+    "self.client = SourceClient(metadata)": 2,
 }
 OCCURRENCES = sum(COPIES.values())
 
@@ -233,13 +234,13 @@ class TestBreadthIsStillRefused:
         assert "ABOVE this one" not in r.stderr, r.stderr
 
     def test_a_line_inside_another_is_told_to_reorder_not_narrow(self, tmp_path: Path):
-        """Deleted code nests lines: `return make_legacy_drivers()` is part of
-        `return make_legacy_drivers() or {}`, so no narrowing of the shorter
+        """Deleted code nests lines: `return make_default_drivers()` is part of
+        `return make_default_drivers() or {}`, so no narrowing of the shorter
         line's entry excludes the longer line, and "narrow the content" was
         advice nobody could follow. A line is charged to the FIRST entry that
         matches it, so order is the remedy — and the advice must work."""
-        nested = "return make_legacy_drivers()"
-        nesting = "return make_legacy_drivers() or {}"
+        nested = "return make_default_drivers()"
+        nesting = "return make_default_drivers() or {}"
         repo = _repo(
             tmp_path,
             "# P\n\n## Constructors\n\nBuild a site from its metadata.\n\n"

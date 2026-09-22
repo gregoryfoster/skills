@@ -1,6 +1,6 @@
 ## Session 2026-08-13
 
-**Project:** CannObserv/cannobserv (shared Python library, uv workspace). User-named subset: #278, #295, #296, #297. Tracking issue #329; plan `docs/plans/2026-08-13-co-v1-oracle-followups-backlog.md`.
+**Project:** CannObserv/cannobserv (shared Python library, uv workspace). User-named subset: #278, #295, #296, #297. Tracking issue #329; plan: a design doc in the consumer repo.
 
 **Interview:** Correctness ×3 (2nd Correctness-leading weight, after 2026-05-24); early production; #278 deferred at Q3 by the project's standing async-parity policy; hybrid parallelism; ceiling 3 (generic worktree scripts, no host provisioning — never bound).
 
@@ -8,23 +8,23 @@
 
 ### Upstream-blocked backlog: the sibling repo's blocker states are the first grep
 
-New provenance flavor: three of four issues were filed as **blocked on another repo's issues** (wp#663/664/666), each opening with "actionable the moment that ships and the pin refreshes." The orchestration-triggering fact was not local — all three upstream issues closed within a 5-day window (verified via `gh issue view --repo` before the interview), and the local contract pin predated every fix. For this shape, check blocker states **before** scoring: they decide which issues are actionable at all, and the closure dates tell you the shared vendored artifact (here `openapi.pinned.json`) is stale — which surfaces the foundation step.
+New provenance flavor: three of four issues were filed as **blocked on another repo's issues** (wp#663/664/666), each opening with "actionable the moment that ships and the pin refreshes." The orchestration-triggering fact was not local — all three upstream issues closed within a 5-day window (verified via `gh issue view --repo` before the interview), and the local contract pin predated every fix. For this shape, check blocker states **before** scoring: they decide which issues are actionable at all, and the closure dates tell you the shared vendored artifact (here the pinned OpenAPI contract) is stale — which surfaces the foundation step.
 
 ### A shared first step that is not an issue
 
-All three issues' step 1 was the same script run (`sync_openapi.py --write`). Modeled as **commit 1 of the Batch A bundle**, verifying all three upstream expectations at once (including Batch B's — the params check), then declared read-only for Batch B. Running it per-issue would have produced provenance churn and cross-batch conflicts on the pin. Generalization of the foundation-shared-file read-only rule (2026-06-08) to a foundation *artifact refresh*.
+All three issues' step 1 was the same script run (the contract-sync script, in write mode). Modeled as **commit 1 of the Batch A bundle**, verifying all three upstream expectations at once (including Batch B's — the params check), then declared read-only for Batch B. Running it per-issue would have produced provenance churn and cross-batch conflicts on the pin. Generalization of the foundation-shared-file read-only rule (2026-06-08) to a foundation *artifact refresh*.
 
 ### Same-function overlap is the sharpest Shape-A signal yet
 
-#296 (waiver filter) and #297 (walker call) edit **adjacent lines in one function** (`test_write_bodies.py:22-23`) — beyond same-file into same-lines. Combined with the issues' own "sequence together" notes and the retire-then-collapse define→use order (emptying the dict first moots #297's waiver-rekeying step), bundling was overdetermined. Continues the 2026-08-10 hard-bundle-signal thread (generated artifact + sync test).
+#296 (waiver filter) and #297 (walker call) edit **adjacent lines in one function** (lines 22-23 of the write-body schema test) — beyond same-file into same-lines. Combined with the issues' own "sequence together" notes and the retire-then-collapse define→use order (emptying the dict first moots #297's waiver-rekeying step), bundling was overdetermined. Continues the 2026-08-10 hard-bundle-signal thread (generated artifact + sync test).
 
 ### A clarifying "Other" answer flipped a decision and exposed a latent data drop
 
-The #295 issue body framed decision 2 as "observation has no such field on either backend" — add speculatively or leave out. I recommended leave-out (early production, no speculative model changes). The user answered with a *question*: "Legacy production Observations include a task/performer list — is that the same thing?" Greps confirmed it is: production observation posts carry the ACF `co_roles` repeater, the wp/v2 event/event_type adapters map it, and the **observation adapter silently drops it on read**. The issue body's claim was true of the *model* but misleading about the *data*. Decision flipped to add-on-both-backends, and the "speculative" change turned out to fix a real read-time loss. Lessons: (1) an "Other" answer phrased as domain knowledge is a grep target, not a preference to be slotted into the offered options — verify before locking; (2) a "no such field" claim in an issue body describes the code, not necessarily the upstream data; the recommended option was wrong because the option framing inherited that gap.
+The #295 issue body framed decision 2 as "observation has no such field on either backend" — add speculatively or leave out. I recommended leave-out (early production, no speculative model changes). The user answered with a *question*: "Legacy production Observations include a task/performer list — is that the same thing?" Greps confirmed it is: production observation posts carry an ACF roles repeater, the WordPress-REST event and event-type adapters map it, and the **observation adapter silently drops it on read**. The issue body's claim was true of the *model* but misleading about the *data*. Decision flipped to add-on-both-backends, and the "speculative" change turned out to fix a real read-time loss. Lessons: (1) an "Other" answer phrased as domain knowledge is a grep target, not a preference to be slotted into the offered options — verify before locking; (2) a "no such field" claim in an issue body describes the code, not necessarily the upstream data; the recommended option was wrong because the option framing inherited that gap.
 
 ### Also captured
 
-- Hybrid preference **degenerated to fully sequential** — every issue pairing shared a file (`_manifest.py` adjacent sections, `test_write_bodies.py` same lines, CHANGELOG, the pin). Small-N backlogs from a single followup cycle may have no file-safe parallelism at all; say so plainly rather than manufacturing a parallel batch.
+- Hybrid preference **degenerated to fully sequential** — every issue pairing shared a file (the schema test's manifest in adjacent sections, the write-body test on the same lines, CHANGELOG, the pin). Small-N backlogs from a single followup cycle may have no file-safe parallelism at all; say so plainly rather than manufacturing a parallel batch.
 - Policy-deferral of a **user-named** issue: #278 was in the named set but AGENTS.md's async-parity policy says defer; Q3 confirmed the policy holds. Naming an issue in the subset is not an override of a standing policy — ask.
 - Planning-time resolution of both flagged build-time decisions (label column → carry both; observation roles → both backends) moved MINOR public-model calls from worker discretion to the design doc's Key Decisions — right call under this repo's API-stability tracking rule.
 - Precedent (a): plan committed without prefix, then #329 opened.
@@ -32,13 +32,13 @@ The #295 issue body framed decision 2 as "observation has no such field on eithe
 
 ### Post-gate addendum (same day): a nomenclature decision reopened after approval
 
-After the plan shipped, the user reopened #295's naming: the `roles` model field predates the
+After the plan shipped, the user reopened #295's naming: the models' roles field predates the
 project's Roles CPT and now collides with the real Role entity — replace with Task/Performer
-nomenclature (`task_performers` field, `get_task_performers` facade, `task_label`+`performer_label`
+nomenclature (a task-performers field and facade, and task and performer label
 columns), justified by "there are no downstream consumers so we can do this right." The audit
-**half-confirmed** that claim: the *new* surfaces had none, but the *existing* `EventModel.roles` /
-`EventTypeModel.roles` had production consumers in the adjacent `cli` checkout (cancellation
-stripping, event-add seeding, an export command, direct `TaskPerformerModel(task=...)` construction).
+**half-confirmed** that claim: the *new* surfaces had none, but the *existing* roles field on the event and
+event-type models had production consumers in the adjacent `cli` checkout (cancellation
+stripping, event-add seeding, an export command, direct construction of the task-performer model).
 Lessons: (1) a user's no-consumers assertion spans whatever *they* mean by the surface — grep the
 adjacent downstream checkouts before accepting it for the surfaces the rename actually touches, and
 surface the split (new-surface-free vs existing-field-consumed) so the breaking half is a deliberate
@@ -61,8 +61,8 @@ cli adoption issue CannObserv/cli#903 filed at ship time from the audited call-s
   call at that size.
 - **Review the reviewer's collapse**: Batch A's CR found that after #297 folded the walker into
   strict validation, nothing guarded the *strictness itself* for the 24 non-replayed ops — a
-  re-pin could silently degrade the oracle back to types-only. The meta-test
-  (`test_request_schemas_stay_strict`) closes the same "nothing fails when it goes stale" class the
+  re-pin could silently degrade the oracle back to types-only. A strictness
+  meta-test closes the same "nothing fails when it goes stale" class the
   batch was retiring; look for this shape whenever a hand check collapses into an
   externally-supplied property.
 - **Worker-report claims spot-verified cheaply**: the orchestrator re-ran the full suite + gates in
