@@ -316,3 +316,10 @@ skills/init-socraticode/SKILL.md :: tighten :: **Self-budget:** held to a **9,40
 skills/init-socraticode/SKILL.md :: tighten :: `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
 skills/init-socraticode/SKILL.md :: tighten :: 6,000-token standard, set at current size so this file cannot grow; how it came
 skills/init-socraticode/SKILL.md :: tighten :: down from 10,050 is recorded beside the figure there.
+# CR 4 after the curation: "not artifacts" overclaimed — createIgnoreFilter is
+# built from the artifact path, so a root-level artifact does read the repo-root
+# file, as context-artifacts.md says. The claim narrowed to "a subtree
+# artifact", and the two lines after it re-wrapped with every word kept.
+skills/init-socraticode/SKILL.md :: disproven :: dominate the index. It governs the code index and graph, not artifacts, so
+skills/init-socraticode/SKILL.md :: tighten :: **ask** whether dated prose registered as one (`docs/plans/`) should leave the
+skills/init-socraticode/SKILL.md :: tighten :: code index too. Template, question, and the first-party `skills/` carve-out:

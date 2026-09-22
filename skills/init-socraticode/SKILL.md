@@ -217,9 +217,9 @@ drop the category, before indexing.
 
 **Also write `.socraticodeignore` (repo root)** — essentially mandatory for any
 repo vendoring skills via `managing-skills`, whose submodule trees otherwise
-dominate the index. It governs the code index and graph, not artifacts, so
-**ask** whether dated prose registered as one (`docs/plans/`) should leave the
-code index too. Template, question, and the first-party `skills/` carve-out:
+dominate the index. It governs the code index and graph, not a subtree
+artifact, so **ask** whether dated prose registered as one (`docs/plans/`)
+should leave the code index too. Template, question, and the first-party `skills/` carve-out:
 [`references/context-artifacts.md`](references/context-artifacts.md#index-exclusions--socraticodeignore).
 
 ### Phase 5 — Run the index and block until *fully* done
