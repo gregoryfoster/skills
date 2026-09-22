@@ -77,25 +77,21 @@ each Bash call runs in a fresh shell, so they are not inherited. Clean up
 bash "<SKILL_DIR>/scripts/preflight.sh"
 ```
 
-Gates: Docker installed + daemon running, **only when something will run in
-it** (a managed Qdrant, or an Ollama container: `docker` mode, or `auto` with no
-native one), never probed on a socket-activated host with the daemon down; Node
-`>=18.17` (26+ is checked against the resolved `socraticode@latest`, not
-refused, and warns if the registry is unreachable —
-[#269](https://github.com/gregoryfoster/skills/issues/269)); `npx` reachable;
-for `STORE=external`, the store's URL, TLS, key and answer, the external
-Ollama, and whether this session carries the settings `env` block (a first
-install passes the values inline, the key already in place); and advisory
-readings — host memory and whether a `MemoryLow=` takes effect, Docker at boot
-(gotcha L), Claude Code's version and install age, the `socraticode`
-marketplace, the plugin MCP server Connected.
+Gates: Docker, **only when something will run in it** (a managed Qdrant, or an
+Ollama container), never probed on a socket-activated host with the daemon
+down; Node `>=18.17` (26+ is checked against the resolved `socraticode@latest`
+— [#269](https://github.com/gregoryfoster/skills/issues/269)); `npx`; for
+`STORE=external`, the store, the external Ollama, and whether this session
+carries the settings `env` block (a first install passes the values inline,
+the key already in place). Advisory readings: host memory and `MemoryLow=`,
+Docker at boot (gotcha L), the running Claude Code's version and install age,
+the `socraticode` marketplace, the plugin MCP server Connected.
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
 non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix
-and wait. Re-run preflight until it exits 0.
-
-> `bash "<SKILL_DIR>/scripts/preflight.sh" --check` is the same gates with no
-> mutation — the fast smoke test (use it as the skill's dry-run).
+and wait. Re-run until it exits 0.
+`bash "<SKILL_DIR>/scripts/preflight.sh" --check` is the same gates, the skill's
+dry-run.
 
 If `EMBEDDING_BACKEND` is a cloud/native backend, export its env (see
 [`references/embedding-backends.md`](references/embedding-backends.md)) in the
@@ -114,11 +110,8 @@ is `plugin@marketplace`, so with none registered the install fails.
 `giancarloerra/socraticode` is canonical (per the plugin-hub listing); forks
 such as `oltivex/socraticode` and `Flink-JP/socraticode` exist — add one only
 deliberately, and the plugin name stays the same. Preflight Gate 4 reports the
-marketplace separately from the connection.
-
-**Duplicate-config trap.** A standalone `mcp__socraticode__*` beside the
-plugin's `mcp__plugin_socraticode_socraticode__*` is redundant — preflight Gate
-4 flags it; remove it with `claude mcp remove socraticode`.
+marketplace separately from the connection, and flags a redundant standalone
+`mcp__socraticode__*` beside the plugin's (`claude mcp remove socraticode`).
 
 **On a small or shared host, pin the server here** — the plugin's command
 installs at every launch, 1.2 G against 75 MB pinned — and on a shared one
@@ -129,74 +122,52 @@ reserve the production service's memory:
 
 Follow [`references/code-exploration-policy.md`](references/code-exploration-policy.md):
 
-1. **Policy block** → land exactly one marker-delimited `## Code Exploration
-   Policy` section in `<POLICY_FILE>`. Apply in order, so a repo in any prior
-   state converges to a single marked block, in place where one already exists:
-   a. **Write the block, preferring the existing position:**
-      - marker pair (`<!-- BEGIN socraticode-policy -->` … `<!-- END
-        socraticode-policy -->`) already exists → **replace between the markers**;
-      - else an unmarked `## Code Exploration Policy` section exists → **replace
-        that section in place** (its heading through the line before the next
-        `##`, or end of file if none follows) with the marked block;
-      - else → **append** a fresh marked block.
+1. **Policy block** → exactly one marker-delimited `## Code Exploration
+   Policy` section in `<POLICY_FILE>`, converging from any prior state:
+   a. **Write it where one already is:** between an existing
+      `<!-- BEGIN socraticode-policy -->` … `<!-- END socraticode-policy -->`
+      pair; else in place of an unmarked `## Code Exploration Policy` section
+      (its heading to the next `##`, or end of file) — **rescuing first**
+      anything in that span the template does not carry, moved unchanged to a
+      `## Code Exploration Notes (repo-specific)` section after the END marker
+      and named in the report, or the replace deletes it silently
+      ([#115](https://github.com/gregoryfoster/skills/issues/115)); else append.
    b. **Then, unconditionally,** delete any *other* `## Code Exploration Policy`
-      section **not** enclosed by the marker pair (same heading-to-next-`##`
-      span). Step (a) fixes at most one location; this sweeps any remaining stray
-      copy — e.g. a repo where an earlier `init-socraticode` run appended a marked
-      block beside the original unmarked one, where step (a) takes the marker-pair
-      branch and would otherwise leave the unmarked copy behind.
-   Never leave more than one policy section. Adapt any path examples to this
-   project's real layout. **Variant:** write **A** (standard) on a first install
-   — the graph does not exist yet, so there is nothing to measure — and let
-   Phase 6's yield gate send you back here to write **B** (degraded) if it
-   returns `low`. On an audit re-run, carry the variant Phase 6 last measured.
-   **Rescue before replacing on the unmarked branch:** anything in that span the
-   template does not itself carry is repo-authored. Move it, unchanged, to a
-   `## Code Exploration Notes (repo-specific)` section after the END marker and
-   name every moved block in the report — a whole-span replace deletes it
-   otherwise, silently ([#115](https://github.com/gregoryfoster/skills/issues/115)).
-2. **Detail doc** → write `docs/SOCRATICODE.md` from
+      section outside the markers: (a) fixes one location, and an earlier run
+      may have appended a marked block beside the unmarked original.
+   Adapt path examples to this project's layout. Write variant **A** (standard)
+   on a first install — there is no graph to measure yet — and let Phase 6's
+   yield gate send you back for **B** (degraded) on `low`; an audit re-run
+   carries the variant Phase 6 last measured.
+2. **Detail doc** → write `docs/SOCRATICODE.md` (creating `docs/`) from
    [`references/socraticode-doc.md`](references/socraticode-doc.md): the full
    tool table, per-tool notes, graph-health and index-scope guidance, and a
-   **pointer** to the prefetch hook — never a transcription of its `select:`
-   query: the hook is a vendored symlink, so a copy drifts silently while the
-   hook's output cannot (#209, #234). A consumer that already transcribed
-   converges on the next re-run's marker-pair replace. The `AGENTS.md` block
-   links to it and carries only
-   what an agent needs on nearly every task; everything read once lives here.
-   Create `docs/` if absent. **Marker-delimited, like the policy block**, by a
-   pair kept unbroken on one line each: `<!-- BEGIN socraticode-doc -->` and
-   `<!-- END socraticode-doc -->`.
-   - marker pair already present → **replace between the markers** and leave
-     every line after `END` untouched;
-   - else the file exists but is unmarked (every install predating
-     [#210](https://github.com/gregoryfoster/skills/issues/210)) → **rescue
-     before replacing**, exactly as step 1a does for an unmarked policy
-     section: anything the template does not itself carry is repo-authored.
-     Move it, unchanged, under a `## Repo-specific notes` heading *after* the
-     END marker, and name every moved block in the report.
-   - else → write the marked template.
-   Repo-specific notes live here, below `END`, never in `AGENTS.md` — see the
-   policy-block invariant below for why.
-3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → install **two** vendored
-   scripts and register them in `.claude/settings.json`. One command each, and
-   neither is yours to hand-execute: both run `managing-skills`'
-   `scripts/install-hook.sh`, which **symlinks** into `skills-vendor/*/…/scripts/`
-   merges the SessionStart entry without clobbering existing
+   **pointer** to the prefetch hook, never a copy of its `select:` query — the
+   hook is a vendored symlink, so a copy drifts silently (#209, #234). The
+   `AGENTS.md` block links here and keeps only what nearly every task needs.
+   Marker-delimited too, each marker unbroken on its own line:
+   `<!-- BEGIN socraticode-doc -->` and `<!-- END socraticode-doc -->`.
+   Replace between existing markers, leaving every line after `END` untouched;
+   an unmarked file (every install before
+   [#210](https://github.com/gregoryfoster/skills/issues/210)) gets step 1a's
+   **rescue** first, under a `## Repo-specific notes` heading after `END`; else
+   write the template. Repo-specific notes live below `END`, never in `AGENTS.md`.
+3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → run
+   [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
+   Step A and Step C verbatim; neither hook is yours to hand-execute or
+   hand-wire. Both call `managing-skills`' `scripts/install-hook.sh`, which
+   **symlinks** the hook into `skills-vendor/*/…/scripts/`, merges its
+   SessionStart entry into `.claude/settings.json` without clobbering
    `hooks`/`permissions`/other keys, and **copies** only where there is no
-   `skills-vendor/` tree (#200).
-   Run [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
-   Step A and Step C verbatim; the flags are the only difference between them.
-   - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe
-     markers `socraticode-prefetch` (canonical, written) and
-     `socraticode-reminder` (legacy, matched but never written), so a re-run
-     upgrades an older entry in place instead of duplicating it.
+   `skills-vendor/` tree (#200) — the worse install, for reasons in Step A
+   (#99, #186).
+   - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder; dedupe
+     markers `socraticode-prefetch` (written) and `socraticode-reminder`
+     (legacy, matched only), so a re-run upgrades an older entry in place.
    - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check,
-     symlinked exactly the same way. Its dedupe marker `socraticode-health` is
-     deliberately distinct, so one hook's strip cannot evict the other's entry
-     from the array they share. It is silent when clean, so a stale copy is
-     indistinguishable from a healthy one. It reports; it never re-indexes.
-   Why a copy is the worse install (#99, #186): the reference's Step A.
+     symlinked the same way. Its distinct marker `socraticode-health` keeps one
+     hook's dedupe from evicting the other's entry. Silent when clean, so a
+     stale copy looks healthy; it reports, and never re-indexes.
 4. **`.socraticode.json`** (when `STORE=external` or `LINKED_PROJECTS` is set)
    → at the repo root, merged, committed: `projectId` for an external store
    (default: the repo name), and each linked sibling in `linkedProjects` as a
@@ -228,31 +199,27 @@ single **literal file or directory** (globs do **not** work — the server `stat
 the value; a directory indexes recursively). Drop categories the project lacks.
 
 **Migrate a legacy top-level array first (idempotent audit).** A manifest whose
-first non-whitespace character is `[` is rejected outright, and a rejected
-manifest is silent — `codebase_status` omits the artifact line, so the repo
-indexes "successfully" at `artifacts 0/0` with **no context search at all**
-(gotcha K). Rewrite it as `{"artifacts": [ …the existing array… ]}` first;
-mechanics in
-[`references/context-artifacts.md`](references/context-artifacts.md#migrating-a-legacy-top-level-array).
+first non-whitespace character is `[` is rejected, silently: the repo indexes
+"successfully" at `artifacts 0/0` with **no context search at all** (gotcha K).
+Rewrite it as `{"artifacts": [ …the existing array… ]}`:
+[mechanics](references/context-artifacts.md#migrating-a-legacy-top-level-array).
 
-**Then gate on the validator** — cheap, and it runs before the expensive index:
+**Then gate on the validator**, before the expensive index:
 
 ```bash
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" validate-manifest "<PROJECT_PATH>"
 ```
 
-It checks shape, names and globs, and that **every path resolves** — exiting
-non-zero with one line per problem (the rules:
-[`references/context-artifacts.md`](references/context-artifacts.md)). A non-resolving path
-is not cosmetic: the server skips it silently, so `artifacts N/N` never reaches
-parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every reported line, or
+It checks shape, names and globs, and that **every path resolves**, one line per
+problem. A non-resolving path is skipped silently, so `artifacts N/N` never
+reaches parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every line, or
 drop the category, before indexing.
 
 **Also write `.socraticodeignore` (repo root)** — essentially mandatory for any
-repo vendoring skills via `managing-skills`, where the submodule trees otherwise
-dominate the index (on replicator: 301 files/1038 chunks → 28/42, ~70 min → 84 s).
-Every `init-project-fastapi` repo qualifies. The template, and the carve-out for
-projects authoring first-party skills under `skills/`:
+repo vendoring skills via `managing-skills`, whose submodule trees otherwise
+dominate the index. It governs the code index and graph, not a subtree
+artifact, so **ask** whether dated prose registered as one (`docs/plans/`)
+should leave the code index too. Template, question, and the first-party `skills/` carve-out:
 [`references/context-artifacts.md`](references/context-artifacts.md#index-exclusions--socraticodeignore).
 
 ### Phase 5 — Run the index and block until *fully* done
@@ -272,14 +239,11 @@ first):
 2. Poll `codebase_status` until the run reports **`Last operation: Full index —
    completed`** with no "in progress" block, **and** `codebase_graph_status` is
    **READY**, **and** context artifacts are **N/N**. "100% embedded" alone is NOT
-   done (gotcha C — the graph is still building and artifacts are unindexed at
-   100%), and don't *wait* to see 100% either: the server prints its progress
-   percentage only while indexing is in flight, so a finished run shows no
+   done (gotcha C), and don't *wait* to see 100%: a finished run prints no
    percentage at all (gotcha J).
 3. If artifacts aren't auto-indexed, run `codebase_context_index { projectPath }`.
-4. Confirm the file watcher registered (`codebase_watch` / status). Note it's
-   **ephemeral** — it lives only while a server is running (gotcha E); persistent
-   auto-update needs the plugin daemon live in an interactive session.
+4. Confirm the file watcher registered (`codebase_watch` / status); it is
+   **ephemeral**, living only while a server runs (gotcha E).
 
 **Fallback path** — when the server is Connected but the tools were never injected
 into the session (gotcha A), and a Claude Code **restart** didn't register them
@@ -293,13 +257,9 @@ The driver speaks JSON-RPC to the plugin's server directly, keeps it alive while
 indexing (gotcha B) and blocks on the same three-signal predicate; it **owns its
 child process** — no `pkill -f` (gotcha G).
 
-> **If the driver can't find the server**, `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
-> resolve` prints the launch command it would use, starting nothing (gotcha I);
-> `SOCRATICODE_ENTRY` overrides it only if that chain comes up empty.
-
-> **Timeouts.** The first index is slow and one-time (gotcha D): raise
-> `INDEX_TIMEOUT_MS` (default 2h) or switch backends rather than let it abort a
-> live build.
+> **Driver can't find the server?** `mcp-driver.mjs resolve` prints the launch
+> command it would use, starting nothing (gotcha I). **Slow first index?** Raise
+> `INDEX_TIMEOUT_MS` (default 2h) or switch backends (gotcha D).
 
 ### Phase 6 — Verify
 
@@ -311,14 +271,10 @@ Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PAT
 - `STORE=external`: `codebase_health` reports `Qdrant mode: external` and the
   store's endpoint, not a container.
 - `codebase_status`: artifacts N/N, and the last operation **completed, not
-  FAILED**. A failed last operation fails verification even with every other
-  light green — the delta that failed is missing from the index. On usa-wa an
-  `Incremental update — FAILED (fetch failed)` sat unreported for ~21h behind
-  three green lights ([#107](https://github.com/gregoryfoster/skills/issues/107)).
+  FAILED** — a failed one fails verification even with every other light green,
+  because the delta that failed is missing from the index.
 
-**Graph yield — READY is a status, not a result.** usa-wa reported READY over
-**3 edges across 374 files** (a src-layout resolver defect, fixed in 1.13.0).
-Measure it:
+**Graph yield — READY is a status, not a result** (gotcha N). Measure it:
 
 ```bash
 node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
@@ -332,9 +288,8 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 | `unknown` | < 20 files, or the status string did not parse | report it; leave variant A |
 
 **A stale or unstamped `Built by:` line is its own defect.** `health-check`
-compares the stamp against the session's server where the plugin fixes its
-version (else its own) rather than waiting for a `STALE` token, and reports
-staleness *beside* the verdict above, never instead of it
+compares the stamp against the session's server rather than waiting for a
+`STALE` token, and reports staleness *beside* the verdict, never instead of it
 ([#297](https://github.com/gregoryfoster/skills/issues/297), #305). Rebuild,
 then re-measure before variant B.
 
@@ -358,22 +313,15 @@ Present a completion table:
 ## Re-run on an existing project (audit/repair)
 
 Running this skill on a project that already has SocratiCode is **safe and is
-the audit**: every file edit is idempotent and Phase 6 re-verifies the
-completion signals. Before an audit re-run read
-[`references/audit-rerun.md`](references/audit-rerun.md) — what each phase
-re-does, the partial installs a re-run repairs, and the one thing a re-run must
-not do quietly: rescue repo-authored prose out of an unmarked policy section
-before Phase 3 replaces the span
-([#115](https://github.com/gregoryfoster/skills/issues/115)).
+the audit**: every edit is idempotent and Phase 6 re-verifies. Read
+[`references/audit-rerun.md`](references/audit-rerun.md) first — what each
+phase re-does, what a re-run repairs, and the rescue it must not skip.
 
 ## Key invariants
 
-Seven further invariants are enforced by Phases 4–6 and recorded under
-*Invariants a phase already enforces* in
-[`references/troubleshooting.md`](references/troubleshooting.md), beside the
-gotcha matrix (A–U) and the native-vs-fallback decision tree: three
-completion signals, yield over `READY`, a FAILED last operation, the fenced
-driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
+The invariants Phases 4–6 enforce are in
+[`references/troubleshooting.md`](references/troubleshooting.md) beside the
+gotcha matrix (A–U) and the native-vs-fallback decision tree.
 
 - **All file edits are idempotent.** The AGENTS.md policy block and the
   `docs/SOCRATICODE.md` template are both marker-delimited — a re-run replaces
@@ -392,12 +340,8 @@ driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
   two or three highest-traffic rows; everything else goes to
   `docs/SOCRATICODE.md`. Adding a row to the block is a budget decision
   ([#115](https://github.com/gregoryfoster/skills/issues/115)).
-- **Repo-authored content inside an unmarked policy section is rescued, never
-  replaced.** The unmarked branch replaces a whole span, and repos grow real
-  content in it. Move anything the template does not carry to
-  `## Code Exploration Notes (repo-specific)` outside the markers, and say so.
 
-**Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
-`tests/structural/test_skill_self_budget.py` — a named exception to the repo's
-6,000-token standard, set at current size so this file cannot grow; how it came
-down from 10,050 is recorded beside the figure there.
+**Self-budget:** held to a **9,000-token ratchet (estimate and exact)** by
+`tests/structural/test_skill_self_budget.py`, a named exception to the repo's
+6,000-token standard; how it came down from 10,050 is recorded beside the
+figure there.

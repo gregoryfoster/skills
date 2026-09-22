@@ -70,13 +70,15 @@ each of them.
   "100%" is waiting for something that will never arrive (gotcha J).
 - **Gate the graph on yield, not on status.** `READY` says a build finished, not
   that it resolved anything: usa-wa reported READY over 3 edges across 374 files
-  (gotcha N). Measure edges per file, and on a `low` verdict write the degraded
+  (gotcha N; a src-layout resolver defect, fixed in 1.13.0). Measure edges per file, and on a `low` verdict write the degraded
   policy rather than failing the install — a policy that points at broken
   tooling is worse than no policy, because empty output reads as "no dependents"
   rather than "tool failed" ([#107](https://github.com/gregoryfoster/skills/issues/107)).
 - **A failed last operation is a finding, not a footnote.** `codebase_status`
   records it and nothing used to read it outside an in-flight index run. Phase 6
-  fails on it; the once-per-day health hook reports it if it appears later.
+  fails on it; the once-per-day health hook reports it if it appears later. On
+  usa-wa an `Incremental update — FAILED (fetch failed)` sat unreported for
+  ~21h behind three green lights ([#107](https://github.com/gregoryfoster/skills/issues/107)).
 - **The driver is a fenced fallback, not the default.** Prefer native tools;
   reach for `mcp-driver.mjs` only when the session won't expose the tools even
   after a restart. It owns its child process — no `pkill -f`.

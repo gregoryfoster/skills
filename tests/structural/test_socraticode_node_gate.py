@@ -111,6 +111,10 @@ def _env(binv: Path) -> dict:
     # exported one failed four tests here. The test that needs it sets its own
     # (#287 round 2, CR 51).
     env.pop("SOCRATICODE_ENTRY", None)
+    # Inside a Claude Code session preflight walks its own process ancestry to
+    # the binary running it (#316), which from here is the developer's own —
+    # read, and possibly run for --version. None of these tests is about that.
+    env.pop("CLAUDECODE", None)
     env["PATH"] = f"{binv}{os.pathsep}{env['PATH']}"
     # Preflight reads user settings for values since #287 CR 7: an empty
     # config dir, so the developer's own settings.json cannot name a store.

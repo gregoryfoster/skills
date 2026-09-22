@@ -365,7 +365,17 @@ SKILL_MD_RATCHETS = {
     #
     # So this file is at its honest floor without deleting procedure, which is
     # the case Phase 4 of curating-context says to report rather than force.
-    "init-socraticode": 9_400,
+    #
+    # That floor was the delegation's, not the prose's. After #315 and #316 it
+    # stood at 9,381 exact, and a curation took it to 8,094 by tightening in
+    # place instead: Phase 3 keeps every marker, rescue and hook rule the
+    # policy-split, graph-yield, reminder-hook and external-store tests pin, in
+    # fewer words; the Re-run section, Key invariants' rescue bullet and Phase
+    # 5's gotcha restatements give way to the references that state them in
+    # full; two Phase 6 anecdotes moved into troubleshooting.md. 136 lines
+    # warranted `tighten`, with --claims dropping none. The ratchet came down to
+    # 9,000 at the operator's call, above the measured size rather than at it.
+    "init-socraticode": 9_000,
     # managing-skills was here at 8,750, justified by "carries no references/ at
     # all, so every word of it is always-loaded by construction — the one skill
     # where demotion is the whole remaining move." That described the directory

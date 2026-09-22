@@ -146,9 +146,14 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
   repo-root `.socraticodeignore`, a `versions/` artifact still embedded
   `002_b.sql`; moving the same line into `versions/.socraticodeignore` dropped
   it, and a nested `versions/sub/.gitignore` dropped a file under `sub/` too.
-  Rooting it there is deliberate — it also keeps an artifact declared at
-  `./build/openapi/` from ignoring *itself*, since the relative paths no longer
-  start with `build/`.
+  Re-measured on 1.14.0 with an artifact at `./docs/plans`
+  ([#315](https://github.com/gregoryfoster/skills/issues/315)): a file listed in
+  the project-root file was still embedded, and listed in
+  `docs/plans/.socraticodeignore` it was dropped. Only that top-level
+  `.socraticodeignore` is read — unlike `.gitignore`, a nested one is not
+  (`dist/services/ignore.js`). Rooting it there is deliberate — it also keeps
+  an artifact declared at `./build/openapi/` from ignoring *itself*, since the
+  relative paths no longer start with `build/`.
 - **The built-in defaults now apply INSIDE an artifact, which can drop content
   you wanted.** `__pycache__`, `*.pyc`, `dist`, `build`, `out`, `target`,
   `_build`, `deps`, `obj`, `coverage`, `vendor`, `.tox`, `*.lock`, `*.log`,
@@ -281,11 +286,44 @@ exclude `skills-vendor/` (and `.claude/skills/`) only** — don't drop the proje
 own skills from the index. Otherwise adapt to the project's own vendored trees;
 add any large generated/data dirs that aren't already in `.gitignore`.
 
-Note this file governs the **code index**, and reaches a directory context
-artifact only when the artifact path *is* the repo root: since 1.13 the artifact
-walk runs the same chain, but rooted at the artifact directory, so a subtree
-artifact reads ignore files inside itself and never this one. The built-in
-defaults apply to both. See the Field notes above.
+**Two stores, two controls.** This file governs the **code index and the
+graph** — `indexer.js` and `code-graph.js` build their filter from the project
+path. The **context store** is governed by the manifest. A path excluded from
+one stays searchable in the other, which is what makes an exclusion safe to
+reason about. The file reaches a directory artifact only when the artifact path
+*is* the repo root: the artifact walk builds its filter from the artifact path,
+so a subtree artifact reads ignore files inside itself and never this one. The
+built-in defaults apply to both. See the Field notes above.
+
+| To… | Change |
+|-----|--------|
+| Trim what code search and the graph see | this file, at the repo root |
+| Trim a directory artifact | a `.gitignore` anywhere inside that artifact's directory, or a `.socraticodeignore` at its top — a nested one is not read |
+| Drop an artifact | its entry in the manifest |
+
+### Dated prose — ask whether it leaves the code index
+
+Where the project keeps dated prose — `docs/plans/`, `docs/research/`, an ADR
+archive — and the manifest registers it as a directory artifact, **ask the
+operator** whether to add it to this file as well. Recommend yes: it stays
+searchable through `codebase_context_search`, so nothing is lost, and it stops
+competing with source in `codebase_search`. Where it is **not** an artifact,
+excluding it makes it unsearchable, so recommend no. Report the answer either
+way.
+
+The case for asking, measured on `CannObserv/address-validator` (socraticode
+1.14.0, [#315](https://github.com/gregoryfoster/skills/issues/315)): its plans
+alone were **981 of 2,677 code-index chunks (36.6%)**, outranking first-party
+source on questions the plans answer wrongly, and dated prose was **52% of
+everything embedded across both stores**. After excluding plans and research
+the code index fell to 1,672 chunks, and the context store stayed at 1,112 with
+`design-plans` at 983. Kept in the context store, plans still answer an
+unscoped context search: one about a `CHECK` constraint returned a value a
+later migration had dropped, which is why the generated doc's schema row
+scopes that search with `artifactName`
+([`socraticode-doc.md`](socraticode-doc.md)). Crowd-out and staleness go together: plans
+are voluminous where the design was iterated, which is where they are most
+likely superseded.
 
 ## Migrating a legacy top-level array
 

@@ -94,3 +94,10 @@ skills/orchestrating-issue-backlog/SKILL.md :: stable :: if two independent batc
 # Written by the curation itself, in Step 5 item 2's pointer, so not carried
 # over: a pair by construction, like the group above.
 skills/orchestrating-issue-backlog/SKILL.md :: stable :: in any file two agents share
+
+# init-socraticode/SKILL.md (curation, 2026-09-22). The hooks are named in the
+# same cell; the three signals are Phase 5 step 2's, a few lines above; "two or
+# three rows" is the policy block's design bound, not a tally of anything.
+skills/init-socraticode/SKILL.md :: enumerated :: install the two SessionStart hooks (prefetch reminder + once-per-day health check)
+skills/init-socraticode/SKILL.md :: enumerated :: blocks on the same three-signal predicate
+skills/init-socraticode/SKILL.md :: stable :: at the negative rule plus the
