@@ -38,10 +38,6 @@ That is defence in depth rather than the fix for a measured corruption. Git's ch
 
 `.skills/doctor.sh` is replaced under a running doctor too, by its own self-sync, and needs no braces: `install-doctor.sh` writes a temp file and renames it into place, so the running doctor keeps its inode — the reason a refresh applies from the doctor's *next* run.
 
-## An unstage is checked, not assumed ([#311](https://github.com/gregoryfoster/skills/issues/311))
-
-Both failure paths end by unstaging the hook's paths, so the index goes back as the hook found it: a commit that failed, and a push that failed and was rolled back. Each used a `git reset` whose exit status was discarded, with git's stderr in the log as its only trace. CannObserv/power-map was found on 2026-09-18 with both paths still staged beneath the hook's own "unstaging" line, and the cause is still unknown. #306's in-place rewrite was measured and ruled out, and an `index.lock` held by another git process reproduces the state (the reset exits 128). So the hook checks the outcome, whatever the cause: after the reset it reads the index back and names on stderr anything still staged under its paths, with the `git reset` that clears it. The check sees the index as the reset left it. A hook or framework that re-stages later is past it, and the log line after "commit failed" is where git's reason lands if it recurs.
-
 ## Pushing what it commits ([#293](https://github.com/gregoryfoster/skills/issues/293))
 
 The hook commits pointer bumps **and pushes them**. It used to only commit.
@@ -79,6 +75,10 @@ A rollback reverts only the *recorded pointer*. The refreshed submodule content 
 Where `main` is protected, or the hook has no push credentials, every push is rejected and rolled back, so the pointer never advances and the skills freeze at the vendored commit — loudly, on stderr, every session. That is the intended degradation: a consumer that cannot share a bump should not be silently accumulating them.
 
 `.skills/doctor.sh` warns whenever `main` is ahead of its upstream, which is the only cohort-wide sensor that can exist for this — an unpushed commit lives on exactly one machine, so nothing reachable through the GitHub API can see it.
+
+## An unstage is checked, not assumed ([#311](https://github.com/gregoryfoster/skills/issues/311))
+
+Both failure paths end by unstaging the hook's paths, so the index goes back as the hook found it: a commit that failed, and a push that failed and was rolled back. Each used a `git reset` whose exit status was discarded, with git's stderr in the log as its only trace. CannObserv/power-map was found on 2026-09-18 with both paths still staged beneath the hook's own "unstaging" line, and the cause is still unknown. #306's in-place rewrite was measured and ruled out, and an `index.lock` held by another git process reproduces the state (the reset exits 128). So the hook checks the outcome, whatever the cause: after the reset it reads the index back and names on stderr anything still staged under its paths, with the `git reset` that clears it. The check sees the index as the reset left it. A hook or framework that re-stages later is past it, and the log line after "commit failed" is where git's reason lands if it recurs.
 
 ## Uninstalling by hand
 
