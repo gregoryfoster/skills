@@ -212,3 +212,26 @@ tests/structural/test_content_invariants.py :: "### Rule 6 — Detect worktree f
 tests/structural/test_content_invariants.py :: body.index("### Orchestrator agent") : body.index("### Worker agents")
 tests/structural/test_content_invariants.py :: protocol = self.execution[self.execution.index("### Worker agents") :]
 tests/structural/test_skill_self_budget.py :: # verbatim into references/: the execution protocol (Agent Roles, Branch
+
+# --- init-socraticode's references (SKILL.md curation, 2026-09-22) ---
+#
+# Swept with --file skills/init-socraticode/SKILL.md, every reference that
+# names a SKILL.md phase or section is a standing back-reference. Each was
+# checked against SKILL.md after the curation: Phase 0 is still the detached
+# source, Phase 3 still installs the policy block, doc and hooks, Phases 4 and 5
+# still index the artifacts and still state the four invariants #287 moved out,
+# Phase 5's fallback is still the driver, the HARD-GATE still allows that one
+# write, and Key invariants still carries only rules no phase states (the
+# rescue bullet this curation removed is Phase 3 step 1a's). The duplicate
+# heading is the two fenced policy-block templates, variants A and B.
+skills/init-socraticode/references/code-exploration-policy.md :: Three artifacts the skill installs into the target project (SKILL.md Phase 3):
+skills/init-socraticode/references/context-artifacts.md :: to embed the artifacts (SKILL.md Phase 4 + Phase 5).
+skills/init-socraticode/references/detached-source.md :: Phase 0 of `SKILL.md`, in full.
+skills/init-socraticode/references/detached-source.md :: in `SKILL.md` are **placeholders** for the literal
+skills/init-socraticode/references/embedding-backends.md :: (SKILL.md's parameters)
+skills/init-socraticode/references/external-store.md :: The one write `SKILL.md`'s HARD-GATE allows before preflight
+skills/init-socraticode/references/socraticode-doc.md :: ([`code-exploration-policy.md`](code-exploration-policy.md), SKILL.md Phase 3).
+skills/init-socraticode/references/troubleshooting.md :: (SKILL.md Phase 5, fallback path)
+skills/init-socraticode/references/troubleshooting.md :: `SKILL.md`'s **Key invariants** carries only constraints stated nowhere else.
+skills/init-socraticode/references/troubleshooting.md :: external store's procedure under the `SKILL.md` ratchet: Phases 4 and 5 state
+skills/init-socraticode/references/code-exploration-policy.md :: ## Code Exploration Policy

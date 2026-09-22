@@ -29,38 +29,6 @@
 # PATH, and the report says how many entries sat a run out (#139).
 
 
-# --- 2026-08-24, #230 CR round 2 item 13 ---------------------------------
-# Phase 0 moved to references/detached-source.md. These five lines are its
-# connective tissue, retargeted by the same change that moved what they point
-# at: the "otherwise clone" lead-in now names the reference, and the placeholder
-# note now says the reference prints the paths. Single-transition — prune once
-# c0dc7da is an ancestor of every future --base, i.e. once it is on main.
-skills/init-socraticode/SKILL.md :: retarget :: phase. Otherwise clone once to a scratch dir and reference scripts through the
-skills/init-socraticode/SKILL.md :: retarget :: captured path:
-skills/init-socraticode/SKILL.md :: retarget :: `<SKILL_DIR>` / `<SKILL_TMP>` below are **placeholders** for the literal paths
-skills/init-socraticode/SKILL.md :: retarget :: printed here (each Bash call runs in a fresh shell — they are not inherited).
-skills/init-socraticode/SKILL.md :: retarget :: Clean up `<SKILL_TMP>` in Phase 6.
-# The self-budget note this same change invalidated: the ratchet moved
-# 10,050 -> 9,400, so both lines were rewritten in place. Same trigger.
-skills/init-socraticode/SKILL.md :: retarget :: held to a **10,050-token ratchet (estimate and exact)** by
-skills/init-socraticode/SKILL.md :: retarget :: 6,000-token standard, set at current size so this file cannot grow.
-
-# --- 2026-08-24, #230 CR round 3 item 21 ---------------------------------
-# Two demoted sections opened by restating the `##` heading directly above
-# them, with an "Also" and a "first" that had no antecedent once the block was
-# no longer a step in a sequence. `duplicate` is the honest warrant and it is
-# worth being precise about why: each base line SPLIT rather than vanished. Its
-# bold lead is verbatim in SKILL.md — "**Also write `.socraticodeignore` (repo
-# root)**" at Phase 4, "**Migrate a legacy top-level array first (idempotent
-# audit).**" above it — and its tail is verbatim in the reference. Every word
-# is still in the surface; no single destination LINE carries both halves, which
-# is the whole-line matching working as designed rather than a drop.
-#
-# Scoped to SKILL.md because PATH matches the run's --file, and the run that
-# reports these is the SKILL.md curation, not one against the reference.
-skills/init-socraticode/SKILL.md :: duplicate :: **Also write `.socraticodeignore` (repo root).** It's layered on the built-in
-skills/init-socraticode/SKILL.md :: duplicate :: **Migrate a legacy top-level array first (idempotent audit).** The server
-
 # --- v1.14 self-curation pass (2026-08-31), and the #258-#260 batch under it ---
 #
 # The interval is `--base main`, so it spans two changes and the warrants below
@@ -199,3 +167,152 @@ skills/curating-context/SKILL.md :: retarget :: ([both](references/budget-and-me
 skills/managing-skills/SKILL.md :: tighten :: and auto-commits the pointer bumps. Designed for
 skills/managing-skills/SKILL.md :: tighten :: - **Commits the doctor it installed**
 skills/managing-skills/SKILL.md :: tighten :: details of that merge, and the manual uninstall equivalent:
+
+# --- 2026-09-22, init-socraticode/SKILL.md curation (ratchet 9,400 -> 9,000) ---
+# Class C tightenings, rewritten in place: Phase 1's gate list, Phase 2's
+# duplicate-config callout (the callout itself lives in
+# code-exploration-policy.md), Phase 3 steps 1-3 (every operative rule kept
+# inline; the tests hold that Phase 3 is the procedure), Phase 4's
+# legacy-array and validator paragraphs, Phase 5's gotcha restatements (C, J,
+# E, I, D, all in troubleshooting.md), Phase 6's FAILED and READY anecdotes
+# (moved into troubleshooting.md's matching invariant bullets, re-wrapped),
+# the Re-run section (audit-rerun.md carries it), Key invariants' intro and its
+# rescue bullet (Phase 3 step 1a states the rule), and the self-budget line,
+# which the ratchet change rewrites. --claims: 173 atoms at base, 0 dropped.
+# SINGLE-TRANSITION — spent once this branch lands on main. Prune them then.
+skills/init-socraticode/SKILL.md :: tighten :: Gates: Docker installed + daemon running, **only when something will run in
+skills/init-socraticode/SKILL.md :: tighten :: it** (a managed Qdrant, or an Ollama container: `docker` mode, or `auto` with no
+skills/init-socraticode/SKILL.md :: tighten :: native one), never probed on a socket-activated host with the daemon down; Node
+skills/init-socraticode/SKILL.md :: tighten :: `>=18.17` (26+ is checked against the resolved `socraticode@latest`, not
+skills/init-socraticode/SKILL.md :: tighten :: refused, and warns if the registry is unreachable —
+skills/init-socraticode/SKILL.md :: tighten :: [#269](https://github.com/gregoryfoster/skills/issues/269)); `npx` reachable;
+skills/init-socraticode/SKILL.md :: tighten :: for `STORE=external`, the store's URL, TLS, key and answer, the external
+skills/init-socraticode/SKILL.md :: tighten :: Ollama, and whether this session carries the settings `env` block (a first
+skills/init-socraticode/SKILL.md :: tighten :: install passes the values inline, the key already in place); and advisory
+skills/init-socraticode/SKILL.md :: tighten :: readings — host memory and whether a `MemoryLow=` takes effect, Docker at boot
+skills/init-socraticode/SKILL.md :: tighten :: (gotcha L), the running Claude Code's version and install age, the
+skills/init-socraticode/SKILL.md :: tighten :: `socraticode` marketplace, the plugin MCP server Connected.
+skills/init-socraticode/SKILL.md :: tighten :: and wait. Re-run preflight until it exits 0.
+skills/init-socraticode/SKILL.md :: tighten :: > `bash "<SKILL_DIR>/scripts/preflight.sh" --check` is the same gates with no
+skills/init-socraticode/SKILL.md :: tighten :: > mutation — the fast smoke test (use it as the skill's dry-run).
+skills/init-socraticode/SKILL.md :: tighten :: marketplace separately from the connection.
+skills/init-socraticode/SKILL.md :: tighten :: **Duplicate-config trap.** A standalone `mcp__socraticode__*` beside the
+skills/init-socraticode/SKILL.md :: tighten :: plugin's `mcp__plugin_socraticode_socraticode__*` is redundant — preflight Gate
+skills/init-socraticode/SKILL.md :: tighten :: 4 flags it; remove it with `claude mcp remove socraticode`.
+skills/init-socraticode/SKILL.md :: tighten :: 1. **Policy block** → land exactly one marker-delimited `## Code Exploration
+skills/init-socraticode/SKILL.md :: tighten :: Policy` section in `<POLICY_FILE>`. Apply in order, so a repo in any prior
+skills/init-socraticode/SKILL.md :: tighten :: state converges to a single marked block, in place where one already exists:
+skills/init-socraticode/SKILL.md :: tighten :: a. **Write the block, preferring the existing position:**
+skills/init-socraticode/SKILL.md :: tighten :: - marker pair (`<!-- BEGIN socraticode-policy -->` … `<!-- END
+skills/init-socraticode/SKILL.md :: tighten :: socraticode-policy -->`) already exists → **replace between the markers**;
+skills/init-socraticode/SKILL.md :: tighten :: - else an unmarked `## Code Exploration Policy` section exists → **replace
+skills/init-socraticode/SKILL.md :: tighten :: that section in place** (its heading through the line before the next
+skills/init-socraticode/SKILL.md :: tighten :: `##`, or end of file if none follows) with the marked block;
+skills/init-socraticode/SKILL.md :: tighten :: - else → **append** a fresh marked block.
+skills/init-socraticode/SKILL.md :: tighten :: section **not** enclosed by the marker pair (same heading-to-next-`##`
+skills/init-socraticode/SKILL.md :: tighten :: span). Step (a) fixes at most one location; this sweeps any remaining stray
+skills/init-socraticode/SKILL.md :: tighten :: copy — e.g. a repo where an earlier `init-socraticode` run appended a marked
+skills/init-socraticode/SKILL.md :: tighten :: block beside the original unmarked one, where step (a) takes the marker-pair
+skills/init-socraticode/SKILL.md :: tighten :: branch and would otherwise leave the unmarked copy behind.
+skills/init-socraticode/SKILL.md :: tighten :: Never leave more than one policy section. Adapt any path examples to this
+skills/init-socraticode/SKILL.md :: tighten :: project's real layout. **Variant:** write **A** (standard) on a first install
+skills/init-socraticode/SKILL.md :: tighten :: — the graph does not exist yet, so there is nothing to measure — and let
+skills/init-socraticode/SKILL.md :: tighten :: Phase 6's yield gate send you back here to write **B** (degraded) if it
+skills/init-socraticode/SKILL.md :: tighten :: returns `low`. On an audit re-run, carry the variant Phase 6 last measured.
+skills/init-socraticode/SKILL.md :: tighten :: **Rescue before replacing on the unmarked branch:** anything in that span the
+skills/init-socraticode/SKILL.md :: tighten :: template does not itself carry is repo-authored. Move it, unchanged, to a
+skills/init-socraticode/SKILL.md :: tighten :: `## Code Exploration Notes (repo-specific)` section after the END marker and
+skills/init-socraticode/SKILL.md :: tighten :: name every moved block in the report — a whole-span replace deletes it
+skills/init-socraticode/SKILL.md :: tighten :: otherwise, silently ([#115](https://github.com/gregoryfoster/skills/issues/115)).
+skills/init-socraticode/SKILL.md :: tighten :: 2. **Detail doc** → write `docs/SOCRATICODE.md` from
+skills/init-socraticode/SKILL.md :: tighten :: **pointer** to the prefetch hook — never a transcription of its `select:`
+skills/init-socraticode/SKILL.md :: tighten :: query: the hook is a vendored symlink, so a copy drifts silently while the
+skills/init-socraticode/SKILL.md :: tighten :: hook's output cannot (#209, #234). A consumer that already transcribed
+skills/init-socraticode/SKILL.md :: tighten :: converges on the next re-run's marker-pair replace. The `AGENTS.md` block
+skills/init-socraticode/SKILL.md :: tighten :: links to it and carries only
+skills/init-socraticode/SKILL.md :: tighten :: what an agent needs on nearly every task; everything read once lives here.
+skills/init-socraticode/SKILL.md :: tighten :: Create `docs/` if absent. **Marker-delimited, like the policy block**, by a
+skills/init-socraticode/SKILL.md :: tighten :: pair kept unbroken on one line each: `<!-- BEGIN socraticode-doc -->` and
+skills/init-socraticode/SKILL.md :: tighten :: `<!-- END socraticode-doc -->`.
+skills/init-socraticode/SKILL.md :: tighten :: - marker pair already present → **replace between the markers** and leave
+skills/init-socraticode/SKILL.md :: tighten :: every line after `END` untouched;
+skills/init-socraticode/SKILL.md :: tighten :: - else the file exists but is unmarked (every install predating
+skills/init-socraticode/SKILL.md :: tighten :: [#210](https://github.com/gregoryfoster/skills/issues/210)) → **rescue
+skills/init-socraticode/SKILL.md :: tighten :: before replacing**, exactly as step 1a does for an unmarked policy
+skills/init-socraticode/SKILL.md :: tighten :: section: anything the template does not itself carry is repo-authored.
+skills/init-socraticode/SKILL.md :: tighten :: Move it, unchanged, under a `## Repo-specific notes` heading *after* the
+skills/init-socraticode/SKILL.md :: tighten :: END marker, and name every moved block in the report.
+skills/init-socraticode/SKILL.md :: tighten :: - else → write the marked template.
+skills/init-socraticode/SKILL.md :: tighten :: Repo-specific notes live here, below `END`, never in `AGENTS.md` — see the
+skills/init-socraticode/SKILL.md :: tighten :: policy-block invariant below for why.
+skills/init-socraticode/SKILL.md :: tighten :: 3. **SessionStart hooks** (when `INSTALL_HOOK=yes`) → install **two** vendored
+skills/init-socraticode/SKILL.md :: tighten :: scripts and register them in `.claude/settings.json`. One command each, and
+skills/init-socraticode/SKILL.md :: tighten :: neither is yours to hand-execute: both run `managing-skills`'
+skills/init-socraticode/SKILL.md :: tighten :: `scripts/install-hook.sh`, which **symlinks** into `skills-vendor/*/…/scripts/`
+skills/init-socraticode/SKILL.md :: tighten :: merges the SessionStart entry without clobbering existing
+skills/init-socraticode/SKILL.md :: tighten :: `skills-vendor/` tree (#200).
+skills/init-socraticode/SKILL.md :: tighten :: Run [`references/code-exploration-policy.md`](references/code-exploration-policy.md)
+skills/init-socraticode/SKILL.md :: tighten :: Step A and Step C verbatim; the flags are the only difference between them.
+skills/init-socraticode/SKILL.md :: tighten :: - `.claude/hooks/socraticode-reminder.sh` — the prefetch reminder. Dedupe
+skills/init-socraticode/SKILL.md :: tighten :: markers `socraticode-prefetch` (canonical, written) and
+skills/init-socraticode/SKILL.md :: tighten :: `socraticode-reminder` (legacy, matched but never written), so a re-run
+skills/init-socraticode/SKILL.md :: tighten :: upgrades an older entry in place instead of duplicating it.
+skills/init-socraticode/SKILL.md :: tighten :: symlinked exactly the same way. Its dedupe marker `socraticode-health` is
+skills/init-socraticode/SKILL.md :: tighten :: deliberately distinct, so one hook's strip cannot evict the other's entry
+skills/init-socraticode/SKILL.md :: tighten :: from the array they share. It is silent when clean, so a stale copy is
+skills/init-socraticode/SKILL.md :: tighten :: indistinguishable from a healthy one. It reports; it never re-indexes.
+skills/init-socraticode/SKILL.md :: tighten :: Why a copy is the worse install (#99, #186): the reference's Step A.
+skills/init-socraticode/SKILL.md :: tighten :: first non-whitespace character is `[` is rejected outright, and a rejected
+skills/init-socraticode/SKILL.md :: tighten :: manifest is silent — `codebase_status` omits the artifact line, so the repo
+skills/init-socraticode/SKILL.md :: tighten :: indexes "successfully" at `artifacts 0/0` with **no context search at all**
+skills/init-socraticode/SKILL.md :: tighten :: (gotcha K). Rewrite it as `{"artifacts": [ …the existing array… ]}` first;
+skills/init-socraticode/SKILL.md :: tighten :: mechanics in
+skills/init-socraticode/SKILL.md :: tighten :: [`references/context-artifacts.md`](references/context-artifacts.md#migrating-a-legacy-top-level-array).
+skills/init-socraticode/SKILL.md :: tighten :: **Then gate on the validator** — cheap, and it runs before the expensive index:
+skills/init-socraticode/SKILL.md :: tighten :: It checks shape, names and globs, and that **every path resolves** — exiting
+skills/init-socraticode/SKILL.md :: tighten :: non-zero with one line per problem (the rules:
+skills/init-socraticode/SKILL.md :: tighten :: [`references/context-artifacts.md`](references/context-artifacts.md)). A non-resolving path
+skills/init-socraticode/SKILL.md :: tighten :: is not cosmetic: the server skips it silently, so `artifacts N/N` never reaches
+skills/init-socraticode/SKILL.md :: tighten :: parity and Phase 5 blocks until `INDEX_TIMEOUT_MS`. Fix every reported line, or
+skills/init-socraticode/SKILL.md :: tighten :: done (gotcha C — the graph is still building and artifacts are unindexed at
+skills/init-socraticode/SKILL.md :: tighten :: 100%), and don't *wait* to see 100% either: the server prints its progress
+skills/init-socraticode/SKILL.md :: tighten :: percentage only while indexing is in flight, so a finished run shows no
+skills/init-socraticode/SKILL.md :: tighten :: 4. Confirm the file watcher registered (`codebase_watch` / status). Note it's
+skills/init-socraticode/SKILL.md :: tighten :: **ephemeral** — it lives only while a server is running (gotcha E); persistent
+skills/init-socraticode/SKILL.md :: tighten :: auto-update needs the plugin daemon live in an interactive session.
+skills/init-socraticode/SKILL.md :: tighten :: > **If the driver can't find the server**, `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
+skills/init-socraticode/SKILL.md :: tighten :: > resolve` prints the launch command it would use, starting nothing (gotcha I);
+skills/init-socraticode/SKILL.md :: tighten :: > `SOCRATICODE_ENTRY` overrides it only if that chain comes up empty.
+skills/init-socraticode/SKILL.md :: tighten :: > **Timeouts.** The first index is slow and one-time (gotcha D): raise
+skills/init-socraticode/SKILL.md :: tighten :: > `INDEX_TIMEOUT_MS` (default 2h) or switch backends rather than let it abort a
+skills/init-socraticode/SKILL.md :: tighten :: > live build.
+skills/init-socraticode/SKILL.md :: tighten :: FAILED**. A failed last operation fails verification even with every other
+skills/init-socraticode/SKILL.md :: tighten :: light green — the delta that failed is missing from the index. On usa-wa an
+skills/init-socraticode/SKILL.md :: tighten :: `Incremental update — FAILED (fetch failed)` sat unreported for ~21h behind
+skills/init-socraticode/SKILL.md :: tighten :: three green lights ([#107](https://github.com/gregoryfoster/skills/issues/107)).
+skills/init-socraticode/SKILL.md :: tighten :: **Graph yield — READY is a status, not a result.** usa-wa reported READY over
+skills/init-socraticode/SKILL.md :: tighten :: **3 edges across 374 files** (a src-layout resolver defect, fixed in 1.13.0).
+skills/init-socraticode/SKILL.md :: tighten :: Measure it:
+skills/init-socraticode/SKILL.md :: tighten :: compares the stamp against the session's server where the plugin fixes its
+skills/init-socraticode/SKILL.md :: tighten :: version (else its own) rather than waiting for a `STALE` token, and reports
+skills/init-socraticode/SKILL.md :: tighten :: staleness *beside* the verdict above, never instead of it
+skills/init-socraticode/SKILL.md :: tighten :: the audit**: every file edit is idempotent and Phase 6 re-verifies the
+skills/init-socraticode/SKILL.md :: tighten :: completion signals. Before an audit re-run read
+skills/init-socraticode/SKILL.md :: tighten :: [`references/audit-rerun.md`](references/audit-rerun.md) — what each phase
+skills/init-socraticode/SKILL.md :: tighten :: re-does, the partial installs a re-run repairs, and the one thing a re-run must
+skills/init-socraticode/SKILL.md :: tighten :: not do quietly: rescue repo-authored prose out of an unmarked policy section
+skills/init-socraticode/SKILL.md :: tighten :: before Phase 3 replaces the span
+skills/init-socraticode/SKILL.md :: tighten :: Seven further invariants are enforced by Phases 4–6 and recorded under
+skills/init-socraticode/SKILL.md :: tighten :: *Invariants a phase already enforces* in
+skills/init-socraticode/SKILL.md :: tighten :: [`references/troubleshooting.md`](references/troubleshooting.md), beside the
+skills/init-socraticode/SKILL.md :: tighten :: gotcha matrix (A–U) and the native-vs-fallback decision tree: three
+skills/init-socraticode/SKILL.md :: tighten :: completion signals, yield over `READY`, a FAILED last operation, the fenced
+skills/init-socraticode/SKILL.md :: tighten :: driver, adapted artifacts, excluded vendor trees, the ephemeral watcher.
+skills/init-socraticode/SKILL.md :: tighten :: - **Repo-authored content inside an unmarked policy section is rescued, never
+skills/init-socraticode/SKILL.md :: tighten :: replaced.** The unmarked branch replaces a whole span, and repos grow real
+skills/init-socraticode/SKILL.md :: tighten :: content in it. Move anything the template does not carry to
+skills/init-socraticode/SKILL.md :: tighten :: `## Code Exploration Notes (repo-specific)` outside the markers, and say so.
+skills/init-socraticode/SKILL.md :: tighten :: **Self-budget:** held to a **9,400-token ratchet (estimate and exact)** by
+skills/init-socraticode/SKILL.md :: tighten :: `tests/structural/test_skill_self_budget.py` — a named exception to the repo's
+skills/init-socraticode/SKILL.md :: tighten :: 6,000-token standard, set at current size so this file cannot grow; how it came
+skills/init-socraticode/SKILL.md :: tighten :: down from 10,050 is recorded beside the figure there.
