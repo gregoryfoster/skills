@@ -157,7 +157,7 @@ Get approval before writing the design doc.
 
 The design doc is stored in the plans directory governed by [`writing-plans`](../writing-plans/). Resolve the target directory via `bash skills/writing-plans/scripts/resolve-plans-dir.sh` (env `PLANS_DIR` → `.skills/plans_dir` → `<repo>/docs/plans/`); the filename is `YYYY-MM-DD-<topic>-backlog.md`. The sections below are specific to backlog orchestration, not `writing-plans`' generic structure — share the directory, not the shape.
 
-Read [references/execution.md](references/execution.md) before writing it: the doc records the batch→main merge strategy that file has you ask for.
+Read [references/execution.md](references/execution.md) before writing it: the doc records the batch→main merge strategy that file has you ask for, and the post-merge tail it has you plan.
 
 Sections:
 - **Goal** — one paragraph
