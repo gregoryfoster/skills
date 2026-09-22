@@ -80,10 +80,9 @@ constant.
 ## Duplicated filter blocks
 
 A workflow triggered on both `push` and `pull_request` carries the ignore list
-**twice**, and the two copies drift. `cannobserv#356` shipped
-`tests/test_ci_workflow.py` — 29 tests — asserting that the two `paths-ignore`
-blocks stay identical and that no build input is matched by any pattern, with
-the build inputs discovered from disk.
+**twice**, and the two copies drift. `cannobserv#356` shipped a 29-test module
+asserting that the two `paths-ignore` blocks stay identical and that no build
+input is matched by any pattern, with the build inputs discovered from disk.
 
 That is the Phase 7 handoff in concrete form: the audit produces the finding,
 `enforcing-architecture` graduates it into a contract that fails when someone
