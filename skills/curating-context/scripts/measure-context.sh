@@ -1949,8 +1949,12 @@ if [ -n "$PERSIST_FLAG" ] && [ "$exact_flag" != true ]; then
   persist_why="persisted nothing: not every count reached count_tokens (see the WARN lines above), and an estimate cannot anchor the estimator"
   persist_next="re-run once count_tokens answers"
 elif [ -n "$PERSIST_UNWRITTEN" ]; then
+  # "Not all of", since one write can land and the other fail: --calibrate
+  # writes the ratio into its existing file and moves the counts into .skills/,
+  # so a read-only directory holding a writable ratio file takes the first and
+  # refuses the second, under an INFO saying the ratio was written (CR 69).
   PERSIST_REFUSED="$PERSIST_FLAG"
-  persist_why="could not write $PERSIST_UNWRITTEN (see the WARN lines above), so what it was asked to persist is not on disk"
+  persist_why="could not write $PERSIST_UNWRITTEN (see the WARN lines above), so not all of what it was asked to persist is on disk"
   persist_next="re-run once the path is writable"
 fi
 if [ -n "$PERSIST_REFUSED" ]; then

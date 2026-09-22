@@ -29,6 +29,7 @@ every skill in turn and leave it at whichever ran last.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -612,6 +613,35 @@ class TestAWriteThatFailedSaysSo:
         assert json.loads(r.stdout)["policy"]["tokens_exact"] is True, (
             "the measurement still prints in full, and it was exact"
         )
+
+    @pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        reason="root writes into a read-only directory",
+    )
+    def test_a_half_written_calibrate_says_only_that_half_failed(
+        self, tmp_path: Path, exact_env: dict
+    ):
+        """CR 69. The ratio goes into its existing file and the counts are
+        moved into .skills/, so a read-only directory holding a writable ratio
+        file takes one write and refuses the other. The refusal said "what it
+        was asked to persist is not on disk" beneath "INFO wrote
+        .skills/context-token-ratio"."""
+        repo = _calibrated(tmp_path, exact_env)
+        skills = repo / ".skills"
+        skills.chmod(0o555)
+        try:
+            r = _run(repo, exact_env, "--exact", "--calibrate", *SCOPE)
+        finally:
+            skills.chmod(0o755)
+        assert r.returncode == 2, r.stderr
+        assert "INFO wrote .skills/context-token-ratio" in r.stderr, r.stderr
+        line = next(
+            (ln for ln in r.stderr.splitlines() if ln.startswith("ERROR --calibrate")),
+            "",
+        )
+        assert "could not write .skills/context-token-counts" in line, r.stderr
+        assert "context-token-ratio" not in line, line
+        assert "not all of what it was asked to persist" in line, line
 
     def test_the_refresh_loop_breaks_on_it(self, tmp_path: Path, exact_env: dict):
         repo = _unwritable(tmp_path)
