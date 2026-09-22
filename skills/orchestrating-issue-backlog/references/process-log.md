@@ -67,13 +67,16 @@ upstream maintainer adds the entry and adjudicates the promotions in one pass
 this way).
 
 **Second: is the consumer private?** This log is public. Where the host repo
-is private, the entry names no identifier from it — no class, function, test or
-file path — and describes the mechanism instead ("a registry scan", "the
-pagination gate"). Its name and issue numbers are fine; put the issue
-references in backticks so they do not autolink to this repo's. Check before
-drafting, since a leak cannot be edited away: an issue body keeps a public
-revision history, and a landed entry stays in git history (2026-09-16/21
-wordpress, which counted four such entries here, since scrubbed).
+is private, the entry names no identifier of its own — no class, method,
+function, test, key, table or route, and no path to one of them, its plans or
+its docs — and describes the mechanism instead ("a registry scan", "the
+pagination gate"). Framework API names, and files every such repo keeps in the
+same place (`composer.json`, `phpunit.xml`, `AGENTS.md`), are not its own. Its
+name and issue numbers are fine; put the issue references in backticks so they
+do not autolink to this repo's. Check before drafting, since a leak cannot be
+edited away: an issue body keeps a public revision history, and a landed entry
+stays in git history (2026-09-16/21 wordpress, which counted four such entries
+here, since scrubbed).
 
 1. Write `process-log/<year>/<date>-<project>.md`, opening with a
    `## Session <date>` heading. Use the year the session ran; create the
