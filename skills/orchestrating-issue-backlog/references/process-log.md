@@ -76,7 +76,10 @@ name and issue numbers are fine; put the issue references in backticks so they
 do not autolink to this repo's. Check before drafting, since a leak cannot be
 edited away: an issue body keeps a public revision history, and a landed entry
 stays in git history (2026-09-16/21 wordpress, which counted four such entries
-here, since scrubbed).
+here, since scrubbed). The rule binds entries. A reference that measures the
+consumers' doc or CI surfaces, as `curating-context` and `auditing-ci-cost` do,
+may name a private consumer's docs, sections and workflow files, since those
+are what it measures, but never one of its code identifiers.
 
 1. Write `process-log/<year>/<date>-<project>.md`, opening with a
    `## Session <date>` heading. Use the year the session ran; create the
