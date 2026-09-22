@@ -874,12 +874,14 @@ report_pointer_behind_overrides() {
   if [ "$LINES_TO_SETTLE" = "1" ]; then
     # The one case the paragraph above is wrong about: no command is printed,
     # because the one each entry would have got fails for all but the first
-    # to run (#312).
+    # to run (#312). "Cannot be shown", as the entry's note says, because an
+    # ancestry git could not answer lands here too (CR 8).
     echo "doctor: Except where an entry prints no bump: the commits its submodule's" >&2
-    echo "doctor: entries record lie on diverged lines, and no pointer contains them" >&2
-    echo "doctor: all. Re-sync those overrides onto one line first — onto a commit one" >&2
-    echo "doctor: of them records, or one descending from each — their text, version:" >&2
-    echo "doctor: and synced-from: all; the next run then prints the one bump." >&2
+    echo "doctor: entries record cannot be shown to lie on one line, so no pointer is" >&2
+    echo "doctor: known to contain them all. Re-sync those overrides onto one line" >&2
+    echo "doctor: first — onto a commit one of them records, or one descending from" >&2
+    echo "doctor: each — their text, version: and synced-from: all; the next run then" >&2
+    echo "doctor: prints the one bump." >&2
   fi
   [ "$HOLD_TO_SETTLE" = "1" ] || return 0
   # "Where an entry shows one": on diverged lines the note offers no re-pin,
