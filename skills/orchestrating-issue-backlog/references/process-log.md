@@ -36,18 +36,22 @@ Step and Q numbers refer to `SKILL.md`; Rule and Worker-step numbers to
 - Step 4 decide-then-rescore at the approval gate + write scope changes back to GitHub — 2026-08-09, 2026-08-11; decisions move the *graph*, not only scores — 2026-08-23, 2026-08-28 power-map
 - Step 4 measure an empirical decision at the gate rather than ask — 2026-08-21, 2026-08-27, 2026-09-14 observo
 - Step 5 item 2 ([`shared-files.md`](shared-files.md)) where a shared fixture hides — `conftest.py`, module-local fixtures, test fakes of a protocol the backlog changes — 2026-07-08, 2026-08-13 power-map, 2026-09-14 observo
-- Step 7 ([`batch-design.md`](batch-design.md)) a budget-tight file is single-writer — 2026-08-16, 2026-08-18, 2026-09-14 observo
+- Step 7 ([`batch-design.md`](batch-design.md)) a budget-tight file is single-writer — 2026-08-16, 2026-08-18, 2026-09-14 observo, 2026-09-16/21 wordpress execution
 - Step 7 ([`batch-design.md`](batch-design.md)) exclusion groups plus a queue as the chunking form past a small ceiling, and the longest chain as the critical path — 2026-09-14 observo (held, pre-registered), 2026-09-15 observo execution (confirmed)
 - Q5 ([`shared-backing-services.md`](shared-backing-services.md)) the **capacity** half — what hardware runs the verification — plus the Rule 5 clause that the cheap re-verification confirms only the provisioning pool — 2026-08-12, 2026-09-14 observo, 2026-09-16 wordpress
 - Step 5 item 2 ([`shared-files.md`](shared-files.md)) an assertion vacuous **as filed**, by layer rather than by a moved column — 2026-08-14 observo, 2026-08-21, 2026-09-16 wordpress
 - Steps 1–2 ([`issue-audit.md`](issue-audit.md)) where the issue names no contract doc, the policy file does, and it is newer than the thread's last word — 2026-08-13 observo, 2026-09-16 wordpress
 - Branch strategy / Orchestrator step 5 / Worker step 1 ([`execution.md`](execution.md)) the batch branch as a **verification artifact** where the host ships per-item PRs (2026-09-16 wordpress); the `--no-merged` snapshot, `git branch -d` run where HEAD is the batch branch, and the handoff harvest (2026-09-15 observo execution); a worktree has no initialised submodules, so a vendored skill is read by absolute path from the main checkout (2026-09-15 observo execution)
-- Report-back slot ([`execution.md`](execution.md)) a decision taken at the gate is a hypothesis too — 2026-08-21 and 2026-08-27 recorded the converse, reversed 2026-09-15 observo execution
+- Report-back slot ([`execution.md`](execution.md)) a decision taken at the gate is a hypothesis too — 2026-08-21 and 2026-08-27 recorded the converse, reversed 2026-09-15 observo execution, and the orchestrator's own launch notes 2026-09-16/21 wordpress execution; reconcile on tests, not assertions — 2026-09-16/21 wordpress execution
 - Step 10 ("Adding an entry", below) a vendored copy is not where the entry goes — 2026-09-14 observo, 2026-09-15 observo execution, 2026-09-16 wordpress
 - Step 7 count the table's items before approval, and quote that count ([`batch-design.md`](batch-design.md)) — 2026-09-14 observo (found by 2026-09-15 observo execution), 2026-09-16 observo; pairing as a constraint problem once the conflict matrix is dense — 2026-09-16 observo
 - Rule 3 ([`execution.md`](execution.md)) measure the briefed baseline in a tree cut the way the workers' are, and name the delta; that delta's skipped tests as a finder for a verification-mode asymmetry ([`batch-design.md`](batch-design.md)) — 2026-09-16 observo
 - Steps 1–2 ([`issue-audit.md`](issue-audit.md)) a closed upstream prerequisite is not a landed one: resolve the gate against the dependency's changelog, not the issue's state — 2026-08-20, 2026-09-17 cli
 - Q5's third sub-question, the commit hook's own parallelism ([`shared-backing-services.md`](shared-backing-services.md)), and Worker step 6's pointer to it — 2026-09-17 cli
+- Orchestrator protocol ([`execution.md`](execution.md)) a review round's fix commits are new code, and a prescribed fix is verified by mutation — 2026-08-17 skills #182 execution, 2026-08-17 watcher #268 execution, 2026-08-21 skills #219 execution, 2026-09-16/21 wordpress execution
+- Branch strategy and Orchestrator steps 10–11 ([`execution.md`](execution.md)) the post-merge tail as planned work with an owner — 2026-08-13 usa-wa, 2026-08-13/14 usa-wa #218 execution, 2026-09-16/21 wordpress execution; the merge comment and the closing disposition — 2026-09-16/21 wordpress execution
+- Worker step 5 ([`execution.md`](execution.md)) a measured deliverable names its instrument's version — 2026-08-27 skills selection surface (the interpreter), 2026-09-16/21 wordpress execution
+- Step 10 ("Adding an entry", below) a private consumer's entry names no identifier from it — 2026-09-16/21 wordpress execution
 
 ---
 ## Adding an entry
@@ -61,6 +65,15 @@ signal, and it survives into the next session's Step 1–2 stray sweep. The
 upstream maintainer adds the entry and adjudicates the promotions in one pass
 (2026-09-14 observo, 2026-09-15 observo, 2026-09-16 wordpress — all three filed
 this way).
+
+**Second: is the consumer private?** This log is public. Where the host repo
+is private, the entry names no identifier from it — no class, function, test or
+file path — and describes the mechanism instead ("a registry scan", "the
+pagination gate"). Its name and issue numbers are fine; put the issue
+references in backticks so they do not autolink to this repo's. Check before
+drafting, since a leak cannot be edited away: an issue body keeps a public
+revision history, and a landed entry stays in git history (2026-09-16/21
+wordpress, which counted four such entries already here).
 
 1. Write `process-log/<year>/<date>-<project>.md`, opening with a
    `## Session <date>` heading. Use the year the session ran; create the
