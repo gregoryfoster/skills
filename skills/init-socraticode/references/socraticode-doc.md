@@ -47,8 +47,15 @@ can answer from it — see [`context-artifacts.md`](context-artifacts.md).
 ## Template
 
 Adapt before writing: the `codebase_context` row must name this project's real
-non-code knowledge. The Prefetch section stays as written — it points at the
-vendored hook instead of transcribing its `select:` query, because the hook is
+non-code knowledge, and the schema row the artifact that holds the schema — or
+lose its context-search half where none is declared. That row exists because an
+unfiltered context search is one ranking across every artifact: on
+`CannObserv/address-validator` a question about allowed status values drew five
+of five hits from design plans, asserting a value a migration had since
+dropped, while `codebase_search` put the migration first
+([#315](https://github.com/gregoryfoster/skills/issues/315)). The Prefetch
+section stays as written — it points at the vendored hook instead of
+transcribing its `select:` query, because the hook is
 a symlink ([#186](https://github.com/gregoryfoster/skills/issues/186)) and a
 transcription goes stale silently when upstream changes the query
 ([#209](https://github.com/gregoryfoster/skills/issues/209) was that exact
@@ -83,7 +90,8 @@ heading down there, not in `AGENTS.md`.
 | Every symbol declared in a file | `codebase_symbols` |
 | Imports/dependents of a file | `codebase_graph_query` |
 | Import cycles | `codebase_graph_circular` |
-| DB schemas, deployment topology, runbook context | `codebase_context` / `codebase_context_search` |
+| Deployment topology, runbooks, design history — the declared artifacts | `codebase_context` / `codebase_context_search` |
+| Current DB schema, allowed values, migrations | `codebase_search` or the migrations; `codebase_context_search` only with `artifactName` set to a declared schema artifact |
 | Path-pattern walks ("all `*.py` under `src/`") | the Explore subagent |
 
 ## Prefetch
@@ -134,6 +142,9 @@ silently — the hook's output cannot drift from itself.
   compare it against the source, and for a directory against its **newest
   file**, not the directory's own timestamp. The daily check does exactly that
   and names the stale artifacts.
+  And every artifact competes in **one ranking**: a large directory of dated
+  prose outranks a small current file, and a plan answers with the value it
+  was written against. Set `artifactName` to search one artifact.
 - **The file watcher is ephemeral.** It lives only while an MCP server process
   is running. After a long gap, or after a reboot, re-run `codebase_index`
   rather than trusting the index to be current.
@@ -281,17 +292,28 @@ reports it, names both versions and names `codebase_graph_build`.
 
 ## Index scope
 
-`.socraticodeignore` (repo root, gitignore syntax, layered on the built-in
-defaults and `.gitignore`) controls what gets embedded **by the code index**.
-Since socraticode 1.13 directory context artifacts run that same chain, but
-**rooted at the artifact directory, not the repo** — so a repo-root
-`.socraticodeignore` never reaches a subtree artifact, and only ignore files
-inside the artifact path do. The built-in defaults (`build`, `dist`, `vendor`,
-`coverage`, `*.lock`, `__pycache__`…) **do** apply inside one, and drop those
-names silently: scope each artifact to the subtree you want embedded, then
-check it for default-ignored names you meant to keep. Editing
-`.socraticodeignore` affects **subsequent** scans only — re-index to apply it.
-Vendored trees dominate the index if left in, and vendored prose outranks
-first-party code in `codebase_search` results.
+**Two stores, two controls.** The repo-root `.socraticodeignore` (gitignore
+syntax, layered on the built-in defaults and `.gitignore`) governs the **code
+index and the graph**. The **context store** is governed by the manifest,
+`.socraticodecontextartifacts.json`. A path excluded from one stays searchable
+in the other: leaving `docs/plans/` out of the code index does not take it out
+of `codebase_context_search`.
+
+A directory artifact (socraticode 1.13+) honours the built-in defaults, the
+`.gitignore` files inside it, nested ones included, and a `.socraticodeignore`
+placed **at the top of the artifact directory**. The repo-root
+`.socraticodeignore` does not reach it. The defaults (`build`, `dist`,
+`vendor`, `coverage`, `*.lock`, `__pycache__`…) drop those names inside an
+artifact silently, so check each artifact's subtree for any you meant to keep.
+
+| To… | Change |
+|-----|--------|
+| Trim what code search and the graph see | the repo-root `.socraticodeignore` |
+| Trim a directory artifact | an ignore file inside that artifact's directory |
+| Drop an artifact | its entry in the manifest |
+
+Editing `.socraticodeignore` affects **subsequent** scans only — re-index to
+apply it. Vendored trees dominate the index if left in, and vendored prose
+outranks first-party code in `codebase_search` results.
 <!-- END socraticode-doc -->
 ````

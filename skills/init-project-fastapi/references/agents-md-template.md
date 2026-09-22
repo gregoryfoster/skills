@@ -36,7 +36,8 @@ SocratiCode is the preferred semantic-search tool for this repo (once indexed; t
 | What does an entry point actually do? | `codebase_flow` |
 | Callers and callees of a function | `codebase_symbol` |
 | Imports/dependents of a file | `codebase_graph_query` |
-| DB schemas, deployment topology, runbook context | `codebase_context` / `codebase_context_search` |
+| Deployment topology, runbooks, design history | `codebase_context` / `codebase_context_search` |
+| Current DB schema, allowed values, migrations | `codebase_search` or `alembic/versions/` — an unfiltered context search can answer from a superseded plan |
 
 Prefetch query — run via `ToolSearch` at session start:
 
