@@ -415,11 +415,13 @@ esac
 # protection among children that claim less, in proportion to their usage, and
 # a parent at 0 has none to share (systemd.resource-control(5): "it is
 # generally required to set a corresponding allocation on all ancestors"). It
-# does change the reading below a granting slice, though. There a slice that
-# grants less is no clamp: what passes it is a usage-dependent share, at most
-# the grant above less its siblings' claims — so the walk says that, and not
-# "at most 0" (#307 CR 43). The templated-slice clamp above was measured on a
-# bare `rw` mount, without the option.
+# does add to the reading below a granting slice, though. A slice that grants
+# less than what reaches it still reserves only its own grant, and passes down
+# a usage-dependent share on top, at most the grant above less its siblings'
+# claims. So a unit it clamps is told what it reserves and what it may keep
+# besides, not "at most 0" (#307 CR 43), and a unit its grant covers is
+# reserved either way (#307 CR 66). The templated-slice clamp above was
+# measured on a bare `rw` mount, without the option.
 #
 # The mountinfo path is the one argument, and the cgroup mount point is read
 # out of it rather than assumed, so the whole reading follows from one file.
@@ -521,9 +523,9 @@ low_human() {
 # named rather than dropped.
 PROTECTION_DEPTH=6
 
-# protection_walk DIR PREFIX GRANT GRANTER DEPTH [SHARED] — every child of the
-# slice at DIR that claims MemoryLow=, against GRANT: the least any slice from
-# system.slice down to this one grants, GRANTER being the slice that set it
+# protection_walk DIR PREFIX GRANT GRANTER DEPTH [SOFT SHARED] — every child of
+# the slice at DIR that claims MemoryLow=, against GRANT: the least any slice
+# from system.slice down to this one grants, GRANTER being the slice that set it
 # (the higher one on a tie). PREFIX is DIR's path below system.slice, so a unit
 # is named where a reader of the cgroup tree finds it; DEPTH is DIR's own.
 #
@@ -541,23 +543,31 @@ PROTECTION_DEPTH=6
 # exists for. Only for two claimants or more: one alone over its grant is
 # already the clamp warning above, and at a grant of 0 every claimant is.
 #
-# SHARED is empty while GRANT is a chain of hard grants. Under
-# memory_recursiveprot, a slice granting less than GRANT is not a clamp: the
-# kernel's recursive branch hands it a share of what its parent affords and its
-# siblings leave unclaimed, in proportion to its unprotected usage. So GRANT
-# below it becomes that static bound — the grant above less its siblings'
-# claims — and SHARED the clause saying it is a share, not a reservation. The
-# claims are summed before any slice is descended, since the bound needs them.
+# GRANT is the same reading with memory_recursiveprot as without it, because
+# the option only ADDS: its branch of effective_protection() hands a child
+# that claims less than its parent affords a share of the parent's unclaimed
+# protection, in proportion to its unprotected usage, on top of what it claims
+# — never in place of it. So below a slice granting less than what reaches it,
+# a unit still reserves what the chain of grants gives it, and may keep a
+# usage-dependent share above that. SOFT is the static bound on what can reach
+# DIR so — what reached the slice above, less its siblings' claims — and SHARED
+# the clause naming where it comes from; both are empty without the option, or
+# where no share reaches past GRANT. CR 43 walked SOFT in GRANT's place, and a
+# chain granted in full, host-memory.md's own remedy, read as "not a
+# reservation" on every host mounted with the option (#307 CR 66). The claims
+# are summed before any slice is descended, since the bound needs them.
 protection_walk() {
-  local dir="$1" prefix="$2" grant="$3" granter="$4" depth="$5" shared="${6:-}" d name low
-  local sum=0 n=0 unbounded="" who="" here what others bound
+  local dir="$1" prefix="$2" grant="$3" granter="$4" depth="$5" soft="${6:-}" shared="${7:-}" d name low
+  local sum=0 n=0 unbounded="" who="" here what reach up others cap hard hardby s c
   here="${prefix%/}" here="${here##*/}" here="${here:-system.slice}"
-  if [ -n "$shared" ]; then
-    what="the up to $(low_human "$grant") that reaches $here"
-  elif [ "$grant" = max ]; then
+  if [ "$grant" = max ]; then
     what="$granter's unlimited grant"
   else
     what="the $(low_human "$grant") $granter grants"
+  fi
+  reach="$what" up="$grant"
+  if [ -n "$soft" ]; then
+    reach="the up to $(low_human "$soft") that reaches $here" up="$soft"
   fi
   for d in "$dir"/*/; do
     [ -d "$d" ] || continue
@@ -570,7 +580,10 @@ protection_walk() {
     esac
     case "$name" in
       *.slice) ;;
-      *) protection_line "$prefix$name" "$low" "$(low_min "$grant" "$low")" "$grant" "$granter" "$shared" ;;
+      *)
+        protection_line "$prefix$name" "$low" "$(low_min "$grant" "$low")" "$grant" "$granter" \
+          "$(low_min "$up" "$low")" "$shared"
+        ;;
     esac
   done
 
@@ -581,31 +594,42 @@ protection_walk() {
     case "$low" in max | [0-9]*) ;; *) continue ;; esac
     if [ "$depth" -ge "$PROTECTION_DEPTH" ]; then
       deep="${deep:+$deep, }$prefix$name"
-    elif [ "$(low_min "$grant" "$low")" = "$grant" ]; then
-      protection_walk "$d" "$prefix$name/" "$grant" "$granter" "$((depth + 1))" "$shared"
-    elif [ -z "$recursive" ]; then
-      protection_walk "$d" "$prefix$name/" "$low" "$name" "$((depth + 1))"
+      continue
+    fi
+    if [ "$(low_min "$grant" "$low")" = "$grant" ]; then
+      hard="$grant" hardby="$granter"
     else
-      # It grants less than GRANT, so it is a number. A sibling at max claims
-      # all of it, read in full use; the sum holds this slice's own claim.
-      others=$((sum - low)) bound=0
-      if [ -z "$unbounded" ]; then
-        if [ "$grant" = max ]; then
-          bound=max
-        elif [ "$grant" -gt "$others" ]; then
-          bound=$((grant - others))
+      hard="$low" hardby="$name"
+    fi
+    # What the option passes it besides: all that reaches DIR where it grants
+    # at least that, else a share, its siblings' claims taken first. It grants
+    # less than a number or max there, so it is a number; a sibling at max
+    # claims everything, read in full use; the sum holds its own claim.
+    s="" c=""
+    if [ -n "$recursive" ]; then
+      if [ "$(low_min "$up" "$low")" = "$up" ]; then
+        s="$soft" c="$shared"
+      else
+        others=$((sum - low)) cap=0
+        if [ -n "$unbounded" ]; then
+          :
+        elif [ "$up" = max ]; then
+          cap=max
+        elif [ "$up" -gt "$others" ]; then
+          cap=$((up - others))
+        fi
+        if [ "$cap" = max ] || [ "$cap" -gt "$low" ]; then
+          if [ "$others" -gt 0 ]; then others=" less the $(low_human "$others") its siblings claim"; else others=""; fi
+          s="$cap" c="with memory_recursiveprot, $name passes down a share of $reach$others, in proportion to its usage"
+        elif [ -n "$soft" ]; then
+          # Nothing unclaimed left to share here: its own grant bounds it.
+          s="$low" c="$shared, then $name grants $(low_human "$low")"
         fi
       fi
-      if [ "$bound" = max ] || [ "$bound" -gt "$low" ]; then
-        if [ "$others" -gt 0 ]; then others=" less the $(low_human "$others") its siblings claim"; else others=""; fi
-        protection_walk "$d" "$prefix$name/" "$bound" "$name" "$((depth + 1))" \
-          "its $name grants $(low_human "$low"), and with memory_recursiveprot passes down a share of $what$others, in proportion to its usage"
-      else
-        # Nothing left unclaimed to share: its own grant is the bound.
-        protection_walk "$d" "$prefix$name/" "$low" "$name" "$((depth + 1))" \
-          "${shared:+$shared, then its $name grants $(low_human "$low")}"
-      fi
+      # Named only where it reaches past the chain of grants.
+      if [ -n "$s" ] && [ "$(low_min "$s" "$hard")" = "$s" ]; then s="" c=""; fi
     fi
+    protection_walk "$d" "$prefix$name/" "$hard" "$hardby" "$((depth + 1))" "$s" "$c"
   done
 
   case "$grant" in max | 0) return 0 ;; esac
@@ -613,24 +637,18 @@ protection_walk() {
   if [ -n "$unbounded" ] || [ "$sum" -gt "$grant" ]; then
     if [ -n "$unbounded" ]; then sum=max; fi
     flagged=1
-    warn "Memory protection: under $here, $n children claim $(low_human "$sum") together ($who), more than $what — once they use their claims, each keeps a share of it in proportion to its usage, not what it claims"
+    warn "Memory protection: under $here, $n children claim $(low_human "$sum") together ($who), more than $what — once they use their claims, each keeps a share of it in proportion to its usage, not what it claims${soft:+; memory_recursiveprot may pass down more, up to $(low_human "$soft") in all, but by usage, not by reservation}"
   fi
 }
 
-# protection_line UNIT CLAIM EFFECTIVE GRANT GRANTER [SHARED] — one claiming
-# unit: tallied when every slice above grants its claim, a warning naming the
-# slice that clamps it when one does not, and one saying it keeps a share when
-# SHARED says a slice above passes one down (see protection_walk). "Reserves up
-# to", not "keeps": what it keeps also depends on its siblings' claims, which
-# protection_walk sums.
+# protection_line UNIT CLAIM EFFECTIVE GRANT GRANTER [SHARE SHARED] — one
+# claiming unit: tallied when every slice above grants its claim, a warning
+# naming the slice that clamps it when one does not, and saying what it may
+# keep above that where SHARED says memory_recursiveprot passes a share down,
+# of up to SHARE (see protection_walk). "Reserves up to", not "keeps": what it
+# keeps also depends on its siblings' claims, which protection_walk sums.
 protection_line() {
-  local unit="$1" claim="$2" eff="$3" grant="$4" granter="$5" shared="${6:-}" who
-  if [ -n "$shared" ]; then
-    flagged=1
-    claims="${claims:+$claims, }$unit"
-    warn "Memory protection: $unit claims MemoryLow=$(low_human "$claim") but keeps a usage-dependent share of up to $(low_human "$eff") — $shared: not a clamp, and not a reservation either"
-    return 0
-  fi
+  local unit="$1" claim="$2" eff="$3" grant="$4" granter="$5" share="${6:-}" shared="${7:-}" who kept
   if [ "$eff" = "$claim" ]; then
     claims="${claims:+$claims, }$unit reserves up to $(low_human "$claim")"
     return 0
@@ -641,6 +659,12 @@ protection_line() {
     who="system.slice grants $(low_human "$grant")"
   else
     who="its $granter grants $(low_human "$grant")"
+  fi
+  if [ -n "$shared" ]; then
+    kept="reserves only $(low_human "$eff")"
+    [ "$eff" != 0 ] || kept="reserves none of it"
+    warn "Memory protection: $unit claims MemoryLow=$(low_human "$claim") but $kept — $who — and above that keeps a usage-dependent share of up to $(low_human "$share"): $shared. A share, not a reservation"
+    return 0
   fi
   warn "Memory protection: $unit claims MemoryLow=$(low_human "$claim") but keeps at most $(low_human "$eff") — $who, and a unit keeps no more than every slice above it grants"
 }

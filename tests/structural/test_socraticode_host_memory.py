@@ -480,6 +480,71 @@ class TestPreflightReadsTheWholeChain:
         assert "at most 0 MiB" in warned[0], warned
         assert "system-postgresql.slice grants 0 MiB" in warned[0], warned
 
+    # The option only ADDS: effective_protection()'s recursive branch computes
+    # ep = min(usage, claim) and then adds the unclaimed share to it, so what a
+    # chain of grants reserves is reserved with the option too (#307 CR 66).
+    # CR 43 walked the share in the grant's place, and every unit below a slice
+    # granting less than its parent read as "not a reservation".
+    @requires_bash
+    @pytest.mark.parametrize(
+        ("slice_low", "claim"),
+        [(384, 384), (256, 128)],
+        ids=["every-link-granted", "claim-within-the-slice"],
+    )
+    def test_recursiveprot_leaves_a_granted_chain_reserved(
+        self, tmp_path: Path, slice_low: int, claim: int
+    ) -> None:
+        """address-validator's fixed chain, 1G / 384M / 384M, is host-memory.md's
+        own remedy. With the option it read as unprotected, and the hint sent
+        the operator to grant slices that were granted."""
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(1024 * MIB),
+                    "system.slice/system-postgresql.slice": str(slice_low * MIB),
+                    "system.slice/system-postgresql.slice/postgresql@16-main.service": str(
+                        claim * MIB
+                    ),
+                },
+                opts=self.RECURSIVEPROT,
+            )
+        )
+        assert not _marked(lines, WARN), lines
+        assert not _marked(lines, HINT), lines
+        passed = _marked(lines, PASS)
+        assert len(passed) == 1, lines
+        assert f"reserves up to {claim} MiB" in passed[0], passed
+        assert "with memory_recursiveprot" in passed[0], passed
+
+    @requires_bash
+    def test_recursiveprot_keeps_the_slices_own_grant_reserved(
+        self, tmp_path: Path
+    ) -> None:
+        """A 512M claim under a 256M slice reserves the 256M, and may keep a
+        share above it. It read as reserving nothing."""
+        lines, _ = _read(
+            _host(
+                tmp_path,
+                {
+                    "system.slice": str(1024 * MIB),
+                    "system.slice/foo.slice": str(256 * MIB),
+                    "system.slice/foo.slice/a.service": str(512 * MIB),
+                },
+                opts=self.RECURSIVEPROT,
+            )
+        )
+        warned = _marked(lines, WARN)
+        assert len(warned) == 1, lines
+        for part in (
+            "reserves only 256 MiB",
+            "its foo.slice grants 256 MiB",
+            "usage-dependent share of up to 512 MiB",
+            "1024 MiB system.slice grants",
+        ):
+            assert part in warned[0], f"the warning must say {part!r}: {warned}"
+        assert "not a reservation either" not in warned[0], warned
+
     @requires_bash
     def test_max_is_no_limit(self, tmp_path: Path) -> None:
         lines, _ = _read(
