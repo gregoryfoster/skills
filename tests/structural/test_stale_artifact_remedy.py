@@ -73,6 +73,11 @@ RERUN_FULL = re.compile(
 )
 RUN_INCREMENTAL = re.compile(r"\brun +`?codebase_update", re.I)
 
+# The claim itself, not just the handle for checking it. Each file words it
+# differently ("not evidence it failed", "not evidence the index failed"), so
+# the pattern spans the verb rather than pinning one phrasing.
+NOT_A_FAILURE = re.compile(r"not evidence[^.]{0,40}fail", re.I)
+
 
 def _stale_finding(tmp_path: Path) -> str:
     """The health-check finding for a repo with one artifact edited since index."""
@@ -154,9 +159,20 @@ class TestTheFullReEmbedIsDocumentedWithItsCost:
 
         A red that succeeded reads exactly like a red that failed, and the
         second re-run costs another hour for nothing.
+
+        Both halves are required, because either alone is survivable prose. The
+        CLAIM without the handle leaves a reader believing the run may have
+        finished and no way to find out; the handle without the claim names a
+        field nothing has given them a reason to read. This test asserted only
+        the handle until #317's own review.
         """
         for path in self._sources():
             text = path.read_text()
+            assert NOT_A_FAILURE.search(text), (
+                f"{path.name} names the 1800 s timeout without saying that "
+                "hitting it is not evidence the index failed — the server runs "
+                "on past the client's abort (#317)"
+            )
             assert "lastIndexedAt" in text, (
                 f"{path.name} does not tell a reader whose call timed out how to "
                 "find out whether the index finished anyway — `lastIndexedAt` on "
