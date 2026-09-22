@@ -50,7 +50,7 @@ state.
 acceptance — "decide the seam once", naming #667 as a future consumer.
 
 The payoff was larger than predicted: #669 built one prefetch seam serving **four** consumers, and two
-of them (an admin column's start-time label and the event-type taxonomy's event-ID lookup) either did not exist or
+of them (an admin column's start-time label and the event-type model's event-ID lookup) either did not exist or
 were not visible as consumers until #667 merged. Run in parallel, the seam would have shipped with one
 consumer and a third connective issue would have been needed. A gate can be justified by *design
 coherence* with zero file overlap, and it is the one sanctioned way to let Foundation override a
