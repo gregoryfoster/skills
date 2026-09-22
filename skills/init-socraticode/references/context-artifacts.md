@@ -9,6 +9,19 @@ The manifest lives at the **repo root** as `.socraticodecontextartifacts.json`.
 After `codebase_index` finishes embeddings + graph, run `codebase_context_index`
 (or let the driver do it) to embed the artifacts (SKILL.md Phase 4 + Phase 5).
 
+> **`codebase_context_index` is the install-time call, and it is the expensive
+> one.** It re-embeds **every** artifact unconditionally — no content-hash skip
+> — and awaits the whole run emitting no progress notifications, so from a
+> Claude Code session the only bound on it is the 1800 s tool idle timeout.
+> Measured on `CannObserv/watcher`: ~1,500 chunks against a shared CPU embedder
+> ran 77 minutes, the session aborted at 30, and the server finished 47 minutes
+> after that. **A timeout there is not evidence the index failed** — check the
+> project's `lastIndexedAt` in the `socraticode_metadata` collection before
+> re-running. Once the manifest is indexed, the repair for a *stale* artifact
+> is `codebase_update`: its `ensureArtifactsIndexed` pass compares each
+> artifact's content hash and re-embeds only the ones that moved
+> ([#317](https://github.com/gregoryfoster/skills/issues/317)).
+
 > **Adapt, do not copy.** The acceptance criteria require the manifest to name
 > the project's *actual* files. The canonical categories below are the taxonomy
 > the configured cohort repos converged on (archiver 8 artifacts, power-map 6,

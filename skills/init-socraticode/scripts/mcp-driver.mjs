@@ -2823,9 +2823,26 @@ async function cmdHealthCheck(projectPath, probePath) {
           // Its own finding rather than a qualifier on the parity line,
           // because the parity line only exists on a shortfall and staleness
           // has to be reportable at 14/14 — which is the whole case.
+          //
+          // The named call is codebase_update, NOT codebase_context_index
+          // (#317). Both clear the finding; only one of them is affordable.
+          // codebase_context_index -> indexAllArtifacts re-embeds every
+          // artifact unconditionally — no content-hash skip — and awaits the
+          // whole run while emitting no MCP progress notifications, so the
+          // only bound on it from a session is Claude Code's 1800s tool idle
+          // timeout. Measured on CannObserv/watcher: ~1500 chunks against a
+          // shared CPU embedder ran 77 minutes, the session aborted at 30, and
+          // the server finished 47 minutes later — a remedy that "failed"
+          // while succeeding, for three stale artifacts. codebase_update ends
+          // in ensureArtifactsIndexed, which compares each artifact's
+          // contentHash and configurationSignature and re-embeds only what
+          // moved; on a watcher-following repo that is seconds. Staleness here
+          // is edits made while no watcher ran, which is exactly the delta the
+          // incremental path exists to carry.
           defect(
             `context artifacts ${indexed}/${declared} indexed, ${stale.length} stale — `
-            + `${stale.map((s) => s.name).join(', ')}; re-run codebase_context_index`
+            + `${stale.map((s) => s.name).join(', ')}; run codebase_update `
+            + `(incremental — codebase_context_index re-embeds every artifact)`
           );
         }
       }

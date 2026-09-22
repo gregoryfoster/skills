@@ -130,8 +130,8 @@ silently — the hook's output cannot drift from itself.
   a correct manifest cannot rule out: the path resolved, the run *completed*,
   and the artifact still is not indexed. Ask `codebase_context`, which is the
   only per-artifact index status there is — `codebase_status` gives a count
-  and never a name — then re-run `codebase_context_index`. The once-per-day
-  health check reports this gap too, and names the artifact.
+  and never a name — then run `codebase_update`. The once-per-day health
+  check reports this gap too, and names the artifact.
   A third diagnosis has no empty result to warn you at all: the artifact is
   indexed, the answer arrives, and it is **stale**. Nothing guarantees a
   re-index when the source changes, so an edited file — or a new file under a
@@ -141,10 +141,22 @@ silently — the hook's output cannot drift from itself.
   `codebase_context` prints each artifact's index time beside its status;
   compare it against the source, and for a directory against its **newest
   file**, not the directory's own timestamp. The daily check does exactly that
-  and names the stale artifacts.
+  and names the stale artifacts; the remedy is `codebase_update`.
   And every artifact competes in **one ranking**: a large directory of dated
   prose outranks a small current file, and a plan answers with the value it
   was written against. Set `artifactName` to search one artifact.
+- **`codebase_update` is the incremental catch-up**, and the repair for a
+  `stale` artifact. It re-indexes changed files and re-embeds only the
+  artifacts whose content hash moved, synchronously — seconds, on a repo the
+  watcher has been following.
+- **`codebase_context_index` is not.** It re-embeds **every** artifact
+  unconditionally — no content-hash skip, no progress notifications — so on a
+  large manifest against a shared CPU embedder it can outlast Claude Code's
+  1800 s tool idle timeout. Measured: one repo's ~1,500 chunks took 77 minutes
+  and the session gave up at 30. **That timeout is not evidence the index
+  failed** — the server runs on after the client aborts, so check the project's
+  `lastIndexedAt` in the `socraticode_metadata` collection before re-running.
+  Keep it for a first index, or a manifest whose artifacts all changed.
 - **The file watcher is ephemeral.** It lives only while an MCP server process
   is running. After a long gap, or after a reboot, re-run `codebase_index`
   rather than trusting the index to be current.

@@ -507,8 +507,10 @@ class TestHealthCheckReportsStaleArtifacts:
         """The severity call #220's contract made possible.
 
         A note is a measurement no action changes. This one is repaired by a
-        named single call — `codebase_context_index` — and until it is run the
-        index answers wrongly rather than emptily.
+        named single call — `codebase_update` since #317, which re-embeds only
+        the artifacts whose content hash moved — and until it is run the index
+        answers wrongly rather than emptily. Which call the finding names is
+        pinned by test_stale_artifact_remedy.py, not here.
         """
         repo = _repo(tmp_path)
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)
