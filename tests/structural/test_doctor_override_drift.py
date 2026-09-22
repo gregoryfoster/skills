@@ -1131,6 +1131,11 @@ class TestAPinnedPointer:
         assert "re-pin that line" not in flat, flat
         assert flat.count(f"pinned at {base}") == 1, flat
         assert f"re-sync each of them to {base}" in flat, flat
+        # The closing remedy offered "re-pin the line as shown" beneath an
+        # entry showing none (CR 67).
+        assert "as shown" not in flat, flat
+        assert "re-pin the line where the entry shows one" in flat, flat
+        assert "re-sync each override to the pinned commit" in flat, flat
 
     def test_the_env_var_pin_file_is_read(self, consumer: Path):
         """Same resolution as the hook: `$SKILLS_PIN_FILE` first."""

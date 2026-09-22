@@ -52,7 +52,7 @@ set -euo pipefail
 # copy that produced it. Nothing branches on it: sync_self keeps the installed
 # copy equal to the vendored source, which makes drift transient and a
 # version-comparison mechanism unnecessary.
-VERSION="2026-09-21-4"
+VERSION="2026-09-21-5"
 
 CHECK_ONLY=0
 VERBOSE=0
@@ -843,12 +843,14 @@ report_pointer_behind_overrides() {
   echo "doctor: pointer's older text would undo that sync. Advisory: nothing is" >&2
   echo "doctor: changed for you." >&2
   [ "$HOLD_TO_SETTLE" = "1" ] || return 0
+  # "Where an entry shows one": on diverged lines the note offers no re-pin,
+  # and this paragraph used to offer it "as shown" beneath it (#290 CR 67).
   echo "doctor: Except where an entry offers to keep the hold: a bump alone ends it," >&2
   echo "doctor: and the auto-refresh hook then reports pin drift at every session." >&2
-  echo "doctor: Either re-pin the line as shown and commit the pin file with the" >&2
-  echo "doctor: pointer, or keep the hold and re-sync the override to the pinned" >&2
-  echo "doctor: commit instead — its text, version: and synced-from: — with the" >&2
-  echo "doctor: pointer at the pinned commit." >&2
+  echo "doctor: Either re-pin the line where the entry shows one and commit the pin" >&2
+  echo "doctor: file with the pointer, or keep the hold and re-sync each override to" >&2
+  echo "doctor: the pinned commit instead — its text, version: and synced-from: —" >&2
+  echo "doctor: with the pointer at the pinned commit." >&2
 }
 
 report_unassessed_overrides() {
