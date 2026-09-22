@@ -87,8 +87,8 @@ for `STORE=external`, the store's URL, TLS, key and answer, the external
 Ollama, and whether this session carries the settings `env` block (a first
 install passes the values inline, the key already in place); and advisory
 readings — host memory and whether a `MemoryLow=` takes effect, Docker at boot
-(gotcha L), Claude Code's version and install age, the `socraticode`
-marketplace, the plugin MCP server Connected.
+(gotcha L), the running Claude Code's version and install age, the
+`socraticode` marketplace, the plugin MCP server Connected.
 
 **Detect-and-instruct only.** On any ✗ the script prints the exact fix and exits
 non-zero. Do **not** auto-install Node/npm or auto-start Docker — relay the fix

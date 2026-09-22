@@ -4,9 +4,10 @@
 #
 # Detect-and-instruct only: every failing gate prints the exact fix command and
 # exits non-zero. This script NEVER installs or mutates the host toolchain
-# (no auto brew/apt/nvm, no docker pulls, and no `claude update`, which has no
-# check-only mode — Claude Code's version and install age are reported
-# instead) — that is the operator's call.
+# (no auto brew/apt/nvm, no docker pulls, and no `claude update` or
+# `exeuntu update claude`, neither of which can only check — the version and
+# install age of the Claude Code running this session are reported instead,
+# and PATH's beside it where the two differ) — that is the operator's call.
 #
 # Usage:
 #   bash preflight.sh            # run all gates; exit 0 only if every gate passes
@@ -1124,110 +1125,251 @@ else
   pass "npx reachable"
 fi
 
-# ── Claude Code's own version and install age (advisory; #310) ──────────────
-# Everything else this skill depends on has its version reported — Node against
-# upstream's engines, the build that launches, the store, the plugin's
-# registration — except the host running all of it. A CannObserv workstation
-# sat on Claude Code 2.1.71 from March to September while 2.1.278 was current,
-# preflight green on every run, and #309 then reasoned from current
-# documentation about a six-month-old binary: two confidently wrong
-# conclusions reached shipped comments and one an upstream issue. The version
-# being invisible is what made the mistake invisible.
+# ── Claude Code: the binary running this session, its version and age ───────
+# Advisory (#310, #316). Everything else this skill depends on has its version
+# reported — Node against upstream's engines, the build that launches, the
+# store, the plugin's registration — except the host running all of it. A
+# CannObserv workstation sat on Claude Code 2.1.71 from March to September
+# while 2.1.278 was current, preflight green on every run, and #309 then
+# reasoned from current documentation about a six-month-old binary: two
+# confidently wrong conclusions reached shipped comments and one an upstream
+# issue. The version being invisible is what made the mistake invisible.
+#
+# WHICH binary. `claude --version` answers for PATH, and an IDE session does
+# not run PATH's claude: it runs the extension's own native binary. Measured on
+# two exeuntu VMs, PATH said 2.1.258 while the agent ran 2.1.266, and 2.1.251
+# while it ran 2.1.273 — and after `sudo exeuntu update claude` the first read
+# 2.1.278 on PATH with the agent unchanged, so the documented remedy made the
+# reported number MORE wrong (#316). So inside a session (CLAUDECODE set) this
+# walks up its own process ancestry to the first Claude Code executable and
+# measures that; the gap between it and PATH's is reported first, and no
+# verdict is ever computed from PATH's when the running one is known. Outside a
+# session, or when the walk finds nothing, PATH's claude is measured and the
+# line says so.
 #
 # Age, not a version comparison, because nothing may ask what is current:
 # `claude update` has no check-only mode — it installs — and this script never
-# mutates the host or makes a network call for this. The native installer keeps
-# one file per version under $XDG_DATA_HOME/claude/versions/ (default
-# ~/.local/share), with ~/.local/bin/claude linked at the running one, and each
-# file's mtime is its install date; .claude.json's installMethod says whether
-# that layout applies. Claude Code keeps that file in CLAUDE_CONFIG_DIR when it
-# is set and in HOME otherwise — not under ~/.claude, where settings.json lives —
-# and both locations are read the way 2.1.278 reads them:
-# join(CLAUDE_CONFIG_DIR || homedir(), ".claude.json"), and
-# XDG_DATA_HOME ?? join(home, ".local", "share") for the versions directory.
-# "Installed 195 days ago" reads on its own, where a bare version number needs
-# the current one beside it. Releases ran at about one a day between those two
-# versions (207 across 195 days), so 30 days is roughly 30 releases behind.
+# mutates the host or makes a network call for this. The age is the mtime of
+# the resolved file, whatever its layout: the native installer's
+# versions/<v>, an extension's native-binary/claude, an image's root-owned
+# /usr/local/bin/claude. #310 read it only where .claude.json said
+# installMethod "native", and an exeuntu image records no installMethod at all
+# — its binary is baked in at build time — so the age never fired on the hosts
+# it was filed for. Nothing here reads .claude.json: autoUpdates is absent on
+# the same image while `claude doctor` reports "Auto-updates: enabled" for a
+# binary the user cannot write, so an unset key is unknown, never "enabled".
+# "Installed 195 days ago" reads on its own, where a bare version needs the
+# current one beside it. Releases ran at about one a day (207 across 195 days),
+# so 30 days is roughly 30 releases behind.
 #
 # Every path it cannot measure says so; none is skipped silently.
 CLAUDE_AGE_WARN_DAYS=30
-claude_version_age() {
-  local raw ver method link target mtime now days reason="" config versions
-  raw="$(claude --version 2>/dev/null || true)"
-  # "2.1.278 (Claude Code)" — the first word of the first line, when it is a
-  # release number. Parameter expansion rather than awk: an advisory reading
-  # must not be able to end the run, and under `set -e` a missing tool inside
-  # an assignment's command substitution does exactly that.
-  ver="${raw%%$'\n'*}"
-  ver="${ver%% *}"
-  case "$ver" in
-    [0-9]*.[0-9]*.[0-9]*) ;;
-    *)
-      warn "Claude Code: 'claude --version' ($(command -v claude)) reported no version, so its version and install age were not determined"
+
+# Parent of process $1. `ps` first because both platforms have it, so one path
+# runs everywhere; /proc/<pid>/status covers a Linux image without procps.
+claude_ppid() {
+  local out="" line
+  out="$(ps -o ppid= -p "$1" 2>/dev/null || true)"
+  out="${out//[!0-9]/}"
+  if [ -z "$out" ] && [ -r "/proc/$1/status" ]; then
+    while IFS= read -r line; do
+      case "$line" in PPid:*) out="${line//[!0-9]/}"; break ;; esac
+    done <"/proc/$1/status" || true
+  fi
+  printf '%s' "$out"
+}
+
+# Executable of process $1 as an absolute path, or nothing. /proc first: Linux's
+# `ps -o comm=` gives a 15-character name, while macOS's gives the path.
+claude_exe() {
+  local out=""
+  out="$(readlink "/proc/$1/exe" 2>/dev/null || true)"
+  [ -n "$out" ] || out="$(ps -o comm= -p "$1" 2>/dev/null || true)"
+  out="${out#"${out%%[![:space:]]*}"}"
+  out="${out%"${out##*[![:space:]]}"}"
+  case "$out" in /*) printf '%s' "$out" ;; esac
+}
+
+# The nearest ancestor that is a Claude Code executable: named claude (an
+# image's, an extension's) or a native installer's versions/<v> file. A binary
+# replaced since it started reads "<path> (deleted)" in /proc, kept as is.
+claude_running_binary() {
+  local pid="$PPID" exe hops=0
+  while [ "$hops" -lt 16 ]; do
+    case "$pid" in '' | *[!0-9]*) return 0 ;; esac
+    [ "$pid" -gt 1 ] || return 0
+    exe="$(claude_exe "$pid")"
+    case "$exe" in
+      */claude | */claude\ \(deleted\) | */claude/versions/*)
+        printf '%s' "$exe"
+        return 0
+        ;;
+    esac
+    pid="$(claude_ppid "$pid")"
+    hops=$((hops + 1))
+  done
+}
+
+# What `$1 --version` answers: "2.1.278 (Claude Code)", the first word of the
+# first line when it is a release number, else nothing. Parameter expansion
+# rather than awk: an advisory reading must not be able to end the run, and
+# under `set -e` a missing tool inside an assignment's command substitution
+# does exactly that.
+claude_reported_version() {
+  local v
+  v="$("$1" --version 2>/dev/null || true)"
+  v="${v%%$'\n'*}"
+  v="${v%% *}"
+  case "$v" in [0-9]*.[0-9]*.[0-9]*) printf '%s' "$v" ;; esac
+}
+
+# The release the file $1 names by its path — an extension directory or a
+# native installer's versions/<v> — else what it answers to --version.
+claude_version_of() {
+  local v=""
+  case "$1" in
+    */anthropic.claude-code-*/*) v="${1##*/anthropic.claude-code-}"; v="${v%%/*}"; v="${v%%-*}" ;;
+    */claude/versions/*) v="${1##*/claude/versions/}"; v="${v%%/*}" ;;
+  esac
+  case "$v" in
+    [0-9]*.[0-9]*.[0-9]*) printf '%s' "$v" ;;
+    *) [ ! -x "$1" ] || claude_reported_version "$1" ;;
+  esac
+}
+
+# The remedy for a stale binary depends on which channel installed it; naming
+# the wrong one is how a host gets a second binary that PATH picks between.
+claude_remedy() {
+  case "$1" in
+    */anthropic.claude-code-*/*)
+      hint "Update the Claude Code extension in the IDE, then reload its window — updating the claude on PATH does not change what this session runs"
       return 0
       ;;
   esac
-  config="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
-  versions="${XDG_DATA_HOME:-$HOME/.local/share}/claude/versions"
-  method="$(grep -oE '"installMethod"[[:space:]]*:[[:space:]]*"[^"]*"' "$config" 2>/dev/null \
-    | head -n 1 | sed -E 's/.*"([^"]*)"$/\1/' || true)"
-  link="$HOME/.local/bin/claude"
-  if [ -z "$method" ]; then
-    reason="$config records no installMethod"
-  elif [ "$method" != native ]; then
-    reason="installMethod is '$method' — only the native installer keeps a dated file per version"
+  if command -v exeuntu >/dev/null 2>&1; then
+    hint "sudo exeuntu update claude — the image's own channel; run it yourself. Not 'claude update', which installs a second copy beside the root-owned image binary rather than replacing it (CannObserv/broker#36)"
   else
-    if [ -L "$link" ]; then
-      target="$(readlink "$link" 2>/dev/null || true)"
-      case "$target" in /*) ;; ?*) target="$HOME/.local/bin/$target" ;; esac
-    else
-      target="$versions/$ver"
-    fi
-    case "$target" in
-      */claude/versions/"$ver")
-        # GNU stat first, then BSD: `stat -c` is an illegal option on macOS,
-        # and on Linux `stat -f` means the filesystem rather than the file.
-        mtime="$(stat -c %Y "$target" 2>/dev/null || stat -f %m "$target" 2>/dev/null || true)"
-        if [ ! -e "$target" ]; then
-          reason="there is no $target"
-        else
-          case "$mtime" in
-            '' | *[!0-9]*) reason="the modification time of $target could not be read" ;;
-          esac
-        fi
-        ;;
-      *)
-        reason="$link points at ${target:-nothing}, not the $ver that 'claude --version' reports"
-        ;;
-    esac
+    hint "claude update — run it yourself: it installs, and has no check-only mode, so this check never calls it"
+    [ -w "$1" ] || hint "$1 is not writable by you, so 'claude update' would install a second copy beside it rather than replace it — check which one PATH runs afterwards"
   fi
+}
+
+# One ✓ or • line for the file $1: "$2 installed N days ago — $3", with the
+# remedy past the mark. The verdict leads and which binary it is follows.
+claude_age_line() {
+  local mtime now days reason=""
+  # GNU stat first, then BSD: `stat -c` is an illegal option on macOS, and on
+  # Linux `stat -f` means the filesystem rather than the file. -L on both, so a
+  # link is measured by what it points at.
+  mtime="$(stat -L -c %Y "$1" 2>/dev/null || stat -L -f %m "$1" 2>/dev/null || true)"
+  case "$mtime" in '' | *[!0-9]*) reason="the modification time of $1 could not be read" ;; esac
   now="$(date +%s 2>/dev/null || true)"
-  case "$now" in
-    '' | *[!0-9]*) [ -n "$reason" ] || reason="the clock could not be read" ;;
-  esac
+  case "$now" in '' | *[!0-9]*) [ -n "$reason" ] || reason="the clock could not be read" ;; esac
   if [ -n "$reason" ]; then
-    warn "Claude Code $ver — install age not determined: $reason"
+    warn "$2, install age not determined ($reason) — $3"
     return 0
   fi
   days=$(((now - mtime) / 86400))
   [ "$days" -ge 0 ] || days=0
   if [ "$days" -gt "$CLAUDE_AGE_WARN_DAYS" ]; then
-    warn "Claude Code $ver — installed $days days ago, past the $CLAUDE_AGE_WARN_DAYS-day mark (releases have run at about one a day)"
-    hint "claude update — run it yourself: it installs, and has no check-only mode, so this check never calls it"
+    warn "$2 installed $days days ago, past the $CLAUDE_AGE_WARN_DAYS-day mark (releases have run at about one a day) — $3"
+    claude_remedy "$1"
   else
-    pass "Claude Code $ver — installed $days day(s) ago"
+    pass "$2 installed $days day(s) ago — $3"
   fi
 }
+
+# An IDE stages a new extension beside the running one and switches only when
+# its window reloads, so a host can be behind its own completed update — the
+# case where the newest directory's age says current while the agent runs an
+# older release (#316 §5). Named when a newer, complete sibling exists.
+claude_staged_extension() {
+  local run="$1" ver="$2" root inner d v newest=""
+  root="${run%/anthropic.claude-code-*}"
+  inner="${run#"$root"/anthropic.claude-code-}"
+  inner="${inner#*/}"
+  for d in "$root"/anthropic.claude-code-*/; do
+    [ -e "$d$inner" ] || continue
+    v="${d%/}"
+    v="${v##*/anthropic.claude-code-}"
+    v="${v%%-*}"
+    case "$v" in [0-9]*.[0-9]*.[0-9]*) ;; *) continue ;; esac
+    version_ge "$ver" "$v" && continue
+    if [ -z "$newest" ] || ! version_ge "$newest" "$v"; then newest="$v"; fi
+  done
+  if [ -n "$newest" ]; then
+    warn "Claude Code $newest is installed beside it in $root and has not started — the IDE switches to it only when its window reloads"
+    hint "Reload the IDE window; until then this session runs $ver"
+  fi
+}
+
+claude_version_age() {
+  local on_path="" path_file="" path_ver="" run="" run_ver="" label
+  if command -v claude >/dev/null 2>&1; then
+    on_path="$(command -v claude)"
+    path_file="$(readlink -f "$on_path" 2>/dev/null || true)"
+    [ -n "$path_file" ] || path_file="$on_path"
+    path_ver="$(claude_reported_version "$on_path")"
+  fi
+  [ -z "${CLAUDECODE:-}" ] || run="$(claude_running_binary)"
+
+  if [ -n "$run" ]; then
+    case "$run" in
+      *' (deleted)')
+        warn "Claude Code: this session runs ${run% (deleted)}, which has been replaced on disk since it started, so its version and install age were not determined"
+        hint "Restart the session to run what is installed there now"
+        return 0
+        ;;
+    esac
+    if [ ! -e "$run" ]; then
+      warn "Claude Code: this session runs $run, which is no longer on disk, so its version and install age were not determined"
+      hint "Restart the session to run what is installed now"
+      return 0
+    fi
+    # macOS's ps reports the path the binary was started by, link or not.
+    run="$(readlink -f "$run" 2>/dev/null || printf '%s' "$run")"
+    run_ver="$(claude_version_of "$run")"
+    [ -n "$run_ver" ] || [ "$run" != "$path_file" ] || run_ver="$path_ver"
+    label="the binary running this session, $run"
+    if [ "$run" = "$path_file" ]; then
+      label="the binary running this session and PATH's claude, $run"
+    elif [ -z "$on_path" ]; then
+      label="$label (no claude on PATH)"
+    elif [ -n "$run_ver" ] && [ "$run_ver" = "$path_ver" ]; then
+      label="$label (PATH's claude, $path_file, is the same release)"
+    else
+      # The gap first; the verdict after it is the running binary's alone.
+      warn "Claude Code: this session runs ${run_ver:-$run}, but PATH's claude is ${path_ver:-a binary that reported no version} ($path_file) — two programs, and updating PATH's does not change this session's"
+    fi
+    claude_age_line "$run" "Claude Code ${run_ver:-(release unread)}" "$label"
+    case "$run" in
+      */anthropic.claude-code-*/*) [ -z "$run_ver" ] || claude_staged_extension "$run" "$run_ver" ;;
+    esac
+    return 0
+  fi
+
+  local unfound=""
+  [ -z "${CLAUDECODE:-}" ] || unfound="the binary running this session was not found among this check's parent processes"
+  if [ -z "$on_path" ]; then
+    warn "Claude Code: no claude on PATH${unfound:+, and $unfound}, so its version and install age were not determined"
+    return 0
+  fi
+  if [ -z "$path_ver" ]; then
+    warn "Claude Code: 'claude --version' ($on_path) reported no version, so its version and install age were not determined"
+    return 0
+  fi
+  [ -z "$unfound" ] || warn "Claude Code: $unfound, so the reading below is PATH's claude — an IDE session runs a binary of its own"
+  claude_age_line "$path_file" "Claude Code $path_ver" "PATH's claude, $path_file"
+}
+
+claude_version_age
 
 # ── Gate 4 (advisory): plugin MCP server registered and Connected ───────────
 # Not fatal — the bundled mcp-driver.mjs fallback works without the plugin being
 # wired into the session (gotcha A). Reported so the operator knows which path
 # they are on. `claude` may be absent when preflight runs outside Claude Code.
 if command -v claude >/dev/null 2>&1; then
-  # The host first: every reading below is of something this binary does.
-  claude_version_age
-
-  # Then the marketplace: `socraticode@socraticode` is plugin@marketplace, so the
+  # The marketplace first: `socraticode@socraticode` is plugin@marketplace, so the
   # install in Phase 2 cannot resolve until the marketplace is registered.
   # Reported separately from the connection check so a fresh host doesn't read
   # its missing marketplace as "just needs a restart".
@@ -1282,7 +1424,7 @@ if command -v claude >/dev/null 2>&1; then
     hint "Remove the standalone: claude mcp remove socraticode"
   fi
 else
-  printf '  \033[33m•\033[0m %s\n' "claude CLI not found — Claude Code's version and install age were not determined, and the plugin-connection check is skipped"
+  printf '  \033[33m•\033[0m %s\n' "claude CLI not found — the plugin-connection check is skipped"
 fi
 
 echo
