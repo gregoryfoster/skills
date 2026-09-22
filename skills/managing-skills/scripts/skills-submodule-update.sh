@@ -135,6 +135,39 @@ _log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >>"$LOG" 2>/dev/null || true
 }
 
+# _unstage <after> <path>... — unstage the paths, then read the index back
+# rather than trust the reset (#311). <after> names the failure being undone,
+# for the messages: "a failed commit", "a rolled-back push".
+#
+# Both of this hook's failure paths end by handing the index back as they
+# found it, and each did it with a `git reset` whose exit status was
+# discarded, git's stderr in $LOG its only trace. A reset that fails leaves
+# the paths staged with nothing said where a session looks — the state
+# CannObserv/power-map was found in on 2026-09-18, both paths staged beneath
+# this hook's own "unstaging" line. The cause is still unknown: #306's
+# in-place rewrite was measured and ruled out, and an index.lock held by
+# another git process would produce it (measured: the reset exits 128). So
+# this checks the outcome, not a cause: whatever is still staged under the
+# paths is named on stderr, with the command that clears it.
+#
+# It sees the index as the reset left it. Something that re-stages later — a
+# hook running `git add`, a framework restoring its stash — is past it.
+_unstage() {
+  local after="$1" left rc=0
+  shift
+  git reset -q -- "$@" 2>>"$LOG" || _log "unstage after $after: git reset exited $? (git's words above)"
+  left="$(git diff --cached --name-only -- "$@" 2>>"$LOG")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    _log "unstage after $after: could not read the index back (git diff exited $rc) — $* may still be staged"
+    echo "skills update: could not check the index after $after — run git status for $* (see $LOG)" >&2 || true
+  elif [ -n "$left" ]; then
+    left="${left//$'\n'/ }"
+    _log "unstage after $after incomplete — still staged: $left"
+    echo "skills update: $left still staged after $after — unstage by hand: git reset -q -- $left (see $LOG)" >&2 || true
+  fi
+  return 0
+}
+
 # Resolved here, gated further down. The reconcile step is main-only for the
 # same reason the commit is, but it runs before the lock, so it cannot wait
 # for the `exit 0` gate to have computed this.
@@ -330,15 +363,16 @@ _reconcile_unpushed() {
   done < <(git diff --name-only -z "HEAD~$ahead" HEAD 2>/dev/null || true)
 
   if git reset -q --soft "HEAD~$ahead" 2>>"$LOG"; then
+    _log "unpushed: push failed — rolled $ahead commit(s) back; the refreshed content stays in the working tree and the next session retries"
+    echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
     if [ "${#paths[@]}" -gt 0 ]; then
       # Same move as the commit step's failure path: leave the index as we
       # found it. A .skills/doctor.sh that was untracked before the commit
       # goes back to untracked rather than sitting staged in an index the
-      # operator never touched.
-      git reset -q -- "${paths[@]}" 2>>"$LOG" || true
+      # operator never touched. After the report above, so a warning that
+      # this unstage fell short follows the rollback it belongs to.
+      _unstage "a rolled-back push" "${paths[@]}"
     fi
-    _log "unpushed: push failed — rolled $ahead commit(s) back; the refreshed content stays in the working tree and the next session retries"
-    echo "skills update: could not push to $remote — rolled $ahead commit(s) back so this checkout matches $upstream_name (see $LOG)" >&2
   else
     _log "unpushed: push failed AND rollback failed — $BRANCH is still $ahead commit(s) ahead of $upstream_name"
     echo "skills update: $BRANCH is $ahead unpushed commit(s) ahead of $upstream_name and could be neither pushed nor rolled back — fix by hand (see $LOG)" >&2
@@ -743,10 +777,11 @@ if [ "$STATUS_RC" -eq 0 ] && [ -n "$STATUS_OUT" ]; then
         # On failure, unstage what we staged. `git add` above may have staged
         # a previously *untracked* .skills/doctor.sh, and leaving a file the
         # operator never touched sitting in their index is worse than leaving
-        # the commit undone — the next run retries cleanly either way.
+        # the commit undone — the next run retries cleanly either way. The
+        # unstage is checked, not assumed: see _unstage (#311).
         git commit -m "$MSG" -- "${STAGED_PATHS[@]}" 2>&1 || {
           echo "commit failed — unstaging to leave the index as we found it"
-          git reset -q -- "${COMMIT_PATHS[@]}" 2>&1 || true
+          _unstage "a failed commit" "${COMMIT_PATHS[@]}"
         }
       fi
     fi

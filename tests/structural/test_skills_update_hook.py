@@ -22,6 +22,13 @@ Coverage:
 - `git status` fails                         → logged with git's own stderr,
                                                commit skipped, scratch cleaned
 - `git commit` fails                         → index unstaged, install kept
+- ...and the unstage fails (a held
+  index.lock)                                → still-staged paths named on
+                                               stderr, with the command (#311)
+- ...and the reset exits 0 but unstages
+  nothing                                    → still reported: the index is
+                                               read back, not the exit status
+- ...and the index cannot be read back       → reported as unchecked
 
 Pushing what it commits (issue #293) gets its own fixture, `remote_repo`,
 because the `repo` fixture has no upstream at all — a configuration the
@@ -35,6 +42,7 @@ transport, since what matters is whether a push was actually accepted:
 - push fails                                 → refreshed content stays on disk
 - push fails                                 → reported on stderr, not only $LOG
 - push fails                                 → no second attempt in the same run
+- push fails and its unstage fails           → reported after the rollback (#311)
 - an operator's unpushed commit              → never rolled back
 - an operator's unpushed commit              → never published, nothing committed
 - a mix of theirs and ours                   → reported, all of it left alone
@@ -375,6 +383,90 @@ class TestFailedCommitLeavesNoResidue:
         assert (repo / ".skills" / "doctor.sh").exists(), (
             "the working-tree install must survive — only the staging is undone"
         )
+        assert "still staged" not in result.stderr, (
+            f"an unstage that worked must not be reported as one that did not:\n"
+            f"{result.stderr}"
+        )
+
+
+class TestAFailedUnstageIsReported:
+    """#311 — the unstage is read back from the index, never assumed.
+
+    CannObserv/power-map was found with both of the hook's paths staged beneath
+    its own "commit failed — unstaging" line. The reset's exit status was
+    discarded and its stderr went only to $LOG, so a reset that failed looked,
+    from anywhere a session reads, exactly like one that worked. The cause is
+    still unknown, which is why these pin the outcome rather than a cause: a
+    reset refused by a lock, a reset that exits 0 having changed nothing, and an
+    index that cannot be read back at all.
+    """
+
+    COMMIT_REFUSED = (
+        'if [ "$1" = "commit" ]; then echo "shim: commit refused" >&2; exit 1; fi\n'
+    )
+
+    def test_a_reset_refused_by_a_held_lock_is_reported(self, repo):
+        """The issue's leading hypothesis, with real git: another process's
+        index.lock outlives the failed commit, so the reset exits 128."""
+        _write_git_shim(
+            repo,
+            extra_arms=(
+                'if [ "$1" = "commit" ]; then : > .git/index.lock; '
+                'echo "shim: commit refused" >&2; exit 1; fi\n'
+            ),
+        )
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0, "the hook must never block a session"
+        assert _git(repo, "diff", "--cached", "--name-only").stdout.strip() == (
+            ".skills/doctor.sh"
+        ), "the fixture should reproduce the observed state: the path still staged"
+        assert ".skills/doctor.sh still staged after a failed commit" in (
+            result.stderr
+        ), f"the stranded path was not reported on stderr:\n{result.stderr}"
+        assert "git reset -q -- .skills/doctor.sh" in result.stderr, (
+            f"the report should carry the command that clears it:\n{result.stderr}"
+        )
+        log = _log_text(repo)
+        assert "index.lock" in log, f"git's own reason must reach the log:\n{log}"
+
+    def test_the_index_is_read_back_not_the_reset_status(self, repo):
+        """The issue's other hypothesis: the reset ran and exited 0, yet the
+        paths were staged afterwards. A check on the exit status passes here;
+        only reading the index catches it."""
+        _write_git_shim(
+            repo,
+            extra_arms=self.COMMIT_REFUSED
+            + 'if [ "$1" = "reset" ] && [ "$3" = "--" ]; then exit 0; fi\n',
+        )
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0
+        assert ".skills/doctor.sh still staged after a failed commit" in (
+            result.stderr
+        ), f"a reset that did nothing passed as one that worked:\n{result.stderr}"
+
+    def test_an_index_that_cannot_be_read_back_is_reported(self, repo):
+        """A failed read is not an empty one. Taken as "nothing staged", it
+        would be the silence this check exists to end."""
+        _write_git_shim(
+            repo,
+            extra_arms=self.COMMIT_REFUSED
+            + 'if [ "$1" = "reset" ]; then : > .git/reset-ran; fi\n'
+            'if [ "$1" = "diff" ] && [ -e .git/reset-ran ]; then '
+            'echo "fatal: simulated index read failure" >&2; exit 128; fi\n',
+        )
+
+        result = _run_hook(repo)
+
+        assert result.returncode == 0
+        assert "could not check the index after a failed commit" in result.stderr, (
+            result.stderr
+        )
+        assert "still staged after" not in result.stderr, result.stderr
+        assert "simulated index read failure" in _log_text(repo)
 
 
 class TestCommitMessageNamesWhatChanged:
@@ -1033,6 +1125,29 @@ class TestFailedPushRollsBack:
             f"the run attempted the refused push more than once:\n{result.stderr}"
         )
         assert _ahead(remote_repo) == 0
+
+    def test_an_unstage_that_fails_after_the_rollback_is_reported(self, remote_repo):
+        """The rollback's unstage is the commit step's failure path in another
+        place, and it discarded the reset's status the same way (#311). The
+        soft reset is left to work; only the pathspec reset after it fails."""
+        _break_remote(remote_repo)
+        _write_git_shim(
+            remote_repo,
+            extra_arms=(
+                'if [ "$1" = "reset" ] && [ "$3" = "--" ]; then '
+                'echo "fatal: simulated index.lock" >&2; exit 128; fi\n'
+            ),
+        )
+
+        result = _run_hook(remote_repo)
+
+        assert result.returncode == 0, result.stderr
+        assert _ahead(remote_repo) == 0, "the rollback itself must still happen"
+        warning = ".skills/doctor.sh still staged after a rolled-back push"
+        assert warning in result.stderr, result.stderr
+        assert result.stderr.index("could not push") < result.stderr.index(warning), (
+            f"the warning belongs after the rollback it qualifies:\n{result.stderr}"
+        )
 
 
 class TestOperatorCommitsAreUntouchable:
