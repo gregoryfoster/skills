@@ -241,7 +241,14 @@ first):
    **READY**, **and** context artifacts are **N/N**. "100% embedded" alone is NOT
    done (gotcha C), and don't *wait* to see 100%: a finished run prints no
    percentage at all (gotcha J).
-3. If artifacts aren't auto-indexed, run `codebase_context_index { projectPath }`.
+3. If artifacts aren't auto-indexed, run `codebase_context_index { projectPath }`
+   — a full, synchronous re-embed of **every** artifact, emitting no progress,
+   so on a large manifest it can outlast Claude Code's 1800 s tool idle timeout.
+   **A timeout there is not evidence it failed**: the server runs on past the
+   client's abort — check `lastIndexedAt` in `socraticode_metadata` before
+   re-running. Afterwards, a *stale* artifact is repaired by `codebase_update`,
+   which re-embeds only what changed
+   ([#317](https://github.com/gregoryfoster/skills/issues/317)).
 4. Confirm the file watcher registered (`codebase_watch` / status); it is
    **ephemeral**, living only while a server runs (gotcha E).
 

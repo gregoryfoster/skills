@@ -464,14 +464,23 @@ class TestHealthCheckReportsStaleArtifacts:
     `{"declared": 14, "indexed": 14, "unindexed": []}`. Three of those fourteen
     were stale at that moment: `architecture` (`docs/ARCHITECTURE.md`, edited
     04:49, indexed 04:19), `wire-protocol-schemas`, and `implementation-plans`.
-    `codebase_context_search` was answering from superseded chunks with three
-    green lights over it.
+    Three green lights over three artifacts behind their sources.
 
     That is the same silence #214 exists to kill, reached by a worse route. An
     unindexed artifact is *absent* from search: the caller gets nothing and
-    knows to look elsewhere. A stale one answers confidently from old content,
-    and there is no signal at all — so it is a defect and it sets the exit code,
-    not a note.
+    knows to look elsewhere. A stale one is silent in both directions — so it
+    is a defect and it sets the exit code, not a note.
+
+    #225 justified that severity by saying `codebase_context_search` answers
+    from the superseded chunks. Checked against the 1.13.1 and 1.14.0 dists in
+    #317's review, it does not: the search handler calls
+    `ensureArtifactsIndexed` before searching, so the first search re-embeds
+    inline and answers from current chunks, and old chunks reach an answer only
+    when that check errors. The severity is unchanged and rests on what
+    survives — `codebase_context` and every listing do NOT re-index, so nothing
+    surfaces the gap, and the repair is billed unannounced to whichever search
+    next touches the artifact. `mcp-driver.mjs` carries the same correction
+    beside the finding.
 
     The directory case is the harder half, and it is why the comparison is
     against the newest DESCENDANT rather than against the artifact path's own
@@ -507,8 +516,10 @@ class TestHealthCheckReportsStaleArtifacts:
         """The severity call #220's contract made possible.
 
         A note is a measurement no action changes. This one is repaired by a
-        named single call — `codebase_context_index` — and until it is run the
-        index answers wrongly rather than emptily.
+        named single call — `codebase_update` since #317, which re-embeds only
+        the artifacts whose content hash moved — and until it is run the index
+        answers wrongly rather than emptily. Which call the finding names is
+        pinned by test_stale_artifact_remedy.py, not here.
         """
         repo = _repo(tmp_path)
         _stamp(repo / "AGENTS.md", EDITED_AFTER_INDEXING)

@@ -2814,18 +2814,47 @@ async function cmdHealthCheck(projectPath, probePath) {
         if (stale.length) {
           // A DEFECT, not a note, and the severity is the interesting call
           // (#220 made it one). An unindexed artifact is ABSENT from search:
-          // the caller gets nothing back and knows to look elsewhere. A stale
-          // one is worse in kind — codebase_context_search answers
-          // confidently from superseded chunks, and there is no signal at all.
-          // It is also repaired by one named call, which is the line between
-          // the two severities: a note is a measurement no action changes.
+          // the caller gets nothing back and knows to look elsewhere.
+          //
+          // #225 filed the stale case here as worse in kind, on the reading
+          // that codebase_context_search answers confidently from superseded
+          // chunks. Read against the 1.13.1 and 1.14.0 dists, it does not: the
+          // search handler calls ensureArtifactsIndexed before searching
+          // (tools/context-tools.js), so the FIRST search re-embeds the
+          // artifact inline and then answers from current chunks. Old chunks
+          // reach an answer only when that staleness check itself errors.
+          //
+          // The severity stands on what survives that correction. Nothing
+          // SURFACES the gap: codebase_context — what this check and any
+          // listing read — does not re-index, so a listing sits at N/N while
+          // artifacts are behind. And the repair is billed, unannounced, to
+          // whichever search next touches the artifact. It is repaired by one
+          // named call, which is the line between the two severities: a note
+          // is a measurement no action changes.
           //
           // Its own finding rather than a qualifier on the parity line,
           // because the parity line only exists on a shortfall and staleness
           // has to be reportable at 14/14 — which is the whole case.
+          //
+          // The named call is codebase_update, NOT codebase_context_index
+          // (#317). Both clear the finding; only one of them is affordable.
+          // codebase_context_index -> indexAllArtifacts re-embeds every
+          // artifact unconditionally — no content-hash skip — and awaits the
+          // whole run while emitting no MCP progress notifications, so the
+          // only bound on it from a session is Claude Code's 1800s tool idle
+          // timeout. Measured on CannObserv/watcher: ~1500 chunks against a
+          // shared CPU embedder ran 77 minutes, the session aborted at 30, and
+          // the server finished 47 minutes later — a remedy that "failed"
+          // while succeeding, for three stale artifacts. codebase_update ends
+          // in ensureArtifactsIndexed, which compares each artifact's
+          // contentHash and configurationSignature and re-embeds only what
+          // moved; on a watcher-following repo that is seconds. Staleness here
+          // is edits made while no watcher ran, which is exactly the delta the
+          // incremental path exists to carry.
           defect(
             `context artifacts ${indexed}/${declared} indexed, ${stale.length} stale — `
-            + `${stale.map((s) => s.name).join(', ')}; re-run codebase_context_index`
+            + `${stale.map((s) => s.name).join(', ')}; run codebase_update `
+            + `(incremental; NOT codebase_context_index, which re-embeds every artifact)`
           );
         }
       }
