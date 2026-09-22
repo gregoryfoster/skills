@@ -1239,10 +1239,16 @@ claude_version_of() {
 
 # The remedy for a stale binary depends on which channel installed it; naming
 # the wrong one is how a host gets a second binary that PATH picks between.
+# The native installer's versions/<v> is the user's own copy whatever the host,
+# so exeuntu — which updates the image's binary — never answers for it.
 claude_remedy() {
   case "$1" in
     */anthropic.claude-code-*/*)
       hint "Update the Claude Code extension in the IDE, then reload its window — updating the claude on PATH does not change what this session runs"
+      return 0
+      ;;
+    */claude/versions/*)
+      hint "claude update — run it yourself: it installs, and has no check-only mode, so this check never calls it"
       return 0
       ;;
   esac

@@ -405,6 +405,23 @@ class TestTheRemedyFollowsTheChannel:
         )
 
     @requires_bash
+    def test_a_native_install_on_an_exeuntu_host_is_claude_update(
+        self, tmp_path: Path
+    ) -> None:
+        """broker#36's shadow copy: the user's own, which exeuntu never updates."""
+        native = _binary(
+            tmp_path / "home" / ".local" / "share" / "claude" / "versions" / "2.1.258",
+            "2.1.258",
+            100,
+        )
+        binv = _stub_bin(tmp_path, claude=native, ancestor=str(native), exeuntu=True)
+        hints = _hints(_run(tmp_path, binv, session=True))
+        assert any(h.startswith("→ claude update") for h in hints), hints
+        assert not any(h.startswith("→ sudo exeuntu") for h in hints), (
+            f"a native installer's file was sent to the image's updater\n{hints}"
+        )
+
+    @requires_bash
     def test_elsewhere_it_is_claude_update(self, tmp_path: Path) -> None:
         if _on_system_path("exeuntu"):
             pytest.skip("this host has exeuntu on the system PATH")
