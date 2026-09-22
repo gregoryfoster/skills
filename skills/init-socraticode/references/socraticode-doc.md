@@ -309,7 +309,7 @@ artifact silently, so check each artifact's subtree for any you meant to keep.
 | To… | Change |
 |-----|--------|
 | Trim what code search and the graph see | the repo-root `.socraticodeignore` |
-| Trim a directory artifact | an ignore file inside that artifact's directory |
+| Trim a directory artifact | a `.gitignore` anywhere inside that artifact's directory, or a `.socraticodeignore` at its top |
 | Drop an artifact | its entry in the manifest |
 
 Editing `.socraticodeignore` affects **subsequent** scans only — re-index to

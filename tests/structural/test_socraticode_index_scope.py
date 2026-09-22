@@ -84,10 +84,16 @@ class TestTheGeneratedIndexScope:
         )
 
     def test_it_names_a_lever_for_each_job(self) -> None:
+        """Including where in an artifact each ignore file works.
+
+        A `.gitignore` is read at any depth, a `.socraticodeignore` only at the
+        artifact's top — a row saying "an ignore file inside it" sends a reader
+        to a nested `.socraticodeignore` that is silently not read (#315 CR 2).
+        """
         rows = [ln for ln in _scope().splitlines() if ln.startswith("| ")]
         levers = {
             "trim what code search": "repo-root `.socraticodeignore`",
-            "trim a directory artifact": "inside that artifact's directory",
+            "trim a directory artifact": "a `.socraticodeignore` at its top",
             "drop an artifact": "manifest",
         }
         for job, lever in levers.items():

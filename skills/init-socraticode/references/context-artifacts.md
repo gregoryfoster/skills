@@ -298,7 +298,7 @@ built-in defaults apply to both. See the Field notes above.
 | To… | Change |
 |-----|--------|
 | Trim what code search and the graph see | this file, at the repo root |
-| Trim a directory artifact | a `.socraticodeignore` or `.gitignore` inside that artifact's directory |
+| Trim a directory artifact | a `.gitignore` anywhere inside that artifact's directory, or a `.socraticodeignore` at its top — a nested one is not read |
 | Drop an artifact | its entry in the manifest |
 
 ### Dated prose — ask whether it leaves the code index
