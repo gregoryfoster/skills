@@ -4,7 +4,7 @@ description: Curates a repo's agent-context surface — AGENTS.md and the refere
 compatibility: Designed for Claude (claude.ai, Claude Code, or similar). Requires git, bash, and python3. Optionally uses gh for issue verification and the cohort roll-up, and ANTHROPIC_API_KEY for exact token counts.
 metadata:
   author: gregoryfoster
-  version: "1.29"
+  version: "1.30"
   triggers: curate context, context budget, hone AGENTS.md, trim AGENTS.md, prune context
 ---
 
@@ -16,9 +16,6 @@ everything a session can pull in from the repo's own guidance. Every token in
 that surface is paid on every invocation, and every stale claim in it costs more
 than its tokens: an agent that runs a command which no longer exists stops
 trusting the file that told it to.
-
-**Activation triggers:** "curate context", "context budget", "hone AGENTS.md",
-"trim AGENTS.md", "prune context". Also the scheduled weekly run.
 
 ## The Iron Law
 
@@ -351,8 +348,10 @@ mode this PR body is the entire audit trail — a reviewer must be able to
 reconstruct and revert any single decision from it.
 
 Then get the branch a **fresh-eyes review**. If a late fix changes the count,
-**rewrite this run's row with `--amend` to match what ships; across runs, only
-ever append** ([telemetry.md](references/telemetry.md#one-row-per-phase-rewrite-within-append-across)).
+**rewrite this run's row with `--amend`; across runs, only ever append**
+([telemetry.md](references/telemetry.md#one-row-per-phase-rewrite-within-append-across)).
+Merged or rebased the default branch in? **`--repair`**
+([why](references/telemetry.md#merging-the-default-branch-in)).
 
 Never push to the default branch. Never delete on an UNVERIFIABLE verdict, even
 under budget pressure.

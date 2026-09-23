@@ -29,20 +29,20 @@ Options:
                    across the window instead of firing at once.
   --file PATH      Workflow path. Default: .github/workflows/context-cadence.yml
   --ledger PATH    Ledger the cadence records into, relative to the repo root.
-                   Default: .skills/context-metrics.jsonl. Threaded through all
-                   three places that must agree — the union-merge attribute,
-                   the workflow's `git add`, and its error message — because a
-                   cadence that measures correctly and stages the wrong path
-                   records nothing.
-  --check          Report what is installed; change nothing. Seven guarantees
+                   Default: .skills/context-metrics.jsonl. Threaded through
+                   every place that must agree — the union-merge attribute, the
+                   workflow's `git add` and error message, the recorder, the
+                   seam sweep and the delta check — because a cadence that
+                   measures correctly and stages the wrong path records nothing.
+  --check          Report what is installed; change nothing. Eight guarantees
                    are reported independently — the workflow, the driver setup
-                   inside it, the drift report's coverage, the ledger's union
-                   merge, the calibration files' merge attributes, the `ours`
-                   driver the ratio attribute needs to exist at all, and the
-                   newest-wins driver behind the counts attribute — because
-                   each is its own way to lose a row or a warning, and one
-                   combined "ok" would have read green through all of #173,
-                   #192, #237 and #273.
+                   inside it, the drift report's coverage, the delta check, the
+                   ledger's union merge, the calibration files' merge
+                   attributes, the `ours` driver the ratio attribute needs to
+                   exist at all, and the newest-wins driver behind the counts
+                   attribute — because each is its own way to lose a row or a
+                   warning, and one combined "ok" would have read green through
+                   all of #173, #192, #237, #273 and #325.
                    Exit 0 all present, 3 any missing.
   --uninstall      Remove the workflow file AND every merge attribute it
                    installed, leaving .gitattributes as it found it (the file
@@ -428,6 +428,17 @@ if [ "$MODE" = "check" ]; then
       echo "drift report:       STALE — the installed workflow reports the policy"
       echo "                    file only, and only once it is already over"
       echo "                    budget (#273). Re-run install-cadence.sh."
+      rc=3
+    fi
+    # Same shape, third half (#325): a ledger a merge interleaved reads clean
+    # in every other line here, and in the Actions tab.
+    if grep -qF -- '--repair --dry-run' "$WF"; then
+      echo "delta check:        yes (a row a merge put out of place is warned)"
+    else
+      echo "delta check:        STALE — the installed workflow never checks the"
+      echo "                    ledger's recorded deltas, so a row a merge left"
+      echo "                    describing the wrong predecessor goes unreported"
+      echo "                    (#325). Re-run install-cadence.sh."
       rc=3
     fi
   else
@@ -976,6 +987,30 @@ jobs:
           fi
           if [ "\${SEAMS:-0}" -gt 0 ]; then
             echo "::warning::\$SEAMS unacknowledged cross-reference seam(s). Run \\\`curate context\\\`."
+          fi
+
+      # The ledger merges with merge=union, so a curation branch that merged or
+      # rebased this branch in while it was open can land a row between two
+      # others — cleanly, with nothing to signal it — and the later row's
+      # deltas then describe a row that is no longer before it (#325). Three
+      # of the first cohort's thirteen ledgers had one. --dry-run only: this
+      # job appends and never rewrites, so the repair is a commit for whoever
+      # reads the warning. Its stdout is empty on a clean ledger. always(),
+      # like the drift report, so a failed push does not hide it.
+      - name: Check the recorded deltas
+        if: always()
+        run: |
+          if [ -z "\${RECORD_TELEMETRY_SH:-}" ]; then
+            echo "the skill scripts were not resolved — see the failing step above"
+            exit 0
+          fi
+          # --repair reads origin/HEAD, which checkout does not set. Tolerated:
+          # without it --repair says so itself, and still checks the deltas.
+          git remote set-head origin --auto >/dev/null 2>&1 || true
+          bash "\$RECORD_TELEMETRY_SH" --repair --dry-run --ledger "$LEDGER" >/tmp/deltas.jsonl
+          if [ -s /tmp/deltas.jsonl ]; then
+            echo "::warning::\$(wc -l </tmp/deltas.jsonl | tr -d ' ') recorded delta field(s) in $LEDGER disagree with the row now before them — usually a curation branch that merged or rebased this one in. On a branch, run \\\`record-telemetry.sh --repair\\\` and commit it on its own."
+            cat /tmp/deltas.jsonl
           fi
 YAML
 }

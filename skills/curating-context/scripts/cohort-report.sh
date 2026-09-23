@@ -276,11 +276,19 @@ for key in order:
     latest = rows[-1]
     # The best single reduction and what accompanied it — the roll-up's reason
     # for existing: which optimisation actually moved the number, per repo.
-    best = None
-    for r in rows:
-        d = r.get("delta_tokens")
-        if isinstance(d, int) and d < 0 and (best is None or d < best.get("delta_tokens", 0)):
-            best = r
+    #
+    # Derived here from the OBSERVED tokens of consecutive rows, never read from
+    # the recorded delta_tokens: a hand-edit (#319) or a merge that interleaves
+    # the cadence's row (#325) leaves the stored field describing a row that is
+    # no longer before it, and the observed pair cannot go stale. The append's
+    # comparability rule holds — no delta across a measurement-method change.
+    best, best_delta = None, None
+    for prev, r in zip(rows, rows[1:]):
+        if (isinstance(r.get("tokens"), int) and isinstance(prev.get("tokens"), int)
+                and r.get("tokens_exact") == prev.get("tokens_exact")):
+            d = r["tokens"] - prev["tokens"]
+            if d < 0 and (best_delta is None or d < best_delta):
+                best, best_delta = r, d
     # `net` must not span a measurement-method change. record-telemetry.sh
     # suppresses delta_tokens across one because an exact count and an offline
     # estimate are incomparable — the uncalibrated heuristic under-reported this
@@ -323,7 +331,7 @@ for key in order:
         "wave": info["wave"] or None,
         "pair": info["pair"] or None,
         "best_actions": ", ".join(best.get("actions") or []) or "(untagged)" if best else None,
-        "best_delta": best.get("delta_tokens") if best else None,
+        "best_delta": best_delta,
     })
 
 if fmt == "json":
