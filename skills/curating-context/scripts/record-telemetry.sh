@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 # record-telemetry.sh — append one measurement row to the repo's context-metrics
 # ledger, computing deltas against the previous row for the same policy file.
+# Three rewrite modes serve the append: --repo-commit backfills the commit a
+# row describes, --amend replaces this run's row after a late fix, and --repair
+# corrects derived deltas a hand-edit left stale.
 #
-# The ledger is append-only JSONL committed alongside the file it measures, so a
-# repo's curation history travels with the repo and survives a transfer. Reads
-# measure-context.sh JSON on stdin.
+# The ledger is JSONL committed alongside the file it measures, so a repo's
+# curation history travels with the repo and survives a transfer. It is
+# append-only ACROSS runs; within a run, only this run's unmerged row is
+# rewritten (references/telemetry.md). Reads measure-context.sh JSON on stdin,
+# except in --repo-commit and --repair, which read none.
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-record-telemetry.sh — append a context-metrics row to the repo ledger
+record-telemetry.sh — append a context-metrics row to the repo ledger, or
+rewrite one (--repo-commit, --amend) or its deltas (--repair)
 
 Usage:
   measure-context.sh | record-telemetry.sh [options]
+  measure-context.sh | record-telemetry.sh --amend [options]
+  record-telemetry.sh --repo-commit REV
+  record-telemetry.sh --repair [--dry-run]
 
 Options:
   --ledger PATH    Ledger file. Default: .skills/context-metrics.jsonl
@@ -153,6 +162,71 @@ Options:
                    and cannot be changed by a later commit. Refuses the flags
                    that only make sense on an append, rather than discarding
                    them silently.
+  --amend          AMEND MODE. Replace this run's curation row with one built
+                   from the measurement on stdin, instead of adding a second.
+                   The row it targets is the NEWEST row for the measured file,
+                   and the replacement goes LAST in the ledger — where the
+                   --repo-commit backfill that must follow it looks.
+                   This is how Phase 7's "rewrite this run's row to match what
+                   ships" is carried out when a late fix moves the count (#319).
+
+                   delta_tokens and delta_days are DERIVED: an append computes
+                   them against whatever the previous row is at that moment.
+                   Rewriting a row by hand — appending the corrected row and
+                   then deleting the one it supersedes — leaves them describing
+                   a neighbour that no longer exists. This mode computes them
+                   against the rows that will remain, so the order cannot bite.
+
+                   Every measured field is re-read from stdin; `ts` becomes
+                   today and `repo_commit` is re-read from HEAD exactly as an
+                   append would, so backfill it again after committing. The
+                   run's own attributes CARRY FORWARD from the row being
+                   amended unless re-supplied, as groups: --actions; --note;
+                   the verdict (--no-loss, --no-loss-warrants, --claims-*);
+                   --seams/--seams-acked; --counts/--counts-acked. Supplying
+                   any flag in a group replaces the whole group. What was
+                   carried is named on stderr — if the fix touched what a
+                   carried check measured, re-run it and pass its result.
+
+                   Refuses a `baseline` row (it records a state that already
+                   passed), an empty ledger or one with no row for the file
+                   (nothing to amend — append instead), and --baseline or
+                   --repo-commit alongside it. The measurement-method refusal
+                   (exit 4) applies exactly as it does to an append.
+
+                   Within a run only: once the row has merged it is history,
+                   and a later run appends (references/telemetry.md, "rewrite
+                   within, append across"). So --amend also refuses a row the
+                   default branch (origin/HEAD) already holds — matched on
+                   every field but repo_commit, which a backfill may have
+                   changed since. Not by asking whether repo_commit merged:
+                   before the backfill it names a parent that always has. With
+                   no origin/HEAD it warns and proceeds; the remote-tracking
+                   ref is read as-is, so fetch first if it may be stale.
+  --repair         REPAIR MODE. Correct the derived delta fields of every row
+                   whose recorded delta disagrees with the row before it, and
+                   touch nothing else: no measurement is read from stdin and
+                   no row is added or removed. Prints one JSON object per
+                   corrected field to stdout — {"line", "file", "ts", "field",
+                   "was", "now"} — and nothing when the ledger is clean, so
+                   `--repair --dry-run` is a read-only detector (#319).
+
+                   What it corrects is exactly what --print-trend warns about,
+                   through the same function: a delta_days that is not the gap
+                   to the previous row's ts, and a delta_tokens that is not the
+                   token change — or that exists at all across a measurement-
+                   method change, where the append records null and says why in
+                   delta_unavailable. A null is never filled in: it may be a
+                   first row or a deliberate refusal, and repair does not guess.
+
+                   This does not break "across runs, only ever append". That
+                   rule protects what a row OBSERVED, and repair never changes
+                   an observed field; the deltas are arithmetic on the ledger,
+                   and a stale one misreports the trend the rule exists to
+                   keep. Unlike --amend it therefore applies to merged rows.
+                   Commit a repair on its own, so its diff is only the deltas.
+                   A missing or empty ledger has nothing to repair (exit 0).
+                   Accepts only --ledger and --dry-run.
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:
@@ -228,17 +302,26 @@ Row schema (one JSON object per line):
                     previous row — see delta_unavailable
   delta_days        days since the previous row (null if first)
   delta_unavailable present only when delta_tokens was suppressed; says why
+                    The three delta fields are DERIVED from the previous row,
+                    never observed: edit a row or remove its predecessor by hand
+                    and they go stale silently. Rewrite a run's row with
+                    --amend; --print-trend warns about any row whose deltas
+                    disagree with the ledger, and --repair corrects it.
   actions           action tags from --actions, or ["baseline:KIND"] with
                     --baseline
   note              --note text
 
 Exit codes:
-  0  row appended or backfilled (or printed, with --dry-run)
+  0  row appended, backfilled or amended, or the ledger repaired or found
+     clean (or printed, with --dry-run)
   1  usage error (including --baseline with --actions, --no-loss,
      --no-loss-warrants or --claims-*; --no-loss-warrants or --claims-*
-     without a verdict; --claims-dropped N>0 against `ok`; or --repo-commit
+     without a verdict; --claims-dropped N>0 against `ok`; --repo-commit
      with an append-only flag, an unknown revision, an empty ledger or a
-     baseline row), or stdin was not measure-context.sh JSON
+     baseline row; or --amend with --baseline or --repo-commit, an empty
+     ledger, no row for the file, a baseline row, or a row already on the
+     default branch; or --repair with any flag but --ledger and
+     --dry-run), or stdin was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
      (pass --allow-method-change to record it anyway)
@@ -266,6 +349,10 @@ ACTIONS_SET=0
 NOTE_SET=0
 BACKFILL=0
 BACKFILL_REV=""
+AMEND=0
+REPAIR=0
+BASE_REF=""
+BASE_LEDGER=""
 
 # --actions and --note accept an empty value deliberately, so they cannot use
 # ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
@@ -295,6 +382,8 @@ while [ $# -gt 0 ]; do
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
     --repo-commit)
       BACKFILL=1; BACKFILL_REV="${2:?--repo-commit needs a revision}"; shift 2 ;;
+    --amend) AMEND=1; shift ;;
+    --repair) REPAIR=1; shift ;;
     --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
@@ -303,12 +392,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Backfill mode reads no measurement and writes no new row, so every flag that
-# describes a run has nothing to land on. Refused rather than silently
+# Backfill and repair read no measurement and write no new row, so every flag
+# that describes a run has nothing to land on. Refused rather than silently
 # discarded: `--repo-commit HEAD --actions demote:X` looks like it records the
 # tags and would record nothing, which is the failure mode #111 found in the
 # cohort's data with a different field.
-if [ "$BACKFILL" -eq 1 ]; then
+if [ "$BACKFILL" -eq 1 ] || [ "$REPAIR" -eq 1 ]; then
   APPEND_ONLY=""
   [ "$ACTIONS_SET" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --actions"
   [ "$NOTE_SET" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --note"
@@ -324,10 +413,35 @@ if [ "$BACKFILL" -eq 1 ]; then
   [ -z "$REPO_OVERRIDE" ] || APPEND_ONLY="$APPEND_ONLY --repo"
   [ "$ALLOW_METHOD_CHANGE" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --allow-method-change"
   [ "$TREND" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --print-trend"
+fi
+if [ "$REPAIR" -eq 1 ]; then
+  [ "$BACKFILL" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --repo-commit"
+  [ "$AMEND" -eq 0 ] || APPEND_ONLY="$APPEND_ONLY --amend"
+  [ -z "$APPEND_ONLY" ] || {
+    echo "ERROR --repair corrects derived fields already in the ledger, so it" >&2
+    echo "      reads no measurement and cannot record:$APPEND_ONLY." >&2
+    echo "      It accepts only --ledger and --dry-run." >&2
+    exit 1; }
+elif [ "$BACKFILL" -eq 1 ]; then
   [ -z "$APPEND_ONLY" ] || {
     echo "ERROR --repo-commit backfills the row this run already recorded, so" >&2
     echo "      it reads no measurement and cannot record:$APPEND_ONLY." >&2
     echo "      Pass those on the Phase 7 append, before the commit." >&2
+    exit 1; }
+fi
+
+# An amend rewrites a CURATION row from a fresh measurement. --repo-commit is a
+# different rewrite that reads no measurement at all, and a baseline row is the
+# one row the within-a-run rewrite rule exempts — so neither can ride along.
+if [ "$AMEND" -eq 1 ]; then
+  [ "$BACKFILL" -eq 0 ] || {
+    echo "ERROR --amend and --repo-commit are separate steps: amend the row" >&2
+    echo "      from the fixed tree, commit, then backfill --repo-commit HEAD." >&2
+    exit 1; }
+  [ "$BASELINE" -eq 0 ] || {
+    echo "ERROR --amend and --baseline are mutually exclusive: a baseline row" >&2
+    echo "      records a state that has already passed, so a late fix cannot" >&2
+    echo "      change it. --amend rewrites this run's curation row." >&2
     exit 1; }
 fi
 
@@ -459,7 +573,7 @@ trap 'rm -rf "$TMP"' EXIT
 # Backfill mode must NOT touch stdin. A caller running this by hand after the
 # commit has a terminal on fd 0, and reading it to exhaustion would hang the
 # script with no output at all rather than doing the one thing it was asked to.
-if [ "$BACKFILL" -eq 0 ]; then
+if [ "$BACKFILL" -eq 0 ] && [ "$REPAIR" -eq 0 ]; then
   cat >"$TMP/in.json"
   [ -s "$TMP/in.json" ] || { echo "ERROR no measurement on stdin — pipe measure-context.sh into this script" >&2; exit 1; }
 fi
@@ -502,7 +616,15 @@ fi
 REPO_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || REPO_COMMIT=""
 
 MODE=append
-if [ "$BACKFILL" -eq 1 ]; then
+if [ "$REPAIR" -eq 1 ]; then
+  MODE=repair
+  # Vacuously clean, not an error: a cohort sweep runs this as a detector, and
+  # a repo that never recorded a row has no delta that can be wrong. Nor is a
+  # ledger created to answer it.
+  [ -s "$LEDGER" ] || {
+    echo "$LEDGER has no rows; nothing to repair" >&2
+    exit 0; }
+elif [ "$BACKFILL" -eq 1 ]; then
   MODE=backfill
   # Resolve REV here rather than in python, so the row can only ever carry a
   # revision this repo can check out — and normalise it to the short form the
@@ -523,13 +645,51 @@ if [ "$BACKFILL" -eq 1 ]; then
     echo "      --repo-commit rewrites the row this run already recorded;" >&2
     echo "      record it first, then commit, then backfill." >&2
     exit 1; }
+elif [ "$AMEND" -eq 1 ]; then
+  MODE=amend
+  # Same -s test and the same reason as the backfill: a request to rewrite a row
+  # must not be answered by creating a ledger with no rows in it.
+  [ -s "$LEDGER" ] || {
+    echo "ERROR $LEDGER has no rows, so there is nothing to amend." >&2
+    echo "      --amend rewrites the row this run already recorded; record" >&2
+    echo "      it with a plain append first." >&2
+    exit 1; }
+  # The merged-row guard needs the DEFAULT BRANCH's copy of the ledger. Not
+  # repo_commit: before the backfill it names the parent of the shipping commit,
+  # which is already on the default branch, so "is repo_commit merged?" would
+  # refuse exactly the amend Phase 7 asks for. Whether the ROW is there is the
+  # question telemetry.md's test actually asks.
+  #
+  # Unresolvable is a warning, not a refusal: a repo with no origin/HEAD has no
+  # default branch to have merged into, and the rule stays the author's to keep.
+  BASE_REF="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || BASE_REF=""
+  case "$LEDGER" in
+    "$ROOT"/*) LEDGER_REL="${LEDGER#"$ROOT"/}" ;;
+    /*) LEDGER_REL="" ;;
+    *) LEDGER_REL="${LEDGER#./}" ;;
+  esac
+  if [ -z "$BASE_REF" ]; then
+    echo "WARN cannot tell whether this row has merged: no origin/HEAD to compare" >&2
+    echo "     against (\`git remote set-head origin --auto\` sets one). Amending" >&2
+    echo "     a merged row rewrites history — only amend this run's row." >&2
+  elif [ -z "$LEDGER_REL" ]; then
+    echo "WARN cannot tell whether this row has merged: $LEDGER is outside" >&2
+    echo "     this repo, so $BASE_REF holds no copy of it to compare against." >&2
+    BASE_REF=""
+  elif git cat-file -e "$BASE_REF:$LEDGER_REL" 2>/dev/null; then
+    git show "$BASE_REF:$LEDGER_REL" >"$TMP/base.jsonl" || {
+      echo "ERROR cannot read $LEDGER_REL from $BASE_REF" >&2; exit 2; }
+    BASE_LEDGER="$TMP/base.jsonl"
+  fi
+  # No ledger on the default branch at all: nothing has merged, so every row is
+  # this branch's own. BASE_LEDGER stays empty and the guard has nothing to find.
 else
   mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
   [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 fi
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" "$ACTIONS_SET" "$NOTE_SET" "$BASE_REF" "$BASE_LEDGER" <<'PY' || RC=$?
 import datetime as dt
 import json
 import os
@@ -538,7 +698,8 @@ import tempfile
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
  no_loss, seams, seams_acked, no_loss_warrants, repo_commit,
- mode, claims_dropped, claims_warranted, counts, counts_acked) = sys.argv[1:20]
+ mode, claims_dropped, claims_warranted, counts, counts_acked,
+ actions_set, note_set, base_ref, base_ledger) = sys.argv[1:24]
 
 
 def is_curation_row(row):
@@ -590,6 +751,103 @@ def read_ledger(path):
     return lines, parsed
 
 
+def rewrite_ledger(path, lines):
+    """Replace the ledger with LINES — the one write both rewrite modes use.
+
+    Write-then-rename, so a crash mid-write leaves the ledger as it was rather
+    than truncated. The temp file is created in the ledger's own directory
+    because os.replace is only atomic within a filesystem.
+    """
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".context-metrics-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError as exc:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        print(f"ERROR cannot rewrite {path}: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+
+def stale_deltas(prev, r):
+    """{field: (recorded, correct)} for each derived field on R that disagrees
+    with PREV, the row before it for the same file.
+
+    THE ONE DEFINITION --print-trend warns with and --repair corrects with, so
+    the warning can never name a row the repair leaves alone, or the reverse.
+    Only a recorded delta is judged. A null is left alone: it is a first row,
+    or the method-change refusal, or a row predating the field — and from here
+    the three are indistinguishable, so filling one in would be a guess.
+    """
+    out = {}
+    try:
+        gap = (dt.date.fromisoformat(r["ts"])
+               - dt.date.fromisoformat(prev["ts"])).days
+        if isinstance(r.get("delta_days"), int) and r["delta_days"] != gap:
+            out["delta_days"] = (r["delta_days"], gap)
+    except (ValueError, KeyError, TypeError):
+        pass
+    d = r.get("delta_tokens")
+    if isinstance(d, int):
+        if prev.get("tokens_exact") != r.get("tokens_exact"):
+            # The append never writes a delta across a method change — it
+            # writes null and delta_unavailable. One here was hand-made.
+            out["delta_tokens"] = (d, None)
+        elif (isinstance(r.get("tokens"), int)
+              and isinstance(prev.get("tokens"), int)
+              and d != r["tokens"] - prev["tokens"]):
+            out["delta_tokens"] = (d, r["tokens"] - prev["tokens"])
+    return out
+
+
+if mode == "repair":
+    # Rewrites only what stale_deltas() names. A row's correct deltas depend
+    # only on its predecessor's OBSERVED fields — ts, tokens, tokens_exact — and
+    # never on the predecessor's deltas, so one pass in file order is complete:
+    # no correction can invalidate another.
+    lines, parsed = read_ledger(ledger)
+    last_by_file, fixes = {}, []
+    for idx, r in parsed:
+        prev = last_by_file.get(r.get("file"))
+        last_by_file[r.get("file")] = r
+        if prev is None:
+            continue
+        stale = stale_deltas(prev, r)
+        if not stale:
+            continue
+        for field, (was, now) in stale.items():
+            r[field] = now
+            if field == "delta_tokens" and now is None:
+                r["delta_unavailable"] = (
+                    "method changed: previous row tokens_exact="
+                    f"{prev.get('tokens_exact')}, this row tokens_exact="
+                    f"{r.get('tokens_exact')}"
+                )
+            fixes.append({"line": idx + 1, "file": r.get("file"),
+                          "ts": r.get("ts"), "field": field,
+                          "was": was, "now": now})
+        lines[idx] = json.dumps(r, sort_keys=True, ensure_ascii=False)
+    for f in fixes:
+        print(json.dumps(f, sort_keys=True, ensure_ascii=False))
+    rows = len({f["line"] for f in fixes})
+    if not fixes:
+        print(f"{ledger}: every recorded delta agrees with its row's "
+              "predecessor; nothing to repair", file=sys.stderr)
+    elif dry == "1":
+        print(f"--dry-run: would repair {plural(len(fixes), 'field')} on "
+              f"{plural(rows, 'row')} of {ledger}", file=sys.stderr)
+    else:
+        rewrite_ledger(ledger, lines)
+        print(f"repaired {plural(len(fixes), 'field')} on "
+              f"{plural(rows, 'row')} of {ledger} — commit this on its own, so "
+              "its diff is only the deltas", file=sys.stderr)
+    sys.exit(0)
+
+
 if mode == "backfill":
     # Phase 7 records the row and only then commits it alongside the edits, so
     # the append could not have named the commit that ships the tree it
@@ -623,22 +881,7 @@ if mode == "backfill":
         sys.exit(0)
     target["repo_commit"] = repo_commit
     lines[idx] = json.dumps(target, sort_keys=True, ensure_ascii=False)
-    # Write-then-rename, so a crash mid-write leaves the ledger as it was rather
-    # than truncated. The temp file is created in the ledger's own directory
-    # because os.replace is only atomic within a filesystem.
-    d = os.path.dirname(os.path.abspath(ledger)) or "."
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".context-metrics-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("".join(ln + "\n" for ln in lines))
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, ledger)
-    except OSError as exc:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        print(f"ERROR cannot rewrite {ledger}: {exc}", file=sys.stderr)
-        sys.exit(2)
+    rewrite_ledger(ledger, lines)
     print(f"backfilled repo_commit {was or 'null'} -> {repo_commit} on "
           f"{target.get('file')} ({target.get('ts')})", file=sys.stderr)
     sys.exit(0)
@@ -723,9 +966,82 @@ row = {
 }
 
 # Prior rows for the same file, oldest first — through the same reader the
-# backfill uses, so the two modes cannot disagree about which lines are rows.
-history = [prev for _, prev in read_ledger(ledger)[1]
-           if prev.get("file") == row["file"]]
+# backfill uses, so the modes cannot disagree about which lines are rows.
+lines, parsed = read_ledger(ledger)
+mine = [(i, prev) for i, prev in parsed if prev.get("file") == row["file"]]
+
+target_idx, target = None, None
+if mode == "amend":
+    # The row being amended is taken OUT of the history before the deltas are
+    # computed, so they describe the neighbour that will remain. That is the
+    # whole fix for #319: the hand-edit computed them with the superseded row
+    # still present, then deleted it, and the survivor's delta_days described
+    # an interval that no longer existed.
+    if not mine:
+        print(f"ERROR {ledger} has no row for {row['file']}, so there is "
+              "nothing to amend — record this run with a plain append.",
+              file=sys.stderr)
+        sys.exit(1)
+    target_idx, target = mine.pop()
+    if not is_curation_row(target):
+        print(
+            f"ERROR the newest row for {row['file']} is a "
+            f"`{(target.get('actions') or ['baseline'])[0]}` row, which records "
+            "a state that has already passed — telemetry.md exempts it from the "
+            "rewrite rule. Record the curation with a plain append; amend that.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # telemetry.md's test, made mechanical: unmerged, the row is a draft of
+    # this run's record; merged, it is history, and a later run appends. The
+    # row is on the default branch if a row there matches it on everything but
+    # repo_commit — which the backfill may have rewritten on this branch after
+    # the first commit merged, and which is not what makes it the same row.
+    if base_ledger:
+        def identity(r):
+            return json.dumps({k: v for k, v in r.items() if k != "repo_commit"},
+                              sort_keys=True)
+        merged = {identity(r) for _, r in read_ledger(base_ledger)[1]}
+        if identity(target) in merged:
+            print(
+                f"ERROR the newest row for {row['file']} ({target.get('ts')}) is "
+                f"already on {base_ref}: its run has merged, so it is history, "
+                "not a draft. Across runs the ledger only appends — record this "
+                "measurement as a new row (a plain append).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    # The run's own attributes are not re-measured by a fresh measure-context.sh
+    # payload, and a late fix usually moves only the count — so they carry
+    # forward rather than silently becoming null. By GROUP, because the verdict
+    # fields validate against each other: carrying `no_loss_warrants` from the
+    # old row beside a new `--no-loss skipped` would assemble a row no single
+    # invocation could have written.
+    groups = (
+        (("actions",), actions_set == "1"),
+        (("note",), note_set == "1"),
+        (("no_loss", "no_loss_warrants", "claims_dropped", "claims_warranted"),
+         any((no_loss, no_loss_warrants, claims_dropped, claims_warranted))),
+        (("seams", "seams_acked"), bool(seams or seams_acked)),
+        (("counts", "counts_acked"), bool(counts or counts_acked)),
+    )
+    carried = []
+    for fields, supplied in groups:
+        if supplied:
+            continue
+        for f in fields:
+            row[f] = target.get(f)
+            if row[f] not in (None, []):
+                carried.append(f)
+    if carried:
+        # Named, because a carried verdict is a claim about the tree BEFORE the
+        # fix. Usually still true — and when it is not, the author is the only
+        # one who knows the fix touched what the check measured.
+        print(f"carried from the amended row: {', '.join(carried)} — if the fix "
+              "touched what a carried check measured, re-run it and pass the "
+              "result", file=sys.stderr)
+
+history = [prev for _, prev in mine]
 
 if history:
     last = history[-1]
@@ -771,7 +1087,7 @@ if history:
             )
         if would_refuse and dry != "1":
             print(
-                "ERROR refusing to append: this row is "
+                f"ERROR refusing to {mode}: this row is "
                 f"tokens_exact={row['tokens_exact']} but the last row for "
                 f"{row['file']} ({last.get('ts')}) is "
                 f"tokens_exact={last.get('tokens_exact')}. An exact count and an "
@@ -804,6 +1120,29 @@ line_out = json.dumps(row, sort_keys=True, ensure_ascii=False)
 
 if dry == "1":
     print(line_out)
+elif mode == "amend":
+    if row == target:
+        print(f"{row['file']} ({row['ts']}) already records this measurement; "
+              "nothing to amend", file=sys.stderr)
+    else:
+        # MOVED to the end, not rewritten where it sits. The next step is
+        # `--repo-commit HEAD`, which backfills the newest row in the whole
+        # ledger, and `check-seams.sh --base-ledger` reads the newest
+        # repo_commit the same way. Left in place behind another file's row,
+        # the backfill would rewrite THAT row's commit and leave this one a
+        # parent behind. The target was already the newest row for its file
+        # and now carries today's ts, so last is where it belongs.
+        del lines[target_idx]
+        lines.append(line_out)
+        rewrite_ledger(ledger, lines)
+        print(f"amended {row['file']} ({target.get('ts')}): "
+              f"{target.get('tokens')} -> {row['tokens']} tokens",
+              file=sys.stderr)
+        # Here and not only in telemetry.md: the amend re-read repo_commit
+        # from HEAD, which is the parent of the commit about to ship this
+        # row — the #206 gap the backfill exists to close, reopened.
+        print(f"  repo_commit is {repo_commit or 'null'} again — commit, then "
+              "record-telemetry.sh --repo-commit HEAD", file=sys.stderr)
 else:
     try:
         with open(ledger, "a", encoding="utf-8") as fh:
@@ -868,6 +1207,26 @@ if trend == "1":
             "method. This row is the new baseline.",
             file=sys.stderr,
         )
+    # The deltas are derived from the previous row, and a ledger edited by hand
+    # after the append silently invalidates them — the row stops agreeing with
+    # the neighbour it claims to measure against, and nothing else notices
+    # (#319). Two such rows were in this repo's own ledger when it was found.
+    for prev, r in zip(series, series[1:]):
+        found = []
+        for field, (was, now) in stale_deltas(prev, r).items():
+            if field == "delta_days":
+                found.append(f"delta_days {was} (ts gap is {now})")
+            elif now is None:
+                found.append(f"delta_tokens {was:+d} (across a measurement-"
+                             "method change, where it should be null)")
+            else:
+                found.append(f"delta_tokens {was:+d} (token change is {now:+d})")
+        if found:
+            print(f"  WARN row {r['ts']} disagrees with the row before it "
+                  f"({prev['ts']}): {'; '.join(found)} — one of them was edited "
+                  "after the delta was computed. `record-telemetry.sh --repair` "
+                  "corrects it; rewrite a run's row with --amend, not by hand.",
+                  file=sys.stderr)
 PY
 
 exit "$RC"

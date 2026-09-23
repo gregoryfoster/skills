@@ -141,6 +141,45 @@ The permission is about the row being a draft until it merges, not about the
 count in particular. `repo_commit` is the other value that changes inside a
 run, for a reason the count never has: it is unknowable until the commit exists.
 
+**The rewrite is a command, not a hand-edit** (#319). Re-measure the fixed tree
+and pipe it to `record-telemetry.sh --amend`, then commit and backfill
+`--repo-commit HEAD` again:
+
+```bash
+bash "<measure-context.sh>" --exact | bash "<record-telemetry.sh>" --amend --print-trend
+```
+
+`delta_tokens` and `delta_days` are **derived**, not observed: an append
+computes them against whatever the previous row is at that moment. Doing the
+rewrite by hand in the natural order — append the corrected row, then delete
+the one it supersedes — leaves the survivor's deltas measured against a row
+that no longer exists; observed as a row dated a day after its predecessor
+carrying `delta_days: 0`, and in this repo's own ledger as two rows whose
+`delta_tokens` stopped matching their token change when `tokens` was edited in
+place. `--amend` takes the target out of the history before computing, so the
+order cannot bite. It carries the run's attributes (`--actions`, `--note`, the
+verdict, the seam and count pairs) forward unless re-supplied — each as a
+group, so one new flag replaces its whole group — and names on stderr what it
+carried: a carried verdict describes the tree *before* the fix, and only the
+author knows whether the fix touched what it measured. The replacement goes
+**last** in the ledger, because the backfill that must follow it rewrites the
+newest row. `--print-trend` warns about any row whose deltas disagree with the
+row before it.
+
+The merged test is enforced, too: `--amend` refuses a row the default branch
+(`origin/HEAD`) already holds, matched on everything but `repo_commit`. It asks
+whether the **row** merged, not whether `repo_commit` did — before the backfill
+that field names the parent of the shipping commit, which is always on the
+default branch, so the obvious check would refuse every amend Phase 7 asks for.
+
+**Repairing a ledger a hand-edit already damaged** is `--repair`: it corrects
+exactly the rows that warning names, through the same function, and touches no
+observed field — so it does not break *append across*, which protects what a
+row observed, and it applies to merged rows too. A null is never filled in.
+Stdout is one JSON line per corrected field and empty when clean, so
+`record-telemetry.sh --repair --dry-run` is also the read-only detector a cohort
+sweep runs. Commit a repair on its own, so its diff is only the deltas.
+
 ### Backfilling `repo_commit`
 
 Phase 7 measures, records, and only then commits the ledger alongside the edits.
