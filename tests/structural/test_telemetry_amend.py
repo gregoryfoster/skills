@@ -23,6 +23,10 @@ What this file pins:
 - **It refuses** a baseline target, a file with no row, an empty or missing
   ledger (without creating one), and `--baseline` / `--repo-commit` beside it.
 - **The method-change refusal still applies** — an amend is not a way round it.
+- **A merged row is history**: `--amend` refuses a row `origin/HEAD` already
+  holds, backfilled or not, and allows one only this branch carries — asking
+  whether the ROW merged, because `repo_commit` names an already-merged parent
+  until the backfill. With no `origin/HEAD` it warns and proceeds.
 - **`--print-trend` names a row whose deltas disagree with the ledger**, so
   the damage a past hand-edit already did is visible.
 - **The prose names the command** where Phase 7 gives the instruction.
@@ -34,7 +38,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from .test_loss_warrants import _clean_env, _repo
+from .test_loss_warrants import _clean_env, _git, _repo
 
 SKILL_DIR = (
     Path(__file__).resolve().parent.parent.parent / "skills" / "curating-context"
@@ -242,6 +246,77 @@ class TestAmendRefuses:
         assert r.returncode == 4, r.stderr
         assert "refusing to amend" in r.stderr
         assert (repo / LEDGER).read_text() == text
+
+
+def _with_origin(tmp_path: Path, repo: Path) -> None:
+    """Publish REPO's current HEAD as origin's default branch."""
+    bare = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main")
+    _git(repo, "fetch", "-q", "origin")
+    _git(repo, "remote", "set-head", "origin", "main")
+
+
+def _commit(repo: Path, msg: str) -> None:
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", msg)
+
+
+class TestAMergedRowIsHistory:
+    def test_a_merged_row_is_refused(self, tmp_path: Path):
+        repo = _curated(tmp_path)
+        _commit(repo, "curation")
+        _with_origin(tmp_path, repo)
+        text = (repo / LEDGER).read_text()
+        r = _record(repo, 470, "--amend")
+        assert r.returncode == 1, r.stderr
+        assert "already on origin/main" in r.stderr
+        assert (repo / LEDGER).read_text() == text
+
+    def test_a_row_only_this_branch_carries_is_amended(self, tmp_path: Path):
+        """The ordinary Phase 7 case: the baseline is on main — as is the
+        parent repo_commit names — and the curation row is not."""
+        repo = _repo(tmp_path, "# P\n")
+        _seed(repo, BASELINE)
+        _commit(repo, "baseline")
+        _with_origin(tmp_path, repo)
+        rows = [BASELINE, _row("2000-01-03", 450, ["demote:X"])]
+        _seed(repo, *rows)
+        _commit(repo, "curation, unmerged")
+        r = _record(repo, 470, "--amend")
+        assert r.returncode == 0, r.stderr
+        assert _rows(repo)[1]["tokens"] == 470
+
+    def test_a_backfill_after_merge_does_not_hide_it(self, tmp_path: Path):
+        repo = _curated(tmp_path)
+        _commit(repo, "curation")
+        _with_origin(tmp_path, repo)
+        lines = (repo / LEDGER).read_text().splitlines()
+        row = json.loads(lines[1])
+        row["repo_commit"] = "abc1234"
+        lines[1] = json.dumps(row)
+        (repo / LEDGER).write_text("\n".join(lines) + "\n")
+        r = _record(repo, 470, "--amend")
+        assert r.returncode == 1, r.stderr
+
+    def test_a_parallel_runs_row_on_main_is_not_this_row(self, tmp_path: Path):
+        """Positional matching would refuse here: main holds as many rows for
+        the file as this branch does. Only content says they differ."""
+        repo = _repo(tmp_path, "# P\n")
+        _seed(repo, BASELINE, _row("2000-01-02", 480, ["demote:Y"]))
+        _commit(repo, "another run")
+        _with_origin(tmp_path, repo)
+        _seed(repo, BASELINE, _row("2000-01-03", 450, ["demote:X"]))
+        _commit(repo, "this run")
+        r = _record(repo, 470, "--amend")
+        assert r.returncode == 0, r.stderr
+
+    def test_no_origin_warns_and_proceeds(self, tmp_path: Path):
+        repo = _curated(tmp_path)
+        r = _record(repo, 470, "--amend")
+        assert r.returncode == 0, r.stderr
+        assert "cannot tell whether this row has merged" in r.stderr
 
 
 class TestTheTrendNamesAStaleDelta:

@@ -164,6 +164,12 @@ carried: a carried verdict describes the tree *before* the fix, and only the
 author knows whether the fix touched what it measured. `--print-trend` warns
 about any row whose deltas disagree with the row before it.
 
+The merged test is enforced, too: `--amend` refuses a row the default branch
+(`origin/HEAD`) already holds, matched on everything but `repo_commit`. It asks
+whether the **row** merged, not whether `repo_commit` did — before the backfill
+that field names the parent of the shipping commit, which is always on the
+default branch, so the obvious check would refuse every amend Phase 7 asks for.
+
 ### Backfilling `repo_commit`
 
 Phase 7 measures, records, and only then commits the ledger alongside the edits.

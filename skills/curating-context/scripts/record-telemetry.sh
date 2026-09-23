@@ -183,9 +183,15 @@ Options:
                    --repo-commit alongside it. The measurement-method refusal
                    (exit 4) applies exactly as it does to an append.
 
-                   Within a run only: once the row's commit has merged it is
-                   history, and a later run appends
-                   (references/telemetry.md, "rewrite within, append across").
+                   Within a run only: once the row has merged it is history,
+                   and a later run appends (references/telemetry.md, "rewrite
+                   within, append across"). So --amend also refuses a row the
+                   default branch (origin/HEAD) already holds — matched on
+                   every field but repo_commit, which a backfill may have
+                   changed since. Not by asking whether repo_commit merged:
+                   before the backfill it names a parent that always has. With
+                   no origin/HEAD it warns and proceeds; the remote-tracking
+                   ref is read as-is, so fetch first if it may be stale.
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:
@@ -276,7 +282,8 @@ Exit codes:
      without a verdict; --claims-dropped N>0 against `ok`; --repo-commit
      with an append-only flag, an unknown revision, an empty ledger or a
      baseline row; or --amend with --baseline or --repo-commit, an empty
-     ledger, no row for the file, or a baseline row), or stdin was not
+     ledger, no row for the file, a baseline row, or a row already on the
+     default branch), or stdin was not
      measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
@@ -306,6 +313,8 @@ NOTE_SET=0
 BACKFILL=0
 BACKFILL_REV=""
 AMEND=0
+BASE_REF=""
+BASE_LEDGER=""
 
 # --actions and --note accept an empty value deliberately, so they cannot use
 # ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
@@ -588,13 +597,42 @@ elif [ "$AMEND" -eq 1 ]; then
     echo "      --amend rewrites the row this run already recorded; record" >&2
     echo "      it with a plain append first." >&2
     exit 1; }
+  # The merged-row guard needs the DEFAULT BRANCH's copy of the ledger. Not
+  # repo_commit: before the backfill it names the parent of the shipping commit,
+  # which is already on the default branch, so "is repo_commit merged?" would
+  # refuse exactly the amend Phase 7 asks for. Whether the ROW is there is the
+  # question telemetry.md's test actually asks.
+  #
+  # Unresolvable is a warning, not a refusal: a repo with no origin/HEAD has no
+  # default branch to have merged into, and the rule stays the author's to keep.
+  BASE_REF="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || BASE_REF=""
+  case "$LEDGER" in
+    "$ROOT"/*) LEDGER_REL="${LEDGER#"$ROOT"/}" ;;
+    /*) LEDGER_REL="" ;;
+    *) LEDGER_REL="${LEDGER#./}" ;;
+  esac
+  if [ -z "$BASE_REF" ]; then
+    echo "WARN cannot tell whether this row has merged: no origin/HEAD to compare" >&2
+    echo "     against (\`git remote set-head origin --auto\` sets one). Amending" >&2
+    echo "     a merged row rewrites history — only amend this run's row." >&2
+  elif [ -z "$LEDGER_REL" ]; then
+    echo "WARN cannot tell whether this row has merged: $LEDGER is outside" >&2
+    echo "     this repo, so $BASE_REF holds no copy of it to compare against." >&2
+    BASE_REF=""
+  elif git cat-file -e "$BASE_REF:$LEDGER_REL" 2>/dev/null; then
+    git show "$BASE_REF:$LEDGER_REL" >"$TMP/base.jsonl" || {
+      echo "ERROR cannot read $LEDGER_REL from $BASE_REF" >&2; exit 2; }
+    BASE_LEDGER="$TMP/base.jsonl"
+  fi
+  # No ledger on the default branch at all: nothing has merged, so every row is
+  # this branch's own. BASE_LEDGER stays empty and the guard has nothing to find.
 else
   mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
   [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 fi
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" "$ACTIONS_SET" "$NOTE_SET" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" "$ACTIONS_SET" "$NOTE_SET" "$BASE_REF" "$BASE_LEDGER" <<'PY' || RC=$?
 import datetime as dt
 import json
 import os
@@ -604,7 +642,7 @@ import tempfile
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
  no_loss, seams, seams_acked, no_loss_warrants, repo_commit,
  mode, claims_dropped, claims_warranted, counts, counts_acked,
- actions_set, note_set) = sys.argv[1:22]
+ actions_set, note_set, base_ref, base_ledger) = sys.argv[1:24]
 
 
 def is_curation_row(row):
@@ -822,6 +860,25 @@ if mode == "amend":
             file=sys.stderr,
         )
         sys.exit(1)
+    # telemetry.md's test, made mechanical: unmerged, the row is a draft of
+    # this run's record; merged, it is history, and a later run appends. The
+    # row is on the default branch if a row there matches it on everything but
+    # repo_commit — which the backfill may have rewritten on this branch after
+    # the first commit merged, and which is not what makes it the same row.
+    if base_ledger:
+        def identity(r):
+            return json.dumps({k: v for k, v in r.items() if k != "repo_commit"},
+                              sort_keys=True)
+        merged = {identity(r) for _, r in read_ledger(base_ledger)[1]}
+        if identity(target) in merged:
+            print(
+                f"ERROR the newest row for {row['file']} ({target.get('ts')}) is "
+                f"already on {base_ref}: its run has merged, so it is history, "
+                "not a draft. Across runs the ledger only appends — record this "
+                "measurement as a new row (a plain append).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     # The run's own attributes are not re-measured by a fresh measure-context.sh
     # payload, and a late fix usually moves only the count — so they carry
     # forward rather than silently becoming null. By GROUP, because the verdict
