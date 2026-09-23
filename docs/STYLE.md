@@ -4,6 +4,10 @@ Conventions with a reference implementation. The short rules that apply to every
 script live inline in [AGENTS.md](../AGENTS.md) under `## Scripts`; this file
 carries the conventions that need a full template and a rationale.
 
+Token budgets are next door: the SKILL.md ratchet, the two readings that bind
+it and how to anchor a file are in [BUDGETS.md](BUDGETS.md), which split out of
+this file when it reached its own per-doc budget.
+
 ## Invoking a skill's own scripts (per-script resolution)
 
 **Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path names a file that doesn't exist, failing with "No such file or directory" in every project without its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
