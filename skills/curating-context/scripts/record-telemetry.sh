@@ -750,6 +750,15 @@ def is_curation_row(row):
     return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
 
 
+# Both rewrites target this run's row as the newest, and merging the default
+# branch in leaves the cadence's baseline row newest instead — so a refusal on
+# a baseline row names the repair that puts this run's rows back last (#325).
+AFTER_MERGE = ("Merged the default branch in since recording? Run "
+               "`record-telemetry.sh --repair` first: it moves this branch's "
+               "rows after the default branch's, and this run's row is newest "
+               "again.")
+
+
 def plural(n, word):
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
@@ -943,7 +952,8 @@ if mode == "backfill":
             f"{ledger} is a `{(target.get('actions') or ['baseline'])[0]}` row, "
             "which records a state that has already passed — a later commit "
             "cannot change what it describes, and telemetry.md exempts it from "
-            "the rewrite rule in both directions. Backfill the curation row.",
+            "the rewrite rule in both directions. Backfill the curation row. "
+            f"{AFTER_MERGE}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1067,7 +1077,8 @@ if mode == "amend":
             f"ERROR the newest row for {row['file']} is a "
             f"`{(target.get('actions') or ['baseline'])[0]}` row, which records "
             "a state that has already passed — telemetry.md exempts it from the "
-            "rewrite rule. Record the curation with a plain append; amend that.",
+            "rewrite rule. Record the curation with a plain append; amend that. "
+            f"{AFTER_MERGE}",
             file=sys.stderr,
         )
         sys.exit(1)

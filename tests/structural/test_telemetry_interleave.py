@@ -24,6 +24,8 @@ What this file pins:
 - **Both modes share one row identity**, blind to a backfilled `repo_commit`
   and to repaired deltas, so neither breaks the held-row rule with the rewrite
   the other makes (CR 1).
+- **After a merge, `--amend` and `--repo-commit` name `--repair`**, and once
+  it has run both reach this run's row again (CR 2).
 - **With no `origin/HEAD` it warns** and repairs in file order.
 - **The cadence warns** on a stale ledger and is silent on a clean one, and
   `--check` names a workflow rendered without the step.
@@ -84,6 +86,18 @@ def _fixes(r) -> set:
         (f["line"], f["field"], f["was"], f["now"])
         for f in map(json.loads, r.stdout.splitlines())
     }
+
+
+def _backfill(repo: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(RECORD), "--repo-commit", "HEAD"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        cwd=str(repo),
+        env=_clean_env(),
+        timeout=30,
+    )
 
 
 def _merged(tmp_path: Path, *, origin: bool = True) -> Path:
@@ -194,6 +208,37 @@ class TestOtherShapes:
         r = _repair(repo, "--dry-run")
         assert "cannot tell which rows the default branch holds" in r.stderr
         assert _fixes(r) == {(4, "delta_tokens", 0, 100), (4, "delta_days", 7, 0)}
+
+
+class TestPhase7RewritesAfterAMerge:
+    """A merge leaves the cadence's baseline row newest, where both rewrites
+    look for this run's row. The refusal names --repair, and after it both
+    rewrites reach this run's row again (CR 2)."""
+
+    def test_backfill_names_repair_then_lands_on_this_runs_row(self, tmp_path: Path):
+        repo = _merged(tmp_path)
+        r = _backfill(repo)
+        assert r.returncode == 1, r.stderr
+        assert "--repair" in r.stderr, r.stderr
+        assert _repair(repo).returncode == 0
+        assert _backfill(repo).returncode == 0
+        last = _rows(repo)[-1]
+        assert last["actions"] == ["demote:Layout"], last
+        assert last["repo_commit"], last
+
+    def test_amend_names_repair_then_lands_on_this_runs_row(self, tmp_path: Path):
+        repo = _merged(tmp_path)
+        r = _record(repo, 390, "--amend")
+        assert r.returncode == 1, r.stderr
+        assert "--repair" in r.stderr, r.stderr
+        assert _repair(repo).returncode == 0
+        r = _record(repo, 390, "--amend")
+        assert r.returncode == 0, r.stderr
+        assert [(x["tokens"], x["actions"]) for x in _rows(repo)][-1] == (
+            390,
+            ["demote:Layout"],
+        )
+        assert len(_rows(repo)) == 4
 
 
 class TestOneIdentityForBothModes:
