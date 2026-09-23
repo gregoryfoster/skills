@@ -172,14 +172,15 @@ whether the **row** merged, not whether `repo_commit` did — before the backfil
 that field names the parent of the shipping commit, which is always on the
 default branch, so the obvious check would refuse every amend Phase 7 asks for.
 
-**Repairing a ledger a hand-edit or a merge already damaged** is `--repair`: it corrects
-exactly the rows that warning names, through the same function, and touches no
-observed field — so it does not break *append across*, which protects what a
-row observed, and it applies to merged rows too. A null is never filled in.
-Stdout is one JSON line per corrected field and empty when clean, so
+**Repairing a ledger a hand-edit or a merge already damaged** is `--repair`: it
+corrects exactly the rows that warning names, through the same function, and
+touches no observed field — so it does not break *append across*, which
+protects what a row observed, and it applies to merged rows too. A null is never
+filled in. Stdout is one JSON line per correction — a corrected field, or a row
+[moved](#merging-the-default-branch-in) — and empty when clean, so
 `record-telemetry.sh --repair --dry-run` is also the read-only detector a cohort
-sweep runs. Commit a repair on its own, so its diff is only the deltas. A
-repaired row the default branch already holds is a line both branches now
+sweep runs. Commit a repair on its own, so its diff is only the deltas and the
+moves. A repaired row the default branch already holds is a line both branches now
 carry, so merge that repair with its branch up to date: if the default branch
 appends first, `merge=union` keeps **both** versions of the row.
 
