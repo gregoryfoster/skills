@@ -928,11 +928,11 @@ if mode == "repair":
         print(f"{ledger}: every recorded delta agrees with its row's "
               "predecessor; nothing to repair", file=sys.stderr)
     elif dry == "1":
-        print(f"--dry-run: would repair {plural(len(fixes), 'field')} on "
+        print(f"--dry-run: would make {plural(len(fixes), 'correction')} to "
               f"{plural(rows, 'row')} of {ledger}", file=sys.stderr)
     else:
         rewrite_ledger(ledger, lines)
-        print(f"repaired {plural(len(fixes), 'field')} on "
+        print(f"made {plural(len(fixes), 'correction')} to "
               f"{plural(rows, 'row')} of {ledger} — commit this on its own, so "
               "its diff is only the deltas and the moves", file=sys.stderr)
     sys.exit(0)

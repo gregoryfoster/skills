@@ -29,7 +29,8 @@ What this file pins:
 - **A branch row older than the cadence row gets a negative `delta_days`** —
   documented, since the move follows the ledger's order (CR 3).
 - **With no `origin/HEAD` it warns** and repairs in file order.
-- **The cadence warns** on a stale ledger and is silent on a clean one, and
+- **The cadence warns** — in corrections, since a move is not a delta (CR 4) —
+  on a stale ledger and is silent on a clean one, and
   `--check` names a workflow rendered without the step.
 - **`cohort-report.sh` derives the best reduction** from observed tokens, so a
   stale stored `delta_tokens` cannot move it.
@@ -327,7 +328,7 @@ class TestTheCadenceWarns:
         repo = _merged(tmp_path, origin=False)
         r = _run_step(repo, RECORD_TELEMETRY_SH=str(RECORD))
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "::warning::2 recorded delta field(s)" in r.stdout, r.stdout
+        assert "::warning::2 correction(s) to" in r.stdout, r.stdout
         assert '"field": "delta_tokens"' in r.stdout, r.stdout
 
     def test_a_clean_ledger_is_silent(self, tmp_path: Path):

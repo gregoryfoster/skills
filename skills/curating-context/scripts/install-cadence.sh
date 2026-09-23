@@ -1009,7 +1009,7 @@ jobs:
           git remote set-head origin --auto >/dev/null 2>&1 || true
           bash "\$RECORD_TELEMETRY_SH" --repair --dry-run --ledger "$LEDGER" >/tmp/deltas.jsonl
           if [ -s /tmp/deltas.jsonl ]; then
-            echo "::warning::\$(wc -l </tmp/deltas.jsonl | tr -d ' ') recorded delta field(s) in $LEDGER disagree with the row now before them — usually a curation branch that merged or rebased this one in. On a branch, run \\\`record-telemetry.sh --repair\\\` and commit it on its own."
+            echo "::warning::\$(wc -l </tmp/deltas.jsonl | tr -d ' ') correction(s) to $LEDGER — recorded deltas that disagree with the row now before them, usually after a curation branch merged or rebased this one in. On a branch, run \\\`record-telemetry.sh --repair\\\` and commit it on its own."
             cat /tmp/deltas.jsonl
           fi
 YAML
