@@ -26,6 +26,8 @@ What this file pins:
   the other makes (CR 1).
 - **After a merge, `--amend` and `--repo-commit` name `--repair`**, and once
   it has run both reach this run's row again (CR 2).
+- **A branch row older than the cadence row gets a negative `delta_days`** —
+  documented, since the move follows the ledger's order (CR 3).
 - **With no `origin/HEAD` it warns** and repairs in file order.
 - **The cadence warns** on a stale ledger and is silent on a clean one, and
   `--check` names a workflow rendered without the step.
@@ -202,6 +204,24 @@ class TestOtherShapes:
         _git(repo, "rebase", "-q", "main")
         r = _repair(repo)
         assert _fixes(r) == {(3, "delta_days", 7, 0)}, r.stdout
+
+    def test_a_branch_row_older_than_the_cadence_row_gets_a_negative_gap(
+        self, tmp_path: Path
+    ):
+        """Documented, not a defect: the move follows the ledger's order, not
+        the calendar, and delta_days is arithmetic on that order (CR 3)."""
+        repo = _merged(tmp_path)
+        lines = _lines(repo)
+        pre = json.loads(lines[1])
+        (repo / LEDGER).write_text(
+            "\n".join([lines[0], json.dumps({**pre, "ts": "2026-09-09"}), *lines[2:]])
+            + "\n"
+        )
+        assert _repair(repo).returncode == 0
+        moved = next(
+            r for r in _rows(repo) if r["actions"] == ["baseline:pre-curation"]
+        )
+        assert moved["delta_days"] == -1, moved
 
     def test_no_origin_warns_and_repairs_in_file_order(self, tmp_path: Path):
         repo = _merged(tmp_path, origin=False)

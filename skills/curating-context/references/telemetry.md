@@ -206,7 +206,9 @@ duplicate above, verified: the curation's merge then keeps that row twice. So
 `origin/HEAD` holds, in their own order — what a rebase gives — then
 recomputes. Held rows stay byte-identical, and the newest row is this run's
 again, where the [backfill](#backfilling-repo_commit) looks. A move is reported
-as field `line`; without `origin/HEAD` it warns and repairs in file order.
+as field `line`; without `origin/HEAD` it warns and repairs in file order. A
+branch row measured before the cadence row now ahead of it gets a **negative**
+`delta_days` — correct for the ledger's order; its `ts` still says when.
 
 A cadence row landing after the branch's last merge is interleaved by the
 curation's own merge, which no branch step prevents; the scheduled job's

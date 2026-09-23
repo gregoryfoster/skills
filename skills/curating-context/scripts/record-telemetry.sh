@@ -315,7 +315,9 @@ Row schema (one JSON object per line):
   delta_tokens      change vs the previous row for this file. Null on the first
                     row, and null when the measurement method changed since the
                     previous row — see delta_unavailable
-  delta_days        days since the previous row (null if first)
+  delta_days        days since the previous row (null if first). Negative when
+                    the row was measured before the one now ahead of it — the
+                    order --repair gives a branch's rows after a merge
   delta_unavailable present only when delta_tokens was suppressed; says why
                     The three delta fields are DERIVED from the previous row,
                     never observed: edit a row or remove its predecessor by hand,
