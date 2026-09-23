@@ -465,7 +465,7 @@ class TestAPersistThatDidNotHappenSaysSo:
     """#294 CR 22. `--anchor` and `--calibrate` ask for a write, and a run in
     which any count fell back persists nothing — correctly, since an estimate
     cannot anchor the estimator. It used to exit 0 saying nothing about it, so
-    docs/STYLE.md's refresh loop, `… --anchor … || break`, never broke on the
+    docs/BUDGETS.md's refresh loop, `… --anchor … || break`, never broke on the
     likeliest failure and moved on to the next skill with this one unanchored.
     Now it names what was not written and exits 2, after the measurement.
     """
@@ -509,7 +509,7 @@ class TestAPersistThatDidNotHappenSaysSo:
         assert "persisted nothing" not in r.stderr
 
     def test_the_refresh_loop_breaks_on_it(self, tmp_path: Path, partial_env: dict):
-        """The loop docs/STYLE.md documents, in miniature: it stops at the
+        """The loop docs/BUDGETS.md documents, in miniature: it stops at the
         first skill whose anchor could not be written."""
         repo = _repo(tmp_path)
         _second_corner(repo)

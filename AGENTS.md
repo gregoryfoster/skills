@@ -158,8 +158,8 @@ forking it. Three of those resolve through the same three-step lookup —
 path), and `SKILLS_PIN_FILE` / `.skills/skills-pin` (one `<submodule-path>
 <commit-ish>` per line). That is the shared *shape*, not the inventory — the
 rest use their own, and reading this section as the list is how
-[#261](https://github.com/gregoryfoster/skills/issues/261) reached a repo that
-could tailor a gate's watch list but not its advice. Every `.skills/` file a
+[#261](https://github.com/gregoryfoster/skills/issues/261) left a repo able to
+tailor a gate's watch list but not its advice. Every `.skills/` file a
 project may commit, what replaces or extends a default, and what each absence
 means: [docs/KNOBS.md](docs/KNOBS.md), held complete by
 [tests/structural/test_skills_knob_inventory.py](tests/structural/test_skills_knob_inventory.py).
@@ -167,8 +167,8 @@ The per-skill defaults and resolver helpers: [docs/CONVENTIONS.md](docs/CONVENTI
 
 ## References convention
 
-Skills may carry supplementary `references/*.md` files for content that exceeds the
-SKILL.md body cap. They are loaded on demand, not on activation. Two rules are
+Skills may carry supplementary `references/*.md` files for content exceeding the
+SKILL.md body cap, loaded on demand rather than on activation. Two rules are
 enforced by the structural suite:
 
 - **Every `references/<name>.md` must be linked from its sibling SKILL.md** —
@@ -177,10 +177,10 @@ enforced by the structural suite:
 - **Relative links resolve from the file that contains them.** Every rendered
   link in any `skills/**/*.md` — SKILL.md and references alike — must point at a
   real path, or [tests/structural/test_relative_links.py](tests/structural/test_relative_links.py)
-  fails. Links inside code fences and inline code spans are skipped: they never
-  render as links, which is where illustrative paths belonging to a *consuming*
-  repo live. An illustrative link in prose needs an `EXEMPT_LINKS` entry naming
-  the file, the target and the reason ([#143](https://github.com/gregoryfoster/skills/issues/143)).
+  fails. Links inside code fences and inline code spans are skipped — they never
+  render, and that is where a *consuming* repo's illustrative paths live. An
+  illustrative link in prose needs an `EXEMPT_LINKS` entry naming the file, the
+  target and the reason ([#143](https://github.com/gregoryfoster/skills/issues/143)).
 
 Convention, not enforced: **no frontmatter**, **`lowercase-kebab.md`** names, and
 no length cap — escaping that body cap is the point of a reference file.
@@ -196,15 +196,14 @@ Every `SKILL.md` is held to a **6,000-token ratchet** — the figure
 which also holds every `references/*.md` to the 10,000-token per-doc budget,
 with nothing exempt — [#152](https://github.com/gregoryfoster/skills/issues/152)
 retired the one exemption by splitting the append-only log rather than excusing
-it. Most skills meet it; the rest carry a named exception with
-its reason beside it, and every file names its own figure in prose so the gate
-and the run read the same number. A ratchet only ever comes down.
+it. The skills that miss it carry a named exception with its reason beside it,
+and every file names its own figure in prose so the gate and the run read the
+same number. A ratchet only ever comes down.
 
-Two readings bind it, not one: the offline estimate pre-commit sees, and
-`count_tokens` under `SKILL_BUDGET_EXACT=1`. Only the estimate is always on,
-which let three ratchets be breached past a green suite. How the two are
-reconciled, what pre-commit warns about, and the weekly exact gate:
-[docs/STYLE.md](docs/STYLE.md).
+Two readings bind it, not one, and only the estimate is always on — which let
+three ratchets be breached past a green suite. What each reading is, how they
+are reconciled, anchoring a file before curating it, and the weekly exact gate:
+[docs/BUDGETS.md](docs/BUDGETS.md).
 
 `AGENTS.md` itself is gated: the `context-budget-gate` pre-commit hook fails any commit that puts it over `.skills/context-budget` (#88).
 
@@ -259,12 +258,11 @@ pytest tests/integration/ -v -m integration  # billed, needs .env; never gated
 ```
 
 **Put a new structural rule in its own `tests/structural/test_<rule>.py`, not at
-the end of `test_context_surface.py`.** That file is already ~4,100 lines and is
-the obvious default home, which is exactly the problem: when several agents work
-the backlog in parallel worktrees, appending to one shared file turns every merge
-into a conflict, while a new per-rule file merges clean. It also keeps a rule
-findable by filename. Extend an existing file only when the new test belongs to
-the rule that file already owns.
+the end of `test_context_surface.py`.** That file is the obvious default home,
+which is exactly the problem: when several agents work the backlog in parallel
+worktrees, appending to one shared file turns every merge into a conflict, while
+a per-rule file merges clean and stays findable by filename. Extend an existing
+file only when the new test belongs to the rule that file already owns.
 
 `ANTHROPIC_API_KEY` lives in the gitignored `.env` at the repo root. Load it with
 `set -a && source .env && set +a`; `run-integration-tests.sh` and
@@ -292,5 +290,6 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 
 - [docs/STYLE.md](docs/STYLE.md) — the per-script resolution template, the gate-script rules and the scripts they bind, the `GIT_DIR` scrub, and the refused `extensions.worktreeConfig`
 - [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the resolver helpers behind the three env-var knobs
+- [docs/BUDGETS.md](docs/BUDGETS.md) — a budget's two readings, anchoring, and the weekly exact gate
 - [docs/KNOBS.md](docs/KNOBS.md) — every `.skills/` file a project may commit: grammar, reader, replaces-or-extends, and what absence means
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery
