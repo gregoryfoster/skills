@@ -27,8 +27,28 @@ from tests.utils.skill_loader import Skill, all_skills
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 
-# Collect all (skill, script_path) pairs for parametrization
-_all_scripts = [(skill, script) for skill in all_skills() for script in skill.scripts()]
+# (label, script_path) pairs for parametrization.
+#
+# Repo-root `scripts/` is in scope since
+# [#318](https://github.com/gregoryfoster/skills/issues/318). These properties
+# — executable bit, `set -euo pipefail`, a `--help` that exits 0 with output —
+# are AGENTS.md's script conventions, stated for every script the repo ships,
+# but the parametrization was built from `all_skills()` and so stopped at
+# `skills/*/scripts/`. `SHELL_SCRIPT_GLOBS` above already covered repo-root
+# scripts for shellcheck, which made the gap easy to miss: the surface looked
+# gated because half of it was.
+#
+# The cost was not hypothetical. `scripts/run-integration-tests.sh` forwarded
+# no arguments and handled no flags, so `bash scripts/run-integration-tests.sh
+# --help` silently dropped the flag and ran the BILLED integration suite —
+# `--help` being the one flag a reader tries precisely to find out what a
+# script costs before running it.
+_all_scripts = [
+    (skill.dir_name, script) for skill in all_skills() for script in skill.scripts()
+]
+_all_scripts += [
+    ("<root>", path) for path in sorted((REPO_ROOT / "scripts").glob("*.sh"))
+]
 
 
 # --- shellcheck gate (#90) -------------------------------------------------
@@ -386,13 +406,31 @@ def _run_help(script_path: str) -> subprocess.CompletedProcess:
 
 @pytest.fixture(
     params=_all_scripts,
-    ids=lambda pair: f"{pair[0].dir_name}/{pair[1].name}",
+    ids=lambda pair: f"{pair[0]}/{pair[1].name}",
 )
 def script_pair(request):
     return request.param
 
 
 class TestScriptProperties:
+    def test_repo_root_scripts_are_examined(self):
+        """The half that keeps the extension honest (#318).
+
+        Widening a parametrization is invisible if the new glob matches
+        nothing: the suite stays green and the surface still looks gated. Pin
+        that repo-root `scripts/` actually contributed, so a layout change
+        fails here rather than quietly shrinking the rule back to where it was.
+        """
+        found = sorted(s.name for label, s in _all_scripts if label == "<root>")
+        assert found, (
+            "no repo-root scripts/*.sh reached TestScriptProperties — the "
+            "#318 extension has silently reverted to skills/ only."
+        )
+        assert "pre-ship.sh" in found, (
+            "scripts/pre-ship.sh is this repo's ship gate and must be held to "
+            f"the script conventions it gates for. Found: {found}"
+        )
+
     def test_is_executable(self, script_pair):
         _, script = script_pair
         assert os.access(script, os.X_OK), f"{script} must be executable (chmod +x)"

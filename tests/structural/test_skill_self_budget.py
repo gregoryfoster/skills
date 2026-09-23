@@ -54,7 +54,7 @@ Three things this gate deliberately is, and is not:
   squeezed against its ratchet by an estimate reading high got silence, and
   then a curation it never needed. `warn_about_the_other_edge` names those, and
   `warn_about_the_anchors` names every SKILL.md with no anchor and every
-  measured file whose anchor has lapsed — the gap docs/STYLE.md's by-hand
+  measured file whose anchor has lapsed — the gap docs/BUDGETS.md's by-hand
   refresh closes.
 - **The skill's own machinery.** The measurement shells out to
   `measure-context.sh` with the flags #95 named rather than reimplementing the
@@ -641,7 +641,7 @@ def anchor_cmd(skill: str) -> str:
 
 
 # Every skill at once: `anchor_cmd` in a loop, behind the preflight so a
-# missing key fails once rather than once per skill. docs/STYLE.md documents it
+# missing key fails once rather than once per skill. docs/BUDGETS.md documents it
 # verbatim and TestTheAnchorsAreVisible holds the two together, because the
 # refresh is committed by hand and this is the text a hand copies.
 REFRESH_ALL_CMD = (
@@ -858,7 +858,7 @@ def estimate_caveat(skill: str, estimate: int | None = None, *, anchored: bool) 
             "the overage is the estimator's and the fix is an anchor, not a "
             "trim — this counts the skill's SKILL.md and references exactly "
             "and prices each from its own count from then on "
-            "(docs/STYLE.md):\n  " + anchor_cmd(skill)
+            "(docs/BUDGETS.md):\n  " + anchor_cmd(skill)
         )
     if estimate is None:
         return caveat
@@ -965,7 +965,7 @@ def warn_about_the_other_edge(surfaces: dict, counts: dict | None = None) -> Non
     Its remedy is not "run the exact pass" but "anchor the file": the anchor
     command counts the skill exactly, and if the count has the headroom the
     squeeze is gone for good, because the estimate is then a rescale of that
-    count. Silent when nothing qualifies, which after docs/STYLE.md's refresh
+    count. Silent when nothing qualifies, which after docs/BUDGETS.md's refresh
     is the steady state — only a new skill or a lapsed anchor reappears here.
     """
     rows = squeeze_rows(surfaces, counts)
@@ -994,7 +994,7 @@ def warn_about_the_other_edge(surfaces: dict, counts: dict | None = None) -> Non
         "that count from then on:\n"
         + "\n".join(f"  {anchor_cmd(skill)}" for skill, *_ in rows)
         + f"\nTrim only if the exact count is still tight; otherwise commit "
-        f"{COUNTS_KNOB.name} and the squeeze is gone (docs/STYLE.md).",
+        f"{COUNTS_KNOB.name} and the squeeze is gone (docs/BUDGETS.md).",
         EstimateSqueezeWarning,
         stacklevel=2,
     )
@@ -1033,7 +1033,7 @@ def lapsed_anchor_rows(
 
 
 def unanchored_skills(surfaces: dict, counts: dict | None = None) -> list[str]:
-    """Skills whose SKILL.md has no row at all — the gap docs/STYLE.md's
+    """Skills whose SKILL.md has no row at all — the gap docs/BUDGETS.md's
     refresh closes, and the state 17 of 19 were in when #294 was filed.
 
     SKILL.md only. The refresh anchors each skill's references too, but the
@@ -1046,7 +1046,7 @@ def unanchored_skills(surfaces: dict, counts: dict | None = None) -> list[str]:
 
 
 def warn_about_the_anchors(surfaces: dict, counts: dict | None = None) -> None:
-    """Name every file priced from the ratio that docs/STYLE.md says is anchored.
+    """Name every file priced from the ratio that docs/BUDGETS.md says is anchored.
 
     A warning, never a failure: the remedy needs a key, pre-commit holds none,
     and a new skill cannot be anchored in the commit that adds it without one.
@@ -1077,7 +1077,7 @@ def warn_about_the_anchors(surfaces: dict, counts: dict | None = None) -> None:
     warnings.warn(
         "ANCHORS: these files are priced from the repo-wide ratio in "
         f"{RATIO_KNOB.name}, not from their own last exact count, and "
-        "docs/STYLE.md anchors every SKILL.md. POLICY_ESTIMATE_BAND lets the "
+        "docs/BUDGETS.md anchors every SKILL.md. POLICY_ESTIMATE_BAND lets the "
         "ratio misprice a SKILL.md anywhere from "
         f"{POLICY_ESTIMATE_BAND[0]:+.0%} to {POLICY_ESTIMATE_BAND[1]:+.0%}, and "
         "a lapsed anchor looks like a live one to everything that does not read "
@@ -1785,7 +1785,7 @@ class TestWhatTheCountsFileAnchors:
     is strictly more accurate — it is the correction #217's blind spot asked
     for — but it also means "the budget binds BOTH readings" describes one
     measurement counted twice for that file rather than two independent ones.
-    Since #294 that is the policy for every SKILL.md (docs/STYLE.md), and a
+    Since #294 that is the policy for every SKILL.md (docs/BUDGETS.md), and a
     skill the policy has not reached is reported rather than declared.
     """
 
@@ -1825,7 +1825,7 @@ class TestWhatTheCountsFileAnchors:
         reasoned from "no `skills/*/SKILL.md` is anchored" for months after it
         stopped being true, and adding a skill to the counts file should cost a
         deliberate edit. #294 made the declaration "every SKILL.md", written in
-        docs/STYLE.md with the command that carries it out, and made the prose
+        docs/BUDGETS.md with the command that carries it out, and made the prose
         that reasoned from the set read the measurement instead
         (`priced_from_its_anchor`). What is left to pin is that a skill the
         policy has not reached cannot go unreported: never anchored, or anchored
@@ -2376,10 +2376,16 @@ class TestTheAnchorsAreVisible:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_docs_style_documents_the_refresh_verbatim(self):
-        """The refresh is committed by hand, so the doc is what a hand copies."""
-        style = " ".join((REPO_ROOT / "docs" / "STYLE.md").read_text().split())
-        assert " ".join(REFRESH_ALL_CMD.split()) in style
+    def test_docs_budgets_documents_the_refresh_verbatim(self):
+        """The refresh is committed by hand, so the doc is what a hand copies.
+
+        The doc is docs/BUDGETS.md since #318 split the self-budget section out
+        of docs/BUDGETS.md, which had reached its per-doc budget. This assertion
+        is what would have caught that silently: it reads the file rather than
+        naming it in prose.
+        """
+        budgets = " ".join((REPO_ROOT / "docs" / "BUDGETS.md").read_text().split())
+        assert " ".join(REFRESH_ALL_CMD.split()) in budgets
 
 
 class TestTheScheduledExactGate:

@@ -323,3 +323,61 @@ skills/init-socraticode/SKILL.md :: tighten :: down from 10,050 is recorded besi
 skills/init-socraticode/SKILL.md :: disproven :: dominate the index. It governs the code index and graph, not artifacts, so
 skills/init-socraticode/SKILL.md :: tighten :: **ask** whether dated prose registered as one (`docs/plans/`) should leave the
 skills/init-socraticode/SKILL.md :: tighten :: code index too. Template, question, and the first-party `skills/` carve-out:
+
+# --- #318 curation run (2026-09-23) ---------------------------------------
+# docs/STYLE.md was at 9,992/10,000 and AGENTS.md at 5,990/6,000. The
+# self-budget section was the one thing in STYLE.md that is not script style,
+# so it split out to docs/BUDGETS.md. The Self-budget pointer in AGENTS.md
+# named STYLE.md and had to be re-aimed by the same run that invalidated it —
+# the `retarget` shape exactly. Both lines below are that one pointer; the
+# replacement was read against them, and the third clause ("what pre-commit
+# warns about") was widened to "anchoring a file before curating it", which is
+# what the destination actually leads with.
+AGENTS.md :: retarget :: reconciled, what pre-commit warns about, and the weekly exact gate:
+AGENTS.md :: retarget :: [docs/STYLE.md](docs/STYLE.md).
+
+# --- #318 curation: class-C tightening of AGENTS.md (2026-09-23) ---
+# Every entry below was verified with --claims: claims_dropped: 0, so each
+# rewrite carried its backticked spans, issue refs and link targets across.
+
+# Resolution knobs — same claims (the #261 outcome, the shape-not-inventory
+# warning), fewer words. --claims confirms no atom dropped.
+AGENTS.md :: tighten :: [#261](https://github.com/gregoryfoster/skills/issues/261) reached a repo that
+AGENTS.md :: tighten :: could tailor a gate's watch list but not its advice. Every `.skills/` file a
+
+# References convention intro — two sentences merged into one; 'loaded on demand,
+# not on activation' survives as 'loaded on demand rather than on activation'.
+AGENTS.md :: tighten :: Skills may carry supplementary `references/*.md` files for content that exceeds the
+AGENTS.md :: tighten :: SKILL.md body cap. They are loaded on demand, not on activation. Two rules are
+
+# References convention, the code-fence carve-out — same rule, same EXEMPT_LINKS
+# requirement, same #143 reference; the clause order tightened.
+AGENTS.md :: tighten :: fails. Links inside code fences and inline code spans are skipped: they never
+AGENTS.md :: tighten :: render as links, which is where illustrative paths belonging to a *consuming*
+AGENTS.md :: tighten :: repo live. An illustrative link in prose needs an `EXEMPT_LINKS` entry naming
+AGENTS.md :: tighten :: the file, the target and the reason ([#143](https://github.com/gregoryfoster/skills/issues/143)).
+
+# Self-budget — 'Most skills meet it; the rest carry' became 'The skills that miss
+# it carry'. Same claim, stated once rather than as a contrast.
+AGENTS.md :: tighten :: it. Most skills meet it; the rest carry a named exception with
+AGENTS.md :: tighten :: its reason beside it, and every file names its own figure in prose so the gate
+AGENTS.md :: tighten :: and the run read the same number. A ratchet only ever comes down.
+
+# Self-budget, the two readings — the definitions of each reading moved to
+# docs/BUDGETS.md in this same run and are no longer restated here; the policy
+# file keeps the rule (two readings bind, only the estimate is always on, three
+# ratchets breached) and points at the mechanism.
+AGENTS.md :: tighten :: Two readings bind it, not one: the offline estimate pre-commit sees, and
+AGENTS.md :: tighten :: `count_tokens` under `SKILL_BUDGET_EXACT=1`. Only the estimate is always on,
+AGENTS.md :: tighten :: which let three ratchets be breached past a green suite. How the two are
+
+# Dev setup, the per-rule test file — the rule and its reason both survive. The
+# '~4,100 lines' figure went: check-counts.sh flags a bare count as rot-prone,
+# and the argument does not rest on the number.
+AGENTS.md :: tighten :: the end of `test_context_surface.py`.** That file is already ~4,100 lines and is
+AGENTS.md :: tighten :: the obvious default home, which is exactly the problem: when several agents work
+AGENTS.md :: tighten :: the backlog in parallel worktrees, appending to one shared file turns every merge
+AGENTS.md :: tighten :: into a conflict, while a new per-rule file merges clean. It also keeps a rule
+AGENTS.md :: tighten :: findable by filename. Extend an existing file only when the new test belongs to
+AGENTS.md :: tighten :: the rule that file already owns.
+

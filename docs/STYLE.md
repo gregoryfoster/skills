@@ -4,6 +4,10 @@ Conventions with a reference implementation. The short rules that apply to every
 script live inline in [AGENTS.md](../AGENTS.md) under `## Scripts`; this file
 carries the conventions that need a full template and a rationale.
 
+Token budgets are next door: the SKILL.md ratchet, the two readings that bind
+it and how to anchor a file are in [BUDGETS.md](BUDGETS.md), which split out of
+this file when it reached its own per-doc budget.
+
 ## Invoking a skill's own scripts (per-script resolution)
 
 **Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path names a file that doesn't exist, failing with "No such file or directory" in every project without its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
@@ -66,12 +70,13 @@ Document any intentional silent fallback (e.g., `git rev-parse --show-toplevel 2
 
 This convention is enforced by [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestGateScriptHardening`). Reverting a hardened site to `done < <(...)` form fails the structural suite. **The rule is wider than that detector**: `cmd || true` straight to stdout and `[ -n "$(cmd)" ]` in a condition swallow a failure just as completely, and no regex over the text catches them — they are pinned by behaviour instead, in [tests/structural/test_gate_producer_exit_codes.py](../tests/structural/test_gate_producer_exit_codes.py). If process substitution is genuinely required, tag the loop with `# unhardened: <reason>` either on the `done` line itself or anywhere within the prior 10 lines as an opt-out.
 
-**Which files it examines is derived from the discipline, not from one filename** — and not from this heading, which named `(pre-ship, doc-check)` until [#255](https://github.com/gregoryfoster/skills/issues/255): two filenames in a title read as the scope, and the enforcement followed the title rather than the rule. Every script under `skills/shipping-work*/scripts/` and `skills/reviewing-code*/scripts/` is classified in that file as `GATE_SCRIPTS` or `NON_GATE_SCRIPTS`, with a reason, and a new script cannot ship unclassified — the same forcing function [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) applies to a new variant. Until [#255](https://github.com/gregoryfoster/skills/issues/255) the gate ran against `pre-ship.sh` alone, though this section named both scripts and cites `doc-check.sh` as canonical: a `done < <(git ls-files)` duly shipped in `doc-check.sh` with the suite green, feeding a did-we-match-anything branch whose empty answer is reported as *"the list is misconfigured for this repo"* — a confident diagnosis of the wrong problem, at the same exit code as the real one.
+**Which files it examines is derived from the discipline, not from one filename** — and not from this heading, which named `(pre-ship, doc-check)` until [#255](https://github.com/gregoryfoster/skills/issues/255): two filenames in a title read as the scope, and the enforcement followed the title rather than the rule. Every script under `skills/shipping-work*/scripts/`, `skills/reviewing-code*/scripts/` and this repo's own `scripts/` is classified in that file as `GATE_SCRIPTS` or `NON_GATE_SCRIPTS`, with a reason, and a new script cannot ship unclassified — the same forcing function [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) applies to a new variant. Until [#255](https://github.com/gregoryfoster/skills/issues/255) the gate ran against `pre-ship.sh` alone, though this section named both scripts and cites `doc-check.sh` as canonical: a `done < <(git ls-files)` duly shipped in `doc-check.sh` with the suite green, feeding a did-we-match-anything branch whose empty answer is reported as *"the list is misconfigured for this repo"* — a confident diagnosis of the wrong problem, at the same exit code as the real one.
 
 Three classifications are worth stating, since none is obvious from the filename:
 
 - `reviewing-code*/scripts/gather-context.sh` is **reporting-only** — its output is context for a human, not a branch — and keeps its process-substitution sites.
 - `check-status.sh` is a **gate**: its exit code *is* the working-tree verdict Step 2 branches on. It decided that verdict with `[ -n "$(git status --porcelain)" ]` until [#257](https://github.com/gregoryfoster/skills/issues/257) — a failing git substitutes the empty string, which is exactly what a clean tree substitutes to, so a dirty tree was reported clean with the modification printed four lines above the verdict denying it. Note where `set -e` does and does not help: it aborts on a failing simple command, but not on one inside `if [ -n "$(…)" ]`, so the three reporting commands failed loudly and the single deciding one failed silently.
+- This repo's own `scripts/` is in the set since [#318](https://github.com/gregoryfoster/skills/issues/318): `python-lint.sh` and `structural-tests.sh` are **gates** — each exit code is a verdict `scripts/pre-ship.sh` branches on — and `run-integration-tests.sh` is an **action** off the ship path. The glob was anchored at `skills/` until then, so the gate this repo *runs* was held below the ones it *publishes*.
 - `detect-import-targets.sh` and `detect-test-dirs.sh` are **gate producers**, because `pre-ship.sh` skips the import check or pytest entirely when either answers with an empty list. Both used to run `uv run python -c …` under a `|| true`, so a `uv` that could not run at all was indistinguishable from a project with no package name and no test directories — while the caller's own careful exit-code capture around them reported a pass. Their behaviour is pinned by [tests/structural/test_gate_producer_exit_codes.py](../tests/structural/test_gate_producer_exit_codes.py): a resolver that cannot run exits 2, a resolver that answers nothing exits 0.
 
 ## Project-local overrides: wrap, don't fork
@@ -90,7 +95,7 @@ Every `shipping-work*/scripts/pre-ship.sh` carries this as a commented `# --- Pr
   - `xargs` word-split `PW=two words` into a wrong value and exited 0, which is worse than the crash because it is silent.
 - **Quote the export**: `export "$key=$val"` is what makes spaces, globs and quoted values survive, so the recipe needs no `set -f` dance and no shellcheck suppressions. **Skip a key that is not a plain identifier** rather than aborting — a malformed line in a secrets file must not decide whether the gate runs.
 
-`shipping-work`'s own `pre-ship.sh` is the documented exception: it is a stub that exits 1, so there is nothing to delegate to and its block puts the env loading in the project's override instead. [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) holds the block across all four variants and classifies that exception explicitly, so a fifth variant cannot ship without one.
+`shipping-work`'s own `pre-ship.sh` is the documented exception: it is a stub that exits 1, so there is nothing to delegate to and its block puts the env loading in the project's override instead. There the project's repo-root `scripts/pre-ship.sh` *is* the gate, not a wrapper around one; the stub's message names it and the test asserts that positively, the old guard having matched nothing in any variant ([#320](https://github.com/gregoryfoster/skills/issues/320)). [tests/structural/test_pre_ship_env_override.py](../tests/structural/test_pre_ship_env_override.py) holds the block across all four variants and classifies that exception explicitly, so a fifth variant cannot ship without one.
 
 ## A repo-creating git command must scrub `GIT_DIR`
 
@@ -124,51 +129,6 @@ Separately, `git config --local` from a **linked worktree** writes the *shared* 
 - **Two costs, no offsetting benefit.** A clone does not inherit the extension, so it cannot be a property of the repository anyone else gets; and this repo is at `core.repositoryformatversion = 0`, where `extensions.*` is out of contract. Git 2.39.3 honours it there anyway, which is worse than refusing it: the behaviour is version-dependent and unannounced.
 
 The defences that do work are already in place — the `GIT_DIR` scrub above, and Rule 6 reading the exit code rather than stdout.
-
-## The SKILL.md self-budget, and how its two readings are reconciled
-
-It binds **both** readings — the offline estimate pre-commit sees, and
-`count_tokens` under `SKILL_BUDGET_EXACT=1`. On SKILL.md files the estimate is
-observed running 13% low to 7% high, and `POLICY_ESTIMATE_BAND` permits 15%
-either way — that band edge, not the observed figure, is what the warning below
-computes a worst case from. So neither reading alone is the contract — and only
-the estimate is always on, which let
-three ratchets be breached past a green suite. Two things close that
-([#217](https://github.com/gregoryfoster/skills/issues/217)): every pre-commit
-run now **warns** about each skill whose worst permissible exact count exceeds
-its ratchet (a warning, not a failure), and
-[.github/workflows/skill-budget-exact.yml](../.github/workflows/skill-budget-exact.yml)
-runs the exact pass weekly as the gate that does fail. On the commit path the
-exact pass stays opt-in, not opportunistic: it costs ~20s and one API call per
-surface, and an unusable key must never be able to block a commit.
-
-**What each number means.** The estimate is bytes over
-`.skills/context-token-ratio`, a repo-wide figure the weekly cadence refits,
-unless the file is **anchored**: a row in `.skills/context-token-counts` prices it
-from its own last exact count until it drifts past `CTX_DRIFT_PCT` of that size
-and silently reverts to the ratio. Priced from the ratio, a SKILL.md reads
-**high** as well as low: `orchestrating-issue-backlog` was curated to fit 34
-tokens of apparent headroom that `count_tokens` put at 675
-([#294](https://github.com/gregoryfoster/skills/issues/294)). So **anchor before
-curating against a squeeze**, and trim only if the exact count is still tight.
-
-Every SKILL.md is anchored by a refresh committed by hand, after adding or
-curating a skill or when a green run asks:
-
-```bash
-bash skills/curating-context/scripts/measure-context.sh --check-credential &&
-for s in skills/*/SKILL.md; do bash skills/curating-context/scripts/measure-context.sh --exact --anchor --file "$s" --docs-dir "${s%/SKILL.md}/references" >/dev/null || break; done
-```
-
-`--anchor` writes the per-file rows and never the ratio, which `--calibrate` would
-refit to each skill in turn ([#263](https://github.com/gregoryfoster/skills/issues/263));
-rows merge per path under `merge=context-counts`
-([#237](https://github.com/gregoryfoster/skills/issues/237)). The weekly exact job
-does not run it: it holds `contents: read`, and a change to a tracked file wants
-a reviewer. Each skill's `references/` is anchored too. A green run asks for it
-by warning **ANCHORS** (a SKILL.md with no row, or any lapsed row) and **ESTIMATE
-SQUEEZE** (a skill near its ratchet on a ratio-priced estimate) — never failing,
-since pre-commit holds no key.
 
 ## A write through a temp file must be checked
 

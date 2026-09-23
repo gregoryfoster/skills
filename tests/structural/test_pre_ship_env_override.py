@@ -18,6 +18,7 @@ the project's own override instead. Asserting the wrapper recipe there would
 enshrine advice that cannot work.
 """
 
+import re
 import shlex
 import subprocess
 import tempfile
@@ -41,6 +42,62 @@ DELEGATING_VARIANTS = [
 STUB_VARIANTS = ["shipping-work"]
 
 ALL_VARIANTS = sorted(DELEGATING_VARIANTS + STUB_VARIANTS)
+
+# The remedy the stub must name, asserted positively
+# ([#320](https://github.com/gregoryfoster/skills/issues/320)). The previous
+# guard was a blacklist of one spelling, `"local fork"`, read out of the
+# override comment block alone. The wording that actually shipped for months —
+# "Copy shipping-work/ into your project's skills/ directory" — sat 16 lines
+# above that block and contained neither word, and the three delegating
+# variants say "do NOT fork this script", which does not contain it either. So
+# the check was green against all four files while matching nothing in any of
+# them: the #252 dead-list shape, in the guard rather than in a path list.
+#
+# A blacklist can only grow one spelling at a time. Naming what must be TRUE
+# cannot be evaded by rewording, so that is where the weight goes.
+STUB_REMEDY = "scripts/pre-ship.sh"
+
+# The harmful shape, kept as a secondary check and kept polarity-aware: `copy
+# … skills/` on one line is the recommendation, and the same words under a
+# negation are the warning against it, which the corrected message carries on
+# purpose. A shape check blind to polarity would fail the fix rather than the
+# defect. This is a shape match, not comprehension — it is the weaker half
+# here, which is why STUB_REMEDY exists.
+_COPY_INTO_SKILLS = re.compile(r"cop(?:y|ies|ying)\b[^\n]*\bskills/", re.I)
+_NEGATED = re.compile(
+    r"\b(?:not|never|don'?t|avoid|rather than|instead of|no need)\b", re.I
+)
+_STUB_EXIT_MARKER = "# === STUB EARLY EXIT"
+
+
+def _stub_failure_message(variant: str) -> str:
+    """The echo lines the stub prints before `exit 1`.
+
+    Scoped to the message rather than the file so the assertion pins the text
+    an operator actually reads at the moment the gate refuses, not a mention
+    of the same path in a comment further down.
+    """
+    lines = _script(variant).read_text().splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith(_STUB_EXIT_MARKER)]
+    assert len(starts) == 1, (
+        f"{variant}/scripts/pre-ship.sh must carry exactly one "
+        f"'{_STUB_EXIT_MARKER}' marker; found {len(starts)}."
+    )
+    out = []
+    for ln in lines[starts[0] :]:
+        if ln.startswith("exit "):
+            return "\n".join(out)
+        # `echo` lines only. The block also carries six comment lines, and
+        # including them let the assertion below be satisfied by a comment
+        # mentioning the remedy while the PRINTED message had lost it — which
+        # is the whole failure this guard exists to catch (CR 3).
+        if ln.startswith("echo "):
+            out.append(ln)
+    raise AssertionError(
+        f"{variant}/scripts/pre-ship.sh: no `exit` found after "
+        f"'{_STUB_EXIT_MARKER}' — the stub no longer exits where this file "
+        "thinks it does, so the message it pins may not be the one that prints."
+    )
 
 
 def _script(variant: str) -> Path:
@@ -88,11 +145,88 @@ class TestOverrideBlockCoverage:
 
     @pytest.mark.parametrize("variant", ALL_VARIANTS)
     def test_does_not_recommend_a_fork(self, variant):
-        block = _block(variant).lower()
-        assert "local fork" not in block, (
-            f"{variant}/scripts/pre-ship.sh still recommends a local fork. A "
-            "fork copies the whole gate to add a few lines and drifts silently "
-            "on every submodule update. Recommend a wrapper instead."
+        """Read the WHOLE file, not the override comment block (#320).
+
+        The block is where the recipe lives; it is not where the advice an
+        operator reads lives. The stub's failure message prints to stderr at
+        the moment the gate refuses, which is the one place that text is
+        certain to be read, and it sat outside everything this file checked.
+        """
+        for n, line in enumerate(_script(variant).read_text().splitlines(), 1):
+            assert "local fork" not in line.lower(), (
+                f"{variant}/scripts/pre-ship.sh:{n} still recommends a local "
+                "fork. A fork copies the whole gate to add a few lines and "
+                "drifts silently on every submodule update. Recommend a "
+                "wrapper instead (or, for the stub, a repo-root "
+                f"{STUB_REMEDY})."
+            )
+            if _COPY_INTO_SKILLS.search(line) and not _NEGATED.search(line):
+                raise AssertionError(
+                    f"{variant}/scripts/pre-ship.sh:{n} tells the consumer to "
+                    f"copy into a skills/ directory:\n    {line.strip()}\n"
+                    "That is a fork of the whole skill, which then drifts on "
+                    "every submodule update. The supported mechanism is one "
+                    f"file: a repo-root {STUB_REMEDY} (#301), wrapping the "
+                    "vendored gate for the delegating variants and BEING the "
+                    "gate for the stub. If this line warns against the copy "
+                    "rather than recommending it, phrase the negation on the "
+                    "same line."
+                )
+
+    @pytest.mark.parametrize("variant", STUB_VARIANTS)
+    def test_stub_failure_message_names_the_repo_root_remedy(self, variant):
+        """The positive half, and the load-bearing one (#320).
+
+        `test_does_not_recommend_a_fork` can only reject spellings someone
+        thought to list. This says what must be there, in the text that
+        prints when the gate refuses — so a reword that drops the remedy
+        fails here even if it introduces no forbidden phrase at all.
+        """
+        msg = _stub_failure_message(variant)
+        assert STUB_REMEDY in msg, (
+            f"{variant}/scripts/pre-ship.sh's failure message does not name "
+            f"`{STUB_REMEDY}`. That is the mechanism docs/STYLE.md documents "
+            "for this variant and the only one Step 1 resolves ahead of the "
+            "skill's own copy (#301). Without it the operator is told to "
+            "override with no supported way to do it, which is how the "
+            "copy-into-skills/ wording survived for months. Printed:\n" + msg
+        )
+
+    @pytest.mark.parametrize("variant", STUB_VARIANTS)
+    def test_stub_help_names_the_repo_root_remedy(self, variant):
+        """`--help` is the other surface an operator reaches for, and the
+        failure message now points at it by name."""
+        res = subprocess.run(
+            ["bash", str(_script(variant)), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert res.returncode == 0, f"--help exited {res.returncode}: {res.stderr}"
+        assert STUB_REMEDY in res.stdout, (
+            f"{variant}/scripts/pre-ship.sh --help does not name "
+            f"`{STUB_REMEDY}`:\n{res.stdout}"
+        )
+
+    def test_the_fork_detector_can_actually_fire(self):
+        """A guard that matches nothing reads as coverage (#252, #320).
+
+        This is the half that was missing: the old check was asserted against
+        four files, passed on all four, and would have passed on a fifth that
+        said anything at all. Feed it the wording that shipped and the wording
+        that replaced it, and require it to tell them apart.
+        """
+        shipped = "       Copy shipping-work/ into your project's skills/ directory and"
+        assert _COPY_INTO_SKILLS.search(shipped) and not _NEGATED.search(shipped), (
+            "the detector no longer fires on the exact line #320 was filed "
+            f"about:\n    {shipped}"
+        )
+        corrected = (
+            "       Do NOT copy shipping-work/ into your own skills/ directory: a"
+        )
+        assert _COPY_INTO_SKILLS.search(corrected) and _NEGATED.search(corrected), (
+            "the detector no longer recognises the corrected line as a "
+            f"negation, so the fix would fail as the defect:\n    {corrected}"
         )
 
     @pytest.mark.parametrize("variant", ALL_VARIANTS)
