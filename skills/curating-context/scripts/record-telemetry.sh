@@ -153,6 +153,39 @@ Options:
                    and cannot be changed by a later commit. Refuses the flags
                    that only make sense on an append, rather than discarding
                    them silently.
+  --amend          AMEND MODE. Rewrite this run's curation row IN PLACE from
+                   the measurement on stdin, instead of appending a new one.
+                   The row it targets is the NEWEST row for the measured file.
+                   This is how Phase 7's "rewrite this run's row to match what
+                   ships" is carried out when a late fix moves the count (#319).
+
+                   delta_tokens and delta_days are DERIVED: an append computes
+                   them against whatever the previous row is at that moment.
+                   Rewriting a row by hand — appending the corrected row and
+                   then deleting the one it supersedes — leaves them describing
+                   a neighbour that no longer exists. This mode computes them
+                   against the rows that will remain, so the order cannot bite.
+
+                   Every measured field is re-read from stdin; `ts` becomes
+                   today and `repo_commit` is re-read from HEAD exactly as an
+                   append would, so backfill it again after committing. The
+                   run's own attributes CARRY FORWARD from the row being
+                   amended unless re-supplied, as groups: --actions; --note;
+                   the verdict (--no-loss, --no-loss-warrants, --claims-*);
+                   --seams/--seams-acked; --counts/--counts-acked. Supplying
+                   any flag in a group replaces the whole group. What was
+                   carried is named on stderr — if the fix touched what a
+                   carried check measured, re-run it and pass its result.
+
+                   Refuses a `baseline` row (it records a state that already
+                   passed), an empty ledger or one with no row for the file
+                   (nothing to amend — append instead), and --baseline or
+                   --repo-commit alongside it. The measurement-method refusal
+                   (exit 4) applies exactly as it does to an append.
+
+                   Within a run only: once the row's commit has merged it is
+                   history, and a later run appends
+                   (references/telemetry.md, "rewrite within, append across").
   --allow-method-change
                    Append even when this row's measurement method differs from
                    the ledger's latest row for the same file. Refused by default:
@@ -228,17 +261,23 @@ Row schema (one JSON object per line):
                     previous row — see delta_unavailable
   delta_days        days since the previous row (null if first)
   delta_unavailable present only when delta_tokens was suppressed; says why
+                    The three delta fields are DERIVED from the previous row,
+                    never observed: edit a row or remove its predecessor by hand
+                    and they go stale silently. Use --amend; --print-trend warns
+                    about any row whose deltas disagree with the ledger.
   actions           action tags from --actions, or ["baseline:KIND"] with
                     --baseline
   note              --note text
 
 Exit codes:
-  0  row appended or backfilled (or printed, with --dry-run)
+  0  row appended, backfilled or amended (or printed, with --dry-run)
   1  usage error (including --baseline with --actions, --no-loss,
      --no-loss-warrants or --claims-*; --no-loss-warrants or --claims-*
-     without a verdict; --claims-dropped N>0 against `ok`; or --repo-commit
+     without a verdict; --claims-dropped N>0 against `ok`; --repo-commit
      with an append-only flag, an unknown revision, an empty ledger or a
-     baseline row), or stdin was not measure-context.sh JSON
+     baseline row; or --amend with --baseline or --repo-commit, an empty
+     ledger, no row for the file, or a baseline row), or stdin was not
+     measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
      (pass --allow-method-change to record it anyway)
@@ -266,6 +305,7 @@ ACTIONS_SET=0
 NOTE_SET=0
 BACKFILL=0
 BACKFILL_REV=""
+AMEND=0
 
 # --actions and --note accept an empty value deliberately, so they cannot use
 # ${2:?...} for arity — and a bare `shift 2` at the end of argv fails under
@@ -295,6 +335,7 @@ while [ $# -gt 0 ]; do
     --repo) REPO_OVERRIDE="${2:?--repo needs a name}"; shift 2 ;;
     --repo-commit)
       BACKFILL=1; BACKFILL_REV="${2:?--repo-commit needs a revision}"; shift 2 ;;
+    --amend) AMEND=1; shift ;;
     --allow-method-change) ALLOW_METHOD_CHANGE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --print-trend) TREND=1; shift ;;
@@ -328,6 +369,21 @@ if [ "$BACKFILL" -eq 1 ]; then
     echo "ERROR --repo-commit backfills the row this run already recorded, so" >&2
     echo "      it reads no measurement and cannot record:$APPEND_ONLY." >&2
     echo "      Pass those on the Phase 7 append, before the commit." >&2
+    exit 1; }
+fi
+
+# An amend rewrites a CURATION row from a fresh measurement. --repo-commit is a
+# different rewrite that reads no measurement at all, and a baseline row is the
+# one row the within-a-run rewrite rule exempts — so neither can ride along.
+if [ "$AMEND" -eq 1 ]; then
+  [ "$BACKFILL" -eq 0 ] || {
+    echo "ERROR --amend and --repo-commit are separate steps: amend the row" >&2
+    echo "      from the fixed tree, commit, then backfill --repo-commit HEAD." >&2
+    exit 1; }
+  [ "$BASELINE" -eq 0 ] || {
+    echo "ERROR --amend and --baseline are mutually exclusive: a baseline row" >&2
+    echo "      records a state that has already passed, so a late fix cannot" >&2
+    echo "      change it. --amend rewrites this run's curation row." >&2
     exit 1; }
 fi
 
@@ -523,13 +579,22 @@ if [ "$BACKFILL" -eq 1 ]; then
     echo "      --repo-commit rewrites the row this run already recorded;" >&2
     echo "      record it first, then commit, then backfill." >&2
     exit 1; }
+elif [ "$AMEND" -eq 1 ]; then
+  MODE=amend
+  # Same -s test and the same reason as the backfill: a request to rewrite a row
+  # must not be answered by creating a ledger with no rows in it.
+  [ -s "$LEDGER" ] || {
+    echo "ERROR $LEDGER has no rows, so there is nothing to amend." >&2
+    echo "      --amend rewrites the row this run already recorded; record" >&2
+    echo "      it with a plain append first." >&2
+    exit 1; }
 else
   mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
   [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
 fi
 
 RC=0
-python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" <<'PY' || RC=$?
+python3 - "$TMP/in.json" "$LEDGER" "$TODAY" "$REPO_NAME" "$ACTIONS" "$NOTE" "$DRY" "$TREND" "$ALLOW_METHOD_CHANGE" "$NO_LOSS" "$SEAMS" "$SEAMS_ACKED" "$NO_LOSS_WARRANTS" "$REPO_COMMIT" "$MODE" "$CLAIMS_DROPPED" "$CLAIMS_WARRANTED" "$COUNTS" "$COUNTS_ACKED" "$ACTIONS_SET" "$NOTE_SET" <<'PY' || RC=$?
 import datetime as dt
 import json
 import os
@@ -538,7 +603,8 @@ import tempfile
 
 (src, ledger, today, repo, actions, note, dry, trend, allow_method,
  no_loss, seams, seams_acked, no_loss_warrants, repo_commit,
- mode, claims_dropped, claims_warranted, counts, counts_acked) = sys.argv[1:20]
+ mode, claims_dropped, claims_warranted, counts, counts_acked,
+ actions_set, note_set) = sys.argv[1:22]
 
 
 def is_curation_row(row):
@@ -590,6 +656,28 @@ def read_ledger(path):
     return lines, parsed
 
 
+def rewrite_ledger(path, lines):
+    """Replace the ledger with LINES — the one write both rewrite modes use.
+
+    Write-then-rename, so a crash mid-write leaves the ledger as it was rather
+    than truncated. The temp file is created in the ledger's own directory
+    because os.replace is only atomic within a filesystem.
+    """
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".context-metrics-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("".join(ln + "\n" for ln in lines))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError as exc:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        print(f"ERROR cannot rewrite {path}: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+
 if mode == "backfill":
     # Phase 7 records the row and only then commits it alongside the edits, so
     # the append could not have named the commit that ships the tree it
@@ -623,22 +711,7 @@ if mode == "backfill":
         sys.exit(0)
     target["repo_commit"] = repo_commit
     lines[idx] = json.dumps(target, sort_keys=True, ensure_ascii=False)
-    # Write-then-rename, so a crash mid-write leaves the ledger as it was rather
-    # than truncated. The temp file is created in the ledger's own directory
-    # because os.replace is only atomic within a filesystem.
-    d = os.path.dirname(os.path.abspath(ledger)) or "."
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".context-metrics-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("".join(ln + "\n" for ln in lines))
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, ledger)
-    except OSError as exc:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        print(f"ERROR cannot rewrite {ledger}: {exc}", file=sys.stderr)
-        sys.exit(2)
+    rewrite_ledger(ledger, lines)
     print(f"backfilled repo_commit {was or 'null'} -> {repo_commit} on "
           f"{target.get('file')} ({target.get('ts')})", file=sys.stderr)
     sys.exit(0)
@@ -723,9 +796,63 @@ row = {
 }
 
 # Prior rows for the same file, oldest first — through the same reader the
-# backfill uses, so the two modes cannot disagree about which lines are rows.
-history = [prev for _, prev in read_ledger(ledger)[1]
-           if prev.get("file") == row["file"]]
+# backfill uses, so the modes cannot disagree about which lines are rows.
+lines, parsed = read_ledger(ledger)
+mine = [(i, prev) for i, prev in parsed if prev.get("file") == row["file"]]
+
+target_idx, target = None, None
+if mode == "amend":
+    # The row being amended is taken OUT of the history before the deltas are
+    # computed, so they describe the neighbour that will remain. That is the
+    # whole fix for #319: the hand-edit computed them with the superseded row
+    # still present, then deleted it, and the survivor's delta_days described
+    # an interval that no longer existed.
+    if not mine:
+        print(f"ERROR {ledger} has no row for {row['file']}, so there is "
+              "nothing to amend — record this run with a plain append.",
+              file=sys.stderr)
+        sys.exit(1)
+    target_idx, target = mine.pop()
+    if not is_curation_row(target):
+        print(
+            f"ERROR the newest row for {row['file']} is a "
+            f"`{(target.get('actions') or ['baseline'])[0]}` row, which records "
+            "a state that has already passed — telemetry.md exempts it from the "
+            "rewrite rule. Record the curation with a plain append; amend that.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # The run's own attributes are not re-measured by a fresh measure-context.sh
+    # payload, and a late fix usually moves only the count — so they carry
+    # forward rather than silently becoming null. By GROUP, because the verdict
+    # fields validate against each other: carrying `no_loss_warrants` from the
+    # old row beside a new `--no-loss skipped` would assemble a row no single
+    # invocation could have written.
+    groups = (
+        (("actions",), actions_set == "1"),
+        (("note",), note_set == "1"),
+        (("no_loss", "no_loss_warrants", "claims_dropped", "claims_warranted"),
+         any((no_loss, no_loss_warrants, claims_dropped, claims_warranted))),
+        (("seams", "seams_acked"), bool(seams or seams_acked)),
+        (("counts", "counts_acked"), bool(counts or counts_acked)),
+    )
+    carried = []
+    for fields, supplied in groups:
+        if supplied:
+            continue
+        for f in fields:
+            row[f] = target.get(f)
+            if row[f] not in (None, []):
+                carried.append(f)
+    if carried:
+        # Named, because a carried verdict is a claim about the tree BEFORE the
+        # fix. Usually still true — and when it is not, the author is the only
+        # one who knows the fix touched what the check measured.
+        print(f"carried from the amended row: {', '.join(carried)} — if the fix "
+              "touched what a carried check measured, re-run it and pass the "
+              "result", file=sys.stderr)
+
+history = [prev for _, prev in mine]
 
 if history:
     last = history[-1]
@@ -771,7 +898,7 @@ if history:
             )
         if would_refuse and dry != "1":
             print(
-                "ERROR refusing to append: this row is "
+                f"ERROR refusing to {mode}: this row is "
                 f"tokens_exact={row['tokens_exact']} but the last row for "
                 f"{row['file']} ({last.get('ts')}) is "
                 f"tokens_exact={last.get('tokens_exact')}. An exact count and an "
@@ -804,6 +931,16 @@ line_out = json.dumps(row, sort_keys=True, ensure_ascii=False)
 
 if dry == "1":
     print(line_out)
+elif mode == "amend":
+    if row == target:
+        print(f"{row['file']} ({row['ts']}) already records this measurement; "
+              "nothing to amend", file=sys.stderr)
+    else:
+        lines[target_idx] = line_out
+        rewrite_ledger(ledger, lines)
+        print(f"amended {row['file']} ({target.get('ts')}): "
+              f"{target.get('tokens')} -> {row['tokens']} tokens",
+              file=sys.stderr)
 else:
     try:
         with open(ledger, "a", encoding="utf-8") as fh:
@@ -868,6 +1005,30 @@ if trend == "1":
             "method. This row is the new baseline.",
             file=sys.stderr,
         )
+    # The deltas are derived from the previous row, and a ledger edited by hand
+    # after the append silently invalidates them — the row stops agreeing with
+    # the neighbour it claims to measure against, and nothing else notices
+    # (#319). Two such rows were in this repo's own ledger when it was found.
+    for prev, r in zip(series, series[1:]):
+        found = []
+        try:
+            gap = (dt.date.fromisoformat(r["ts"])
+                   - dt.date.fromisoformat(prev["ts"])).days
+            if isinstance(r.get("delta_days"), int) and r["delta_days"] != gap:
+                found.append(f"delta_days {r['delta_days']} (ts gap is {gap})")
+        except (ValueError, KeyError, TypeError):
+            pass
+        if (isinstance(r.get("delta_tokens"), int)
+                and isinstance(r.get("tokens"), int)
+                and isinstance(prev.get("tokens"), int)
+                and r["delta_tokens"] != r["tokens"] - prev["tokens"]):
+            found.append(f"delta_tokens {r['delta_tokens']:+d} "
+                         f"(token change is {r['tokens'] - prev['tokens']:+d})")
+        if found:
+            print(f"  WARN row {r['ts']} disagrees with the row before it "
+                  f"({prev['ts']}): {'; '.join(found)} — one of them was edited "
+                  "after the delta was computed. Rewrite a run's row with "
+                  "--amend, not by hand.", file=sys.stderr)
 PY
 
 exit "$RC"
