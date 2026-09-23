@@ -12,6 +12,7 @@
 README.md: the skills table restates each skill's description and triggers. Update the row when SKILL.md frontmatter changes; add one for a new skill directory.
 AGENTS.md: skill inventory, repo-wide authoring rules, and the gate surface. Held to .skills/context-budget by a ratchet that only comes down, and BOTH readings bind — the offline estimate pre-commit sees, and count_tokens under SKILL_BUDGET_EXACT=1. Demote to a reference doc rather than appending.
 docs/KNOBS.md: every .skills/ path a project may commit. A new reader needs a row — test_skills_knob_inventory.py has no ignore-list, so an undocumented knob fails the suite, and so does a row whose knob was removed.
+docs/BUDGETS.md: the SKILL.md ratchet, the two readings that bind it (offline estimate and SKILL_BUDGET_EXACT=1), and anchoring a file before curating it. A change to how a budget is measured, gated or refreshed belongs here, not in AGENTS.md, which states the rule in one line.
 docs/STYLE.md: the template and rationale behind any script rule or gate discipline that AGENTS.md states in one line. A new rule belongs in both, at different depths.
 docs/CONVENTIONS.md: override authoring, the references/ conditional-block delimiters, and VARIANT_FAMILIES — a new variant must be declared there or the selection surface goes stale.
 The sibling SKILL.md: every references/<name>.md must be linked from it (test_references.py), and every relative link must resolve from the file that contains it (test_relative_links.py).
