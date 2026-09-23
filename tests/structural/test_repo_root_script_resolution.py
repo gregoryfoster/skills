@@ -110,16 +110,24 @@ def test_repo_root_scripts_shadow_nothing_unintended():
     )
 
 
-@pytest.mark.parametrize(
-    "script",
-    [
-        "doc-check.sh",
-        "check-status.sh",
-        "push.sh",
-        "comment-issue.sh",
-        "close-issue.sh",
-    ],
-)
+def _shipping_work_scripts_not_overridden() -> list[str]:
+    """Every script shipping-work's block resolves, minus the one we override.
+
+    Derived, not listed. The module docstring says the resolvable set is never
+    hardcoded, and this parametrization was a hardcoded copy of it until CR 6 —
+    the principle contradicted six lines under its own statement. A rename
+    upstream now changes what is tested instead of leaving a list testing a
+    name nothing resolves.
+    """
+    resolvable = _resolvable_script_names()
+    return sorted(
+        name
+        for name, skills in resolvable.items()
+        if "shipping-work" in skills and name not in INTENDED_OVERRIDES
+    )
+
+
+@pytest.mark.parametrize("script", _shipping_work_scripts_not_overridden())
 def test_shipping_work_non_gate_scripts_resolve_to_the_skill(script):
     """#318 acceptance: the other five still resolve to the skill, here.
 
@@ -137,6 +145,21 @@ def test_shipping_work_non_gate_scripts_resolve_to_the_skill(script):
         f"{script} does not resolve to .claude/skills/shipping-work/scripts/. "
         "Either the self-discovery symlink is broken (docs/SKILLS.md) or the "
         "script was renamed; Step 1 would stop on this name."
+    )
+
+
+def test_the_derived_parametrization_is_not_empty():
+    """A derived list that derives to nothing passes every case it has (#252)."""
+    derived = _shipping_work_scripts_not_overridden()
+    assert len(derived) >= 5, (
+        "shipping-work's publishing block resolved "
+        f"{len(derived)} non-overridden script(s): {derived}. Fewer than five "
+        "means the block's shape changed and the resolution test above is now "
+        "asserting almost nothing."
+    )
+    assert "pre-ship.sh" not in derived, (
+        "pre-ship.sh must be excluded by INTENDED_OVERRIDES — it is the one "
+        "script this repo deliberately owns."
     )
 
 
