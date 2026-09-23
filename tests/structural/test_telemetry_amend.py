@@ -15,8 +15,9 @@ What this file pins:
 
 - **`--amend` computes the deltas against the rows that remain**, which is
   the hand-edit trap closed by construction.
-- **It rewrites in place**: one row replaced, nothing appended, other lines
-  (malformed ones included) untouched.
+- **It replaces, never adds**: one row replaced, other lines (malformed ones
+  included) untouched — and the replacement moves last, where the
+  `--repo-commit` backfill that follows it looks (CR 1).
 - **The run's attributes carry forward by group**, and supplying any flag in a
   group replaces the whole group — so no amend assembles a row no single
   invocation could have written.
@@ -152,7 +153,7 @@ class TestAmendComputesAgainstWhatRemains:
         assert amended["delta_tokens"] == -30, amended
         assert amended["delta_days"] > 2, amended  # today minus 2000-01-01
 
-    def test_rewrites_in_place_and_keeps_other_lines(self, tmp_path: Path):
+    def test_replaces_and_keeps_other_lines(self, tmp_path: Path):
         repo = _curated(tmp_path)
         before = (repo / LEDGER).read_text().splitlines()
         (repo / LEDGER).write_text(
@@ -165,6 +166,39 @@ class TestAmendComputesAgainstWhatRemains:
         assert after[0] == before[0]
         assert after[1] == "{not json"
         assert json.loads(after[2])["tokens"] == 470
+
+    def test_the_amended_row_moves_last_so_the_backfill_finds_it(self, tmp_path: Path):
+        """CR 1. `--repo-commit HEAD` backfills the newest row in the whole
+        ledger. Amended in place behind another file's row, the backfill
+        rewrote that row's commit instead."""
+        repo = _curated(tmp_path)
+        other = _row(
+            "2000-01-03", 90, ["demote:Z"], file="OTHER.md", repo_commit="0ther00"
+        )
+        rows = _rows(repo)
+        _seed(repo, *rows, other)
+        assert _record(repo, 470, "--amend").returncode == 0
+        r = subprocess.run(
+            ["bash", str(RECORD), "--repo-commit", "HEAD"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=_clean_env(),
+            timeout=30,
+        )
+        assert r.returncode == 0, r.stderr
+        after = _rows(repo)
+        assert [x["file"] for x in after] == ["AGENTS.md", "OTHER.md", "AGENTS.md"]
+        assert after[1]["repo_commit"] == "0ther00", after[1]
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+            check=True,
+        ).stdout.strip()
+        assert after[2]["tokens"] == 470 and after[2]["repo_commit"] == head
 
     def test_a_repeat_amend_is_a_no_op(self, tmp_path: Path):
         repo = _curated(tmp_path)

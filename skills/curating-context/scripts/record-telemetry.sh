@@ -153,9 +153,11 @@ Options:
                    and cannot be changed by a later commit. Refuses the flags
                    that only make sense on an append, rather than discarding
                    them silently.
-  --amend          AMEND MODE. Rewrite this run's curation row IN PLACE from
-                   the measurement on stdin, instead of appending a new one.
-                   The row it targets is the NEWEST row for the measured file.
+  --amend          AMEND MODE. Replace this run's curation row with one built
+                   from the measurement on stdin, instead of adding a second.
+                   The row it targets is the NEWEST row for the measured file,
+                   and the replacement goes LAST in the ledger — where the
+                   --repo-commit backfill that must follow it looks.
                    This is how Phase 7's "rewrite this run's row to match what
                    ships" is carried out when a late fix moves the count (#319).
 
@@ -1114,7 +1116,15 @@ elif mode == "amend":
         print(f"{row['file']} ({row['ts']}) already records this measurement; "
               "nothing to amend", file=sys.stderr)
     else:
-        lines[target_idx] = line_out
+        # MOVED to the end, not rewritten where it sits. The next step is
+        # `--repo-commit HEAD`, which backfills the newest row in the whole
+        # ledger, and `check-seams.sh --base-ledger` reads the newest
+        # repo_commit the same way. Left in place behind another file's row,
+        # the backfill would rewrite THAT row's commit and leave this one a
+        # parent behind. The target was already the newest row for its file
+        # and now carries today's ts, so last is where it belongs.
+        del lines[target_idx]
+        lines.append(line_out)
         rewrite_ledger(ledger, lines)
         print(f"amended {row['file']} ({target.get('ts')}): "
               f"{target.get('tokens')} -> {row['tokens']} tokens",
