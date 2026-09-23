@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 # record-telemetry.sh — append one measurement row to the repo's context-metrics
 # ledger, computing deltas against the previous row for the same policy file.
+# Three rewrite modes serve the append: --repo-commit backfills the commit a
+# row describes, --amend replaces this run's row after a late fix, and --repair
+# corrects derived deltas a hand-edit left stale.
 #
-# The ledger is append-only JSONL committed alongside the file it measures, so a
-# repo's curation history travels with the repo and survives a transfer. Reads
-# measure-context.sh JSON on stdin.
+# The ledger is JSONL committed alongside the file it measures, so a repo's
+# curation history travels with the repo and survives a transfer. It is
+# append-only ACROSS runs; within a run, only this run's unmerged row is
+# rewritten (references/telemetry.md). Reads measure-context.sh JSON on stdin,
+# except in --repo-commit and --repair, which read none.
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-record-telemetry.sh — append a context-metrics row to the repo ledger
+record-telemetry.sh — append a context-metrics row to the repo ledger, or
+rewrite one (--repo-commit, --amend) or its deltas (--repair)
 
 Usage:
   measure-context.sh | record-telemetry.sh [options]
+  measure-context.sh | record-telemetry.sh --amend [options]
+  record-telemetry.sh --repo-commit REV
+  record-telemetry.sh --repair [--dry-run]
 
 Options:
   --ledger PATH    Ledger file. Default: .skills/context-metrics.jsonl
