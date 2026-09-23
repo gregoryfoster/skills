@@ -51,6 +51,7 @@ from .test_telemetry_amend import (
     RECORD,
     SKILL_MD,
     TELEMETRY,
+    _commit,
     _record,
     _row,
     _rows,
@@ -73,11 +74,6 @@ CAD2 = _row("2026-09-17", 400, ["baseline:scheduled"], delta_tokens=-100, delta_
 def _append(repo: Path, *rows) -> None:
     with (repo / LEDGER).open("a") as fh:
         fh.write("".join(json.dumps(r) + "\n" for r in rows))
-
-
-def _commit(repo: Path, msg: str) -> None:
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", msg)
 
 
 def _lines(repo: Path) -> list:
@@ -119,12 +115,7 @@ def _merged(tmp_path: Path, *, origin: bool = True) -> Path:
     _append(repo, CAD1)
     _commit(repo, "weekly context measurement")
     if origin:
-        bare = tmp_path / "origin.git"
-        _git(tmp_path, "init", "-q", "--bare", str(bare))
-        _git(repo, "remote", "add", "origin", str(bare))
-        _git(repo, "push", "-q", "origin", "main")
-        _git(repo, "fetch", "-q", "origin")
-        _git(repo, "remote", "set-head", "origin", "main")
+        _with_origin(tmp_path, repo)
     _git(repo, "checkout", "-q", "cur")
     _git(repo, "merge", "-q", "--no-edit", "main")
     return repo
