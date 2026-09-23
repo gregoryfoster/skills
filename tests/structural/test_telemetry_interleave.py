@@ -21,6 +21,9 @@ What this file pins:
 - **The in-place repair is what duplicates** — the reason for the move,
   demonstrated rather than asserted.
 - **The rebase shape needs no move**, only the deltas.
+- **Both modes share one row identity**, blind to a backfilled `repo_commit`
+  and to repaired deltas, so neither breaks the held-row rule with the rewrite
+  the other makes (CR 1).
 - **With no `origin/HEAD` it warns** and repairs in file order.
 - **The cadence warns** on a stale ledger and is silent on a clean one, and
   `--check` names a workflow rendered without the step.
@@ -43,9 +46,11 @@ from .test_telemetry_amend import (
     RECORD,
     SKILL_MD,
     TELEMETRY,
+    _record,
     _row,
     _rows,
     _seed,
+    _with_origin,
 )
 from .test_telemetry_repair import _repair
 
@@ -189,6 +194,37 @@ class TestOtherShapes:
         r = _repair(repo, "--dry-run")
         assert "cannot tell which rows the default branch holds" in r.stderr
         assert _fixes(r) == {(4, "delta_tokens", 0, 100), (4, "delta_days", 7, 0)}
+
+
+class TestOneIdentityForBothModes:
+    """--amend refuses what the default branch holds and --repair moves what it
+    does not, so both must ask the question the same way — blind to the
+    repo_commit a backfill rewrites and the deltas a repair recomputes."""
+
+    def test_repair_does_not_move_a_held_row_whose_repo_commit_was_backfilled(
+        self, tmp_path: Path
+    ):
+        repo = _repo(tmp_path, "# P\n")
+        row = _row("2026-09-10", 400, ["demote:Layout"], repo_commit="aaaaaaa")
+        _seed(repo, X, row, CAD1)
+        _commit(repo, "ledger")
+        _with_origin(tmp_path, repo)
+        _seed(repo, X, {**row, "repo_commit": "bbbbbbb"}, CAD1)
+        r = _repair(repo, "--dry-run")
+        assert not [f for f in _fixes(r) if f[1] == "line"], r.stdout
+
+    def test_amend_refuses_a_merged_row_whose_deltas_were_repaired(
+        self, tmp_path: Path
+    ):
+        repo = _repo(tmp_path, "# P\n")
+        row = _row("2026-09-10", 400, ["demote:Layout"], delta_tokens=-50)
+        _seed(repo, X, row)
+        _commit(repo, "ledger")
+        _with_origin(tmp_path, repo)
+        _seed(repo, X, {**row, "delta_tokens": -100, "delta_days": 7})
+        r = _record(repo, 390, "--amend")
+        assert r.returncode == 1, r.stderr
+        assert "already on origin/main" in r.stderr, r.stderr
 
 
 def _deltas_step(repo: Path) -> str:

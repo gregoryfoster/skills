@@ -835,13 +835,21 @@ def stale_deltas(prev, r):
     return out
 
 
-DERIVED = ("delta_tokens", "delta_days", "delta_unavailable")
+# Fields a row may legitimately gain after it merged: the deltas --repair
+# recomputes, and the repo_commit a backfill rewrites on this branch.
+REWRITABLE = ("delta_tokens", "delta_days", "delta_unavailable", "repo_commit")
 
 
-def observed(r):
-    """R without its derived fields: what makes two lines the same row even
-    when one of them has had its deltas repaired."""
-    return json.dumps({k: v for k, v in r.items() if k not in DERIVED},
+def row_identity(r):
+    """What makes two lines the same ROW whatever was rewritten since.
+
+    THE ONE TEST of whether the default branch holds a row: --amend refuses
+    what it matches and --repair moves what it does not. Two tests let each
+    mode break the rule with the rewrite the other makes — a repaired merged
+    row read as unmerged to --amend, a backfilled one as this branch's own to
+    --repair, which then moved a line the default branch holds (#325).
+    """
+    return json.dumps({k: v for k, v in r.items() if k not in REWRITABLE},
                       sort_keys=True)
 
 
@@ -862,8 +870,8 @@ if mode == "repair":
     # report names rows as they are in the file its reader has.
     orig = {}
     if base_ledger:
-        held = {observed(r) for _, r in read_ledger(base_ledger)[1]}
-        own = {i for i, r in parsed if observed(r) not in held}
+        held = {row_identity(r) for _, r in read_ledger(base_ledger)[1]}
+        own = {i for i, r in parsed if row_identity(r) not in held}
         order = ([i for i in range(len(lines)) if i not in own]
                  + [i for i in range(len(lines)) if i in own])
         if order != list(range(len(lines))):
@@ -1065,15 +1073,12 @@ if mode == "amend":
         sys.exit(1)
     # telemetry.md's test, made mechanical: unmerged, the row is a draft of
     # this run's record; merged, it is history, and a later run appends. The
-    # row is on the default branch if a row there matches it on everything but
-    # repo_commit — which the backfill may have rewritten on this branch after
-    # the first commit merged, and which is not what makes it the same row.
+    # row is on the default branch if a row there has its row_identity() —
+    # blind to a backfilled repo_commit and to repaired deltas, neither of
+    # which is what makes it the same row.
     if base_ledger:
-        def identity(r):
-            return json.dumps({k: v for k, v in r.items() if k != "repo_commit"},
-                              sort_keys=True)
-        merged = {identity(r) for _, r in read_ledger(base_ledger)[1]}
-        if identity(target) in merged:
+        merged = {row_identity(r) for _, r in read_ledger(base_ledger)[1]}
+        if row_identity(target) in merged:
             print(
                 f"ERROR the newest row for {row['file']} ({target.get('ts')}) is "
                 f"already on {base_ref}: its run has merged, so it is history, "
