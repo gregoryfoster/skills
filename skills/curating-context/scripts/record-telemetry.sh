@@ -312,8 +312,7 @@ Exit codes:
      baseline row; or --amend with --baseline or --repo-commit, an empty
      ledger, no row for the file, a baseline row, or a row already on the
      default branch; or --repair with any flag but --ledger and
-     --dry-run), or stdin was not
-     measure-context.sh JSON
+     --dry-run), or stdin was not measure-context.sh JSON
   2  infrastructure failure (unwritable ledger, python3 missing)
   4  refused: measurement method differs from the previous row for this file
      (pass --allow-method-change to record it anyway)
