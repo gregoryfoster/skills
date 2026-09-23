@@ -23,7 +23,7 @@ usage() {
   echo "Exit codes:"
   echo "  0  the suite passed"
   echo "  1  test failures"
-  echo "  2  no usable .venv at the repo root"
+  echo "  2  no usable .venv at the repo root, or not inside a git repository"
   echo "  5  pytest collected no tests — not a pass; check -m/-k and the path"
   echo "  *  otherwise pytest's own exit code, passed through unchanged"
 }
@@ -35,6 +35,16 @@ if [[ "${1:-}" == "--help" ]]; then
   usage
   exit 0
 fi
+
+# Everything below is relative — the .env probe, .venv and tests/integration/ —
+# so resolve the root rather than trusting the caller's cwd. Without this, a run
+# from a subdirectory reported "no usable .venv at the repo root" about a repo
+# root whose .venv was fine (CR 4).
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "ERROR: not inside a git repository — the suite did not run." >&2
+  exit 2
+}
+cd "$REPO_ROOT"
 
 # Export vars from the secrets file if present (provides ANTHROPIC_API_KEY etc.).
 # `.env` is the cohort-wide name; bare `env` is the name this repo used before
