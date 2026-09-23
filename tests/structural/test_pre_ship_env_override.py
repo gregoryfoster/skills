@@ -87,7 +87,12 @@ def _stub_failure_message(variant: str) -> str:
     for ln in lines[starts[0] :]:
         if ln.startswith("exit "):
             return "\n".join(out)
-        out.append(ln)
+        # `echo` lines only. The block also carries six comment lines, and
+        # including them let the assertion below be satisfied by a comment
+        # mentioning the remedy while the PRINTED message had lost it — which
+        # is the whole failure this guard exists to catch (CR 3).
+        if ln.startswith("echo "):
+            out.append(ln)
     raise AssertionError(
         f"{variant}/scripts/pre-ship.sh: no `exit` found after "
         f"'{_STUB_EXIT_MARKER}' — the stub no longer exits where this file "
