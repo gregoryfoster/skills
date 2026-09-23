@@ -80,13 +80,13 @@ in `.gitattributes`, appending to whatever is already there. With it, the same
 race rebases cleanly and both rows survive in order.
 
 The path tracks `--ledger`, and so do the workflow's `git add`, the recorder's
-own `--ledger`, and the seam sweep's `--base-ledger` — four places that must name
-one file, because a cadence measuring into one path and staging another records
-nothing, and a sweep reading a third finds no predecessor and reports an empty
-interval every week. The renderer interpolates one variable into all four, so
-they cannot drift through the installer; hand-editing the rendered workflow is
-the only way to break it, which is why the file says to re-run the installer
-instead. Re-running it without the flag reads the ledger back out of the
+own `--ledger`, the seam sweep's `--base-ledger` and the delta check's — every
+one must name one file, because a cadence measuring into one path and staging
+another records nothing, and a sweep reading a third finds no predecessor and
+reports an empty interval every week. The renderer interpolates one variable
+into every one, so they cannot drift through the installer; hand-editing the
+rendered workflow is the only way to break it, which is why the file says to
+re-run the installer instead. Re-running it without the flag reads the ledger back out of the
 installed workflow — from the `git add --` line, which is why adding
 `--base-ledger` did not disturb it — rather than reverting to the default, and
 changing it removes the line it supersedes.
@@ -195,6 +195,27 @@ installed repo it reports the old half.
 suppressed: silence about a doc over budget is the failure being fixed, so it
 must not be the fix's own shape. Why, and why `tokens_source` is per row:
 [measuring-tokens.md](budget-and-metrics/measuring-tokens.md#run-wide-on-policy-per-row-on-docs).
+
+## The delta check
+
+The job's last step runs `record-telemetry.sh --repair --dry-run` and turns
+any output into a `::warning::`, with the JSON lines beneath it. The union merge
+above is what makes it necessary: a curation branch that merges or rebases the
+default branch in while it is open puts this job's row between rows it was
+never measured beside, and nothing conflicts. The row that now follows a new
+neighbour keeps deltas describing the old one. Three of the first cohort's
+thirteen ledgers had one when the #319 sweep looked
+([#325](https://github.com/gregoryfoster/skills/issues/325)).
+
+Phase 7 repairs the interleave a branch's own merge causes
+([telemetry.md](telemetry.md#merging-the-default-branch-in)); this step catches
+the one no branch can, a row that lands after the branch's last merge and is
+interleaved by the curation's own merge. It **reports and never repairs**: the
+job appends and never rewrites, and the repair is a commit for whoever reads
+the warning.
+
+`--check` reports a workflow rendered before this as `delta check: STALE` and
+exits 3, the same marker the drift report carries.
 
 ## The workflow
 

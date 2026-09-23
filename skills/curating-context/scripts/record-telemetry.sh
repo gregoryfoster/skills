@@ -3,7 +3,7 @@
 # ledger, computing deltas against the previous row for the same policy file.
 # Three rewrite modes serve the append: --repo-commit backfills the commit a
 # row describes, --amend replaces this run's row after a late fix, and --repair
-# corrects derived deltas a hand-edit left stale.
+# corrects derived deltas a hand-edit or a merge left stale.
 #
 # The ledger is JSONL committed alongside the file it measures, so a repo's
 # curation history travels with the repo and survives a transfer. It is
@@ -205,11 +205,23 @@ Options:
                    ref is read as-is, so fetch first if it may be stale.
   --repair         REPAIR MODE. Correct the derived delta fields of every row
                    whose recorded delta disagrees with the row before it, and
-                   touch nothing else: no measurement is read from stdin and
-                   no row is added or removed. Prints one JSON object per
+                   touch no observed field: no measurement is read from stdin
+                   and no row is added or removed. Prints one JSON object per
                    corrected field to stdout — {"line", "file", "ts", "field",
-                   "was", "now"} — and nothing when the ledger is clean, so
-                   `--repair --dry-run` is a read-only detector (#319).
+                   "was", "now"}, "line" as in the ledger it read — and nothing
+                   when the ledger is clean, so `--repair --dry-run` is a
+                   read-only detector (#319).
+
+                   Run it after merging or rebasing the default branch into a
+                   curation branch (#325). Rows only this branch carries move
+                   after every row the default branch (origin/HEAD) holds, in
+                   their own order — the order a rebase gives — reported as
+                   field "line". Merging puts the default branch's new rows
+                   after the branch's, and repairing the delta of a row both
+                   carry makes a line both have changed, which merge=union
+                   later duplicates. Moved instead, every row the default
+                   branch holds stays byte-identical. With no origin/HEAD it
+                   warns and repairs in file order.
 
                    What it corrects is exactly what --print-trend warns about,
                    through the same function: a delta_days that is not the gap
@@ -223,8 +235,11 @@ Options:
                    rule protects what a row OBSERVED, and repair never changes
                    an observed field; the deltas are arithmetic on the ledger,
                    and a stale one misreports the trend the rule exists to
-                   keep. Unlike --amend it therefore applies to merged rows.
-                   Commit a repair on its own, so its diff is only the deltas.
+                   keep. Unlike --amend it therefore applies to merged rows —
+                   but a repaired merged row is a line the default branch has
+                   too, so merge that repair with its branch up to date, or
+                   merge=union keeps both versions. Commit a repair on its own,
+                   so its diff is only the deltas and the moves.
                    A missing or empty ledger has nothing to repair (exit 0).
                    Accepts only --ledger and --dry-run.
   --allow-method-change
@@ -300,10 +315,13 @@ Row schema (one JSON object per line):
   delta_tokens      change vs the previous row for this file. Null on the first
                     row, and null when the measurement method changed since the
                     previous row — see delta_unavailable
-  delta_days        days since the previous row (null if first)
+  delta_days        days since the previous row (null if first). Negative when
+                    the row was measured before the one now ahead of it — the
+                    order --repair gives a branch's rows after a merge
   delta_unavailable present only when delta_tokens was suppressed; says why
                     The three delta fields are DERIVED from the previous row,
-                    never observed: edit a row or remove its predecessor by hand
+                    never observed: edit a row or remove its predecessor by hand,
+                    or merge the default branch into a branch that appended,
                     and they go stale silently. Rewrite a run's row with
                     --amend; --print-trend warns about any row whose deltas
                     disagree with the ledger, and --repair corrects it.
@@ -615,6 +633,35 @@ fi
 # measured, and null already means "cannot name an interval" to the reader.
 REPO_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || REPO_COMMIT=""
 
+# BASE_REF and BASE_LEDGER: the default branch, and its copy of the ledger.
+# Shared by --amend, which refuses a row that has merged, and --repair, which
+# moves the rows that have not after the ones that have — so the two cannot
+# disagree about which rows are history. Unresolvable is a warning, not a
+# refusal: a repo with no origin/HEAD has no default branch to compare against.
+# No ledger on the default branch at all leaves BASE_LEDGER empty: nothing has
+# merged, so every row is this branch's own.
+resolve_base_ledger() {
+  local what="$1" consequence="$2" rel
+  BASE_REF="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || BASE_REF=""
+  case "$LEDGER" in
+    "$ROOT"/*) rel="${LEDGER#"$ROOT"/}" ;;
+    /*) rel="" ;;
+    *) rel="${LEDGER#./}" ;;
+  esac
+  if [ -z "$BASE_REF" ]; then
+    echo "WARN cannot tell $what: no origin/HEAD to compare against" >&2
+    echo "     (\`git remote set-head origin --auto\` sets one). $consequence" >&2
+  elif [ -z "$rel" ]; then
+    echo "WARN cannot tell $what: $LEDGER is outside" >&2
+    echo "     this repo, so $BASE_REF holds no copy of it to compare against." >&2
+    BASE_REF=""
+  elif git cat-file -e "$BASE_REF:$rel" 2>/dev/null; then
+    git show "$BASE_REF:$rel" >"$TMP/base.jsonl" || {
+      echo "ERROR cannot read $rel from $BASE_REF" >&2; exit 2; }
+    BASE_LEDGER="$TMP/base.jsonl"
+  fi
+}
+
 MODE=append
 if [ "$REPAIR" -eq 1 ]; then
   MODE=repair
@@ -624,6 +671,14 @@ if [ "$REPAIR" -eq 1 ]; then
   [ -s "$LEDGER" ] || {
     echo "$LEDGER has no rows; nothing to repair" >&2
     exit 0; }
+  # Which rows the default branch holds, so this branch's own go after them
+  # (#325). Merging the default branch in puts its rows AFTER the branch's, and
+  # repairing the delta of a row both branches carry makes it a line both have
+  # changed: once the default branch appends again, merge=union keeps BOTH
+  # versions and the row is duplicated. Moved instead, a held row keeps the
+  # predecessor it has there, and only rows the branch alone carries change.
+  resolve_base_ledger "which rows the default branch holds" \
+    "Deltas are repaired in file order; on a branch that merged the default branch in, set one and re-run."
 elif [ "$BACKFILL" -eq 1 ]; then
   MODE=backfill
   # Resolve REV here rather than in python, so the row can only ever carry a
@@ -659,30 +714,8 @@ elif [ "$AMEND" -eq 1 ]; then
   # which is already on the default branch, so "is repo_commit merged?" would
   # refuse exactly the amend Phase 7 asks for. Whether the ROW is there is the
   # question telemetry.md's test actually asks.
-  #
-  # Unresolvable is a warning, not a refusal: a repo with no origin/HEAD has no
-  # default branch to have merged into, and the rule stays the author's to keep.
-  BASE_REF="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || BASE_REF=""
-  case "$LEDGER" in
-    "$ROOT"/*) LEDGER_REL="${LEDGER#"$ROOT"/}" ;;
-    /*) LEDGER_REL="" ;;
-    *) LEDGER_REL="${LEDGER#./}" ;;
-  esac
-  if [ -z "$BASE_REF" ]; then
-    echo "WARN cannot tell whether this row has merged: no origin/HEAD to compare" >&2
-    echo "     against (\`git remote set-head origin --auto\` sets one). Amending" >&2
-    echo "     a merged row rewrites history — only amend this run's row." >&2
-  elif [ -z "$LEDGER_REL" ]; then
-    echo "WARN cannot tell whether this row has merged: $LEDGER is outside" >&2
-    echo "     this repo, so $BASE_REF holds no copy of it to compare against." >&2
-    BASE_REF=""
-  elif git cat-file -e "$BASE_REF:$LEDGER_REL" 2>/dev/null; then
-    git show "$BASE_REF:$LEDGER_REL" >"$TMP/base.jsonl" || {
-      echo "ERROR cannot read $LEDGER_REL from $BASE_REF" >&2; exit 2; }
-    BASE_LEDGER="$TMP/base.jsonl"
-  fi
-  # No ledger on the default branch at all: nothing has merged, so every row is
-  # this branch's own. BASE_LEDGER stays empty and the guard has nothing to find.
+  resolve_base_ledger "whether this row has merged" \
+    "Amending a merged row rewrites history — only amend this run's row."
 else
   mkdir -p "$(dirname "$LEDGER")" || { echo "ERROR cannot create $(dirname "$LEDGER")" >&2; exit 2; }
   [ -f "$LEDGER" ] || : >"$LEDGER" || { echo "ERROR cannot create $LEDGER" >&2; exit 2; }
@@ -717,6 +750,15 @@ def is_curation_row(row):
     """
     acts = row.get("actions") or []
     return not (acts and all(a.split(":", 1)[0] == "baseline" for a in acts))
+
+
+# Both rewrites target this run's row as the newest, and merging the default
+# branch in leaves the cadence's baseline row newest instead — so a refusal on
+# a baseline row names the repair that puts this run's rows back last (#325).
+AFTER_MERGE = ("Merged the default branch in since recording? Run "
+               "`record-telemetry.sh --repair` first: it moves this branch's "
+               "rows after the default branch's, and this run's row is newest "
+               "again.")
 
 
 def plural(n, word):
@@ -804,13 +846,61 @@ def stale_deltas(prev, r):
     return out
 
 
+# Fields a row may legitimately gain after it merged: the deltas --repair
+# recomputes, and the repo_commit a backfill rewrites on this branch.
+REWRITABLE = ("delta_tokens", "delta_days", "delta_unavailable", "repo_commit")
+
+
+def row_identity(r):
+    """What makes two lines the same ROW whatever was rewritten since.
+
+    THE ONE TEST of whether the default branch holds a row: --amend refuses
+    what it matches and --repair moves what it does not. Two tests let each
+    mode break the rule with the rewrite the other makes — a repaired merged
+    row read as unmerged to --amend, a backfilled one as this branch's own to
+    --repair, which then moved a line the default branch holds (#325).
+    """
+    return json.dumps({k: v for k, v in r.items() if k not in REWRITABLE},
+                      sort_keys=True)
+
+
 if mode == "repair":
+    lines, parsed = read_ledger(ledger)
+    fixes = []
+    # Rows only this branch carries go AFTER every row the default branch
+    # holds, in their own order — the order a rebase gives (#325). Merging the
+    # default branch in puts its new rows after the branch's, so the delta that
+    # goes stale can be on a row the default branch holds; repaired in place,
+    # that row becomes a line both branches have changed, and merge=union
+    # keeps both versions once the default branch appends again. Moved, every
+    # held line stays byte-identical and only the branch's own rows change.
+    # Everything that is not an own row (held, malformed, blank) keeps its
+    # place relative to the rest.
+    #
+    # Each row's line in the ledger AS READ, by its line after any move: the
+    # report names rows as they are in the file its reader has.
+    orig = {}
+    if base_ledger:
+        held = {row_identity(r) for _, r in read_ledger(base_ledger)[1]}
+        own = {i for i, r in parsed if row_identity(r) not in held}
+        order = ([i for i in range(len(lines)) if i not in own]
+                 + [i for i in range(len(lines)) if i in own])
+        if order != list(range(len(lines))):
+            by_idx = dict(parsed)
+            for new, old in enumerate(order):
+                if old != new and old in own:
+                    fixes.append({"line": old + 1, "file": by_idx[old].get("file"),
+                                  "ts": by_idx[old].get("ts"), "field": "line",
+                                  "was": old + 1, "now": new + 1})
+            orig = dict(enumerate(order))
+            lines = [lines[i] for i in order]
+            parsed = [(new, by_idx[old]) for new, old in enumerate(order)
+                      if old in by_idx]
     # Rewrites only what stale_deltas() names. A row's correct deltas depend
     # only on its predecessor's OBSERVED fields — ts, tokens, tokens_exact — and
     # never on the predecessor's deltas, so one pass in file order is complete:
     # no correction can invalidate another.
-    lines, parsed = read_ledger(ledger)
-    last_by_file, fixes = {}, []
+    last_by_file = {}
     for idx, r in parsed:
         prev = last_by_file.get(r.get("file"))
         last_by_file[r.get("file")] = r
@@ -827,7 +917,7 @@ if mode == "repair":
                     f"{prev.get('tokens_exact')}, this row tokens_exact="
                     f"{r.get('tokens_exact')}"
                 )
-            fixes.append({"line": idx + 1, "file": r.get("file"),
+            fixes.append({"line": orig.get(idx, idx) + 1, "file": r.get("file"),
                           "ts": r.get("ts"), "field": field,
                           "was": was, "now": now})
         lines[idx] = json.dumps(r, sort_keys=True, ensure_ascii=False)
@@ -838,13 +928,13 @@ if mode == "repair":
         print(f"{ledger}: every recorded delta agrees with its row's "
               "predecessor; nothing to repair", file=sys.stderr)
     elif dry == "1":
-        print(f"--dry-run: would repair {plural(len(fixes), 'field')} on "
+        print(f"--dry-run: would make {plural(len(fixes), 'correction')} to "
               f"{plural(rows, 'row')} of {ledger}", file=sys.stderr)
     else:
         rewrite_ledger(ledger, lines)
-        print(f"repaired {plural(len(fixes), 'field')} on "
+        print(f"made {plural(len(fixes), 'correction')} to "
               f"{plural(rows, 'row')} of {ledger} — commit this on its own, so "
-              "its diff is only the deltas", file=sys.stderr)
+              "its diff is only the deltas and the moves", file=sys.stderr)
     sys.exit(0)
 
 
@@ -864,7 +954,8 @@ if mode == "backfill":
             f"{ledger} is a `{(target.get('actions') or ['baseline'])[0]}` row, "
             "which records a state that has already passed — a later commit "
             "cannot change what it describes, and telemetry.md exempts it from "
-            "the rewrite rule in both directions. Backfill the curation row.",
+            "the rewrite rule in both directions. Backfill the curation row. "
+            f"{AFTER_MERGE}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -988,21 +1079,19 @@ if mode == "amend":
             f"ERROR the newest row for {row['file']} is a "
             f"`{(target.get('actions') or ['baseline'])[0]}` row, which records "
             "a state that has already passed — telemetry.md exempts it from the "
-            "rewrite rule. Record the curation with a plain append; amend that.",
+            "rewrite rule. Record the curation with a plain append; amend that. "
+            f"{AFTER_MERGE}",
             file=sys.stderr,
         )
         sys.exit(1)
     # telemetry.md's test, made mechanical: unmerged, the row is a draft of
     # this run's record; merged, it is history, and a later run appends. The
-    # row is on the default branch if a row there matches it on everything but
-    # repo_commit — which the backfill may have rewritten on this branch after
-    # the first commit merged, and which is not what makes it the same row.
+    # row is on the default branch if a row there has its row_identity() —
+    # blind to a backfilled repo_commit and to repaired deltas, neither of
+    # which is what makes it the same row.
     if base_ledger:
-        def identity(r):
-            return json.dumps({k: v for k, v in r.items() if k != "repo_commit"},
-                              sort_keys=True)
-        merged = {identity(r) for _, r in read_ledger(base_ledger)[1]}
-        if identity(target) in merged:
+        merged = {row_identity(r) for _, r in read_ledger(base_ledger)[1]}
+        if row_identity(target) in merged:
             print(
                 f"ERROR the newest row for {row['file']} ({target.get('ts')}) is "
                 f"already on {base_ref}: its run has merged, so it is history, "
@@ -1223,9 +1312,10 @@ if trend == "1":
                 found.append(f"delta_tokens {was:+d} (token change is {now:+d})")
         if found:
             print(f"  WARN row {r['ts']} disagrees with the row before it "
-                  f"({prev['ts']}): {'; '.join(found)} — one of them was edited "
-                  "after the delta was computed. `record-telemetry.sh --repair` "
-                  "corrects it; rewrite a run's row with --amend, not by hand.",
+                  f"({prev['ts']}): {'; '.join(found)} — one of them was edited, "
+                  "or a merge put another row between them, after the delta was "
+                  "computed. `record-telemetry.sh --repair` corrects it; rewrite "
+                  "a run's row with --amend, not by hand.",
                   file=sys.stderr)
 PY
 

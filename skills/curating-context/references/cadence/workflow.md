@@ -278,6 +278,30 @@ jobs:
           if [ "${SEAMS:-0}" -gt 0 ]; then
             echo "::warning::$SEAMS unacknowledged cross-reference seam(s). Run \`curate context\`."
           fi
+
+      # The ledger merges with merge=union, so a curation branch that merged or
+      # rebased this branch in while it was open can land a row between two
+      # others — cleanly, with nothing to signal it — and the later row's
+      # deltas then describe a row that is no longer before it (#325). Three
+      # of the first cohort's thirteen ledgers had one. --dry-run only: this
+      # job appends and never rewrites, so the repair is a commit for whoever
+      # reads the warning. Its stdout is empty on a clean ledger. always(),
+      # like the drift report, so a failed push does not hide it.
+      - name: Check the recorded deltas
+        if: always()
+        run: |
+          if [ -z "${RECORD_TELEMETRY_SH:-}" ]; then
+            echo "the skill scripts were not resolved — see the failing step above"
+            exit 0
+          fi
+          # --repair reads origin/HEAD, which checkout does not set. Tolerated:
+          # without it --repair says so itself, and still checks the deltas.
+          git remote set-head origin --auto >/dev/null 2>&1 || true
+          bash "$RECORD_TELEMETRY_SH" --repair --dry-run --ledger ".skills/context-metrics.jsonl" >/tmp/deltas.jsonl
+          if [ -s /tmp/deltas.jsonl ]; then
+            echo "::warning::$(wc -l </tmp/deltas.jsonl | tr -d ' ') correction(s) to .skills/context-metrics.jsonl — recorded deltas that disagree with the row now before them, usually after a curation branch merged or rebased this one in. On a branch, run \`record-telemetry.sh --repair\` and commit it on its own."
+            cat /tmp/deltas.jsonl
+          fi
 ```
 
 Its header comment restates § *What goes on the clock is a measurement, not a

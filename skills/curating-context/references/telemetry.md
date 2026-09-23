@@ -172,13 +172,49 @@ whether the **row** merged, not whether `repo_commit` did — before the backfil
 that field names the parent of the shipping commit, which is always on the
 default branch, so the obvious check would refuse every amend Phase 7 asks for.
 
-**Repairing a ledger a hand-edit already damaged** is `--repair`: it corrects
-exactly the rows that warning names, through the same function, and touches no
-observed field — so it does not break *append across*, which protects what a
-row observed, and it applies to merged rows too. A null is never filled in.
-Stdout is one JSON line per corrected field and empty when clean, so
+**Repairing a ledger a hand-edit or a merge already damaged** is `--repair`: it
+corrects exactly the rows that warning names, through the same function, and
+touches no observed field — so it does not break *append across*, which
+protects what a row observed, and it applies to merged rows too. A null is never
+filled in. Stdout is one JSON line per correction — a corrected field, or a row
+[moved](#merging-the-default-branch-in) — and empty when clean, so
 `record-telemetry.sh --repair --dry-run` is also the read-only detector a cohort
-sweep runs. Commit a repair on its own, so its diff is only the deltas.
+sweep runs. Commit a repair on its own, so its diff is only the deltas and the
+moves. A repaired row the default branch already holds is a line both branches now
+carry, so merge that repair with its branch up to date: if the default branch
+appends first, `merge=union` keeps **both** versions of the row.
+
+### Merging the default branch in
+
+When the weekly [cadence](cadence.md) appends to the default branch while a
+curation branch is open, merging or rebasing it in puts that row among rows it
+was never measured beside. `merge=union` merges cleanly, so nothing signals it,
+and the row that now follows a new neighbour keeps deltas describing the old one
+— three of thirteen cohort ledgers at the #319 sweep
+([#325](https://github.com/gregoryfoster/skills/issues/325)). So after **any**
+merge or rebase of the default branch into a curation branch:
+
+```bash
+bash "<record-telemetry.sh>" --repair
+```
+
+and commit the result on its own. Empty stdout means nothing was out of place.
+
+A merge puts the branch's rows *first*, so the stale delta can be on the
+cadence's row — one the default branch holds — and repairing it in place is the
+duplicate above, verified: the curation's merge then keeps that row twice. So
+`--repair` first moves every row only this branch carries after every row
+`origin/HEAD` holds, in their own order — what a rebase gives — then
+recomputes. Held rows stay byte-identical, and the newest row is this run's
+again, where the [backfill](#backfilling-repo_commit) looks. A move is reported
+as field `line`; without `origin/HEAD` it warns and repairs in file order. A
+branch row measured before the cadence row now ahead of it gets a **negative**
+`delta_days` — correct for the ledger's order; its `ts` still says when.
+
+A cadence row landing after the branch's last merge is interleaved by the
+curation's own merge, which no branch step prevents; the scheduled job's
+`--repair --dry-run` warns on it the next week
+([cadence.md](cadence.md#the-delta-check)).
 
 ### Backfilling `repo_commit`
 
@@ -277,7 +313,9 @@ recognise:
 prints current tokens, net change, run count, orphan and dead-link counts, and
 **the action tags that accompanied each repo's largest single reduction**. That
 last column is the cross-repo learning: after a few weeks it names which
-optimisation actually pays, and the same one usually pays everywhere.
+optimisation actually pays, and the same one usually pays everywhere. The
+reduction is the observed `tokens` change between consecutive rows, never the
+stored `delta_tokens`, which a hand-edit or a merge can leave stale (#325).
 
 `net` obeys the same comparability rule as `delta_tokens`: it is anchored at the
 oldest run contiguously matching the *latest* run's method, not at the first run
