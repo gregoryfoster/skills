@@ -100,14 +100,22 @@ usage() {
 }
 
 # Every argument, not just the first: a gate that rejects `--bogus` but accepts
-# `--help --bogus` teaches its callers to stop checking.
+# `--help --bogus` teaches its callers to stop checking. So validation is a
+# COMPLETE pass and --help acts only after it — acting on --help from inside
+# the loop is what made that comment false here until CR 2, since it returned
+# before the rest of "$@" was ever looked at.
+WANT_HELP=0
 for arg in "$@"; do
   case "$arg" in
-    --help) usage; exit 0 ;;
+    --help) WANT_HELP=1 ;;
     "") ;;
     *) echo "ERROR: unknown argument '$arg'" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [[ "$WANT_HELP" -eq 1 ]]; then
+  usage
+  exit 0
+fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "ERROR: not inside a git repository — the ship gate did not run." >&2
