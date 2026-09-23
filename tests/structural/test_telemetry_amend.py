@@ -152,6 +152,9 @@ class TestAmendComputesAgainstWhatRemains:
         assert amended["tokens"] == 470
         assert amended["delta_tokens"] == -30, amended
         assert amended["delta_days"] > 2, amended  # today minus 2000-01-01
+        # CR 2: the amend reopened the #206 gap, so it names the step that
+        # closes it.
+        assert "--repo-commit HEAD" in r.stderr
 
     def test_replaces_and_keeps_other_lines(self, tmp_path: Path):
         repo = _curated(tmp_path)

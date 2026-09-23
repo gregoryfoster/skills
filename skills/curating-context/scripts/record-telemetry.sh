@@ -1129,6 +1129,11 @@ elif mode == "amend":
         print(f"amended {row['file']} ({target.get('ts')}): "
               f"{target.get('tokens')} -> {row['tokens']} tokens",
               file=sys.stderr)
+        # Here and not only in telemetry.md: the amend re-read repo_commit
+        # from HEAD, which is the parent of the commit about to ship this
+        # row — the #206 gap the backfill exists to close, reopened.
+        print(f"  repo_commit is {repo_commit or 'null'} again — commit, then "
+              "record-telemetry.sh --repo-commit HEAD", file=sys.stderr)
 else:
     try:
         with open(ledger, "a", encoding="utf-8") as fh:
