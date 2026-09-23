@@ -2,8 +2,10 @@
 # pre-ship.sh
 # Stub: runs the project's test suite before shipping.
 #
-# This script must be overridden by the consuming project's local skill override.
-# The global shipping-work skill cannot know the project's test runner.
+# The global shipping-work skill cannot know the project's test runner, so this
+# exits 1 until the project supplies one as `scripts/pre-ship.sh` at its REPO
+# ROOT — one file, resolved ahead of the skill's copy by Step 1 (#301). Not a
+# fork of shipping-work/ into the project's own skills/; see --help.
 #
 # Usage: bash "<pre-ship.sh>" [--help]
 set -euo pipefail
@@ -11,12 +13,28 @@ set -euo pipefail
 if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash \"$0\""
   echo ""
-  echo "Runs the project test suite. Must be overridden in the consuming project."
-  echo "The global skill provides this stub only — replace with your test runner."
+  echo "Runs the project test suite. This is a stub: the global skill cannot"
+  echo "know your test runner, so it exits 1 until the project supplies one."
+  echo ""
+  echo "Supply it as scripts/pre-ship.sh at your REPO ROOT. Step 1 resolves"
+  echo "each script separately, project scripts/ first, so that file wins for"
+  echo "this gate alone and the skill's other five still resolve to the skill"
+  echo "(#301). Do not copy shipping-work/ into your own skills/ — a fork of"
+  echo "the whole skill drifts silently on every submodule update, and there"
+  echo "is nothing here worth copying: the gate below this stub is a stub too."
+  echo ""
+  echo "Unlike the -php/-python-click/-python-fastapi variants, which ship a"
+  echo "real gate and want a WRAPPER that execs back into it, your file IS the"
+  echo "gate here. There is no delegate. See docs/STYLE.md, \"Project-local"
+  echo "overrides: wrap, don't fork\"."
   echo ""
   echo "Scaffolding (worktree zombie audit + JS toolchain auto-detection) is"
-  echo "included below the stub exit. Overrides that remove the exit block"
-  echo "inherit the scaffolding verbatim, matching the FastAPI/Click/PHP siblings."
+  echo "included below the stub exit. A project file that starts from this one"
+  echo "inherits it verbatim, matching the FastAPI/Click/PHP siblings."
+  echo ""
+  echo "Exit codes:"
+  echo "  0  --help"
+  echo "  1  always, until the project supplies scripts/pre-ship.sh"
   exit 0
 fi
 
@@ -26,9 +44,14 @@ fi
 # it with a real test-runner invocation. Until then, the stub does no work
 # (no audit, no npm gates) so its "you must override" message is the first
 # and only thing the operator sees.
-echo "ERROR: pre-ship.sh is a stub. The consuming project must override this script." >&2
-echo "       Copy shipping-work/ into your project's skills/ directory and" >&2
-echo "       replace this file with your test runner (e.g., uv run pytest)." >&2
+echo "ERROR: pre-ship.sh is a stub. This project has not supplied a ship gate." >&2
+echo "       Write scripts/pre-ship.sh at your repo root and put your test" >&2
+echo "       runner in it (e.g. uv run pytest). Step 1 resolves each script" >&2
+echo "       separately, so that file wins for this gate alone and the other" >&2
+echo "       five still resolve to the skill (#301)." >&2
+echo "       Do NOT copy shipping-work/ into your own skills/ directory: a" >&2
+echo "       fork of the whole skill drifts on every update, and this stub" >&2
+echo "       has no gate worth copying. See 'bash \"$0\" --help'." >&2
 exit 1
 # ============================================================================
 
