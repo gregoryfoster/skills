@@ -295,8 +295,9 @@ Row schema (one JSON object per line):
   delta_unavailable present only when delta_tokens was suppressed; says why
                     The three delta fields are DERIVED from the previous row,
                     never observed: edit a row or remove its predecessor by hand
-                    and they go stale silently. Use --amend; --print-trend warns
-                    about any row whose deltas disagree with the ledger.
+                    and they go stale silently. Rewrite a run's row with
+                    --amend; --print-trend warns about any row whose deltas
+                    disagree with the ledger, and --repair corrects it.
   actions           action tags from --actions, or ["baseline:KIND"] with
                     --baseline
   note              --note text
