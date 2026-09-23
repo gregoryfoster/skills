@@ -148,10 +148,21 @@ echo "ok"
 # spawn races. A warning, not a gate — a stale process is not a reason to
 # refuse a ship, but it is worth one line before one is made. Absent script is
 # a silent skip: it is vendored at a non-canonical path in some consumers.
-if [[ -x "$AUDIT" ]]; then
-  if ! bash "$AUDIT" --quiet; then
-    echo "WARN: worktree zombies detected — see 'bash $AUDIT'" >&2
-  fi
+# -f, not -x: the invocation is `bash "$AUDIT"`, so a readable-but-not-
+# executable script would run fine and a -x guard would skip it silently.
+if [[ -f "$AUDIT" ]]; then
+  RC=0
+  bash "$AUDIT" --quiet || RC=$?
+  # The audit documents 0 none / 1 found / 2 tooling failure. Folding 2 into
+  # "zombies detected" would report a confident diagnosis of the wrong problem
+  # — the shape docs/STYLE.md's gate-script discipline exists to prevent, and
+  # this file is where that discipline is dogfooded.
+  case "$RC" in
+    0) ;;
+    1) echo "WARN: worktree zombies detected — see 'bash $AUDIT'" >&2 ;;
+    *) echo "WARN: the worktree-zombie audit did not run (exit $RC); zombies" >&2
+       echo "      were neither found nor ruled out — see 'bash $AUDIT'" >&2 ;;
+  esac
 fi
 
 # --- Gate 1/3: context budget ------------------------------------------------
