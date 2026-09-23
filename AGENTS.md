@@ -145,8 +145,9 @@ These carry a full template and a rationale in
 - **Gate-script discipline.** A script whose output drives a ship/skip decision
   must never silently swallow the stderr of the tool producing that output.
   `TestGateScriptHardening` binds every `shipping-work*` / `reviewing-code*`
-  script, each classified gate or reporting (#255); `test_pre_ship_env_override.py`
-  holds the wrapper-don't-fork override block across all four variants (#105).
+  script plus repo-root `scripts/` (#318), each classified gate or reporting
+  (#255); `test_pre_ship_env_override.py` holds the wrapper-don't-fork
+  override block across all four variants (#105).
 
 ## Resolution knobs
 
@@ -240,23 +241,21 @@ pip install -r requirements-test.txt
 pre-commit install                       # structural tests run on every commit
 ```
 
-Hooks use `.venv/` at the repo root. A worktree has none; link it, never
-re-create: `ln -s <main>/.venv .venv`.
+Hooks use `.venv/` at the repo root. A worktree has none; the gate links the
+main checkout's in and never re-creates it (#156).
 
-Python is gated by ruff, pinned exactly in `requirements-test.txt`. `bash
-scripts/python-lint.sh` runs `check` + `format --check` (`--fix` applies both)
-as a pre-commit hook ahead of the suite; `test_python_lint.py` runs the same
-checks inside.
-On a missing or mismatched ruff the suite skips loudly (`RUFF_REQUIRED=1` to
-fail) and the hook refuses to run
-([#246](https://github.com/gregoryfoster/skills/issues/246)).
+Python is gated by ruff, pinned exactly in `requirements-test.txt`: `bash
+scripts/python-lint.sh` runs `check` + `format --check` (`--fix` applies both),
+and `test_python_lint.py` runs the same checks inside. On a missing or
+mismatched ruff the suite skips loudly (`RUFF_REQUIRED=1` to fail) and the hook
+refuses to run ([#246](https://github.com/gregoryfoster/skills/issues/246)).
 
-Structural tests are the only pytest gate; integration tests are never wired to
-pre-push. Run either by hand:
+`scripts/pre-ship.sh` is the ship gate — every pre-commit hook in one
+command, and what `shipping-work` Step 1 resolves (#318):
 
 ```bash
-pytest tests/structural/ -v              # fast, no API key needed
-pytest tests/integration/ -v -m integration  # needs .env, billed ≈$0.16
+bash scripts/pre-ship.sh                 # budget + ruff + suite
+pytest tests/integration/ -v -m integration  # billed, needs .env; never gated
 ```
 
 **Put a new structural rule in its own `tests/structural/test_<rule>.py`, not at

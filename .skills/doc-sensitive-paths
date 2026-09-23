@@ -1,0 +1,28 @@
+# Paths whose change should prompt a documentation spot-check before shipping.
+# REPLACES shipping-work/doc-check.sh's built-in SENSITIVE_PATHS wholesale
+# (#318). Tailored together with .skills/doc-sections — tailoring one alone
+# yields advice written for a stack this repo does not have (#261, #284).
+#
+# Entries match path SEGMENTS at any depth and are LITERAL: doc-check.sh quotes
+# the entry inside its `case` pattern, so `skills/*/SKILL.md` would match
+# nothing. `SKILL.md` matches every skill's; `references/` matches every
+# skill's directory. Every entry below matches at least one tracked file,
+# which is what keeps the gate off its exit-2 "a list that cannot hit anything
+# is not a pass" path.
+#
+# The defaults this replaces were written for an application repo: they watch
+# src/api/, src/models/, schema.sql, composer.json and package.json, none of
+# which exist here, and they carry README advice about a top-level CLI list and
+# a two-line quick start that this repo does not have either.
+
+SKILL.md
+references/
+scripts/
+docs/
+AGENTS.md
+README.md
+.skills/
+tests/structural/
+requirements-test.txt
+.pre-commit-config.yaml
+.github/workflows/

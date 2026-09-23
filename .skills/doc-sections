@@ -1,0 +1,18 @@
+# The advice printed when .skills/doc-sensitive-paths hits. REPLACES
+# doc-check.sh's built-in DOC_SECTIONS wholesale (#318). The path list says
+# what the gate watches; this says what to do about a hit.
+#
+# Written as a mapping from what changed to the doc that may need it, each
+# naming the test that enforces it where one exists. Nearly every commit here
+# touches skills/ or docs/, so this gate fires on nearly every ship — which
+# means descriptive prose gets skimmed past by the third one. A line an
+# operator can check and be WRONG about is worth more than a line that merely
+# reads well.
+
+README.md: the skills table restates each skill's description and triggers. Update the row when SKILL.md frontmatter changes; add one for a new skill directory.
+AGENTS.md: skill inventory, repo-wide authoring rules, and the gate surface. Held to .skills/context-budget by a ratchet that only comes down, and BOTH readings bind — the offline estimate pre-commit sees, and count_tokens under SKILL_BUDGET_EXACT=1. Demote to a reference doc rather than appending.
+docs/KNOBS.md: every .skills/ path a project may commit. A new reader needs a row — test_skills_knob_inventory.py has no ignore-list, so an undocumented knob fails the suite, and so does a row whose knob was removed.
+docs/STYLE.md: the template and rationale behind any script rule or gate discipline that AGENTS.md states in one line. A new rule belongs in both, at different depths.
+docs/CONVENTIONS.md: override authoring, the references/ conditional-block delimiters, and VARIANT_FAMILIES — a new variant must be declared there or the selection surface goes stale.
+The sibling SKILL.md: every references/<name>.md must be linked from it (test_references.py), and every relative link must resolve from the file that contains it (test_relative_links.py).
+GATE_SCRIPTS / NON_GATE_SCRIPTS in tests/structural/test_content_invariants.py: a new script under skills/*/scripts/ or repo-root scripts/ must be classified gate or reporting, with a reason. It cannot ship unclassified.

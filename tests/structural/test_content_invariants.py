@@ -1430,7 +1430,27 @@ def _unhardened_process_substitution_sites(content: str) -> list[tuple[int, str]
 # Every `.sh` under these families is classified below, gate or not. The two
 # families are the ones docs/STYLE.md's discipline addresses; a script anywhere
 # else is out of its stated scope.
-_GATE_FAMILY_GLOBS = ("shipping-work*/scripts/*.sh", "reviewing-code*/scripts/*.sh")
+# Repo-root relative, not SKILLS_DIR relative, since
+# [#318](https://github.com/gregoryfoster/skills/issues/318): this repo's own
+# `scripts/pre-ship.sh` is a gate script by the discipline's own definition —
+# its output decides whether we ship — and it sat outside a glob anchored at
+# `skills/`. `TestShellcheck` already reached it; the hardening rule did not,
+# which left the gate this repo RUNS held to a weaker standard than the ones it
+# PUBLISHES. That is the asymmetry #255 closed for doc-check.sh, arriving from
+# the other direction.
+_REPO_ROOT = SKILLS_DIR.parent
+_GATE_FAMILY_GLOBS = (
+    "skills/shipping-work*/scripts/*.sh",
+    "skills/reviewing-code*/scripts/*.sh",
+    "scripts/*.sh",
+)
+
+
+def _gate_id(rel: str) -> str:
+    """`skills/<skill>/scripts/<f>` -> `<skill>/<f>`; `scripts/<f>` -> `<root>/<f>`."""
+    parts = rel.split("/")
+    return (parts[1] if len(parts) == 4 else "<root>") + "/" + parts[-1]
+
 
 # Bucket 1 of the two-bucket rule: output drives a control-flow decision, so a
 # producer that fails silently turns into a false pass. Keyed by basename —
@@ -1458,6 +1478,20 @@ GATE_SCRIPTS = {
         "reviewing-code-python-click copy is held byte-equal to the shipping "
         "one, so both are held to the stricter role"
     ),
+    # This repo's own gate surface, in scope since #318.
+    "python-lint.sh": (
+        "gate 2/3 of this repo's ship gate and the pre-commit hook ahead of "
+        "the suite; its exit code IS the lint verdict both branch on, and it "
+        "captures `git ls-files`'s status explicitly rather than letting an "
+        "empty answer read as a clean tree"
+    ),
+    "structural-tests.sh": (
+        "gate 3/3, and the only pytest gate. It passes pytest's own exit code "
+        "through unchanged — including 5 for nothing-collected, which is the "
+        "shape where a broken conftest or a renamed directory reports green "
+        "while verifying nothing. A swallowed producer here is a false pass on "
+        "the whole suite"
+    ),
 }
 
 # Bucket 2: reporting-only, or an action whose own exit code is the verdict.
@@ -1473,13 +1507,19 @@ NON_GATE_SCRIPTS = {
     ),
     "close-issue.sh": "an action: `gh issue close`'s exit code is the verdict",
     "comment-issue.sh": "an action: `gh issue comment`'s exit code is the verdict",
+    "run-integration-tests.sh": (
+        "an action, and deliberately off the ship path: it `exec`s pytest, so "
+        "that exit code is the verdict, and nothing parses its output. "
+        "pre-ship.sh does not call it — the integration suite is billed and "
+        "needs .env, so it is never wired to a gate (#318)"
+    ),
 }
 
 
 def _gate_family_scripts() -> list[Path]:
     out: list[Path] = []
     for pattern in _GATE_FAMILY_GLOBS:
-        out.extend(SKILLS_DIR.glob(pattern))
+        out.extend(_REPO_ROOT.glob(pattern))
     return sorted(out)
 
 
@@ -1515,17 +1555,14 @@ class TestGateScriptHardening:
     """
 
     _GATE_PATHS = sorted(
-        p.relative_to(SKILLS_DIR).as_posix()
+        p.relative_to(_REPO_ROOT).as_posix()
         for p in _gate_family_scripts()
         if p.name in GATE_SCRIPTS
     )
 
-    @pytest.fixture(
-        params=_GATE_PATHS,
-        ids=lambda p: p.split("/")[0] + "/" + p.split("/")[-1],
-    )
+    @pytest.fixture(params=_GATE_PATHS, ids=_gate_id)
     def script_path(self, request):
-        return SKILLS_DIR / request.param
+        return _REPO_ROOT / request.param
 
     def test_every_family_script_is_classified(self):
         """A new script must be classified, not silently uncovered.
@@ -1535,13 +1572,13 @@ class TestGateScriptHardening:
         rule claims to cover while extending nothing that checks it.
         """
         unclassified = sorted(
-            p.relative_to(SKILLS_DIR).as_posix()
+            p.relative_to(_REPO_ROOT).as_posix()
             for p in _gate_family_scripts()
             if p.name not in GATE_SCRIPTS and p.name not in NON_GATE_SCRIPTS
         )
         assert not unclassified, (
-            "unclassified script(s) in the shipping-work* / reviewing-code* "
-            "families:\n"
+            "unclassified script(s) in the gate surface (shipping-work* / "
+            "reviewing-code* families, plus this repo's own scripts/):\n"
             + "\n".join(f"  {p}" for p in unclassified)
             + "\n\nAdd each basename to GATE_SCRIPTS (its output drives a "
             "control-flow decision) or to NON_GATE_SCRIPTS (reporting-only, "
@@ -1584,13 +1621,13 @@ class TestGateScriptHardening:
         """
         assert any(p.split("/")[-1] == name for p in self._GATE_PATHS), (
             f"{name} is classified as a gate script but no file with that "
-            "name was found under skills/{shipping-work,reviewing-code}*/scripts/"
+            f"name was found under any of {list(_GATE_FAMILY_GLOBS)}"
         )
 
     def test_no_unhardened_process_substitution(self, script_path):
         violations = _unhardened_process_substitution_sites(script_path.read_text())
         assert not violations, (
-            f"{script_path.relative_to(SKILLS_DIR)} contains unhardened "
+            f"{script_path.relative_to(_REPO_ROOT)} contains unhardened "
             f"`done < <(...)` site(s):\n"
             + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations)
             + "\n\nGate-script inputs must capture the producer's exit code. "
