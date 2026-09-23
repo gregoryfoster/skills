@@ -164,6 +164,14 @@ carried: a carried verdict describes the tree *before* the fix, and only the
 author knows whether the fix touched what it measured. `--print-trend` warns
 about any row whose deltas disagree with the row before it.
 
+**Repairing a ledger a hand-edit already damaged** is `--repair`: it corrects
+exactly the rows that warning names, through the same function, and touches no
+observed field — so it does not break *append across*, which protects what a
+row observed, and it applies to merged rows too. A null is never filled in.
+Stdout is one JSON line per corrected field and empty when clean, so
+`record-telemetry.sh --repair --dry-run` is also the read-only detector a cohort
+sweep runs. Commit a repair on its own, so its diff is only the deltas.
+
 The merged test is enforced, too: `--amend` refuses a row the default branch
 (`origin/HEAD`) already holds, matched on everything but `repo_commit`. It asks
 whether the **row** merged, not whether `repo_commit` did — before the backfill
