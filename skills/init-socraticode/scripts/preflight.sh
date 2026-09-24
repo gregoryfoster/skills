@@ -327,9 +327,11 @@ fi
 # install at start, and pinning one does not pin the other: the driver's pin
 # above covers the health hook, index, status and verify; the session's server
 # is the plugin's own. Since upstream 0c33776 (2026-09-20) that plugin reads
-# its package spec from SOCRATICODE_SPEC, so a repo's settings env block can
-# pin it — but that commit landed after the 1.14.0 release without a version
-# bump, so an installed "1.14.0" may predate it and ignore the variable.
+# its package spec from SOCRATICODE_SPEC, so the variable in Claude Code's
+# environment when it starts pins it (a settings env block alone can miss the
+# launch, below) — but that commit landed after the 1.14.0 release without a
+# version bump, so an installed "1.14.0" may predate it and ignore the
+# variable.
 #
 # Read through the driver's own resolver rather than re-implemented here: it
 # follows plugin.json's `mcpServers` to the file Claude Code actually loads —
