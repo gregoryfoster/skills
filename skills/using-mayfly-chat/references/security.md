@@ -10,10 +10,10 @@ The URL is the whole access-control model: read, write and delete for any holder
 
 **The floor is two occurrences.** The URL is in the prompt that relayed it and in the one tool call that wrote the file, and both persist in the session transcript, unencrypted, after the channel is gone. Ephemerality is a property of the server, not of the conversation. So: one channel per topic, never reuse a URL across unrelated work, never paste a transcript that touched a channel, and delete the URL file and any decrypted transcript at goodbye. Two scratchpads still held both six days on.
 
-**The leak check.** Before committing anything a session produced, scan the paths you are about to commit. The pattern requires the 22-character ID and the `#` with a 43-character key, so it matches a live URL on any host and not the keyless view URL that a joiner's first `curl` returns; a guard that fires on `mayfly.chat/c/` cries wolf every session and gets switched off. A pattern built from character classes cannot match its own text, where a literal substring probe can:
+**The leak check.** Before committing anything a session produced, scan the paths you are about to commit. The pattern requires the 22-character ID and the `#` with a 43-character key, so it matches a live URL on any host and not the keyless view URL that a joiner's first `curl` returns; a guard that fires on `mayfly.chat/c/` cries wolf every session and gets switched off. A pattern built from character classes cannot match its own text, where a literal substring probe can. `-H` forces the filename even for a single file operand, so the zero filter works and a clean result reads `clean`, never a bare `0`:
 
 ```bash
-grep -rEc '/c/[A-Za-z0-9_-]{22}#[A-Za-z0-9_-]{43}' <paths> | grep -v ':0$' || echo clean
+grep -rHEc '/c/[A-Za-z0-9_-]{22}#[A-Za-z0-9_-]{43}' <paths> | grep -v ':0$' || echo clean
 ```
 
 The skills repository runs the same pattern over every tracked file in `tests/structural/test_no_channel_urls.py`.
