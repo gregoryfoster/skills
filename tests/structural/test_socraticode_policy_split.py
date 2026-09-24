@@ -219,8 +219,28 @@ class TestBlockStaysSmall:
                 f"variant {i} still inlines the ToolSearch prefetch query. It is "
                 "~680 bytes of fully-qualified tool names on one line, it is "
                 "already printed by the SessionStart hook this skill installs, "
-                f"and it belongs in {OVERFLOW_DOC} (#115)."
+                "and that hook's output is its only copy (#115, #234)."
             )
+
+    def test_link_does_not_promise_the_prefetch_query(self, blocks: list[str]) -> None:
+        """#323: the link line said the doc held the "prefetch query".
+
+        #234 made the hook's output the only copy of the `select:` query, so
+        the doc points at the hook instead. The block sits between markers — a
+        consumer's local correction is overwritten on the next re-run — and it
+        is always loaded, so a stale promise here sends every agent in every
+        consuming repo to a doc for a string that doc was changed not to hold.
+        """
+        stale = [
+            f"variant {'AB'[i]}"
+            for i, block in enumerate(blocks)
+            if re.search(r"prefetch\s+query", block)
+        ]
+        assert not stale, (
+            f"{stale} still say {OVERFLOW_DOC} holds the prefetch query. It "
+            "holds a pointer to `.claude/hooks/socraticode-reminder.sh`, whose "
+            'output is the only copy (#234); say "prefetch hook" (#323).'
+        )
 
 
 class TestBlockKeepsWhatMatters:

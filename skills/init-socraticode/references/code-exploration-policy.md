@@ -4,9 +4,9 @@ Three artifacts the skill installs into the target project (SKILL.md Phase 3):
 
 1. A **Code Exploration Policy** section in the project's `AGENTS.md`, wrapped in
    idempotency markers so re-runs never duplicate it.
-2. A **`docs/SOCRATICODE.md`** detail doc carrying the full tool table, the
-   prefetch query and the per-tool guidance — see
-   [`socraticode-doc.md`](socraticode-doc.md).
+2. A **`docs/SOCRATICODE.md`** detail doc carrying the full tool table, a
+   pointer to the prefetch hook (never the query itself, #234) and the per-tool
+   guidance — see [`socraticode-doc.md`](socraticode-doc.md).
 3. A **SessionStart hook** in `.claude/settings.json` that re-emits the
    `ToolSearch` prefetch instruction each session (the `codebase_*` MCP tools
    are *deferred* — their schemas load only after the prefetch).
@@ -96,7 +96,7 @@ semantic search.
 | Exact string or regex (errors, log lines, known symbols) | `grep` / `rg` |
 | Imports/dependents of a file · blast radius of a change | `codebase_graph_query` / `codebase_impact` |
 
-Full tool table, prefetch query, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
+Full tool table, prefetch hook, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
 <!-- END socraticode-policy -->
 ```
 
@@ -138,7 +138,7 @@ Explore subagent for path-pattern walks, not semantic search.
 | Exact string or regex (errors, log lines, known symbols) | `grep` / `rg` |
 | Imports/dependents of a file · blast radius of a change | `grep` / `rg` — graph low-yield |
 
-Full tool table, prefetch query, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
+Full tool table, prefetch hook, per-tool guidance: [`docs/SOCRATICODE.md`](docs/SOCRATICODE.md).
 <!-- END socraticode-policy -->
 ```
 

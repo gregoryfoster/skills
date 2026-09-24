@@ -264,6 +264,11 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
     const server = expandVars(hit.server, { CLAUDE_PLUGIN_ROOT: versionDir });
     if (server?.command && Array.isArray(server.args)) {
       return {
+        // Which variable the package spec is read from, off the UNEXPANDED
+        // definition — `SOCRATICODE_SPEC` since upstream 0c33776, null for a
+        // build that hardcodes it. That is the difference between "set the
+        // variable" and "update the plugin first" as a remedy (#327).
+        specVariable: specVariableOf(hit.server),
         command: server.command,
         args: server.args,
         env: server.env && typeof server.env === 'object' ? server.env : {},
@@ -275,6 +280,16 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
         pluginVersion: hit.pluginVersion ?? null,
       };
     }
+  }
+  return null;
+}
+
+// The variable a definition's `socraticode[@…]` argument is spelled with, as
+// `${NAME}` or `${NAME:-socraticode@…}`, or null when the spec is a literal.
+function specVariableOf(server) {
+  for (const a of Array.isArray(server?.args) ? server.args : []) {
+    const m = typeof a === 'string' && /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-socraticode(?:@[^}]*)?)?\}$/.exec(a);
+    if (m) return m[1];
   }
   return null;
 }
@@ -476,8 +491,14 @@ function registryLatest() {
 // floating plugin both exist, and at that point "nothing printed" and "the
 // check never ran" would be the same report. Two spellings of not-measured is
 // the defect #297 removed.
-function pinDriftFinding({ running, floatingSpec, resolves, pinPath }) {
+function pinDriftFinding({ running, floatingSpec, resolves, pinPath, specVariable = null }) {
   const note = (message) => ({ severity: SEVERITY.note, message });
+  // The other half of the fix, offered only where the installed plugin reads
+  // the variable — on a build that hardcodes its spec it would do nothing, and
+  // a remedy that changes nothing is what #326 had to take back (#327).
+  const pinSession = specVariable && running
+    ? `, or pin the session to the driver: ${specVariable}=socraticode@${running} in the repo's settings env block`
+    : '';
   if (!running) {
     return note(`pinned launch, but no server version was recorded, so drift against '${floatingSpec}' was NOT measured`);
   }
@@ -490,7 +511,7 @@ function pinDriftFinding({ running, floatingSpec, resolves, pinPath }) {
       message:
         `pinned server ${running}, but the session's plugin launches '${floatingSpec}', which resolves to `
         + `${resolves} — two different feature releases writing one store; re-pin deliberately with `
-        + `npm install --prefix ${pinPath} socraticode@${resolves}`,
+        + `npm install --prefix ${pinPath} socraticode@${resolves}${pinSession}`,
     };
   }
   return note(`pinned at ${running}; the plugin's '${floatingSpec}' resolves to ${resolves} — same feature release`);
@@ -1049,6 +1070,164 @@ function newestMtimeMs(target) {
   try { root = statSync(target); } catch { return null; }
   visit(target, root.isDirectory(), '');
   return newest;
+}
+
+// ── content confirmation (#326) ──────────────────────────────────────────────
+// mtime is a prefilter, not a verdict. A checkout, a local merge, `git stash
+// pop`, a rebase or a bare `touch` rewrites a file with IDENTICAL bytes and a
+// new mtime — and the server's repair is keyed on content, so codebase_update
+// answers `0 files changed`, re-embeds nothing, and the finding it was named
+// to clear comes back the next day. Measured on CannObserv/wslcb-licensing-
+// tracker: two artifacts called stale at 18:49 by a merge, their last content
+// change at 18:32:14, indexed 30 and 42 seconds later (#326).
+//
+// So a newer mtime is confirmed against the key the server itself uses before
+// it is reported: the artifact's contentHash, recomputed here the way
+// dist/services/context-artifacts.js readArtifactContent computes it (1.14.0),
+// and compared with the one stored on the project's socraticode_metadata
+// point. Equal means the index already holds these bytes, whatever the clock
+// says.
+//
+// Transcribed rather than imported, like the walk above and for the same
+// reason. The transcription is exact only where this walk can be: a directory
+// holding an ignore file or a virtualenv marker is one the server filters with
+// the two chain layers this driver does not mirror (see serverIgnoresEntry),
+// and a symlink is one glob resolves by rules this walk does not follow. There
+// it REFUSES to hash rather than hashing something close — a near-miss hash
+// never matches, and would turn every touched file into a confirmed defect.
+// Pinned against the installed server in test_context_artifact_parity.py.
+const BINARY_SNIFF_BYTES = 8192; // constants.js DETECT_HEAD_BYTES
+
+function contentDigest(text) {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+// { hash } or { hash: null, reason }. Never throws: an artifact this cannot
+// hash is one whose freshness stays unconfirmed, not a failed health check.
+function artifactContentHash(target) {
+  let root;
+  try { root = statSync(target); } catch (e) { return { hash: null, reason: `cannot stat it (${e.code || e.message})` }; }
+  if (root.isFile()) {
+    // The server reads a single-file artifact verbatim as utf-8, no binary
+    // sniff and no ignore chain: a declared path is an explicit instruction.
+    try { return { hash: contentDigest(readFileSync(target, 'utf8')) }; } catch (e) {
+      return { hash: null, reason: `cannot read it (${e.code || e.message})` };
+    }
+  }
+  if (!root.isDirectory()) return { hash: null, reason: 'it is neither a file nor a directory' };
+
+  const files = [];
+  let budget = FRESHNESS_WALK_BUDGET;
+  let refusal = null;
+  const walk = (dir, relativePath) => {
+    // The ignore files the server's chain reads, rooted at the artifact: a
+    // `.gitignore` in any directory it walks, `.socraticodeignore` at the root
+    // only. Dot-named, so the entry loop below would never see them.
+    const markers = relativePath ? ['.gitignore'] : ['.gitignore', '.socraticodeignore'];
+    for (const m of markers) {
+      if (existsSync(joinPath(dir, m))) {
+        refusal = `${relativePath ? `${relativePath}/` : ''}${m} filters it by rules this driver does not mirror`;
+        return;
+      }
+    }
+    // A subdirectory holding pyvenv.cfg or conda-meta/ is a virtualenv the
+    // server excludes whatever it is called (ignore.js isEnvironmentDirectory).
+    if (relativePath && (existsSync(joinPath(dir, 'pyvenv.cfg')) || existsSync(joinPath(dir, 'conda-meta')))) {
+      refusal = `${relativePath}/ is a virtualenv the server excludes by marker`;
+      return;
+    }
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch (e) {
+      refusal = `cannot list ${relativePath || 'its root'} (${e.code || e.message})`;
+      return;
+    }
+    for (const e of entries) {
+      if (refusal) return;
+      if (budget-- <= 0) { refusal = `it holds more than ${FRESHNESS_WALK_BUDGET} entries`; return; }
+      if (e.name.startsWith('.')) continue;
+      const childRelative = relativePath ? `${relativePath}/${e.name}` : e.name;
+      if (serverIgnoresEntry(e.name, childRelative)) continue;
+      if (e.isDirectory()) walk(joinPath(dir, e.name), childRelative);
+      else if (e.isFile()) files.push(childRelative);
+      else { refusal = `${childRelative} is a symlink or special file`; return; }
+    }
+  };
+  walk(target, '');
+  if (refusal) return { hash: null, reason: refusal };
+
+  // Everything below is readArtifactContent's own loop: glob's paths sorted by
+  // code unit, a NUL in the first 8 KiB skips the file as binary, an unreadable
+  // one is skipped, and the rest are joined under a `# ── path ──` header.
+  files.sort();
+  const parts = [];
+  for (const rel of files) {
+    let buf;
+    try { buf = readFileSync(joinPath(target, rel)); } catch { continue; }
+    if (buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)) continue;
+    parts.push(`# ── ${rel} ──\n${buf.toString('utf8')}`);
+  }
+  // The server refuses such an artifact outright, so it holds no hash to match.
+  if (!parts.length) return { hash: null, reason: 'it holds no readable text file' };
+  return { hash: contentDigest(parts.join('\n\n')) };
+}
+
+// Where the server's Qdrant client connects (qdrant.js getClient): QDRANT_URL
+// when set, in either mode, with 6333/443 filled in when it names no port;
+// otherwise host and port, over https when an API key is set.
+function qdrantBase(env) {
+  if (env.QDRANT_URL) {
+    const u = new URL(env.QDRANT_URL);
+    if (!u.port) u.port = u.protocol === 'https:' ? '443' : '6333';
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+  }
+  return `${env.QDRANT_API_KEY ? 'https' : 'http'}://${env.QDRANT_HOST || 'localhost'}:${env.QDRANT_PORT || 16333}`;
+}
+
+// qdrant.js metadataPointId: the first 32 hex of sha256(collection), as a UUID.
+function metadataPointId(collection) {
+  const h = createHash('sha256').update(collection).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+const QDRANT_READ_TIMEOUT_MS = 10000;
+
+// The contentHash the server stored per artifact, read off the project's
+// context point in socraticode_metadata: { hashes: Map(name -> hash) } or
+// { hashes: null, error }. No MCP tool returns it — codebase_context prints
+// the index time and nothing else — so this is one read-only REST call to the
+// store the server just answered from, with the environment it was launched
+// with. Never throws.
+async function indexedArtifactHashes(projectPath, env) {
+  const prefix = env.QDRANT_COLLECTION_PREFIX || '';
+  const collection = `${prefix}context_${effectiveProjectId(projectPath, env).value}`;
+  const metadata = `${prefix}socraticode_metadata`;
+  let base;
+  try { base = qdrantBase(env); } catch (e) { return { hashes: null, error: `QDRANT_URL does not parse (${e.message})` }; }
+  let res;
+  try {
+    res = await fetch(`${base}/collections/${metadata}/points`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(env.QDRANT_API_KEY ? { 'api-key': env.QDRANT_API_KEY } : {}) },
+      body: JSON.stringify({ ids: [metadataPointId(collection)], with_payload: true }),
+      signal: AbortSignal.timeout(QDRANT_READ_TIMEOUT_MS),
+    });
+  } catch (e) {
+    return { hashes: null, error: `cannot reach Qdrant at ${base} (${e.cause?.code || e.message})` };
+  }
+  if (!res.ok) return { hashes: null, error: `Qdrant at ${base} answered HTTP ${res.status} for ${metadata}` };
+  let point;
+  try { point = (await res.json())?.result?.[0]; } catch (e) {
+    return { hashes: null, error: `Qdrant at ${base} answered unparseable JSON (${e.message})` };
+  }
+  if (!point) return { hashes: null, error: `${metadata} holds no point for ${collection}` };
+  let states = point.payload?.artifacts;
+  try { if (typeof states === 'string') states = JSON.parse(states); } catch { states = null; }
+  if (!Array.isArray(states)) return { hashes: null, error: `the ${collection} metadata point carries no artifact list` };
+  return {
+    hashes: new Map(states
+      .filter((s) => s && typeof s.name === 'string' && typeof s.contentHash === 'string')
+      .map((s) => [s.name, s.contentHash])),
+  };
 }
 
 // Asymmetric on purpose: only a positively-indexed status counts as indexed,
@@ -2774,7 +2953,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         // Only the artifacts that ARE indexed: an unindexed one has no index
         // time to compare against, and the parity finding below already names
         // it. Double-counting would make the stale count useless as a number.
-        const stale = [];
+        const candidates = [];
         const unjudged = [];
         for (const a of listed) {
           if (!a.indexed) continue;
@@ -2783,7 +2962,7 @@ async function cmdHealthCheck(projectPath, probePath) {
           const newest = newestMtimeMs(resolvePath(projectPath, a.path));
           if (newest === null) { unjudged.push(a.name); continue; }
           if (newest > indexedAt) {
-            stale.push({
+            candidates.push({
               name: a.name,
               path: a.path,
               sourceMtime: new Date(newest).toISOString(),
@@ -2792,11 +2971,42 @@ async function cmdHealthCheck(projectPath, probePath) {
           }
         }
 
+        // ── newer ≠ changed (#326) ────────────────────────────────────────
+        // A newer mtime only nominates. Each candidate is confirmed against
+        // the contentHash the server stored for it — the key its own repair
+        // uses — so a checkout that rewrote identical bytes is `touched`, not
+        // stale, and the finding stays one that codebase_update can clear.
+        // The store is read only when something was nominated: on a fresh
+        // tree this costs nothing. Its environment is the one the server was
+        // launched with, plugin env block included, so both address one store.
+        const stale = [];
+        const touched = [];
+        const unverified = [];
+        if (candidates.length) {
+          const stored = await indexedArtifactHashes(projectPath, { ...process.env, ...client.launch.env });
+          for (const c of candidates) {
+            const local = artifactContentHash(resolvePath(projectPath, c.path));
+            const indexedHash = stored.hashes?.get(c.name) ?? null;
+            if (local.hash && indexedHash) {
+              (local.hash === indexedHash ? touched : stale).push({ ...c, contentHash: local.hash, indexedHash });
+            } else {
+              unverified.push({
+                ...c,
+                reason: local.hash
+                  ? stored.error || 'the index records no content hash for it'
+                  : `its content cannot be hashed here: ${local.reason}`,
+              });
+            }
+          }
+        }
+
         report.artifacts = {
           declared,
           indexed,
           unindexed: unindexed.map((a) => ({ name: a.name, status: a.status })),
           stale,
+          touched,
+          unverified,
           // Named, not swallowed. A server build that stops printing the
           // timestamp would otherwise silently switch freshness off, which is
           // this check's own version of the failure it exists to report.
@@ -2855,6 +3065,22 @@ async function cmdHealthCheck(projectPath, probePath) {
             `context artifacts ${indexed}/${declared} indexed, ${stale.length} stale — `
             + `${stale.map((s) => s.name).join(', ')}; run codebase_update `
             + `(incremental; NOT codebase_context_index, which re-embeds every artifact)`
+          );
+        }
+        if (unverified.length) {
+          // A NOTE, and the other half of #326. Nominated by mtime, confirmed
+          // by nothing: calling it a defect is how a touched file became a
+          // daily finding whose remedy re-embeds nothing. But it is not
+          // silence either — the edit may be real, and the call that settles
+          // it is cheap and a no-op when it is not.
+          // Grouped by reason: an unreachable store is one cause for every
+          // nominee, and repeating it per name buries the names.
+          const byReason = new Map();
+          for (const u of unverified) byReason.set(u.reason, [...(byReason.get(u.reason) ?? []), u.name]);
+          note(
+            `context artifacts with source newer than the index, content unverified — `
+            + `${[...byReason].map(([reason, names]) => `${names.join(', ')} (${reason})`).join('; ')}; `
+            + 'codebase_update re-embeds any whose content moved and changes nothing for the rest'
           );
         }
       }
@@ -2942,18 +3168,19 @@ async function cmdHealthCheck(projectPath, probePath) {
   // ── pinned driver vs floating session (#295) ─────────────────────────────
   // Both halves must hold: this run launched from the pin, AND the plugin's
   // recorded command still resolves at launch time. Pinning the driver does not
-  // pin the session — Claude Code cannot override a plugin's MCP command — so
-  // what the pin buys (no install at launch, a deterministic driver) is paid
-  // for in a divergence that did not exist while both floated and agreed by
-  // coincidence of timing. Leaving that unmeasured would trade a measured
-  // memory spike for an unmeasured correctness risk, so it is measured here.
+  // pin the session — that takes SOCRATICODE_SPEC, on a plugin build that reads
+  // it (#327) — so a driver pinned alone buys no install at launch and a
+  // deterministic driver at the price of a divergence that did not exist while
+  // both floated and agreed by coincidence of timing. Leaving that unmeasured
+  // would trade a measured memory spike for an unmeasured correctness risk, so
+  // it is measured here. With the variable set to the pin's version the
+  // plugin's spec is fixed, and there is nothing left to measure.
   //
   // After the server checks, like the linked-project block below, so the
   // infrastructure findings lead the list. No server call: the pin's version is
   // the filesystem's and the floating one is the registry's.
-  const floatingSpec = report.launch?.pinned
-    ? pluginSpecFloats(launchFromPluginConfig({ project: projectPath }))
-    : null;
+  const plugin = report.launch?.pinned ? launchFromPluginConfig({ project: projectPath }) : null;
+  const floatingSpec = plugin ? pluginSpecFloats(plugin) : null;
   if (floatingSpec) {
     const running = report.server?.version || report.launch.pinVersion;
     const resolves = registryLatest();
@@ -2963,7 +3190,9 @@ async function cmdHealthCheck(projectPath, probePath) {
     // so it lives in a pure function the selftest can pin to fixtures without
     // a server, a network or a clock. Naming it here would put the rule in the
     // one place no fixture can reach.
-    findings.push(pinDriftFinding({ running, floatingSpec, resolves, pinPath: pinDir() }));
+    findings.push(pinDriftFinding({
+      running, floatingSpec, resolves, pinPath: pinDir(), specVariable: plugin.specVariable,
+    }));
   }
 
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
@@ -3151,6 +3380,14 @@ Commands:
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
            SOCRATICODE_LINKED_PROJECTS), which the server drops silently.
+           A context artifact whose source is newer than its index time is
+           confirmed by content before it is called stale: hashed as the
+           server hashes it and compared with the contentHash the server
+           stored, read by ONE read-only POST to Qdrant's socraticode_metadata
+           collection, at the address and with the key (QDRANT_URL, or
+           QDRANT_HOST/QDRANT_PORT; QDRANT_API_KEY; QDRANT_COLLECTION_PREFIX)
+           the launched server uses. Made only when an artifact's mtime is
+           newer; an artifact that cannot be confirmed is a note (#326).
            Each finding carries a SEVERITY: a defect is a state a named action
            repairs and sets exit 1; a note is a measurement no action changes,
            is prefixed "note: " in both the JSON and on stderr, and costs
@@ -3200,6 +3437,9 @@ Env:
                       the plugin's floating 'npx ... @latest' command and inert
                       when absent (default ~/.socraticode/pin; populate with
                       'npm install --prefix <dir> socraticode@<version>')
+  SOCRATICODE_SPEC    expanded into the plugin's definition as Claude Code does,
+                      so a value that pins the session's launch pins the
+                      driver's unpinned launches and drift check too (#327)
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
                       installed_plugins.json (default ~/.claude) — both to
                       launch and, in health-check and verify, to read which
@@ -3367,6 +3607,8 @@ export {
   parseEmbedPercent, parseArtifacts, graphReady,
   // declared ≠ indexed (#214), indexed ≠ fresh (#225)
   parseContextArtifacts, artifactIndexed, parseIndexedAt, newestMtimeMs,
+  // newer ≠ changed: the server's content key, recomputed and read back (#326)
+  artifactContentHash, indexedArtifactHashes, metadataPointId, qdrantBase,
   // the transcribed half of the artifact-walk parity claim, and the matcher
   // over it — exported so the four pattern forms can be asserted directly
   // rather than only through a tmp_path tree per case (#270)
@@ -3401,6 +3643,8 @@ export {
   // resolution half as well as the decision half, so a reordering fails a
   // fixture rather than only a hand-run
   pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
+  // the session's own pin, and whether the installed plugin reads one (#327)
+  specVariableOf,
   // following plugin.json rather than guessing a launcher filename (#309)
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)

@@ -208,11 +208,18 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
   transcribed `DEFAULT_IGNORE_PATTERNS` (#270) — because anything counted that
   the server never embeds reports a byte-identical artifact `stale` with a
   remedy that cannot clear it: re-indexing does not bring in the file whose
-  mtime moved (#235). What the driver does **not** mirror is the chain's other
-  two layers — artifact-local `.gitignore`/`.socraticodeignore`, and
-  virtualenvs found by marker. A file excluded by one of those, inside an
-  artifact, can still produce a false `stale`; it is rare, and it is the one
-  case where the right response to the finding is to dismiss it.
+  mtime moved (#235). A newer mtime only **nominates** an artifact, though:
+  `git checkout`, a local merge, `git stash pop` or `touch` rewrite identical
+  bytes, and `codebase_update` — which compares content hashes — then re-embeds
+  nothing and the finding recurs daily (#326). So each nominee is hashed the
+  way the server hashes it and compared with the `contentHash` on its
+  `socraticode_metadata` point: equal is `touched`, and silent; different is
+  `stale`. What the driver does **not** mirror is the chain's other two layers
+  — artifact-local `.gitignore`/`.socraticodeignore`, and virtualenvs found by
+  marker — so it refuses to hash a directory holding one, and a nominee it
+  cannot hash, or whose stored hash it cannot read, is reported as a **note**
+  ("content unverified"), not a defect. `codebase_update` settles it either
+  way, and is a no-op when nothing moved.
 - **Each `name` must be unique** (case-insensitive) — the server rejects
   duplicates at parse time, aborting the whole run. When you split one category
   into multiple entries, give each a distinct name (as the template's

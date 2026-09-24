@@ -34,11 +34,18 @@
 # whose daemon is down, no docker command runs at all — any of them would
 # start the daemon.
 #
+# Two launches can install at start — the driver's and the plugin session's —
+# and each is pinned separately: a pre-install under SOCRATICODE_PIN_DIR, and
+# SOCRATICODE_SPEC (read like the store values above) on a plugin build that
+# reads it. Both pins are reported, with a warning where the driver is pinned
+# and the session is not, where they disagree, or where the installed plugin
+# ignores the variable (#327).
+#
 # Network reads, all bounded to a few seconds and none a write:
-#   - Node 26+ only: `npm view socraticode version`, to learn whether the build
-#     that will launch carries the Node 26 Qdrant transport bridge. Degraded to
-#     a warning when it does not answer, so an air-gapped host is slowed rather
-#     than blocked.
+#   - Node 26+ only, and only while the session's launch floats: `npm view
+#     socraticode version`, to learn whether the build that will launch carries
+#     the Node 26 Qdrant transport bridge. Degraded to a warning when it does
+#     not answer, so an air-gapped host is slowed rather than blocked.
 #   - external store: GET <QDRANT_URL>/collections, without the key and then
 #     with it, so a store that answers 401 is told apart from one that does not
 #     answer, and a rejected key from a missing one. The key goes to curl on
@@ -311,6 +318,56 @@ if [ -r "$SC_PIN_DIR/node_modules/socraticode/package.json" ]; then
   SC_PIN_VER="$(node -e 'try{const v=require(process.argv[1]).version;if(typeof v==="string")process.stdout.write(v.trim())}catch{}' \
     "$SC_PIN_DIR/node_modules/socraticode/package.json" 2>/dev/null || true)"
 fi
+
+# The plugin session's launch, as the driver reads it (#327). Two launches can
+# install at start, and pinning one does not pin the other: the driver's pin
+# above covers the health hook, index, status and verify; the session's server
+# is the plugin's own. Since upstream 0c33776 (2026-09-20) that plugin reads
+# its package spec from SOCRATICODE_SPEC, so a repo's settings env block can
+# pin it — but that commit landed after the 1.14.0 release without a version
+# bump, so an installed "1.14.0" may predate it and ignore the variable.
+#
+# Read through the driver's own resolver rather than re-implemented here: it
+# follows plugin.json's `mcpServers` to the file Claude Code actually loads —
+# the repo ships three launch manifests and two of them hardcode @latest — and
+# expands `${VAR:-default}` the way Claude Code does (#309). The value is the
+# one a session here carries: this process's, else the settings files'.
+#
+# SC_PLUGIN_FIXED is the exact version the plugin's definition launches, or
+# SC_PLUGIN_FLOATS the spec it resolves at launch — both empty when no
+# definition applies here; SC_SPEC_VAR names the variable the spec is read
+# from, empty when the installed build hardcodes it.
+# Parameter expansion, not dirname: the suite runs this script on a PATH
+# holding only its stubs.
+case "${BASH_SOURCE[0]}" in
+  */*) SC_DRIVER_PATH="${BASH_SOURCE[0]%/*}/mcp-driver.mjs" ;;
+  *) SC_DRIVER_PATH="./mcp-driver.mjs" ;;
+esac
+# >>> plugin-launch
+SC_PLUGIN_FIXED="" SC_PLUGIN_FLOATS="" SC_SPEC_VAR=""
+resolve SOCRATICODE_SPEC; SC_SPEC="$R_VAL" SC_SPEC_SRC="$R_SRC"
+if command -v node >/dev/null 2>&1; then
+  # Exported only when non-empty: Claude Code expands a variable set to the
+  # empty string to an empty argument, not to the default, and so does the
+  # driver — an empty export here would describe a launch nobody runs. The
+  # driver path goes in the environment, not argv: the driver runs its CLI
+  # when argv[1] is its own path, which `node -e … <driver>` would make it.
+  # (No comments inside the substitution: bash 3.2 misparses a quote there.)
+  SC_PLUGIN="$(
+    env ${SC_SPEC:+"SOCRATICODE_SPEC=$SC_SPEC"} \
+      SC_DRIVER="$SC_DRIVER_PATH" node --input-type=module -e '
+      const { pathToFileURL } = await import("node:url");
+      const d = await import(pathToFileURL(process.env.SC_DRIVER).href);
+      const p = d.launchFromPluginConfig({ project: process.argv[1] });
+      if (p) process.stdout.write([d.pluginLaunchVersion(p) ?? "",
+        d.pluginSpecFloats(p) ?? "", p.specVariable ?? ""].join("|"));
+    ' "$ROOT" 2>/dev/null || true
+  )"
+  IFS='|' read -r SC_PLUGIN_FIXED SC_PLUGIN_FLOATS SC_SPEC_VAR <<EOF
+$SC_PLUGIN
+EOF
+fi
+# <<< plugin-launch
 
 # ── Host capacity: the install is the peak, not the index ───────────────────
 # Advisory, never fatal. A small host CAN index — broker's 2 GB node did, under
@@ -1070,9 +1127,9 @@ else
   else
     # Node 26+: judge every build that will actually launch — which, since #295,
     # can be TWO. A pinned pre-install is what mcp-driver.mjs runs (the health
-    # hook, index and verify runs); the plugin's own session server still
-    # launches `socraticode@latest` regardless, because Claude Code cannot
-    # override a plugin's MCP command. Judging only one of them would pass a
+    # hook, index and verify runs); the plugin's own session server launches
+    # what its definition resolves to — `socraticode@latest` unless
+    # SOCRATICODE_SPEC pins it (#327). Judging only one of them would pass a
     # host whose other server exits on start.
     if [ -n "$SC_PIN_VER" ]; then
       if version_ge "$SC_PIN_VER" "$NODE26_SERVER_MIN"; then
@@ -1086,8 +1143,15 @@ else
     # business to escalate. Bounded: an offline host must reach the warn branch
     # in seconds, not sit on npm's default retry ladder. `timeout(1)` is not on
     # a stock macOS, so the budget is handed to npm itself.
-    SC_LATEST="$(npm view socraticode version --silent \
-      --fetch-timeout=5000 --fetch-retries=1 2>/dev/null || true)"
+    #
+    # A session pinned by SOCRATICODE_SPEC launches that version, not the
+    # registry's, so there is nothing to look up (#327).
+    if [ -n "$SC_PLUGIN_FIXED" ]; then
+      SC_LATEST="$SC_PLUGIN_FIXED"
+    else
+      SC_LATEST="$(npm view socraticode version --silent \
+        --fetch-timeout=5000 --fetch-retries=1 2>/dev/null || true)"
+    fi
     # Last line, not `tr -d` over the whole reply: deleting newlines CONCATENATES
     # a multi-line answer, so `1.13.1\n1.13.2` would become `1.13.11.13.2` and
     # parse as a plausible 1.13.11. Every other reader in this skill degrades to
@@ -1125,6 +1189,46 @@ if ! command -v npx >/dev/null 2>&1; then
 else
   pass "npx reachable"
 fi
+
+# ── Launch pins: the driver's and the plugin session's (#327) ───────────────
+# Reported together because they are separate exposures: a pinned driver beside
+# a floating session reads as done, and the session still installs at every
+# start. Silent where nothing is pinned on a host with headroom — that is the
+# default working as shipped, and a line that always fires is the cry-wolf
+# shape the health hook is tuned against.
+# >>> launch-pins
+SPEC_NAME="${SC_SPEC_VAR:-SOCRATICODE_SPEC}"
+SPEC_HINT="Pin the session in .claude/settings.json: \"env\": {\"$SPEC_NAME\": \"socraticode@${SC_PIN_VER:-<version>}\"} — a session started afterwards launches that version without installing (references/host-memory.md)"
+if [ -n "$SC_SPEC" ] && [ -z "${SOCRATICODE_SPEC:-}" ] && [ -n "${CLAUDECODE:-}" ]; then
+  # Read from the files, so the lines below describe the NEXT session; this
+  # one started without it and its server launched from the default.
+  warn "SOCRATICODE_SPEC is declared in $SC_SPEC_SRC, but this session does not carry it — its server launched from the plugin's default"
+  hint "Restart Claude Code in this folder, trusting it if asked"
+fi
+if [ -n "$SC_PLUGIN_FIXED" ]; then
+  if [ -n "$SC_PIN_VER" ] && [ "$SC_PIN_VER" != "$SC_PLUGIN_FIXED" ]; then
+    warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, the plugin session launches $SC_PLUGIN_FIXED — two builds writing one store"
+    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
+  else
+    pass "Plugin session launches socraticode $SC_PLUGIN_FIXED${SC_SPEC_VAR:+ ($SC_SPEC_VAR, from $SC_SPEC_SRC)}${SC_PIN_VER:+, as the driver pin does} — no launch installs"
+  fi
+elif [ -n "$SC_PLUGIN_FLOATS" ]; then
+  if [ -z "$SC_SPEC_VAR" ] && [ -n "$SC_SPEC" ]; then
+    warn "SOCRATICODE_SPEC is set ($SC_SPEC_SRC), but the installed plugin's launch never reads it — it hardcodes '$SC_PLUGIN_FLOATS'"
+    hint "The variable reached the plugin after the 1.14.0 release with no version bump, so a '1.14.0' install can predate it: update the socraticode plugin, then check the launched command with 'claude mcp list'"
+  elif [ -n "$SC_PIN_VER" ]; then
+    warn "The driver is pinned at socraticode $SC_PIN_VER, but the plugin session launches '$SC_PLUGIN_FLOATS' — it still installs at every session start"
+    if [ -n "$SC_SPEC_VAR" ]; then
+      hint "$SPEC_HINT"
+    else
+      hint "This plugin build hardcodes its spec; update the plugin to one that reads SOCRATICODE_SPEC (references/host-memory.md)"
+    fi
+  elif [ -n "$SC_SPEC_VAR" ] && [ -n "$MEM_KB" ] && [ "$MEM_KB" -lt 4194304 ]; then
+    warn "The plugin session launches '$SC_PLUGIN_FLOATS', installing at every session start on a host under 4 GiB"
+    hint "$SPEC_HINT"
+  fi
+fi
+# <<< launch-pins
 
 # ── Claude Code: the binary running this session, its version and age ───────
 # Advisory (#310, #316). Everything else this skill depends on has its version

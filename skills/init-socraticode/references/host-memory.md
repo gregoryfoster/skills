@@ -9,8 +9,9 @@ unit's `MemoryLow=` can take effect on this host.
 
 ## Don't install at launch: the pinned pre-install
 
-The plugin's `mcp.json` is `npx -y --prefer-online socraticode@latest`, and
-`mcp-driver.mjs` reused that command verbatim — so the health hook, `index`,
+The plugin launches `npx -y --prefer-online socraticode@latest` unless
+`SOCRATICODE_SPEC` says otherwise (below), and `mcp-driver.mjs` reused that
+command verbatim — so the health hook, `index`,
 `status` and `verify` each installed a server before talking to one.
 `--prefer-online` revalidates against the registry on *every* launch, so a warm
 cache is not a warm path on any day the package moved.
@@ -39,12 +40,48 @@ pin resolves nothing and the chain is exactly what it was.
 `SOCRATICODE_PIN_DIR` moves it; `node "<SKILL_DIR>/scripts/mcp-driver.mjs"
 resolve` says which path won, without launching a server.
 
-**What the pin does not do, and why the hook now says so.** It does not pin the
-*session*. Claude Code cannot override a plugin's MCP server command, so the
-plugin keeps launching `@latest` — the driver becomes deterministic while the
-session goes on floating. That is a **new** divergence: before the pin both
-floated and agreed by coincidence of timing. `health-check` measures it, and
-splits on how wide the gap is, because a pin is *meant* to lag:
+**Pin the session too: `SOCRATICODE_SPEC`.** The pin above covers the
+driver's launches — the health hook, `index`, `status`, `verify`. The session's
+server is the plugin's, and since upstream
+[`0c33776`](https://github.com/giancarloerra/socraticode/commit/0c33776) (2026-09-20)
+the plugin reads its package spec from a variable: its launch is
+`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`. Set it in the
+repo's settings env block, to the pin's version so both launches are one build:
+
+```json
+{ "env": { "SOCRATICODE_SPEC": "socraticode@<version>" } }
+```
+
+An exact version resolves from the npx cache without installing — #295's cost,
+so this is the one-line fix for the install at launch on a small or co-tenant
+host. Like every settings variable it reaches only sessions started after it is
+written, in a trusted folder. The driver expands the same variable when it
+reads the plugin's definition, so once it matches the pin the drift below has
+nothing to measure. `preflight.sh` reports both pins, and says when the
+installed plugin does not read the variable
+([#327](https://github.com/gregoryfoster/skills/issues/327)).
+
+**Read the launched command, never a manifest.** The plugin ships three launch
+manifests, and only the one `.claude-plugin/plugin.json` names is live:
+
+| File | Launches | Live under Claude Code? |
+|---|---|---|
+| `.claude-plugin/mcp.json` | `${SOCRATICODE_SPEC:-socraticode@latest}` | **yes** — `plugin.json`'s `mcpServers` names it |
+| `.mcp.json`, `mcp.json` (plugin root) | hardcoded `socraticode@latest` | no — since `0c33776`; before it, `plugin.json` named `./.mcp.json` |
+
+Reading a root one confirms that the session cannot be pinned, and that is how
+#295 came to say so. The variable also landed after the 1.14.0 release with no
+version bump, so a cache directory labelled `1.14.0` can predate it: its
+`plugin.json` names `./.mcp.json`, and the variable does nothing there. Check
+what actually launched — `claude mcp list` prints the command on its
+`plugin:socraticode:socraticode:` line, and `ps -eo args | grep socraticode`
+shows the spec (`npm exec socraticode@1.14.0`).
+
+**A pinned driver beside a floating session is a new divergence.** Before the
+pin both floated and agreed by coincidence of timing; with only the driver
+pinned, the driver is deterministic while the session goes on floating.
+`health-check` measures it, and splits on how wide the gap is, because a pin is
+*meant* to lag:
 
 | Gap between the pin and what `@latest` resolves to | Reported as |
 |---|---|
@@ -52,9 +89,9 @@ splits on how wide the gap is, because a pin is *meant* to lag:
 | A minor or major release (`1.13.2` vs `1.14.0`) | **defect** — two feature releases writing one store, the shape [`troubleshooting.md`](troubleshooting.md) row S is about. Re-pin deliberately |
 | The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
 
-Re-pinning is the same `npm install --prefix` line with the new version. Do it
-as a decision, not on a schedule: the reason to pin was to stop an unattended
-launch from installing.
+Re-pinning is the same `npm install --prefix` line with the new version —
+and the same version in `SOCRATICODE_SPEC`. Do it as a decision, not on a
+schedule: the reason to pin was to stop an unattended launch from installing.
 
 ## A production service on the same host
 
