@@ -452,9 +452,15 @@ def _why_it_cannot_cap() -> str | None:
     at import, so every collection of the structural suite on a Linux host
     would create a real scope, and a user bus slower than the timeout would
     raise at import and turn the whole module — and the commit gate — red.
+
+    Asks what the hook asks: not only whether systemd takes the cap, but
+    whether it accounts the scope's memory. Where it has no memory controller
+    it takes MemoryMax= and enforces nothing, and this test's payload would be
+    allocating against the host itself.
     """
     if shutil.which("systemd-run") is None or shutil.which("choom") is None:
         return "no systemd-run or choom here"
+    unit = f"socraticode-cap-test-{os.getpid()}"
     try:
         probe = subprocess.run(
             [
@@ -462,6 +468,7 @@ def _why_it_cannot_cap() -> str | None:
                 "--user",
                 "--scope",
                 "-q",
+                f"--unit={unit}",
                 "-p",
                 "MemoryMax=64M",
                 "-p",
@@ -470,7 +477,13 @@ def _why_it_cannot_cap() -> str | None:
                 "-n",
                 "500",
                 "--",
-                "true",
+                "systemctl",
+                "--user",
+                "show",
+                "-p",
+                "MemoryCurrent",
+                "--value",
+                f"{unit}.scope",
             ],
             capture_output=True,
             text=True,
@@ -480,6 +493,12 @@ def _why_it_cannot_cap() -> str | None:
         return f"the capability probe did not finish: {exc}"
     if probe.returncode != 0:
         return f"user systemd cannot cap a scope here: {probe.stderr.strip()}"
+    if not probe.stdout.strip().isdigit():
+        return (
+            "user systemd accepts MemoryMax= here but accounts no memory for "
+            f"the scope (MemoryCurrent={probe.stdout.strip()!r}), so it would "
+            "not enforce it — cgroup v1, or no memory controller delegated"
+        )
     return None
 
 
@@ -495,16 +514,25 @@ class TestARealCapKills:
         why = _why_it_cannot_cap()
         if why:
             pytest.skip(why)
+        # Bounded at 8x the cap: if the cap does not hold after all, the
+        # payload stops at 512 MB and the assertion below says so, instead of
+        # allocating until the kernel OOM killer picks something on this host.
         harness.driver.write_text(
             "import fs from 'node:fs';\n"
             "fs.appendFileSync(process.env.STUB_RUNS, 'run\\n');\n"
             "const hog = [];\n"
-            "for (;;) hog.push(Buffer.alloc(8 * 1024 * 1024, 1));\n"
+            "for (let i = 0; i < 64; i++) hog.push(Buffer.alloc(8 * 1024 * 1024, 1));\n"
+            "process.stderr.write('survived 512 MB under the cap\\n');\n"
         )
         result = harness.run(
             stubs=False, SOCRATICODE_HEALTH_CAP="MemoryMax=64M MemorySwapMax=0"
         )
         assert result.returncode == 0, result.stderr
+        assert "survived 512 MB" not in harness.hook_log(), (
+            "the payload allocated 512 MB under MemoryMax=64M and was not "
+            "stopped: this host accepts the cap without enforcing it, and the "
+            f"probe did not notice\n{harness.hook_log()}"
+        )
         assert f"{CAP_LINE} (MemoryMax=64M)" in result.stdout, (
             f"stdout: {result.stdout!r}\nlog:\n{harness.hook_log()}"
         )
