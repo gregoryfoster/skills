@@ -39,12 +39,17 @@ Docker and no network — and it is there because #270 was a claim about the
 server's internals that nothing in this file could check.
 """
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
+import threading
+from contextlib import contextmanager
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -231,11 +236,103 @@ def _repo(tmp_path: Path, artifacts: object = "default") -> Path:
     return repo
 
 
-def _health_check(tmp_path: Path, repo: Path, replies: dict) -> tuple:
+# What the index holds for an artifact the fixtures edit, unless a test says
+# otherwise: a hash no real content produces. The tests here "edit" a file by
+# restamping its mtime alone, so without this every edit would be the touched,
+# byte-identical case #326 exists to clear, and none of them would test staleness.
+OTHER_CONTENT = "0000000000000000"
+
+
+def _metadata_point_id(repo: Path) -> str:
+    """qdrant.js metadataPointId for the repo's context collection, by path hash."""
+    project_id = hashlib.sha256(str(repo).encode()).hexdigest()[:12]
+    h = hashlib.sha256(f"context_{project_id}".encode()).hexdigest()
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+
+def _closed_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@contextmanager
+def _qdrant_stub(repo: Path, indexed_hashes: dict | None):
+    """The one Qdrant read health-check makes: the metadata point's artifact list.
+
+    Answers only for the point id the server itself would use, so a driver that
+    addresses the wrong collection reads nothing rather than the fixture's
+    hashes. `indexed_hashes=None` is a store nobody answers on. Yields the port
+    and the list of request bodies received.
+    """
+    if indexed_hashes is None:
+        yield _closed_port(), []
+        return
+    expected = _metadata_point_id(repo)
+    received: list = []
+    states = json.dumps(
+        [{"name": n, "contentHash": h} for n, h in indexed_hashes.items()]
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 — http.server's spelling
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append({"path": self.path, "body": body})
+            points = (
+                [{"id": expected, "payload": {"artifacts": states}}]
+                if self.path == "/collections/socraticode_metadata/points"
+                and body.get("ids") == [expected]
+                else []
+            )
+            reply = json.dumps({"result": points}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+
+        def log_message(self, *_args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1], received
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _manifest_names(repo: Path) -> list:
+    try:
+        manifest = json.loads((repo / MANIFEST_NAME).read_text())
+        return [a["name"] for a in manifest["artifacts"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def _health_check(
+    tmp_path: Path,
+    repo: Path,
+    replies: dict,
+    indexed_hashes: dict | None | str = OTHER_CONTENT,
+) -> tuple:
     """Run `mcp-driver.mjs health-check` against a scripted stub server.
+
+    `indexed_hashes` is what the stub store says each artifact was indexed
+    with: a dict by name, a single hash for every manifest artifact, or None
+    for a store that does not answer.
 
     Returns (CompletedProcess, parsed stdout JSON or None, list of tools called).
     """
+    if isinstance(indexed_hashes, str):
+        indexed_hashes = dict.fromkeys(_manifest_names(repo), indexed_hashes)
+    with _qdrant_stub(repo, indexed_hashes) as (port, _received):
+        return _run_health_check(tmp_path, repo, replies, port)
+
+
+def _run_health_check(tmp_path: Path, repo: Path, replies: dict, port: int) -> tuple:
     stub = tmp_path / "stub-server.mjs"
     stub.write_text(STUB_SERVER)
     reply_file = tmp_path / "replies.json"
@@ -252,6 +349,8 @@ def _health_check(tmp_path: Path, repo: Path, replies: dict) -> tuple:
             STUB_REPLIES=str(reply_file),
             STUB_CALLS=str(calls),
             HEALTH_TIMEOUT_MS="30000",
+            QDRANT_HOST="127.0.0.1",
+            QDRANT_PORT=str(port),
         ),
     )
     try:
@@ -1807,3 +1906,235 @@ class TestTheTranscriptionAgainstARunningServer:
                 f"newestMtimeMs did not count {decoy!r} — a substring prune "
                 "would pass the equality test by hiding real staleness (#270)"
             )
+
+    @requires_node
+    def test_the_content_hash_matches_the_servers(
+        self, tmp_path: Path, server: tuple[Path, str]
+    ) -> None:
+        """#326: the hash that clears a touched artifact must BE the server's.
+
+        A near-miss is the dangerous direction: it never matches, so every
+        touched file becomes a confirmed defect — worse than the mtime-only
+        finding it replaced. So the whole parity tree is hashed by both sides,
+        plus the three things the hash reads that the walk never did: a binary
+        file (skipped), undecodable bytes (U+FFFD), and names whose sort order
+        differs by case. The single-file form is checked on its own, since the
+        server reads it by a different path with no sniff at all.
+        """
+        dist, version = server
+        root = tmp_path / "artifact"
+        for relative in PARITY_TREE:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"{relative}\n")
+        (root / "sub" / "blob.dat").write_bytes(b"head\x00tail")
+        (root / "latin1.txt").write_bytes(b"caf\xe9\n")
+        (root / "Upper.md").write_text("U\n")
+        (root / "lower.md").write_text("l\n")
+
+        harness = tmp_path / "hash.mjs"
+        harness.write_text(
+            "const [dist, driver, root] = process.argv.slice(2);\n"
+            "const { readArtifactContent } = await import("
+            "`${dist}/services/context-artifacts.js`);\n"
+            "const { artifactContentHash } = await import(driver);\n"
+            "const single = `${root}/latin1.txt`;\n"
+            "process.stdout.write(JSON.stringify({\n"
+            "  server: (await readArtifactContent(root, root)).contentHash,\n"
+            "  driver: artifactContentHash(root),\n"
+            "  serverFile: (await readArtifactContent(single, root)).contentHash,\n"
+            "  driverFile: artifactContentHash(single),\n"
+            "}));\n"
+        )
+        result = subprocess.run(
+            ["node", str(harness), str(dist), str(DRIVER), str(root)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        got = json.loads(result.stdout)
+        assert got["driver"] == {"hash": got["server"]}, (
+            f"socraticode {version}: artifactContentHash disagrees with "
+            f"readArtifactContent over the parity tree ({got}). A hash that "
+            "never matches turns every touched file into a confirmed stale "
+            "defect (#326); re-transcribe from "
+            f"{dist}/services/context-artifacts.js"
+        )
+        assert got["driverFile"] == {"hash": got["serverFile"]}, got
+
+
+def _driver_hash(target: Path) -> dict:
+    script = (
+        f"import {{ artifactContentHash }} from {json.dumps(str(DRIVER))};"
+        f"process.stdout.write(JSON.stringify(artifactContentHash("
+        f"{json.dumps(str(target))})));"
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=_clean_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+class TestANewerMtimeIsConfirmedByContent:
+    """#326: a newer mtime nominates an artifact; its content hash decides.
+
+    On CannObserv/wslcb-licensing-tracker a merge rewrote `docs/DEPLOYMENT.md`
+    and `infra/` with identical bytes seventeen minutes after they were
+    indexed. health-check called both stale and named `codebase_update`, which
+    compares the server's stored `contentHash`, found nothing changed, and
+    re-embedded nothing — so the finding came back every day with a remedy
+    that could not clear it. `git checkout`, a local merge, `git stash pop`, a
+    rebase and `touch` all produce it.
+
+    So a nominated artifact is hashed the server's way and compared with the
+    `contentHash` on its `socraticode_metadata` point. Where either side cannot
+    be had, the finding drops to a note: an unconfirmed mtime is not a defect
+    whose remedy may be a no-op, and it is not silence either.
+    """
+
+    @staticmethod
+    def _real_hashes(repo: Path) -> dict:
+        return {
+            "database-schema": _driver_hash(repo / "docs" / "schema.sql")["hash"],
+            "reference-docs": _driver_hash(repo / "docs")["hash"],
+            "agent-guidelines": _driver_hash(repo / "AGENTS.md")["hash"],
+        }
+
+    @staticmethod
+    def _replies() -> dict:
+        return {
+            **DEFAULT_REPLIES,
+            "codebase_status": STATUS_COMPLETE,
+            "codebase_context": CONTEXT_ALL_INDEXED,
+        }
+
+    @staticmethod
+    def _touch_under_docs(repo: Path) -> None:
+        """A checkout restamping a file with identical bytes, dir restamped old."""
+        _stamp(repo / "docs" / "schema.sql", EDITED_AFTER_INDEXING)
+        _stamp(repo / "docs")
+
+    @requires_node
+    def test_a_touched_directory_artifact_is_fresh(self, tmp_path: Path) -> None:
+        """The issue's acceptance case: touched, content-identical, under a dir."""
+        repo = _repo(tmp_path)
+        self._touch_under_docs(repo)
+        result, report, _ = _health_check(
+            tmp_path, repo, self._replies(), self._real_hashes(repo)
+        )
+        assert report is not None, result.stderr
+        assert not [f for f in report["findings"] if "context artifact" in f], (
+            "a byte-identical artifact whose mtime a checkout moved was still "
+            f"reported: {report['findings']}. codebase_update re-embeds nothing "
+            "for it, so the finding would recur daily (#326)"
+        )
+        touched = {a["name"] for a in report["artifacts"]["touched"]}
+        assert touched == {"database-schema", "reference-docs"}, report["artifacts"]
+        assert report["artifacts"]["stale"] == [], report["artifacts"]
+        assert result.returncode == 0, result.stdout
+
+    @requires_node
+    def test_a_real_edit_under_the_same_directory_is_still_stale(
+        self, tmp_path: Path
+    ) -> None:
+        """The other direction: hashes taken, then the bytes change."""
+        repo = _repo(tmp_path)
+        indexed = self._real_hashes(repo)
+        (repo / "docs" / "schema.sql").write_text("-- schema, edited\n")
+        self._touch_under_docs(repo)
+        result, report, _ = _health_check(tmp_path, repo, self._replies(), indexed)
+        assert report is not None, result.stderr
+        stale = {a["name"] for a in report["artifacts"]["stale"]}
+        assert stale == {"database-schema", "reference-docs"}, report["artifacts"]
+        assert any("2 stale" in f for f in report["findings"]), report["findings"]
+        assert result.returncode == 1, result.stdout
+
+    @requires_node
+    def test_an_unreachable_store_is_a_note_not_a_defect(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        self._touch_under_docs(repo)
+        result, report, _ = _health_check(
+            tmp_path, repo, self._replies(), indexed_hashes=None
+        )
+        assert report is not None, result.stderr
+        assert not [f for f in report["findings"] if "stale" in f], report["findings"]
+        notes = [f for f in report["findings"] if "content unverified" in f]
+        assert len(notes) == 1, report["findings"]
+        assert "cannot reach Qdrant" in notes[0], notes
+        assert "reference-docs" in notes[0], notes
+        assert result.returncode == 0, result.stdout
+
+    @requires_node
+    def test_an_ignore_file_the_driver_cannot_mirror_is_a_note(
+        self, tmp_path: Path
+    ) -> None:
+        """Refuse to hash rather than hash something close (#326)."""
+        repo = _repo(tmp_path)
+        (repo / "docs" / ".gitignore").write_text("*.tmp\n")
+        indexed = {**self._real_hashes(repo), "reference-docs": OTHER_CONTENT}
+        self._touch_under_docs(repo)
+        result, report, _ = _health_check(tmp_path, repo, self._replies(), indexed)
+        assert report is not None, result.stderr
+        unverified = {a["name"]: a["reason"] for a in report["artifacts"]["unverified"]}
+        assert list(unverified) == ["reference-docs"], report["artifacts"]
+        assert ".gitignore" in unverified["reference-docs"], unverified
+        # The single-file artifact in the same directory is read verbatim by
+        # the server, ignore chain or not, so it is still confirmed.
+        touched = {a["name"] for a in report["artifacts"]["touched"]}
+        assert touched == {"database-schema"}, report["artifacts"]
+        assert result.returncode == 0, result.stdout
+
+    @requires_node
+    def test_a_fresh_tree_never_reads_the_store(self, tmp_path: Path) -> None:
+        """Nothing nominated, nothing to confirm: the store read costs nothing."""
+        repo = _repo(tmp_path)
+        with _qdrant_stub(repo, self._real_hashes(repo)) as (port, received):
+            result, report, _ = _run_health_check(tmp_path, repo, self._replies(), port)
+        assert report is not None, result.stderr
+        assert received == [], received
+        assert result.returncode == 0, result.stdout
+
+    @requires_node
+    @pytest.mark.parametrize(
+        ("env", "base"),
+        [
+            pytest.param({}, "http://localhost:16333", id="managed-default"),
+            pytest.param(
+                {"QDRANT_HOST": "q", "QDRANT_PORT": "7000", "QDRANT_API_KEY": "k"},
+                "https://q:7000",
+                id="key-means-https",
+            ),
+            pytest.param(
+                {"QDRANT_URL": "http://store.lan", "QDRANT_HOST": "ignored"},
+                "http://store.lan:6333",
+                id="url-wins-and-gets-6333",
+            ),
+            pytest.param(
+                {"QDRANT_URL": "https://x.cloud.qdrant.io/"},
+                "https://x.cloud.qdrant.io",
+                id="https-url-keeps-443",
+            ),
+        ],
+    )
+    def test_the_store_address_is_the_servers(self, env: dict, base: str) -> None:
+        """qdrant.js getClient, mirrored: URL first in either mode, then host:port."""
+        script = (
+            f"import {{ qdrantBase }} from {json.dumps(str(DRIVER))};"
+            f"process.stdout.write(qdrantBase({json.dumps(env)}));"
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_clean_env(),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == base

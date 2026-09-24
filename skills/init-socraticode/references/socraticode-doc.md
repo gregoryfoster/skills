@@ -146,9 +146,11 @@ silently — the hook's output cannot drift from itself.
   `codebase_context` does **not** re-index, which is why a listing can sit at
   N/N while artifacts are behind. It prints each artifact's index time beside
   its status; compare it against the source, and for a directory against its
-  **newest file**, not the directory's own timestamp. The daily check does
-  exactly that and names the stale artifacts. `codebase_update` repairs them
-  out of band, so the next search is not the one that pays.
+  **newest file**, not the directory's own timestamp — then compare content,
+  since a checkout or merge moves the timestamp of bytes it did not change.
+  The daily check does exactly that and names the stale artifacts.
+  `codebase_update` repairs them out of band, so the next search is not the
+  one that pays.
   And every artifact competes in **one ranking**: a large directory of dated
   prose outranks a small current file, and a plan answers with the value it
   was written against. Set `artifactName` to search one artifact.
