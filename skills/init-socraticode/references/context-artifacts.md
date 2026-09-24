@@ -300,8 +300,12 @@ artifacts before it searches, so the first search after an edit pays the
 re-embed inline, and old chunks reach an answer only when that staleness check
 itself errors — it is logged and the search proceeds anyway.
 `codebase_context` does not re-index, which is why a listing can sit at N/N
-while artifacts lag; its index times are compared against content, not mtime,
-by the daily check (**Staleness parity**, above).
+while artifacts lag. It prints each artifact's index time: compare that with
+the source — for a directory, its newest file, not the directory's own
+timestamp — and read a newer source as a nominee rather than an edit, since a
+checkout or merge restamps bytes it did not change. The daily check hashes
+each nominee to settle it (**Staleness parity**, above), and `codebase_update`
+settles it too, re-embedding nothing where the content has not moved.
 
 ## Index exclusions — `.socraticodeignore`
 
