@@ -32,12 +32,15 @@ per-doc budget like every other reference.
 
 import json
 import subprocess
+import warnings
 from pathlib import Path
 
 import pytest
+import yaml
 
 from .test_skill_self_budget import (
     EXACT_ENV,
+    EXACT_WORKFLOW,
     MEASURE,
     REPO_ROOT,
     _env,
@@ -132,6 +135,25 @@ class TestTheGeneratedDocStaysSmall:
         )
 
 
+def _not_verified() -> None:
+    """Warn, then skip: the exact pass was asked for and did not happen.
+
+    The warning's prefix is the one `skill-budget-exact.yml`'s `-W` filter
+    escalates, so the weekly job goes red rather than green-having-measured-
+    nothing — #217's failure, which a silent skip here would rebuild for this
+    one ratchet. On the pre-commit path the warning is only a warning.
+    """
+    warnings.warn(
+        f"{EXACT_ENV} was set but the run could not reach count_tokens, so "
+        "the exact contract WAS NOT VERIFIED for the generated "
+        "docs/SOCRATICODE.md template — only the offline estimate ran. Check "
+        "the credential: `measure-context.sh --check-credential`.",
+        UserWarning,
+        stacklevel=2,
+    )
+    pytest.skip(f"{EXACT_ENV} set but count_tokens was not reached")
+
+
 class TestTheContractMeasuredExactly:
     def test_the_exact_count_is_within_the_ratchet(self, tmp_path: Path) -> None:
         if not _exact_requested():
@@ -140,13 +162,30 @@ class TestTheContractMeasuredExactly:
                 "as test_skill_self_budget.py's exact pass is"
             )
         if not _has_credential():
-            pytest.skip(f"{EXACT_ENV} set but no usable count_tokens credential")
+            _not_verified()
         path = tmp_path / "SOCRATICODE.md"
         path.write_text(_generated())
         measured = _measure_exact(path)
         if not measured["tokens_exact"]:
-            pytest.skip("count_tokens was not reached; the estimate test ran")
+            _not_verified()
         assert measured["tokens"] <= GENERATED_DOC_RATCHET, (
             f"the generated docs/SOCRATICODE.md is {measured['tokens']} exact "
             f"tokens against its {GENERATED_DOC_RATCHET:,} ratchet (#329)"
+        )
+
+    def test_the_weekly_exact_job_runs_this_file(self) -> None:
+        """Opt-in is only half a contract if nothing ever opts in.
+
+        The pre-commit gate never sets SKILL_BUDGET_EXACT, so without the
+        scheduled job this ratchet's exact half would never run anywhere.
+        """
+        workflow = yaml.safe_load(EXACT_WORKFLOW.read_text())
+        commands = " ".join(
+            str(step.get("run", ""))
+            for job in workflow["jobs"].values()
+            for step in job.get("steps", [])
+        )
+        assert f"tests/structural/{Path(__file__).name}" in commands, (
+            f"{EXACT_WORKFLOW.name} does not run this file, so the generated "
+            "doc's exact count is never measured (#217, #329)"
         )
