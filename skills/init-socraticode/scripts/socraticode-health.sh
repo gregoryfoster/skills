@@ -394,10 +394,22 @@ if [ "${#CAP_PROPS[@]}" -gt 0 ]; then
   # memory/cpu delegation; macOS never reaches the probe at all. Only the log
   # says so. A line in every session on those hosts would be a finding that
   # always fires, the tuned-out reporter #180 exists to prevent (trap 5).
-  if _capped "$_unit-probe" true >/dev/null 2>&1; then
+  #
+  # With the first line of the probe's stderr, which is what tells a host that
+  # cannot cap ("Failed to connect to bus") from a property systemd refused —
+  # trap 2's host, or a mistyped SOCRATICODE_HEALTH_CAP an operator would
+  # otherwise believe was in force.
+  #
+  # `trap - ERR` first, inside the substitution only. set -E hands the ERR
+  # trap to the subshell, where the `if` no longer shields a failure from it
+  # (measured on bash 3.2): _hook_panic would run there and `exit 0`, and a
+  # probe that failed would read as one that passed — a capped launch on a
+  # host that cannot cap, and FAILED TO RUN every day.
+  if _probe_err="$(trap - ERR; _capped "$_unit-probe" true 2>&1 >/dev/null)"; then
     CAP_UNIT="$_unit"
   else
-    _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500 -- true) failed — running uncapped"
+    _probe_err="${_probe_err%%$'\n'*}"
+    _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500 -- true) failed (${_probe_err:-no message}) — running uncapped"
   fi
 fi
 

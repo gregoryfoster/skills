@@ -251,6 +251,9 @@ class TestAHostThatCannotCap:
         assert harness.runs() == 1, "the check did not run uncapped"
         assert not harness.calls("choom"), "the payload went through the cap"
         assert "memory cap unavailable" in harness.hook_log(), harness.hook_log()
+        assert "Failed to connect to bus" in harness.hook_log(), (
+            "the log says the probe failed but not why (CR 5)"
+        )
 
     @requires_node
     def test_unsupported_properties_run_uncapped_too(self, harness: Harness) -> None:
@@ -263,6 +266,10 @@ class TestAHostThatCannotCap:
             "shown cannot be created"
         )
         assert harness.runs() == 1
+        assert "Unknown assignment: CPUQuota=100%" in harness.hook_log(), (
+            "a refused property logs like a missing bus, so an operator cannot "
+            f"tell their cap was rejected (CR 5)\n{harness.hook_log()}"
+        )
 
     @requires_node
     def test_findings_still_reach_the_session(self, harness: Harness) -> None:
