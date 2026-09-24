@@ -32,6 +32,7 @@ is the acceptance's "a stub that exceeds a tiny MemoryMax".
 """
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -369,29 +370,42 @@ class TestACapKillIsReportedAsSuch:
         assert f"{CAP_LINE} (MemoryMax=64M)" in result.stdout, result.stdout
 
 
-def _can_cap() -> bool:
+def _why_it_cannot_cap() -> str | None:
+    """Why this host cannot run the real test, or None if it can.
+
+    Called from the test body, never from a decorator: a `skipif` argument runs
+    at import, so every collection of the structural suite on a Linux host
+    would create a real scope, and a user bus slower than the timeout would
+    raise at import and turn the whole module — and the commit gate — red.
+    """
     if shutil.which("systemd-run") is None or shutil.which("choom") is None:
-        return False
-    probe = subprocess.run(
-        [
-            "systemd-run",
-            "--user",
-            "--scope",
-            "-q",
-            "-p",
-            "MemoryMax=64M",
-            "-p",
-            "MemorySwapMax=0",
-            "choom",
-            "-n",
-            "500",
-            "--",
-            "true",
-        ],
-        capture_output=True,
-        timeout=30,
-    )
-    return probe.returncode == 0
+        return "no systemd-run or choom here"
+    try:
+        probe = subprocess.run(
+            [
+                "systemd-run",
+                "--user",
+                "--scope",
+                "-q",
+                "-p",
+                "MemoryMax=64M",
+                "-p",
+                "MemorySwapMax=0",
+                "choom",
+                "-n",
+                "500",
+                "--",
+                "true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"the capability probe did not finish: {exc}"
+    if probe.returncode != 0:
+        return f"user systemd cannot cap a scope here: {probe.stderr.strip()}"
+    return None
 
 
 class TestARealCapKills:
@@ -400,10 +414,12 @@ class TestARealCapKills:
     no macOS host and no CI runner without linger."""
 
     @requires_node
-    @pytest.mark.skipif(not _can_cap(), reason="user systemd cannot cap a scope here")
     def test_a_payload_over_its_cap_is_killed_and_said_so(
         self, harness: Harness
     ) -> None:
+        why = _why_it_cannot_cap()
+        if why:
+            pytest.skip(why)
         harness.driver.write_text(
             "import fs from 'node:fs';\n"
             "fs.appendFileSync(process.env.STUB_RUNS, 'run\\n');\n"
@@ -422,18 +438,16 @@ class TestARealCapKills:
             "bash's job notice for the killed payload reached the hook's "
             f"stderr instead of its log: {result.stderr!r}"
         )
+        # This run's own unit, from the hook's log: a glob would also match the
+        # scopes of real sessions' daily checks on the same host.
+        found = re.search(r"capped: scope (\S+\.scope)", harness.hook_log())
+        assert found, harness.hook_log()
         left = subprocess.run(
-            [
-                "systemctl",
-                "--user",
-                "list-units",
-                "socraticode-health-*",
-                "--no-legend",
-            ],
+            ["systemctl", "--user", "list-units", "--all", found.group(1)],
             capture_output=True,
             text=True,
             timeout=30,
         )
-        assert left.stdout.strip() == "", (
-            f"a scope outlived its payload:\n{left.stdout}"
+        assert found.group(1) not in left.stdout, (
+            f"the killed check's scope outlived its payload:\n{left.stdout}"
         )
