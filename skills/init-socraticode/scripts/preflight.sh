@@ -34,11 +34,18 @@
 # whose daemon is down, no docker command runs at all — any of them would
 # start the daemon.
 #
+# Two launches can install at start — the driver's and the plugin session's —
+# and each is pinned separately: a pre-install under SOCRATICODE_PIN_DIR, and
+# SOCRATICODE_SPEC (read like the store values above) on a plugin build that
+# reads it. Both pins are reported, with a warning where the driver is pinned
+# and the session is not, where they disagree, or where the installed plugin
+# ignores the variable (#327).
+#
 # Network reads, all bounded to a few seconds and none a write:
-#   - Node 26+ only: `npm view socraticode version`, to learn whether the build
-#     that will launch carries the Node 26 Qdrant transport bridge. Degraded to
-#     a warning when it does not answer, so an air-gapped host is slowed rather
-#     than blocked.
+#   - Node 26+ only, and only while the session's launch floats: `npm view
+#     socraticode version`, to learn whether the build that will launch carries
+#     the Node 26 Qdrant transport bridge. Degraded to a warning when it does
+#     not answer, so an air-gapped host is slowed rather than blocked.
 #   - external store: GET <QDRANT_URL>/collections, without the key and then
 #     with it, so a store that answers 401 is told apart from one that does not
 #     answer, and a rejected key from a missing one. The key goes to curl on
