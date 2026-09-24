@@ -1277,7 +1277,7 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
     warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, $SC_SESSION_SIDE — two builds writing one store"
     hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
   elif [ -n "$SC_SEEN_SPEC" ]; then
-    pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) runs 'npm exec socraticode@$SC_PLUGIN_FIXED'${SC_PIN_VER:+, as the driver pin does} — no launch installs"
+    pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) was launched as socraticode@$SC_PLUGIN_FIXED${SC_PIN_VER:+, matching the driver pin} — no launch installs"
   else
     warn "$SC_PINNED_BY launches socraticode $SC_PLUGIN_FIXED — not observed: ${SC_SEEN_WHY:-the process table was not read}"
   fi
