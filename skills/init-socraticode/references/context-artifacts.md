@@ -281,6 +281,28 @@ done
 Any `MISS` → drop that category from the manifest rather than shipping a path
 that skips at index time and leaves `artifacts N/N` short.
 
+### Reading an empty or stale context search
+
+The generated doc's `codebase_context_search` note compresses this
+([#329](https://github.com/gregoryfoster/skills/issues/329)). No answer has a
+second cause a correct manifest cannot rule out: on CannObserv/power-map#454 the
+path resolved, the run *completed*, and the artifact still was not indexed.
+`codebase_status` gives a count and never a name, so `codebase_context`, which
+lists each artifact's status, is the only way to tell the two apart
+([#214](https://github.com/gregoryfoster/skills/issues/214)). A third case
+*returns* an answer: the artifact is indexed and **stale** — an edited file, or
+a new file under a directory artifact like `docs/plans/`, leaves the count at
+N/N with superseded chunks embedded. Three of observo's fourteen artifacts were
+behind their sources while the check reported `14/14`
+([#225](https://github.com/gregoryfoster/skills/issues/225)). That usually
+costs a wait, not a wrong answer: `codebase_context_search` re-indexes changed
+artifacts before it searches, so the first search after an edit pays the
+re-embed inline, and old chunks reach an answer only when that staleness check
+itself errors — it is logged and the search proceeds anyway.
+`codebase_context` does not re-index, which is why a listing can sit at N/N
+while artifacts lag; its index times are compared against content, not mtime,
+by the daily check (**Staleness parity**, above).
+
 ## Index exclusions — `.socraticodeignore`
 
 Phase 4 writes this at the repo root, alongside the manifest.

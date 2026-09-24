@@ -1783,8 +1783,9 @@ function graphBuilderFinding(builder, session) {
 // code, so the severity here changes nothing there; beside `ok` it is the
 // difference between a silent healthy repo and a daily accusation.
 //
-// Exported, and rendered from one place, because the generated doc quotes it
-// verbatim; tests/structural/test_socraticode_graph_yield.py asserts the two
+// Exported, and rendered from one place, because references/graph-health.md
+// quotes it verbatim — the generated doc did until #329 moved the quotation
+// there; tests/structural/test_socraticode_graph_yield.py asserts the two
 // agree, so a reword cannot leave the doc behind. The returned string carries
 // no severity prefix — renderFinding() adds it — so the doc quotes the message
 // and not the envelope.

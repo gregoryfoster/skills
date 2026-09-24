@@ -299,7 +299,8 @@ node "<SKILL_DIR>/scripts/mcp-driver.mjs" health-check "<PROJECT_PATH>" \
 compares the stamp against the session's server rather than waiting for a
 `STALE` token, and reports staleness *beside* the verdict, never instead of it
 ([#297](https://github.com/gregoryfoster/skills/issues/297), #305). Rebuild,
-then re-measure before variant B.
+then re-measure before variant B. What each rule was learned from:
+[`references/graph-health.md`](references/graph-health.md).
 
 Then clean up the Phase 0 scratch clone (if used): `rm -rf "<SKILL_TMP>"`.
 

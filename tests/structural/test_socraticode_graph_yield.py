@@ -55,6 +55,11 @@ POLICY_REF = (
 DOC_REF = (
     REPO_ROOT / "skills" / "init-socraticode" / "references" / "socraticode-doc.md"
 )
+# Where the finding's full wording lives since #329 moved it out of the
+# generated doc, whose Graph health section now keeps only the rules.
+GRAPH_HEALTH_REF = (
+    REPO_ROOT / "skills" / "init-socraticode" / "references" / "graph-health.md"
+)
 
 requires_node = pytest.mark.skipif(
     shutil.which("node") is None,
@@ -934,6 +939,12 @@ class TestUnresolvedFindingIsVerdictAware:
         doc against the finding they were just shown has no way to tell which of
         the two is lying.
 
+        The quotation lives in `references/graph-health.md` since #329: two
+        verdict-specific paragraphs of it were a fixed cost in every consumer's
+        generated doc, which keeps the concepts and names this file. The
+        finding explains itself where it is printed; this is where it is
+        looked up.
+
         Asserted as *agreement*, not as a sentence: the driver renders the
         finding and the doc must contain what it rendered. Reword the driver
         however you like — this stays green as long as the doc moves with it,
@@ -944,13 +955,13 @@ class TestUnresolvedFindingIsVerdictAware:
         day-specific, which the section says in as many words.
         """
         finding = self._finding("N", verdict)
-        section = _flowed(_graph_health(DOC_REF.read_text()))
-        assert _flowed(finding) in section, (
-            f"references/{DOC_REF.name}'s **Graph health** section does not "
-            f"quote what `mcp-driver.mjs` emits on verdict {verdict!r}:\n"
+        text = _flowed(GRAPH_HEALTH_REF.read_text())
+        assert _flowed(finding) in text, (
+            f"references/{GRAPH_HEALTH_REF.name} does not quote what "
+            f"`mcp-driver.mjs` emits on verdict {verdict!r}:\n"
             f"  driver: {_flowed(finding)}\n"
-            "The doc is the only place a consumer can look the finding up; a "
-            "quotation that no longer matches is worse than none (#216)."
+            "It is where a consumer looks the finding up (#329); a quotation "
+            "that no longer matches is worse than none (#216)."
         )
 
 
