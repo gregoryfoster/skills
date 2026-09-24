@@ -53,12 +53,12 @@
 21325 8374 skills/init-socraticode/SKILL.md
 4208 1543 skills/init-socraticode/references/audit-rerun.md
 21717 8110 skills/init-socraticode/references/code-exploration-policy.md
-21987 8359 skills/init-socraticode/references/context-artifacts.md
+22313 8464 skills/init-socraticode/references/context-artifacts.md
 1464 672 skills/init-socraticode/references/detached-source.md
 2765 1109 skills/init-socraticode/references/embedding-backends.md
 9120 3409 skills/init-socraticode/references/external-store.md
-8626 3000 skills/init-socraticode/references/graph-health.md
-16979 6617 skills/init-socraticode/references/host-memory.md
+8680 3021 skills/init-socraticode/references/graph-health.md
+17157 6684 skills/init-socraticode/references/host-memory.md
 5344 1991 skills/init-socraticode/references/linked-projects.md
 11546 4263 skills/init-socraticode/references/socraticode-doc.md
 24828 9194 skills/init-socraticode/references/troubleshooting.md
