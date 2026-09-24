@@ -50,11 +50,12 @@ from .test_skill_self_budget import (
 )
 from .test_socraticode_policy_split import DOC_REF, _template
 
-# 2,547 estimated, 2,593 exact after #329 — the larger, rounded up to the next
-# 50. Lower it when a later trim finds more; never raise it. A rule a consumer
-# acts on may displace a sentence here, but an addition that needs headroom
-# belongs in references/graph-health.md or another reference, which cost a
-# consumer nothing.
+# 2,593 exact after #329, and 2,599 once the verdict table said which measure
+# rules (CR 11) — the larger reading, rounded up to the next 50. Lower it when
+# a later trim finds more; never raise it. A rule a consumer acts on may
+# displace a sentence here, as CR 11's did two sentences of rationale, but an
+# addition that needs headroom belongs in references/graph-health.md or
+# another reference, which cost a consumer nothing.
 GENERATED_DOC_RATCHET = 2_600
 
 RATCHET_PHRASE = f"{GENERATED_DOC_RATCHET:,}-token ratchet (estimate and exact)"

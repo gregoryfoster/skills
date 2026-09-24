@@ -115,9 +115,6 @@ prints:
 bash .claude/hooks/socraticode-reminder.sh
 ```
 
-The query is not copied here, where it would go stale when the vendored hook
-changes.
-
 ## Per-tool notes
 
 - **`codebase_search`** takes natural language, not a regex; an empty result
@@ -158,15 +155,18 @@ node skills/init-socraticode/scripts/mcp-driver.mjs health-check \
   "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 ```
 
+Since 1.13.0 `codebase_graph_status` prints an `Import resolution: N of M
+captured imports resolved…` advisory when resolution collapses. That advisory —
+or its silence under a `Built by:` of v1.13.0 or later — is the server's
+**ruling**, and outranks edges/file:
+
 | `verdict` | Meaning | Do |
 |---|---|---|
-| `ok` | no server advisory, or ≥ 0.1 edges/file | nothing |
-| `low` | the advisory fired, or < 0.1 edges/file | dependency questions go to `grep`; the `AGENTS.md` block is on its degraded variant |
-| `unknown` | < 20 files, or an unparsed status | nothing to conclude |
+| `ok` | a silent ruling; with none, ≥ 0.1 edges/file | nothing |
+| `low` | the advisory fired; with no ruling, < 0.1 edges/file | dependency questions go to `grep`; the `AGENTS.md` block is on its degraded variant |
+| `unknown` | an unparsed status; with no ruling, < 20 files | nothing to conclude |
 
-Since 1.13.0 `codebase_graph_status` prints an `Import resolution: N of M
-captured imports resolved…` advisory when resolution collapses. Trust it, or
-its silence, only when `Built by:` is current:
+Trust a ruling only when `Built by:` is current:
 
 | `Built by:` | a missing advisory means |
 |---|---|
@@ -175,16 +175,15 @@ its silence, only when `Built by:` is current:
 | `unknown (persisted before…)` | same, from a graph cut before the stamp existed |
 | *(line absent)* | server older than 1.13.0, or no built graph; fall back to edges/file |
 
-`health-check` checks the stamp against the server answering your session and
-reports a stale builder as its own defect. **Rebuild the graph after a
-SocratiCode upgrade** with `codebase_graph_build`: a stored graph reports READY
-forever, whatever cut it.
+`health-check` reports a stale builder as its own defect. **Rebuild the graph
+after a SocratiCode upgrade** with `codebase_graph_build`: a stored graph
+reports READY forever, whatever cut it.
 
 **`unresolvedPct` is a statistic beside the verdict, never evidence for it**:
 the share of captured symbol edges matching no project symbol. Edges into
 builtins and external libraries count by construction, so it runs high on
 healthy code and no re-index lowers it. It is a note, and does not set the exit
-code; judge on `verdict` and edges/file. To test the import graph, compare
+code; judge on `verdict`. To test the import graph, compare
 `codebase_graph_query` on a file with known importers against an `rg` sweep.
 
 Rationale, and each finding's full wording:
@@ -210,7 +209,6 @@ those names inside an artifact.
 | Drop an artifact | its entry in the manifest |
 
 Editing `.socraticodeignore` affects **subsequent** scans only; re-index to
-apply it. Left in, vendored trees dominate the index and outrank first-party
-code in `codebase_search`.
+apply it. Left in, vendored trees outrank first-party code in `codebase_search`.
 <!-- END socraticode-doc -->
 ````
