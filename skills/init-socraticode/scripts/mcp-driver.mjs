@@ -426,15 +426,30 @@ function observeSessionLaunch({ env = process.env, selfPid = process.pid } = {})
 // The variable reached this process, and not the session's launch (#332): the
 // green-failing shape, so a defect. Null where nothing was observed, the
 // plugin reads no variable, or this process carries no exact pin to miss.
+// Where one server carries the pin and another does not, the pin DID reach a
+// launch, and setting the variable again changes nothing: the other is a
+// second server beside it, which a standalone entry beside the plugin's is
+// the usual source of (CR 9).
 function sessionPinFinding({ observed, specVariable, value }) {
   if (!observed?.observed || !specVariable || !exactSpecVersion(value)) return null;
-  if (observed.spec === value) return null;
-  const launched = observed.spec ?? observed.servers.map((s) => s.spec).join(', ');
+  const others = observed.servers.filter((s) => s.spec !== value);
+  if (!others.length) return null;
+  const specs = (list) => [...new Set(list.map((s) => s.spec))].join(', ');
+  const pids = (list) => list.map((s) => `pid ${s.pid}`).join(', ');
+  if (others.length < observed.servers.length) {
+    return {
+      severity: SEVERITY.defect,
+      message:
+        `the session's claude launched a second socraticode server beside the pinned ${value}: '${specs(others)}' `
+        + `(${pids(others)}) — two builds on one store; a standalone MCP entry beside the plugin's is the usual `
+        + 'source: claude mcp remove socraticode, then restart the session',
+    };
+  }
   return {
     severity: SEVERITY.defect,
     message:
       `${specVariable}=${value} reached this process but not the session's launch: its server was launched as `
-      + `'${launched}' (${observed.servers.map((s) => `pid ${s.pid}`).join(', ')}) — set it in Claude Code's `
+      + `'${specs(others)}' (${pids(others)}) — set it in Claude Code's `
       + 'environment when it starts (claudeCode.environmentVariables in VS Code, or the shell that launches claude), '
       + 'then restart the session; references/host-memory.md',
   };
@@ -3532,7 +3547,10 @@ async function cmdHealthCheck(projectPath, probePath) {
     let sessionSpec = null;
     let unobserved = null;
     if (seen) {
-      sessionSpec = seen.spec ?? seen.servers.map((s) => s.spec).join(', ');
+      // With several servers the drift is the unpinned ones': the server the
+      // pin launched has none, and a joined list is no spec (CR 9).
+      const specs = [...new Set(seen.servers.map((s) => s.spec))];
+      sessionSpec = seen.spec ?? specs.filter((s) => !running || s !== `socraticode@${running}`).join(', ');
     } else if (sessionPlugin?.specInferred && pluginLaunchVersion(sessionPlugin)) {
       sessionSpec = sessionPlugin.specDefault;
       unobserved = session?.observed?.reason ?? 'no reading';

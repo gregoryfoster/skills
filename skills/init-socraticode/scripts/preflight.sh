@@ -1259,8 +1259,18 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
   # The observed launch first. When it is not the fixed version, every line
   # comparing pins would describe a session that is not running — including
   # the disagreement below, whose remedy would re-pin the driver to a version
-  # nothing launched (CR 1).
-  if [ -n "$SC_SEEN_SPEC" ] && [ "$SC_SEEN_SPEC" != "socraticode@$SC_PLUGIN_FIXED" ]; then
+  # nothing launched (CR 1). A pinned server beside another is not that: the
+  # pin reached a launch, the other is a second server, and setting the
+  # variable again changes nothing (CR 9).
+  SC_SEEN_BESIDE=""
+  case ", $SC_SEEN_SPEC, " in
+    *", socraticode@$SC_PLUGIN_FIXED, "*)
+      [ "$SC_SEEN_SPEC" = "socraticode@$SC_PLUGIN_FIXED" ] || SC_SEEN_BESIDE=1 ;;
+  esac
+  if [ -n "$SC_SEEN_BESIDE" ]; then
+    warn "The session's claude launched a second socraticode server beside the pinned socraticode@$SC_PLUGIN_FIXED ('$SC_SEEN_SPEC', pids $SC_SEEN_PIDS) — two builds writing one store"
+    hint "A standalone MCP entry beside the plugin's is the usual source: claude mcp remove socraticode, then restart the session"
+  elif [ -n "$SC_SEEN_SPEC" ] && [ "$SC_SEEN_SPEC" != "socraticode@$SC_PLUGIN_FIXED" ]; then
     if [ -n "${SOCRATICODE_SPEC:-}" ]; then
       warn "The session's server was launched as '$SC_SEEN_SPEC' (pid $SC_SEEN_PIDS), not socraticode@$SC_PLUGIN_FIXED — $SPEC_NAME reached this shell but not the launch"
     else

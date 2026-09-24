@@ -1019,8 +1019,19 @@ console.log('— the session\'s launch, off the process table (#332) —');
     [missed?.severity, /SOCRATICODE_SPEC=socraticode@1\.14\.0 reached this process/.test(missed?.message),
       /'socraticode@latest' \(pid 28592\)/.test(missed?.message), /claudeCode\.environmentVariables/.test(missed?.message)],
     [SEVERITY.defect, true, true, true]);
+  const carried = sessionLaunchFromProcesses(PS.replace('npm exec socraticode@latest', 'npm exec socraticode@1.14.0'), 76700);
   eq('a launch carrying the pin is no finding',
-    sessionPinFinding({ observed: { ...seen, spec: 'socraticode@1.14.0' }, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' }), null);
+    [carried.spec, sessionPinFinding({ observed: carried, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' })],
+    ['socraticode@1.14.0', null]);
+  // CR 9: the pin reached one launch, and a second server floats beside it.
+  // Naming the variable as missed would send the reader to a step already done.
+  const beside = sessionLaunchFromProcesses(`${PS}\n28593 28287 npm exec socraticode@1.14.0`, 76700);
+  const second = sessionPinFinding({ observed: beside, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' });
+  eq('a pinned server beside a floating one names the second server, not a missed pin',
+    [beside.spec, second?.severity, /reached this process/.test(second?.message),
+      /second socraticode server beside the pinned socraticode@1\.14\.0: 'socraticode@latest' \(pid 28592\)/.test(second?.message),
+      /claude mcp remove socraticode/.test(second?.message)],
+    [null, SEVERITY.defect, false, true, true]);
   eq('nothing observed is no finding — the pin drift says NOT observed instead',
     sessionPinFinding({ observed: { observed: false, reason: 'x' }, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' }), null);
   eq('a floating value pins nothing to miss',

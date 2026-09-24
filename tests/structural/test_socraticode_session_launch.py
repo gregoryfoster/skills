@@ -64,16 +64,24 @@ REPLIES = {
 
 # The stand-in session. `exec -a` gives the child the argv npm gives the
 # plugin's npx launch, so the table reads exactly as it did on the hosts.
+# FAKE_SECOND_SPEC adds a second server beside it, as a standalone entry does.
 FAKE_CLAUDE = """#!/bin/bash
 bash -c "exec -a 'npm exec $FAKE_SERVER_SPEC' sleep 60" &
 srv=$!
-for _ in $(seq 200); do
-  case "$(ps -o args= -p "$srv" 2>/dev/null)" in "npm exec "*) break ;; esac
-  sleep 0.05
+second=""
+if [ -n "${FAKE_SECOND_SPEC:-}" ]; then
+  bash -c "exec -a 'npm exec $FAKE_SECOND_SPEC' sleep 60" &
+  second=$!
+fi
+for pid in $srv $second; do
+  for _ in $(seq 200); do
+    case "$(ps -o args= -p "$pid" 2>/dev/null)" in "npm exec "*) break ;; esac
+    sleep 0.05
+  done
 done
 "$@"
 rc=$?
-kill "$srv" 2>/dev/null
+kill $srv $second 2>/dev/null
 exit "$rc"
 """
 
@@ -228,6 +236,31 @@ class TestHealthCheckReadsTheLaunch:
             report["findings"]
         )
 
+    @requires_tree
+    def test_a_second_server_beside_the_pinned_one_is_named_as_such(
+        self, tmp_path: Path
+    ) -> None:
+        """CR 9: the pin reached a launch, and a duplicate floats beside it."""
+        report = _health_check(
+            tmp_path,
+            server_spec=PINNED,
+            pinned="1.14.0",
+            SOCRATICODE_SPEC=PINNED,
+            FAKE_SECOND_SPEC="socraticode@latest",
+            PATH=_npm_stub(tmp_path, "1.15.0"),
+        )
+        findings = report["findings"]
+        assert not [f for f in findings if "reached this process" in f], (
+            f"the pin reached a launch, and was reported missed\n{findings}"
+        )
+        second = [f for f in findings if "second socraticode server" in f]
+        assert second and not second[0].startswith("note: "), findings
+        assert "'socraticode@latest'" in second[0], second
+        assert report["pinDrift"]["floatingSpec"] == "socraticode@latest", (
+            "the drift is the unpinned server's, not a joined list of both\n"
+            f"{report['pinDrift']}"
+        )
+
 
 def _plugin_launch(tmp_path: Path, *, server_spec: str | None, spec: str) -> dict:
     """preflight's plugin-launch block, run under a session or outside one."""
@@ -324,6 +357,25 @@ class TestPreflightNeverPassesAnUnobservedPin:
         )
         assert "'socraticode@latest' (pid 42284)" in lines[0], lines
         assert not any("disagree" in ln for ln in lines), lines
+
+    def test_a_pinned_launch_beside_a_second_server_is_not_a_missed_pin(
+        self,
+    ) -> None:
+        """CR 9: the variable reached a launch; the other server is a duplicate.
+
+        Naming it missed sent the reader to set a variable already set, and
+        left the floating server beside it, installing at launch, unnamed.
+        """
+        lines = _launch_pins(
+            **PINNED_STATE,
+            SC_SEEN_SPEC=f"socraticode@latest, {PINNED}",
+            SC_SEEN_PIDS="42284 42290",
+            session={"CLAUDECODE": "1", "SOCRATICODE_SPEC": PINNED},
+        )
+        assert "✓" not in "\n".join(lines), lines
+        assert not any("reached this shell" in ln for ln in lines), lines
+        assert "second socraticode server beside the pinned" in lines[0], lines
+        assert "claude mcp remove socraticode" in lines[1], lines
 
     def test_an_unobserved_disagreement_says_so(self) -> None:
         lines = _launch_pins(**PINNED_STATE, SC_PIN_VER="1.13.2")
