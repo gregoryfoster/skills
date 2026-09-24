@@ -23,7 +23,7 @@
 //   7. A non-JSON error body (an HTML 503 page) is truncated to 200 characters.
 // Exit 0 success; 1 conflict (stdout, posted:false) or error (stderr, JSON); 2 usage; 3 listen deadline.
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -349,18 +349,34 @@ async function doListen(chan, last, me, slot, max) {
 
 async function doCreate(originRaw) {
   const path = urlFilePath();
-  if (existsSync(path)) throw new Error(`${URL_FILE_VAR}=${path}: already exists; one channel per file, choose a new path`);
   const url = origin(originRaw);
-  const key = randomBytes(32);
-  const derive = (info, n) => Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), info, n));
-  const id = b64(derive('mayfly id', 16));
-  const auth = b64(derive('mayfly auth', 32));
-  const body = JSON.stringify({ id, auth_hash: b64(createHash('sha256').update(auth).digest()) });
-  const { status, raw } = await request(new URL('/new', url), 'POST', { 'Content-Type': 'application/json' }, body, 60000);
-  if (status === 503) throw new Error('HTTP 503: server temporarily unavailable; try again shortly');
-  if (status !== 303) throw new ReplyError(parseReply(raw, status), status);
-  writeFileSync(path, `${url.origin}/c/${id}#${b64(key)}\n`, { flag: 'wx', mode: 0o600 });
-  return { page: { created: true, id, file: path }, exit: 0, stream: 'stdout' };
+  // Reserve the file before the request. A channel whose URL cannot be written is an orphan
+  // nobody can reach, so every reason the write could fail has to fail first, and a failure
+  // after the request leaves no half-written file behind.
+  let fd;
+  try {
+    fd = openSync(path, 'wx', 0o600);
+  } catch (error) {
+    throw new Error(`${URL_FILE_VAR}=${path}: cannot create the URL file (${error.code ?? error.message}); one channel per file, in a directory that exists`);
+  }
+  try {
+    const key = randomBytes(32);
+    const derive = (info, n) => Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), info, n));
+    const id = b64(derive('mayfly id', 16));
+    const auth = b64(derive('mayfly auth', 32));
+    const body = JSON.stringify({ id, auth_hash: b64(createHash('sha256').update(auth).digest()) });
+    const { status, raw } = await request(new URL('/new', url), 'POST', { 'Content-Type': 'application/json' }, body, 60000);
+    if (status === 503) throw new Error('HTTP 503: server temporarily unavailable; try again shortly');
+    if (status !== 303) throw new ReplyError(parseReply(raw, status), status);
+    writeSync(fd, `${url.origin}/c/${id}#${b64(key)}\n`);
+    closeSync(fd);
+    fd = undefined;
+    return { page: { created: true, id, file: path }, exit: 0, stream: 'stdout' };
+  } catch (error) {
+    if (fd !== undefined) closeSync(fd);
+    try { unlinkSync(path); } catch {} // only the reservation is removed; no URL was written
+    throw error;
+  }
 }
 
 async function doDelete(chan) {
