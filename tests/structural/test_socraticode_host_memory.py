@@ -15,6 +15,9 @@ that report themselves as applied and do nothing:
 - **#303, #307.** Debian's earlyoom unit expands `$EARLYOOM_ARGS` unquoted, so a
   space inside a regex splits it; the regexes match `comm`, truncated to 15
   characters, so a `$`-anchored `--prefer` never matches the server.
+- **#331.** On a host where sessions sit at -1000, `--prefer` reaches only a
+  `choom`'d launch, and a dry run's badness column is printed before the skip
+  that makes it so; on a host with swap, `-m` alone waits for swap to run out.
 
 This file holds both halves to behaviour rather than wording. `preflight.sh`'s
 reading is lifted out of the script and run against fixture cgroup trees —
@@ -905,6 +908,84 @@ class TestTheOomPremiseIsConditional:
                 f"{doc.name} must name the lever that works at -1000 — raising "
                 f"the session's own score: {row}"
             )
+
+
+def _section_four() -> str:
+    text = HOST_MEMORY.read_text()
+    start = text.index("### 4.")
+    return text[start:]
+
+
+class TestTheEarlyKillerFollowsTheHostClass:
+    """#331: what earlyoom does turns on §1's reading, and so does its config.
+
+    Two cohort hosts at -1000 installed the one configuration §4 gave and
+    documented it as preferring dev tooling, which earlyoom never selects
+    there; one pinned a `--prefer` floor of 300 in its tests, read off a dry
+    run's badness column, which is printed before the -1000 skip. And every
+    host that ran it had no swap, which hid that `-m` waits for swap too.
+    """
+
+    @staticmethod
+    def _args() -> list[str]:
+        return TestTheDocsSnippetsWorkAsWritten._earlyoom_args()
+
+    def test_memory_alone_decides_on_a_host_with_swap(self) -> None:
+        """earlyoom needs memory AND swap below their minimums to act.
+
+        The package default is `-s 10`, so on replicator (4 G swap) `-m 12,6`
+        alone waited for ~3.7 GB paged out. `-s 100` alone is not the fix:
+        SIGKILL's swap figure defaults to half the SIGTERM one, so it still
+        waits for swap to be half used.
+        """
+        args = self._args()
+        assert "-s" in args, (
+            "the configuration leaves swap at the package's `-s 10`: on a host "
+            f"with swap, `-m` then waits until swap is ~90% used (#331): {args}"
+        )
+        assert args[args.index("-s") + 1] == "100,100", (
+            "both swap figures must be 100 for memory alone to decide — a bare "
+            f"`-s 100` leaves SIGKILL's at 50 (#331): {args}"
+        )
+
+    def test_the_dry_run_cannot_kill(self) -> None:
+        """The reproduction is offered as safe: every earlyoom it runs is --dryrun."""
+        runs = []
+        for block in _fenced(HOST_MEMORY.read_text(), "bash"):
+            for line in block.replace("\\\n", " ").splitlines():
+                words = shlex.split(line, comments=True)
+                if any(w.endswith("/earlyoom") for w in words):
+                    runs.append(words)
+        assert runs, "host-memory.md no longer shows how to dry-run earlyoom"
+        for words in runs:
+            assert "--dryrun" in words, (
+                f"an earlyoom run in host-memory.md can send a signal: {words}"
+            )
+
+    def test_the_dry_run_prints_the_verdict_lines(self) -> None:
+        """The badness column is pre-skip; only the verdict lines are evidence."""
+        block = next(
+            b for b in _fenced(HOST_MEMORY.read_text(), "bash") if "--dryrun" in b
+        )
+        assert "^sending" in block and "^pid" in block, (
+            "the dry run must keep the `sending` line and the `pid` rows, where "
+            f"`<--- new victim` is marked (#331)\n{block}"
+        )
+        prose = " ".join(_section_four().split())
+        assert "new victim" in prose and "never the badness column" in prose, (
+            "a -1000 `--prefer` match prints badness 300 in a dry run and is "
+            "never taken; §4 must say to read the verdict, not the score"
+        )
+
+    def test_the_minus_1000_host_is_told_what_prefer_reaches(self) -> None:
+        row = next(
+            ln for ln in _section_four().splitlines() if ln.startswith("| **-1000**")
+        )
+        assert "choom -n 500" in row, row
+        assert "decline" in row, (
+            "declining earlyoom at -1000 is a legitimate outcome and the row "
+            f"must say so (#331): {row}"
+        )
 
 
 # Options of systemd-run's that take a value, as a separate word.
