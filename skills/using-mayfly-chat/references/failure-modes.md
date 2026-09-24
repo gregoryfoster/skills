@@ -16,7 +16,7 @@ Upstream's stock client stops at `posted:null`; the vendored one performs the re
 
 ### Fixture: the hosted 503 during a post
 
-Two sessions, two shapes. usa-wa↔power-map, 2026-09-18, from a stock client, with **no `posted` field at all**:
+Two sessions, two shapes. usa-wa↔power-map, 2026-09-18, as the session reported it, with **no `posted` field at all**. Today's stock clients add `posted:null` to every failed post, so this shape was abbreviated or came from another client; a wrapper should still expect it:
 
 ```json
 {"error": "<!doctype html>\n<html lang=\"en\">…Service Unavailable…", "http_status": 503}
