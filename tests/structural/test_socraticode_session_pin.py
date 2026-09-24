@@ -23,6 +23,7 @@ written config tree, as the host-capacity block is in
 test_socraticode_host_memory.py: no claude CLI, no network, no real plugin.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -163,6 +164,32 @@ class TestPreflightReadsTheLiveManifest:
         )
 
 
+def _npx_key(spec: str) -> str:
+    """The directory libnpmexec names a one-package npx tree (7.0.0 – 10.1.x)."""
+    return hashlib.sha512(spec.encode()).hexdigest()[:16]
+
+
+def _npx_tree(cache: Path, spec: str) -> Path:
+    """An npx cache tree for `spec` as npm 10 leaves it (CR 10).
+
+    Keyed on the spec, and with no `_npx` record in its package.json: only
+    libnpmexec 10.1+ (npm 11.3+) writes one, and the stock npm of Node 20 and
+    22 does not — its dependency range is all that is there, and an `@latest`
+    tree that resolved to the same version reads the same.
+    """
+    tree = cache / "_npx" / _npx_key(spec)
+    pkg = tree / "node_modules" / "socraticode"
+    pkg.mkdir(parents=True)
+    version = spec.partition("@")[2]
+    (tree / "package.json").write_text(
+        json.dumps({"dependencies": {"socraticode": f"^{version}"}})
+    )
+    (pkg / "package.json").write_text(
+        json.dumps({"name": "socraticode", "version": version})
+    )
+    return tree
+
+
 def _report(
     *,
     session: dict | None = None,
@@ -201,12 +228,8 @@ def _report(
         + _block("launch-pins")
     )
     with tempfile.TemporaryDirectory() as cache:
-        for i, spec in enumerate(warmed):
-            tree = Path(cache) / "_npx" / f"tree{i}"
-            tree.mkdir(parents=True)
-            (tree / "package.json").write_text(
-                json.dumps({"_npx": {"packages": [spec]}, "dependencies": {}})
-            )
+        for spec in warmed:
+            _npx_tree(Path(cache), spec)
         env = {"npm_config_cache": cache, **(session or {})}
         return _run(program, env).stdout.splitlines()
 

@@ -1294,10 +1294,16 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
   # npx keys its cache on the spec string, so a warm `socraticode@latest` tree
   # does not serve `socraticode@1.14.0`: the first launch of a newly pinned
   # spec is a full install, at session start, unattended — #295's peak once
-  # (#332, address-validator). The tree lists the spec in its package.json's
-  # `_npx.packages`, the only place the quoted `"socraticode@<v>"` appears.
+  # (#332, address-validator). The tree's directory IS that key — the first 16
+  # hex digits of the spec's sha512, as libnpmexec names it, unchanged from
+  # 7.0.0 (npm 10) through 10.1 (npm 11). Its package.json is no witness: only
+  # libnpmexec 10.1+ (npm 11.3+) records the spec there, and an npm 10 tree for
+  # `@1.14.0` reads `"socraticode": "^1.14.0"`, as an `@latest` tree that
+  # resolved to it does (CR 10).
   SC_NPX_DIR="${npm_config_cache:-$HOME/.npm}/_npx"
-  if ! grep -qsF "\"socraticode@$SC_PLUGIN_FIXED\"" "$SC_NPX_DIR"/*/package.json; then
+  SC_NPX_KEY="$(node -e 'process.stdout.write(require("crypto").createHash("sha512").update(process.argv[1]).digest("hex").slice(0, 16))' \
+    "socraticode@$SC_PLUGIN_FIXED" 2>/dev/null || true)"
+  if [ -n "$SC_NPX_KEY" ] && [ ! -f "$SC_NPX_DIR/$SC_NPX_KEY/node_modules/socraticode/package.json" ]; then
     warn "No npx cache tree under $SC_NPX_DIR holds socraticode@$SC_PLUGIN_FIXED, so the first session to launch it installs it — the install peak, once, at an unattended start"
     hint "Warm it now, capped where user systemd allows: systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@$SC_PLUGIN_FIXED -- true (elsewhere, the npm exec alone)"
   fi

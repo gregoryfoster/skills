@@ -41,7 +41,7 @@ from .test_socraticode_graph_yield import (
     _graph_built_by,
     _plugin_config,
 )
-from .test_socraticode_session_pin import _block, _helpers
+from .test_socraticode_session_pin import _block, _helpers, _npx_key
 from .test_socraticode_session_pin import _report as _launch_pins
 
 requires_tree = pytest.mark.skipif(
@@ -407,8 +407,22 @@ class TestPreflightNeverPassesAnUnobservedPin:
         assert "--package=socraticode@1.14.0" in lines[2], lines
 
     def test_a_warm_tree_is_silent(self) -> None:
+        """CR 10: npm 10's tree records no spec, and is warm all the same.
+
+        The check grepped package.json for the `_npx.packages` only npm 11.3+
+        writes, so on stock Node 20 or 22 it called every tree cold, the day
+        after the warm-up it recommends included.
+        """
         lines = _launch_pins(**PINNED_STATE, SC_SEEN_SPEC=PINNED, SC_SEEN_PIDS="1")
         assert len(lines) == 1 and "✓" in lines[0], lines
+
+    def test_the_key_is_the_directory_npm_made(self) -> None:
+        """The plugin's `@latest` tree on this repo's macOS host (npm 11.5.2).
+
+        libnpmexec derives the directory from the spec alone, the same from
+        7.0.0 through 10.1.5, so this one observed name pins the scheme.
+        """
+        assert _npx_key("socraticode@latest") == "e467c9db50cb633b"
 
 
 def _session_version(tmp_path: Path, **variables: str) -> str:
