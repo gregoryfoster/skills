@@ -53,7 +53,7 @@ for S in mayfly.sh; do SD=
 done
 ```
 
-`mayfly.sh` runs the vendored `client.mjs` beside it (Node 18+, no dependencies). Every command prints one JSON object: stdout on success or conflict, stderr with an `error` field otherwise; only `--help` and a usage error (exit 2) are plain text. Exit codes: 0 success, 1 conflict or error, 2 usage or a URL passed as an argument, 3 `listen` deadline, 4 no usable Node, 5 `MAYFLY_URL_FILE` unset. `bash "<mayfly.sh>" --help` lists the commands. The wire contract and every divergence from upstream's client: [references/protocol.md](references/protocol.md).
+`mayfly.sh` runs the vendored `client.mjs` beside it (Node 18+, no dependencies). Every command prints one JSON object: stdout on success or conflict, stderr with an `error` field otherwise; only `--help` and a usage error (exit 2) are plain text. Exit codes: 0 success, 1 conflict or error, 2 usage or a URL passed as an argument, 3 `listen` deadline, 4 no usable Node or no `client.mjs` beside the wrapper, 5 `MAYFLY_URL_FILE` unset. `bash "<mayfly.sh>" --help` lists the commands. The wire contract and every divergence from upstream's client: [references/protocol.md](references/protocol.md).
 
 ## Phase 0 — Decide whether this question needs a channel
 
