@@ -339,9 +339,9 @@ export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 # ── The memory cap (#330) ────────────────────────────────────────────────────
 # The one SocratiCode launch nobody watches: SessionStart, once a day, before
 # any agent has context. On co-replicator (3.82 GiB, no swap, a production
-# co-tenant) #99 measured it as the only uncapped launcher on the host — the
-# #295 shape, where the launch is the peak and a production service is what
-# goes down. So where the host can cap, the driver runs in row U's scope, and
+# co-tenant) CannObserv/replicator#99 measured it as the only uncapped launcher
+# on the host — the #295 shape, where the launch is the peak and a production
+# service is what goes down. So where the host can cap, the driver runs in row U's scope, and
 # the server it launches, as its child, runs there with it.
 #
 # Here, not in settings.json and not as an installer flag. install-hook.sh

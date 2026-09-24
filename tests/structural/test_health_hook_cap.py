@@ -2,8 +2,9 @@
 
 `socraticode-health.sh` runs `mcp-driver.mjs health-check` from SessionStart,
 once per UTC day: the one SocratiCode launch nobody is watching. On
-co-replicator (3.82 GiB, no swap, a production co-tenant) #99 measured it as
-the only uncapped launcher on the host — the #295 shape. Row U's capped scope
+co-replicator (3.82 GiB, no swap, a production co-tenant)
+CannObserv/replicator#99 measured it as the only uncapped launcher on the host
+— the #295 shape. Row U's capped scope
 existed only as prose and as invocations each repo copied into its own docs.
 
 Where the cap lives is what the issue's first trap decides. `install-hook.sh`
