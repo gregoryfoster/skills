@@ -3260,9 +3260,11 @@ async function cmdHealthCheck(projectPath, probePath) {
         // the contentHash the server stored for it — the key its own repair
         // uses — so a checkout that rewrote identical bytes is `touched`, not
         // stale, and the finding stays one that codebase_update can clear.
-        // The store is read only when something was nominated: on a fresh
-        // tree this costs nothing. Its environment is the one the server was
-        // launched with, plugin env block included, so both address one store.
+        // The metadata point is read only when something was nominated, so on
+        // a fresh tree this read costs nothing — the store itself is read on
+        // every run since #333, by the counts above. Its environment is the
+        // one the server was launched with, plugin env block included, so
+        // both address one store.
         const stale = [];
         const touched = [];
         const unverified = [];
