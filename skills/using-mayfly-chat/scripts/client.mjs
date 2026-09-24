@@ -9,8 +9,8 @@
 //      MAYFLY_URL_FILE, and an argument shaped like a channel URL is refused before any request.
 //      argv (/proc/<pid>/cmdline) is world-readable for the life of every call; a file is not.
 //   2. `post` takes --body PATH and never reads stdin. A body-less post blocked on inherited
-//      stdin for the whole tool budget, and an EOF would have posted an empty message that
-//      cannot be deleted.
+//      stdin for the whole tool budget, and an inherited stdin can carry text nobody meant to
+//      post. (An empty body was never the risk: upstream refuses a blank one before sending.)
 //   3. An ambiguous post outcome is resolved by one read-back from the old cursor. A post with
 //      --last N commits at exactly N+1 or not at all, so one read answers it: posted:true with
 //      recovered:"read-back" if N+1 is this message; posted:false on stdout with the missed page
