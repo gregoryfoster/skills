@@ -67,7 +67,7 @@ manifests, and only the one `.claude-plugin/plugin.json` names is live:
 | File | Launches | Live under Claude Code? |
 |---|---|---|
 | `.claude-plugin/mcp.json` | `${SOCRATICODE_SPEC:-socraticode@latest}` | **yes** — `plugin.json`'s `mcpServers` names it |
-| `.mcp.json`, `mcp.json` (plugin root) | hardcoded `socraticode@latest` | no |
+| `.mcp.json`, `mcp.json` (plugin root) | hardcoded `socraticode@latest` | no — since `0c33776`; before it, `plugin.json` named `./.mcp.json` |
 
 Reading a root one confirms that the session cannot be pinned, and that is how
 #295 came to say so. The variable also landed after the 1.14.0 release with no
