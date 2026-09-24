@@ -162,8 +162,12 @@ class TestPreflightReadsTheLiveManifest:
         )
 
 
-def _report(**variables: str) -> list[str]:
-    """preflight's launch-pins block, for the given resolved state."""
+def _report(*, session: dict | None = None, **variables: str) -> list[str]:
+    """preflight's launch-pins block, for the given resolved state.
+
+    `session` is the process environment (CLAUDECODE, SOCRATICODE_SPEC); every
+    other keyword is a shell variable the block reads.
+    """
     defaults = {
         "SC_PLUGIN_FIXED": "",
         "SC_PLUGIN_FLOATS": "",
@@ -174,7 +178,6 @@ def _report(**variables: str) -> list[str]:
         "SC_PIN_DIR": "/home/u/.socraticode/pin",
         "MEM_KB": str(36 * 1024 * 1024),
     }
-    session = variables.pop("session", {})
     state = {**defaults, **variables}
     program = (
         "set -euo pipefail\n"
@@ -183,7 +186,7 @@ def _report(**variables: str) -> list[str]:
         + "".join(f"{k}={json.dumps(v)}\n" for k, v in state.items())
         + _block("launch-pins")
     )
-    return _run(program, session).stdout.splitlines()
+    return _run(program, session or {}).stdout.splitlines()
 
 
 class TestPreflightReportsBothPins:
