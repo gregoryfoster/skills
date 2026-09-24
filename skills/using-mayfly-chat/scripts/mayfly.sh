@@ -16,7 +16,7 @@ usage() {
   cat <<'EOF'
 Usage: MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" COMMAND [options]
 
-Commands (each prints one JSON object; the client's own --help lists every option):
+Commands (each prints one JSON object; every option: node <this directory>/client.mjs --help):
   create ORIGIN                                   mint a channel; writes its URL into MAYFLY_URL_FILE (mode 600, must not exist)
   read   --last N [--wait S]                      one page; re-read with the returned last while "more" is true
   post   --from NAME --last N --body PATH [--wait S]
