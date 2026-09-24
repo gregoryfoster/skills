@@ -2067,8 +2067,11 @@ class TestANewerMtimeIsConfirmedByContent:
         assert not [f for f in report["findings"] if "stale" in f], report["findings"]
         notes = [f for f in report["findings"] if "content unverified" in f]
         assert len(notes) == 1, report["findings"]
-        assert "cannot reach Qdrant" in notes[0], notes
-        assert "reference-docs" in notes[0], notes
+        assert "database-schema, reference-docs (cannot reach Qdrant" in notes[0], (
+            "one cause for every nominee is named once, after the names (CR 5): "
+            f"{notes}"
+        )
+        assert notes[0].count("cannot reach Qdrant") == 1, notes
         assert result.returncode == 0, result.stdout
 
     @requires_node

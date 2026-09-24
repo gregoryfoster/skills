@@ -3073,9 +3073,13 @@ async function cmdHealthCheck(projectPath, probePath) {
           // daily finding whose remedy re-embeds nothing. But it is not
           // silence either — the edit may be real, and the call that settles
           // it is cheap and a no-op when it is not.
+          // Grouped by reason: an unreachable store is one cause for every
+          // nominee, and repeating it per name buries the names.
+          const byReason = new Map();
+          for (const u of unverified) byReason.set(u.reason, [...(byReason.get(u.reason) ?? []), u.name]);
           note(
             `context artifacts with source newer than the index, content unverified — `
-            + `${unverified.map((u) => `${u.name} (${u.reason})`).join('; ')}; `
+            + `${[...byReason].map(([reason, names]) => `${names.join(', ')} (${reason})`).join('; ')}; `
             + 'codebase_update re-embeds any whose content moved and changes nothing for the rest'
           );
         }
