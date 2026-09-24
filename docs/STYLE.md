@@ -12,7 +12,7 @@ this file when it reached its own per-doc budget.
 
 **Never write `bash scripts/X.sh` in a SKILL.md.** The agent's cwd is the *project* root, but `scripts/` ships inside the skill directory, so a bare relative path names a file that doesn't exist, failing with "No such file or directory" in every project without its own `scripts/` copy ([#63](https://github.com/gregoryfoster/skills/issues/63)). [tests/structural/test_content_invariants.py](../tests/structural/test_content_invariants.py) (`TestNoBareScriptPaths`) fails the suite if the form reappears.
 
-Instead, resolve and substitute — **per script, never per directory.** Each skill's SKILL.md carries one resolution block — for `shipping-*` it is folded into the Step 1 doctor preflight; `using-git-worktrees`, `writing-plans`, `curating-context` and `auditing-ci-cost` get a standalone "Script path resolution" section. It resolves **every script the skill's steps and references run** and prints one `<name.sh>=<path>` line each:
+Instead, resolve and substitute — **per script, never per directory.** Each skill's SKILL.md carries one resolution block — for `shipping-*` it is folded into the Step 1 doctor preflight; `using-git-worktrees`, `using-mayfly-chat`, `writing-plans`, `curating-context` and `auditing-ci-cost` get a standalone "Script path resolution" section. It resolves **every script the skill's steps and references run** and prints one `<name.sh>=<path>` line each:
 
 ```bash
 N=<skill-name>
