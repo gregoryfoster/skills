@@ -357,3 +357,56 @@ class TestPreflightNeverPassesAnUnobservedPin:
     def test_a_warm_tree_is_silent(self) -> None:
         lines = _launch_pins(**PINNED_STATE, SC_SEEN_SPEC=PINNED, SC_SEEN_PIDS="1")
         assert len(lines) == 1 and "✓" in lines[0], lines
+
+
+def _session_version(tmp_path: Path, **variables: str) -> str:
+    """The Node 26 gate's choice of which build the session runs (CR 3).
+
+    Lifted between its sentinels, with an `npm` on PATH that answers the
+    registry lookup as 9.9.9, so which branch ran is visible in the answer.
+    """
+    state = {"SC_SEEN_FIXED": "", "SC_SEEN_SPEC": "", "SC_PLUGIN_FIXED": ""}
+    state.update(variables)
+    program = (
+        "set -euo pipefail\n"
+        + "".join(f"{k}={json.dumps(v)}\n" for k, v in state.items())
+        + _block("session-version")
+        + 'printf "%s" "$SC_LATEST"\n'
+    )
+    env = {**os.environ, "PATH": _npm_stub(tmp_path, "9.9.9")}
+    result = subprocess.run(
+        ["bash", "-c", program], capture_output=True, text=True, timeout=30, env=env
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+class TestTheNodeGateJudgesTheObservedBuild:
+    """Which build the Node 26 gate judges: the one seen, else the one inferred."""
+
+    def test_an_observed_exact_launch_is_judged(self, tmp_path: Path) -> None:
+        got = _session_version(
+            tmp_path,
+            SC_SEEN_FIXED="1.12.0",
+            SC_SEEN_SPEC="socraticode@1.12.0",
+            SC_PLUGIN_FIXED="1.14.0",
+        )
+        assert got == "1.12.0", got
+
+    def test_an_observed_floating_launch_asks_the_registry(
+        self, tmp_path: Path
+    ) -> None:
+        """The variable said 1.14.0; the session launched @latest (#332)."""
+        got = _session_version(
+            tmp_path, SC_SEEN_SPEC="socraticode@latest", SC_PLUGIN_FIXED="1.14.0"
+        )
+        assert got == "9.9.9", (
+            "a session seen on @latest runs what the registry resolves, not the "
+            f"version this shell's variable names: {got}"
+        )
+
+    def test_unobserved_the_definition_is_judged(self, tmp_path: Path) -> None:
+        assert _session_version(tmp_path, SC_PLUGIN_FIXED="1.14.0") == "1.14.0"
+
+    def test_nothing_fixed_asks_the_registry(self, tmp_path: Path) -> None:
+        assert _session_version(tmp_path) == "9.9.9"

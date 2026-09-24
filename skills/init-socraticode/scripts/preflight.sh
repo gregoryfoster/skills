@@ -1177,6 +1177,7 @@ else
     # registry's, so there is nothing to look up (#327). Which version that is
     # comes from the launch where it was seen: the variable this script
     # carries can have missed it, and then the session floats (#332).
+    # >>> session-version
     if [ -n "$SC_SEEN_FIXED" ]; then
       SC_LATEST="$SC_SEEN_FIXED"
     elif [ -z "$SC_SEEN_SPEC" ] && [ -n "$SC_PLUGIN_FIXED" ]; then
@@ -1185,6 +1186,7 @@ else
       SC_LATEST="$(npm view socraticode version --silent \
         --fetch-timeout=5000 --fetch-retries=1 2>/dev/null || true)"
     fi
+    # <<< session-version
     # Last line, not `tr -d` over the whole reply: deleting newlines CONCATENATES
     # a multi-line answer, so `1.13.1\n1.13.2` would become `1.13.11.13.2` and
     # parse as a plausible 1.13.11. Every other reader in this skill degrades to
