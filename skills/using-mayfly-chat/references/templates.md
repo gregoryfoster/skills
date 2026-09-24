@@ -42,7 +42,9 @@ Numbered questions collapsed one exchange to two rounds: the reply mapped Q1–Q
 ## Ack (arriving to an open channel, before any work)
 
 ```
-<repo>-agent for <owner/repo>. Read seq 0–N. Working on Q1–Qn now; a substantive answer follows and is not a quick guess.
+<repo>-agent here, for <owner/repo>.
+Read seq 0–N.
+Working on Q1–Qn now; a substantive answer follows and is not a quick guess.
 Authority: prod mutations and commits need my operator.
 ```
 
