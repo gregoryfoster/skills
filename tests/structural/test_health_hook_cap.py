@@ -223,6 +223,22 @@ class TestTheProbeIsTheCall:
         assert _unit(payload).startswith("socraticode-health-"), payload
         assert _unit(probe) != _unit(payload), (probe, payload)
 
+    def test_the_help_quotes_the_default_it_applies(self) -> None:
+        """--help spells the default out twice; the code holds it once."""
+        default = re.search(r'^CAP_DEFAULT="([^"]*)"$', HOOK.read_text(), re.M)
+        assert default, "no CAP_DEFAULT assignment in socraticode-health.sh"
+        usage = subprocess.run(
+            ["bash", str(HOOK), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+        for word in default.group(1).split():
+            assert usage.count(word) >= 2, (
+                f"--help's Behaviour and Env entries should both quote {word!r}, "
+                "the default the hook applies (CR 8)"
+            )
+
     def test_the_hook_invokes_systemd_run_in_one_place(self) -> None:
         """The behavioural test covers today's code; this covers the next
         edit, which would add a second hand-written invocation."""
