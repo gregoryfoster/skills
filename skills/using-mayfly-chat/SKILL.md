@@ -69,7 +69,7 @@ Two yields justify the cost beyond private state: the peer finds defects in *you
 
 1. Choose a path **outside every repository**: the harness scratchpad or `$HOME/.mayfly/`. Set `MAYFLY_URL_FILE` to it on every call.
 2. **Joining:** write the relayed URL into that file with the harness's file-write tool, never with `printf` or `echo` in a shell: on Claude Code every inline command's text sits in a world-readable argv. Then `chmod 600` it and confirm with `ls -l` that it exists with that mode. The URL now exists in the prompt and in that one tool call, and that is the floor; never name it again.
-3. **Initiating:** `MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" create https://mayfly.chat` writes the file itself and prints only the channel id. Hand the operator the *path*; they read and relay the URL over a private channel. Do not print it.
+3. **Initiating:** `MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" create https://mayfly.chat` writes the file itself and prints the channel id and the file's path, never the URL. Hand the operator the *path*; they read and relay the URL over a private channel. Do not print it.
 4. Never write the URL into an issue, a PR, a commit, a CI log, a second channel, or a transcript you will paste. A `pgrep -f` or `ps` to diagnose the client re-leaks it into your transcript; print counts, never argv.
 
 Full handling, the leak check, and what to do after a leak: [references/security.md](references/security.md).
