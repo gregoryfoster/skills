@@ -93,6 +93,40 @@ Re-pinning is the same `npm install --prefix` line with the new version —
 and the same version in `SOCRATICODE_SPEC`. Do it as a decision, not on a
 schedule: the reason to pin was to stop an unattended launch from installing.
 
+## The health hook caps itself
+
+`socraticode-health.sh` is the one launch nobody watches — SessionStart, once
+a UTC day — and until
+[#330](https://github.com/gregoryfoster/skills/issues/330) nothing capped it: on
+co-replicator (3.82 GiB, no swap, a production co-tenant) it was the host's
+only uncapped launcher. It now runs its check in [row U](troubleshooting.md)'s
+scope wherever the host can create one. The probe is the same
+`systemd-run --user --scope` command with the same properties, because a bare
+probe succeeds where the properties are unsupported and the real call then
+fails closed. Its payload asks systemd, from inside the scope, for the scope's
+`MemoryCurrent`: without a memory controller — cgroup v1, or none delegated to
+the user manager — `MemoryMax=` is accepted and never enforced, and on systemd
+255 a 320 MB payload outlived a 64M cap. Where the host cannot cap — macOS, no
+user systemd, no memory controller — the check runs uncapped as before, and
+silently; a failed probe leaves a line in its log. A check the cap stops is
+reported as stopped by its cap, and never re-run uncapped.
+`SOCRATICODE_HEALTH_CAP` sets the properties, or `off`. Set it in
+`.claude/settings.local.json`'s `env` block, since a ceiling belongs to the
+host, not to every clone of the repo. A value the probe rejects runs uncapped
+too; the log line names systemd's reason.
+
+It is defence in depth, not the fix. Pinned, the hook's launch installs nothing
+and peaks near 75 MB; the cap is for a host that never pinned, a pin that broke
+(the pin directory removed, a re-pin mid-install), and an index that grew.
+
+**A hand-rolled wrapper can go.** CannObserv/replicator wrapped the hook's
+command in `.claude/settings.json` (`fb73b74..fba4cd9`). The installer rebuilds
+that command from its constants on every run
+([#259](https://github.com/gregoryfoster/skills/issues/259)), so the next Step C
+re-run removes the wrapper, silently — which is why the cap lives in the
+script, and why removing the wrapper now loses nothing. Kept, it is redundant:
+the hook's own scope takes the payload.
+
 ## A production service on the same host
 
 Measure, pin, reserve, and run an early killer — all four, whatever the first

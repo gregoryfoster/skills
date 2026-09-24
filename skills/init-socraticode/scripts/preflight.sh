@@ -412,6 +412,11 @@ case "$MEM_KB" in
       # options, so `--prefix` would be read as one of its own.
       hint "Pre-install once under a cap instead of installing at every launch: systemd-run --user --scope -p MemoryMax=1536M choom -n 500 -- npm install --prefix $SC_PIN_DIR socraticode@<version>"
       hint "mcp-driver.mjs prefers that pin over the plugin's 'npx ... @latest', so no driver launch installs anything (references/host-memory.md)"
+      # The unattended launch is covered without a step here (#330): the
+      # health hook opens this scope itself wherever the host can, so a
+      # wrapper a repo hand-rolled around it is redundant, and the next
+      # install-hook.sh run removes it anyway.
+      hint "The daily health hook caps its own check the same way wherever user systemd allows (#330) — a hand-rolled systemd-run wrapper around it in .claude/settings.json can go"
       # The shared-host case, named only here. A cap on a session process
       # protects the host solely when the host's own service holds the
       # reservation, and this gate cannot tell a dev box from a production node

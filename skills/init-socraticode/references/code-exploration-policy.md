@@ -16,6 +16,14 @@ The block below is trimmed wording descended from `init-project-fastapi`'s
 `agents-md-template.md`; keep the negative rule and the three-row table, but
 tailor the path examples to the project's actual layout.
 
+**The block names no store**, so it is true under either `STORE` and there is
+nothing in it to adapt for one. It used to say "local Qdrant store + on-disk
+graph", which is false under `STORE=external` and, since the graph is Qdrant
+collections in both modes, half-false under `managed`. A hand fix inside the
+markers is lost on the next re-run, so a storage claim cannot live here
+([#328](https://github.com/gregoryfoster/skills/issues/328)); where the store
+is, `codebase_health` says.
+
 **Why the block is small.** `AGENTS.md` is loaded on every invocation, and this
 section is the one `curating-context` refuses to touch (it has its own
 idempotency contract — see
@@ -79,10 +87,10 @@ Never leave more than one policy section.
 <!-- BEGIN socraticode-policy -->
 ## Code Exploration Policy
 
-SocratiCode is the preferred semantic-search tool here once indexed (local
-Qdrant store + on-disk graph; manifest `.socraticodecontextartifacts.json`).
-Its MCP tools are **deferred** — schemas load only after the `ToolSearch`
-prefetch that `.claude/hooks/socraticode-reminder.sh` prints each session.
+SocratiCode is the preferred semantic-search tool here once indexed (manifest
+`.socraticodecontextartifacts.json`). Its MCP tools are **deferred** — schemas
+load only after the `ToolSearch` prefetch that
+`.claude/hooks/socraticode-reminder.sh` prints each session.
 
 **Negative rule.** Use SocratiCode MCP tools first for semantic questions
 ("where is X", "how does Y work", "what depends on Z"). Reach for `grep`/`rg`
@@ -115,10 +123,10 @@ syntax in the `rg` example.
 <!-- BEGIN socraticode-policy -->
 ## Code Exploration Policy
 
-SocratiCode is the preferred semantic-search tool here once indexed (local
-Qdrant store + on-disk graph; manifest `.socraticodecontextartifacts.json`).
-Its MCP tools are **deferred** — schemas load only after the `ToolSearch`
-prefetch that `.claude/hooks/socraticode-reminder.sh` prints each session.
+SocratiCode is the preferred semantic-search tool here once indexed (manifest
+`.socraticodecontextartifacts.json`). Its MCP tools are **deferred** — schemas
+load only after the `ToolSearch` prefetch that
+`.claude/hooks/socraticode-reminder.sh` prints each session.
 
 **Negative rule.** Use SocratiCode MCP tools first for semantic questions
 ("where is X", "how does Y work", "what depends on Z"). Reach for `grep`/`rg`
@@ -277,6 +285,14 @@ the 60s ceiling the hook already exports to the driver, so the inner bound is
 the one that fires and the outer one only catches a driver that never returns.
 A value already in `settings.json` is **preserved** by a re-run, so a consumer
 who tuned this figure keeps it.
+
+**The memory cap is the script's, not an argument.** Wherever user systemd can
+cap a scope, the hook runs its check under row U's properties
+([#330](https://github.com/gregoryfoster/skills/issues/330)) — and only there, silently
+uncapped elsewhere. It lives in the vendored script because the installer
+rebuilds this command from its constants on every run, keeping only the
+timeout: a cap written around the command in `settings.json` is gone after the
+next re-run, and nothing reports it.
 
 Its marker is deliberately distinct from `socraticode-prefetch` /
 `socraticode-reminder`: markers are per-hook precisely so that one hook's

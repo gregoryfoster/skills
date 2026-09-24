@@ -9,6 +9,9 @@
 # needs a running MCP server and the store behind it — Docker for a managed
 # store, a reachable URL for an external one (#287) — and the submodule refresh
 # must not start depending on either.
+#
+# Where the host can cap, the check runs inside a transient systemd scope with
+# troubleshooting.md row U's properties (#330) — see "The memory cap" below.
 set -euo pipefail
 # -E on its own line, not folded into `set -Eeuo` above: the structural suite
 # pins the literal `set -euo pipefail` as the house convention, and a superset
@@ -78,6 +81,8 @@ What it reports (to stdout, which Claude Code injects as session context):
     itself a write, and says that nothing past the configuration was measured.
   - Linked projects that break includeLinked search without blocking the
     check: one whose projectId is invalid, or two that share one.
+  - A check its own memory cap stopped (#330): said as such, since nothing
+    was measured, and never re-run uncapped.
 
 It reports. It runs no docker command of its own, never re-indexes and never
 edits a file — a session-start hook is the wrong place to spend an hour of CPU
@@ -111,6 +116,19 @@ Behaviour:
   - Bounded: HEALTH_TIMEOUT_MS caps the driver run. This hook exports 60000,
     tightening mcp-driver.mjs's own 120000 default, because a session start
     must not wait two minutes on a server that will never answer.
+  - Capped where the host can cap (#330). The driver and the server it
+    launches run in one transient scope — systemd-run --user --scope with
+    MemoryHigh=1200M MemoryMax=1536M CPUQuota=100%, under choom -n 500 so a
+    session at oom_score_adj -1000 is killed by the cap rather than stalled —
+    after a probe that runs the identical command and asks systemd, from
+    inside its scope, whether it accounts that scope's memory — without a
+    memory controller, MemoryMax= is accepted and never enforced. Where the
+    host cannot cap (no systemd-run, as on macOS; no user systemd; or no
+    memory controller for it — cgroup v1, or none delegated) the check runs
+    uncapped, as before, and says nothing about it; a failed probe leaves one
+    log line. With a pinned server the launch peaks near 75 MB and the
+    cap never binds: it is for a host that never pinned, a pin that broke, or
+    an index that grew.
   - Logs to <common .git>/socraticode-health.log (~64 KiB / 200 lines).
   - Exits 0 on every condition.
 
@@ -131,6 +149,12 @@ Env:
   HEALTH_TIMEOUT_MS       driver ceiling in ms. This hook exports 60000; the
                           driver's own default, for a direct run, is 120000.
                           Set it yourself for a slower, more patient check.
+  SOCRATICODE_HEALTH_CAP  the scope's systemd properties, space-separated;
+                          default 'MemoryHigh=1200M MemoryMax=1536M
+                          CPUQuota=100%'. 'off' runs the check uncapped, and
+                          so does a value the probe rejects — the log says
+                          why. A ceiling belongs to the host: set it in
+                          .claude/settings.local.json, not settings.json.
   SOCRATICODE_HEALTH_FORCE=1
                           ignore the once-per-day lock (for testing)
 
@@ -317,6 +341,106 @@ fi
 # tests/structural/test_health_timeout_contract.py keeps them doing so.
 export HEALTH_TIMEOUT_MS="${HEALTH_TIMEOUT_MS:-60000}"
 
+# ── The memory cap (#330) ────────────────────────────────────────────────────
+# The one SocratiCode launch nobody watches: SessionStart, once a day, before
+# any agent has context. On co-replicator (3.82 GiB, no swap, a production
+# co-tenant) CannObserv/replicator#99 measured it as the only uncapped launcher
+# on the host — the #295 shape, where the launch is the peak and a production
+# service is what goes down. So where the host can cap, the driver runs in row
+# U's scope, and the server it launches, as its child, runs there with it.
+#
+# Here, not in settings.json and not as an installer flag. install-hook.sh
+# rebuilds this hook's command from its constants on every run, keeping only
+# the timeout (#259), so a wrapper in settings.json — replicator's fix — is
+# erased by the next init-socraticode re-run, silently. This file is a symlink
+# into the vendored skill, so what is written here survives every re-run.
+#
+# Defence in depth, not the fix. Pinned (#295, #327), this launch installs
+# nothing and peaks near 75 MB. The cap is for a host that never pinned, a pin
+# that broke, and an index that grew.
+#
+# It adds no timeout of its own. HEALTH_TIMEOUT_MS still fires first and the
+# 120s registration after it; the scope holds nothing the driver does not, so
+# when the driver exits, on its own timer or killed, its server's stdin
+# closes, the server exits, and the empty scope goes with it.
+CAP_DEFAULT="MemoryHigh=1200M MemoryMax=1536M CPUQuota=100%"
+CAP_PROPS=()
+CAP_UNIT=""
+_cap_words=()
+if [ "${SOCRATICODE_HEALTH_CAP:-}" = "off" ]; then
+  _log "memory cap off (SOCRATICODE_HEALTH_CAP=off) — running uncapped"
+elif command -v systemd-run >/dev/null 2>&1; then
+  read -r -a _cap_words <<<"${SOCRATICODE_HEALTH_CAP:-$CAP_DEFAULT}" || true
+  for _w in ${_cap_words[@]+"${_cap_words[@]}"}; do
+    CAP_PROPS+=(-p "$_w")
+  done
+fi
+
+# The probe and the payload share this one prefix, so they cannot disagree
+# (#330 trap 2). A bare `systemd-run --user --scope -q true` succeeds where the
+# properties are unsupported; the real call then exits 1 with the uncapped
+# branch already behind it, and a hook written never to fail closed does
+# (#177) — replicator's first wrapper had exactly that bug. Unit name and
+# payload aside, the probe IS the call.
+#
+# And a cap systemd accepts is not a cap it enforces. Where the user manager
+# has no memory controller — cgroup v1, or v2 with memory neither delegated
+# nor accounted — `-p MemoryMax=` is taken, exit 0, and never applied:
+# measured on systemd 255 with the manager at `pids` only, the probe passed
+# and a 320 MB payload outlived MemoryMax=64M. systemd knows, though. The
+# scope's MemoryCurrent reads "[not set]" there and a byte count wherever it
+# accounts the scope's memory, so a cap with a Memory property sends the probe
+# to ask, from inside its own scope. A cap without one asks nothing (`true`):
+# it is not refused over a controller it never uses.
+#
+# Single-quoted on purpose: the probe's `sh -c` expands it, not this shell.
+# shellcheck disable=SC2016
+_CAP_MEMORY_CHECK='m="$(systemctl --user show -p MemoryCurrent --value "$1")" || exit 1
+case "$m" in
+  "" | *[!0-9]*)
+    echo "systemd accounts no memory for $1 (MemoryCurrent=${m:-empty}), so its Memory cap would not be enforced" >&2
+    exit 1 ;;
+esac'
+#
+# choom because at oom_score_adj -1000 — broker's and address-validator's
+# sessions — a MemoryMax= cap stalls a process instead of killing it (#303,
+# #307). Raising a score is unprivileged.
+_capped() {
+  local unit="$1"
+  shift
+  systemd-run --user --scope -q --unit="$unit" \
+    ${CAP_PROPS[@]+"${CAP_PROPS[@]}"} choom -n 500 -- "$@"
+}
+
+if [ "${#CAP_PROPS[@]}" -gt 0 ]; then
+  _unit="socraticode-health-$$-$(date -u +%s)"
+  # Silent where it fails — every host without user systemd, linger or a
+  # memory controller for it; macOS never reaches the probe at all. Only the log
+  # says so. A line in every session on those hosts would be a finding that
+  # always fires, the tuned-out reporter #180 exists to prevent (trap 5).
+  #
+  # With the first line of the probe's stderr, which is what tells a host that
+  # cannot cap ("Failed to connect to bus") from a property systemd refused —
+  # trap 2's host, or a mistyped SOCRATICODE_HEALTH_CAP an operator would
+  # otherwise believe was in force — and from a cap it would not enforce.
+  #
+  # `trap - ERR` first, inside the substitution only. set -E hands the ERR
+  # trap to the subshell, where the `if` no longer shields a failure from it
+  # (measured on bash 3.2): _hook_panic would run there and `exit 0`, and a
+  # probe that failed would read as one that passed — a capped launch on a
+  # host that cannot cap, and FAILED TO RUN every day.
+  _probe=(true)
+  case " ${_cap_words[*]}" in
+    *" Memory"*) _probe=(sh -c "$_CAP_MEMORY_CHECK" sh "$_unit-probe.scope") ;;
+  esac
+  if _probe_err="$(trap - ERR; _capped "$_unit-probe" "${_probe[@]}" 2>&1 >/dev/null)"; then
+    CAP_UNIT="$_unit"
+  else
+    _probe_err="${_probe_err%%$'\n'*}"
+    _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500) failed (${_probe_err:-no message}) — running uncapped"
+  fi
+fi
+
 # Findings land on the driver's stderr, one per line; the JSON verdict is on
 # stdout and goes to the log, not to the session — a session-context injection
 # should be the sentence, not the payload.
@@ -352,9 +476,50 @@ RC=0
 # `${A[@]+"${A[@]}"}`, not `"${A[@]}"`: under `set -u`, bash 3.2 — which is what
 # macOS ships — treats an empty array expansion as an unbound variable and kills
 # the hook before it can report anything.
-node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "$PROJECT" \
-  >>"$LOG" 2>"$FINDINGS_FILE" \
-  || RC=$?
+#
+# Braced, so the redirection holds this shell's stderr too: a payload killed by
+# a signal — the cap's SIGKILL above all — makes bash print a "Killed" job
+# notice, and it belongs in the log with the rest, not on the hook's stderr.
+_driver=(node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "$PROJECT")
+if [ -n "$CAP_UNIT" ]; then
+  { _capped "$CAP_UNIT" "${_driver[@]}"; } >>"$LOG" 2>"$FINDINGS_FILE" || RC=$?
+else
+  { "${_driver[@]}"; } >>"$LOG" 2>"$FINDINGS_FILE" || RC=$?
+fi
+
+# Did the cap stop it? (#330) A killed payload and a crashed one both arrive as
+# a non-zero RC with no findings, and they call for opposite responses, so ask
+# the scope: systemd records an OOM kill as its Result. Asked only after a
+# failure, and only of our own unit. The kill is recorded asynchronously, so a
+# scope still winding down gets a moment — at most ~5s, well inside the 120s.
+#
+# A systemd that records no kill on the scope (OOMPolicy=continue) leaves the
+# report at FAILED TO RUN: wrong about the cause, still louder than silence.
+#
+# Never re-run uncapped, whatever the answer (trap 3). `capped || uncapped`
+# would re-launch, without its cap, the process the cap just stopped, on the
+# host the cap was protecting.
+CAP_KILLED=0
+if [ -n "$CAP_UNIT" ] && [ "$RC" -ne 0 ]; then
+  _result=""
+  _tries=0
+  while :; do
+    _result="$(systemctl --user show -p Result --value "$CAP_UNIT.scope" 2>/dev/null || true)"
+    [ "$_result" != "oom-kill" ] || break
+    _tries=$((_tries + 1))
+    [ "$_tries" -lt 25 ] || break
+    case "$(systemctl --user show -p ActiveState --value "$CAP_UNIT.scope" 2>/dev/null || true)" in
+      active | activating | deactivating | reloading) sleep 0.2 ;;
+      *) break ;;
+    esac
+  done
+  if [ "$_result" = "oom-kill" ]; then
+    CAP_KILLED=1
+    # Our own unit, and the one piece of state the cap leaves: a failed scope
+    # stays listed until it is reset.
+    systemctl --user reset-failed "$CAP_UNIT.scope" >/dev/null 2>&1 || true
+  fi
+fi
 
 # A non-zero RC has TWO meanings and they are opposites (#254): the driver
 # exits 1 for "defects found" (#220), and node also exits 1 for an error thrown
@@ -374,7 +539,16 @@ node "$DRIVER" health-check ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "$PROJECT" \
 # with an empty stderr (SIGKILL, an OOM) also measured nothing, and the
 # invariant behind #177/#214/#225/#254 is that for a reporter that is silent
 # when clean, EVERY failure mode must be louder than silence, never quieter.
-if [ "$RC" -ne 0 ]; then
+if [ "$CAP_KILLED" = 1 ]; then
+  _limit=""
+  for _w in "${_cap_words[@]}"; do
+    case "$_w" in MemoryMax=*) _limit="$_w" ;; esac
+  done
+  _limit="${_limit:-${_cap_words[*]}}"
+  _log "health-check stopped by its memory cap ($_limit) — not re-run uncapped"
+  echo "socraticode-health: the check was stopped by its memory cap ($_limit) before it finished — see $LOG."
+  echo "socraticode-health: this is not a clean result. Nothing was measured today, and it was not re-run uncapped: the cap keeps this host's other services up. A launch that needs that much usually installed the server — pin it (init-socraticode's references/host-memory.md); if the index has outgrown the cap, raise it with SOCRATICODE_HEALTH_CAP where the host has room."
+elif [ "$RC" -ne 0 ]; then
   # `  - ` lines are the driver's findings; the rest is launch chatter.
   # POSIX bracket class, not `\s`: BSD grep -E does not know the escape.
   _found="$(grep -E '^[[:space:]]+- ' "$FINDINGS_FILE" || true)"
@@ -392,7 +566,7 @@ if [ "$RC" -ne 0 ]; then
   fi
 fi
 
-_log "health-check exited $RC"
+_log "health-check exited $RC${CAP_UNIT:+ (capped: scope $CAP_UNIT.scope)}"
 cat "$FINDINGS_FILE" >>"$LOG" 2>/dev/null || true
 # Removal is the EXIT trap's job — it also covers the _hook_panic path, which
 # used to leave the file behind in the git dir.

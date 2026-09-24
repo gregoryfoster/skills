@@ -123,11 +123,15 @@ jobs:
       # binds AGENTS.md and the docs/ tree through the same SKILL_BUDGET_EXACT
       # switch, so before this job it had the identical defect: nothing ever
       # measured it exactly. ~4 more count_tokens calls.
+      # And the generated docs/SOCRATICODE.md template's ratchet (#329), which
+      # names both readings like every other and would otherwise only ever be
+      # held to the estimate. One more call.
       - name: Measure every ratchet against count_tokens
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SKILL_BUDGET_EXACT: '1'
         run: |
           pytest tests/structural/test_skill_self_budget.py \
-                 tests/structural/test_policy_surface_budget.py -v \
+                 tests/structural/test_policy_surface_budget.py \
+                 tests/structural/test_socraticode_doc_budget.py -v \
             -W 'error:SKILL_BUDGET_EXACT was set but the run could not reach count_tokens:UserWarning'
