@@ -33,6 +33,10 @@ The common drift found across the cohort
   [#287](https://github.com/gregoryfoster/skills/issues/287). Move the entries
   into `.socraticode.json`'s `linkedProjects`, relative
   ([`linked-projects.md`](linked-projects.md#migrating-an-older-install));
+- a policy block hand-corrected for an external store — its template said
+  "local Qdrant store + on-disk graph" until
+  [#328](https://github.com/gregoryfoster/skills/issues/328), and now names no
+  store, so the re-run's replacement is the fix rather than an undo;
 - a repo moving to `STORE=external`. If it was ever indexed into that store
   without a `projectId`, those collections sit under its path hash and the
   rename orphans them; see
