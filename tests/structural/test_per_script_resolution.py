@@ -95,7 +95,13 @@ SHIPPING = [
 # the parametrization below.
 PUBLISHERS = sorted(
     SHIPPING
-    + ["auditing-ci-cost", "curating-context", "using-git-worktrees", "writing-plans"]
+    + [
+        "auditing-ci-cost",
+        "curating-context",
+        "using-git-worktrees",
+        "using-mayfly-chat",
+        "writing-plans",
+    ]
 )
 
 
