@@ -106,7 +106,7 @@ The process table is the only evidence of what launched — the server whose
 parent is the session's own `claude`, which is `$PPID` in the Bash tool's shell:
 
 ```bash
-ps -eo pid,ppid,args | grep '[n]pm exec socraticode'   # e.g. `npm exec socraticode@1.14.0`
+ps -eo pid,ppid,args | awk -v p="$PPID" '$2 == p && $3 == "npm" && $4 == "exec"'   # e.g. `npm exec socraticode@1.14.0`
 ```
 
 `claude mcp list` from a session shell is not evidence. It starts a server of
