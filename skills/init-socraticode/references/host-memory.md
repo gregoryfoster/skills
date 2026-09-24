@@ -82,7 +82,7 @@ systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
 ```
 
 From then on an exact version resolves from the npx cache without installing —
-the one-line fix for the install at launch on a small or co-tenant host.
+the fix for the install at launch on a small or co-tenant host.
 `preflight.sh` reports both pins, names a pinned spec no npx cache tree holds,
 and says when the installed plugin does not read the variable
 ([#327](https://github.com/gregoryfoster/skills/issues/327)).
