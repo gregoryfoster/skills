@@ -23,11 +23,13 @@ written config tree, as the host-capacity block is in
 test_socraticode_host_memory.py: no claude CLI, no network, no real plugin.
 """
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -162,11 +164,44 @@ class TestPreflightReadsTheLiveManifest:
         )
 
 
-def _report(*, session: dict | None = None, **variables: str) -> list[str]:
+def _npx_key(spec: str) -> str:
+    """The directory libnpmexec names a one-package npx tree (7.0.0 – 10.1.x)."""
+    return hashlib.sha512(spec.encode()).hexdigest()[:16]
+
+
+def _npx_tree(cache: Path, spec: str) -> Path:
+    """An npx cache tree for `spec` as npm 10 leaves it (CR 10).
+
+    Keyed on the spec, and with no `_npx` record in its package.json: only
+    libnpmexec 10.1+ (npm 11.3+) writes one, and the stock npm of Node 20 and
+    22 does not — its dependency range is all that is there, and an `@latest`
+    tree that resolved to the same version reads the same.
+    """
+    tree = cache / "_npx" / _npx_key(spec)
+    pkg = tree / "node_modules" / "socraticode"
+    pkg.mkdir(parents=True)
+    version = spec.partition("@")[2]
+    (tree / "package.json").write_text(
+        json.dumps({"dependencies": {"socraticode": f"^{version}"}})
+    )
+    (pkg / "package.json").write_text(
+        json.dumps({"name": "socraticode", "version": version})
+    )
+    return tree
+
+
+def _report(
+    *,
+    session: dict | None = None,
+    warmed: tuple[str, ...] | None = None,
+    **variables: str,
+) -> list[str]:
     """preflight's launch-pins block, for the given resolved state.
 
     `session` is the process environment (CLAUDECODE, SOCRATICODE_SPEC); every
-    other keyword is a shell variable the block reads.
+    other keyword is a shell variable the block reads. `warmed` is the specs an
+    npx cache tree holds — by default the one the definition fixes, so a test
+    about something else is not also a cold-cache test (#332).
     """
     defaults = {
         "SC_PLUGIN_FIXED": "",
@@ -177,8 +212,14 @@ def _report(*, session: dict | None = None, **variables: str) -> list[str]:
         "SC_PIN_VER": "",
         "SC_PIN_DIR": "/home/u/.socraticode/pin",
         "MEM_KB": str(36 * 1024 * 1024),
+        "SC_SEEN_SPEC": "",
+        "SC_SEEN_PIDS": "",
+        "SC_SEEN_WHY": "outside a Claude Code session",
     }
     state = {**defaults, **variables}
+    if warmed is None:
+        fixed = state["SC_PLUGIN_FIXED"]
+        warmed = (f"socraticode@{fixed}",) if fixed else ()
     program = (
         "set -euo pipefail\n"
         + _helpers()
@@ -186,7 +227,11 @@ def _report(*, session: dict | None = None, **variables: str) -> list[str]:
         + "".join(f"{k}={json.dumps(v)}\n" for k, v in state.items())
         + _block("launch-pins")
     )
-    return _run(program, session or {}).stdout.splitlines()
+    with tempfile.TemporaryDirectory() as cache:
+        for spec in warmed:
+            _npx_tree(Path(cache), spec)
+        env = {"npm_config_cache": cache, **(session or {})}
+        return _run(program, env).stdout.splitlines()
 
 
 class TestPreflightReportsBothPins:
@@ -197,9 +242,14 @@ class TestPreflightReportsBothPins:
             SC_SPEC="socraticode@1.14.0",
             SC_SPEC_SRC=".claude/settings.json",
             SC_PIN_VER="1.14.0",
+            SC_SEEN_SPEC="socraticode@1.14.0",
+            SC_SEEN_PIDS="42284",
         )
         assert len(lines) == 1 and "✓" in lines[0], lines
         assert "no launch installs" in lines[0], lines
+        assert "observed" in lines[0] and "42284" in lines[0], (
+            f"the pass must say the launch was seen, and which server: {lines}"
+        )
 
     def test_two_pinned_versions_are_named(self) -> None:
         lines = _report(SC_PLUGIN_FIXED="1.14.0", SC_PIN_VER="1.13.2")
@@ -213,7 +263,11 @@ class TestPreflightReportsBothPins:
             SC_PIN_VER="1.14.0",
         )
         assert "still installs" in lines[0], lines
-        assert '"SOCRATICODE_SPEC": "socraticode@1.14.0"' in lines[1], lines
+        assert "SOCRATICODE_SPEC=socraticode@1.14.0" in lines[1], lines
+        assert "claudeCode.environmentVariables" in lines[1], (
+            "the hint must name a channel that reaches the launch — the settings "
+            f"env block alone missed it on three hosts (#332): {lines[1]}"
+        )
 
     def test_a_variable_the_plugin_ignores_is_said_to_be_ignored(self) -> None:
         lines = _report(
@@ -222,7 +276,11 @@ class TestPreflightReportsBothPins:
             SC_SPEC_SRC="the environment",
         )
         assert "never reads it" in lines[0], lines
-        assert "claude mcp list" in lines[1], lines
+        assert "process table" in lines[1] and "claude mcp list" not in lines[1], (
+            "`claude mcp list` from a session shell reports what a launch WITH "
+            f"the shell's environment runs, not what launched (#332): {lines[1]}"
+        )
+        assert "claude plugin update" in lines[1], lines
 
     def test_a_pinned_driver_beside_a_build_that_cannot_pin_says_update(
         self,
@@ -281,15 +339,17 @@ class TestTheDocsNoLongerSayItCannotBeDone:
 
     def test_host_memory_names_the_variable_and_the_live_manifest(self) -> None:
         text = HOST_MEMORY.read_text()
-        assert '"SOCRATICODE_SPEC": "socraticode@' in text, (
-            "host-memory.md must show the settings env block that pins the session"
+        assert '"name": "SOCRATICODE_SPEC", "value": "socraticode@' in text, (
+            "host-memory.md must show the setting that pins the session where "
+            "Claude Code starts (#332)"
         )
         assert ".claude-plugin/mcp.json" in text, (
             "host-memory.md must name the one live manifest — reading a root "
             "one is how #295 concluded the session could not be pinned"
         )
-        assert "claude mcp list" in text, (
-            "host-memory.md must say to read the launched command, not a manifest"
+        assert "ps -eo pid,ppid,args" in text, (
+            "host-memory.md must say to read the launched command off the "
+            "process table, not a manifest"
         )
 
     def test_row_u_pins_both_launches(self) -> None:

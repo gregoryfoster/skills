@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 
+from .test_context_artifact_parity import _closed_port
 from .test_socraticode_node_gate import STORE_VARIABLES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -74,6 +75,12 @@ def _clean_env(**extra: str) -> dict:
         "SOCRATICODE_PROBE_FILE",
         "HEALTH_TIMEOUT_MS",
         "SOCRATICODE_HEALTH_FORCE",
+        # A session sets CLAUDECODE, and health-check then reads the session's
+        # server off the process table (#332): a suite run inside one would
+        # judge every fixture against that session's real launch. Its
+        # SOCRATICODE_SPEC would decide what a fixture definition expands to.
+        "CLAUDECODE",
+        "SOCRATICODE_SPEC",
         # The hook reads it since #330; an operator's value would change
         # which launch path every hook test exercises.
         "SOCRATICODE_HEALTH_CAP",
@@ -87,6 +94,13 @@ def _clean_env(**extra: str) -> dict:
         *STORE_VARIABLES,
     ):
         env.pop(k, None)
+    # health-check counts every listed context artifact in the store since
+    # #333, and with no store variables it addresses localhost:16333 — a real
+    # managed store on a developer's machine, whose answers would decide these
+    # fixtures. A port nothing listens on makes each such read a stated
+    # failure, the same on every host. A test that needs a store passes one.
+    env["QDRANT_HOST"] = "127.0.0.1"
+    env["QDRANT_PORT"] = str(_closed_port())
     env.update(extra)
     return env
 

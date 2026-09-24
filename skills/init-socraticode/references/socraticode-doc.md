@@ -128,13 +128,13 @@ bash .claude/hooks/socraticode-reminder.sh
   symbol name.
 - **`codebase_context_search`** sees only indexed artifacts from
   `.socraticodecontextartifacts.json`. No answer can mean a manifest path that
-  does not resolve, skipped silently, or a resolving artifact left unindexed:
-  ask `codebase_context`, the only per-artifact index status, then run
-  `codebase_update`. An answer can also be **stale** — the search re-indexes
-  changed artifacts first, usually costing only a wait, but `codebase_context`
-  does not, and can list N/N while artifacts lag. The daily check names both.
-  All artifacts share one ranking, where dated plans outrank a small current
-  file; set `artifactName` to search one.
+  does not resolve, skipped silently; an artifact left unindexed, which
+  `codebase_context` names and `codebase_update` indexes; or one listed as
+  indexed with no chunks in the store: `codebase_context_remove`, then
+  `codebase_context_index`. An answer can be **stale**: the search re-indexes
+  changed artifacts first, `codebase_context` never. The daily check names
+  each. All artifacts share one ranking, where dated plans outrank a small
+  current file; set `artifactName` to search one.
 - **`codebase_update`** is the incremental catch-up and the repair for a stale
   artifact: it re-embeds only what changed.
 - **`codebase_context_index`** re-embeds **every** artifact with no progress,

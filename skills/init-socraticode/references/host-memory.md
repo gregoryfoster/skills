@@ -45,20 +45,46 @@ driver's launches — the health hook, `index`, `status`, `verify`. The session'
 server is the plugin's, and since upstream
 [`0c33776`](https://github.com/giancarloerra/socraticode/commit/0c33776) (2026-09-20)
 the plugin reads its package spec from a variable: its launch is
-`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`. Set it in the
-repo's settings env block, to the pin's version so both launches are one build:
+`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`. Set it to the
+pin's version, so both launches are one build, **in Claude Code's environment
+when it starts**:
+
+| Claude Code runs from | Set it in |
+|---|---|
+| the VS Code extension | `claudeCode.environmentVariables` — a machine-scoped setting, so your user `settings.json`, or on a remote `~/.vscode-server/data/Machine/settings.json`; never a committed workspace setting |
+| a terminal | an export in the shell that launches `claude` |
 
 ```json
-{ "env": { "SOCRATICODE_SPEC": "socraticode@<version>" } }
+{ "claudeCode.environmentVariables": [{ "name": "SOCRATICODE_SPEC", "value": "socraticode@<version>" }] }
 ```
 
-An exact version resolves from the npx cache without installing — #295's cost,
-so this is the one-line fix for the install at launch on a small or co-tenant
-host. Like every settings variable it reaches only sessions started after it is
-written, in a trusted folder. The driver expands the same variable when it
-reads the plugin's definition, so once it matches the pin the drift below has
-nothing to measure. `preflight.sh` reports both pins, and says when the
-installed plugin does not read the variable
+**The repo's settings `env` block is not enough on its own.** On watcher,
+notifier and address-validator (Claude Code 2.1.280, VS Code, after a full
+reconnect) it reached the server's environment but not its launch: the
+plugin's args were expanded before the block was merged, so the server ran
+`npm exec socraticode@latest` with `SOCRATICODE_SPEC=socraticode@1.14.0` in its
+environment. The machine setting pinned all three — though each reconnect also
+moved the extension to 2.1.281, so whether the block alone works there is not
+measured. On co-replicator (#327) the block alone worked, and why the hosts
+differ is not known. Keep the block as the declared value if you like —
+preflight compares against it — but not as the mechanism
+([#332](https://github.com/gregoryfoster/skills/issues/332)).
+
+**The first launch of a new exact spec installs.** npx keys its cache on the
+spec string, so a warm `socraticode@latest` tree does not serve
+`socraticode@1.14.0`, and the first session to launch it does a full, uncapped
+install at an unattended start — #295's peak, once. Warm it deliberately,
+under the cap; this builds the tree the plugin's pinned launch then uses:
+
+```bash
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+  choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@<version> -- true
+```
+
+From then on an exact version resolves from the npx cache without installing —
+the fix for the install at launch on a small or co-tenant host.
+`preflight.sh` reports both pins, names a pinned spec no npx cache tree holds,
+and says when the installed plugin does not read the variable
 ([#327](https://github.com/gregoryfoster/skills/issues/327)).
 
 **Read the launched command, never a manifest.** The plugin ships three launch
@@ -72,10 +98,24 @@ manifests, and only the one `.claude-plugin/plugin.json` names is live:
 Reading a root one confirms that the session cannot be pinned, and that is how
 #295 came to say so. The variable also landed after the 1.14.0 release with no
 version bump, so a cache directory labelled `1.14.0` can predate it: its
-`plugin.json` names `./.mcp.json`, and the variable does nothing there. Check
-what actually launched — `claude mcp list` prints the command on its
-`plugin:socraticode:socraticode:` line, and `ps -eo args | grep socraticode`
-shows the spec (`npm exec socraticode@1.14.0`).
+`plugin.json` names `./.mcp.json`, and the variable does nothing there.
+`claude plugin update` can report success and keep reusing that directory;
+move it aside and update again.
+
+The process table is the only evidence of what launched — the server whose
+parent is the session's own `claude`, which is `$PPID` in the Bash tool's shell:
+
+```bash
+ps -eo pid,ppid,args | awk -v p="$PPID" '$2 == p && $3 == "npm" && $4 == "exec"'   # e.g. `npm exec socraticode@1.14.0`
+```
+
+`claude mcp list` from a session shell is not evidence. It starts a server of
+its own with that shell's environment, which carries the variable, so it
+prints what a launch *with* it runs; in a folder the CLI has not trusted it
+ignores the project block altogether. Nor is the variable in the session's
+environment, which the block reaches either way. `preflight.sh` and
+`health-check` read the process table themselves, and report a pin they could
+not observe as not observed ([#332](https://github.com/gregoryfoster/skills/issues/332)).
 
 **A pinned driver beside a floating session is a new divergence.** Before the
 pin both floated and agreed by coincidence of timing; with only the driver
@@ -90,8 +130,9 @@ pinned, the driver is deterministic while the session goes on floating.
 | The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
 
 Re-pinning is the same `npm install --prefix` line with the new version —
-and the same version in `SOCRATICODE_SPEC`. Do it as a decision, not on a
-schedule: the reason to pin was to stop an unattended launch from installing.
+and the same version in `SOCRATICODE_SPEC`, its npx tree warmed first. Do it
+as a decision, not on a schedule: the reason to pin was to stop an unattended
+launch from installing.
 
 ## The health hook caps itself
 
@@ -129,17 +170,21 @@ the hook's own scope takes the payload.
 
 ## A production service on the same host
 
-Measure, pin, reserve, and run an early killer — all four, whatever the first
-step finds. Four CannObserv VMs, and most findings rest on one of them:
-broker (the install peak, sessions at -1000), notifier (sessions at 0, the
-spaced earlyoom regex), wslcb-licensing-tracker (the inert `MemoryLow=`, the
-`$`-anchored `--prefer`, earlyoom on stock arguments) and address-validator
+Measure, pin, reserve, and keep the kernel ahead of exhaustion — all four,
+whatever the first step finds. The first step decides only what an early
+killer is worth (§4). Five CannObserv VMs, and most findings rest on one of
+them: broker (the install peak, sessions at -1000), notifier (sessions at 0,
+the spaced earlyoom regex), wslcb-licensing-tracker (the inert `MemoryLow=`,
+the `$`-anchored `--prefer`, earlyoom on stock arguments), address-validator
 (the templated-slice clamp, and -1000 with no `exe-init` — both measured
-there alone — plus the stock-arguments earlyoom again). Where the hosts
-disagreed, the disagreement is stated rather than resolved
+there alone — plus the stock-arguments earlyoom again) and replicator (-1000
+with swap — 8 GiB and 4 G when #331 measured it — where a dry run showed what
+earlyoom reaches, and it was declined). Where the hosts disagreed, the
+disagreement is stated rather than resolved
 ([#295](https://github.com/gregoryfoster/skills/issues/295),
 [#303](https://github.com/gregoryfoster/skills/issues/303),
-[#307](https://github.com/gregoryfoster/skills/issues/307)).
+[#307](https://github.com/gregoryfoster/skills/issues/307),
+[#331](https://github.com/gregoryfoster/skills/issues/331)).
 
 ### 1. Measure which kind of host this is
 
@@ -155,7 +200,7 @@ done
 
 | Sessions at | Measured on | What follows |
 |---|---|---|
-| **-1000** | broker; address-validator | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
+| **-1000** | broker; address-validator; replicator | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since), so its `--prefer` reaches only a `choom`'d launch (§4). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
 | **0** | notifier | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, and so can earlyoom, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
 
 What decides it was not determined, and `exe-init`'s presence is not it:
@@ -165,6 +210,14 @@ after measuring a 0: the reservation keeps reclaim off the service on any host,
 and `OOMScoreAdjust=` puts the service behind every process a killer can take —
 which, where sessions sit at 0, makes a session the one that goes. Where they
 sit at -1000 nothing on the service's side can: add the `choom` launch above.
+
+**Pin the reading, since nothing pins its cause.** A host can change class
+under you, and the earlyoom configuration in §4 then silently means something
+else. CannObserv/replicator holds its reading with a test: it walks from its
+own process up to the child of `exe-init` or `sshd`, asserts that session
+root's `oom_score_adj` is still what the host's configuration assumed, fails
+naming the issue to reopen, and skips in CI and outside a session
+(`bcf3e5a`, `TestTheEarlyoomDecline`). A host at 0 asserts the opposite.
 
 ### 2. Pin
 
@@ -260,25 +313,54 @@ grant.
 On wslcb, after the fix, the service read 256 MiB effective. Its
 `OOMScoreAdjust=-700` (`oom_score` 208) was calibrated to sit below 300, the
 floor of an earlyoom `--prefer` match. That floor is a match whose own
-`oom_score` is 0, which is a -1000 process, and earlyoom never takes one; a
-session at 0 reads ~667 or more, ~967 as a `--prefer` match. 300 is not a line
-worth calibrating to.
+`oom_score` is 0, which is a -1000 process, and earlyoom never takes one,
+though a dry run prints the 300 anyway (§4); a session at 0 reads ~667 or
+more, ~967 as a `--prefer` match. 300 is not a line worth calibrating to.
 
-### 4. Keep the kernel ahead of exhaustion — `vm.min_free_kbytes`, and earlyoom
+### 4. Keep the kernel ahead of exhaustion — `vm.min_free_kbytes`, and earlyoom where it reaches a session
 
 Set `vm.min_free_kbytes` so the kernel keeps headroom for atomic allocations —
 their failure, not an OOM kill, is how broker's outage presented
-(CannObserv/broker#21, #25). Then run earlyoom, which acts before the kernel
-has to. Four ways it silently runs something other than what you wrote:
+(CannObserv/broker#21, #25). That holds on either kind of host. earlyoom acts
+before the kernel has to, and what it can act on is §1's reading:
+
+| Sessions at | What its `--prefer` reaches | So |
+|---|---|---|
+| **0** | every session process — `MainThread`, `claude`, `npm exec socrat` | run it as configured below; it takes a session before the service |
+| **-1000** | only a launch raised with `choom -n 500 --`; nothing else in a session | it is only as useful as the `choom` discipline around what it would need to kill. Otherwise it sheds small adj-0 daemons — the user manager, cron, logind, `tailscaled` unless avoided — in the kernel's own order, just sooner, freeing tens of MiB. That is a legitimate reason to decline it; replicator did |
+
+On replicator's dry run a `choom`'d `node` was the victim at badness 1313;
+without one it was `(sd-pam)` at 733. Two cohort hosts at -1000 installed
+earlyoom and documented it as preferring dev tooling, which it never selects
+there ([#331](https://github.com/gregoryfoster/skills/issues/331)).
+
+**Read a dry run by its verdict, not its scores.** This kills nothing and
+needs no root:
+
+```bash
+apt-get download earlyoom && dpkg-deb -x earlyoom_*.deb x
+# Thresholds forced so it selects a victim at once; --dryrun sends no signal.
+timeout -s INT 2 ./x/usr/bin/earlyoom --dryrun -d -r 0 -m 99,98 -s 100,100 \
+  --prefer '^(MainThread|claude|npm|node|npx)' 2>&1 | grep -E '^pid|^sending' | head -20
+```
+
+The `-d` table prints each badness **before** the -1000 skip, which runs after
+the `--prefer` bonus is added (`kill.c:242-253`, v1.7). So a -1000
+`MainThread` at 300 there means "would be 300 if it were eligible" — how a
+cohort table came to list eight of them as candidates. Read the row marked
+`<--- new victim` and the `sending` line, never the badness column.
+
+Five ways it silently runs something other than what you wrote:
 
 - **No space inside a regex.** Debian's unit is
   `ExecStart=/usr/bin/earlyoom $EARLYOOM_ARGS`, expanded **unquoted**, so
   systemd splits the value into words. The split honours quotes (systemd 255:
-  `EXTRACT_RELAX|EXTRACT_UNQUOTE`), but the file's own double quotes are gone
-  by then, so a bare space inside a `--prefer` or `--avoid` regex becomes a
-  second argument, and earlyoom does not run the configuration you wrote — no
-  early killer, under a unit that looks active (#303). Keep spaces out rather
-  than quoting around them.
+  `EXTRACT_RELAX|EXTRACT_UNQUOTE`, confirmed through a transient unit on
+  255.4), but the file's own double quotes are gone by then, so a bare space
+  inside a `--prefer` or `--avoid` regex becomes a second argument, and
+  earlyoom does not run the configuration you wrote — no early killer, under a
+  unit that looks active (#303). Keep spaces out rather than quoting around
+  them.
 - **No backslash either.** The same split drops a backslash and keeps the
   character after it, so `\.` reaches earlyoom as `.`, which matches anything,
   with no error. A literal dot is `[.]`.
@@ -293,13 +375,22 @@ has to. Four ways it silently runs something other than what you wrote:
   an already-active unit reloads nothing — wslcb and address-validator both sat
   `active` and `enabled` on Debian's `-r 3600`, with no `--prefer` and no
   `--avoid`. **Restart it** after writing the file.
+- **With swap, the memory threshold waits for swap.** earlyoom acts only when
+  memory **and** swap are both below their minimums, and the package default
+  is `-s 10`. On a host with swap, `-m 12,6` alone acts only after swap is ~90%
+  used: on replicator (4 G, `vm.swappiness=10`) ~3.7 GB paged out before the
+  first SIGTERM, and a dry run's startup line says so (`swap <= 10.00%`).
+  `-s 100,100` lets memory alone decide, and changes nothing where there is no
+  swap. Both figures: `-s 100` alone leaves SIGKILL's at half of it, so
+  SIGKILL still waits until swap is half used. Keep the default only where
+  paging first is the trade you mean.
 
 One working configuration — name *this* host's production service in
-`--avoid`:
+`--avoid`. At -1000 its `--prefer` reaches only `choom`'d launches (above):
 
 ```sh
 # /etc/default/earlyoom
-EARLYOOM_ARGS="-r 3600 -m 12,6 --avoid ^(uv|uvicorn|postgres|tailscaled|systemd|sshd|exe-init)$ --prefer ^(MainThread|claude|npm|node|npx)"
+EARLYOOM_ARGS="-r 3600 -m 12,6 -s 100,100 --avoid ^(uv|uvicorn|postgres|tailscaled|systemd|sshd|exe-init)$ --prefer ^(MainThread|claude|npm|node|npx)"
 ```
 
 ```bash

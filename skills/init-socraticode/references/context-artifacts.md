@@ -220,6 +220,24 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
   cannot hash, or whose stored hash it cannot read, is reported as a **note**
   ("content unverified"), not a defect. `codebase_update` settles it either
   way, and is a no-op when nothing moved.
+- **Store parity — listed is not present.** `codebase_context`'s
+  `✓ indexed (N chunks, <time>)` is the server's per-artifact metadata, not
+  its points. After a full rebuild on CannObserv/cannobserv#464 (1.14.0:
+  `codebase_remove`, `codebase_context_remove`, then `codebase_index` twice)
+  both status tools listed eight artifacts indexed while the context
+  collection held points for two; three of the six empty ones had index times
+  newer than their sources, so they passed every check above. So
+  `health-check` counts each listed artifact's points in the store — one
+  read-only `points/count` per artifact, filtered on `artifactName`, with the
+  server's own environment — and names any with none as a defect (#333). An
+  unreadable store, or a non-zero count that disagrees with the listing (a run
+  in flight moves both), is a note. The repair is `codebase_context_remove`,
+  then `codebase_context_index`, which re-embeds every artifact without a hash
+  skip; `codebase_update` cannot help, since the metadata says no content
+  moved. The cause is not isolated: some metadata outlived
+  `codebase_context_remove`, and the collection was recreated after artifacts
+  were stamped. SocratiCode 1.15.0 fixes a collection-create race
+  (giancarloerra/SocratiCode#176) that may be one cause.
 - **Each `name` must be unique** (case-insensitive) — the server rejects
   duplicates at parse time, aborting the whole run. When you split one category
   into multiple entries, give each a distinct name (as the template's
@@ -306,6 +324,14 @@ timestamp — and read a newer source as a nominee rather than an edit, since a
 checkout or merge restamps bytes it did not change. The daily check hashes
 each nominee to settle it (**Staleness parity**, above), and `codebase_update`
 settles it too, re-embedding nothing where the content has not moved.
+
+A fourth case answers nothing from an artifact every listing calls indexed:
+`✓ indexed`, a fresh index time, and no chunks in the store. `codebase_context`
+cannot show it, since its listing is the metadata that survived; the daily
+check counts the store and names it (**Store parity**, above). The repair is
+`codebase_context_remove` then `codebase_context_index`, not
+`codebase_update`, which skips an artifact whose content hash has not moved
+([#333](https://github.com/gregoryfoster/skills/issues/333)).
 
 ## Index exclusions — `.socraticodeignore`
 
