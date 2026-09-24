@@ -142,6 +142,13 @@
 9414 3550 skills/shipping-work/SKILL.md
 15050 5644 skills/using-git-worktrees/SKILL.md
 2257 801 skills/using-git-worktrees/references/destroy-flags.md
+14474 5238 skills/using-mayfly-chat/SKILL.md
+7170 2262 skills/using-mayfly-chat/references/exchange-discipline.md
+6414 2234 skills/using-mayfly-chat/references/failure-modes.md
+3938 1477 skills/using-mayfly-chat/references/field-notes.md
+7518 2970 skills/using-mayfly-chat/references/protocol.md
+6693 2263 skills/using-mayfly-chat/references/security.md
+4191 1477 skills/using-mayfly-chat/references/templates.md
 13279 5380 skills/vendoring-openapi-client/SKILL.md
 2592 1096 skills/vendoring-openapi-client/references/carve-outs.md
 4340 1659 skills/vendoring-openapi-client/references/ci-drift-job.md
