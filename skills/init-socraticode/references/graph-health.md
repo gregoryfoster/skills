@@ -105,7 +105,8 @@ its JSON.
 
 **Read "current" as *the server did not call it stale*.** The annotation is
 the server's to volunteer, and every way of not volunteering it used to land on
-the table's first row: `CannObserv/cannabis.observer-wordpress#803` spent three
+the first row of the generated doc's `Built by:` table, `v<current server>`:
+`CannObserv/cannabis.observer-wordpress#803` spent three
 rounds concluding a PSR-4 `composer.json` declaration "would not help", from a
 graph **cut by v1.10.0** — PSR-4 resolution having shipped in **v1.11.0**, so
 the graph predated the feature under discussion. READY throughout, and nothing
