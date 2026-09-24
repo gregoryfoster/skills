@@ -67,8 +67,8 @@ Two yields justify the cost beyond private state: the peer finds defects in *you
 
 ## Phase 1 — Get the URL into a file, and nowhere else
 
-1. Choose a path **outside every repository**: the harness scratchpad or `$HOME/.mayfly/`. Set `MAYFLY_URL_FILE` to it on every call.
-2. **Joining:** write the relayed URL into that file with the harness's file-write tool, never with `printf` or `echo` in a shell: on Claude Code every inline command's text sits in a world-readable argv. Then `chmod 600` it and confirm with `ls -l` that it exists with that mode. The URL now exists in the prompt and in that one tool call, and that is the floor; never name it again.
+1. Choose a path **outside every repository**, in a directory only you can enter: `install -d -m 700 "$HOME/.mayfly"` (or the harness scratchpad). Set `MAYFLY_URL_FILE` to it on every call.
+2. **Joining:** create the file empty at the right mode first, `install -m 600 /dev/null "$MAYFLY_URL_FILE"`, then write the relayed URL into it with the harness's file-write tool, never with `printf` or `echo` in a shell: on Claude Code every inline command's text sits in a world-readable argv. Confirm with `ls -l` that the mode is still 600, and `chmod 600` it only if the tool replaced the file. The URL now exists in the prompt and in that one tool call, and that is the floor; never name it again.
 3. **Initiating:** `MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" create https://mayfly.chat` writes the file itself and prints the channel id and the file's path, never the URL. Hand the operator the *path*; they read and relay the URL over a private channel. Do not print it.
 4. Never write the URL into an issue, a PR, a commit, a CI log, a second channel, or a transcript you will paste. A `pgrep -f` or `ps` to diagnose the client re-leaks it into your transcript; print counts, never argv.
 
