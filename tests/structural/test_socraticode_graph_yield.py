@@ -74,6 +74,12 @@ def _clean_env(**extra: str) -> dict:
         "SOCRATICODE_PROBE_FILE",
         "HEALTH_TIMEOUT_MS",
         "SOCRATICODE_HEALTH_FORCE",
+        # A session sets CLAUDECODE, and health-check then reads the session's
+        # server off the process table (#332): a suite run inside one would
+        # judge every fixture against that session's real launch. Its
+        # SOCRATICODE_SPEC would decide what a fixture definition expands to.
+        "CLAUDECODE",
+        "SOCRATICODE_SPEC",
         # The hook reads it since #330; an operator's value would change
         # which launch path every hook test exercises.
         "SOCRATICODE_HEALTH_CAP",

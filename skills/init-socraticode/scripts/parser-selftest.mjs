@@ -44,6 +44,8 @@ import {
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
+  sessionLaunchFromProcesses, isClaudeProcess, launchedSpecOf, exactSpecVersion,
+  specDefaultOf, sessionServer, sessionPinFinding,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -904,6 +906,113 @@ try {
   try {
     eq('a set variable wins over the default', expandVars('${SC_T_SET:-npx}'), '/opt/node');
   } finally { delete process.env.SC_T_SET; }
+}
+
+// ── the session's launch, off the process table (#332) ──────────────────────
+// Every check that called the session pinned read the plugin's definition,
+// expanded against its OWN environment — which a settings env block reaches
+// whether or not it reached the launch. On watcher and notifier that read
+// "pinned at 1.14.0" beside a session on `npm exec socraticode@latest`. The
+// table below is the macOS one this was measured on, trimmed: two sessions,
+// each with its server, the check under the first one's Bash-tool shell — and
+// a `claude mcp list` server beneath the check, which is not the session's.
+console.log('— the session\'s launch, off the process table (#332) —');
+{
+  const EXT = '/Users/u/.vscode/extensions/anthropic.claude-code-2.1.280-darwin-arm64/resources/native-binary/claude';
+  const PS = [
+    '    1     0 /sbin/launchd',
+    ' 1366     1 /Applications/Visual Studio Code.app/Contents/MacOS/Code',
+    `28287  1366 ${EXT} --output-format stream-json --verbose -`,
+    '28592 28287 npm exec socraticode@latest    ',
+    '28804 28592 node /Users/u/.npm/_npx/e467c9db50cb633b/node_modules/.bin/socraticode',
+    `16756  1366 ${EXT} --output-format stream-json --verbose -`,
+    '16863 16756 npm exec socraticode@1.14.0',
+    // The Bash-tool shell: its command line names the binary, and is not one.
+    `76647 28287 /bin/bash -c source /Users/u/.claude/shell-snapshots/s.sh && eval 'pgrep -f ${EXT}'`,
+    '76700 76647 node /repo/scripts/mcp-driver.mjs health-check /repo',
+    '77000 76700 claude mcp list',
+    '77001 77000 npm exec socraticode@1.14.0',
+  ].join('\n');
+  const seen = sessionLaunchFromProcesses(PS, 76700);
+  eq('the session\'s own server is read, and no other session\'s',
+    [seen.observed, seen.claudePid, seen.spec, seen.servers.map((s) => s.pid)],
+    [true, 28287, 'socraticode@latest', [28592]]);
+  eq('a server `claude mcp list` started under the check is not the session\'s',
+    seen.servers.some((s) => s.pid === 77001), false);
+  // A terminal outside any session: its shell descends from the IDE, not a claude.
+  const noClaude = sessionLaunchFromProcesses(`${PS}\n 5000  1366 /bin/zsh -l\n 5001  5000 node /repo/check.mjs`, 5001);
+  eq('no Claude Code ancestor is not observed, and says so',
+    [noClaude.observed, /no Claude Code process/.test(noClaude.reason)], [false, true]);
+  const bare = sessionLaunchFromProcesses(`${PS}\n90000  1366 ${EXT} -\n90001 90000 node /repo/check.mjs`, 90001);
+  eq('a claude with no server yet is not observed, and names the claude',
+    [bare.observed, bare.claudePid], [false, 90000]);
+  const two = sessionLaunchFromProcesses(`${PS}\n28593 28287 npx -y socraticode`, 76700);
+  eq('two servers with different specs share no spec', [two.observed, two.spec, two.servers.length], [true, null, 2]);
+  eq('an orphan reparented to pid 1 is nobody\'s session',
+    sessionLaunchFromProcesses('    1     0 init\n  500     1 npm exec socraticode@latest\n  600     1 node check.mjs', 600).observed,
+    false);
+  eq('an unreadable table is not observed', sessionLaunchFromProcesses('', 1).observed, false);
+
+  eq('Claude Code by its first word, or its second behind an interpreter', [
+    EXT, 'claude', 'node /usr/local/bin/claude',
+    '/home/u/.local/share/claude/versions/2.1.281 --resume',
+    'node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js',
+    `/bin/bash -c exec ${EXT}`, 'node /repo/claude-helper.js', 'npm exec socraticode@latest',
+  ].map(isClaudeProcess), [true, true, true, true, true, false, false, false]);
+
+  eq('the launched spec, in each shape npx takes', [
+    'npm exec socraticode@1.14.0', 'npx -y --prefer-online socraticode@latest', '/usr/bin/npx -y socraticode',
+    'node /usr/lib/node_modules/npm/bin/npx-cli.js -y socraticode@1.2.3',
+    'npm exec --yes --package=socraticode@1.14.0 -- true',
+    'node /Users/u/.npm/_npx/h/node_modules/.bin/socraticode',
+  ].map(launchedSpecOf), ['socraticode@1.14.0', 'socraticode@latest', 'socraticode', 'socraticode@1.2.3', null, null]);
+  eq('only an exact spec fixes a version',
+    ['socraticode@1.14.0', 'socraticode@latest', 'socraticode', 'socraticode@^1.14.0', null].map(exactSpecVersion),
+    ['1.14.0', null, null, null, null]);
+  eq('the definition\'s own default is read off its spec argument',
+    [specDefaultOf({ args: ['-y', '${SOCRATICODE_SPEC:-socraticode@latest}'] }), specDefaultOf({ args: ['socraticode@1.0.0'] })],
+    ['socraticode@latest', null]);
+
+  // sessionServer: what was SEEN outranks what the definition would launch.
+  const pinnedDef = {
+    command: 'npx', args: ['-y', 'socraticode@1.14.0'], plugin: true, source: 'plugin',
+    specVariable: 'SOCRATICODE_SPEC', specInferred: true,
+  };
+  const s1 = sessionServer({ launch: { plugin: true, source: 'plugin' }, plugin: pinnedDef, checkVersion: '1.14.0', observed: seen });
+  eq('an observed floating launch outranks a definition the environment fixed',
+    [s1.version, /^observed: .*'socraticode@latest'/.test(s1.basis)], [null, true]);
+  const s2 = sessionServer({ launch: { plugin: true, source: 'plugin' }, plugin: pinnedDef, checkVersion: '1.14.0',
+    observed: { observed: false, reason: 'outside a Claude Code session' } });
+  eq('unobserved, a version from this process\'s environment is said to be inferred',
+    [s2.version, s2.inferred, /^inferred from this process's environment/.test(s2.basis), /outside a Claude Code session/.test(s2.basis)],
+    ['1.14.0', true, true, true]);
+  const s3 = sessionServer({ launch: { source: 'SOCRATICODE_ENTRY' }, plugin: { ...pinnedDef, specInferred: false }, checkVersion: '1.13.0' });
+  eq('a literal pin in the definition is not an inference',
+    [s3.version, s3.inferred, /^the plugin's definition fixes it/.test(s3.basis)], ['1.14.0', false, true]);
+
+  const missed = sessionPinFinding({ observed: seen, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' });
+  eq('the variable in this process, @latest at the launch: a defect naming both',
+    [missed?.severity, /SOCRATICODE_SPEC=socraticode@1\.14\.0 reached this process/.test(missed?.message),
+      /'socraticode@latest' \(pid 28592\)/.test(missed?.message), /claudeCode\.environmentVariables/.test(missed?.message)],
+    [SEVERITY.defect, true, true, true]);
+  eq('a launch carrying the pin is no finding',
+    sessionPinFinding({ observed: { ...seen, spec: 'socraticode@1.14.0' }, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' }), null);
+  eq('nothing observed is no finding — the pin drift says NOT observed instead',
+    sessionPinFinding({ observed: { observed: false, reason: 'x' }, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@1.14.0' }), null);
+  eq('a floating value pins nothing to miss',
+    sessionPinFinding({ observed: seen, specVariable: 'SOCRATICODE_SPEC', value: 'socraticode@latest' }), null);
+
+  const unseen = pinDriftFinding({
+    running: '1.13.2', floatingSpec: 'socraticode@latest', resolves: '1.14.0', pinPath: '/PIN',
+    specVariable: 'SOCRATICODE_SPEC', unobserved: 'outside a Claude Code session',
+  });
+  eq('an unobserved inferred pin is measured, as a note that says NOT observed — even across a feature gap',
+    [unseen.severity, /NOT observed \(outside a Claude Code session\)/.test(unseen.message), /resolves to 1\.14\.0/.test(unseen.message)],
+    [SEVERITY.note, true, true]);
+  eq('the session-pin remedy names where the variable has to be',
+    /in Claude Code's environment when it starts/.test(pinDriftFinding({
+      running: '1.13.2', floatingSpec: 'socraticode@latest', resolves: '1.14.0', pinPath: '/PIN', specVariable: 'SOCRATICODE_SPEC',
+    }).message), true);
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

@@ -39,7 +39,11 @@
 # SOCRATICODE_SPEC (read like the store values above) on a plugin build that
 # reads it. Both pins are reported, with a warning where the driver is pinned
 # and the session is not, where they disagree, or where the installed plugin
-# ignores the variable (#327).
+# ignores the variable (#327). Inside a session the session's pin is read off
+# the process table (ps: the server its claude launched), never inferred from
+# this script's own environment, and one that cannot be read is reported as
+# not observed; a pinned spec no npx cache tree holds is named too, since its
+# first launch installs (#332).
 #
 # Network reads, all bounded to a few seconds and none a write:
 #   - Node 26+ only, and only while the session's launch floats: `npm view
@@ -337,6 +341,15 @@ fi
 # SC_PLUGIN_FLOATS the spec it resolves at launch — both empty when no
 # definition applies here; SC_SPEC_VAR names the variable the spec is read
 # from, empty when the installed build hardcodes it.
+#
+# Those say what a launch carrying the variable runs, not what this session's
+# did (#332): a settings env block reaches every child of a session — this
+# script included — whether or not it reached the plugin's launch, and on
+# three hosts it did not. So the launch is also read off the process table,
+# through the driver: SC_SEEN_SPEC is the spec the session's claude launched
+# its server with (several, comma-separated, if it launched several) and
+# SC_SEEN_PIDS their pids, or SC_SEEN_WHY says why nothing was seen.
+# SC_SEEN_FIXED is SC_SEEN_SPEC's exact version, when it is one.
 # Parameter expansion, not dirname: the suite runs this script on a PATH
 # holding only its stubs.
 case "${BASH_SOURCE[0]}" in
@@ -345,6 +358,7 @@ case "${BASH_SOURCE[0]}" in
 esac
 # >>> plugin-launch
 SC_PLUGIN_FIXED="" SC_PLUGIN_FLOATS="" SC_SPEC_VAR=""
+SC_SEEN_SPEC="" SC_SEEN_PIDS="" SC_SEEN_WHY="" SC_SEEN_FIXED=""
 resolve SOCRATICODE_SPEC; SC_SPEC="$R_VAL" SC_SPEC_SRC="$R_SRC"
 if command -v node >/dev/null 2>&1; then
   # Exported only when non-empty: Claude Code expands a variable set to the
@@ -359,14 +373,24 @@ if command -v node >/dev/null 2>&1; then
       const { pathToFileURL } = await import("node:url");
       const d = await import(pathToFileURL(process.env.SC_DRIVER).href);
       const p = d.launchFromPluginConfig({ project: process.argv[1] });
+      const s = p ? d.observeSessionLaunch() : null;
+      const seen = s && s.observed
+        ? [[...new Set(s.servers.map((x) => x.spec))].join(", "), s.servers.map((x) => x.pid).join(" "), ""]
+        : ["", "", s ? s.reason : ""];
       if (p) process.stdout.write([d.pluginLaunchVersion(p) ?? "",
-        d.pluginSpecFloats(p) ?? "", p.specVariable ?? ""].join("|"));
+        d.pluginSpecFloats(p) ?? "", p.specVariable ?? "", ...seen].join("|"));
     ' "$ROOT" 2>/dev/null || true
   )"
-  IFS='|' read -r SC_PLUGIN_FIXED SC_PLUGIN_FLOATS SC_SPEC_VAR <<EOF
+  IFS='|' read -r SC_PLUGIN_FIXED SC_PLUGIN_FLOATS SC_SPEC_VAR SC_SEEN_SPEC SC_SEEN_PIDS SC_SEEN_WHY <<EOF
 $SC_PLUGIN
 EOF
 fi
+case "$SC_SEEN_SPEC" in
+  socraticode@*)
+    SC_SEEN_FIXED="${SC_SEEN_SPEC#socraticode@}"
+    case "$SC_SEEN_FIXED" in '' | *[!0-9.]*) SC_SEEN_FIXED="" ;; esac
+    ;;
+esac
 # <<< plugin-launch
 
 # ── Host capacity: the install is the peak, not the index ───────────────────
@@ -1150,8 +1174,12 @@ else
     # a stock macOS, so the budget is handed to npm itself.
     #
     # A session pinned by SOCRATICODE_SPEC launches that version, not the
-    # registry's, so there is nothing to look up (#327).
-    if [ -n "$SC_PLUGIN_FIXED" ]; then
+    # registry's, so there is nothing to look up (#327). Which version that is
+    # comes from the launch where it was seen: the variable this script
+    # carries can have missed it, and then the session floats (#332).
+    if [ -n "$SC_SEEN_FIXED" ]; then
+      SC_LATEST="$SC_SEEN_FIXED"
+    elif [ -z "$SC_SEEN_SPEC" ] && [ -n "$SC_PLUGIN_FIXED" ]; then
       SC_LATEST="$SC_PLUGIN_FIXED"
     else
       SC_LATEST="$(npm view socraticode version --silent \
@@ -1203,24 +1231,57 @@ fi
 # shape the health hook is tuned against.
 # >>> launch-pins
 SPEC_NAME="${SC_SPEC_VAR:-SOCRATICODE_SPEC}"
-SPEC_HINT="Pin the session in .claude/settings.json: \"env\": {\"$SPEC_NAME\": \"socraticode@${SC_PIN_VER:-<version>}\"} — a session started afterwards launches that version without installing (references/host-memory.md)"
+# Where the variable has to be for the launch to see it (#332). A settings env
+# block reaches every child of a session, and on watcher, notifier and
+# address-validator not the plugin's launch: its args were expanded before
+# the block was merged.
+SPEC_WHERE="in Claude Code's environment when it starts — claudeCode.environmentVariables in VS Code (a machine setting), or an export in the shell that launches claude; the repo's settings env block alone can miss the launch (references/host-memory.md)"
+SPEC_HINT="Pin the session: $SPEC_NAME=socraticode@${SC_PIN_VER:-<version>} $SPEC_WHERE"
 if [ -n "$SC_SPEC" ] && [ -z "${SOCRATICODE_SPEC:-}" ] && [ -n "${CLAUDECODE:-}" ]; then
   # Read from the files, so the lines below describe the NEXT session; this
   # one started without it and its server launched from the default.
   warn "SOCRATICODE_SPEC is declared in $SC_SPEC_SRC, but this session does not carry it — its server launched from the plugin's default"
-  hint "Restart Claude Code in this folder, trusting it if asked"
+  hint "Restart Claude Code in this folder, trusting it if asked; if the restarted session's server still launches the default, set it $SPEC_WHERE"
 fi
 if [ -n "$SC_PLUGIN_FIXED" ]; then
+  # The definition fixes a version once the variable is expanded into it, in
+  # THIS process. Whether the session's launch saw it is the process table's
+  # answer, and a pin nobody observed is never a pass (#332).
+  if [ -n "$SC_SPEC_VAR" ]; then
+    SC_PINNED_BY="A session carrying $SC_SPEC_VAR"
+  else
+    SC_PINNED_BY="The plugin's definition"
+  fi
   if [ -n "$SC_PIN_VER" ] && [ "$SC_PIN_VER" != "$SC_PLUGIN_FIXED" ]; then
     warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, the plugin session launches $SC_PLUGIN_FIXED — two builds writing one store"
     hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
+  elif [ "$SC_SEEN_SPEC" = "socraticode@$SC_PLUGIN_FIXED" ]; then
+    pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) runs 'npm exec socraticode@$SC_PLUGIN_FIXED'${SC_PIN_VER:+, as the driver pin does} — no launch installs"
+  elif [ -n "$SC_SEEN_SPEC" ]; then
+    if [ -n "${SOCRATICODE_SPEC:-}" ]; then
+      warn "The session's server was launched as '$SC_SEEN_SPEC' (pid $SC_SEEN_PIDS), not socraticode@$SC_PLUGIN_FIXED — $SPEC_NAME reached this shell but not the launch"
+    else
+      warn "The session's server was launched as '$SC_SEEN_SPEC' (pid $SC_SEEN_PIDS), not socraticode@$SC_PLUGIN_FIXED"
+    fi
+    hint "Set $SPEC_NAME=socraticode@$SC_PLUGIN_FIXED $SPEC_WHERE"
+    hint "Then restart the session: its server reads the variable only when it launches"
   else
-    pass "Plugin session launches socraticode $SC_PLUGIN_FIXED${SC_SPEC_VAR:+ ($SC_SPEC_VAR, from $SC_SPEC_SRC)}${SC_PIN_VER:+, as the driver pin does} — no launch installs"
+    warn "$SC_PINNED_BY launches socraticode $SC_PLUGIN_FIXED — not observed: ${SC_SEEN_WHY:-the process table was not read}"
+  fi
+  # npx keys its cache on the spec string, so a warm `socraticode@latest` tree
+  # does not serve `socraticode@1.14.0`: the first launch of a newly pinned
+  # spec is a full install, at session start, unattended — #295's peak once
+  # (#332, address-validator). The tree lists the spec in its package.json's
+  # `_npx.packages`, the only place the quoted `"socraticode@<v>"` appears.
+  SC_NPX_DIR="${npm_config_cache:-$HOME/.npm}/_npx"
+  if ! grep -qsF "\"socraticode@$SC_PLUGIN_FIXED\"" "$SC_NPX_DIR"/*/package.json; then
+    warn "No npx cache tree under $SC_NPX_DIR holds socraticode@$SC_PLUGIN_FIXED, so the first session to launch it installs it — the install peak, once, at an unattended start"
+    hint "Warm it now, capped where user systemd allows: systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@$SC_PLUGIN_FIXED -- true (elsewhere, the npm exec alone)"
   fi
 elif [ -n "$SC_PLUGIN_FLOATS" ]; then
   if [ -z "$SC_SPEC_VAR" ] && [ -n "$SC_SPEC" ]; then
     warn "SOCRATICODE_SPEC is set ($SC_SPEC_SRC), but the installed plugin's launch never reads it — it hardcodes '$SC_PLUGIN_FLOATS'"
-    hint "The variable reached the plugin after the 1.14.0 release with no version bump, so a '1.14.0' install can predate it: update the socraticode plugin, then check the launched command with 'claude mcp list'"
+    hint "The variable reached the plugin after the 1.14.0 release with no version bump, so a '1.14.0' install can predate it — and 'claude plugin update' can report success while keeping that directory: move it aside and update again, then read the launch off the process table (references/host-memory.md)"
   elif [ -n "$SC_PIN_VER" ]; then
     warn "The driver is pinned at socraticode $SC_PIN_VER, but the plugin session launches '$SC_PLUGIN_FLOATS' — it still installs at every session start"
     if [ -n "$SC_SPEC_VAR" ]; then

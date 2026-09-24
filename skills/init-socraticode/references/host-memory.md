@@ -45,20 +45,46 @@ driver's launches — the health hook, `index`, `status`, `verify`. The session'
 server is the plugin's, and since upstream
 [`0c33776`](https://github.com/giancarloerra/socraticode/commit/0c33776) (2026-09-20)
 the plugin reads its package spec from a variable: its launch is
-`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`. Set it in the
-repo's settings env block, to the pin's version so both launches are one build:
+`npx -y --prefer-online ${SOCRATICODE_SPEC:-socraticode@latest}`. Set it to the
+pin's version, so both launches are one build, **in Claude Code's environment
+when it starts**:
+
+| Claude Code runs from | Set it in |
+|---|---|
+| the VS Code extension | `claudeCode.environmentVariables` — a machine-scoped setting, so your user `settings.json`, or on a remote `~/.vscode-server/data/Machine/settings.json`; never a committed workspace setting |
+| a terminal | an export in the shell that launches `claude` |
 
 ```json
-{ "env": { "SOCRATICODE_SPEC": "socraticode@<version>" } }
+{ "claudeCode.environmentVariables": [{ "name": "SOCRATICODE_SPEC", "value": "socraticode@<version>" }] }
 ```
 
-An exact version resolves from the npx cache without installing — #295's cost,
-so this is the one-line fix for the install at launch on a small or co-tenant
-host. Like every settings variable it reaches only sessions started after it is
-written, in a trusted folder. The driver expands the same variable when it
-reads the plugin's definition, so once it matches the pin the drift below has
-nothing to measure. `preflight.sh` reports both pins, and says when the
-installed plugin does not read the variable
+**The repo's settings `env` block is not enough on its own.** On watcher,
+notifier and address-validator (Claude Code 2.1.280, VS Code, after a full
+reconnect) it reached the server's environment but not its launch: the
+plugin's args were expanded before the block was merged, so the server ran
+`npm exec socraticode@latest` with `SOCRATICODE_SPEC=socraticode@1.14.0` in its
+environment. The machine setting pinned all three — though each reconnect also
+moved the extension to 2.1.281, so whether the block alone works there is not
+measured. On co-replicator (#327) the block alone worked, and why the hosts
+differ is not known. Keep the block as
+the declared value if you like — preflight compares against it — but not as
+the mechanism ([#332](https://github.com/gregoryfoster/skills/issues/332)).
+
+**The first launch of a new exact spec installs.** npx keys its cache on the
+spec string, so a warm `socraticode@latest` tree does not serve
+`socraticode@1.14.0`, and the first session to launch it does a full, uncapped
+install at an unattended start — #295's peak, once. Warm it deliberately,
+under the cap; this builds the tree the plugin's pinned launch then uses:
+
+```bash
+systemd-run --user --scope -p MemoryHigh=1200M -p MemoryMax=1536M \
+  choom -n 500 -- npm exec --yes --prefer-online --package=socraticode@<version> -- true
+```
+
+From then on an exact version resolves from the npx cache without installing —
+the one-line fix for the install at launch on a small or co-tenant host.
+`preflight.sh` reports both pins, names a pinned spec no npx cache tree holds,
+and says when the installed plugin does not read the variable
 ([#327](https://github.com/gregoryfoster/skills/issues/327)).
 
 **Read the launched command, never a manifest.** The plugin ships three launch
@@ -72,10 +98,24 @@ manifests, and only the one `.claude-plugin/plugin.json` names is live:
 Reading a root one confirms that the session cannot be pinned, and that is how
 #295 came to say so. The variable also landed after the 1.14.0 release with no
 version bump, so a cache directory labelled `1.14.0` can predate it: its
-`plugin.json` names `./.mcp.json`, and the variable does nothing there. Check
-what actually launched — `claude mcp list` prints the command on its
-`plugin:socraticode:socraticode:` line, and `ps -eo args | grep socraticode`
-shows the spec (`npm exec socraticode@1.14.0`).
+`plugin.json` names `./.mcp.json`, and the variable does nothing there.
+`claude plugin update` can report success and keep reusing that directory;
+move it aside and update again.
+
+The process table is the only evidence of what launched — the server whose
+parent is the session's own `claude`, which is `$PPID` in the Bash tool's shell:
+
+```bash
+ps -eo pid,ppid,args | grep '[n]pm exec socraticode'   # e.g. `npm exec socraticode@1.14.0`
+```
+
+`claude mcp list` from a session shell is not evidence. It starts a server of
+its own with that shell's environment, which carries the variable, so it
+prints what a launch *with* it runs; in a folder the CLI has not trusted it
+ignores the project block altogether. Nor is the variable in the session's
+environment, which the block reaches either way. `preflight.sh` and
+`health-check` read the process table themselves, and report a pin they could
+not observe as not observed ([#332](https://github.com/gregoryfoster/skills/issues/332)).
 
 **A pinned driver beside a floating session is a new divergence.** Before the
 pin both floated and agreed by coincidence of timing; with only the driver
@@ -90,7 +130,7 @@ pinned, the driver is deterministic while the session goes on floating.
 | The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
 
 Re-pinning is the same `npm install --prefix` line with the new version —
-and the same version in `SOCRATICODE_SPEC`. Do it as a decision, not on a
+and the same version in `SOCRATICODE_SPEC`, its npx tree warmed first. Do it as a decision, not on a
 schedule: the reason to pin was to stop an unattended launch from installing.
 
 ## The health hook caps itself

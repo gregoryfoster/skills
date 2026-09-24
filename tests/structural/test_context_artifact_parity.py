@@ -175,6 +175,12 @@ def _clean_env(**extra: str) -> dict:
         "SOCRATICODE_PROBE_FILE",
         "HEALTH_TIMEOUT_MS",
         "SOCRATICODE_HEALTH_FORCE",
+        # A session sets CLAUDECODE, and health-check then reads the session's
+        # server off the process table (#332): a suite run inside one would
+        # judge every fixture against that session's real launch. Its
+        # SOCRATICODE_SPEC would decide what a fixture definition expands to.
+        "CLAUDECODE",
+        "SOCRATICODE_SPEC",
         # health-check reads both since #281 and #287, and a session on an
         # external-store host carries them from its settings env block: a
         # fixture declaring no projectId is then refused its launch, and a

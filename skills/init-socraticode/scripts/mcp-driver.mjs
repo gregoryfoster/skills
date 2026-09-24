@@ -263,12 +263,20 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
     // already in the environment wins, since that is the host's own answer.
     const server = expandVars(hit.server, { CLAUDE_PLUGIN_ROOT: versionDir });
     if (server?.command && Array.isArray(server.args)) {
+      const specVariable = specVariableOf(hit.server);
       return {
         // Which variable the package spec is read from, off the UNEXPANDED
         // definition — `SOCRATICODE_SPEC` since upstream 0c33776, null for a
         // build that hardcodes it. That is the difference between "set the
         // variable" and "update the plugin first" as a remedy (#327).
-        specVariable: specVariableOf(hit.server),
+        specVariable,
+        // Whether the spec above came from THIS process's environment. Then
+        // the expansion says what a launch carrying the variable runs, not
+        // what the session's launch ran: a settings env block reaches every
+        // child of a session whether or not it reached the plugin's launch
+        // (#332). `specDefault` is what the definition launches without it.
+        specInferred: specVariable !== null && process.env[specVariable] !== undefined,
+        specDefault: specDefaultOf(hit.server),
         command: server.command,
         args: server.args,
         env: server.env && typeof server.env === 'object' ? server.env : {},
@@ -286,12 +294,150 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
 
 // The variable a definition's `socraticode[@…]` argument is spelled with, as
 // `${NAME}` or `${NAME:-socraticode@…}`, or null when the spec is a literal.
+const SPEC_ARG = /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(socraticode(?:@[^}]*)?))?\}$/;
+
 function specVariableOf(server) {
   for (const a of Array.isArray(server?.args) ? server.args : []) {
-    const m = typeof a === 'string' && /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-socraticode(?:@[^}]*)?)?\}$/.exec(a);
+    const m = typeof a === 'string' && SPEC_ARG.exec(a);
     if (m) return m[1];
   }
   return null;
+}
+
+// That argument's `:-` default — `socraticode@latest` in upstream's
+// definition — or null where it has none.
+function specDefaultOf(server) {
+  for (const a of Array.isArray(server?.args) ? server.args : []) {
+    const m = typeof a === 'string' && SPEC_ARG.exec(a);
+    if (m) return m[2] ?? null;
+  }
+  return null;
+}
+
+// `socraticode@x.y.z` → `x.y.z`; anything that resolves at launch → null.
+function exactSpecVersion(spec) {
+  const m = /^socraticode@(\d+\.\d+\.\d+)$/.exec(String(spec ?? ''));
+  return m ? m[1] : null;
+}
+
+// ── which server the session LAUNCHED, off the process table (#332) ─────────
+// Everything above reads the plugin's DEFINITION, expanded against this
+// process's environment. That says what a launch carrying the variable runs,
+// not whether the session's did. A settings `env` block reaches every child of
+// the session — the Bash tool, hooks, this driver — whether or not it reached
+// the plugin's launch, so on a host where it missed, every check here saw the
+// variable and reported the session pinned. Measured on CannObserv/watcher and
+// notifier (Claude Code 2.1.280, VS Code): `npm exec socraticode@latest`,
+// launched by the session's own claude, with SOCRATICODE_SPEC=socraticode@1.14.0
+// in its environment — the args were expanded before the block was merged.
+//
+// So the launch is observed: the session's `claude` is the nearest ancestor of
+// this process that is a Claude Code executable, and its server is the
+// npx-style child it launched. A server `claude mcp list` started is a child
+// of THAT claude, never of an ancestor, so it cannot pass for the session's.
+const INTERPRETERS = /^(node|bun|bash|sh|zsh)$/;
+
+function baseOf(word) {
+  return String(word).slice(String(word).lastIndexOf('/') + 1);
+}
+
+// A Claude Code executable by path: an image's or an extension's `claude`, a
+// native installer's versions/<v>, or an npm install's cli.js.
+function isClaudePath(word) {
+  return baseOf(word) === 'claude'
+    || /\/claude\/versions\/[^/]+$/.test(word)
+    || /\/@anthropic-ai\/claude-code\/cli\.m?js$/.test(word);
+}
+
+// The first word, or the second behind an interpreter — `node …/claude` is an
+// npm install. No further: a Bash-tool shell whose command line merely names
+// the binary is not one (CannObserv/address-validator, where
+// `pgrep -f native-binary/claude` matched exactly that wrapper).
+function isClaudeProcess(args) {
+  const w = String(args).trim().split(/\s+/);
+  if (!w[0]) return false;
+  if (isClaudePath(w[0])) return true;
+  return INTERPRETERS.test(baseOf(w[0])) && w.length > 1 && isClaudePath(w[1]);
+}
+
+// The `socraticode[@…]` an npx-style launch carries, or null. npm renames the
+// npx process `npm exec <spec>`; a shim that spawns rather than execs keeps
+// `npx … <spec>`, and node running npx directly shows `node …/npx …`.
+function launchedSpecOf(args) {
+  const w = String(args).trim().split(/\s+/);
+  let rest = null;
+  if (w[0] === 'npm' && w[1] === 'exec') rest = w.slice(2);
+  else if (/^npx(\.cmd)?$/.test(baseOf(w[0] ?? ''))) rest = w.slice(1);
+  else if (INTERPRETERS.test(baseOf(w[0] ?? '')) && /^npx(-cli\.js)?$/.test(baseOf(w[1] ?? ''))) rest = w.slice(2);
+  if (!rest) return null;
+  return rest.find((a) => /^socraticode(@\S+)?$/.test(a)) ?? null;
+}
+
+// Pure over `ps -eo pid=,ppid=,args=` text and this process's pid.
+// → { observed: true, claudePid, servers: [{ pid, spec, args }], spec }
+//   | { observed: false, reason, claudePid? }
+// `spec` is the one spec every server shares, or null when they differ — a
+// standalone server beside the plugin's is the case that makes two.
+function sessionLaunchFromProcesses(psText, selfPid) {
+  const rows = new Map();
+  for (const line of String(psText).split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s*(.*)$/);
+    if (m) rows.set(Number(m[1]), { pid: Number(m[1]), ppid: Number(m[2]), args: m[3].trim() });
+  }
+  if (!rows.size) return { observed: false, reason: 'the process table could not be read' };
+  let claude = null;
+  let pid = Number(selfPid);
+  // Bounded, and never to pid 1: an orphaned server is reparented there, and
+  // pid 1 is everyone's ancestor.
+  for (let hops = 0; hops < 32 && pid > 1; hops += 1) {
+    const row = rows.get(pid);
+    if (!row) break;
+    if (isClaudeProcess(row.args)) { claude = row; break; }
+    pid = row.ppid;
+  }
+  if (!claude) return { observed: false, reason: 'no Claude Code process among this check\'s ancestors' };
+  const servers = [...rows.values()]
+    .filter((r) => r.ppid === claude.pid)
+    .map((r) => ({ pid: r.pid, spec: launchedSpecOf(r.args), args: r.args }))
+    .filter((s) => s.spec);
+  if (!servers.length) {
+    return {
+      observed: false,
+      claudePid: claude.pid,
+      reason: `the session's claude (pid ${claude.pid}) has no npx-launched socraticode server`,
+    };
+  }
+  const specs = [...new Set(servers.map((s) => s.spec))];
+  return { observed: true, claudePid: claude.pid, servers, spec: specs.length === 1 ? specs[0] : null };
+}
+
+// The impure half: only inside a session — CLAUDECODE is what one sets — and
+// with `-ww`, so neither ps truncates an argv. A host without ps is a stated
+// "not observed", never a guess.
+function observeSessionLaunch({ env = process.env, selfPid = process.pid } = {}) {
+  if (!env.CLAUDECODE) return { observed: false, reason: 'outside a Claude Code session' };
+  const out = spawnSync('ps', ['-ww', '-eo', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 5000 });
+  if (out.status !== 0 || !out.stdout) {
+    return { observed: false, reason: `ps did not answer${out.error ? ` (${out.error.code || out.error.message})` : ''}` };
+  }
+  return sessionLaunchFromProcesses(out.stdout, selfPid);
+}
+
+// The variable reached this process, and not the session's launch (#332): the
+// green-failing shape, so a defect. Null where nothing was observed, the
+// plugin reads no variable, or this process carries no exact pin to miss.
+function sessionPinFinding({ observed, specVariable, value }) {
+  if (!observed?.observed || !specVariable || !exactSpecVersion(value)) return null;
+  if (observed.spec === value) return null;
+  const launched = observed.spec ?? observed.servers.map((s) => s.spec).join(', ');
+  return {
+    severity: SEVERITY.defect,
+    message:
+      `${specVariable}=${value} reached this process but not the session's launch: its server was launched as `
+      + `'${launched}' (${observed.servers.map((s) => `pid ${s.pid}`).join(', ')}) — set it in Claude Code's `
+      + 'environment when it starts (claudeCode.environmentVariables in VS Code, or the shell that launches claude), '
+      + 'then restart the session; references/host-memory.md',
+  };
 }
 
 // A deliberately pre-installed, pinned server — the one launch path that
@@ -417,17 +563,46 @@ function pluginLaunchVersion(p) {
 //     PLUGIN, and the 1.13.1 plugin it named launches `socraticode@latest`.
 //   - no plugin definition at all — nothing records which server that is.
 //
+// All three read the definition. Where the session's launch was OBSERVED on
+// the process table (#332), that outranks them: it is the one reading of what
+// the session ran rather than of what it would run. Where it was not, and the
+// definition's version came from this process's environment, the basis says
+// it was inferred — the variable can reach this process and miss the launch.
+//
 // Pure over its inputs, so every branch is a fixture without a server.
-// → { version: string|null, basis: string, plugin: { version, launches }|null }
-function sessionServer({ launch, plugin, checkVersion }) {
-  if (!plugin) {
-    return { version: null, basis: 'no Claude Code plugin definition was found', plugin: null };
+// → { version: string|null, basis: string, plugin: { version, launches }|null,
+//     observed: object|null, inferred: boolean }
+function sessionServer({ launch, plugin, checkVersion, observed = null }) {
+  const described = plugin
+    ? {
+      version: plugin.pluginVersion ?? null,
+      launches: npxSpec(plugin) ?? [plugin.command, ...plugin.args].join(' '),
+    }
+    : null;
+  const seen = observed?.observed ? observed : null;
+  const answer = (version, basis, inferred = false) => (
+    { version, basis, plugin: described, observed: observed ?? null, inferred }
+  );
+  if (seen) {
+    const pids = seen.servers.map((s) => `pid ${s.pid}`).join(', ');
+    if (!seen.spec) {
+      return answer(null, `observed: the session's claude launched several servers (${seen.servers.map((s) => `'${s.spec}'`).join(', ')})`);
+    }
+    const v = exactSpecVersion(seen.spec);
+    return answer(v, v
+      ? `observed: the session's server was launched as '${seen.spec}' (${pids})`
+      : `observed: the session's server was launched as '${seen.spec}' (${pids}), which it resolved when it started`);
   }
-  const described = {
-    version: plugin.pluginVersion ?? null,
-    launches: npxSpec(plugin) ?? [plugin.command, ...plugin.args].join(' '),
-  };
+  if (!plugin) return answer(null, 'no Claude Code plugin definition was found');
   const fixed = pluginLaunchVersion(plugin);
+  if (fixed && plugin.specInferred) {
+    // Ahead of the "launched too" branch below: this check's handshake says
+    // what ITS launch ran, with this process's environment — the same
+    // inference, not a witness of the session's.
+    return answer(fixed, `inferred from this process's environment: ${plugin.specVariable} fixes the plugin's `
+      + `definition at ${described.launches}; the session's own launch was not observed`
+      + `${observed?.reason ? ` (${observed.reason})` : ''}`, true);
+  }
   // `launch.plugin` says the check launched A plugin definition, not which:
   // the check resolves its own from the entry applying at its project, and a
   // caller that read the two at different projects had this branch report the
@@ -435,28 +610,14 @@ function sessionServer({ launch, plugin, checkVersion }) {
   // version (#305 CR 42). The source names the file the definition was read
   // from, so equal sources are one definition.
   if (fixed && launch?.plugin === true && launch.source === plugin.source) {
-    return {
-      version: checkVersion || fixed,
-      basis: 'the plugin\'s own definition, which this check launched too',
-      plugin: described,
-    };
+    return answer(checkVersion || fixed, 'the plugin\'s own definition, which this check launched too');
   }
-  if (fixed) {
-    return { version: fixed, basis: `the plugin's definition fixes it: ${described.launches}`, plugin: described };
-  }
+  if (fixed) return answer(fixed, `the plugin's definition fixes it: ${described.launches}`);
   const floating = pluginSpecFloats(plugin);
   if (floating) {
-    return {
-      version: null,
-      basis: `the plugin launches '${floating}', which the session resolved when it started`,
-      plugin: described,
-    };
+    return answer(null, `the plugin launches '${floating}', which the session resolved when it started`);
   }
-  return {
-    version: null,
-    basis: `the plugin's definition (${described.launches}) names no version this check can read`,
-    plugin: described,
-  };
+  return answer(null, `the plugin's definition (${described.launches}) names no version this check can read`);
 }
 
 // What that floating spec resolves to right now. Bounded to the same budget
@@ -491,14 +652,30 @@ function registryLatest() {
 // floating plugin both exist, and at that point "nothing printed" and "the
 // check never ran" would be the same report. Two spellings of not-measured is
 // the defect #297 removed.
-function pinDriftFinding({ running, floatingSpec, resolves, pinPath, specVariable = null }) {
+//
+// `unobserved` is the #332 case: this process's environment fixes the
+// plugin's spec, and the session's launch could not be read to confirm the
+// variable reached it. The drift is then measured against the definition's own
+// default — what the session runs if it did not — and is a note whatever the
+// gap, because the session may well be pinned.
+function pinDriftFinding({ running, floatingSpec, resolves, pinPath, specVariable = null, unobserved = null }) {
   const note = (message) => ({ severity: SEVERITY.note, message });
   // The other half of the fix, offered only where the installed plugin reads
   // the variable — on a build that hardcodes its spec it would do nothing, and
-  // a remedy that changes nothing is what #326 had to take back (#327).
+  // a remedy that changes nothing is what #326 had to take back (#327). Named
+  // where it works: the settings env block alone missed the launch on three
+  // hosts (#332).
   const pinSession = specVariable && running
-    ? `, or pin the session to the driver: ${specVariable}=socraticode@${running} in the repo's settings env block`
+    ? `, or pin the session to the driver: ${specVariable}=socraticode@${running} in Claude Code's environment `
+      + 'when it starts (references/host-memory.md)'
     : '';
+  if (unobserved) {
+    return note(
+      `pinned at ${running ?? 'an unrecorded version'}; the session's launch was NOT observed (${unobserved}) — `
+      + `${specVariable} in this process's environment pins it only if it reached the launch, and without it `
+      + `the plugin launches '${floatingSpec}'${resolves ? `, which resolves to ${resolves}` : ''}`
+    );
+  }
   if (!running) {
     return note(`pinned launch, but no server version was recorded, so drift against '${floatingSpec}' was NOT measured`);
   }
@@ -2811,6 +2988,7 @@ async function cmdHealthCheck(projectPath, probePath) {
     );
   }
 
+  let session = null;
   if (!launchBlocked) await withClient(async (client) => {
     const call = async (tool, args) => {
       try {
@@ -2839,9 +3017,14 @@ async function cmdHealthCheck(projectPath, probePath) {
     // the one answering the session's queries, which under Claude Code is the
     // plugin's, and the two need not agree (#305). Recorded beside it, with how
     // its version was known or why it was not, so the JSON says which server
-    // the builder was judged against.
-    const session = sessionServer({
-      launch: client.launch, plugin: launchFromPluginConfig({ project: projectPath }), checkVersion: client.serverVersion,
+    // the builder was judged against. Read off the process table where the
+    // session's launch can be seen, and said to be inferred where it cannot
+    // (#332).
+    session = sessionServer({
+      launch: client.launch,
+      plugin: launchFromPluginConfig({ project: projectPath }),
+      checkVersion: client.serverVersion,
+      observed: observeSessionLaunch(),
     });
     report.sessionServer = session;
 
@@ -3166,34 +3349,75 @@ async function cmdHealthCheck(projectPath, probePath) {
     }
   }, { readOnly: true, project: projectPath });
 
+  // ── the session's pin, as launched (#332) ─────────────────────────────────
+  // This process carries SOCRATICODE_SPEC and the session's server was seen
+  // launched with something else: the variable reached the session's children
+  // and missed its launch. Every reading of the definition calls that session
+  // pinned, so it is said here, with the argv that shows it.
+  const sessionPlugin = session ? launchFromPluginConfig({ project: projectPath }) : null;
+  const missed = sessionPinFinding({
+    observed: session?.observed,
+    specVariable: sessionPlugin?.specVariable ?? null,
+    value: sessionPlugin?.specVariable ? process.env[sessionPlugin.specVariable] : undefined,
+  });
+  if (missed) findings.push(missed);
+
   // ── pinned driver vs floating session (#295) ─────────────────────────────
-  // Both halves must hold: this run launched from the pin, AND the plugin's
-  // recorded command still resolves at launch time. Pinning the driver does not
-  // pin the session — that takes SOCRATICODE_SPEC, on a plugin build that reads
-  // it (#327) — so a driver pinned alone buys no install at launch and a
-  // deterministic driver at the price of a divergence that did not exist while
-  // both floated and agreed by coincidence of timing. Leaving that unmeasured
-  // would trade a measured memory spike for an unmeasured correctness risk, so
-  // it is measured here. With the variable set to the pin's version the
-  // plugin's spec is fixed, and there is nothing left to measure.
+  // Both halves must hold: this run launched from the pin, AND the session's
+  // spec resolves at launch time. Pinning the driver does not pin the session
+  // — that takes SOCRATICODE_SPEC, on a plugin build that reads it (#327) — so
+  // a driver pinned alone buys no install at launch and a deterministic driver
+  // at the price of a divergence that did not exist while both floated and
+  // agreed by coincidence of timing. Leaving that unmeasured would trade a
+  // measured memory spike for an unmeasured correctness risk, so it is
+  // measured here.
+  //
+  // Which spec is the session's, in order of evidence: the one its server was
+  // seen launched with; else, where this process's environment fixes the
+  // definition, the definition's own default, reported as NOT observed — the
+  // variable can reach this process and miss the launch, and skipping the
+  // measurement on its word is how every check here went green over a session
+  // on @latest (#332); else the definition's spec.
   //
   // After the server checks, like the linked-project block below, so the
   // infrastructure findings lead the list. No server call: the pin's version is
-  // the filesystem's and the floating one is the registry's.
-  const plugin = report.launch?.pinned ? launchFromPluginConfig({ project: projectPath }) : null;
-  const floatingSpec = plugin ? pluginSpecFloats(plugin) : null;
-  if (floatingSpec) {
+  // the filesystem's and the floating one is the registry's, or the observed
+  // launch's.
+  if (report.launch?.pinned) {
     const running = report.server?.version || report.launch.pinVersion;
-    const resolves = registryLatest();
-    report.pinDrift = { pinned: running ?? null, floatingSpec, resolves };
-    // The one push here that does not name its severity at the call site, and
-    // the exception is the point: which severity this earns IS the decision,
-    // so it lives in a pure function the selftest can pin to fixtures without
-    // a server, a network or a clock. Naming it here would put the rule in the
-    // one place no fixture can reach.
-    findings.push(pinDriftFinding({
-      running, floatingSpec, resolves, pinPath: pinDir(), specVariable: plugin.specVariable,
-    }));
+    const seen = session?.observed?.observed ? session.observed : null;
+    let sessionSpec = null;
+    let unobserved = null;
+    if (seen) {
+      sessionSpec = seen.spec ?? seen.servers.map((s) => s.spec).join(', ');
+    } else if (sessionPlugin?.specInferred && pluginLaunchVersion(sessionPlugin)) {
+      sessionSpec = sessionPlugin.specDefault;
+      unobserved = session?.observed?.reason ?? 'no reading';
+    } else if (sessionPlugin) {
+      sessionSpec = pluginSpecFloats(sessionPlugin);
+    }
+    const fixedAt = exactSpecVersion(sessionSpec);
+    // An observed launch at an exact version drifts only when it is not the
+    // pin's, and needs no registry to say what it resolves to.
+    if (sessionSpec && (!fixedAt || (seen && running && fixedAt !== running))) {
+      const resolves = fixedAt ?? registryLatest();
+      report.pinDrift = {
+        pinned: running ?? null, floatingSpec: sessionSpec, resolves, observed: Boolean(seen),
+      };
+      // The one push here that does not name its severity at the call site,
+      // and the exception is the point: which severity this earns IS the
+      // decision, so it lives in a pure function the selftest can pin to
+      // fixtures without a server, a network or a clock. Naming it here would
+      // put the rule in the one place no fixture can reach.
+      findings.push(pinDriftFinding({
+        running,
+        floatingSpec: sessionSpec,
+        resolves,
+        pinPath: pinDir(),
+        specVariable: sessionPlugin?.specVariable ?? null,
+        unobserved,
+      }));
+    }
   }
 
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
@@ -3320,7 +3544,10 @@ async function cmdVerify(projectPath) {
       // remedy that re-stamps the same version would conclude the tool is
       // broken, which is the reading #305 records.
       const stamped = graphBuilderFinding(v.builder, sessionServer({
-        launch: client.launch, plugin: launchFromPluginConfig({ project: projectPath }), checkVersion: client.serverVersion,
+        launch: client.launch,
+        plugin: launchFromPluginConfig({ project: projectPath }),
+        checkVersion: client.serverVersion,
+        observed: observeSessionLaunch(),
       }));
       // Printed here too, and before the policy line: a fresh install reading
       // STALE knows to rebuild rather than to accept variant B for a graph that
@@ -3377,6 +3604,13 @@ Commands:
            remedy is update the plugin, restart Claude Code, then rebuild.
            JSON "server" is this check's own launch, "sessionServer" the
            session's and how it was known, "graph.builderCheck" which ruled.
+           Inside a session (CLAUDECODE) the session's server is read off the
+           process table — the npx child of the claude this check runs under
+           — and outranks the definition. Where it cannot be read, a version
+           the definition takes from this process's environment is reported
+           as inferred, and the pin drift is still measured, as NOT observed. A SOCRATICODE_SPEC
+           this process carries that the session's launch did not is a defect
+           (#332).
            JSON verdict on stdout, findings on stderr.
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
@@ -3440,7 +3674,12 @@ Env:
                       'npm install --prefix <dir> socraticode@<version>')
   SOCRATICODE_SPEC    expanded into the plugin's definition as Claude Code does,
                       so a value that pins the session's launch pins the
-                      driver's unpinned launches and drift check too (#327)
+                      driver's unpinned launches too (#327). The expansion
+                      says what a launch carrying it runs, not what the
+                      session's did — see CLAUDECODE (#332)
+  CLAUDECODE          set by a Claude Code session: health-check and verify
+                      then read the session's launched server off the process
+                      table (ps) rather than infer it (#332)
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
                       installed_plugins.json (default ~/.claude) — both to
                       launch and, in health-check and verify, to read which
@@ -3645,7 +3884,10 @@ export {
   // fixture rather than only a hand-run
   pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
   // the session's own pin, and whether the installed plugin reads one (#327)
-  specVariableOf,
+  specVariableOf, specDefaultOf, exactSpecVersion,
+  // what the session's launch ran, read off the process table (#332)
+  sessionLaunchFromProcesses, observeSessionLaunch, sessionPinFinding,
+  isClaudeProcess, launchedSpecOf,
   // following plugin.json rather than guessing a launcher filename (#309)
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)

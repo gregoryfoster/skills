@@ -114,7 +114,8 @@ marketplace separately from the connection, and flags a redundant standalone
 `mcp__socraticode__*` beside the plugin's (`claude mcp remove socraticode`).
 
 **On a small or shared host, pin the server here** — the driver's pre-install
-*and* the session's `SOCRATICODE_SPEC`; the plugin's command installs at every
+*and* the session's `SOCRATICODE_SPEC`, set where Claude Code starts rather than
+only in the settings block; the plugin's command installs at every
 launch, 1.2 G against 75 MB pinned — and on a shared one
 reserve the production service's memory:
 [`host-memory.md`](references/host-memory.md).
