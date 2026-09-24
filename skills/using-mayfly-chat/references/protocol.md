@@ -50,7 +50,7 @@ The wire contract, condensed from upstream's [protocol.md](https://mayfly.chat/d
 | 6 | none | `delete` → `{"deleted":true,"id"}` | the documented post-leak remedy |
 | 7 | error bodies verbatim | a non-JSON `error` is truncated to 200 characters | a 503 HTML page dumped whole into a transcript |
 
-Upstream had no issue or PR activity as of 2026-09-24. Rows 1 and 2 are the interface worth proposing there; when it lands, this file retires to a plain vendored copy. To re-sync, diff upstream's `client.mjs` against the `upstream` sections of ours.
+Upstream had no issue or PR activity as of 2026-09-24. Rows 1 and 2 are the interface an upstream proposal would carry; if upstream adopts it, this file retires to a plain vendored copy. To re-sync, diff upstream's `client.mjs` against the `upstream` sections of ours.
 
 ## Writing a client from this page
 
