@@ -308,6 +308,28 @@ class TestPreflightNeverPassesAnUnobservedPin:
         assert "claudeCode.environmentVariables" in lines[1], lines
         assert "restart" in lines[2], lines
 
+    def test_a_missed_launch_outranks_a_pin_disagreement(self) -> None:
+        """CR 1: the disagreement branch ran first and named the inferred version.
+
+        A driver pinned at 1.13.2 beside a variable naming 1.14.0 read as a
+        1.13.2-vs-1.14.0 disagreement, with a remedy re-pinning the driver to
+        1.14.0 — while the session had launched @latest.
+        """
+        lines = _launch_pins(
+            **PINNED_STATE,
+            SC_PIN_VER="1.13.2",
+            SC_SEEN_SPEC="socraticode@latest",
+            SC_SEEN_PIDS="42284",
+            session={"CLAUDECODE": "1", "SOCRATICODE_SPEC": PINNED},
+        )
+        assert "'socraticode@latest' (pid 42284)" in lines[0], lines
+        assert not any("disagree" in ln for ln in lines), lines
+
+    def test_an_unobserved_disagreement_says_so(self) -> None:
+        lines = _launch_pins(**PINNED_STATE, SC_PIN_VER="1.13.2")
+        assert "disagree" in lines[0], lines
+        assert "not observed: outside a Claude Code session" in lines[0], lines
+
     def test_an_unobserved_pin_is_never_a_pass(self) -> None:
         lines = _launch_pins(**PINNED_STATE)
         assert len(lines) == 1 and "✓" not in lines[0], lines

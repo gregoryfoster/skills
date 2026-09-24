@@ -1247,24 +1247,35 @@ if [ -n "$SC_PLUGIN_FIXED" ]; then
   # The definition fixes a version once the variable is expanded into it, in
   # THIS process. Whether the session's launch saw it is the process table's
   # answer, and a pin nobody observed is never a pass (#332).
+  # Two spellings, because bash 3.2 has no case conversion: one opens a line,
+  # the other sits inside one.
   if [ -n "$SC_SPEC_VAR" ]; then
-    SC_PINNED_BY="A session carrying $SC_SPEC_VAR"
+    SC_PINNED_BY="A session carrying $SC_SPEC_VAR" SC_PINNED_IN="a session carrying $SC_SPEC_VAR"
   else
-    SC_PINNED_BY="The plugin's definition"
+    SC_PINNED_BY="The plugin's definition" SC_PINNED_IN="the plugin's definition"
   fi
-  if [ -n "$SC_PIN_VER" ] && [ "$SC_PIN_VER" != "$SC_PLUGIN_FIXED" ]; then
-    warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, the plugin session launches $SC_PLUGIN_FIXED — two builds writing one store"
-    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
-  elif [ "$SC_SEEN_SPEC" = "socraticode@$SC_PLUGIN_FIXED" ]; then
-    pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) runs 'npm exec socraticode@$SC_PLUGIN_FIXED'${SC_PIN_VER:+, as the driver pin does} — no launch installs"
-  elif [ -n "$SC_SEEN_SPEC" ]; then
+  # The observed launch first. When it is not the fixed version, every line
+  # comparing pins would describe a session that is not running — including
+  # the disagreement below, whose remedy would re-pin the driver to a version
+  # nothing launched (CR 1).
+  if [ -n "$SC_SEEN_SPEC" ] && [ "$SC_SEEN_SPEC" != "socraticode@$SC_PLUGIN_FIXED" ]; then
     if [ -n "${SOCRATICODE_SPEC:-}" ]; then
       warn "The session's server was launched as '$SC_SEEN_SPEC' (pid $SC_SEEN_PIDS), not socraticode@$SC_PLUGIN_FIXED — $SPEC_NAME reached this shell but not the launch"
     else
       warn "The session's server was launched as '$SC_SEEN_SPEC' (pid $SC_SEEN_PIDS), not socraticode@$SC_PLUGIN_FIXED"
     fi
-    hint "Set $SPEC_NAME=socraticode@$SC_PLUGIN_FIXED $SPEC_WHERE"
+    hint "Set $SPEC_NAME=socraticode@${SC_PIN_VER:-$SC_PLUGIN_FIXED} $SPEC_WHERE"
     hint "Then restart the session: its server reads the variable only when it launches"
+  elif [ -n "$SC_PIN_VER" ] && [ "$SC_PIN_VER" != "$SC_PLUGIN_FIXED" ]; then
+    if [ -n "$SC_SEEN_SPEC" ]; then
+      SC_SESSION_SIDE="the plugin session launched $SC_PLUGIN_FIXED (observed)"
+    else
+      SC_SESSION_SIDE="$SC_PINNED_IN launches $SC_PLUGIN_FIXED (not observed: ${SC_SEEN_WHY:-the process table was not read})"
+    fi
+    warn "Launch pins disagree: the driver's pin is socraticode $SC_PIN_VER, $SC_SESSION_SIDE — two builds writing one store"
+    hint "Pin both to one version: $SPEC_NAME=socraticode@$SC_PIN_VER, or re-pin the driver with 'npm install --prefix $SC_PIN_DIR socraticode@$SC_PLUGIN_FIXED'"
+  elif [ -n "$SC_SEEN_SPEC" ]; then
+    pass "Plugin session launched socraticode $SC_PLUGIN_FIXED — observed: its server (pid $SC_SEEN_PIDS) runs 'npm exec socraticode@$SC_PLUGIN_FIXED'${SC_PIN_VER:+, as the driver pin does} — no launch installs"
   else
     warn "$SC_PINNED_BY launches socraticode $SC_PLUGIN_FIXED — not observed: ${SC_SEEN_WHY:-the process table was not read}"
   fi
