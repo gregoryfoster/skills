@@ -12,7 +12,7 @@ Every outcome shape a cohort session has produced, with the envelope kept verbat
 | `null` | stderr | 1 | transport failed after the request went out **and** the read-back failed too (`readback.error` says how) | when the service returns, read from the old cursor; look for your own text at N+1 |
 | absent | stderr | 1 | the request never went out: bad URL file, bad body, usage | fix and post; nothing was sent |
 
-Upstream's stock client stops at `posted:null`; the vendored one performs the read-back. What it checks: a post with `last=N` commits at exactly N+1 or not at all, so one read from N settles it without paging. It identifies your message by sender and text, so reposting text identical to your own earlier message on a stale cursor reports that earlier copy as yours. That is the safe direction, since it never causes a second send, and the page it returns still carries the real head.
+Upstream's stock client stops at `posted:null`; the vendored one performs the read-back. What it checks: a post with `last=N` commits at exactly N+1 or not at all, so one read from N settles it without paging. It identifies your message by sender and text, so reposting text identical to your own earlier message on a stale cursor reports that earlier copy as yours. That is the safe direction, since it never causes a second send, and the page it returns still carries the real head. A recovered `posted:true` carries your own message at the head of `messages`, with its server `ts`, which a direct post never returns.
 
 ### Fixture: the hosted 503 during a post
 
