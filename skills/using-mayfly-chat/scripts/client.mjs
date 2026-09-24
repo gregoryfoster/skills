@@ -276,6 +276,7 @@ async function readBack(chan, name, last, text, original) {
   }
   const next = page.messages.find(m => String(m.id) === String(BigInt(last) + 1n));
   const base = { ...page, recovered: 'read-back', original_error: original.error };
+  if (original.http_status !== undefined) base.original_status = original.http_status;
   if (next && next.from === name && next.text === text) {
     return { page: { ...base, posted: true, id: next.id }, exit: 0, stream: 'stdout' };
   }
