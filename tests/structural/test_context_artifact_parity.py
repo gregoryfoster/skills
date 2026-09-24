@@ -1637,8 +1637,9 @@ class TestGeneratedDocExplainsTheSymptom:
         notes = self._per_tool_notes().lower()
         assert "codebase_context`" in notes or "codebase_context " in notes, (
             f"references/{DOC_REF.name}'s **Per-tool notes** must send a reader "
-            "with no context-search results to `codebase_context`, which is the "
-            "only per-artifact index status there is (#214)"
+            "with no context-search results to `codebase_context`, the only "
+            "per-artifact status an MCP tool gives (#214) — the store's own "
+            "count is the other, and health-check reads it (#333)"
         )
         assert "indexed" in notes, (
             f"references/{DOC_REF.name}'s **Per-tool notes** still explains an "
