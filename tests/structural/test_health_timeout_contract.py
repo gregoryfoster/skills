@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pytest
 
+from .test_context_artifact_parity import _closed_port
 from .test_socraticode_node_gate import STORE_VARIABLES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -81,6 +82,13 @@ def _clean_env(**extra: str) -> dict:
         *STORE_VARIABLES,
     ):
         env.pop(k, None)
+    # health-check counts every listed context artifact in the store since
+    # #333, and with no store variables it addresses localhost:16333 — a real
+    # managed store on a developer's machine, whose answers would decide these
+    # fixtures. A port nothing listens on makes each such read a stated
+    # failure, the same on every host. A test that needs a store passes one.
+    env["QDRANT_HOST"] = "127.0.0.1"
+    env["QDRANT_PORT"] = str(_closed_port())
     env.update(extra)
     return env
 

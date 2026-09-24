@@ -249,11 +249,42 @@ def _repo(tmp_path: Path, artifacts: object = "default") -> Path:
 OTHER_CONTENT = "0000000000000000"
 
 
+def _context_collection(repo: Path) -> str:
+    """The repo's context collection, named by its path hash as the server does."""
+    return f"context_{hashlib.sha256(str(repo).encode()).hexdigest()[:12]}"
+
+
 def _metadata_point_id(repo: Path) -> str:
     """qdrant.js metadataPointId for the repo's context collection, by path hash."""
-    project_id = hashlib.sha256(str(repo).encode()).hexdigest()[:12]
-    h = hashlib.sha256(f"context_{project_id}".encode()).hexdigest()
+    h = hashlib.sha256(_context_collection(repo).encode()).hexdigest()
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+
+# What the stub store holds per artifact, unless a test says otherwise: exactly
+# what the listing claims. #333 counts every listed artifact in the store, so a
+# store that disagreed with its fixture's listing would make every test here a
+# test of that instead. MISSING is a store with no context collection at all.
+LISTED = "listed"
+MISSING = "missing"
+
+
+def _listed_chunks(listing: str) -> dict:
+    """Each artifact's `(N chunks` from a codebase_context reply, by name.
+
+    One point for an artifact listed `✓ indexed` with no count, so a fixture
+    that drops the count tests that and not an empty store.
+    """
+    counts: dict = {}
+    name = None
+    for line in listing.splitlines():
+        head = re.match(r"^\s*━+\s*(.+?)\s*━+\s*$", line)
+        if head:
+            name = head.group(1)
+            continue
+        if name and re.search(r"Status:\s*✓", line):
+            chunks = re.search(r"\((\d+) chunks?", line)
+            counts[name] = int(chunks.group(1)) if chunks else 1
+    return counts
 
 
 def _closed_port() -> int:
@@ -263,18 +294,24 @@ def _closed_port() -> int:
 
 
 @contextmanager
-def _qdrant_stub(repo: Path, indexed_hashes: dict | None):
-    """The one Qdrant read health-check makes: the metadata point's artifact list.
+def _qdrant_stub(
+    repo: Path, indexed_hashes: dict | None, store_points: dict | str | None = None
+):
+    """The two Qdrant reads health-check makes.
 
-    Answers only for the point id the server itself would use, so a driver that
-    addresses the wrong collection reads nothing rather than the fixture's
-    hashes. `indexed_hashes=None` is a store nobody answers on. Yields the port
-    and the list of request bodies received.
+    The metadata point's artifact list (#326), and a `points/count` per listed
+    artifact on the context collection (#333). Each answers only for the id or
+    collection the server itself would use, so a driver that addresses the
+    wrong one reads nothing — and a count on the wrong collection is a 404, as
+    Qdrant answers it. `indexed_hashes=None` is a store nobody answers on;
+    `store_points` is the points per artifact name, or MISSING. Yields the port
+    and the list of requests received.
     """
     if indexed_hashes is None:
         yield _closed_port(), []
         return
     expected = _metadata_point_id(repo)
+    count_path = f"/collections/{_context_collection(repo)}/points/count"
     received: list = []
     states = json.dumps(
         [{"name": n, "contentHash": h} for n, h in indexed_hashes.items()]
@@ -284,14 +321,25 @@ def _qdrant_stub(repo: Path, indexed_hashes: dict | None):
         def do_POST(self) -> None:  # noqa: N802 — http.server's spelling
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             received.append({"path": self.path, "body": body})
+            if self.path.endswith("/points/count"):
+                if self.path != count_path or store_points == MISSING:
+                    self._send(404, {"status": {"error": "Not found: Collection"}})
+                    return
+                name = body["filter"]["must"][0]["match"]["value"]
+                count = (store_points or {}).get(name, 0)
+                self._send(200, {"result": {"count": count}})
+                return
             points = (
                 [{"id": expected, "payload": {"artifacts": states}}]
                 if self.path == "/collections/socraticode_metadata/points"
                 and body.get("ids") == [expected]
                 else []
             )
-            reply = json.dumps({"result": points}).encode()
-            self.send_response(200)
+            self._send(200, {"result": points})
+
+        def _send(self, status: int, payload: dict) -> None:
+            reply = json.dumps(payload).encode()
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(reply)))
             self.end_headers()
@@ -323,18 +371,23 @@ def _health_check(
     repo: Path,
     replies: dict,
     indexed_hashes: dict | None | str = OTHER_CONTENT,
+    store_points: dict | str = LISTED,
 ) -> tuple:
     """Run `mcp-driver.mjs health-check` against a scripted stub server.
 
     `indexed_hashes` is what the stub store says each artifact was indexed
     with: a dict by name, a single hash for every manifest artifact, or None
-    for a store that does not answer.
+    for a store that does not answer. `store_points` is what it holds per
+    artifact: LISTED (what the codebase_context reply claims), a dict by
+    name, or MISSING for no context collection.
 
     Returns (CompletedProcess, parsed stdout JSON or None, list of tools called).
     """
     if isinstance(indexed_hashes, str):
         indexed_hashes = dict.fromkeys(_manifest_names(repo), indexed_hashes)
-    with _qdrant_stub(repo, indexed_hashes) as (port, _received):
+    if store_points == LISTED:
+        store_points = _listed_chunks(replies.get("codebase_context") or "")
+    with _qdrant_stub(repo, indexed_hashes, store_points) as (port, _received):
         return _run_health_check(tmp_path, repo, replies, port)
 
 
@@ -2101,13 +2154,21 @@ class TestANewerMtimeIsConfirmedByContent:
         assert result.returncode == 0, result.stdout
 
     @requires_node
-    def test_a_fresh_tree_never_reads_the_store(self, tmp_path: Path) -> None:
-        """Nothing nominated, nothing to confirm: the store read costs nothing."""
+    def test_a_fresh_tree_never_reads_the_hashes(self, tmp_path: Path) -> None:
+        """Nothing nominated, nothing to confirm: the metadata read costs nothing.
+
+        The store is still read — #333 counts every listed artifact's points —
+        but only by `points/count`; the content-hash read is #326's alone.
+        """
         repo = _repo(tmp_path)
-        with _qdrant_stub(repo, self._real_hashes(repo)) as (port, received):
-            result, report, _ = _run_health_check(tmp_path, repo, self._replies(), port)
+        replies = self._replies()
+        points = _listed_chunks(replies["codebase_context"])
+        with _qdrant_stub(repo, self._real_hashes(repo), points) as (port, received):
+            result, report, _ = _run_health_check(tmp_path, repo, replies, port)
         assert report is not None, result.stderr
-        assert received == [], received
+        assert [r for r in received if "socraticode_metadata" in r["path"]] == [], (
+            received
+        )
         assert result.returncode == 0, result.stdout
 
     @requires_node

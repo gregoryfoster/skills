@@ -282,7 +282,10 @@ Native tools, or `node "<SKILL_DIR>/scripts/mcp-driver.mjs" verify "<PROJECT_PAT
   store's endpoint, not a container.
 - `codebase_status`: artifacts N/N, and the last operation **completed, not
   FAILED** — a failed one fails verification even with every other light green,
-  because the delta that failed is missing from the index.
+  because the delta that failed is missing from the index. N/N is the server's
+  listing, not its points: `health-check` counts each listed artifact in the
+  store and names one with none
+  ([#333](https://github.com/gregoryfoster/skills/issues/333)).
 
 **Graph yield — READY is a status, not a result** (gotcha N). Measure it:
 

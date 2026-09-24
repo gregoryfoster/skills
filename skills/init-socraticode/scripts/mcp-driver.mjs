@@ -1043,8 +1043,10 @@ function parseArtifacts(text) {
 }
 
 // codebase_context lists one block per manifest entry, and its Status line is
-// the ONLY per-artifact index state there is — the status line's `M/N indexed`
-// gives a count and never a name:
+// the only per-artifact index state an MCP tool gives — the status line's `M/N
+// indexed` gives a count and never a name. It is the server's METADATA, not
+// its points: an artifact listed `✓ indexed` can hold none (#333), which is
+// why the chunk count is read too, and checked against the store:
 //
 //   ━━━ reference-docs ━━━
 //     Path: ./docs/
@@ -1059,13 +1061,14 @@ function parseArtifacts(text) {
 // offers, and `indexed` alone is a presence check. `Context artifacts: 14/14`
 // says nothing about whether any of the fourteen still matches its source.
 //
-// → [{ name, path, status, indexed, lastIndexed }]
+// → [{ name, path, status, indexed, lastIndexed, chunks }] — `chunks` is the
+// listed count, or null where the status prints none.
 function parseContextArtifacts(text) {
   const out = [];
   for (const line of String(text).split('\n')) {
     const head = line.match(/^\s*━+\s*(.+?)\s*━+\s*$/);
     if (head) {
-      out.push({ name: head[1], path: null, status: '', indexed: false, lastIndexed: null });
+      out.push({ name: head[1], path: null, status: '', indexed: false, lastIndexed: null, chunks: null });
       continue;
     }
     if (!out.length) continue;
@@ -1077,6 +1080,8 @@ function parseContextArtifacts(text) {
       current.status = status[1];
       current.indexed = artifactIndexed(status[1]);
       current.lastIndexed = parseIndexedAt(status[1]);
+      const chunks = status[1].match(/\((\d+)\s+chunks?\b/);
+      current.chunks = chunks ? Number(chunks[1]) : null;
     }
   }
   return out;
@@ -1405,6 +1410,79 @@ async function indexedArtifactHashes(projectPath, env) {
       .filter((s) => s && typeof s.name === 'string' && typeof s.contentHash === 'string')
       .map((s) => [s.name, s.contentHash])),
   };
+}
+
+// ── listed ≠ present (#333) ──────────────────────────────────────────────────
+// codebase_context's `✓ indexed (N chunks, …)` is the server's per-artifact
+// METADATA, not its points. After a full rebuild on CannObserv/cannobserv#464
+// (1.14.0: codebase_remove, codebase_context_remove, then codebase_index
+// twice) both status tools listed eight artifacts indexed while the context
+// collection held points for two. Three of the six empty ones carried index
+// times newer than their sources, so they passed every check here: declared,
+// listed, fresh — and absent from every context search.
+//
+// So each listed artifact's points are counted in the store, by the
+// `artifactName` every context point carries: one read-only `points/count`
+// per artifact, on the collection and with the environment the server was
+// launched with — the store #326's hash read already addresses. The MCP route
+// (codebase_context_search scoped by artifactName) re-indexes changed
+// artifacts before it answers, and a check that repairs as a side effect
+// breaks the hook's "reports; never repairs".
+//
+// → { counts: Map(name -> points), collection } or
+//   { counts: null, collection, error, missing? } — `missing` when the store
+//   says the collection does not exist, which is zero points for every
+//   artifact rather than a failure to count. Never throws.
+async function artifactPointCounts(projectPath, env, names) {
+  const prefix = env.QDRANT_COLLECTION_PREFIX || '';
+  const collection = `${prefix}context_${effectiveProjectId(projectPath, env).value}`;
+  let base;
+  try { base = qdrantBase(env); } catch (e) {
+    return { counts: null, collection, error: `QDRANT_URL does not parse (${e.message})` };
+  }
+  const headers = { 'content-type': 'application/json', ...(env.QDRANT_API_KEY ? { 'api-key': env.QDRANT_API_KEY } : {}) };
+  const counts = new Map();
+  for (const name of names) {
+    let res;
+    try {
+      res = await fetch(`${base}/collections/${collection}/points/count`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ filter: { must: [{ key: 'artifactName', match: { value: name } }] }, exact: true }),
+        signal: AbortSignal.timeout(QDRANT_READ_TIMEOUT_MS),
+      });
+    } catch (e) {
+      return { counts: null, collection, error: `cannot reach Qdrant at ${base} (${e.cause?.code || e.message})` };
+    }
+    if (res.status === 404) {
+      return { counts: null, collection, missing: true, error: `Qdrant at ${base} holds no ${collection} collection` };
+    }
+    if (!res.ok) return { counts: null, collection, error: `Qdrant at ${base} answered HTTP ${res.status} for ${collection}` };
+    let n;
+    try { n = (await res.json())?.result?.count; } catch (e) {
+      return { counts: null, collection, error: `Qdrant at ${base} answered unparseable JSON (${e.message})` };
+    }
+    if (!Number.isInteger(n)) return { counts: null, collection, error: `Qdrant at ${base} answered no count for ${collection}` };
+    counts.set(name, n);
+  }
+  return { counts, collection };
+}
+
+// Pure: the listing against the store. `empty` is #333's shape — listed
+// indexed, no points at all — and a defect with a named repair. `miscounted`
+// is a listing and a store that disagree on a non-zero count: a run in flight
+// moves both, so it is a note until it persists.
+function storeParity(listed, { counts = null, missing = false } = {}) {
+  const empty = [];
+  const miscounted = [];
+  for (const a of listed) {
+    if (!a.indexed) continue;
+    const stored = missing ? 0 : counts?.get(a.name);
+    if (stored === undefined) continue;
+    if (stored === 0 && a.chunks !== 0) empty.push({ name: a.name, listed: a.chunks });
+    else if (a.chunks != null && stored !== a.chunks) miscounted.push({ name: a.name, listed: a.chunks, stored });
+  }
+  return { empty, miscounted };
 }
 
 // Asymmetric on purpose: only a positively-indexed status counts as indexed,
@@ -3132,6 +3210,20 @@ async function cmdHealthCheck(projectPath, probePath) {
         const listed = parseContextArtifacts(ctx.text);
         const unindexed = listed.filter((a) => !a.indexed);
         const indexed = listed.length - unindexed.length;
+        // The environment the server was launched with, plugin env block
+        // included, so every store read below addresses the server's store.
+        const storeEnv = { ...process.env, ...client.launch.env };
+
+        // ── listed ≠ present (#333) ───────────────────────────────────────
+        // Before freshness: an artifact with no points is not indexed, whatever
+        // its listing says, so it is named here and not judged stale below —
+        // the #225 rule against double-counting, one layer down.
+        const listedIndexed = listed.filter((a) => a.indexed).map((a) => a.name);
+        const store = listedIndexed.length
+          ? await artifactPointCounts(projectPath, storeEnv, listedIndexed)
+          : { counts: new Map(), collection: null };
+        const presence = storeParity(listed, store);
+        const empty = new Set(presence.empty.map((e) => e.name));
 
         // ── indexed ≠ fresh (#225) ────────────────────────────────────────
         // Only the artifacts that ARE indexed: an unindexed one has no index
@@ -3140,7 +3232,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         const candidates = [];
         const unjudged = [];
         for (const a of listed) {
-          if (!a.indexed) continue;
+          if (!a.indexed || empty.has(a.name)) continue;
           const indexedAt = a.lastIndexed ? Date.parse(a.lastIndexed) : NaN;
           if (!a.path || Number.isNaN(indexedAt)) { unjudged.push(a.name); continue; }
           const newest = newestMtimeMs(resolvePath(projectPath, a.path));
@@ -3167,7 +3259,7 @@ async function cmdHealthCheck(projectPath, probePath) {
         const touched = [];
         const unverified = [];
         if (candidates.length) {
-          const stored = await indexedArtifactHashes(projectPath, { ...process.env, ...client.launch.env });
+          const stored = await indexedArtifactHashes(projectPath, storeEnv);
           for (const c of candidates) {
             const local = artifactContentHash(resolvePath(projectPath, c.path));
             const indexedHash = stored.hashes?.get(c.name) ?? null;
@@ -3195,6 +3287,15 @@ async function cmdHealthCheck(projectPath, probePath) {
           // timestamp would otherwise silently switch freshness off, which is
           // this check's own version of the failure it exists to report.
           unjudged,
+          // Listed indexed and counted in the store (#333): what was counted
+          // where, and why not where it could not be.
+          empty: presence.empty,
+          miscounted: presence.miscounted,
+          store: {
+            collection: store.collection,
+            missing: store.missing === true,
+            error: store.counts || store.missing ? null : store.error ?? null,
+          },
         };
         if (indexed < declared) {
           // Naming it is the whole value: 2/3 sends the reader back to
@@ -3204,6 +3305,25 @@ async function cmdHealthCheck(projectPath, probePath) {
             ? unindexed.map((a) => `${a.name}: ${a.status || 'not indexed'}`).join('; ')
             : `codebase_context listed only ${listed.length} of them`;
           defect(`context artifacts ${indexed}/${declared} indexed — ${named}`);
+        }
+        if (presence.empty.length) {
+          // A DEFECT: absent from every context search, reported by nothing
+          // else, and repaired by a named sequence. Not the stale remedy —
+          // codebase_update re-embeds only what moved by content hash, and the
+          // metadata that says these are indexed says nothing moved.
+          // codebase_context_index re-embeds every artifact with no hash skip
+          // (#317), which is what clears it; remove-then-index is the sequence
+          // that repaired cannobserv, whose metadata had outlived one remove.
+          // That took well under the idle timeout at ~1,600 chunks, but it is
+          // the call #317 measured past it, so the finding carries the
+          // not-a-failure rule with it.
+          defect(
+            `context artifacts ${indexed}/${declared} listed indexed, ${presence.empty.length} with no chunks in the store — `
+            + `${presence.empty.map((e) => e.name).join(', ')}`
+            + `${store.missing ? ` (the store holds no ${store.collection} collection)` : ''}; `
+            + 'run codebase_context_remove, then codebase_context_index — a full re-embed, which can outlast the 1800 s '
+            + 'tool timeout and still finish (check lastIndexedAt); codebase_update skips them, their content hash unmoved'
+          );
         }
         if (stale.length) {
           // A DEFECT, not a note, and the severity is the interesting call
@@ -3266,6 +3386,19 @@ async function cmdHealthCheck(projectPath, probePath) {
             + `${[...byReason].map(([reason, names]) => `${names.join(', ')} (${reason})`).join('; ')}; `
             + 'codebase_update re-embeds any whose content moved and changes nothing for the rest'
           );
+        }
+        if (presence.miscounted.length) {
+          // A NOTE: a run in flight moves the listing and the points apart for
+          // as long as it runs, and one reading cannot tell that from a loss.
+          note(
+            'context artifacts whose store count differs from their listing — '
+            + `${presence.miscounted.map((m) => `${m.name} (listed ${m.listed}, store ${m.stored})`).join(', ')}; `
+            + 'an index run in flight moves both, so re-check before acting'
+          );
+        }
+        if (listedIndexed.length && !store.counts && !store.missing) {
+          // Not silence, and not a defect: the listing may be true.
+          note(`context artifacts listed indexed were not counted in the store — ${store.error}`);
         }
       }
     }
@@ -3623,6 +3756,10 @@ Commands:
            QDRANT_HOST/QDRANT_PORT; QDRANT_API_KEY; QDRANT_COLLECTION_PREFIX)
            the launched server uses. Made only when an artifact's mtime is
            newer; an artifact that cannot be confirmed is a note (#326).
+           Every artifact listed indexed is also counted in the store — one
+           read-only points/count per artifact on the context collection,
+           filtered on artifactName — and one with no points is a defect: a
+           listing is the server's metadata, not its points (#333).
            Each finding carries a SEVERITY: a defect is a state a named action
            repairs and sets exit 1; a note is a measurement no action changes,
            is prefixed "note: " in both the JSON and on stderr, and costs
@@ -3849,6 +3986,8 @@ export {
   parseContextArtifacts, artifactIndexed, parseIndexedAt, newestMtimeMs,
   // newer ≠ changed: the server's content key, recomputed and read back (#326)
   artifactContentHash, indexedArtifactHashes, metadataPointId, qdrantBase,
+  // listed ≠ present: each listed artifact's points, counted in the store (#333)
+  artifactPointCounts, storeParity,
   // the transcribed half of the artifact-walk parity claim, and the matcher
   // over it — exported so the four pattern forms can be asserted directly
   // rather than only through a tmp_path tree per case (#270)

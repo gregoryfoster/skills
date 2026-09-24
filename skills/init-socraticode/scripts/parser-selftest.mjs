@@ -46,6 +46,7 @@ import {
   parseContextArtifacts, parseIndexedAt,
   sessionLaunchFromProcesses, isClaudeProcess, launchedSpecOf, exactSpecVersion,
   specDefaultOf, sessionServer, sessionPinFinding,
+  storeParity,
 } from './mcp-driver.mjs';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -628,6 +629,29 @@ eq('…and the source path comes with it',
 // A build that stops printing the timestamp must leave freshness UNJUDGED.
 // Reading a missing time as "indexed just now" would rebuild the silent green;
 // reading it as stale would make the line noise the cohort learns to skip.
+// Listed ≠ present (#333): the chunk count is the server's metadata, and the
+// store's own count per artifactName is what says it holds anything.
+eq('the listed chunk count is read, null where none is printed',
+  parseContextArtifacts(CONTEXT_LISTING).map((a) => a.chunks), [42, null]);
+{
+  const listed = [
+    { name: 'agent-guidelines', indexed: true, chunks: 2 },
+    { name: 'design-docs', indexed: true, chunks: 319 },
+    { name: 'package-config', indexed: true, chunks: 2 },
+    { name: 'pending', indexed: false, chunks: null },
+    { name: 'uncounted', indexed: true, chunks: null },
+  ];
+  const counts = new Map([['agent-guidelines', 0], ['design-docs', 319], ['package-config', 1], ['uncounted', 0]]);
+  const parity = storeParity(listed, { counts });
+  eq('listed indexed with no points is empty, with or without a listed count',
+    parity.empty.map((e) => e.name), ['agent-guidelines', 'uncounted']);
+  eq('a non-zero disagreement is a miscount, not an absence',
+    parity.miscounted, [{ name: 'package-config', listed: 2, stored: 1 }]);
+  eq('a missing collection empties every listed-indexed artifact, and only those',
+    storeParity(listed, { missing: true }).empty.map((e) => e.name),
+    ['agent-guidelines', 'design-docs', 'package-config', 'uncounted']);
+  eq('nothing counted, nothing concluded', storeParity(listed, { counts: null }), { empty: [], miscounted: [] });
+}
 eq('a status with no timestamp yields no index time',
   parseIndexedAt('✓ indexed'), null);
 eq('a bare date is not an index time',
