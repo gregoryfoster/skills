@@ -63,7 +63,7 @@ One message per round, every correction in it, each naming the seq it corrects a
 State only facts your side verified, attributed and dated by the server timestamp:
 
 ```
-power-map checked their built desired_person_names against this set (2026-09-18T17:30:16Z, seq 3): all 11 rows are noops.
+power-map checked their built desired_person_names against this set (<server ts>, seq <n>): all 11 rows are noops.
 ```
 
 The plan is recorded once, by whoever owns the issue. A peer claim you could not verify stays a claim in the record.
