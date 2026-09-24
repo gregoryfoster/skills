@@ -40,7 +40,7 @@ import {
   compareVersions,
   versionGap, pluginSpecFloats, pinDriftFinding, SEVERITY,
   pinVersion, launchFromPin, resolveServerLaunch,
-  pluginServerFromVersionDir, expandVars,
+  pluginServerFromVersionDir, expandVars, launchFromPluginConfig, specVariableOf, pluginLaunchVersion,
   GRAPH_YIELD_MIN_EDGES_PER_NODE, GRAPH_YIELD_MIN_NODES,
   GRAPH_UNRESOLVED_WARN_PCT,
   parseContextArtifacts, parseIndexedAt,
@@ -724,6 +724,47 @@ try {
   eq('a range floats', floatsWith(['-y', 'socraticode@^1.13.0']), 'socraticode@^1.13.0');
   eq('an exact version does not', floatsWith(['-y', 'socraticode@1.14.0']), null);
   eq('a recorded path does not', floatsWith(['/opt/socraticode/dist/index.js'], '/usr/bin/node'), null);
+
+  // #327: the session CAN be pinned. Upstream 0c33776 made Claude Code's
+  // manifest `.claude-plugin/mcp.json`, whose spec is a variable, and left both
+  // root manifests hardcoding @latest — so the tree below is that layout, and
+  // reading a root file instead of following plugin.json is the trap it pins.
+  const specTree = () => {
+    const d = mkdtempSync(join(tmpdir(), 'sc-spec-'));
+    const v = join(d, 'plugins', 'cache', 'socraticode', 'socraticode', '1.14.0');
+    mkdirSync(join(v, '.claude-plugin'), { recursive: true });
+    const def = (spec) => JSON.stringify({ mcpServers: { socraticode: { command: 'npx', args: ['-y', '--prefer-online', spec] } } });
+    writeFileSync(join(v, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '1.14.0', mcpServers: './.claude-plugin/mcp.json' }));
+    writeFileSync(join(v, '.claude-plugin', 'mcp.json'), def('${SOCRATICODE_SPEC:-socraticode@latest}'));
+    for (const root of ['mcp.json', '.mcp.json']) writeFileSync(join(v, root), def('socraticode@latest'));
+    return d;
+  };
+  const specCfg = specTree();
+  try {
+    const read = (spec) => {
+      const prev = { c: process.env.CLAUDE_CONFIG_DIR, s: process.env.SOCRATICODE_SPEC };
+      process.env.CLAUDE_CONFIG_DIR = specCfg;
+      if (spec === undefined) delete process.env.SOCRATICODE_SPEC; else process.env.SOCRATICODE_SPEC = spec;
+      try { return launchFromPluginConfig(); } finally {
+        if (prev.c === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev.c;
+        if (prev.s === undefined) delete process.env.SOCRATICODE_SPEC; else process.env.SOCRATICODE_SPEC = prev.s;
+      }
+    };
+    eq('the live manifest names the variable', read(undefined).specVariable, 'SOCRATICODE_SPEC');
+    eq('…and follows plugin.json, not a root manifest', /\.claude-plugin[\\/]mcp\.json/.test(read(undefined).source), true);
+    eq('unset, the session floats', pluginSpecFloats(read(undefined)), 'socraticode@latest');
+    eq('set to a version, it is pinned', pluginSpecFloats(read('socraticode@1.14.0')), null);
+    eq('…at that version', pluginLaunchVersion(read('socraticode@1.14.0')), '1.14.0');
+  } finally {
+    rmSync(specCfg, { recursive: true, force: true });
+  }
+  eq('a literal spec names no variable', specVariableOf({ args: ['-y', 'socraticode@latest'] }), null);
+  eq('a bare variable is one', specVariableOf({ args: ['${SOCRATICODE_SPEC}'] }), 'SOCRATICODE_SPEC');
+  eq('a variable for something else is not', specVariableOf({ args: ['${OTHER:-x}'] }), null);
+  eq('the drift defect offers the session pin where it works',
+    /SOCRATICODE_SPEC=socraticode@1\.13\.2/.test(at({ running: '1.13.2', resolves: '1.14.0', specVariable: 'SOCRATICODE_SPEC' }).message), true);
+  eq('…and not on a build that ignores it',
+    /SOCRATICODE_SPEC/.test(at({ running: '1.13.2', resolves: '1.14.0' }).message), false);
 
   // The REORDERING is the risky half of #295 — the pin sits ahead of the
   // plugin's recorded command, reversing #85 — and it was the half with no

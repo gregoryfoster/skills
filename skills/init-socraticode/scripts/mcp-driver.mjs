@@ -264,6 +264,11 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
     const server = expandVars(hit.server, { CLAUDE_PLUGIN_ROOT: versionDir });
     if (server?.command && Array.isArray(server.args)) {
       return {
+        // Which variable the package spec is read from, off the UNEXPANDED
+        // definition — `SOCRATICODE_SPEC` since upstream 0c33776, null for a
+        // build that hardcodes it. That is the difference between "set the
+        // variable" and "update the plugin first" as a remedy (#327).
+        specVariable: specVariableOf(hit.server),
         command: server.command,
         args: server.args,
         env: server.env && typeof server.env === 'object' ? server.env : {},
@@ -275,6 +280,16 @@ function launchFromPluginConfig({ project = process.cwd() } = {}) {
         pluginVersion: hit.pluginVersion ?? null,
       };
     }
+  }
+  return null;
+}
+
+// The variable a definition's `socraticode[@…]` argument is spelled with, as
+// `${NAME}` or `${NAME:-socraticode@…}`, or null when the spec is a literal.
+function specVariableOf(server) {
+  for (const a of Array.isArray(server?.args) ? server.args : []) {
+    const m = typeof a === 'string' && /^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-socraticode(?:@[^}]*)?)?\}$/.exec(a);
+    if (m) return m[1];
   }
   return null;
 }
@@ -476,8 +491,14 @@ function registryLatest() {
 // floating plugin both exist, and at that point "nothing printed" and "the
 // check never ran" would be the same report. Two spellings of not-measured is
 // the defect #297 removed.
-function pinDriftFinding({ running, floatingSpec, resolves, pinPath }) {
+function pinDriftFinding({ running, floatingSpec, resolves, pinPath, specVariable = null }) {
   const note = (message) => ({ severity: SEVERITY.note, message });
+  // The other half of the fix, offered only where the installed plugin reads
+  // the variable — on a build that hardcodes its spec it would do nothing, and
+  // a remedy that changes nothing is what #326 had to take back (#327).
+  const pinSession = specVariable && running
+    ? `, or pin the session to the driver: ${specVariable}=socraticode@${running} in the repo's settings env block`
+    : '';
   if (!running) {
     return note(`pinned launch, but no server version was recorded, so drift against '${floatingSpec}' was NOT measured`);
   }
@@ -490,7 +511,7 @@ function pinDriftFinding({ running, floatingSpec, resolves, pinPath }) {
       message:
         `pinned server ${running}, but the session's plugin launches '${floatingSpec}', which resolves to `
         + `${resolves} — two different feature releases writing one store; re-pin deliberately with `
-        + `npm install --prefix ${pinPath} socraticode@${resolves}`,
+        + `npm install --prefix ${pinPath} socraticode@${resolves}${pinSession}`,
     };
   }
   return note(`pinned at ${running}; the plugin's '${floatingSpec}' resolves to ${resolves} — same feature release`);
@@ -3143,18 +3164,19 @@ async function cmdHealthCheck(projectPath, probePath) {
   // ── pinned driver vs floating session (#295) ─────────────────────────────
   // Both halves must hold: this run launched from the pin, AND the plugin's
   // recorded command still resolves at launch time. Pinning the driver does not
-  // pin the session — Claude Code cannot override a plugin's MCP command — so
-  // what the pin buys (no install at launch, a deterministic driver) is paid
-  // for in a divergence that did not exist while both floated and agreed by
-  // coincidence of timing. Leaving that unmeasured would trade a measured
-  // memory spike for an unmeasured correctness risk, so it is measured here.
+  // pin the session — that takes SOCRATICODE_SPEC, on a plugin build that reads
+  // it (#327) — so a driver pinned alone buys no install at launch and a
+  // deterministic driver at the price of a divergence that did not exist while
+  // both floated and agreed by coincidence of timing. Leaving that unmeasured
+  // would trade a measured memory spike for an unmeasured correctness risk, so
+  // it is measured here. With the variable set to the pin's version the
+  // plugin's spec is fixed, and there is nothing left to measure.
   //
   // After the server checks, like the linked-project block below, so the
   // infrastructure findings lead the list. No server call: the pin's version is
   // the filesystem's and the floating one is the registry's.
-  const floatingSpec = report.launch?.pinned
-    ? pluginSpecFloats(launchFromPluginConfig({ project: projectPath }))
-    : null;
+  const plugin = report.launch?.pinned ? launchFromPluginConfig({ project: projectPath }) : null;
+  const floatingSpec = plugin ? pluginSpecFloats(plugin) : null;
   if (floatingSpec) {
     const running = report.server?.version || report.launch.pinVersion;
     const resolves = registryLatest();
@@ -3164,7 +3186,9 @@ async function cmdHealthCheck(projectPath, probePath) {
     // so it lives in a pure function the selftest can pin to fixtures without
     // a server, a network or a clock. Naming it here would put the rule in the
     // one place no fixture can reach.
-    findings.push(pinDriftFinding({ running, floatingSpec, resolves, pinPath: pinDir() }));
+    findings.push(pinDriftFinding({
+      running, floatingSpec, resolves, pinPath: pinDir(), specVariable: plugin.specVariable,
+    }));
   }
 
   // ── configured ≠ resolved (#281) ──────────────────────────────────────────
@@ -3604,6 +3628,8 @@ export {
   // resolution half as well as the decision half, so a reordering fails a
   // fixture rather than only a hand-run
   pinVersion, launchFromPin, pluginSpecFloats, versionGap, pinDriftFinding,
+  // the session's own pin, and whether the installed plugin reads one (#327)
+  specVariableOf,
   // following plugin.json rather than guessing a launcher filename (#309)
   pluginServerFromVersionDir, expandVars,
   // tool-reply predicates (gotcha M)
