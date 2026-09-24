@@ -13,7 +13,7 @@ Two properties, both from findings on #302:
 - **Match the key, not the host.** A joiner's first `curl` of a channel returns
   the keyless view URL, which is harmless: the id alone derives no bearer and
   no encryption key. A guard that fires on `mayfly.chat/c/` cries wolf on every
-  session and gets switched off (comment 10 §2). The pattern here requires the
+  session and gets switched off (comment 9 §2). The pattern here requires the
   22-character id AND the `#` fragment with its 43-character key, on any host,
   because a self-hosted instance leaks the same way.
 - **The pattern cannot match itself.** A leak check whose own text contains the

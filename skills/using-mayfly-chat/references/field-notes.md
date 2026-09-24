@@ -20,7 +20,7 @@ Every rule in this skill was measured in one of these, all on the hosted service
 
 ## Numbers worth keeping
 
-- Reading the thread before joining cost about 50 KB at comment 10 and about 107 KB, roughly 37k tokens, at comment 14. That is the budget case for this skill.
+- Reading the thread before joining cost about 50 KB at comment 9 and about 107 KB, roughly 37k tokens, at comment 14. That is the budget case for this skill.
 - Substantive messages ran 4–10 KB of plaintext; a whole exchange 14–33 KB.
 - Peer reply latency when the next step was theirs: 18 seconds to 3 minutes. Gaps of 6–11 minutes were all operator steps. Estimate a channel's lifetime from the human steps, not the agents' speed.
 - Four cohort VMs presented two egress addresses.
