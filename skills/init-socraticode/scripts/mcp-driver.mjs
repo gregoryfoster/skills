@@ -3376,6 +3376,14 @@ Commands:
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
            SOCRATICODE_LINKED_PROJECTS), which the server drops silently.
+           A context artifact whose source is newer than its index time is
+           confirmed by content before it is called stale: hashed as the
+           server hashes it and compared with the contentHash the server
+           stored, read by ONE read-only POST to Qdrant's socraticode_metadata
+           collection, at the address and with the key (QDRANT_URL, or
+           QDRANT_HOST/QDRANT_PORT; QDRANT_API_KEY; QDRANT_COLLECTION_PREFIX)
+           the launched server uses. Made only when an artifact's mtime is
+           newer; an artifact that cannot be confirmed is a note (#326).
            Each finding carries a SEVERITY: a defect is a state a named action
            repairs and sets exit 1; a note is a measurement no action changes,
            is prefixed "note: " in both the JSON and on stderr, and costs
@@ -3425,6 +3433,9 @@ Env:
                       the plugin's floating 'npx ... @latest' command and inert
                       when absent (default ~/.socraticode/pin; populate with
                       'npm install --prefix <dir> socraticode@<version>')
+  SOCRATICODE_SPEC    expanded into the plugin's definition as Claude Code does,
+                      so a value that pins the session's launch pins the
+                      driver's unpinned launches and drift check too (#327)
   CLAUDE_CONFIG_DIR   Claude config dir searched for the plugin's mcp.json and
                       installed_plugins.json (default ~/.claude) — both to
                       launch and, in health-check and verify, to read which
