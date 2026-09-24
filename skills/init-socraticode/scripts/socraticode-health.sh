@@ -149,7 +149,10 @@ Env:
                           Set it yourself for a slower, more patient check.
   SOCRATICODE_HEALTH_CAP  the scope's systemd properties, space-separated;
                           default 'MemoryHigh=1200M MemoryMax=1536M
-                          CPUQuota=100%'. 'off' runs the check uncapped.
+                          CPUQuota=100%'. 'off' runs the check uncapped, and
+                          so does a value the probe rejects — the log says
+                          why. A ceiling belongs to the host: set it in
+                          .claude/settings.local.json, not settings.json.
   SOCRATICODE_HEALTH_FORCE=1
                           ignore the once-per-day lock (for testing)
 

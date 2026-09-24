@@ -107,8 +107,10 @@ unsupported and the real call then fails closed. Where the host cannot cap —
 macOS, no user systemd, no delegation — the check runs uncapped as before, and
 silently; a failed probe leaves a line in its log. A check the cap stops is
 reported as stopped by its cap, and never re-run uncapped.
-`SOCRATICODE_HEALTH_CAP` in the settings `env` block sets the properties, or
-`off`.
+`SOCRATICODE_HEALTH_CAP` sets the properties, or `off`. Set it in
+`.claude/settings.local.json`'s `env` block, since a ceiling belongs to the
+host, not to every clone of the repo. A value the probe rejects runs uncapped
+too; the log line names systemd's reason.
 
 It is defence in depth, not the fix. Pinned, the hook's launch installs nothing
 and peaks near 75 MB; the cap is for a host that never pinned, a pin that broke
