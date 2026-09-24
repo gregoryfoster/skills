@@ -3751,9 +3751,9 @@ Commands:
            process table — the npx child of the claude this check runs under
            — and outranks the definition. Where it cannot be read, a version
            the definition takes from this process's environment is reported
-           as inferred, and the pin drift is still measured, as NOT observed. A SOCRATICODE_SPEC
-           this process carries that the session's launch did not is a defect
-           (#332).
+           as inferred, and the pin drift is still measured, as NOT observed.
+           A SOCRATICODE_SPEC this process carries that the session's launch
+           did not is a defect (#332).
            JSON verdict on stdout, findings on stderr.
            Also reports linked projects that are configured and do not
            resolve (.socraticode.json's linkedProjects and
