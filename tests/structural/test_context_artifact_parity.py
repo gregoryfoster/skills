@@ -323,7 +323,10 @@ def _qdrant_stub(
             received.append({"path": self.path, "body": body})
             if self.path.endswith("/points/count"):
                 if self.path != count_path or store_points == MISSING:
-                    self._send(404, {"status": {"error": "Not found: Collection"}})
+                    # Qdrant's own wording, which names the collection.
+                    collection = self.path.split("/")[2]
+                    error = f"Not found: Collection `{collection}` doesn't exist!"
+                    self._send(404, {"status": {"error": error}})
                     return
                 name = body["filter"]["must"][0]["match"]["value"]
                 count = (store_points or {}).get(name, 0)

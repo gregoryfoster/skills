@@ -1454,8 +1454,16 @@ async function artifactPointCounts(projectPath, env, names) {
     } catch (e) {
       return { counts: null, collection, error: `cannot reach Qdrant at ${base} (${e.cause?.code || e.message})` };
     }
+    // Missing only on Qdrant's own word: its 404 names the collection
+    // ("Not found: Collection `x` doesn't exist!"). A 404 from a proxy or a
+    // wrong path names nothing, and reading it as "no collection" would call
+    // every artifact empty, daily, over an address fault (CR 2).
     if (res.status === 404) {
-      return { counts: null, collection, missing: true, error: `Qdrant at ${base} holds no ${collection} collection` };
+      let said = '';
+      try { said = String((await res.json())?.status?.error ?? ''); } catch { /* not Qdrant's JSON */ }
+      if (said.includes(collection)) {
+        return { counts: null, collection, missing: true, error: `Qdrant at ${base} holds no ${collection} collection` };
+      }
     }
     if (!res.ok) return { counts: null, collection, error: `Qdrant at ${base} answered HTTP ${res.status} for ${collection}` };
     let n;

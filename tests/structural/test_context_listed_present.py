@@ -20,6 +20,8 @@ collection the server itself would address.
 import json
 import re
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .test_context_artifact_parity import (
@@ -130,6 +132,43 @@ class TestTheListingIsCheckedAgainstTheStore:
         assert "3 with no chunks" in line, line
         assert f"holds no {_context_collection(repo)} collection" in line, line
         assert report["artifacts"]["store"]["missing"] is True, report["artifacts"]
+
+    @requires_node
+    def test_a_404_that_names_no_collection_is_not_a_missing_one(
+        self, tmp_path: Path
+    ) -> None:
+        """CR 2: a proxy's 404 is an address fault, not an empty store."""
+        repo = _repo(tmp_path)
+        received: list = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 — http.server's spelling
+                self.rfile.read(int(self.headers["Content-Length"]))
+                received.append(self.path)
+                body = b"<html>404 Not Found</html>"
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            result, report, _ = _run_health_check(
+                tmp_path, repo, REPLIES, server.server_address[1]
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert received, "the store was never asked"
+        assert not _empty_finding(report), report["findings"]
+        notes = [f for f in report["findings"] if "not counted in the store" in f]
+        assert notes and "HTTP 404" in notes[0], report["findings"]
+        assert result.returncode == 0, result.stdout
 
     @requires_node
     def test_an_unreadable_store_is_a_note(self, tmp_path: Path) -> None:
