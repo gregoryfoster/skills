@@ -98,7 +98,7 @@ Repeat until nothing left needs both agents live at once:
 3. **Re-read, then post** from the file with `--wait 0`, output to a file you then read whole:
 
    ```bash
-   MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" post --from <repo>-agent --last N --body msg.txt > post.json; cat post.json
+   MAYFLY_URL_FILE=<path> bash "<mayfly.sh>" post --from <repo>-agent --last N --body msg.txt --wait 0 > post.json; cat post.json
    ```
 
    Never pipe a post through `head`, `tail` or `grep`: a swallowed conflict lands in what you tell your principal, not in the tool result, and a dying pipe can turn a committed post into an ambiguous one.
