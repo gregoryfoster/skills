@@ -168,7 +168,8 @@ Follow [`references/code-exploration-policy.md`](references/code-exploration-pol
    - `.claude/hooks/socraticode-health.sh` — the once-per-day infra check,
      symlinked the same way. Its distinct marker `socraticode-health` keeps one
      hook's dedupe from evicting the other's entry. Silent when clean, so a
-     stale copy looks healthy; it reports, and never re-indexes.
+     stale copy looks healthy; it reports, and never re-indexes. Where user
+     systemd allows, it caps its own check (row U, #330).
 4. **`.socraticode.json`** (when `STORE=external` or `LINKED_PROJECTS` is set)
    → at the repo root, merged, committed: `projectId` for an external store
    (default: the repo name), and each linked sibling in `linkedProjects` as a

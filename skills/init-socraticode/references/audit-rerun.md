@@ -37,6 +37,10 @@ The common drift found across the cohort
   "local Qdrant store + on-disk graph" until
   [#328](https://github.com/gregoryfoster/skills/issues/328), and now names no
   store, so the re-run's replacement is the fix rather than an undo;
+- a hand-rolled cap wrapper around the health hook's command
+  (CannObserv/replicator). Step C's installer rebuilds the command without it,
+  which since [#330](https://github.com/gregoryfoster/skills/issues/330) loses nothing:
+  the hook caps itself ([`host-memory.md`](host-memory.md#the-health-hook-caps-itself));
 - a repo moving to `STORE=external`. If it was ever indexed into that store
   without a `projectId`, those collections sit under its path hash and the
   rename orphans them; see

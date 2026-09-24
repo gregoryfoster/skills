@@ -38,4 +38,10 @@
 # with it: unpinned hosts still pay the download, and a pinned one adds a
 # bounded 5s registry read (the pin-drift finding) in its place, so 120 remains
 # the budget both shapes fit in.
+#
+# The memory cap is NOT an argument here, deliberately (#330). The installer
+# rebuilds the command from this line on every run and keeps only the timeout
+# (#259), which is exactly how CannObserv/replicator's hand-rolled systemd-run
+# wrapper would have been erased by its next re-run. The hook opens the scope
+# itself, so the cap survives the rebuild and a wrapper is redundant.
 --hook socraticode-health.sh --skill init-socraticode --marker socraticode-health --copy-fallback --timeout 120

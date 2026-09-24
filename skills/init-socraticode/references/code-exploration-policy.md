@@ -286,6 +286,14 @@ the one that fires and the outer one only catches a driver that never returns.
 A value already in `settings.json` is **preserved** by a re-run, so a consumer
 who tuned this figure keeps it.
 
+**The memory cap is the script's, not an argument.** Wherever user systemd can
+cap a scope, the hook runs its check under row U's properties
+([#330](https://github.com/gregoryfoster/skills/issues/330)) — and only there, silently
+uncapped elsewhere. It lives in the vendored script because the installer
+rebuilds this command from its constants on every run, keeping only the
+timeout: a cap written around the command in `settings.json` is gone after the
+next re-run, and nothing reports it.
+
 Its marker is deliberately distinct from `socraticode-prefetch` /
 `socraticode-reminder`: markers are per-hook precisely so that one hook's
 dedupe-strip cannot evict the other's entry from the array they share. This hook

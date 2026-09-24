@@ -74,6 +74,9 @@ def _clean_env(**extra: str) -> dict:
         "SOCRATICODE_PROBE_FILE",
         "HEALTH_TIMEOUT_MS",
         "SOCRATICODE_HEALTH_FORCE",
+        # The hook reads it since #330; an operator's value would change
+        # which launch path every hook test exercises.
+        "SOCRATICODE_HEALTH_CAP",
         # health-check reads it since #281, and a session that runs this suite
         # may well have it set — the skill writes it into settings.local.json.
         "SOCRATICODE_LINKED_PROJECTS",
