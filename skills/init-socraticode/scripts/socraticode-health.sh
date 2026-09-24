@@ -120,9 +120,11 @@ Behaviour:
     launches run in one transient scope — systemd-run --user --scope with
     MemoryHigh=1200M MemoryMax=1536M CPUQuota=100%, under choom -n 500 so a
     session at oom_score_adj -1000 is killed by the cap rather than stalled —
-    after a probe that runs the identical command with 'true' as its payload.
-    Where the host cannot cap (no systemd-run, as on macOS, or a probe that
-    fails for want of user systemd or memory/cpu delegation) the check runs
+    after a probe that runs the identical command and asks systemd, from
+    inside its scope, whether it accounts that scope's memory — without a
+    memory controller, MemoryMax= is accepted and never enforced. Where the
+    host cannot cap (no systemd-run, as on macOS; no user systemd; or no
+    memory controller for it — cgroup v1, or none delegated) the check runs
     uncapped, as before, and says nothing about it; a failed probe leaves one
     log line. With a pinned server the launch peaks near 75 MB and the
     cap never binds: it is for a host that never pinned, a pin that broke, or
@@ -378,8 +380,27 @@ fi
 # (#330 trap 2). A bare `systemd-run --user --scope -q true` succeeds where the
 # properties are unsupported; the real call then exits 1 with the uncapped
 # branch already behind it, and a hook written never to fail closed does
-# (#177) — replicator's first wrapper had exactly that bug. Unit name aside,
-# the probe IS the call, with `true` for its payload.
+# (#177) — replicator's first wrapper had exactly that bug. Unit name and
+# payload aside, the probe IS the call.
+#
+# And a cap systemd accepts is not a cap it enforces. Where the user manager
+# has no memory controller — cgroup v1, or v2 with memory neither delegated
+# nor accounted — `-p MemoryMax=` is taken, exit 0, and never applied:
+# measured on systemd 255 with the manager at `pids` only, the probe passed
+# and a 320 MB payload outlived MemoryMax=64M. systemd knows, though. The
+# scope's MemoryCurrent reads "[not set]" there and a byte count wherever it
+# accounts the scope's memory, so a cap with a Memory property sends the probe
+# to ask, from inside its own scope. A cap without one asks nothing (`true`):
+# it is not refused over a controller it never uses.
+#
+# Single-quoted on purpose: the probe's `sh -c` expands it, not this shell.
+# shellcheck disable=SC2016
+_CAP_MEMORY_CHECK='m="$(systemctl --user show -p MemoryCurrent --value "$1")" || exit 1
+case "$m" in
+  "" | *[!0-9]*)
+    echo "systemd accounts no memory for $1 (MemoryCurrent=${m:-empty}), so its Memory cap would not be enforced" >&2
+    exit 1 ;;
+esac'
 #
 # choom because at oom_score_adj -1000 — broker's and address-validator's
 # sessions — a MemoryMax= cap stalls a process instead of killing it (#303,
@@ -393,26 +414,30 @@ _capped() {
 
 if [ "${#CAP_PROPS[@]}" -gt 0 ]; then
   _unit="socraticode-health-$$-$(date -u +%s)"
-  # Silent where it fails — every host without user systemd, linger and
-  # memory/cpu delegation; macOS never reaches the probe at all. Only the log
+  # Silent where it fails — every host without user systemd, linger or a
+  # memory controller for it; macOS never reaches the probe at all. Only the log
   # says so. A line in every session on those hosts would be a finding that
   # always fires, the tuned-out reporter #180 exists to prevent (trap 5).
   #
   # With the first line of the probe's stderr, which is what tells a host that
   # cannot cap ("Failed to connect to bus") from a property systemd refused —
   # trap 2's host, or a mistyped SOCRATICODE_HEALTH_CAP an operator would
-  # otherwise believe was in force.
+  # otherwise believe was in force — and from a cap it would not enforce.
   #
   # `trap - ERR` first, inside the substitution only. set -E hands the ERR
   # trap to the subshell, where the `if` no longer shields a failure from it
   # (measured on bash 3.2): _hook_panic would run there and `exit 0`, and a
   # probe that failed would read as one that passed — a capped launch on a
   # host that cannot cap, and FAILED TO RUN every day.
-  if _probe_err="$(trap - ERR; _capped "$_unit-probe" true 2>&1 >/dev/null)"; then
+  _probe=(true)
+  case " ${_cap_words[*]}" in
+    *" Memory"*) _probe=(sh -c "$_CAP_MEMORY_CHECK" sh "$_unit-probe.scope") ;;
+  esac
+  if _probe_err="$(trap - ERR; _capped "$_unit-probe" "${_probe[@]}" 2>&1 >/dev/null)"; then
     CAP_UNIT="$_unit"
   else
     _probe_err="${_probe_err%%$'\n'*}"
-    _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500 -- true) failed (${_probe_err:-no message}) — running uncapped"
+    _log "memory cap unavailable: the probe (systemd-run --user --scope ${CAP_PROPS[*]} choom -n 500) failed (${_probe_err:-no message}) — running uncapped"
   fi
 fi
 

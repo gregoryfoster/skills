@@ -83,6 +83,10 @@ CHOOM_STUB = r"""#!/usr/bin/env bash
 exec "$@"
 """
 
+# `show -p MemoryCurrent` answers a byte count, as for a scope whose memory
+# systemd accounts, or STUB_MEMORY_CURRENT — "[not set]" where it has no
+# memory controller and would not enforce a MemoryMax=.
+#
 # `show -p Result` answers "success" for the first STUB_RESULT_AFTER queries,
 # with the scope still deactivating, then STUB_SCOPE_RESULT: systemd records an
 # OOM kill asynchronously, so the hook has to wait for a scope winding down.
@@ -97,6 +101,7 @@ case "$*" in
     n=$(grep -c 'p.Result' "$STUB_LOG" || true)
     if [ "$n" -le "${STUB_RESULT_AFTER:-0}" ]; then echo deactivating
     else echo "${STUB_SCOPE_STATE:-inactive}"; fi ;;
+  *"-p MemoryCurrent"*) echo "${STUB_MEMORY_CURRENT:-1503232}" ;;
 esac
 exit 0
 """
@@ -199,8 +204,33 @@ class TestTheProbeIsTheCall:
             f"  probe:   {p_opts}\n  payload: {c_opts}"
         )
         assert p_choom == c_choom == {"-n": "500"}, (p_choom, c_choom)
-        assert p_cmd == ["true"], p_cmd
+        assert p_cmd[:2] == ["sh", "-c"], p_cmd
         assert c_cmd[0] == "node" and "health-check" in c_cmd, c_cmd
+
+    @requires_node
+    def test_the_probe_asks_whether_its_own_scope_is_accounted(
+        self, harness: Harness
+    ) -> None:
+        """Accepted is not enforced: systemd takes a MemoryMax= it has no
+        controller for. The probe asks about its own scope, not the payload's,
+        which does not exist yet."""
+        harness.run()
+        probe, _ = harness.calls("systemd-run")
+        asked = [c for c in harness.calls("systemctl") if "MemoryCurrent" in c]
+        assert [c[-1] for c in asked] == [f"{_unit(probe)}.scope"], (
+            "the probe should ask systemd once whether it accounts the probe "
+            f"scope's memory: {asked}"
+        )
+
+    @requires_node
+    def test_a_cap_without_memory_asks_nothing_of_it(self, harness: Harness) -> None:
+        """A CPU-only cap is not refused over a controller it never uses."""
+        harness.run(
+            SOCRATICODE_HEALTH_CAP="CPUQuota=50%", STUB_MEMORY_CURRENT="[not set]"
+        )
+        probe, _ = harness.calls("systemd-run")
+        assert _split(probe)[2] == ["true"], probe
+        assert harness.runs() == 1
 
     @requires_node
     def test_the_default_properties_are_row_us(self, harness: Harness) -> None:
@@ -286,6 +316,26 @@ class TestAHostThatCannotCap:
             "a refused property logs like a missing bus, so an operator cannot "
             f"tell their cap was rejected (CR 5)\n{harness.hook_log()}"
         )
+
+    @requires_node
+    def test_a_cap_systemd_would_not_enforce_runs_uncapped(
+        self, harness: Harness
+    ) -> None:
+        """cgroup v1, or no memory controller delegated: the properties are
+        accepted, exit 0, and bind nothing. Measured on systemd 255 — a 320 MB
+        payload outlived MemoryMax=64M — so "capped" in the log would be false.
+        """
+        result = harness.run(STUB_MEMORY_CURRENT="[not set]")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", result.stdout
+        assert len(harness.calls("systemd-run")) == 1, (
+            "the payload was launched under a cap the probe had found systemd "
+            "would not enforce"
+        )
+        assert harness.runs() == 1
+        log = harness.hook_log()
+        assert "memory cap unavailable" in log and "MemoryCurrent=[not set]" in log, log
+        assert "capped: scope" not in log, log
 
     @requires_node
     def test_findings_still_reach_the_session(self, harness: Harness) -> None:
@@ -377,7 +427,8 @@ class TestACapKillIsReportedAsSuch:
     def test_a_clean_capped_run_is_silent(self, harness: Harness) -> None:
         result = harness.run()
         assert result.stdout == "", result.stdout
-        assert not harness.calls("systemctl"), (
+        asked = [c for c in harness.calls("systemctl") if "MemoryCurrent" not in c]
+        assert not asked, (
             "a clean run has no failure to explain, and asked the scope anyway"
         )
 

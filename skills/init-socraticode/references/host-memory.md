@@ -101,10 +101,13 @@ a UTC day — and until
 co-replicator (3.82 GiB, no swap, a production co-tenant) it was the host's
 only uncapped launcher. It now runs its check in [row U](troubleshooting.md)'s
 scope wherever the host can create one. The probe is the same
-`systemd-run --user --scope` command with the same properties and `true` for
-its payload, because a bare probe succeeds where the properties are
-unsupported and the real call then fails closed. Where the host cannot cap —
-macOS, no user systemd, no delegation — the check runs uncapped as before, and
+`systemd-run --user --scope` command with the same properties, because a bare
+probe succeeds where the properties are unsupported and the real call then
+fails closed. Its payload asks systemd, from inside the scope, for the scope's
+`MemoryCurrent`: without a memory controller — cgroup v1, or none delegated to
+the user manager — `MemoryMax=` is accepted and never enforced, and on systemd
+255 a 320 MB payload outlived a 64M cap. Where the host cannot cap — macOS, no
+user systemd, no memory controller — the check runs uncapped as before, and
 silently; a failed probe leaves a line in its log. A check the cap stops is
 reported as stopped by its cap, and never re-run uncapped.
 `SOCRATICODE_HEALTH_CAP` sets the properties, or `off`. Set it in
