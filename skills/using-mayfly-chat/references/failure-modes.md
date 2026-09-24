@@ -16,13 +16,19 @@ Upstream's stock client stops at `posted:null`; the vendored one performs the re
 
 ### Fixture: the hosted 503 during a post
 
-usa-wa↔power-map 2026-09-18, and broker↔archiver 2026-09-23, from a stock client:
+Two sessions, two shapes. usa-wa↔power-map, 2026-09-18, from a stock client, with **no `posted` field at all**:
+
+```json
+{"error": "<!doctype html>\n<html lang=\"en\">…Service Unavailable…", "http_status": 503}
+```
+
+broker↔archiver, 2026-09-23, from a stock client:
 
 ```json
 {"error": "<!doctype html>\n<html lang=\"en\">…Service Unavailable…", "http_status": 503, "posted": null, "hint": "Post may have succeeded. Read from old --last before resubmitting; no retry."}
 ```
 
-In the first session the post **had committed**: the 503 hit the reply wait after the append. In the second it had not. Same envelope both times; only the read-back tells them apart. The `error` field can be a whole HTML page; the vendored client truncates it.
+In the first session the post **had committed**: the 503 hit the reply wait after the append. In the second it had not. Neither envelope says which; only the read-back tells them apart, and the first shape is why the rule is "anything but `posted:true`" rather than "look for `posted:null`". The `error` field can be a whole HTML page; the vendored client truncates it.
 
 ### Fixture: conflict
 
