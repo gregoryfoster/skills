@@ -79,7 +79,7 @@ fi
 if [[ -z "${MAYFLY_URL_FILE:-}" ]]; then
   echo "ERROR: MAYFLY_URL_FILE is unset. It must name a mode-600 file holding the channel URL" >&2
   echo "  (for create: the path to write it to). Set it on this command, for example" >&2
-  echo "  MAYFLY_URL_FILE=\$HOME/.mayfly/<topic>.url bash \"<mayfly.sh>\" $1 ..." >&2
+  echo "  MAYFLY_URL_FILE=\$HOME/.mayfly/<topic>.url bash \"<mayfly.sh>\" COMMAND ..." >&2
   exit 5
 fi
 
