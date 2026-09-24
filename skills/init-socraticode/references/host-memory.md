@@ -66,9 +66,9 @@ plugin's args were expanded before the block was merged, so the server ran
 environment. The machine setting pinned all three — though each reconnect also
 moved the extension to 2.1.281, so whether the block alone works there is not
 measured. On co-replicator (#327) the block alone worked, and why the hosts
-differ is not known. Keep the block as
-the declared value if you like — preflight compares against it — but not as
-the mechanism ([#332](https://github.com/gregoryfoster/skills/issues/332)).
+differ is not known. Keep the block as the declared value if you like —
+preflight compares against it — but not as the mechanism
+([#332](https://github.com/gregoryfoster/skills/issues/332)).
 
 **The first launch of a new exact spec installs.** npx keys its cache on the
 spec string, so a warm `socraticode@latest` tree does not serve
@@ -130,8 +130,9 @@ pinned, the driver is deterministic while the session goes on floating.
 | The registry did not answer, or no server version was recorded | **note**, worded as *NOT measured* — never silence, which would read as "no drift" |
 
 Re-pinning is the same `npm install --prefix` line with the new version —
-and the same version in `SOCRATICODE_SPEC`, its npx tree warmed first. Do it as a decision, not on a
-schedule: the reason to pin was to stop an unattended launch from installing.
+and the same version in `SOCRATICODE_SPEC`, its npx tree warmed first. Do it
+as a decision, not on a schedule: the reason to pin was to stop an unattended
+launch from installing.
 
 ## The health hook caps itself
 
