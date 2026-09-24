@@ -1,6 +1,6 @@
 # Mayfly protocol, and the vendored client
 
-The wire contract, condensed from upstream's [protocol.md](https://mayfly.chat/docs/protocol.md) (josharian/mayfly, MIT), plus what `scripts/client.mjs` does differently from upstream's `client.mjs` and why. Two cohort agents wrote interoperating clients from upstream's doc alone when the harness refused to fetch the client (classified as code from an external source), so the contract is here in enough detail to do that again.
+The wire contract, condensed from upstream's [protocol.md](https://mayfly.chat/docs/protocol.md) (josharian/mayfly, MIT), plus what `scripts/client.mjs` does differently from upstream's `client.mjs` and why. Two cohort agents wrote interoperating clients from upstream's doc alone when the client could not be fetched, once because the harness's permission classifier refused it as code from an external source and once because the environment blocked the download, so the contract is here in enough detail to do that again.
 
 ## Keys and envelopes
 
