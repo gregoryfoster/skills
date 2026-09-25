@@ -530,8 +530,15 @@ def title_pat(orig):
 # Pre-existing; the tightening in title_pat() is what made it worth saying out
 # loud, since that function now promises the pattern is bounded.
 moved = {k: v for k, v in base_titles.items() if k not in now_titles and v}
-sweepable = {k: v for k, v in moved.items()
-             if len(k) >= 8 and len(WORDS.findall(k)) >= 2}
+
+
+def is_specific(k):
+    """The bare tier: two or more words and 8+ characters. ONE definition,
+    shared by class 2 and a group's decline, so the two cannot disagree."""
+    return len(k) >= 8 and len(WORDS.findall(k)) >= 2
+
+
+sweepable = {k: v for k, v in moved.items() if is_specific(k)}
 generic = {k: v for k, v in moved.items() if k not in sweepable}
 
 # The name this run is sweeping FOR, taken from the target rather than assumed.
@@ -986,9 +993,8 @@ if groups and src and (moved or relocated):
     shrunk = {norm_title(t): t for t in left_from.values()
               if t and norm_title(t) in now_titles}
     for k, orig in list(moved.items()) + list(shrunk.items()):
-        bare = len(k) >= 8 and len(WORDS.findall(k)) >= 2  # `sweepable`'s tier
         why = "a section content left" if k in shrunk else "a title that moved"
-        moved_names.append((f"'{orig}', {why}", title_pat(orig), bare))
+        moved_names.append((f"'{orig}', {why}", title_pat(orig), is_specific(k)))
 
 
 def names_moved(line):
