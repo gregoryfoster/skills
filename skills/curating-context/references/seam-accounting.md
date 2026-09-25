@@ -106,8 +106,11 @@ It covers `source-back-reference` hits under the prefix, for that swept file
 only, and never expires. It **declines** a line that also names content that
 moved — a title that left the file, or a surviving section a body line left —
 so `AGENTS.md's variant strategy` in a test is still reported when that section
-moves. The report prints each group's count and reason. Doc back-references and
-`source-moved-title` keep line-scoped entries, and those still expire.
+moves. The report prints each group's count and reason, and its hits count
+into `seams_acked` — so a demotion row in such a repo carries hundreds there,
+which is the group working, not an acknowledged set ballooning. Doc
+back-references and `source-moved-title` keep line-scoped entries, and those
+still expire.
 
 Chosen over three alternatives. A path **ignore-list** hides a real pointer with
 no judgement attached. Sweeping only **pointer-shaped** hits is a heuristic that
