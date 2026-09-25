@@ -136,7 +136,11 @@ Options:
                    in the ledger — the one the append just wrote — and every
                    curation row before it that shares its commit without a
                    break: a run recording two files appends both at one HEAD
-                   (#324). Each rewritten row is named on stderr.
+                   (#324). Each rewritten row is named on stderr. A ledger
+                   backfilled before that fix can hold such a row still a
+                   parent behind while the newest names REV; a re-run answers
+                   "nothing to backfill", and nothing can tell which older rows
+                   were that run's, so set that one row's `repo_commit` by hand.
 
                    Phase 7 measures, records, and only then commits the ledger
                    alongside the edits — so the hash the append could see is the
