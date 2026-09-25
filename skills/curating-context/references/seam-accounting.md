@@ -83,3 +83,36 @@ no base.
 `repo_commit`; the base a given row's sweep used is the *previous* row's
 `repo_commit`, and `null` there means that row's sweep had an empty interval.
 The one case where that inference is wrong is the loud fallback above.
+
+## A repo whose source is about policy files
+
+The source classes open on any demotion, and in a repo whose own tooling is the
+subject — a test suite built from synthetic policy files, scripts that read a
+consumer's `AGENTS.md` — the filename is subject matter hundreds of times over.
+Measured on this skill's own repo on 2026-09-24: one demotion out of `AGENTS.md`
+took the sweep from 0 unacknowledged hits to ~700, ~690 of them under `tests/`
+and `skills/`. A line-scoped
+entry for each expires whenever its line changes, so the busiest test file
+turned the gate red on unrelated edits, and demotion — the lever that makes real
+headroom — was priced out ([#321](https://github.com/gregoryfoster/skills/issues/321)).
+
+So `.skills/context-seams-ok` takes a **group** entry:
+
+```
+@mentions AGENTS.md tests/ :: <why every mention under tests/ is subject matter>
+```
+
+It covers `source-back-reference` hits under the prefix, for that swept file
+only, and never expires. It **declines** a line that also names content that
+moved — a title that left the file, or a surviving section a body line left —
+so `AGENTS.md's variant strategy` in a test is still reported when that section
+moves. The report prints each group's count and reason. Doc back-references and
+`source-moved-title` keep line-scoped entries, and those still expire.
+
+Chosen over three alternatives. A path **ignore-list** hides a real pointer with
+no judgement attached. Sweeping only **pointer-shaped** hits is a heuristic that
+fails silently. Declaring that the repo **curates by tightening only** leaves
+the wall where it is. The group's limit is what a decline cannot see: a line
+that describes moved content without naming its section. So group only where the
+lines are about policy files in general, and judge a line that makes a claim
+about the repo's own policy file line by line.

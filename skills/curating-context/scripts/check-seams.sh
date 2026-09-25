@@ -67,7 +67,8 @@ Options:
                    source legitimately names the policy file everywhere — a
                    tooling repo, say — where the sweep is all noise. The report
                    says when the sweep ran with this on, so a clean exit never
-                   silently means "not looked at".
+                   silently means "not looked at". A group entry (below) keeps
+                   the moved-title class and the rest of the tree swept.
   --ack-file PATH  Acknowledgement file. Default: .skills/context-seams-ok.
                    One entry per line, two forms:
                      CONTENT            substring of "<class> <path> <line>"
@@ -88,6 +89,18 @@ Options:
                    One entry per judged line: the report charges each hit to
                    the first pattern that matched and WARNs on any pattern
                    covering more than 3 hits or more than one file.
+
+                   One exception, for source that is ABOUT policy files — a
+                   test suite whose fixtures name AGENTS.md hundreds of times
+                   (#321). A GROUP entry acknowledges every source-back-reference
+                   under a path prefix, for one swept file, and never expires:
+                     @mentions SWEPT-FILE PATH-PREFIX :: REASON
+                   It covers no other class, and it DECLINES a line that also
+                   names content that moved — a title that left SWEPT-FILE, or
+                   a surviving section a body line left — so that line is
+                   reported for judgement as usual. The report prints each
+                   group's hit count and reason; a line-scoped entry is tried
+                   first. The reason is required; a malformed entry exits 1.
   -h, --help       Show this help and exit 0.
 
 What it reports, in four classes:
@@ -695,11 +708,12 @@ LINK_TEXT_ROOT = (re.compile(r"\[(?:" + _roots_alt + r")/")
                   if _reloc_roots else None)
 
 
-def body_keys(lines):
+def body_keys(lines, sections=None):
     """Comparable form -> first raw line, for every line that is evidence of a
     move. Fence state is tracked across the walk, so the caller cannot ask for
-    one line's key without it and get the heading rule wrong."""
-    out, opener = {}, None
+    one line's key without it and get the heading rule wrong. SECTIONS, when
+    given, is filled with each key's enclosing section title."""
+    out, opener, title = {}, None, None
     for raw in lines:
         s = raw.strip()
         m = FENCE.match(s)
@@ -712,6 +726,10 @@ def body_keys(lines):
         # A marker of the OTHER kind inside a fence falls through to here, where
         # it is keyed as the fenced content it is.
         fenced = opener is not None
+        if not fenced:
+            h = HEADING.match(raw)
+            if h:
+                title = h.group(2)
         if not s or (not fenced and ANY_HEADING.match(s)):
             continue
         k = LINK_DEPTH.sub("](", s)
@@ -721,25 +739,31 @@ def body_keys(lines):
         floor = RELOC_MIN_CHARS_FENCED if fenced else RELOC_MIN_CHARS
         if len(k) >= floor:
             out.setdefault(k, s)
+            if sections is not None:
+                sections.setdefault(k, title)
     return out
 
 
-def relocated_lines():
+def relocated_lines(sections=None):
     """Base body lines that left the policy file for the live docs tree.
 
     One entry per DISTINCT normalised line, so the count is of lines the
     predicate can tell apart rather than of raw lines moved — two identical
     bullets leaving together are one entry, and the report says "body line(s)"
-    on that basis.
+    on that basis. SECTIONS, when given, is left holding each relocated line's
+    base section title, keyed as body_keys() keys it.
     """
-    left = body_keys(base_lines)
+    left = body_keys(base_lines, sections)
     for k in body_keys(now_lines):
         left.pop(k, None)
-    if not left:
-        return []
     dest = set()
-    for d in docs:
-        dest |= body_keys(doc_lines(d)).keys()
+    if left:
+        for d in docs:
+            dest |= body_keys(doc_lines(d)).keys()
+    if sections is not None:
+        for k in list(sections):
+            if k not in left or k not in dest:
+                del sections[k]
     return [v for k, v in left.items() if k in dest]
 
 
@@ -867,6 +891,42 @@ if src and (moved or relocated):
                               line.strip()))
                 break
 
+# A GROUP acknowledgement: one judged entry for every filename mention under a
+# path, for a repo whose tracked source is ABOUT policy files (#321). This
+# repo's own suite names AGENTS.md ~700 times as fixtures and code paths, so any
+# demotion out of it opened ~700 hits, each needing a line-scoped entry that
+# expires whenever the busiest test file changes. A group does not expire, so it
+# is held to what makes that safe:
+#
+#   - it covers source-back-reference ONLY — never a doc class, and never
+#     source-moved-title, the class that names content;
+#   - it names the swept file it was judged for, so it cannot reach a --file
+#     run against another target that shares this ack file;
+#   - it carries its reason, and the report prints it with the count;
+#   - it DECLINES a line that also names content that moved: a title that left
+#     the swept file, or the title of a surviving section a body line left.
+#     A filename hit stops at the filename (one hit per line), so without
+#     this a test citing "AGENTS.md § <a title that moved>" would be silenced
+#     by the very entry that exists to say tests only mention the file.
+#
+# What it cannot see is a line that describes moved content without naming its
+# section — the limit class 2 already has. So group only where the lines are
+# about policy files in general, not about this repo's own one.
+GROUP_KEY = "@mentions"
+GROUP_FORM = f"{GROUP_KEY} <swept-file> <path-prefix> :: <reason>"
+
+
+def parse_group(raw, n):
+    head, sep, reason = raw.partition(" :: ")
+    fields = head.split()
+    if not sep or not reason.strip() or len(fields) != 3:
+        print(f"ERROR {ack_file}:{n}: a group entry takes the form "
+              f"'{GROUP_FORM}', reason required: {raw[:80]}", file=sys.stderr)
+        sys.exit(1)
+    return {"swept": fields[1], "prefix": fields[2], "reason": reason.strip(),
+            "raw": raw}
+
+
 # Acknowledged hits: judged legitimate on an earlier run and recorded in the
 # ack file, one substring per line. Matched on content, not line numbers, so an
 # entry survives unrelated edits and expires the moment its line changes —
@@ -879,12 +939,16 @@ if src and (moved or relocated):
 # requires, since that class matches on #\d{2,} — into a BROADER pattern than
 # the author wrote. "Fixed in #412" became "Fixed in", which still matched the
 # judged hit and every future "Fixed in ..." hit nobody judged.
-patterns = []
+patterns, groups = [], []
 try:
     with open(ack_file, encoding="utf-8") as fh:
-        for raw in fh:
+        for n, raw in enumerate(fh, 1):
             raw = raw.strip()
-            if raw and not raw.startswith("#"):
+            if not raw or raw.startswith("#"):
+                continue
+            if raw.startswith(GROUP_KEY + " ") or raw == GROUP_KEY:
+                groups.append(parse_group(raw, n))
+            else:
                 patterns.append(raw)
 except OSError:
     pass
@@ -905,16 +969,57 @@ def matches(p, cls, path, full):
     return p in f"{cls} {path} {full}"
 
 
+groups = [g for g in groups if g["swept"] == policy_rel]
+# What a group must decline: every title a line could use to name content that
+# moved. The moved titles, on the tier rule class 2 uses, and the sections a
+# body line left while the heading stayed — the #272 demotion shape.
+moved_names = []
+if groups and src and (moved or relocated):
+    left_from = {}
+    relocated_lines(left_from)
+    shrunk = {norm_title(t): t for t in left_from.values()
+              if t and norm_title(t) in now_titles}
+    for k, orig in list(moved.items()) + list(shrunk.items()):
+        bare = len(k) >= 8 and len(WORDS.findall(k)) >= 2  # `sweepable`'s tier
+        why = "a section content left" if k in shrunk else "a title that moved"
+        moved_names.append((f"'{orig}', {why}", title_pat(orig), bare))
+
+
+def names_moved(line):
+    # The policy filename is itself a `.md` pointer, and every line a group
+    # sees carries it — so the generic tier asks for a pointer beside it.
+    rest = line
+    for n in LOCAL_POLICY_NAMES + OUTER_POLICY_NAMES:
+        rest = rest.replace(n, "")
+    for said, pat, bare in moved_names:
+        if pat.search(line) and (bare or POINTER.search(rest)):
+            return said
+    return None
+
+
 new, acked = [], []
 matched_by = {p: [] for p in patterns}
+grouped = {g["raw"]: [] for g in groups}
+declined = 0
 for cls, loc, detail, full in seams:
     path = loc.rsplit(":", 1)[0]
     hit_pattern = next((p for p in patterns if matches(p, cls, path, full)), None)
-    if hit_pattern is None:
-        new.append((cls, loc, detail))
-    else:
+    if hit_pattern is not None:
         acked.append((cls, loc))
         matched_by[hit_pattern].append(loc)
+        continue
+    g = next((g for g in groups if cls == "source-back-reference"
+              and path.startswith(g["prefix"])), None)
+    if g is not None:
+        named = names_moved(full)
+        if named is None:
+            grouped[g["raw"]].append(loc)
+            continue
+        declined += 1
+        detail = (f"names {named} — {GROUP_KEY} {g['prefix']} does not "
+                  f"cover it: {detail}")
+    new.append((cls, loc, detail))
+n_grouped = sum(len(v) for v in grouped.values())
 
 if generic:
     # Say which titles got the weaker sweep. A heuristic that silently narrows
@@ -971,6 +1076,19 @@ if new:
     print("below goes on the ledger row via --seams.")
 else:
     print("OK — no unacknowledged cross-reference seams.")
+if n_grouped or declined:
+    # Counted, not listed: the judgement is the entry, and listing hundreds of
+    # fixture lines would bury the one thing to read — the reason.
+    print(f"\n{n_grouped} filename mention(s) acknowledged by group "
+          f"({GROUP_KEY} in {ack_file}):")
+    for g in groups:
+        locs = grouped[g["raw"]]
+        files = {l.rsplit(":", 1)[0] for l in locs}
+        print(f"  {len(locs)} hit(s) in {len(files)} file(s) under "
+              f"{g['prefix']} — {g['reason'][:90]}")
+    if declined:
+        print(f"  {declined} declined: the line also names content that "
+              "moved, so it is listed above for judgement.")
 if acked:
     print(f"\n{len(acked)} acknowledged seam(s) skipped (judged legitimate in "
           f"{ack_file}):")
@@ -1011,7 +1129,7 @@ if acked:
 # with an interval half, so a row of counts is uninterpretable without it.
 print(f"\nseam_interval: {seam_interval}")
 print(f"seam_base: {base_ref}")
-print(f"seams_acked: {len(acked)}")
+print(f"seams_acked: {len(acked) + n_grouped}")
 print(f"seams: {len(new)}")
 sys.exit(3 if new else 0)
 PY

@@ -244,3 +244,20 @@ skills/init-socraticode/references/code-exploration-policy.md :: ## Code Explora
 # AGENTS.md still carries `## Self-budget`, which states the ratchet inline
 # while BUDGETS.md carries the mechanism. Verified 2026-09-23.
 docs/BUDGETS.md :: that *state* the budgets live inline in [AGENTS.md](../AGENTS.md) under
+
+# --- #321: group entries for the source that IS the policy-file machinery ---
+#
+# Any demotion out of AGENTS.md opens the source sweep, and this repo's own
+# suite and skill scripts name AGENTS.md ~690 times — fixture names, synthetic
+# policy files, code paths. Subject matter, not references: they describe
+# policy files in general, and a test that reads this repo's AGENTS.md fails on
+# its own when the content it reads moves. Line-scoped, that was ~690 entries
+# expiring whenever the busiest test file changed. Each group still declines a
+# line that names a title which moved or a section a body line left.
+#
+# Deliberately NOT grouped: scripts/, .claude/hooks/, .github/ and
+# .pre-commit-config.yaml. Their dozen mentions are claims about THIS repo's
+# AGENTS.md ("AGENTS.md states it is never gated"), which a group cannot check,
+# so a demotion judges them line by line.
+@mentions AGENTS.md tests/ :: the structural and integration suites are the policy-file machinery: fixtures, synthetic policy files, and assertions that fail by themselves when the AGENTS.md content they read moves
+@mentions AGENTS.md skills/ :: skill scripts name AGENTS.md as the file a CONSUMING repo keeps — a generic subject, never this repo's own policy file
