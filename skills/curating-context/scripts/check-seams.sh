@@ -206,7 +206,7 @@ a successor heading that merely contains the old title is skipped.
 
 Exit codes:
   0  no unacknowledged seams
-  1  usage error, or no policy file found
+  1  usage error, a malformed @mentions entry, or no policy file found
   2  infrastructure failure (base revision unreadable, python3 missing)
   3  one or more NEW seams to review — judge each: fix what lies, acknowledge
      what is legitimate, re-run
