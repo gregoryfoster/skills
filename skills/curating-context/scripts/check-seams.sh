@@ -95,7 +95,8 @@ Options:
                    (#321). A GROUP entry acknowledges every source-back-reference
                    under a path prefix, for one swept file, and never expires:
                      @mentions SWEPT-FILE PATH-PREFIX :: REASON
-                   It covers no other class, and it DECLINES a line that also
+                   PATH-PREFIX matches whole path segments: `tests` never
+                   reaches `tests-data/`. It covers no other class, and it DECLINES a line that also
                    names content that moved — a title that left SWEPT-FILE, or
                    a surviving section a body line left — so that line is
                    reported for judgement as usual. The report prints each
