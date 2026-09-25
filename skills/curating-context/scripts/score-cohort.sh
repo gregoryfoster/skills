@@ -1351,9 +1351,11 @@ t_versions, c_versions = sorted(t_by_version), sorted(c_by_version)
 # annotations, a reader taking an annotation as describing reality, sitting in
 # the script instead. wave:/pair: are rollout order now, not a version
 # assignment (#118/#168): nothing has ever held an arm at a version, because
-# .skills/skills-pin was in no cohort repo (0 of 13 observed 2026-09-24) and a
-# pin could not label a scored run anyway — the cadence writes
-# baseline:scheduled and classify_run() skips it.
+# .skills/skills-pin was in no cohort repo (observed 2026-09-24, not
+# re-verified: 0 of 13 by
+# `gh api repos/CannObserv/<r>/contents/.skills/skills-pin`) and a pin could
+# not label a scored run anyway — the cadence writes baseline:scheduled and
+# classify_run() skips it.
 #
 # DERIVED from the ledgers already fetched, never asserted, so it cannot go stale
 # the way the claim it replaces did. If the newest version recorded anywhere in

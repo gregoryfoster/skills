@@ -73,17 +73,16 @@ lockfile resolves that pin to (e.g. `0.29.1`, recorded in the sidecar's
 | `FILTER_SPEC` | `no` | `no` \| `yes` (+ `KEEP_PREFIX`, default `/api/v1/`) | Phase 2; refresh + drift flows re-filter identically |
 | `DRIFT_GUARD` | `ci` | `none` \| `ci` \| `ci+live` | Phase 6 per [references/ci-drift-job.md](references/ci-drift-job.md) and [references/live-drift.md](references/live-drift.md) |
 
-Cohort context (show when the user asks "why this default?"). Observed
-2026-07-30, not re-verified — by 2026-09-24 `watcher-client` and
-`powermap-client` had been retired, leaving `archiver-client` under the
-hermetic gate and observo on a live-only drift job:
+Cohort context (show when the user asks "why this default?"). This is what
+the cohort did on 2026-07-30, and some of these clients have since been
+retired — read the names as history and the mechanism as the argument:
 
 - `OUTPUT_LAYOUT=sdk-package` — archiver (twice: `archiver-client`,
   `watcher-client`) and usa-wa (`powermap-client` workspace member) used a
   standalone package; observo used `generated-tree`. The SDK's own lockfile
   pinning the generator + ruff is what makes drift checks byte-stable, so
   sdk-package was both majority and mechanically stronger.
-- `FILTER_SPEC` — only observo filtered (producer exposes an `/admin/*` HTMX
+- `FILTER_SPEC` — only observo filtered (producer exposed an `/admin/*` HTMX
   surface it never calls). Say `yes` when the producer spec carries surface
   the consumer won't touch.
 - `DRIFT_GUARD=ci` — every cohort consumer ran the hermetic CI gate; only

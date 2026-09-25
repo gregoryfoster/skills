@@ -24,10 +24,9 @@ After `codebase_index` finishes embeddings + graph, run `codebase_context_index`
 
 > **Adapt, do not copy.** The acceptance criteria require the manifest to name
 > the project's *actual* files. The canonical categories below are the taxonomy
-> the configured cohort repos converged on — manifests run from 5 to 33
-> artifacts (observed 2026-09-24, not re-verified) — so include each category
-> **only when the project has the files**, fix every path, and verify each path
-> resolves to a real file or directory before indexing.
+> the configured cohort repos converged on — include each category **only when
+> the project has the files**, fix every path, and verify each path resolves to
+> a real file or directory before indexing.
 
 ## Manifest shape — one `path` string per artifact
 
