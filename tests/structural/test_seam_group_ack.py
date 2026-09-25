@@ -15,7 +15,8 @@ What this file pins:
   `seams_acked`, and prints its reason with the count.
 - **It declines a line naming content that moved**: a title that left the
   swept file, or a surviving section a body line left — the generic-title tier
-  only on a line that points somewhere, as class 2 matches it.
+  only on a line that points somewhere, as class 2 matches it — including
+  when a title moved and another section shrank in the same run.
 - **It reaches nothing else**: not a doc back-reference, not
   `source-moved-title`, not a path outside its prefix — matched on a path
   segment, so `tests` does not reach `tests-data/` — not a run against
@@ -186,6 +187,28 @@ class TestTheGroupDeclines:
         assert r.returncode == 3, r.stdout
         assert _count(r, "seams") == 1, r.stdout
         assert "'Release Checklist', a section content left" in r.stdout
+
+    def test_a_shrunk_section_in_a_run_where_another_title_moved(self, tmp_path: Path):
+        """CR 9. A moved title skips the first relocation walk, so the group
+        runs its own — the branch that finds `Build` lost a line while
+        `Release Checklist` left whole."""
+        repo = _repo(
+            tmp_path, extra={"tests/test_build.py": "# see AGENTS.md § Build\n"}
+        )
+        _write(
+            repo,
+            "AGENTS.md",
+            "# Guide\n\n## Build\n\nBuild steps: [docs/RELEASE.md](docs/RELEASE.md).\n",
+        )
+        _write(
+            repo,
+            "docs/RELEASE.md",
+            MOVED_DOC + "\n## Building\n\nrun make before every commit, always.\n",
+        )
+        _ack(repo, TESTS_GROUP)
+        r = _seams(repo)
+        assert "tests/test_build.py:1" in r.stdout, r.stdout
+        assert "'Build', a section content left" in r.stdout, r.stdout
 
     def test_a_generic_title_only_where_the_line_points(self, tmp_path: Path):
         """`Build` is one word, so class 2 matches it only beside a pointer;
