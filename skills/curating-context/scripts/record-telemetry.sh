@@ -138,11 +138,11 @@ Options:
                    break: a run recording two files appends both at one HEAD
                    (#324). A row origin/HEAD already holds ends the walk, as
                    it would refuse --amend. Each rewritten row is named on
-                   stderr. A ledger
-                   backfilled before that fix can hold such a row still a
-                   parent behind while the newest names REV; a re-run answers
-                   "nothing to backfill", and nothing can tell which older rows
-                   were that run's, so set that one row's `repo_commit` by hand.
+                   stderr. A ledger backfilled before that fix can hold such a
+                   row still a parent behind while the newest names REV; a
+                   re-run answers "nothing to backfill", and nothing can tell
+                   which older rows were that run's, so set that one row's
+                   `repo_commit` by hand.
 
                    Phase 7 measures, records, and only then commits the ledger
                    alongside the edits — so the hash the append could see is the
