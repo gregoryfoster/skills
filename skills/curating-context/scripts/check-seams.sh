@@ -777,7 +777,10 @@ def relocated_lines(sections=None):
 # Computed only when it can change what happens. A moved title already turns the
 # sweep on, and --no-source turns it off; reading every doc a second time to
 # refine a note nobody can act on is a cost a gate script should not pay.
-relocated = [] if moved or sweep_source != "1" else relocated_lines()
+# The sections they left come free with the walk, for a group's decline below.
+left_from = {}
+relocated = ([] if moved or sweep_source != "1"
+             else relocated_lines(left_from))
 
 
 # -- class 1: back-references — the policy file named inside a reference doc.
@@ -988,8 +991,10 @@ groups = [g for g in groups if g["swept"] == policy_rel]
 # body line left while the heading stayed — the #272 demotion shape.
 moved_names = []
 if groups and src and (moved or relocated):
-    left_from = {}
-    relocated_lines(left_from)
+    if moved:
+        # Skipped above when a title moved; a demotion can still leave another
+        # section standing with less in it.
+        relocated_lines(left_from)
     shrunk = {norm_title(t): t for t in left_from.values()
               if t and norm_title(t) in now_titles}
     for k, orig in list(moved.items()) + list(shrunk.items()):
