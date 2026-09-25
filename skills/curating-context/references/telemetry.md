@@ -244,6 +244,10 @@ would look tidier and has no fixed point: amending changes the hash the row was
 just given. The follow-up commit touches the ledger line and nothing else, so
 the tree the row describes is still the tree at the commit it names.
 
+A run recording two files appends both rows at one HEAD, so the backfill
+rewrites every curation row that shares its commit, walking back from the
+newest until another commit — an earlier run's — ends it (#324).
+
 `--repo-commit` rewrites in place and never appends, so a re-run is a no-op and
 an interrupted run leaves a row that still parses — one commit behind, and
 recoverable by running the backfill later. It refuses a revision the repo does

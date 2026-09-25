@@ -130,10 +130,13 @@ Options:
                    the origin remote nor the checkout directory names the
                    repository the cohort roster knows this repo as.
   --repo-commit REV
-                   BACKFILL MODE. Set `repo_commit` on the row this run already
+                   BACKFILL MODE. Set `repo_commit` on the rows this run already
                    recorded to REV, and do nothing else: no measurement is read
-                   from stdin and no row is appended. The row it targets is the
-                   NEWEST in the ledger — the one the append just wrote.
+                   from stdin and no row is appended. It targets the NEWEST row
+                   in the ledger — the one the append just wrote — and every
+                   curation row before it that shares its commit without a
+                   break: a run recording two files appends both at one HEAD
+                   (#324). Each rewritten row is named on stderr.
 
                    Phase 7 measures, records, and only then commits the ledger
                    alongside the edits — so the hash the append could see is the
@@ -960,9 +963,24 @@ if mode == "backfill":
         )
         sys.exit(1)
     was = target.get("repo_commit")
+    # A run that records rows for two files appends both at one HEAD, so they
+    # share the stale commit the newest carries (#324). Walk back from the
+    # newest while that holds: every row appended before this run committed
+    # names an older HEAD, because every run commits its ledger. A baseline row
+    # at the same HEAD is this run's too, and exempt — skipped, not a stop.
+    # A null names no HEAD, so it cannot tell this run's rows from ones
+    # predating the field: the newest row alone, as before.
+    targets = [(idx, target)]
+    if was is not None:
+        for i, r in reversed(parsed[:-1]):
+            if r.get("repo_commit") != was:
+                break
+            if is_curation_row(r):
+                targets.insert(0, (i, r))
     if dry == "1":
-        target["repo_commit"] = repo_commit
-        print(json.dumps(target, sort_keys=True, ensure_ascii=False))
+        for _, r in targets:
+            r["repo_commit"] = repo_commit
+            print(json.dumps(r, sort_keys=True, ensure_ascii=False))
         sys.exit(0)
     if was == repo_commit:
         # Idempotent by answering, not by writing. A re-run is the normal way an
@@ -970,11 +988,14 @@ if mode == "backfill":
         print(f"repo_commit already {repo_commit}; nothing to backfill",
               file=sys.stderr)
         sys.exit(0)
-    target["repo_commit"] = repo_commit
-    lines[idx] = json.dumps(target, sort_keys=True, ensure_ascii=False)
+    for i, r in targets:
+        r["repo_commit"] = repo_commit
+        lines[i] = json.dumps(r, sort_keys=True, ensure_ascii=False)
     rewrite_ledger(ledger, lines)
-    print(f"backfilled repo_commit {was or 'null'} -> {repo_commit} on "
-          f"{target.get('file')} ({target.get('ts')})", file=sys.stderr)
+    # One line per row, so a multi-file run shows every row it moved.
+    for _, r in targets:
+        print(f"backfilled repo_commit {was or 'null'} -> {repo_commit} on "
+              f"{r.get('file')} ({r.get('ts')})", file=sys.stderr)
     sys.exit(0)
 
 try:
@@ -1215,7 +1236,7 @@ elif mode == "amend":
               "nothing to amend", file=sys.stderr)
     else:
         # MOVED to the end, not rewritten where it sits. The next step is
-        # `--repo-commit HEAD`, which backfills the newest row in the whole
+        # `--repo-commit HEAD`, which backfills from the newest row in the whole
         # ledger, and `check-seams.sh --base-ledger` reads the newest
         # repo_commit the same way. Left in place behind another file's row,
         # the backfill would rewrite THAT row's commit and leave this one a
