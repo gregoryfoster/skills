@@ -91,10 +91,10 @@ subject — a test suite built from synthetic policy files, scripts that read a
 consumer's `AGENTS.md` — the filename is subject matter hundreds of times over.
 Measured on this skill's own repo on 2026-09-24: one demotion out of `AGENTS.md`
 took the sweep from 0 unacknowledged hits to ~700, ~690 of them under `tests/`
-and `skills/`. A line-scoped
-entry for each expires whenever its line changes, so the busiest test file
-turned the gate red on unrelated edits, and demotion — the lever that makes real
-headroom — was priced out ([#321](https://github.com/gregoryfoster/skills/issues/321)).
+and `skills/`. A line-scoped entry for each expires whenever its line changes,
+so the busiest test file turned the gate red on unrelated edits, and demotion —
+the lever that makes real headroom — was priced out
+([#321](https://github.com/gregoryfoster/skills/issues/321)).
 
 So `.skills/context-seams-ok` takes a **group** entry:
 
