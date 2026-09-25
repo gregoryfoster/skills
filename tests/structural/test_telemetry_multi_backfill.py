@@ -15,6 +15,9 @@ What this file pins:
   before — and does not end the walk.
 - **A null commit backfills the newest row alone**: it names no HEAD, so it
   cannot tell this run's rows from ones predating the field.
+- **A row the default branch holds ends the walk** even at the same commit —
+  rewritten, it is the line merge=union later keeps twice (CR 11) — and a walk
+  past the newest row with no `origin/HEAD` to check against says so.
 - **`--dry-run` previews every target** and writes nothing; **a re-run is a
   no-op**.
 - **The prose names the multi-row rule** where the backfill is documented.
@@ -27,7 +30,16 @@ import subprocess
 from pathlib import Path
 
 from .test_loss_warrants import _clean_env, _repo
-from .test_telemetry_amend import LEDGER, RECORD, TELEMETRY, _row, _rows, _seed
+from .test_telemetry_amend import (
+    LEDGER,
+    RECORD,
+    TELEMETRY,
+    _commit,
+    _row,
+    _rows,
+    _seed,
+    _with_origin,
+)
 
 STALE = "5ta1e00"
 EARLIER = "ea41e00"
@@ -113,6 +125,35 @@ class TestEveryRowOfTheRunIsBackfilled:
         )
         assert _backfill(repo).returncode == 0
         assert [x.get("repo_commit") for x in _rows(repo)] == [None, _head(repo)]
+
+
+class TestAHeldRowIsHistory:
+    def test_a_row_the_default_branch_holds_ends_the_walk(self, tmp_path: Path):
+        """A parallel branch cut from the same HEAD merged its row, never
+        backfilled, so it shares this run's stale commit."""
+        repo = _repo(tmp_path, "# P\n")
+        merged = _row(
+            "2000-01-05", 90, ["demote:Z"], file="OTHER.md", repo_commit=STALE
+        )
+        _seed(repo, merged)
+        _commit(repo, "the other branch's curation")
+        _with_origin(tmp_path, repo)
+        _seed(repo, merged, _row("2000-01-06", 450, ["demote:X"], repo_commit=STALE))
+        r = _backfill(repo)
+        assert r.returncode == 0, r.stderr
+        assert [x["repo_commit"] for x in _rows(repo)] == [STALE, _head(repo)]
+
+    def test_a_walk_with_nothing_to_check_against_warns(self, tmp_path: Path):
+        r = _backfill(_two_file_run(tmp_path))
+        assert r.returncode == 0, r.stderr
+        assert "no origin/HEAD" in r.stderr, r.stderr
+
+    def test_a_single_row_backfill_stays_quiet(self, tmp_path: Path):
+        repo = _repo(tmp_path, "# P\n")
+        _seed(repo, _row("2000-01-05", 450, ["demote:X"], repo_commit=STALE))
+        r = _backfill(repo)
+        assert r.returncode == 0, r.stderr
+        assert "WARN" not in r.stderr, r.stderr
 
 
 class TestPreviewAndRerun:

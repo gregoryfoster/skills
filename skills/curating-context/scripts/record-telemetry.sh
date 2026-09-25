@@ -136,7 +136,9 @@ Options:
                    in the ledger — the one the append just wrote — and every
                    curation row before it that shares its commit without a
                    break: a run recording two files appends both at one HEAD
-                   (#324). Each rewritten row is named on stderr. A ledger
+                   (#324). A row origin/HEAD already holds ends the walk, as
+                   it would refuse --amend. Each rewritten row is named on
+                   stderr. A ledger
                    backfilled before that fix can hold such a row still a
                    parent behind while the newest names REV; a re-run answers
                    "nothing to backfill", and nothing can tell which older rows
@@ -647,8 +649,10 @@ REPO_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || REPO_COMMIT=""
 # refusal: a repo with no origin/HEAD has no default branch to compare against.
 # No ledger on the default branch at all leaves BASE_LEDGER empty: nothing has
 # merged, so every row is this branch's own.
+# QUIET (a third argument) drops the two WARNs, for a caller that warns itself
+# only when the answer turns out to matter.
 resolve_base_ledger() {
-  local what="$1" consequence="$2" rel
+  local what="$1" consequence="$2" quiet="${3:-}" rel
   BASE_REF="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || BASE_REF=""
   case "$LEDGER" in
     "$ROOT"/*) rel="${LEDGER#"$ROOT"/}" ;;
@@ -656,11 +660,13 @@ resolve_base_ledger() {
     *) rel="${LEDGER#./}" ;;
   esac
   if [ -z "$BASE_REF" ]; then
-    echo "WARN cannot tell $what: no origin/HEAD to compare against" >&2
-    echo "     (\`git remote set-head origin --auto\` sets one). $consequence" >&2
+    [ -n "$quiet" ] || {
+      echo "WARN cannot tell $what: no origin/HEAD to compare against" >&2
+      echo "     (\`git remote set-head origin --auto\` sets one). $consequence" >&2; }
   elif [ -z "$rel" ]; then
-    echo "WARN cannot tell $what: $LEDGER is outside" >&2
-    echo "     this repo, so $BASE_REF holds no copy of it to compare against." >&2
+    [ -n "$quiet" ] || {
+      echo "WARN cannot tell $what: $LEDGER is outside" >&2
+      echo "     this repo, so $BASE_REF holds no copy of it to compare against." >&2; }
     BASE_REF=""
   elif git cat-file -e "$BASE_REF:$rel" 2>/dev/null; then
     git show "$BASE_REF:$rel" >"$TMP/base.jsonl" || {
@@ -707,6 +713,9 @@ elif [ "$BACKFILL" -eq 1 ]; then
     echo "      --repo-commit rewrites the row this run already recorded;" >&2
     echo "      record it first, then commit, then backfill." >&2
     exit 1; }
+  # Quiet: the newest row is backfilled either way, and only a walk past it
+  # needs to know which rows have merged — the python warns then, not always.
+  resolve_base_ledger "" "" quiet
 elif [ "$AMEND" -eq 1 ]; then
   MODE=amend
   # Same -s test and the same reason as the backfill: a request to rewrite a row
@@ -974,13 +983,23 @@ if mode == "backfill":
     # at the same HEAD is this run's too, and exempt — skipped, not a stop.
     # A null names no HEAD, so it cannot tell this run's rows from ones
     # predating the field: the newest row alone, as before.
+    #
+    # A row the default branch holds is history even at the same commit — a
+    # parallel branch cut from one HEAD, never backfilled — and rewriting it is
+    # the line merge=union later keeps twice (#325). So a held row ends the walk.
+    held = ({row_identity(r) for _, r in read_ledger(base_ledger)[1]}
+            if base_ledger else set())
     targets = [(idx, target)]
     if was is not None:
         for i, r in reversed(parsed[:-1]):
-            if r.get("repo_commit") != was:
+            if r.get("repo_commit") != was or row_identity(r) in held:
                 break
             if is_curation_row(r):
                 targets.insert(0, (i, r))
+    if len(targets) > 1 and not base_ref:
+        print("WARN cannot tell whether the earlier rows at this commit have "
+              "merged (no origin/HEAD); backfilling them as this run's",
+              file=sys.stderr)
     if dry == "1":
         for _, r in targets:
             r["repo_commit"] = repo_commit
