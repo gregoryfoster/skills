@@ -17,7 +17,8 @@ What this file pins:
   swept file, or a surviving section a body line left — the generic-title tier
   only on a line that points somewhere, as class 2 matches it.
 - **It reaches nothing else**: not a doc back-reference, not
-  `source-moved-title`, not a path outside its prefix, not a run against
+  `source-moved-title`, not a path outside its prefix — matched on a path
+  segment, so `tests` does not reach `tests-data/` — not a run against
   another swept file.
 - **A reason is required**; a malformed entry exits 1 and names the form.
 - **A line-scoped entry still expires** beside a group: the gate still fails
@@ -216,6 +217,16 @@ class TestTheGroupReachesNothingElse:
         r = _seams(repo)
         assert _count(r, "seams") == 1, r.stdout
         assert "scripts/tool.sh:1" in r.stdout
+
+    def test_not_a_sibling_sharing_the_prefix_text(self, tmp_path: Path):
+        """CR 1. `tests` names a directory, not a string: `tests-data/` is
+        another tree, and an entry that never expires must not reach it."""
+        repo = _repo(tmp_path, extra={"tests-data/seed.sh": "# reads AGENTS.md\n"})
+        _ack(repo, "@mentions AGENTS.md tests :: fixtures name the file")
+        r = _seams(repo)
+        assert _count(r, "seams") == 1, r.stdout
+        assert "tests-data/seed.sh:1" in r.stdout
+        assert "3 hit(s) in 1 file(s) under tests/" in r.stdout
 
     def test_not_a_doc_back_reference(self, tmp_path: Path):
         repo = _repo(tmp_path)

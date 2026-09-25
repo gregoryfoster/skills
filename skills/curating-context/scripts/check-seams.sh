@@ -923,8 +923,14 @@ def parse_group(raw, n):
         print(f"ERROR {ack_file}:{n}: a group entry takes the form "
               f"'{GROUP_FORM}', reason required: {raw[:80]}", file=sys.stderr)
         sys.exit(1)
-    return {"swept": fields[1], "prefix": fields[2], "reason": reason.strip(),
-            "raw": raw}
+    # A prefix ends on a path segment: `skills` must not reach `skills-vendor/`,
+    # because an entry that never expires may cover no more than it names.
+    return {"swept": fields[1], "prefix": fields[2].rstrip("/"),
+            "reason": reason.strip(), "raw": raw}
+
+
+def under(path, prefix):
+    return path == prefix or path.startswith(prefix + "/")
 
 
 # Acknowledged hits: judged legitimate on an earlier run and recorded in the
@@ -1009,14 +1015,14 @@ for cls, loc, detail, full in seams:
         matched_by[hit_pattern].append(loc)
         continue
     g = next((g for g in groups if cls == "source-back-reference"
-              and path.startswith(g["prefix"])), None)
+              and under(path, g["prefix"])), None)
     if g is not None:
         named = names_moved(full)
         if named is None:
             grouped[g["raw"]].append(loc)
             continue
         declined += 1
-        detail = (f"names {named} — {GROUP_KEY} {g['prefix']} does not "
+        detail = (f"names {named} — {GROUP_KEY} {g['prefix']}/ does not "
                   f"cover it: {detail}")
     new.append((cls, loc, detail))
 n_grouped = sum(len(v) for v in grouped.values())
@@ -1085,7 +1091,7 @@ if n_grouped or declined:
         locs = grouped[g["raw"]]
         files = {l.rsplit(":", 1)[0] for l in locs}
         print(f"  {len(locs)} hit(s) in {len(files)} file(s) under "
-              f"{g['prefix']} — {g['reason'][:90]}")
+              f"{g['prefix']}/ — {g['reason'][:90]}")
     if declined:
         print(f"  {declined} declined: the line also names content that "
               "moved, so it is listed above for judgement.")
