@@ -92,12 +92,13 @@ Given growth, there are two tiers:
 
 Requiring growth is the whole design, and it is what lets the second tier exist
 at all. Over-budget alone would fire on every edit to a file that is already
-over — which, measured exactly, is the state **ten of the twelve** cohort repos
-are in today, and a hook that fires on every edit is one everybody turns off. An
-increase alone would fire on healthy growth deep inside budget. Together they
-mean the guard speaks exactly when someone is making a number worse, so a tier
-*below* the budget adds a signal without adding nagging: it fires on the edit
-that enters the band, not on every edit thereafter.
+over — which, measured exactly, was the state of **ten of the twelve** cohort
+repos when this tier was designed (2026-09-10) — and a hook that fires on every
+edit is one everybody turns off. An increase alone would fire on healthy growth
+deep inside budget. Together they mean the guard speaks exactly when someone is
+making a number worse, so a tier *below* the budget adds a signal without adding
+nagging: it fires on the edit that enters the band, not on every edit
+thereafter.
 
 Before the `NEAR` tier the budget behaved as a **cliff**. A file at 9,999 tokens
 against a 10,000 budget was exactly as silent as one at 3,000, so the first

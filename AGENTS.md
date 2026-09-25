@@ -289,7 +289,7 @@ When an agent-specific or stack-specific divergence is needed (see "Variant stra
 ## Detail Docs
 
 - [docs/STYLE.md](docs/STYLE.md) — the per-script resolution template, the gate-script rules and the scripts they bind, the `GIT_DIR` scrub, and the refused `extensions.worktreeConfig`
-- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, and the resolver helpers behind the three env-var knobs
+- [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — authoring a project override, the `references/` conditional-block delimiters, the env-var knobs' resolver helpers, and claims about another repo
 - [docs/BUDGETS.md](docs/BUDGETS.md) — a budget's two readings, anchoring, and the weekly exact gate
 - [docs/KNOBS.md](docs/KNOBS.md) — every `.skills/` file a project may commit: grammar, reader, replaces-or-extends, and what absence means
 - [docs/SKILLS.md](docs/SKILLS.md) — the submodule + symlink vendoring pattern, `.skills/doctor.sh`, and self-discovery

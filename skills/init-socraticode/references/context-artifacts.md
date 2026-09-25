@@ -24,10 +24,10 @@ After `codebase_index` finishes embeddings + graph, run `codebase_context_index`
 
 > **Adapt, do not copy.** The acceptance criteria require the manifest to name
 > the project's *actual* files. The canonical categories below are the taxonomy
-> the configured cohort repos converged on (archiver 8 artifacts, power-map 6,
-> observo 13, usa-wa 7) — include each category **only when the project has the
-> files**, fix every path, and verify each path resolves to a real file or
-> directory before indexing.
+> the configured cohort repos converged on — manifests run from 5 to 33
+> artifacts (observed 2026-09-24, not re-verified) — so include each category
+> **only when the project has the files**, fix every path, and verify each path
+> resolves to a real file or directory before indexing.
 
 ## Manifest shape — one `path` string per artifact
 
@@ -73,7 +73,7 @@ comma never means "combine into one `path`"; there is no multi-path `path`.
 
 | Category | Typical path (file or dir) | Include when |
 |---|---|---|
-| `agent-guidelines` | `./AGENTS.md` | always (every cohort repo registers it) |
+| `agent-guidelines` | `./AGENTS.md` | always — it is the project's agent policy file |
 | `commands` | `./docs/COMMANDS.md` | the project keeps a command reference |
 | `skills-doc` | `./docs/SKILLS.md` | the project vendors skills |
 | `socraticode-doc` | `./docs/SOCRATICODE.md` | always (Phase 3 writes it) |

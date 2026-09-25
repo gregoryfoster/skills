@@ -100,7 +100,7 @@ flags name versions now, and there are no defaults left to invert.
 > scored run**: the cadence writes `baseline:scheduled`, and the scored run is
 > the first row whose actions are *not* purely `baseline*`, so the rows a pin
 > versions deterministically are the rows this gate skips. `.skills/skills-pin`
-> is also installed in **none** of the twelve, so no arm was ever held back.
+> was also installed in **none** of the twelve, so no arm was ever held back.
 >
 > The arm is therefore the `skill_version` on the row, and `wave:`/`pair:` are
 > **rollout order** — which half a change reaches first, and which two repos were

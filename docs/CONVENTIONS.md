@@ -192,3 +192,28 @@ to update, the name inference survives as a *detector*:
 `undeclared_variant_candidates()` flags anything shaped like `<baseline>-<suffix>`
 that is undeclared, and `test_naming.py` fails on it by name. If a lookalike is
 genuinely not a variant, record it in `NOT_VARIANTS` with the reason.
+
+## Claims about another repository
+
+A sentence about what a cohort repo **keeps, runs or is** right now describes a
+tree this repo cannot see, and nothing here re-checks it. One such claim called
+`CannObserv/power-map`'s `scripts/pre-ship.sh` a fork on 2026-09-21. The file
+was deleted the next day, and #320 cited the claim two days later as evidence
+([#322](https://github.com/gregoryfoster/skills/issues/322)). The date read as
+a credential when it was really an expiry. So write the claim in one of two
+forms:
+
+- **The shape, without names.** Use this when the argument only needs the
+  pattern to exist: "a consumer may keep a one-file `scripts/` holding a
+  wrapper". This is the default, and it cannot rot.
+- **An observation.** Use this when the names carry the argument. Write it in
+  the past tense, with the date and the command that re-derives it, so the
+  reader can re-check it and does not take it on trust:
+  "observed 2026-09-24, not re-verified: two of thirteen kept one
+  (`gh api repos/CannObserv/<r>/contents/scripts/pre-ship.sh`)".
+
+**Never write another repo's state in the present tense** ("every cohort repo
+runs…", "ten of the twelve are in today"). **An event needs neither form**: what
+a run measured, or what a commit did on a date, stays true. **Do not gate this**:
+a test that calls the GitHub API for thirteen repos adds a network dependency to
+a suite that has none, and it would fail for reasons unrelated to this repo.

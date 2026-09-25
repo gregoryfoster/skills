@@ -94,7 +94,7 @@ class TestFindingCarriesItsDerivation:
         missing = [lbl for lbl in ORIGINAL_LABELS if lbl not in format_line]
         assert not missing, (
             f"The finding format must stay additive — original labels missing: {missing}. "
-            "Eleven cohort repos vendor this skill and pin these four verbatim"
+            "consuming repos vendor this skill and pin these four verbatim"
         )
 
     def test_label_order_is_stable(self, format_line):
