@@ -174,7 +174,8 @@ Measure, pin, reserve, and keep the kernel ahead of exhaustion — all four,
 whatever the first step finds. The first step decides only what an early
 killer is worth (§4). Five CannObserv VMs, and most findings rest on one of
 them: broker (the install peak, sessions at -1000), notifier (sessions at 0,
-the spaced earlyoom regex), wslcb-licensing-tracker (the inert `MemoryLow=`,
+then at -1000 after a reboot changed their path in; the spaced earlyoom
+regex), wslcb-licensing-tracker (the inert `MemoryLow=`,
 the `$`-anchored `--prefer`, earlyoom on stock arguments), address-validator
 (the templated-slice clamp, and -1000 with no `exe-init` — both measured
 there alone — plus the stock-arguments earlyoom again) and replicator (-1000
@@ -189,7 +190,8 @@ disagreement is stated rather than resolved
 ### 1. Measure which kind of host this is
 
 Whether the kernel's OOM killer can pick a session process at all **varies by
-host**, and it decides which half of the mitigation is load-bearing. Read it
+host, and on one host by the path the session came in on**. It decides which
+half of the mitigation is load-bearing. Read it
 off the processes themselves — `comm` is what the kernel and earlyoom both see:
 
 ```bash
@@ -200,11 +202,19 @@ done
 
 | Sessions at | Measured on | What follows |
 |---|---|---|
-| **-1000** | broker; address-validator; replicator | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since), so its `--prefer` reaches only a `choom`'d launch (§4). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
-| **0** | notifier | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, and so can earlyoom, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
+| **-1000** | broker; address-validator; replicator; notifier after its 2026-09-28 reboot | Inherited from `sshd` and `exe-init` on broker; address-validator has no `exe-init` process and lands there anyway. **No killer can pick a session** — not the kernel's, and not earlyoom, which skips a -1000 process exactly as the kernel does, `--prefer` or not (`kill.c`, v1.7 and since), so its `--prefer` reaches only a `choom`'d launch (§4). VSCode Server, Claude Code and any server they launch are never the victim, so under real exhaustion something else goes, the production service included, and a cgroup cap on a session **stalls** it rather than killing it. The service's `OOMScoreAdjust=` only reorders what *is* killable. The lever that works here is the session's own score: launch it under `choom -n 500 --` (raising is unprivileged), or inside [row U](troubleshooting.md)'s capped scope, which applies the same `choom` and bounds what it can take. |
+| **0** | notifier, 09-18 and 09-24, with the session root under `sshd` → `sshd-session` | Only `sshd` and `exe-init` at -1000; every `claude`, `MainThread` and `npm exec socrat` at 0. The kernel's killer *can* pick a session, and so can earlyoom, so the production unit's `OOMScoreAdjust=` is what creates the gap, and a cap on a session **kills** rather than stalls. |
 
-What decides it was not determined, and `exe-init`'s presence is not it:
-notifier has one and sits at 0, address-validator has none and sits at -1000.
+**The class belongs to the session's path in, not to the host.** notifier
+has been in both rows:
+- at 0 while the session root sat under `sshd` → `sshd-session`;
+- at -1000 after the reboot for CannObserv/notifier#91 (2026-09-28), when the
+  editor's server started directly under `exe-init` (-1000) and every process
+  below it inherited that value (CannObserv/notifier#88, reopened).
+
+What sets the path, and so the class, was not determined. `exe-init`'s
+presence alone doesn't decide it: address-validator has no `exe-init` and
+sits at -1000.
 **The service-side actions below are the same either way.** Do not skip them
 after measuring a 0: the reservation keeps reclaim off the service on any host,
 and `OOMScoreAdjust=` puts the service behind every process a killer can take —
@@ -213,7 +223,8 @@ sit at -1000 nothing on the service's side can: add the `choom` launch above.
 
 **Pin the reading, since nothing pins its cause.** A host can change class
 under you, and the earlyoom configuration in §4 then silently means something
-else. CannObserv/replicator holds its reading with a test: it walks from its
+else. notifier did, across one reboot, and its pinned test was what caught
+it. CannObserv/replicator holds its reading with a test: it walks from its
 own process up to the child of `exe-init` or `sshd`, asserts that session
 root's `oom_score_adj` is still what the host's configuration assumed, fails
 naming the issue to reopen, and skips in CI and outside a session
