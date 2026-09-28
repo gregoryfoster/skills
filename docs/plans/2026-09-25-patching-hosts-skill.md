@@ -63,16 +63,37 @@ decisions folded in:
     0755, across three boots.
   - The script stayed armed: past line 3 it would re-run the install steps,
     as a user with sudo.
+  - **exe.dev delivers the VM's creation-time setup script again on every
+    boot** (CannObserv/replicator#122). `exe-setup.service` ran it with
+    `ConditionResult=yes` after 5 of 5 in-guest reboots and 1 of 1 platform
+    reset. The file was absent between boots, and back before the next one.
+    So an absent file is **not** evidence of cleanup, and shredding it
+    removes only the current copy.
+    - [derived] Working model: `exe-init`, which runs as `init=` before
+      systemd, does the re-delivery.
+    - A VM created without a script has nothing to deliver. The sixth host
+      read "condition unmet".
 
-  The probe names the secret patterns it matched and their line numbers,
-  **never the values**. The remedy it proposes:
-  1. revoke the key, which is the operator's job;
-  2. `shred -u` the script;
-  3. `reset-failed` the unit;
-  4. verify `ConditionResult=no`.
+  The probe reports:
+  - the unit's `ConditionResult` and `Result` for each retained boot, and
+    the file's mode if it is present;
+  - the secret patterns matched in the file and in the unit's journal, with
+    line numbers, **never the values**.
 
-  It never runs any of these itself, and it leaves the unit alone, because
-  the unit belongs to the platform.
+  The remedy it proposes, in this order:
+  1. **Revoke the key.** It's the operator's job, and the only step that
+     lasts, because it covers every copy: the one delivered again each boot,
+     the journal, and the platform's stored record. A key that is spent or
+     expired is recorded as inert.
+  2. Ask the platform to show, replace or clear the stored script. It's an
+     open owner question whether exe.dev allows this.
+  3. Optionally, `shred -u` the current copy and `reset-failed` the unit.
+     Both come back at the next boot.
+  4. Verify after the next **reboot**, not by a manual start.
+
+  A script that re-runs on every boot must be harmless when it does. The
+  probe never runs any of these steps itself, and it leaves the unit alone,
+  because the unit belongs to the platform.
 - **A gated `apply.sh`.** Needs an explicit approval flag. It records the
   package versions before applying, applies security updates through
   `unattended-upgrade` with `NEEDRESTART_MODE=l`, then re-probes.
@@ -149,10 +170,13 @@ base image, or an owner-approved remedy the profile documents.
      `exe-setup.service` failed, and whether the script holds a secret (by
      pattern, never the value). The hosts already patched get the same check
      as a follow-up. usa-wa had no script, and power-map's image has no
-     `exe-setup.service` at all. broker's and archiver's are unknown. The
-     co-index template's comment records that archiver's script aborted at
+     `exe-setup.service` at all. broker's and archiver's are being checked in
+     CannObserv/broker#68 and CannObserv/archiver#284. The co-index
+     template's comment records that archiver's script aborted at
      `tailscale up` and its key survived **on disk and in the journal**, so
-     the check reads the journal too (by pattern, never the value).
+     the check reads the journal too (by pattern, never the value). Since
+     CannObserv/replicator#122, the check records `ConditionResult` for each
+     boot, because the file is delivered again at every boot.
 
    **Step 1 starts after the round**, so the skill is built from every
    host's readings, not broker's alone.
@@ -225,6 +249,9 @@ base image, or an owner-approved remedy the profile documents.
      failed, reported as a finding. The output names the pattern and the
      line, and **the fixture's secret string appears nowhere in stdout or
      stderr**;
+   - no `/exe.dev/setup`, but a journal showing `ConditionResult=yes` on
+     every retained boot, reported as a script **re-delivered each boot**,
+     not as clean;
    - an argv log showing no installing, removing or list-writing command was
      run.
 4. **The `exe-dev-exeuntu` profile.** Add `references/environments/exe-dev-exeuntu.md`:
@@ -237,7 +264,16 @@ base image, or an owner-approved remedy the profile documents.
      `User=exedev`, and a cleanup that runs only after a successful
      `ExecStart`. So a script that fails leaves itself, and any secret in
      it, on disk. The unit exists on some images, fails on some and is
-     absent on others;
+     absent on others. **The platform delivers the creation-time script
+     again at every boot**, so "runs once at first boot" is wrong
+     (CannObserv/replicator `4850b1a` corrected its own doc);
+   - clean-shutdown evidence on this image. PID 1 logs to `console`, and
+     its journal lines are sporadic. Use instead:
+     - the service's own stop line;
+     - journald's `Journal stopped`;
+     - no EXT4 orphan recovery at the next boot.
+
+     A platform resize or restart is a hard reset;
    - the documented remedy path;
    - what the platform owns.
 
@@ -334,7 +370,12 @@ base image, or an owner-approved remedy the profile documents.
        unconditional; a trailing line is not", co-index's
        `deploy/index/setup.sh.template`);
      - uses only single-use, short-lived auth keys, like notifier's, which
-       had expired by the time it was found.
+       had expired by the time it was found. The copy delivered again at
+       each later boot is then already dead;
+     - is **idempotent**, because it runs on every boot, not once.
+
+     A template fixes only VMs created from it. A VM that already exists
+     keeps the script it was created with, until the platform clears it.
    - in each host repo, a census and remediation issue after release, broker
      first. It carries that host's dormant components, each as prune or keep.
    - where a dormant component shipped with the image on every host, the
