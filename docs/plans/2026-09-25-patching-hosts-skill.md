@@ -54,6 +54,25 @@ decisions folded in:
   component the owner keeps is declared as an exception, with its reason and
   review-by date. A prune follows a staged calendar the operator can shorten
   (step 6b).
+- **Provisioning leftovers.** The probe reports provisioning state that
+  outlived its run. The first case is `/exe.dev/setup` after a failed
+  `exe-setup.service` (CannObserv/notifier#93):
+  - The unit's cleanup is an `ExecStartPost=` `rm`, and it runs only if
+    `ExecStart` succeeded. notifier's script exited on line 3 on every boot,
+    so its plaintext Tailscale auth key stayed on disk, world-readable at
+    0755, across three boots.
+  - The script stayed armed: past line 3 it would re-run the install steps,
+    as a user with sudo.
+
+  The probe names the secret patterns it matched and their line numbers,
+  **never the values**. The remedy it proposes:
+  1. revoke the key, which is the operator's job;
+  2. `shred -u` the script;
+  3. `reset-failed` the unit;
+  4. verify `ConditionResult=no`.
+
+  It never runs any of these itself, and it leaves the unit alone, because
+  the unit belongs to the platform.
 - **A gated `apply.sh`.** Needs an explicit approval flag. It records the
   package versions before applying, applies security updates through
   `unattended-upgrade` with `NEEDRESTART_MODE=l`, then re-probes.
@@ -125,6 +144,15 @@ base image, or an owner-approved remedy the profile documents.
      listeners, whether the repo references it, and whether it is in the
      security set. The remaining briefs collect these as facts only; pruning
      is not part of the round.
+   - **Each run also records `/exe.dev/setup`** (added 2026-09-28, from
+     CannObserv/notifier#93): whether it exists, its mode, whether
+     `exe-setup.service` failed, and whether the script holds a secret (by
+     pattern, never the value). The hosts already patched get the same check
+     as a follow-up. usa-wa had no script, and power-map's image has no
+     `exe-setup.service` at all. broker's and archiver's are unknown. The
+     co-index template's comment records that archiver's script aborted at
+     `tailscale up` and its key survived **on disk and in the journal**, so
+     the check reads the journal too (by pattern, never the value).
 
    **Step 1 starts after the round**, so the skill is built from every
    host's readings, not broker's alone.
@@ -193,6 +221,10 @@ base image, or an owner-approved remedy the profile documents.
      with a `keep:` exception, reported as `kept`;
    - a Postgres whose activity can't be read, reported as `unknown`;
    - idle evidence younger than 30 days, reported as `unknown`;
+   - a 0755 `/exe.dev/setup` holding a `tskey-auth-` literal, with the unit
+     failed, reported as a finding. The output names the pattern and the
+     line, and **the fixture's secret string appears nowhere in stdout or
+     stderr**;
    - an argv log showing no installing, removing or list-writing command was
      run.
 4. **The `exe-dev-exeuntu` profile.** Add `references/environments/exe-dev-exeuntu.md`:
@@ -201,6 +233,11 @@ base image, or an owner-approved remedy the profile documents.
      `exeuntu update` manages;
    - known places where config and reality disagree: the masked timers, and
      `claude doctor` reporting its defaults as settings;
+   - the `exe-setup.service` contract: `ConditionPathExists=/exe.dev/setup`,
+     `User=exedev`, and a cleanup that runs only after a successful
+     `ExecStart`. So a script that fails leaves itself, and any secret in
+     it, on disk. The unit exists on some images, fails on some and is
+     absent on others;
    - the documented remedy path;
    - what the platform owns.
 
@@ -290,7 +327,14 @@ base image, or an owner-approved remedy the profile documents.
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
    - in the new CannObserv infra repo, once it exists, the cohort base image
-     and the Terraform hardening;
+     and the Terraform hardening. They should include a provisioning-script
+     template that:
+     - logs under `$HOME`;
+     - removes the script and any key file from an `EXIT` trap ("a trap is
+       unconditional; a trailing line is not", co-index's
+       `deploy/index/setup.sh.template`);
+     - uses only single-use, short-lived auth keys, like notifier's, which
+       had expired by the time it was found.
    - in each host repo, a census and remediation issue after release, broker
      first. It carries that host's dormant components, each as prune or keep.
    - where a dormant component shipped with the image on every host, the
