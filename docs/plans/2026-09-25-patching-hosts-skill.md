@@ -55,20 +55,9 @@ decisions folded in:
   `ephemeral`. An ephemeral host is patched by rebuilding its image, so it
   gets a report and never an apply.
 
-  The round showed that **what constrains a window differs on every host**,
-  and the probe can't infer it:
-  - a queue's in-flight jobs (watcher);
-  - a backup timer (watcher, notifier);
-  - scheduled ingest (wslcb);
-  - callers that can't tolerate an outage (address-validator);
-  - an in-host automatic restarter (wslcb's healthcheck timer).
-
-  So the knob declares them as lines:
-  - `quiet` (UTC ranges to avoid);
-  - `inflight <command>` (must print 0 before each step, and inside the reboot chain);
-  - `restarter <unit>` (stopped for a data-store restart, and proven running afterwards);
-  - `datastore <kind> <unit>` (what the recovery point dumps);
-  - `caller <repo>` (who gets the notice).
+  What constrains a window differs on every host (a queue, a backup timer,
+  ingest, callers, an in-host restarter), so the knob declares it. The
+  grammar is [knob.md](../../skills/patching-hosts/references/knob.md).
 - **A read-only `probe.sh`.** Reports environment, each update channel's
   configured and actual state, list age, pending updates by origin, restart
   and reboot signals, and policy deviations. Any deviation not declared as an
@@ -86,69 +75,20 @@ decisions folded in:
   review-by date. A prune follows a staged calendar the operator can shorten
   (step 6b).
 - **Provisioning leftovers.** The probe reports provisioning state that
-  outlived its run. The first case is `/exe.dev/setup` after a failed
-  `exe-setup.service` (CannObserv/notifier#93):
-  - The unit's cleanup is an `ExecStartPost=` `rm`, and it runs only if
-    `ExecStart` succeeded. notifier's script exited on line 3 on every boot,
-    so its plaintext Tailscale auth key stayed on disk, world-readable at
-    0755, across three boots.
-  - The script stayed armed: past line 3 it would re-run the install steps,
-    as a user with sudo.
-  - **exe.dev delivers the VM's creation-time setup script again on every
-    boot** (CannObserv/replicator#122). `exe-setup.service` ran it with
-    `ConditionResult=yes` after 5 of 5 in-guest reboots and 1 of 1 platform
-    reset. The file was absent between boots, and back before the next one.
-    So an absent file is **not** evidence of cleanup, and shredding it
-    removes only the current copy.
-    - [derived] Working model: `exe-init`, which runs as `init=` before
-      systemd, does the re-delivery.
-    - A VM created without a script has nothing to deliver. The sixth host
-      read "condition unmet".
-
-  The probe reports:
-  - the unit's `ConditionResult` and `Result` for each retained boot, and
-    the file's mode if it is present;
-  - the secret patterns matched in the file and in the unit's journal, with
-    line numbers, **never the values**.
-
-  The remedy it proposes, in this order:
-  1. **Revoke the key.** It's the operator's job, and the only step that
-     lasts, because it covers every copy: the one delivered again each boot,
-     the journal, and the platform's stored record. A key that is spent or
-     expired is recorded as inert.
-  2. Ask the platform to show, replace or clear the stored script. It's an
-     open owner question whether exe.dev allows this.
-  3. Optionally, `shred -u` the current copy and `reset-failed` the unit.
-     Both come back at the next boot.
-  4. Verify after the next **reboot**, not by a manual start.
-
-  A script that re-runs on every boot must be harmless when it does. The
-  probe never runs any of these steps itself, and it leaves the unit alone,
-  because the unit belongs to the platform.
-- **A gated `apply.sh`, in the shape all ten runs used.** It needs an
-  explicit approval flag and records the package versions first. Then:
-  1. the bulk, with the data-store and Docker packages held;
-  2. each held group as its own step, under its own approval, because
-     `postgresql-16`'s script restarts the cluster;
-  3. a re-probe.
-
-  Every step runs as `NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade`:
-  - adj 0, not the session's -1000;
-  - no hard memory cap, since a kill mid-dpkg is worse than the risk;
-  - verdict from the exit code, `All upgrades installed` and `dpkg --audit`.
-- **Reboots are a script too.** The chain the round converged on becomes
-  `reboot-chain.sh`, a detached root script:
-  1. the `inflight` gate;
-  2. stop the restarters, then the services;
-  3. `CHECKPOINT`, then stop the data store;
-  4. `journalctl --sync`;
-  5. copy the journal, last;
-  6. `sync`, then an in-guest reboot.
-
-  After the boot, `probe.sh --post-boot` checks:
-  - a clean shutdown, from evidence that survives a volatile journal;
-  - the first start's result and `critical-chain`, not just `is-active`;
-  - the restarters are back, and the session adj read directly.
+  outlived its run. The first case is `/exe.dev/setup`, whose secret
+  survives a failed `exe-setup.service`, and which the platform delivers
+  again on every boot (CannObserv/notifier#93, CannObserv/replicator#122).
+  The contract and the remedy order (revoke the key first; everything else
+  comes back at the next boot) are in the
+  [profile](../../skills/patching-hosts/references/environments/exe-dev-exeuntu.md#provisioning-leftovers-exe-setupservice).
+  The probe reads each boot's `ConditionResult` and reports secret patterns
+  by name and line, never the value ([readings.md](../../skills/patching-hosts/references/readings.md)). It never
+  runs a remedy itself.
+- **A gated `apply.sh` and a detached `reboot-chain.sh`, in the shape all
+  ten runs used**: a recovery point off the node, then a bulk step with the
+  data-store and Docker packages held, each held group under its own
+  approval, then an in-guest reboot chain and post-boot checks. The
+  procedure, with each trap it avoids, is [run.md](../../skills/patching-hosts/references/run.md).
 - **Two lanes** (decided 2026-09-29, from the gap on #313 comment
   5879792979).
   - **The security lane** is everything above, `-security` only. It runs
@@ -169,21 +109,13 @@ decisions folded in:
     `exeuntu update`.
   - What a repo installed itself belongs to that repo.
   - When the probe sees an update available for a component whose owner
-    is another repo (the infra repo above all), the
+    is another repo (CannObserv/provisioner above all), the
     skill proposes an issue for that owner. On approval, it files the
     issue (step 6c).
-- **One profile, `exe-dev-exeuntu`, covering two image generations.** Every
-  fact in it is dated and sourced.
-
-  | | Feb-2026 images | Newer images |
-  |---|---|---|
-  | `exe-init` | hands off to systemd | stays resident |
-  | `exe-setup.service` | none | re-runs the creation-time script on every boot |
-  | journal | volatile (`systemd-journal-flush` masked) | persistent |
-  | session path | through exe.dev's `sshd` | through `exe-init` |
-
-  A second profile, for DigitalOcean plus Lima (the WordPress host), is
-  deferred past v1.
+- **One profile, `exe-dev-exeuntu`, covering two image generations**:
+  [environments/exe-dev-exeuntu.md](../../skills/patching-hosts/references/environments/exe-dev-exeuntu.md).
+  Every fact in it is dated and sourced. A second profile, for DigitalOcean
+  plus Lima (the WordPress host), is deferred past v1.
 - **An infrastructure repo owns the image** (decided 2026-09-29). Four
   findings belong to the image, not to any host:
   - the masked timers, with `Periodic::Enable "0"`;
@@ -191,7 +123,7 @@ decisions folded in:
   - the setup script re-delivered on every boot;
   - `exe-init` builds that start sessions at -1000.
 
-  A new CannObserv infrastructure repo is stood up as part of this work
+  CannObserv/provisioner, a new private repo, is stood up as part of this work
   (step 0b). It's the `image` owner that step 6c's notices go to, and the home
   of the base image and provisioning template (step 9).
 - **A process log**, modelled on `orchestrating-issue-backlog`'s.
@@ -237,20 +169,23 @@ base image, or an owner-approved remedy the profile documents.
      `docker-disable-periodic-update`. The Docker base image sets it to 0,
      which makes the timers no-ops even when unmasked (CannObserv/archiver#278).
 
-0b. **Stand up the CannObserv infrastructure repo** (decided 2026-09-29). It
-    must exist before step 6c has an `image` owner to notify.
-    - Creating a repo is an outward act, so its name and visibility are
-      confirmed with you at this step. The default is `CannObserv/infra`,
-      **private**, because it will hold Terraform.
-    - Seed it with:
+0b. **Stand up CannObserv/provisioner** (decided 2026-09-29). It must exist
+    before step 6c has an `image` owner to notify.
+    - **Created 2026-09-29: private, empty.** You chose the name and
+      visibility.
+    - **Seeding it happens in its own session,** not from this repo, per the
+      no-cross-repo-commits rule:
       - an AGENTS.md;
-      - the vendored skills submodule, with `using-mayfly-chat`;
-      - four issues, one per image-level finding (Approach).
-    - Step 6c's rule keeps private identifiers out of notices to a **public**
-      repo. A private infra repo may name any host.
+      - the vendored skills submodule, with `using-mayfly-chat`.
 
-    *Done when* the repo exists, its four issues are filed, and the knob
-    grammar's default `image` owner names it.
+      A bootstrap issue there carries the brief.
+    - **Four issues, one per image-level finding** (Approach), each filed on
+      your go-ahead.
+    - Step 6c's rule keeps private identifiers out of notices to a **public**
+      repo. A private provisioner may name any host.
+
+    *Done when* the repo is bootstrapped, its four issues are filed, and the
+    knob grammar's default `image` owner names it.
 
 1. **Scaffold.** Create `skills/patching-hosts/SKILL.md`: frontmatter, the
    7-step core from #313 §2(a), the per-script resolution block for every
@@ -270,16 +205,8 @@ base image, or an owner-approved remedy the profile documents.
      stays until the base image stops shipping the component.
    - The `.skills/patching-hosts` grammar and a row in `docs/KNOBS.md`. With
      no knob, the host is treated as production and the skill only reports.
-   - The grammar includes:
-     - `posture automatic|scheduled`;
-     - `window <weekday> <UTC range>` and `quiet <UTC range> [<weekday>]`;
-     - `inflight <command>`;
-     - `restarter <unit>`;
-     - `datastore postgres|redis <unit> [<db>]`;
-     - `hold <pkg-glob> <step>`: the held groups, with Postgres and Docker
-       as defaults;
-     - `caller <repo>`;
-     - `owner <component-glob> <repo>`.
+   - The grammar is written: [knob.md](../../skills/patching-hosts/references/knob.md) (2026-09-29). This step
+     implements its parser.
 
    - The `[host <glob>]` sections, and how a host finds its own. It is
      matched by `--host`, or else by `hostname`. An exact name beats a glob.
@@ -303,45 +230,12 @@ base image, or an owner-approved remedy the profile documents.
    held by an exception separately from those pending. It emits JSON on stdout
    and diagnostics on stderr.
 
-   **What the round added** (each one a reading a host agent got wrong, or
-   had to find by hand):
-   - **Where the journal actually lives:** files under `/var/log/journal`,
-     and whether `systemd-journal-flush` is masked. `Storage=` doesn't
-     settle it (address-validator's 51 days were lost at a reboot). Report
-     the days the journal holds.
-   - **Pending by class**, ESM included, from `pro security-status` where
-     `pro` exists. Count security from the `unattended-upgrade --dry-run`
-     selection, never from `apt list | grep -security` (usa-wa: 178 against
-     185).
-   - **Held-step candidates:** which of the `hold` globs are in the set.
-   - **Data-store restart need:** any data-store process that maps a
-     library in the set. Its own package being absent from the set isn't
-     enough (watcher, address-validator, wslcb).
-   - **Live arguments from `/proc/<pid>/cmdline`**, never a journal block.
-     wslcb read earlyoom's boot-time block and reported the wrong config.
-   - **Boot ordering** for each runbook service: its `After=` and whether a
-     data store it uses is in its `critical-chain`. wslcb's first start
-     succeeded by luck.
-   - **The session's chain to PID 1, with each adj, read directly.** A host
-     test that can skip is not evidence (CannObserv/watcher#333, CannObserv/address-validator#236).
-   - **Whether anything consumes a setup script,** rather than whether
-     `exe-init` is running.
-   - **Anything staged under `/tmp`,** since `D /tmp` empties it at every
-     boot (read in noble's systemd source).
-   - **A backup regime:** any timer or cron that dumps a declared
-     `datastore`, and when it last succeeded.
-   - **Boot time from `/proc/stat` btime,** never `who -b` (wrong on three
-     hosts).
+   **The readings are specified** in [readings.md](../../skills/patching-hosts/references/readings.md)
+   (2026-09-29), each with the mistake it prevents. The probe implements
+   them, plus a `--post-boot` mode for the checks in [run.md](../../skills/patching-hosts/references/run.md) §6.
 
-   With `--post-boot`, the probe checks:
-   - a clean shutdown: the data store's own log, no EXT4 orphan recovery,
-     and the chain's journal copy;
-   - each runbook service's `NRestarts` and first-start result;
-   - each `restarter` is active;
-   - needrestart and PID 1 are clean;
-   - any `Persistent=` catch-up.
-
-   Its `dormant` section is described in `references/dormant-components.md`.
+   Its `dormant` section follows the verdict rules in
+   [policy.md](../../skills/patching-hosts/references/policy.md#dormant-components).
    Each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama and
    Qdrant to start with) gets one entry with its evidence:
    - the unit's state and whether it is enabled;
@@ -386,47 +280,18 @@ base image, or an owner-approved remedy the profile documents.
    - a runbook service without `After=` its data store, reported as a
      finding even when its first start succeeded;
    - a session chain whose adj test would skip: the adj is read anyway.
-4. **The `exe-dev-exeuntu` profile.** Add `references/environments/exe-dev-exeuntu.md`:
-   - its detection check;
-   - each update channel: apt, the platform kernel, and the agent binaries
-     `exeuntu update` manages;
-   - known places where config and reality disagree: the masked timers, and
-     `claude doctor` reporting its defaults as settings;
-   - the `exe-setup.service` contract: `ConditionPathExists=/exe.dev/setup`,
-     `User=exedev`, and a cleanup that runs only after a successful
-     `ExecStart`. So a script that fails leaves itself, and any secret in
-     it, on disk. The unit exists on some images, fails on some and is
-     absent on others. **The platform delivers the creation-time script
-     again at every boot**, so "runs once at first boot" is wrong
-     (CannObserv/replicator `4850b1a` corrected its own doc);
-   - clean-shutdown evidence on this image. PID 1 logs to `console`, and
-     its journal lines are sporadic. Use instead:
-     - the service's own stop line;
-     - journald's `Journal stopped`;
-     - no EXT4 orphan recovery at the next boot.
+4. **The `exe-dev-exeuntu` profile.** Written 2026-09-29:
+   [environments/exe-dev-exeuntu.md](../../skills/patching-hosts/references/environments/exe-dev-exeuntu.md).
+   It covers the detection markers, the two image generations, the update
+   channels, the self-restart table, `/tmp`, the `exe-setup.service`
+   contract, clean-shutdown evidence, sessions and OOM, and the image
+   owner's findings. This step:
+   - wires its detection into the probe;
+   - adds a generic apt fallback section to `SKILL.md` for hosts no profile
+     matches.
 
-     A platform resize or restart is a hard reset;
-   - the two image generations (Approach's table), with their markers;
-   - **a table of what restarts itself, whatever needrestart says,**
-     measured across ten hosts, with each row's host count:
-     - `postgresql-16`: restarts the cluster, 1.5–2.8 s;
-     - `containerd`: 3 of 4;
-     - `polkit`: 2 of 3;
-     - PID 1 and the user manager: re-exec;
-     - journald and timesyncd.
-
-     `docker.io` never restarts dockerd (4 of 4), so the reboot is Docker's
-     restart;
-   - `Remove-New-Unused-Dependencies` removes packages during a security
-     apply (`libde265`, 2 of 2 Feb-2026 hosts). Removals are recorded
-     apart from upgrades;
-   - `D /tmp` empties `/tmp` at every boot; `/var/tmp` survives;
-   - the documented remedy path;
-   - what the platform owns.
-
-   Every fact carries its date and source. Also add a generic apt fallback
-   section to `SKILL.md` for hosts no profile matches. *Done when* the links
-   and references tests pass.
+   *Done when* the probe names the profile and the generation on each
+   fixture, and the links and references tests pass.
 5. **Validate against the real image, offline.** Run `probe.sh` inside the
    exeuntu image, pinned by digest, in a throwaway container. Confirm the
    detection, the masked readings and the needrestart version. The digest
@@ -610,7 +475,7 @@ base image, or an owner-approved remedy the profile documents.
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
-   - in the CannObserv infra repo (step 0b), the cohort base image and the
+   - in CannObserv/provisioner (step 0b), the cohort base image and the
      Terraform hardening. They should include a provisioning-script
      template that:
      - logs under `$HOME`;
@@ -629,9 +494,9 @@ base image, or an owner-approved remedy the profile documents.
    - where a dormant component shipped with the image on every host, the
      prune belongs in the cohort base image, not in a removal on each host.
      That keeps provisioning reproducible. **How a prune is promoted into
-     provisioning gets its own design process** in the infra repo, not in
+     provisioning gets its own design process** in CannObserv/provisioner, not in
      this plan;
-   - **a cohort backup pattern**, in the infra repo. Three hosts have no
+   - **a cohort backup pattern**, in CannObserv/provisioner. Three hosts have no
      backup regime (CannObserv/archiver#233, CannObserv/address-validator#240,
      CannObserv/wslcb-licensing-tracker#185), and watcher's is a working
      template;
@@ -652,7 +517,7 @@ base image, or an owner-approved remedy the profile documents.
   `unknown`, not `dormant`, so a monthly job or freshly reset statistics
   can't make a live component look unused.
 - **A removal by hand is recorded in the knob (2026-09-27).** When the
-  component came with the image, the fix is the base image (infra repo).
+  component came with the image, the fix is the base image (CannObserv/provisioner).
   Until provisioning catches up, a removal on a single host is drift from
   that image, and the knob declares it so the probe doesn't report it as
   unexplained variance.
@@ -681,7 +546,8 @@ base image, or an owner-approved remedy the profile documents.
   - **Cadence: monthly.** The cohort's posture is `scheduled`: a monthly,
     gated run per host covering both lanes, with the apt timers left
     masked. That answers D4.
-  - **An infrastructure repo** is stood up as part of this work (step 0b).
+  - **An infrastructure repo** is stood up as part of this work (step 0b):
+    CannObserv/provisioner, private (named 2026-09-29).
   - **The gap until the first monthly run** is closed by exercising the
     skill by hand on every host (step 8b). That run is each host's
     catch-up.
@@ -695,8 +561,9 @@ base image, or an owner-approved remedy the profile documents.
   own session. A reminder or calendar for the monthly run is not designed
   yet. The once-a-day `SessionStart` status line (step 9) is the first
   candidate.
-- **The infra repo's name and visibility** are confirmed at step 0b. The
-  default is `CannObserv/infra`, private.
+- **CannObserv/provisioner's bootstrap** runs in its own session. Until
+  it's seeded, the four image issues can be filed, but no agent there can
+  act on them.
 - **Ubuntu Pro.** The ESM class stays pending on every host until someone
   decides whether to attach Pro. That's an owner question, not the
   skill's; the skill only reports it.

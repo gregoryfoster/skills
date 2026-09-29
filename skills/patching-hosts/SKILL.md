@@ -1,0 +1,66 @@
+---
+name: patching-hosts
+description: Patches a Linux host's OS packages safely and records the run. It compares the host's actual update state against the posture its knob declares (automatic security-only upgrades, or a scheduled monthly run), measures the pending set by class (security, -updates, third-party, Ubuntu Pro/ESM, outside apt), then runs a gated apply in held steps with a recovery point, needrestart held to list mode, a detached in-guest reboot chain, and post-boot verification. Also reports dormant components and provisioning leftovers. Use when the user says "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", or "is this host patched".
+compatibility: Designed for Claude Code or a similar harness with a Bash tool, on a Debian or Ubuntu host with apt, unattended-upgrades and needrestart, reached as a user with sudo. The first environment profile is exe.dev's exeuntu image (Ubuntu 24.04); other hosts use the generic apt path.
+metadata:
+  author: gregoryfoster
+  version: "0.1"
+  triggers: patch the host, OS updates, security updates, apply updates, unattended-upgrades, needrestart, is this host patched
+---
+
+# Patching Hosts
+
+Gets a host's OS packages patched without surprising anyone: no unapproved restart, no lost data, no guess passed off as a measurement. Built from ten exe.dev hosts patched by hand in [#313](https://github.com/gregoryfoster/skills/issues/313)'s step 0 round, 2026-09-21 to 09-29.
+
+**Status: in development.** The procedure and its references are here; the scripts (probe, apply, recovery point, reboot chain) land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md). Until they do, follow the references by hand.
+
+**Activation triggers:** "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", "is this host patched".
+
+## The Iron Law
+
+<!-- skill:required id=iron-law -->
+```
+NO APPLY, RESTART OR REBOOT WITHOUT THE OWNER'S APPROVAL, GIVEN IN THE HOST'S OWN SESSION
+NO APPLY WITHOUT A RECOVERY POINT THAT HAS LEFT THE NODE
+NO CLAIM ABOUT THE HOST THAT WASN'T READ ON THE HOST
+```
+
+A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. An absent setting is `unknown`, never its default.
+
+## Rationalization prevention
+
+| Thought | Reality |
+|---|---|
+| "The needrestart drop-in is in, so nothing will restart" | It governs the hook only. `postgresql-16` restarts its cluster, and `containerd` itself, from their own maintainer scripts. Hold them, and approve each step. |
+| "Postgres isn't in the set, so it doesn't need a restart" | Its backends map libc6, libssl and libxml2. Read `/proc/*/maps`. |
+| "`/health` is 200, so the database step is done" | A fail-open cache hides the outage, and a stale pool hides behind a green health check. Prove a real request, a new row, a cache hit. |
+| "The first start after boot succeeded" | By luck, unless `critical-chain` shows its data store. Read the ordering. |
+| "The journal is persistent; the config says so" | `systemd-journal-flush` can be masked. Look for files under `/var/log/journal`. |
+| "0 security pending: the host is patched" | Not `universe`. Read `pro security-status`. |
+| "The test passed" | It skipped. Read the value directly. |
+
+## The run
+
+1. **Read the host:** environment, update channels, the pending set by class, impact, dormant components. See [readings.md](references/readings.md).
+2. **Compare against the posture** the knob declares ([knob.md](references/knob.md), [policy.md](references/policy.md)). Every undeclared deviation is a finding. An expired exception is a finding.
+3. **Propose, in the record:** what goes in, which steps are held, which restarts, the window, and why. Include the callers' notice when the knob names callers.
+4. **The needrestart drop-in**, approval 1, proven with `needrestart -m u -b -r l`.
+5. **The recovery point**, off the node, then **the apply** in held steps: approvals 2 and 3(a).
+6. **The reboot**, when needrestart's list or `reboot-required` calls for one: a detached in-guest chain, approval 3(b). Then verify.
+7. **Record** what happened and what's left pending, by class.
+
+Steps 4–7 in full, with each trap: [run.md](references/run.md). The environment's quirks (image generations, which packages restart themselves, `/tmp`, clean-shutdown evidence): [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
+
+## What the skill never does on its own
+
+It never unmasks a timer, edits apt or needrestart config beyond the approved drop-in, removes a package by name, restarts through the platform (a hard reset), or files an issue in another repo without approval. Reaching a posture is provisioning's job: the base image, or an owner-approved remedy.
+
+## Detail Docs
+
+- [references/readings.md](references/readings.md) — what to measure before proposing, and the mistake each reading prevents
+- [references/run.md](references/run.md) — approvals, the gate, the recovery point, held steps, the reboot chain, post-boot checks, the record
+- [references/policy.md](references/policy.md) — the two postures, the two lanes, pending classes, exceptions, dormant components, owners
+- [references/knob.md](references/knob.md) — the `.skills/patching-hosts` grammar
+- [references/environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md) — the exe.dev exeuntu profile
+
+**Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by `tests/structural/test_skill_self_budget.py`; both readings must clear it. Each `references/` doc is held to the 10,000-token per-doc budget.

@@ -1,0 +1,64 @@
+# Readings: what to measure before proposing a run
+
+The probe's specification, and the checklist to follow by hand until the probe exists. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. All readings are read-only, except `apt-get update`, which writes the package lists (the probe refreshes into a scratch directory instead).
+
+**Report an absent setting as `unknown`, never as its default.** A reading the probe couldn't take is `unknown`, not clean.
+
+## The environment
+
+| Reading | How | Mistake it prevents |
+|---|---|---|
+| Which profile, and which image generation | markers, not a digest ([environments/exe-dev-exeuntu.md](environments/exe-dev-exeuntu.md)) | assuming the newer image's `exe-setup`, journal and session path on a Feb-2026 host |
+| Boot time | `/proc/stat` btime | `who -b` was wrong on three hosts |
+| **Where the journal actually lives** | files under `/var/log/journal`; `systemctl is-enabled systemd-journal-flush`; the days the oldest entry reaches back | `Storage=persistent` with the flush masked: address-validator's 51 days were lost at the reboot |
+| PID 1's log target | `systemd-analyze get-log-target` | expecting PID 1's lines as clean-shutdown evidence when it logs to `console` |
+| **The session's chain to PID 1** | the adj of every process from `$$` up, read directly | a host test that skips when the parent isn't `exe-init`/`sshd`, reading green (CannObserv/watcher#333) |
+| **What consumes a setup script** | `exe-setup.service`'s `LoadState`, and its `ConditionResult` and `Result` for each retained boot; `/exe.dev/setup`'s mode; secret patterns by name and line, **never the value** | taking an absent file as cleanup, when the platform delivers it again every boot |
+| **Anything staged under `/tmp`** | `ls -la /tmp`; `/usr/lib/tmpfiles.d/tmp.conf` and `/etc/tmpfiles.d/` | losing a staged binary to `D /tmp` at the reboot (CannObserv/wslcb-licensing-tracker#182) |
+
+## What updates this host
+
+| Reading | How | Mistake it prevents |
+|---|---|---|
+| The apt timers and service | `systemctl is-enabled`, or the mask symlinks on disk (works offline) | trusting `20auto-upgrades`' `1`/`1` |
+| **The effective `Periodic::Enable`, and which file sets it** | `apt-config shell E APT::Periodic::Enable`; grep `/etc/apt/apt.conf.d/` | missing `docker-disable-periodic-update`'s `0`, which makes unmasked timers no-ops |
+| Every apt source, and each origin | `/etc/apt/sources.list.d/`, `apt-cache policy` | treating a third-party origin as Ubuntu's |
+| The needrestart config in force | `needrestart -m u -b -r l`'s `Disabling Ubuntu mode` line | a drop-in that doesn't load, leaving the hook in automatic mode |
+| **Everything outside apt, with its owner** | `/usr/local/bin`, `~/.local/bin`, container images and their age, pinned tools | a component nobody patches because nobody owns it |
+
+## The pending set, by class
+
+| Reading | How | Mistake it prevents |
+|---|---|---|
+| List age | the security `InRelease` mtime | a count against stale lists, which measures provisioning, not the image |
+| **Security, counted right** | `unattended-upgrade --dry-run -d`'s `Packages that will be upgraded` line | `apt list \| grep -security` undercounts (usa-wa: 178 against 185), and `grep \| head` on the one-per-line header truncates |
+| `-updates` and third-party | `apt list --upgradable` against each origin | treating the security count as "everything" |
+| **Ubuntu Pro / ESM** | `pro security-status` | "0 security pending" read as covering `universe` (wslcb: 29 esm-apps pending) |
+| The dry run's cost | wall time, max RSS, download size, free disk | a disk-full or memory-starved apply on a host that shares memory with sessions |
+| Held-group candidates | which `hold` globs are in the set | a major version bump (docker.io 28→29) going in with the bulk |
+
+## Impact
+
+| Reading | How | Mistake it prevents |
+|---|---|---|
+| **Which processes map a library in the set** | `/proc/*/maps` against the set's shared objects | "Postgres isn't in the set, so no restart": its backends mapped libc6 and libxml2 (watcher, address-validator, wslcb) |
+| Each data store's source and collation | `datcollate` and provider per database; `datcollversion` unless C.UTF-8 on libc | a collation-version change after a libc or ICU upgrade |
+| **Live arguments** | `/proc/<pid>/cmdline` | reading a daemon's config from its journal. wslcb quoted earlyoom's boot-time block, not its last start |
+| **Boot ordering** of each service | its `After=`, and `systemd-analyze critical-chain` | a first start that succeeds by luck, and fails on the next boot (CannObserv/address-validator#239) |
+| **In-host automatic restarters** | timers or services that run `systemctl restart`; `OnFailure=` chains; `Requires=` on the service | a health timer restarting the app, unapproved, during a 1.5 s database outage |
+| **A backup regime** | timers or cron that dump each data store, and their last success | taking a second dump when a verified off-node regime exists, or assuming one that doesn't |
+| The health baseline | each knob `health`, the suite's pass and skip counts, `systemctl --failed`, the timers' last results | no baseline to compare the post-boot state against |
+| Callers and traffic | the service's own access or audit log, by UTC hour | a window in the busy hour; a caller whose degraded path is permanent (CannObserv/power-map#589) |
+| What reads 200 while degraded | the code path for each dependency down | a fail-open cache hiding the outage, or a caller stamping a 200 `unavailable` as done (CannObserv/wslcb-licensing-tracker#183) |
+
+## Dormant components
+
+For each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama, Qdrant to start with):
+- the unit's state and whether it's enabled;
+- its listeners;
+- its workload: containers, databases and their sizes, enabled sites;
+- whether the repo's units, docs or knob name it;
+- its packages in the security set;
+- whether it shipped with the image or was installed later.
+
+The verdict rules are in [policy.md](policy.md). **Name the evidence source for each verdict.** A journal that holds 10 days can't show 30 days of idleness.
