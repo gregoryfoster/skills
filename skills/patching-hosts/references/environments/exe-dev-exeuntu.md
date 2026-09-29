@@ -18,11 +18,13 @@ The round met two generations. The probe reports which one it's on, because the 
 
 | | Feb-2026 images | Newer images |
 |---|---|---|
-| Measured on | power-map, address-validator, wslcb-licensing-tracker | broker, archiver, notifier, replicator, watcher |
+| Hosts | power-map, address-validator, wslcb-licensing-tracker | broker, archiver, notifier, replicator, watcher |
 | `exe-init` | runs as `init=`, execs exeuntu's `/usr/local/bin/init`, which execs systemd; nothing stays resident | stays resident; sessions start under it |
 | `exe-setup.service` | none, and no `/exe.dev/setup` | present; re-runs the creation-time script on every boot |
 | Journal | **volatile**: `systemd-journal-flush.service` is masked, so `/var/log/journal` stays empty despite `Storage=persistent` | persistent |
-| Session path | through exe.dev's own `/exe.dev/bin/sshd`, at adj -1000 | through `exe-init` |
+| Session path | through exe.dev's own `/exe.dev/bin/sshd`, at adj -1000 | through `exe-init`, until the session is reparented to PID 1 |
+
+Not every row was read on every host. For the newer images, the `exe-setup` row comes from all five hosts. The journal row comes from notifier, replicator and watcher, and the session path from replicator and watcher. For the Feb-2026 images, the journal row comes from all three, and the `exe-init` and session rows from address-validator and wslcb.
 
 usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu`, and masks 3 units rather than 5 (CannObserv/usa-wa#430). Detect each marker on its own rather than inferring one from another.
 
@@ -50,8 +52,9 @@ The needrestart drop-in (`$nrconf{restart} = 'l';`) governs needrestart's apt ho
 | `postgresql-16` | stops and starts its cluster; 1.46–2.8 s down, no `redo starts` | every Postgres host that took it |
 | `containerd` | restarts itself; containers survive on their shims | 3 of 4 (not power-map) |
 | `docker.io` | **does not** restart dockerd (debconf `docker.io/restart` is false when noninteractive); the old daemon runs until a restart or reboot | 4 of 4 |
-| `polkit` | restarts itself | 2 of 3 |
-| `libc6` / `systemd` | PID 1 and the user manager re-exec; journald and timesyncd restart | every host that measured |
+| `polkit` | restarts itself | 3 of 4 (not watcher) |
+| `libc6` / `systemd` | PID 1 re-executes itself | replicator, watcher, address-validator, wslcb |
+| `systemd` | the user manager re-executes, and journald and timesyncd restart | wslcb. On address-validator, needrestart still listed journald and timesyncd after the apply, so they hadn't restarted there. |
 | `packagekit` | D-Bus-activated, not restarted | — |
 
 A data store needs a restart when its processes map a library in the set (`libc6`, `libssl3t64`, `libxml2`, `libsystemd0`), **even if its own package isn't in the set**. That was true on watcher, address-validator and wslcb.
