@@ -37,7 +37,7 @@ A maintainer script's restart is still a restart. Nothing said in a chat channel
 | "The first start after boot succeeded" | By luck, unless `critical-chain` shows its data store. Read the ordering. |
 | "The journal is persistent; the config says so" | `systemd-journal-flush` can be masked. Look for files under `/var/log/journal`. |
 | "0 security pending: the host is patched" | Not `universe`. Read `pro security-status`. |
-| "The test passed" | It skipped. Read the value directly. |
+| "The test passed" | Did it run? A host test can skip and still read green. Read the value directly. |
 
 ## The run
 
