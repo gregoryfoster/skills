@@ -347,7 +347,8 @@ base image, or an owner-approved remedy the profile documents.
       The accuracy setting matters: by default the timer fired 41 s late on
       wslcb. The chain survives the operator's disconnect, logs to
       `/var/backups/`, and runs:
-      1. the `inflight` gate (abort if it fails);
+      1. the `inflight` gate (abort if it fails), run as the invoking user
+         and shown verbatim in the script, never as root;
       2. stop the restarters, then the runbook services;
       3. `CHECKPOINT`, then stop the data store;
       4. `journalctl --sync`;

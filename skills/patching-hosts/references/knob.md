@@ -45,6 +45,10 @@ class ephemeral
 | `exception <what> <review-by YYYY-MM-DD> <reason>` | A declared deviation, expiring on its date ([policy.md](policy.md)). |
 | `records <path-or-repo>` | Where run records go. |
 
+## Commands from the knob
+
+`inflight` and `health` are shell commands read from a committed file. **They never run as root.** The scripts run them as the invoking user, and the reboot chain, which is root, drops to that user with `runuser -u <user> --`. The chain script prints each one verbatim, so the owner approves the exact commands with the chain. Otherwise, anyone who can commit the knob could get a command run as root at the next patch run.
+
 ## An example
 
 Illustrative, shaped like a host with local Postgres, scheduled ingest and a health timer that restarts the app. It isn't any one repo's file.
