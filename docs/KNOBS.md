@@ -46,7 +46,7 @@ forking a skill.
 | `context-proximity-pct` | a single number, 1-100 | `curating-context`, the context-budget hook | env `CONTEXT_PROXIMITY_PCT` wins, then this file | 90 — a file is reported as approaching its budget from 90% of it |
 | `context-docs-dir` | single-line path | `curating-context` | replaces the default | `docs` |
 | `cohort` | one repo per line, `#`-comment header carrying `wave:` / `pair:` | `curating-context`'s cohort scoring | no default — the file *is* the cohort | scoring has nothing to score |
-| `patching-hosts` | one directive per line, `#`-comments, optional `[host <glob>]` sections — [grammar](../skills/patching-hosts/references/knob.md) | `patching-hosts` | declares rather than configures: a section overrides the global lines for the hosts it matches | every host is `production`, compared against the reference `automatic` posture; deviations are reported and nothing is applied |
+| `patching-hosts` | one directive per line, `#`-comments, optional `[host <glob>]` sections — [grammar](../skills/patching-hosts/references/knob.md) | `patching-hosts` | declares rather than configures: a section overrides the global lines for the hosts it matches, and a `hold` line naming a default step replaces that default | every host is `production`, compared against the reference `automatic` posture; deviations are reported and nothing is applied |
 
 ### Acknowledgement files
 
