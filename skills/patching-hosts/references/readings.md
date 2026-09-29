@@ -1,6 +1,9 @@
 # Readings: what to measure before proposing a run
 
-The probe's specification, and the checklist to follow by hand until the probe exists. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. All readings are read-only, except `apt-get update`, which writes the package lists (the probe refreshes into a scratch directory instead).
+The probe's specification, and the checklist to follow by hand until the probe exists. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. The readings are read-only, with two exceptions:
+
+- `apt-get update` writes the package lists. The probe refreshes into a scratch directory instead.
+- **The security count's dry run** (`unattended-upgrade --dry-run -d`) runs as root and downloads the whole set into apt's cache: about 290 MB and 9 minutes on address-validator. The probe runs it only when asked, with apt's cache pointed at a scratch directory: an `APT_CONFIG` file setting `Dir::Cache::archives`, since `unattended-upgrade` takes no `-o`.
 
 **Report an absent setting as `unknown`, never as its default.** A reading the probe couldn't take is `unknown`, not clean. That includes a read that needed root and failed: `/proc/<pid>/maps` of another user's process, needrestart's check, the Postgres catalogs.
 
