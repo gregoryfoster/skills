@@ -97,6 +97,25 @@ decisions folded in:
 - **A gated `apply.sh`.** Needs an explicit approval flag. It records the
   package versions before applying, applies security updates through
   `unattended-upgrade` with `NEEDRESTART_MODE=l`, then re-probes.
+- **Two lanes** (decided 2026-09-29, from the gap on #313 comment
+  5879792979).
+  - **The security lane** is everything above: frequent, and
+    `-security` only.
+  - **The maintenance lane** is monthly. It uses the same run, but its
+    selection is Ubuntu `-updates` plus each host's approved third-party
+    origins. The profile gives every origin a policy: *follow*, *pin*, or
+    *hold, with a reason*.
+  - Every run records what it **left pending, by class**: security,
+    `-updates`, third-party, and outside apt.
+- **An owner for every component, and a way to tell them.** The probe
+  names an update owner for each component apt doesn't reach.
+  - Binaries the image ships belong to the image, or the platform's
+    `exeuntu update`.
+  - What a repo installed itself belongs to that repo.
+  - When the probe sees an update available for a component whose owner
+    is another repo (the eventual image-generation repo above all), the
+    skill proposes an issue for that owner. On approval, it files the
+    issue (step 6c).
 - **One profile, `exe-dev-exeuntu`.** Every fact in it is dated and sourced.
 - **A process log**, modelled on `orchestrating-issue-backlog`'s.
 
@@ -344,6 +363,42 @@ base image, or an owner-approved remedy the profile documents.
     - that a disable covers `docker.socket` as well as `docker.service`;
     - the drift refusal when the simulated set changes;
     - that no command outside the approved set was run.
+
+6c. **The maintenance lane and owner notices.**
+    - **`apply.sh --lane maintenance`** reuses the security lane's gates,
+      recovery point, window and reboot decision. Only the selection
+      differs: Ubuntu `-updates` plus the origins the profile marks
+      *follow*. It applies through `apt-get upgrade`, with the same holds
+      and the same `NEEDRESTART_MODE=l`.
+    - **Tailscale** goes in the maintenance lane, because upgrading
+      tailscaled drops every host's tailnet path, so it needs a planned
+      window. A Tailscale security bulletin expedites it into an
+      out-of-cycle window. The profile records where those bulletins are
+      watched, and by whom.
+    - **The knob gains `owner <component-glob> <repo>` lines.** The default
+      owner of something the image ships is `image`, meaning the
+      image-generation repo once it exists; until then, the host's own repo.
+    - **`notify-owners.sh`** turns the probe's "update available, owner
+      elsewhere" rows into issues in the owner's repo.
+      - `--dry-run` is the default, and prints each issue it would file.
+      - `--file --approve` files them through `gh`. Filing is an outward
+        write, so it never happens without approval.
+      - It files one issue per component. A hidden marker
+        (`<!-- patching-hosts:update <component> -->`) lets a later run find
+        the open issue and comment the newer version on it, rather than open
+        a duplicate.
+      - An issue carries the component, installed and available versions,
+        the evidence source, and the hosts affected. It carries no host
+        secrets, and no private-repo identifiers when the owner's repo is
+        public.
+
+    *Done when* stub tests prove:
+    - `--lane maintenance` selects `-updates` and the *follow* origins, and
+      never a *hold* one;
+    - `notify-owners.sh` files nothing without `--file --approve`;
+    - a second run finds the open issue by its marker and comments instead
+      of filing a duplicate;
+    - the body carries no value that matched a secret pattern.
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
@@ -410,6 +465,18 @@ base image, or an owner-approved remedy the profile documents.
     security;
   - the skill proposes and people run it, with scripts wherever the steps
     are stable (step 6b).
+- **A maintenance lane, owners, and owner notices (2026-09-29).**
+  - A monthly maintenance lane for `-updates` and approved third-party
+    origins. The round finishes security-only, as decided, then every host
+    catches up once, and the lane is monthly after that.
+  - Tailscale sits in the maintenance lane, with advisory-triggered
+    expediting.
+  - Binaries outside apt: the image or platform owns what the image ships,
+    and each repo owns what it installed. The skill reports staleness and
+    the owner, and updates none of them.
+  - The skill supports filing an update notice with the owner's repo,
+    above all the eventual image-generation repo. It's approval-gated and
+    deduplicated (step 6c).
 
 ## Open questions / risks
 
@@ -423,7 +490,7 @@ base image, or an owner-approved remedy the profile documents.
   designing is who schedules the window and who is accountable for it. This
   makes the knob's `window` something the skill acts on, and it needs its own
   plan revision after the round.
-- **Step 6b makes v1 larger.** It can ship as a v1.1 if v1 runs long; the
+- **Steps 6b and 6c make v1 larger.** Either can ship as a v1.1 if v1 runs long; the
   probe's `dormant` section (step 3) doesn't depend on it.
 - **Profile detection uses markers, not the image digest.** Step 0 found no
   digest in any documented place in the guest (broker#65, M3). Detection
