@@ -321,7 +321,9 @@ base image, or an owner-approved remedy the profile documents.
    *Done when* stub tests prove:
    - each refusal;
    - the recorded before-versions;
-   - the holds, released only for the named step;
+   - the holds, released only for the named step, and never touching a
+     package the owner held before the run (`showhold` ends equal to its
+     recorded value);
    - `NEEDRESTART_MODE` and `choom`;
    - a failing verdict stops the run;
    - no `systemctl unmask`, `enable` or `reboot`, and no `apt-get remove` or

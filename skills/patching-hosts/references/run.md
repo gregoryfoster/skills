@@ -62,19 +62,19 @@ Count first:
 
 Then:
 
-1. **Hold** each `hold` group in the set: `sudo apt-mark hold <packages>`.
+1. **Hold** each `hold` group in the set: `sudo apt-mark hold <packages>`. **Leave the owner's own holds alone:** a package in `apt-mark showhold` before the run was held on purpose, so the run never holds or unholds it. Report it as held by the owner.
 2. **Bulk:** `sudo NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`.
    - `choom -n 0` puts the apply at adj 0, so the kernel doesn't sacrifice a production service to protect a -1000 session.
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
    - `NEEDRESTART_MODE=l` backs up the drop-in. In apt's hook there's no `-r`, so the variable wins.
 3. **Each held group, under approval 3(a):**
-   - unhold it;
+   - unhold the packages the run held, and only those;
    - stop each `restarter`;
    - run the same command;
    - poll health **every second, logging each code with its timestamp**, until two 200s in a row;
    - start each `restarter` again, and confirm `is-active`.
 4. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
-5. Confirm `apt-mark showhold` is empty.
+5. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
 
 **The verdict** comes from the exit code, `All upgrades installed`, and an empty `dpkg --audit`. **Never count `Failed` or `error` lines**: a clean apply logged about 100 needrestart "kernel versions" lines.
 
