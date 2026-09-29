@@ -20,6 +20,7 @@ Three, given separately:
 - Every `inflight` command prints `0`. Read it right before the step, not at the window's start (watcher's queue; wslcb's ingest).
 - No dev server or hand-started instance is in use.
 - Each `restarter`'s state is read and recorded.
+- **Before approval 3(a) or 3(b), each `caller` has been told:** the window, the expected outage, and what the caller does while this host is down. A caller whose degraded path is permanent needs to know most (CannObserv/power-map#589 stores addresses unstandardized for good). The notice goes where the knob's `records` says, or to the caller's own repo on approval.
 
 ## 1. The needrestart drop-in
 
