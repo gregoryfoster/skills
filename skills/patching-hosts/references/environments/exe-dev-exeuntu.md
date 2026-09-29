@@ -101,7 +101,7 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
 
 ## What belongs to the image owner
 
-These are image findings, not host findings. They go to the image owner, CannObserv/provisioner, not to each host:
+These are image findings, not host findings. They go to the image owner the knob names ([knob.md](../knob.md)'s `owner`), not to each host:
 
 1. the masked apt timers and `Periodic::Enable "0"`;
 2. the volatile journal on the Feb-2026 images;

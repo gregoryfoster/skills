@@ -79,7 +79,7 @@ An installed engine or daemon that nothing uses is patch surface, disk and attac
 
 Every component apt doesn't reach has an update owner:
 
-- **the image** (or the platform's `exeuntu update`) owns what the image ships. For the CannObserv cohort that's CannObserv/provisioner;
+- **the image** (or the platform's `exeuntu update`) owns what the image ships. A repo names who that is with a knob line, `owner <glob> <owner/repo>`; until it does, the owner is recorded as `image`;
 - **the repo** that installed a component owns it (a pinned tool, a container image);
 - **the skill** only reports staleness and the owner. It updates none of them.
 
