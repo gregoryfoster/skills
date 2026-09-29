@@ -121,7 +121,16 @@ sudo systemd-run --unit=reboot-chain --on-active=120 --timer-property=AccuracySe
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
 3. `sudo -u postgres psql -c CHECKPOINT`, then stop the data store.
 4. `journalctl --sync`.
-5. **Copy the journal, last**, so it holds every stop line: `cp -a /run/log/journal/<machine-id> /var/backups/journal-<utc>/` (or `/var/log/journal/…`), then read it back with `journalctl -D … -n 5`. On a volatile journal this copy is the only record of the shutdown.
+5. **Copy the journal, last**, so it holds every stop line. On a volatile journal this copy is the only record of the shutdown:
+
+   ```
+   install -d -m 700 /var/backups/journal-<utc>
+   cp -a /run/log/journal/<machine-id>/. /var/backups/journal-<utc>/   # or /var/log/journal/…
+   chmod -R go-rwx /var/backups/journal-<utc>
+   journalctl -D /var/backups/journal-<utc> -n 5                       # the read-back
+   ```
+
+   `cp -a` alone keeps the source's `systemd-journal` group and its 2755 mode, so the copy would stay readable by that group. A journal can hold secrets: archiver's setup-script key was in its journal. The copy is a recovery-point file, so it gets a stated retention (§2).
 6. `sync`, then `systemctl reboot`. **In-guest only**: a platform restart is a hard reset.
 
 Before launching:
