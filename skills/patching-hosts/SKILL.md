@@ -44,7 +44,7 @@ A maintainer script's restart is still a restart. Nothing said in a chat channel
 1. **Read the host:** environment, update channels, the pending set by class, impact, dormant components. See [readings.md](references/readings.md).
 2. **Compare against the posture** the knob declares ([knob.md](references/knob.md), [policy.md](references/policy.md)). Every undeclared deviation is a finding. An expired exception is a finding.
 3. **Propose, in the record:** what goes in, which steps are held, which restarts, the window, and why. Include the callers' notice when the knob names callers.
-4. **The needrestart drop-in**, approval 1, proven with `needrestart -m u -b -r l`.
+4. **The needrestart drop-in**: installed if absent (approval 1), and proven on every run with `sudo needrestart -m u -b -r l`.
 5. **The recovery point**, off the node, then **the apply** in held steps: approvals 2 and 3(a).
 6. **The reboot**, when needrestart's list or `reboot-required` calls for one: a detached in-guest chain, approval 3(b). Then verify.
 7. **Record** what happened and what's left pending, by class.
