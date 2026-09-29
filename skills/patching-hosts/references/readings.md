@@ -2,7 +2,7 @@
 
 The probe's specification, and the checklist to follow by hand until the probe exists. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. All readings are read-only, except `apt-get update`, which writes the package lists (the probe refreshes into a scratch directory instead).
 
-**Report an absent setting as `unknown`, never as its default.** A reading the probe couldn't take is `unknown`, not clean.
+**Report an absent setting as `unknown`, never as its default.** A reading the probe couldn't take is `unknown`, not clean. That includes a read that needed root and failed: `/proc/<pid>/maps` of another user's process, needrestart's check, the Postgres catalogs.
 
 ## The environment
 
@@ -23,7 +23,7 @@ The probe's specification, and the checklist to follow by hand until the probe e
 | The apt timers and service | `systemctl is-enabled`, or the mask symlinks on disk (works offline) | trusting `20auto-upgrades`' `1`/`1` |
 | **The effective `Periodic::Enable`, and which file sets it** | `apt-config shell E APT::Periodic::Enable`; grep `/etc/apt/apt.conf.d/` | missing `docker-disable-periodic-update`'s `0`, which makes unmasked timers no-ops |
 | Every apt source, and each origin | `/etc/apt/sources.list.d/`, `apt-cache policy` | treating a third-party origin as Ubuntu's |
-| The needrestart config in force | `needrestart -m u -b -r l`'s `Disabling Ubuntu mode` line | a drop-in that doesn't load, leaving the hook in automatic mode |
+| The needrestart config in force | `sudo needrestart -m u -b -r l`'s `Disabling Ubuntu mode` line | a drop-in that doesn't load, leaving the hook in automatic mode |
 | **Everything outside apt, with its owner** | `/usr/local/bin`, `~/.local/bin`, container images and their age, pinned tools | a component nobody patches because nobody owns it |
 
 ## The pending set, by class
@@ -41,7 +41,7 @@ The probe's specification, and the checklist to follow by hand until the probe e
 
 | Reading | How | Mistake it prevents |
 |---|---|---|
-| **Which processes map a library in the set** | `/proc/*/maps` against the set's shared objects | "Postgres isn't in the set, so no restart": its backends mapped libc6 and libxml2 (watcher, address-validator, wslcb) |
+| **Which processes map a library in the set** | `sudo` read of `/proc/*/maps` against the set's shared objects | "Postgres isn't in the set, so no restart": its backends mapped libc6 and libxml2 (watcher, address-validator, wslcb) |
 | Each data store's source and collation | `datcollate` and provider per database; `datcollversion` unless C.UTF-8 on libc | a collation-version change after a libc or ICU upgrade |
 | **Live arguments** | `/proc/<pid>/cmdline` | reading a daemon's config from its journal. wslcb quoted earlyoom's boot-time block, not its last start |
 | **Boot ordering** of each service | its `After=`, and `systemd-analyze critical-chain` | a first start that succeeds by luck, and fails on the next boot (CannObserv/address-validator#239) |

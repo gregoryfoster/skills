@@ -100,8 +100,10 @@ Consider `sudo dpkg --configure -a`, record the state, and the owner decides. Th
 
 After the last step:
 - `sudo needrestart -b -r l`;
-- `grep -c '(deleted)' /proc/1/maps`;
+- `sudo grep -c '(deleted)' /proc/1/maps`;
 - `/var/run/reboot-required` and its `.pkgs`.
+
+`/proc/<pid>/maps` of another user's process needs root: without `sudo` it's "Permission denied", and a read that failed is `unknown`, never 0.
 
 Reboot when any of them calls for it: dbus, logind, `user@`, a data store, or PID 1 mapping deleted libraries. **Never decide from a kernel**: exe.dev has no guest kernel. PID 1 re-executing itself during the apply (it did on most hosts) doesn't mean no reboot.
 
@@ -136,7 +138,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
   - **its ordering**: `systemd-analyze critical-chain <service>` includes its data store, and the unit has `After=` on it. wslcb's first start succeeded by luck, until `After=postgresql.service` made it configured. Don't add `Wants=`: it would start a cluster an operator stopped on purpose.
 - **Each `restarter`** is active.
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.
-- **needrestart is clean**, `/proc/1/maps` has no `(deleted)`, and `reboot-required` is gone.
+- **needrestart is clean**, `sudo grep -c '(deleted)' /proc/1/maps` reads 0, and `reboot-required` is gone.
 - **The session adj, read directly** up the chain to PID 1. Never trust a test that can skip.
 - **Containers are back.** On power-map, qdrant waited for first use despite `unless-stopped`. On wslcb, with `docker.service` enabled, both came back at boot.
 - **The downtime**, from the stop line or the last request to the first good response.
