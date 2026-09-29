@@ -36,7 +36,7 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 
 | Lane | Selection | Cadence |
 |---|---|---|
-| **security** | Ubuntu `-security` | continuous under `automatic`; monthly under `scheduled` |
+| **security** | Ubuntu `-security` | daily under `automatic` (the apt timers); monthly under `scheduled` |
 | **maintenance** | Ubuntu `-updates`, plus each third-party origin whose policy is *follow* | monthly |
 
 - **Under `scheduled`, both lanes run in the same monthly window.**

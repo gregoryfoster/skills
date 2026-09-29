@@ -92,7 +92,7 @@ decisions folded in:
 - **Two lanes** (decided 2026-09-29, from the gap on #313 comment
   5879792979).
   - **The security lane** is everything above, `-security` only. It runs
-    continuously under `automatic`, and monthly under `scheduled`.
+    daily under `automatic` (the apt timers), and monthly under `scheduled`.
   - **The maintenance lane** is monthly. It uses the same run, but its
     selection is Ubuntu `-updates` plus each host's approved third-party
     origins. The profile gives every origin a policy: *follow*, *pin*, or
