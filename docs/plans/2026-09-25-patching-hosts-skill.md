@@ -298,9 +298,10 @@ base image, or an owner-approved remedy the profile documents.
    and `NEEDRESTART_MODE` questions were answered in step 0. *Done when* the
    profile's detection matches the image.
 6. **`apply.sh` and steps 5–7 of the core.**
-   - `apply.sh` refuses without `--approve`, refuses on a production-class
-     host that names no recovery point, and refuses on an `ephemeral` host
-     (the remedy is to rebuild its image).
+   - `apply.sh` refuses without `--approve`, refuses on a host that declares
+     a `datastore` but has no recovery point off the node, and refuses on an
+     `ephemeral` host (the remedy is to rebuild its image). A host with no
+     data store needs only its before-versions.
    - It writes the before-versions (`dpkg-query -W`, `apt-mark showhold`,
      `apt-mark showauto`) to a root-only record file.
    - `--step bulk|<held group>` runs one step. The bulk holds every `hold`

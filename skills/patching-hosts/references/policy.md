@@ -22,7 +22,7 @@ It suits a host with **no local data store**. On a host with one it means unsche
 The host is patched in a scheduled, gated run once a month, and the apt timers stay masked. A run is:
 
 - a chosen window, clear of whatever the knob says constrains it;
-- a fresh recovery point, copied off the node;
+- a fresh recovery point, copied off the node, for each declared data store. A host with no data store records its before-versions;
 - the apply in held steps, each approved;
 - a reboot if needrestart's list or `reboot-required` calls for one;
 - the verification;

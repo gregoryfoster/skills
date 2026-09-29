@@ -21,11 +21,11 @@ Gets a host's OS packages patched without surprising anyone: no unapproved resta
 <!-- skill:required id=iron-law -->
 ```
 NO APPLY, RESTART OR REBOOT WITHOUT THE OWNER'S APPROVAL, GIVEN IN THE HOST'S OWN SESSION
-NO APPLY WITHOUT A RECOVERY POINT THAT HAS LEFT THE NODE
+NO APPLY ON A HOST WITH A DATA STORE UNTIL ITS RECOVERY POINT HAS LEFT THE NODE
 NO CLAIM ABOUT THE HOST THAT WASN'T READ ON THE HOST
 ```
 
-A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. An absent setting is `unknown`, never its default.
+A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path through snapshot.ubuntu.com; it just has nothing to dump.
 
 ## Rationalization prevention
 

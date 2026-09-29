@@ -33,6 +33,8 @@ $nrconf{restart} = 'l';
 
 ## 2. The recovery point
 
+Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump.
+
 - **Prefer the host's own backup regime** when one exists and succeeded recently. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
 - **Otherwise, dump each data store as root**, mode 600 from creation. A `>` from the session shell can't write to `/var/backups` (CannObserv/address-validator#235):
 
