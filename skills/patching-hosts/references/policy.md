@@ -4,7 +4,7 @@ What a host is compared against. The probe reports a host's actual state, and an
 
 ## Two postures
 
-A host declares one in its knob ([knob.md](knob.md)). With no knob, the skill only reports.
+A host declares one in its knob ([knob.md](knob.md)). **With no knob, or no `posture` line, the probe compares the host against `automatic`**, the reference policy, and reports every deviation, but never applies anything. A cohort that runs `scheduled` commits its knob to say so.
 
 ### `automatic`: the generic reference policy
 

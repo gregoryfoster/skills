@@ -1,6 +1,6 @@
 # The host knob: `.skills/patching-hosts`
 
-A consuming repo commits `.skills/patching-hosts` to tell the skill what only its owner knows. The skill reads it and never writes it. With no knob, every host is treated as `production`, and the skill only reports.
+A consuming repo commits `.skills/patching-hosts` to tell the skill what only its owner knows. The skill reads it and never writes it. With no knob, every host is treated as `production` with posture `automatic`: the probe reports its deviations from that reference policy, and nothing is applied.
 
 The grammar is one directive per line. `#` starts a comment, and blank lines are ignored. It's the same line grammar as the repo's other knobs, so it parses on stock Ubuntu with nothing extra installed. A malformed line is a finding, never silently skipped.
 
@@ -20,14 +20,14 @@ class ephemeral
 - A host finds its section by `--host NAME`, or else by `hostname`.
 - **Precedence:** global, then a glob, then an exact name. An exact name beats a glob.
 - **Two globs that match equally** are a configuration finding, not a silent choice.
-- **A file with sections and no match** for this host means `production`, report-only.
+- **A file with sections and no match** for this host gets the global lines only. With no global `posture`, that's `automatic`, report-only.
 
 ## Directives
 
 | Directive | Meaning |
 |---|---|
 | `class production\|staging\|dev\|ephemeral` | An `ephemeral` host is patched by rebuilding its image, so it gets a report and never an apply. |
-| `posture automatic\|scheduled` | [policy.md](policy.md). Absent: report-only. |
+| `posture automatic\|scheduled` | [policy.md](policy.md). Absent: compared against `automatic`, report-only. |
 | `window <weekday> <HH:MM-HH:MM UTC>` | When the monthly run may happen. May repeat. |
 | `quiet <HH:MM-HH:MM UTC> [<weekday>]` | A range no step may overlap: an ingest run, a backup, the callers' busy hours. May repeat. |
 | `inflight <command>` | Must print `0` before each step, and again inside the reboot chain. For a job queue, the in-flight count. For oneshot ingest, the active task units. |
