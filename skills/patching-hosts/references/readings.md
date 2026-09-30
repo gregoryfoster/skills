@@ -39,6 +39,7 @@ The probe's specification, and the checklist to follow by hand until the probe e
 | **Ubuntu Pro / ESM** | `pro security-status` | "0 security pending" read as covering `universe` (wslcb: 29 esm-apps pending) |
 | The dry run's cost | wall time, max RSS, download size, free disk | a disk-full or memory-starved apply on a host that shares memory with sessions |
 | Held-group candidates | which `hold` globs are in the set | a major version bump (docker.io 28→29) going in with the bulk |
+| **Owner holds** | `apt-mark showhold` against the pending set and the knob's `held:` exceptions | a security fix deferred indefinitely by a hold nobody declared ([policy.md](policy.md#exceptions)) |
 
 ## Impact
 
@@ -46,6 +47,7 @@ The probe's specification, and the checklist to follow by hand until the probe e
 |---|---|---|
 | **Which processes map a library in the set** | `sudo` read of `/proc/*/maps` against the set's shared objects | "Postgres isn't in the set, so no restart": its backends mapped libc6 and libxml2 (watcher, address-validator, wslcb) |
 | Each data store's source and collation | `datcollate` and provider per database; `datcollversion` unless C.UTF-8 on libc | a collation-version change after a libc or ICU upgrade |
+| **Undeclared databases** | the cluster's databases, less `postgres` and the templates, against the knob's `datastore` lines | a database the recovery point doesn't cover ([knob.md](knob.md)) |
 | **Live arguments** | `/proc/<pid>/cmdline` | reading a daemon's config from its journal. wslcb quoted earlyoom's boot-time block, not its last start |
 | **Boot ordering** of each service | its `After=`, and `systemd-analyze critical-chain` | a first start that succeeds by luck, and fails on the next boot (CannObserv/address-validator#239) |
 | **In-host automatic restarters** | timers or services that run `systemctl restart`; `OnFailure=` chains | a health timer restarting the app, unapproved, during a 1.5 s database outage |

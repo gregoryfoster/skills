@@ -281,7 +281,11 @@ base image, or an owner-approved remedy the profile documents.
      the reading comes from `cmdline`;
    - a runbook service without `After=` its data store, reported as a
      finding even when its first start succeeded;
-   - a session chain whose adj test would skip: the adj is read anyway.
+   - a session chain whose adj test would skip: the adj is read anyway;
+   - an owner's hold on a pending package without a `held:` exception,
+     reported as a finding;
+   - a cluster database no `datastore` line names, reported as a finding,
+     while `postgres` and the templates are not.
 4. **The `exe-dev-exeuntu` profile.** Written 2026-09-29:
    [environments/exe-dev-exeuntu.md](../../skills/patching-hosts/references/environments/exe-dev-exeuntu.md).
    It covers the detection markers, the two image generations, the update
