@@ -47,7 +47,7 @@ class ephemeral
 
 ## Commands from the knob
 
-`inflight` and `health` are shell commands read from a committed file. **They never run as root.** The scripts run them as the invoking user, and the reboot chain, which is root, drops to that user with `runuser -u <user> --`. The chain script prints each one verbatim, so the owner approves the exact commands with the chain. Otherwise, anyone who can commit the knob could get a command run as root at the next patch run.
+`inflight` and `health` are shell commands read from a committed file. **They never run as root.** They run as `$SUDO_USER` when a script is started with `sudo`, or else as the user who started it. The reboot chain, which is root, records that user's name when it's written and drops to it with `runuser -u <user> --`. A script refuses to run a knob command when the user resolves to root. The chain script prints each one verbatim, so the owner approves the exact commands with the chain. Otherwise, anyone who can commit the knob could get a command run as root at the next patch run.
 
 ## An example
 
