@@ -33,7 +33,7 @@ class ephemeral
 | a list | `window`, `quiet`, `inflight`, `health`, `restarter`, `service`, `backup`, `caller` | the most specific scope that declares any replaces the whole list |
 | keyed | `datastore` (per unit and database), `hold` (per step), `owner` (per component), `origin` (per origin), `exception` (per `<what>`) | entries accumulate across scopes; for one key, the most specific wins |
 
-A value set twice at the same precedence is a finding, and the later line wins. Two `datastore` lines for one unit add their databases together.
+A one-value or keyed directive set twice at the same precedence is a finding, and the later line wins; a list simply holds every line. Two `datastore` lines for one unit add their databases together.
 
 ## Directives
 
