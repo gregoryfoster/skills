@@ -117,7 +117,7 @@ An engine without `pool_pre_ping` can serve 503s from a pooled connection opened
 - anything from `dpkg --audit`;
 - a failed recovery check.
 
-Consider `sudo dpkg --configure -a`, record the state, and the owner decides. The round never needed this branch; it's untested on a real host.
+Consider `sudo dpkg --configure -a`, record the state, and the owner decides. **List the run's own holds in the record**: the owner releases each one, or declares it as an `exception` with a review-by date. An abort never leaves an undeclared hold behind, because both lanes, and `automatic`, would skip that package indefinitely. The round never needed this branch; it's untested on a real host.
 
 ## 4. The reboot decision
 
