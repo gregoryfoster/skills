@@ -135,7 +135,7 @@ Reboot when any of them calls for it: dbus, logind, `user@`, a data store, or PI
 Run it detached, as a 0700 root script, so the operator's disconnect can't cut it off. Log it to `/var/backups/`:
 
 ```
-sudo systemd-run --unit=reboot-chain --on-active=120 --timer-property=AccuracySec=1s /var/backups/reboot-chain-<utc>.sh
+sudo systemd-run --unit=reboot-chain-<utc> --on-active=120 --timer-property=AccuracySec=1s /var/backups/reboot-chain-<utc>.sh
 ```
 
 `AccuracySec=1s` matters: by default the transient timer fired 41 s late (CannObserv/wslcb-licensing-tracker#184). The script's steps:
