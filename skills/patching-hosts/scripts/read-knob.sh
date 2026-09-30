@@ -68,6 +68,10 @@ fi
 if [ -z "$config" ]; then
   config="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.skills/patching-hosts"
 fi
+case $config in *[[:cntrl:]]*)
+  echo "ERROR the config path holds a control character" >&2
+  exit 2 ;;
+esac
 [ -n "$host" ] || host=$(hostname)
 [ -n "$today" ] || today=$(date -u +%Y-%m-%d)
 
@@ -77,13 +81,18 @@ fi
 knob_load "$config" "$host" "$today"
 
 # --- JSON -------------------------------------------------------------------
-# Knob text holds no control character but a tab (the parser rejects the rest),
-# so escaping the backslash, the quote and the tab is complete.
+# Every string printed is knob text (no control character but a tab: the parser
+# rejects the rest), a host name (knob_load checks it) or the config path
+# (checked above). So escaping the backslash, the quote and the tab covers
+# them; a newline and a carriage return are escaped too, in case one ever
+# gets past those checks.
 js() {
   local s=$1
   s=${s//\\/\\\\}
   s=${s//\"/\\\"}
   s=${s//$'\t'/\\t}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
   printf '"%s"' "$s"
 }
 js_or_null() { if [ -n "$1" ]; then js "$1"; else printf null; fi; }

@@ -569,3 +569,9 @@ def test_knob_load_refuses_a_date_or_host_it_cant_use(tmp_path):
     r = _run("--config", str(knob), "--host", "a\nb", "--today", TODAY)
     assert r.returncode == 2
     assert r.stdout == ""
+
+
+def test_a_config_path_with_a_control_character_is_refused(tmp_path):
+    r = _run("--config", str(tmp_path / "a\nb"), "--host", "h", "--today", TODAY)
+    assert r.returncode == 2
+    assert r.stdout == ""
