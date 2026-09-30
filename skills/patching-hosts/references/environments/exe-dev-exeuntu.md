@@ -34,7 +34,7 @@ On a volatile journal the reboot erases everything before it. That's how address
 
 | Channel | State on the image | Owner |
 |---|---|---|
-| apt (Ubuntu archive + security) | **off**: `apt-daily.timer`, `apt-daily-upgrade.timer` and `unattended-upgrades.service` are masked (3 units on usa-wa's image, 5 on the others measured) | the host's run ([policy.md](../policy.md)) |
+| apt (Ubuntu archive + security) | **off**: `apt-daily.timer`, `apt-daily-upgrade.timer` and `unattended-upgrades.service` are masked, 3 units on usa-wa's image. The newer images, and exeuntu `main` at `ae8be4d` (#313, 2026-09-24), mask both `update-notifier` timers too, for 5 | the host's run ([policy.md](../policy.md)) |
 | `APT::Periodic::Enable` | **0**, from `/etc/apt/apt.conf.d/docker-disable-periodic-update`, a Docker-base-image file. It makes the timers no-ops even when they're unmasked (CannObserv/archiver#278). A policy that turns them on must set `"1"` in a file sorting after it. | image |
 | Kernel | the platform's; no guest kernel, so a kernel never decides a reboot | platform |
 | `exeuntu update` | the agent binaries the image ships under `/usr/local/bin` | image / platform |
