@@ -36,7 +36,7 @@ class ephemeral
 | `restarter <unit>` | An in-host automatic restarter (a health timer, a watchdog, an `OnFailure=` chain). Stopped for a data-store restart, then proven active again. |
 | `service <unit>` | A runbook service: stopped in the reboot chain, and checked after boot for its first start's result and its ordering. |
 | `health <command>` | A health check. Must exit 0. May repeat. |
-| `datastore postgres\|redis <unit> [<database>]` | What the recovery point captures, and what the reboot chain checkpoints and stops. |
+| `datastore postgres <unit> <database>...` or `datastore redis <unit>` | What the recovery point captures, and what the reboot chain checkpoints and stops. A Postgres line names each database to dump: one the cluster holds that no line names is a finding, because the recovery point wouldn't cover it. May repeat; a unit named twice is checkpointed and stopped once. |
 | `backup <unit>` | The host's own backup regime. The recovery point prefers a recent success of this unit over a second dump. |
 | `hold <package-glob>... <step>` | A package group applied as its own step: one or more globs, and the **last token is the step's name**. The defaults are `postgresql-* libpq5` as `postgres`, `redis-server redis-tools` as `redis`, and `docker.io containerd` as `docker`. A `hold` line naming a default step **replaces** that default; the other defaults stay. |
 | `caller <repo>` | A repo whose service calls this host, told before a restart. |
