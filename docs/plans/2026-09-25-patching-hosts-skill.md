@@ -109,7 +109,7 @@ decisions folded in:
     `exeuntu update`.
   - What a repo installed itself belongs to that repo.
   - When the probe sees an update available for a component whose owner
-    is another repo (CannObserv/provisioner above all), the
+    is another repo (the image repo above all), the
     skill proposes an issue for that owner. On approval, it files the
     issue (step 6c).
 - **One profile, `exe-dev-exeuntu`, covering two image generations**:
@@ -123,8 +123,8 @@ decisions folded in:
   - the setup script re-delivered on every boot;
   - `exe-init` builds that start sessions at -1000.
 
-  CannObserv/provisioner, a new private repo, is stood up as part of this work
-  (step 0b). It's the `image` owner that step 6c's notices go to, and the home
+  **The image repo**, a new private CannObserv repo, is stood up as part of
+  this work (step 0b). It's the `image` owner that step 6c's notices go to, and the home
   of the base image and provisioning template (step 9).
 - **A process log**, modelled on `orchestrating-issue-backlog`'s.
 
@@ -169,10 +169,10 @@ base image, or an owner-approved remedy the profile documents.
      `docker-disable-periodic-update`. The Docker base image sets it to 0,
      which makes the timers no-ops even when unmasked (CannObserv/archiver#278).
 
-0b. **Stand up CannObserv/provisioner** (decided 2026-09-29). It must exist
+0b. **Stand up the image repo** (decided 2026-09-29). It must exist
     before step 6c has an `image` owner to notify.
     - **Created 2026-09-29: private, empty.** You chose the name and
-      visibility.
+      visibility. Because it's private, this public plan doesn't name it.
     - **Seeding it happens in its own session,** not from this repo, per the
       no-cross-repo-commits rule:
       - an AGENTS.md;
@@ -182,7 +182,7 @@ base image, or an owner-approved remedy the profile documents.
     - **Four issues, one per image-level finding** (Approach), each filed on
       your go-ahead.
     - Step 6c's rule keeps private identifiers out of notices to a **public**
-      repo. A private provisioner may name any host.
+      repo. The image repo is private, so its issues may name any host.
 
     *Done when* the repo is bootstrapped, its four issues are filed, and the
     knob grammar's default `image` owner names it.
@@ -485,7 +485,7 @@ base image, or an owner-approved remedy the profile documents.
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
-   - in CannObserv/provisioner (step 0b), the cohort base image and the
+   - in the image repo (step 0b), the cohort base image and the
      Terraform hardening. They should include a provisioning-script
      template that:
      - logs under `$HOME`;
@@ -504,9 +504,9 @@ base image, or an owner-approved remedy the profile documents.
    - where a dormant component shipped with the image on every host, the
      prune belongs in the cohort base image, not in a removal on each host.
      That keeps provisioning reproducible. **How a prune is promoted into
-     provisioning gets its own design process** in CannObserv/provisioner, not in
+     provisioning gets its own design process** in the image repo, not in
      this plan;
-   - **a cohort backup pattern**, in CannObserv/provisioner. Three hosts have no
+   - **a cohort backup pattern**, in the image repo. Three hosts have no
      backup regime (CannObserv/archiver#233, CannObserv/address-validator#240,
      CannObserv/wslcb-licensing-tracker#185), and watcher's is a working
      template;
@@ -527,7 +527,7 @@ base image, or an owner-approved remedy the profile documents.
   `unknown`, not `dormant`, so a monthly job or freshly reset statistics
   can't make a live component look unused.
 - **A removal by hand is recorded in the knob (2026-09-27).** When the
-  component came with the image, the fix is the base image (CannObserv/provisioner).
+  component came with the image, the fix is the base image (the image repo).
   Until provisioning catches up, a removal on a single host is drift from
   that image, and the knob declares it so the probe doesn't report it as
   unexplained variance.
@@ -557,7 +557,7 @@ base image, or an owner-approved remedy the profile documents.
     gated run per host covering both lanes, with the apt timers left
     masked. That answers D4.
   - **An infrastructure repo** is stood up as part of this work (step 0b):
-    CannObserv/provisioner, private (named 2026-09-29).
+    the image repo, private (created 2026-09-29).
   - **The gap until the first monthly run** is closed by exercising the
     skill by hand on every host (step 8b). That run is each host's
     catch-up.
@@ -571,7 +571,7 @@ base image, or an owner-approved remedy the profile documents.
   own session. A reminder or calendar for the monthly run is not designed
   yet. The once-a-day `SessionStart` status line (step 9) is the first
   candidate.
-- **CannObserv/provisioner's bootstrap** runs in its own session. Until
+- **The image repo's bootstrap** runs in its own session. Until
   it's seeded, the four image issues can be filed, but no agent there can
   act on them.
 - **Ubuntu Pro.** The ESM class stays pending on every host until someone
