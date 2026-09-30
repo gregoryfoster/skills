@@ -16,7 +16,12 @@ What this file pins, against references/knob.md:
 - scalars take the most specific value, lists are replaced whole, keyed
   directives accumulate per key;
 - an exception expires the day after its review-by date;
-- the example in knob.md parses clean, and every directive in its table parses.
+- the example in knob.md parses clean, and every directive in its table parses;
+- the reader calls the library outside any condition, so errexit stays on
+  inside it, and it needs no tool beyond bash to order the sections;
+- the library ignores its caller's IFS, leaves the caller's own `--help` alone,
+  and refuses a date or a host it can't use;
+- nothing the reader prints carries an unescaped control character.
 
 Runs under whatever `bash` is on PATH, which is 3.2 on macOS: the library is
 written for it. No API calls; each test writes its knob under tmp_path.
