@@ -323,7 +323,7 @@ base image, or an owner-approved remedy the profile documents.
      `dpkg --configure -a`, then the snapshot.ubuntu.com versions. The round
      never exercised this, so it's tested by stubs only.
    - A data-store step stops each `restarter` first, polls health every
-     second (logging each code with its timestamp), then starts the
+     second (logging each result with its timestamp), then starts the
      restarter and proves it's active.
    - It never reboots, unmasks, enables, or removes anything by name. It
      re-probes and runs the knob's health checks.

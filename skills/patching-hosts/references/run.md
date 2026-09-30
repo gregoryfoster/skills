@@ -81,7 +81,7 @@ Then:
    - unhold the packages the run held, and only those;
    - stop each `restarter`;
    - run the same command;
-   - poll health **every second, logging each code with its timestamp**, until two 200s in a row;
+   - poll every `health` command **every second, logging each result with its timestamp**, until all of them exit 0 twice in a row;
    - start each `restarter` again, and confirm `is-active`.
 4. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
 5. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
