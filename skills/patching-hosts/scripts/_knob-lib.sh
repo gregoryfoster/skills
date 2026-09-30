@@ -53,7 +53,15 @@ case "${0##*/}" in
     ;;
 esac
 
-# Every result variable, reset. Field order per record:
+# Every result variable, reset.
+#
+# Scalars: KNOB_PATH, KNOB_HOST, KNOB_TODAY, KNOB_PRESENT (0|1), KNOB_CLASS,
+# KNOB_POSTURE, KNOB_IMAGE_OWNER and KNOB_RECORDS, each value with a *_LINE
+# (empty for a default), and KNOB_REPORT_ONLY (0|1).
+# Lists of plain strings: KNOB_SECTIONS (applied, least specific first) and
+# KNOB_REPORT_ONLY_WHY.
+#
+# Field order per record:
 #   KNOB_WINDOW     weekday start end wraps line
 #   KNOB_QUIET      weekday-or-empty start end wraps line
 #   KNOB_INFLIGHT, KNOB_HEALTH                  command line
