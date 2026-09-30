@@ -24,7 +24,7 @@ The round met two generations. The probe reports which one it's on, because the 
 | Journal | **volatile**: `systemd-journal-flush.service` is masked, so `/var/log/journal` stays empty despite `Storage=persistent` | persistent |
 | Session path | through exe.dev's own `/exe.dev/bin/sshd`, at adj -1000 | through `exe-init`, until the session is reparented to PID 1 |
 
-Not every row was read on every host. For the newer images, the `exe-setup` row comes from all five hosts. The journal row comes from notifier, replicator and watcher, and the session path from replicator and watcher. For the Feb-2026 images, the journal row comes from all three, and the `exe-init` and session rows from address-validator and wslcb.
+Not every row was read on every host. For the newer images, the unit's presence comes from all five hosts, but its re-run on every boot was counted on replicator and watcher only. notifier's failed on every boot, which is consistent with it. The journal row comes from notifier, replicator and watcher, and the session path from replicator and watcher. For the Feb-2026 images, the journal row comes from all three, and the `exe-init` and session rows from address-validator and wslcb.
 
 usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu`, and masks 3 units rather than 5 (CannObserv/usa-wa#430). Detect each marker on its own rather than inferring one from another.
 
