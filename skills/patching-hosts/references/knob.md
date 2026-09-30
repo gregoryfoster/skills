@@ -2,7 +2,7 @@
 
 A consuming repo commits `.skills/patching-hosts` to tell the skill what only its owner knows. The skill reads it and never writes it. With no knob, every host is treated as `production` with posture `automatic`: the probe reports its deviations from that reference policy, and nothing is applied.
 
-The grammar is one directive per line, and blank lines are ignored. **`#` starts a comment only at the start of a line or after whitespace**, so a command can hold a `#` (a URL fragment) as long as no space precedes it. `inflight` and `health` take the rest of the line as their command, run with `sh -c`, so a pipe works. It's the same line grammar as the repo's other knobs, so it parses on stock Ubuntu with nothing extra installed. A malformed line is a finding, never silently skipped.
+The grammar is one directive per line, and blank lines are ignored. **`#` starts a comment only at the start of a line or after whitespace**, so a command can hold a `#` (a URL fragment) as long as no space precedes it. `inflight` and `health` take the rest of the line as their command, run with `sh -c`, so a pipe works. It's the other knobs' `#`-comment line grammar, plus `[host <glob>]` sections, so it parses on stock Ubuntu with nothing extra installed. A malformed line is a finding, never silently skipped.
 
 ## Hosts and sections
 
