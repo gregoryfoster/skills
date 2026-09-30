@@ -531,3 +531,17 @@ def test_the_library_ignores_a_callers_strict_ifs(tmp_path):
     assert "postgres|postgresql-16 libpq5|2" in lines, lines
     assert "keep:x|2026-12-31|two words|0|3" in lines, lines
     assert "findings=0" in lines, lines
+
+
+def test_a_caller_keeps_its_own_help_and_reads_the_knob_variables(tmp_path):
+    """Sourced, the library must not answer the caller's `--help`: $0 and $1
+    are the caller's then. And knob_load leaves its results in KNOB_*."""
+    after = (
+        'printf "%s %s %s\\n" "$KNOB_POSTURE" "$KNOB_POSTURE_LINE" "$KNOB_PRESENT"\n'
+        'printf "%s\\n" "${KNOB_WINDOW[0]//$KNOB_US/|}"\n'
+    )
+    knob = "posture scheduled\nwindow Tue 15:00-21:00\n"
+    r = _source(tmp_path, knob, "", after, "--help")
+    assert r.returncode == 0, r.stderr
+    assert "This file is a library" not in r.stdout
+    assert r.stdout.splitlines() == ["scheduled 1 1", "Tue|15:00|21:00|0|2"]
