@@ -493,7 +493,7 @@ _knob_report_only() {
   [ "$_KNOB_MALFORMED" -eq 0 ] ||
     KNOB_REPORT_ONLY_WHY+=("a malformed line: the knob isn't trusted for an apply until every line parses")
   [ "$_KNOB_AMBIGUOUS" -eq 0 ] ||
-    KNOB_REPORT_ONLY_WHY+=("more than one glob section matches this host")
+    KNOB_REPORT_ONLY_WHY+=("glob sections that are equally specific match this host")
   [ "${#KNOB_REPORT_ONLY_WHY[@]}" -eq 0 ] || KNOB_REPORT_ONLY=1
 }
 

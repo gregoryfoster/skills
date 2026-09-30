@@ -282,6 +282,7 @@ def test_equally_specific_globs_tie_and_neither_applies(tmp_path):
     assert out["sections"] == []
     assert _kinds(out) == ["ambiguous-sections"]
     assert out["report_only"] is True
+    assert any("equally specific" in why for why in out["report_only_reasons"])
     message = out["findings"][0]["message"]
     assert "[host co-*]" in message and "[host *-db]" in message
 
