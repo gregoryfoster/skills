@@ -54,10 +54,12 @@ Every host records its before-versions (below). A host that declares a `datastor
 
   For Redis: `BGSAVE`, wait for it to finish, then copy the RDB file the same way.
 - **The owner copies the dump off the node** with their own `scp`, and checks it against that sha256 **before the apply**.
-- **On the node only:**
-  - `pg_dumpall --globals-only` (role hashes);
+- **On the node only**, each written like the dump, through `| sudo sh -c 'umask 077; cat > /var/backups/<name>-<utc>'`, and checked with `stat` for mode 600:
+  - `sudo -u postgres pg_dumpall --globals-only` (role password hashes);
   - the before-versions, `dpkg-query -W`;
   - `apt-mark showauto` and `apt-mark showhold`.
+
+  A `>` from the session shell can't write there, and `sudo tee` creates the file at 644, readable by every user on the host.
 - **Secrets never travel:** the service's env file, keys and DSNs stay put.
 - **State a retention** for every recovery-point file, and flag a dump that holds personal data. address-validator's held its audit log's raw input.
 - A package rollback fetches the recorded version from snapshot.ubuntu.com, because `docker-clean` empties apt's `.deb` cache.
