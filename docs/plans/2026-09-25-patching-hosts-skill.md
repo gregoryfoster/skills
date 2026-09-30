@@ -310,7 +310,8 @@ base image, or an owner-approved remedy the profile documents.
      data store needs only its before-versions.
    - A script on the node can't see that a dump has left it, so that
      refusal binds to the owner's attestation of every recovery-point
-     file `recovery-point.sh` recorded:
+     file meant to leave the node, which is each database dump and RDB
+     copy `recovery-point.sh` recorded:
      - one `--offnode-sha256 <hex>` per dump, each equal to a recorded
        sha256, typed after the owner checks their own copy;
      - for a `backup` unit, which writes straight off the node,
@@ -367,6 +368,9 @@ base image, or an owner-approved remedy the profile documents.
       prefers the host's own backup regime** when the probe finds one that
       succeeded recently (watcher), and then records the object name the
       unit's run reported instead.
+    - It also writes `pg_dumpall --globals-only` on the node, mode 600, and
+      never asks for it to be attested: it holds role password hashes, so
+      it stays on the node.
       The dump is written with a stated retention, and flagged when it
       holds personal data (address-validator's `raw_input`).
     - **`reboot-chain.sh --approve`** writes and launches the chain as a
@@ -386,6 +390,8 @@ base image, or an owner-approved remedy the profile documents.
 
     *Done when* stub tests prove:
     - the dump's mode, and that it's written as root;
+    - the globals dump written at mode 600, and never requested for an
+      off-node attestation;
     - a truncated dump failing the gate, although `--list` passes it;
     - the chain's order;
     - the abort when the gate fails;
