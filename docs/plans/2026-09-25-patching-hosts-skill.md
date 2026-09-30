@@ -305,9 +305,13 @@ base image, or an owner-approved remedy the profile documents.
      `ephemeral` host (the remedy is to rebuild its image). A host with no
      data store needs only its before-versions.
    - A script on the node can't see that a dump has left it, so that
-     refusal binds to the owner's attestation. `--offnode-sha256 <hex>`
-     must equal the sha256 that `recovery-point.sh` recorded, and the owner
-     types it after checking their own copy.
+     refusal binds to the owner's attestation of every recovery-point
+     file `recovery-point.sh` recorded:
+     - one `--offnode-sha256 <hex>` per dump, each equal to a recorded
+       sha256, typed after the owner checks their own copy;
+     - for a `backup` unit, which writes straight off the node,
+       `--offnode-object <name>`, equal to the object the unit's run
+       reported, typed after the owner confirms it exists.
    - It writes the before-versions (`dpkg-query -W`, `apt-mark showhold`,
      `apt-mark showauto`) to a root-only record file.
    - `--step bulk|<held group>` runs one step. The bulk holds every `hold`
@@ -331,8 +335,9 @@ base image, or an owner-approved remedy the profile documents.
 
    *Done when* stub tests prove:
    - each refusal, including a step that starts outside a `quiet` range
-     but would run into one, and a missing or mismatched
-     `--offnode-sha256`;
+     but would run into one, a missing or mismatched `--offnode-sha256`,
+     one dump of two left unattested, and a `backup`-unit recovery point
+     without its `--offnode-object`;
    - the recorded before-versions;
    - the holds, released only for the named step, and never touching a
      package the owner held before the run (`showhold` ends equal to its
@@ -352,10 +357,11 @@ base image, or an owner-approved remedy the profile documents.
 
       It gates on every pipeline stage exiting 0, then `pg_restore --list`,
       then a full read (`pg_restore -f /dev/null`), then mode 600. `--list`
-      alone passes a dump truncated after its table of contents. It prints
-      the sha256
-      for the owner's off-node copy. **It prefers the host's own backup
-      regime** when the probe finds one that succeeded recently (watcher).
+      alone passes a dump truncated after its table of contents. It records
+      and prints each dump's sha256 for the owner's off-node copy. **It
+      prefers the host's own backup regime** when the probe finds one that
+      succeeded recently (watcher), and then records the object name the
+      unit's run reported instead.
       The dump is written with a stated retention, and flagged when it
       holds personal data (address-validator's `raw_input`).
     - **`reboot-chain.sh --approve`** writes and launches the chain as a
