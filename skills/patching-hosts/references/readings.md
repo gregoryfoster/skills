@@ -48,7 +48,8 @@ The probe's specification, and the checklist to follow by hand until the probe e
 | Each data store's source and collation | `datcollate` and provider per database; `datcollversion` unless C.UTF-8 on libc | a collation-version change after a libc or ICU upgrade |
 | **Live arguments** | `/proc/<pid>/cmdline` | reading a daemon's config from its journal. wslcb quoted earlyoom's boot-time block, not its last start |
 | **Boot ordering** of each service | its `After=`, and `systemd-analyze critical-chain` | a first start that succeeds by luck, and fails on the next boot (CannObserv/address-validator#239) |
-| **In-host automatic restarters** | timers or services that run `systemctl restart`; `OnFailure=` chains; `Requires=` on the service | a health timer restarting the app, unapproved, during a 1.5 s database outage |
+| **In-host automatic restarters** | timers or services that run `systemctl restart`; `OnFailure=` chains | a health timer restarting the app, unapproved, during a 1.5 s database outage |
+| **Units that `Requires=` a service** | `systemctl list-dependencies --reverse <service>` | a stop and a later `start` leaving the dependent inactive: wslcb's health timer stopped with the app, and only a `restart` brings it back |
 | **A backup regime** | timers or cron that dump each data store, and their last success | taking a second dump when a verified off-node regime exists, or assuming one that doesn't |
 | The health baseline | each knob `health`, the suite's pass and skip counts, `systemctl --failed`, the timers' last results | no baseline to compare the post-boot state against |
 | Callers and traffic | the service's own access or audit log, by UTC hour | a window in the busy hour; a caller whose degraded path is permanent (CannObserv/power-map#589) |
