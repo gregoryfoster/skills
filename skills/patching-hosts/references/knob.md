@@ -38,7 +38,7 @@ class ephemeral
 | `health <command>` | A health check. Must exit 0. May repeat. |
 | `datastore postgres\|redis <unit> [<database>]` | What the recovery point captures, and what the reboot chain checkpoints and stops. |
 | `backup <unit>` | The host's own backup regime. The recovery point prefers a recent success of this unit over a second dump. |
-| `hold <package-glob>... <step>` | A package group applied as its own step: one or more globs, and the **last token is the step's name**. The defaults are `postgresql-* libpq5` as `postgres` and `docker.io containerd` as `docker`. A `hold` line naming a default step **replaces** that default; the other defaults stay. |
+| `hold <package-glob>... <step>` | A package group applied as its own step: one or more globs, and the **last token is the step's name**. The defaults are `postgresql-* libpq5` as `postgres`, `redis-server redis-tools` as `redis`, and `docker.io containerd` as `docker`. A `hold` line naming a default step **replaces** that default; the other defaults stay. |
 | `caller <repo>` | A repo whose service calls this host, told before a restart. |
 | `owner <component-glob> <repo>` | The update owner of a component apt doesn't reach. `<repo>` is `owner/name`, `self` for this repo, or `image` for whoever owns the image. The default owner of what the image ships is `image`. |
 | `image-owner <owner/name>` | Whom `image` means: the repo that owns this host's image. The profile's image-level findings, and notices for what the image ships, go there. Absent: they're reported with owner `image`, and no notice is proposed. |
