@@ -314,9 +314,12 @@ base image, or an owner-approved remedy the profile documents.
      copy `recovery-point.sh` recorded:
      - one `--offnode-sha256 <hex>` per dump, each equal to a recorded
        sha256, typed after the owner checks their own copy;
-     - for a `backup` unit, which writes straight off the node,
-       `--offnode-object <name>`, equal to the object the unit's run
-       reported, typed after the owner confirms it exists.
+     - for a `backup` unit, which writes straight off the node, a run of
+       that unit that succeeded after the recovery point began (its
+       `Result` and `ExecMainExitTimestamp`), plus `--offnode-object
+       <name>`, typed after the owner confirms the object exists. A
+       generic script can't parse what each backup unit logs, so the name
+       is recorded as the owner's attestation, not compared.
    - It writes the before-versions (`dpkg-query -W`, `apt-mark showhold`,
      `apt-mark showauto`) to a root-only record file.
    - `--step bulk|<held group>` runs one step. The bulk holds every `hold`
@@ -343,7 +346,8 @@ base image, or an owner-approved remedy the profile documents.
      would run past its close, a step that starts outside a `quiet` range
      but would run into one, a missing or mismatched `--offnode-sha256`,
      one dump of two left unattested, and a `backup`-unit recovery point
-     without its `--offnode-object`;
+     whose last successful run predates the recovery point, or that lacks
+     `--offnode-object`;
    - the recorded before-versions;
    - the holds, released only for the named step, and never touching a
      package the owner held before the run (`showhold` ends equal to its
@@ -366,8 +370,8 @@ base image, or an owner-approved remedy the profile documents.
       alone passes a dump truncated after its table of contents. It records
       and prints each dump's sha256 for the owner's off-node copy. **It
       prefers the host's own backup regime** when the probe finds one that
-      succeeded recently (watcher), and then records the object name the
-      unit's run reported instead.
+      succeeded recently (watcher). It then starts that unit and records
+      its run's `Result` and `ExecMainExitTimestamp` instead of a sha256.
     - It also writes `pg_dumpall --globals-only` on the node, mode 600, and
       never asks for it to be attested: it holds role password hashes, so
       it stays on the node.
