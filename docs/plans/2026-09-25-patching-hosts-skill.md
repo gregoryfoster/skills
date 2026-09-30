@@ -303,6 +303,10 @@ base image, or an owner-approved remedy the profile documents.
      a `datastore` but has no recovery point off the node, and refuses on an
      `ephemeral` host (the remedy is to rebuild its image). A host with no
      data store needs only its before-versions.
+   - A script on the node can't see that a dump has left it, so that
+     refusal binds to the owner's attestation. `--offnode-sha256 <hex>`
+     must equal the sha256 that `recovery-point.sh` recorded, and the owner
+     types it after checking their own copy.
    - It writes the before-versions (`dpkg-query -W`, `apt-mark showhold`,
      `apt-mark showauto`) to a root-only record file.
    - `--step bulk|<held group>` runs one step. The bulk holds every `hold`
@@ -325,7 +329,8 @@ base image, or an owner-approved remedy the profile documents.
 
    *Done when* stub tests prove:
    - each refusal, including a step that starts outside a `quiet` range
-     but would run into one;
+     but would run into one, and a missing or mismatched
+     `--offnode-sha256`;
    - the recorded before-versions;
    - the holds, released only for the named step, and never touching a
      package the owner held before the run (`showhold` ends equal to its
