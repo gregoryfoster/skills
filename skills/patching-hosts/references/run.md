@@ -72,7 +72,7 @@ Count first:
 
 Then:
 
-1. **Hold** each `hold` group in the set: `sudo apt-mark hold <packages>`. **Leave the owner's own holds alone:** a package in `apt-mark showhold` before the run was held on purpose, so the run never holds or unholds it. Report it as held by the owner.
+1. **Hold** each `hold` group in the set: `sudo apt-mark hold <packages>`. **Leave the owner's own holds alone:** a package in `apt-mark showhold` before the run was held on purpose, so the run never holds or unholds it. Report it as held by the owner. If it's in the pending set, that's a finding unless a `held:<package>` exception covers it ([policy.md](policy.md#exceptions)).
 2. **Bulk:** `sudo NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`.
    - `choom -n 0` puts the apply at adj 0, so the kernel doesn't sacrifice a production service to protect a -1000 session.
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
@@ -121,7 +121,7 @@ An engine without `pool_pre_ping` can serve 503s from a pooled connection opened
 - anything from `dpkg --audit`;
 - a failed recovery check.
 
-Consider `sudo dpkg --configure -a`, record the state, and the owner decides. **List the run's own holds in the record**: the owner releases each one, or declares it as an `exception` with a review-by date. An abort never leaves an undeclared hold behind, because both lanes, and `automatic`, would skip that package indefinitely. The round never needed this branch; it's untested on a real host.
+Consider `sudo dpkg --configure -a`, record the state, and the owner decides. **List the run's own holds in the record**: the owner releases each one, or declares it as `exception held:<package> <review-by> <reason>`. An abort never leaves an undeclared hold behind, because both lanes, and `automatic`, would skip that package indefinitely. The round never needed this branch; it's untested on a real host.
 
 ## 4. The reboot decision
 

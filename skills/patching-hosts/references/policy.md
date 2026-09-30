@@ -65,6 +65,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 - A passed review-by date **expires** the exception, and the deviation becomes a finding again.
 - Keeping a dormant component is an exception: `exception keep:<component> <review-by> <reason>`.
 - Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when it passes, the probe proposes the next stage. A `purged:` line stays until the base image stops shipping the component.
+- **A package hold is declared as `held:<package>`.** A hold on a package in the pending set defers its update, and a security package never waits without an exception ([Two lanes](#two-lanes)). So an undeclared hold on a pending package is a finding, whether the owner placed it or an aborted run left it ([run.md](run.md)).
 
 ## Dormant components
 
