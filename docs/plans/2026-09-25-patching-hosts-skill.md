@@ -320,7 +320,8 @@ base image, or an owner-approved remedy the profile documents.
      with no memory cap, and records wall time and max RSS.
    - The verdict comes from the exit code, `All upgrades installed` and an
      empty `dpkg --audit`. On failure it stops and prints the abort branch:
-     `dpkg --configure -a`, then the snapshot.ubuntu.com versions. The round
+     `dpkg --configure -a`, the snapshot.ubuntu.com versions, and the run's
+     own holds, each to be released or declared as `held:<package>`. The round
      never exercised this, so it's tested by stubs only.
    - A data-store step stops each `restarter` first, polls health every
      second (logging each result with its timestamp), then starts the
@@ -337,7 +338,8 @@ base image, or an owner-approved remedy the profile documents.
      package the owner held before the run (`showhold` ends equal to its
      recorded value);
    - `NEEDRESTART_MODE` and `choom`;
-   - a failing verdict stops the run;
+   - a failing verdict stops the run, and its output lists the run's own
+     holds;
    - no `systemctl unmask`, `enable` or `reboot`, and no `apt-get remove` or
      `purge`, was run.
 
