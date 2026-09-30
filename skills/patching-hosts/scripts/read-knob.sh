@@ -70,7 +70,6 @@ if [ -z "$config" ]; then
 fi
 [ -n "$host" ] || host=$(hostname)
 [ -n "$today" ] || today=$(date -u +%Y-%m-%d)
-_knob_is_date "$today" || { echo "ERROR --today takes YYYY-MM-DD, not $today" >&2; exit 2; }
 
 # Called plainly, never in a condition: bash turns errexit off for everything a
 # condition runs, so a failure inside the library would go unseen. Its return

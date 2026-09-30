@@ -545,3 +545,27 @@ def test_a_caller_keeps_its_own_help_and_reads_the_knob_variables(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "This file is a library" not in r.stdout
     assert r.stdout.splitlines() == ["scheduled 1 1", "Tue|15:00|21:00|0|2"]
+
+
+def test_knob_load_refuses_a_date_or_host_it_cant_use(tmp_path):
+    """An empty date sorts before every review-by date, so no exception would
+    ever expire; a host holding a newline would break the JSON."""
+    knob = tmp_path / "patching-hosts"
+    knob.write_text("posture scheduled\nexception keep:x 2026-01-01 old\n")
+    lib = READ_KNOB.parent / "_knob-lib.sh"
+    caller = (
+        f'set -euo pipefail\n. "{lib}"\nknob_load "{knob}" "$1" "$2"\necho loaded\n'
+    )
+    bad = [("web-1", ""), ("web-1", "30/09/2026"), ("", TODAY), ("a\nb", TODAY)]
+    for host, today in bad:
+        r = subprocess.run(
+            ["bash", "-c", caller, "caller", host, today],
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+        )
+        assert r.returncode == 2, (host, today, r.stdout, r.stderr)
+        assert "loaded" not in r.stdout
+    r = _run("--config", str(knob), "--host", "a\nb", "--today", TODAY)
+    assert r.returncode == 2
+    assert r.stdout == ""

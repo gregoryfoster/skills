@@ -32,7 +32,8 @@ _knob-lib.sh — the .skills/patching-hosts reader shared by patching-hosts' scr
 This file is a library. Source it; do not run it:
 
   . "<dir>/_knob-lib.sh"
-  knob_load <path> <host> <today YYYY-MM-DD>   # returns 2 if <path> is unreadable
+  knob_load <path> <host> <today YYYY-MM-DD>
+      returns 2 if <path> is unreadable, or the host or date isn't one
 
 Call knob_load plainly, never inside if, && or ||: bash turns errexit off for
 everything a condition runs, and a failure in the library would go unseen.
@@ -114,6 +115,11 @@ _knob_is_weekday() {
 
 _knob_is_repo() {
   local re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  [[ $1 =~ $re ]]
+}
+
+_knob_is_host() {
+  local re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
   [[ $1 =~ $re ]]
 }
 
@@ -504,6 +510,17 @@ knob_load() {  # <path> <host> <today YYYY-MM-DD>
   # list would carry a newline.
   local IFS=$' \t\n'
   knob_reset
+  # Checked here, not left to each caller: an empty date sorts before every
+  # review-by date, so no exception would ever expire, and a host holding a
+  # control character would reach the output unescaped.
+  if ! _knob_is_date "$3"; then
+    echo "ERROR knob_load takes the date as YYYY-MM-DD" >&2
+    return 2
+  fi
+  if ! _knob_is_host "$2"; then
+    echo "ERROR knob_load takes a host name of letters, digits, '.', '-' and '_'" >&2
+    return 2
+  fi
   KNOB_PATH=$1 KNOB_HOST=$2 KNOB_TODAY=$3
   if [ -e "$KNOB_PATH" ]; then
     if [ -d "$KNOB_PATH" ] || [ ! -r "$KNOB_PATH" ]; then
