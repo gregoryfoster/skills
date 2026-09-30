@@ -25,6 +25,7 @@ written for it. No API calls; each test writes its knob under tmp_path.
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -470,3 +471,26 @@ def test_the_reader_calls_the_library_outside_any_condition():
         if "knob_load " in line and not line.lstrip().startswith("#")
     ]
     assert calls == ['knob_load "$config" "$host" "$today"'], calls
+
+
+def test_the_applied_sections_need_no_tool_beyond_bash(tmp_path):
+    """The reader runs on the host being patched. With no `sort` on PATH, the
+    sections still layer and are still listed, rather than reading as none."""
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    for tool in ("dirname", "readlink"):
+        (tools / tool).symlink_to(shutil.which(tool))
+    knob = tmp_path / "patching-hosts"
+    knob.write_text(LAYERED)
+    env = _clean_env()
+    env["PATH"] = str(tools)
+    r = subprocess.run(
+        [shutil.which("bash"), str(READ_KNOB), "--config", str(knob)]
+        + ["--host", "co-worker-7", "--today", TODAY],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["sections"] == ["co-*", "co-worker-*", "co-worker-7"]

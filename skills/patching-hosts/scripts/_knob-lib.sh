@@ -332,14 +332,21 @@ _knob_match_sections() {
     _knob_finding "" ambiguous-sections \
       "$KNOB_HOST matches glob sections that are equally specific: ${lines#, }. None of them applies until one is narrowed or an exact section is added"
   done
-  # Applied sections, least specific first, as they layer.
-  local r
-  for r in $(for j in ${_KS_GLOB[@]+"${!_KS_GLOB[@]}"}; do
-    [ "${_KS_RANK[$j]}" -le 0 ] || printf '%s\n' "${_KS_RANK[$j]}"
-  done | sort -n -u); do
-    for j in "${!_KS_GLOB[@]}"; do
-      [ "${_KS_RANK[$j]}" != "$r" ] || KNOB_SECTIONS+=("${_KS_GLOB[$j]}")
+  # Applied sections, least specific first, as they layer. Ordered in bash: a
+  # sort inside a for word list can fail, and no errexit would see it.
+  local best
+  local -a left=()
+  for j in ${_KS_GLOB[@]+"${!_KS_GLOB[@]}"}; do
+    [ "${_KS_RANK[$j]}" -le 0 ] || left+=("$j")
+  done
+  while [ "${#left[@]}" -gt 0 ]; do
+    best=0
+    for k in "${!left[@]}"; do
+      [ "${_KS_RANK[${left[$k]}]}" -ge "${_KS_RANK[${left[$best]}]}" ] || best=$k
     done
+    KNOB_SECTIONS+=("${_KS_GLOB[${left[$best]}]}")
+    unset "left[$best]"
+    left=(${left[@]+"${left[@]}"})
   done
 }
 
