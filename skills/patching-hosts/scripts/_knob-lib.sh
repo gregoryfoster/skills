@@ -498,6 +498,10 @@ _knob_report_only() {
 }
 
 knob_load() {  # <path> <host> <today YYYY-MM-DD>
+  # Words split and join on the default separators, whatever the caller set:
+  # under a strict IFS=$'\n\t', a line would read as one word, and a joined
+  # list would carry a newline.
+  local IFS=$' \t\n'
   knob_reset
   KNOB_PATH=$1 KNOB_HOST=$2 KNOB_TODAY=$3
   if [ -e "$KNOB_PATH" ]; then

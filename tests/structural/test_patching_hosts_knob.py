@@ -494,3 +494,39 @@ def test_the_applied_sections_need_no_tool_beyond_bash(tmp_path):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["sections"] == ["co-*", "co-worker-*", "co-worker-7"]
+
+
+def _source(tmp_path: Path, knob_text: str, before: str, after: str, *args: str):
+    """Runs a caller that sources the library the way the probe will:
+    `before` runs ahead of knob_load, `after` reads its results."""
+    knob = tmp_path / "patching-hosts"
+    knob.write_text(knob_text)
+    caller = tmp_path / "caller.sh"
+    lib = READ_KNOB.parent / "_knob-lib.sh"
+    caller.write_text(
+        f'set -euo pipefail\n{before}. "{lib}"\n'
+        f'knob_load "{knob}" web-1 {TODAY}\n{after}'
+    )
+    return subprocess.run(
+        ["bash", str(caller), *args], capture_output=True, text=True, env=_clean_env()
+    )
+
+
+def test_the_library_ignores_a_callers_strict_ifs(tmp_path):
+    knob = (
+        "posture scheduled\n"
+        "hold postgresql-16 libpq5 postgres\n"
+        "exception keep:x 2026-12-31 two words\n"
+    )
+    after = (
+        'for r in "${KNOB_HOLD[@]}" "${KNOB_EXCEPTION[@]}"; do\n'
+        '  printf "%s\\n" "${r//$KNOB_US/|}"\n'
+        "done\n"
+        'printf "findings=%s\\n" "${#KNOB_FINDING[@]}"\n'
+    )
+    r = _source(tmp_path, knob, "IFS=$'\\n\\t'\n", after)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert "postgres|postgresql-16 libpq5|2" in lines, lines
+    assert "keep:x|2026-12-31|two words|0|3" in lines, lines
+    assert "findings=0" in lines, lines
