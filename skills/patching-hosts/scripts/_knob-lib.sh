@@ -17,9 +17,10 @@ set -euo pipefail
 # a line carrying any control character but a tab is malformed.
 KNOB_US=$'\037'
 
-# Precedence ranks: a default, then the global lines, then each matching glob
-# section at 2 plus its specificity (its characters that aren't * or ?), then
-# an exact section. A record that doesn't apply to this host has no rank (-1).
+# Precedence ranks: the global lines, then each matching glob section at 2 plus
+# its specificity (its characters that aren't * or ?), then an exact section. A
+# record that doesn't apply to this host has no rank (-1). A default hold has
+# none either: it applies only when no line names its step.
 KNOB_RANK_GLOBAL=1
 KNOB_RANK_GLOB=2
 KNOB_RANK_EXACT=100000
