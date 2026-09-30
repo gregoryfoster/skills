@@ -33,6 +33,9 @@ This file is a library. Source it; do not run it:
   . "<dir>/_knob-lib.sh"
   knob_load <path> <host> <today YYYY-MM-DD>   # returns 2 if <path> is unreadable
 
+Call knob_load plainly, never inside if, && or ||: bash turns errexit off for
+everything a condition runs, and a failure in the library would go unseen.
+
 Then read the KNOB_* variables knob_load sets. Records join their fields with
 $KNOB_US; the field order of each array is documented at knob_reset.
 USAGE

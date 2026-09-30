@@ -29,6 +29,7 @@ in the output, not an error. A malformed line also makes the host report-only.
 Exit codes:
   0  resolved; read findings and report_only
   2  usage error, an unreadable knob, or the library missing
+  *  any other code: the reader failed; don't trust stdout
 USAGE
 }
 
@@ -71,7 +72,10 @@ fi
 [ -n "$today" ] || today=$(date -u +%Y-%m-%d)
 _knob_is_date "$today" || { echo "ERROR --today takes YYYY-MM-DD, not $today" >&2; exit 2; }
 
-knob_load "$config" "$host" "$today" || exit 2
+# Called plainly, never in a condition: bash turns errexit off for everything a
+# condition runs, so a failure inside the library would go unseen. Its return
+# of 2 still exits 2 here.
+knob_load "$config" "$host" "$today"
 
 # --- JSON -------------------------------------------------------------------
 # Knob text holds no control character but a tab (the parser rejects the rest),

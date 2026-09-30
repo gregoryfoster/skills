@@ -459,3 +459,14 @@ def test_a_symlinked_reader_finds_its_library(tmp_path):
     )
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["knob"]["present"] is False
+
+
+def test_the_reader_calls_the_library_outside_any_condition():
+    """Inside `if`, `&&` or `||`, bash turns errexit off for the whole call,
+    so a failure in the library would print a partial answer with exit 0."""
+    calls = [
+        line.strip()
+        for line in READ_KNOB.read_text().splitlines()
+        if "knob_load " in line and not line.lstrip().startswith("#")
+    ]
+    assert calls == ['knob_load "$config" "$host" "$today"'], calls
