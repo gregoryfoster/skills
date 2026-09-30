@@ -62,7 +62,7 @@ Every host records its before-versions (below). A host that declares a `datastor
   A `>` from the session shell can't write there, and `sudo tee` creates the file at 644, readable by every user on the host.
 - **Secrets never travel:** the service's env file, keys and DSNs stay put.
 - **State a retention** for every recovery-point file, and flag a dump that holds personal data. address-validator's held its audit log's raw input.
-- A package rollback fetches the recorded version from snapshot.ubuntu.com, because `docker-clean` empties apt's `.deb` cache.
+- A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps
 
@@ -132,7 +132,7 @@ After the last step:
 
 `/proc/<pid>/maps` of another user's process needs root: without `sudo` it's "Permission denied", and a read that failed is `unknown`, never 0.
 
-Reboot when any of them calls for it: dbus, logind, `user@`, a data store, or PID 1 mapping deleted libraries. **Never decide from a kernel**: exe.dev has no guest kernel. PID 1 re-executing itself during the apply (it did on most hosts) doesn't mean no reboot.
+Reboot when any of them calls for it: dbus, logind, `user@`, a data store, PID 1 mapping deleted libraries, or a pending kernel (needrestart's `NEEDRESTART-KSTA` of 2 or 3). **On exe.dev, never decide from a kernel:** there's no guest kernel, so its kernel lines mean nothing ([the profile](environments/exe-dev-exeuntu.md#update-channels)). PID 1 re-executing itself during the apply (it did on most hosts) doesn't mean no reboot.
 
 ## 5. The reboot chain
 
