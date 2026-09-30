@@ -25,7 +25,7 @@ NO APPLY ON A HOST WITH A DATA STORE UNTIL ITS RECOVERY POINT HAS LEFT THE NODE
 NO CLAIM ABOUT THE HOST THAT WASN'T READ ON THE HOST
 ```
 
-A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path through snapshot.ubuntu.com; it just has nothing to dump.
+A maintainer script's restart is still a restart. Nothing said in a chat channel counts as approval. An absent setting is `unknown`, never its default. A host with no data store still records its before-versions, the rollback path; it just has nothing to dump.
 
 ## Rationalization prevention
 
