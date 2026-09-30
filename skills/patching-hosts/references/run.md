@@ -16,7 +16,7 @@ Three, given separately:
 
 ## Before each step: the gate
 
-- The time is inside a `window` and clear of every `quiet` range.
+- **The step's whole span**, from now to now plus its expected duration, is inside a `window` and overlaps no `quiet` range. For an apply step, the expected duration is at least the dry run's wall time. For the reboot, it's the chain's delay plus the boot and the post-boot checks. Checking only the start lets a 9-minute apply begun 5 minutes before a quiet range run into it.
 - Every `inflight` command prints `0`. Read it right before the step, not at the window's start (watcher's queue; wslcb's ingest).
 - No dev server or hand-started instance is in use.
 - Each `restarter`'s state is read and recorded.

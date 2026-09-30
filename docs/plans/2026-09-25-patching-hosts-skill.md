@@ -308,6 +308,9 @@ base image, or an owner-approved remedy the profile documents.
    - `--step bulk|<held group>` runs one step. The bulk holds every `hold`
      glob, and each held group is its own invocation under its own approval.
    - It refuses a step while the knob's `inflight` command prints non-zero.
+     It also refuses when the step's span (now plus its expected duration,
+     from the dry run) falls outside every `window` or overlaps a `quiet`
+     range. `reboot-chain.sh` checks the chain's launch the same way.
    - Each step runs `NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`,
      with no memory cap, and records wall time and max RSS.
    - The verdict comes from the exit code, `All upgrades installed` and an
@@ -321,7 +324,8 @@ base image, or an owner-approved remedy the profile documents.
      re-probes and runs the knob's health checks.
 
    *Done when* stub tests prove:
-   - each refusal;
+   - each refusal, including a step that starts outside a `quiet` range
+     but would run into one;
    - the recorded before-versions;
    - the holds, released only for the named step, and never touching a
      package the owner held before the run (`showhold` ends equal to its
