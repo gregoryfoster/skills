@@ -40,12 +40,15 @@ Every host records its before-versions (below). A host that declares a `datastor
 - **Otherwise, dump each data store as root**, mode 600 from creation. A `>` from the session shell can't write to `/var/backups` (CannObserv/address-validator#235):
 
   ```
-  set -o pipefail
   sudo -u postgres pg_dump -Fc <db> | sudo sh -c 'umask 077; cat > /var/backups/<db>-<utc>.dump'
-  sudo pg_restore --list /var/backups/<db>-<utc>.dump >/dev/null   # the gate
-  stat -c %a /var/backups/<db>-<utc>.dump                           # 600
+  echo "${PIPESTATUS[@]}"                                                 # gate 1: must be "0 0"
+  sudo pg_restore --list /var/backups/<db>-<utc>.dump >/dev/null          # gate 2: the TOC
+  sudo pg_restore -f /dev/null /var/backups/<db>-<utc>.dump               # gate 3: a full read
+  stat -c %a /var/backups/<db>-<utc>.dump                                  # 600
   sha256sum /var/backups/<db>-<utc>.dump
   ```
+
+  **`--list` alone isn't a gate.** A custom-format dump written to a pipe puts its table of contents first, so a dump cut off mid-data (pg_dump killed, disk full) still lists cleanly. The pipeline's exit status and a full read are what catch it. watcher's backup regime does the full read too.
 
   For Redis: `BGSAVE`, wait for it to finish, then copy the RDB file the same way.
 - **The owner copies the dump off the node** with their own `scp`, and checks it against that sha256 **before the apply**.

@@ -336,7 +336,10 @@ base image, or an owner-approved remedy the profile documents.
         (CannObserv/address-validator#235).
       - Redis: `BGSAVE`, then a copy of the RDB file.
 
-      It gates on `pg_restore --list` and mode 600, and prints the sha256
+      It gates on every pipeline stage exiting 0, then `pg_restore --list`,
+      then a full read (`pg_restore -f /dev/null`), then mode 600. `--list`
+      alone passes a dump truncated after its table of contents. It prints
+      the sha256
       for the owner's off-node copy. **It prefers the host's own backup
       regime** when the probe finds one that succeeded recently (watcher).
       The dump is written with a stated retention, and flagged when it
@@ -358,7 +361,7 @@ base image, or an owner-approved remedy the profile documents.
 
     *Done when* stub tests prove:
     - the dump's mode, and that it's written as root;
-    - the `--list` gate;
+    - a truncated dump failing the gate, although `--list` passes it;
     - the chain's order;
     - the abort when the gate fails;
     - the journal copy comes after every stop;
