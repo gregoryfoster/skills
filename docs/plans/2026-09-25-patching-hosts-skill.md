@@ -212,8 +212,9 @@ base image, or an owner-approved remedy the profile documents.
    - The `[host <glob>]` sections, and how a host finds its own. It is
      matched by `--host`, or else by `hostname`. An exact name beats a glob.
      Two globs that match equally are a configuration finding, not a silent
-     choice. A file with sections and no match is treated as production,
-     report-only.
+     choice. A host that matches none of a file's sections gets the global
+     lines only; with no global `posture`, that's `automatic`, report-only
+     (knob.md).
 
    *Done when* `test_skills_knob_inventory.py` passes, and a parser test
    covers:
