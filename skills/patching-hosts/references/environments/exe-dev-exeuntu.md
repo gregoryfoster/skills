@@ -55,7 +55,7 @@ The needrestart drop-in (`$nrconf{restart} = 'l';`) governs needrestart's apt ho
 | `polkit` | restarts itself | 3 of 4 (not watcher) |
 | `libc6` / `systemd` | PID 1 re-executes itself | replicator, watcher, address-validator, wslcb |
 | `systemd` | the user manager re-executes, and journald and timesyncd restart | wslcb. On address-validator, needrestart still listed journald and timesyncd after the apply, so they hadn't restarted there. |
-| `redis-server` | restarts the server from its postinst on upgrade (read in noble's 7.0.15-1ubuntu0.24.04.4, 2026-09-30); not measured, since broker held it | — |
+| `redis-server` | restarts the server from its postinst on upgrade (read in noble's 7.0.15-1ubuntu0.24.04.4, 2026-09-30); not measured in the round | — |
 | `packagekit` | D-Bus-activated, not restarted | — |
 
 A data store needs a restart when its processes map a library in the set (`libc6`, `libssl3t64`, `libxml2`, `libsystemd0`), **even if its own package isn't in the set**. That was true on watcher, address-validator and wslcb.

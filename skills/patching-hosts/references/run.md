@@ -9,7 +9,7 @@ Three, given separately:
 1. **The needrestart drop-in**: a repo change, then its installation.
 2. **The apply**: the bulk step, after the recovery point.
 3. **Restarts**:
-   - **3(a)**: each held step that can restart a service (Postgres's cluster, Redis, containerd), with any `restarter` stopped around it. broker held `redis-server` and took it in its own restart window (#313);
+   - **3(a)**: each held step that can restart a service (Postgres's cluster, Redis, containerd), with any `restarter` stopped around it. noble's `redis-server` restarts the server from its postinst on upgrade ([the profile](environments/exe-dev-exeuntu.md#packages-that-restart-their-own-services));
    - **3(b)**: the reboot.
 
    A maintainer script's restart is still a restart, so the owner approves it knowingly, not as a side effect of "the apply".
