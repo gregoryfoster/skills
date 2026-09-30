@@ -187,13 +187,12 @@ base image, or an owner-approved remedy the profile documents.
     *Done when* the repo is bootstrapped, its four issues are filed, and the
     knob grammar's default `image` owner names it.
 
-1. **Scaffold.** Create `skills/patching-hosts/SKILL.md`: frontmatter, the
-   7-step core from #313 §2(a), the per-script resolution block for every
-   script (`probe.sh`, `apply.sh`, `recovery-point.sh`, `reboot-chain.sh`,
-   `prune-plan.sh`, `prune.sh`, `notify-owners.sh`), and the self-budget
-   line. Add a row to the README skills
-   table. *Done when* `skills-ref validate skills/patching-hosts` and the
-   naming and self-budget tests pass.
+1. **Scaffold. Done 2026-09-29** (`4ac1799`): `SKILL.md` with its
+   frontmatter, the core, the self-budget line and the five references,
+   plus the README and `docs/KNOBS.md` rows. `skills-ref validate` and the
+   structural suite pass. **Left for later steps:** each script's
+   per-script resolution block lands with that script, starting with
+   `probe.sh` in step 3.
 2. **Policy and knob.**
    - `references/policy.md`: the reference policy, what each deviation means,
      and the exception grammar (`exception <what> <review-by> <reason>`).
