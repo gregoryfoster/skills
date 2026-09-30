@@ -66,7 +66,7 @@ Every host records its before-versions (below). A host that declares a `datastor
 
 ## 3. The apply, in held steps
 
-Count first:
+Count first (`probe.sh --dry-run-into DIR` does both, with apt's cache in `DIR`):
 - Count security from `sudo unattended-upgrade --dry-run -d`, from its `Packages that will be upgraded` line. The `pkgs that look like they should be upgraded:` header lists the whole selection one per line, and `apt list | grep -security` undercounts (usa-wa: 178 against 185).
 - Record the dry run's time and max RSS, and free disk against the download size.
 
@@ -167,6 +167,8 @@ Before launching:
 If the reboot slips out of the window, say so, and redo the gate and the quiet-hour check.
 
 ## 6. After the boot
+
+`probe.sh --post-boot` takes these checks, and each one that fails is a finding. The downtime, and any `Persistent=` catch-up, are left to you.
 
 - **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the chain's journal copy. For Postgres: `database system was shut down at …` and no `redo starts`.
 - **Each `service`:**

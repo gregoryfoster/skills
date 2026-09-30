@@ -1,9 +1,11 @@
 # Readings: what to measure before proposing a run
 
-The probe's specification, and the checklist to follow by hand until the probe exists. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. The readings are read-only, with two exceptions:
+What `probe.sh` reads, and the checklist for what it leaves to you. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. The readings are read-only, with two exceptions:
 
-- `apt-get update` writes the package lists. The probe refreshes into a scratch directory instead.
-- **The security count's dry run** (`unattended-upgrade --dry-run -d`) runs as root and downloads the whole set into apt's cache: about 290 MB and 9 minutes on address-validator. The probe runs it only when asked, with apt's cache pointed at a scratch directory: an `APT_CONFIG` file setting `Dir::Cache::archives`, since `unattended-upgrade` takes no `-o`.
+- `apt-get update` writes the package lists. The probe refreshes only with `--refresh-into DIR`, into `DIR/lists`.
+- **The security count's dry run** (`unattended-upgrade --dry-run -d`) runs as root and downloads the whole set into apt's cache: about 290 MB and 9 minutes on address-validator. The probe runs it only with `--dry-run-into DIR`, with apt's cache pointed at `DIR/archives` through an `APT_CONFIG` file, since `unattended-upgrade` takes no `-o`. Without it, the security count is a lower bound.
+
+The probe reads the root-only readings through `sudo -n`, so it never prompts. With `--root DIR` it reads an image tree's files, and asks a running system only when `DIR/run/systemd/system` exists, the test systemd itself uses.
 
 **Report an absent setting as `unknown`, never as its default.** A reading the probe couldn't take is `unknown`, not clean. That includes a read that needed root and failed: `/proc/<pid>/maps` of another user's process, needrestart's check, the Postgres catalogs.
 
@@ -68,3 +70,13 @@ For each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama, Qdrant 
 - whether it shipped with the image or was installed later.
 
 The verdict rules are in [policy.md](policy.md). **Name the evidence source for each verdict.** A journal that holds 10 days can't show 30 days of idleness.
+
+## What the probe leaves to you
+
+A reading it couldn't take is `null` in its output and named in `not_read`: no root, no running system, or no `pro`. These it never takes, so read them yourself:
+
+- **callers and traffic**, from the service's own access or audit log;
+- **what reads 200 while degraded**, from the code;
+- **the suite's pass and skip counts**, for the health baseline;
+- **whether a component came with the image**, until the profile supplies the image's date;
+- **the downtime** after a boot, from the stop line or the last request to the first good response.

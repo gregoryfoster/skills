@@ -4,7 +4,7 @@ A consuming repo commits `.skills/patching-hosts` to tell the skill what only it
 
 The grammar is one directive per line, and blank lines are ignored. **`#` starts a comment only at the start of a line or after whitespace**, so a command can hold a `#` (a URL fragment) as long as no space precedes it. `inflight` and `health` take the rest of the line as their command, run with `sh -c`, so a pipe works. It's the other knobs' `#`-comment line grammar, plus `[host <glob>]` sections, so it parses on stock Ubuntu with nothing extra installed. **A malformed line is a finding, never silently skipped**, reported by its line number and never echoed. It also makes every host report-only until it's fixed: a dropped `quiet` or `datastore` line would otherwise let a run through that the owner meant to stop.
 
-`read-knob.sh` prints what the knob resolves to for one host, as JSON ([SKILL.md](../SKILL.md) has its resolution block). The probe and `apply.sh` will read it through the same library, so every script sees the same knob.
+`read-knob.sh` prints what the knob resolves to for one host, as JSON ([SKILL.md](../SKILL.md) has its resolution block). `probe.sh` reads it through the same library, and `apply.sh` will, so every script sees the same knob.
 
 ## Hosts and sections
 
@@ -55,7 +55,7 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 | `caller <repo>` | A repo whose service calls this host, told before a restart. |
 | `owner <component-glob> <repo>` | The update owner of a component apt doesn't reach. `<repo>` is `owner/name`, `self` for this repo, or `image` for whoever owns the image. The default owner of what the image ships is `image`. |
 | `image-owner <owner/name>` | Whom `image` means: the repo that owns this host's image. The profile's image-level findings, and notices for what the image ships, go there. Absent: they're reported with owner `image`, and no notice is proposed. |
-| `origin <origin> follow\|pin <version>\|hold <reason>` | A third-party apt origin's policy in the maintenance lane. |
+| `origin <origin> follow\|pin <version>\|hold <reason>` | A third-party apt origin's policy in the maintenance lane. `<origin>` is its `o=` field as `apt-cache policy` prints it, with `_` for each space, or its site. A third-party origin with no line is a finding. |
 | `exception <what> <review-by YYYY-MM-DD> <reason>` | A declared deviation, expiring on its date ([policy.md](policy.md)). |
 | `records <path-or-repo>` | Where run records go. |
 

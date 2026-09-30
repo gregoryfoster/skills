@@ -67,6 +67,29 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 - Each prune stage is declared the same way, as `disabled:<component>`, `removed:<component>` or `purged:<component>`. The review-by date is the prune calendar: when it passes, the probe proposes the next stage. A `purged:` line stays until the base image stops shipping the component.
 - **A package hold is declared as `held:<package>`.** A hold on a package in the pending set defers its update, and a security package never waits without an exception ([Two lanes](#two-lanes)). So an undeclared hold on a pending package is a finding, whether the owner placed it or an aborted run left it ([run.md](run.md)).
 
+**What `<what>` names.** Each probe finding an exception can cover carries it as `exception_what`:
+
+| `<what>` | The deviation |
+|---|---|
+| `timer:<unit>` | `apt-daily.timer` or `apt-daily-upgrade.timer` isn't enabled under `automatic`, or isn't masked under `scheduled` |
+| `periodic:<key>` | `APT::Periodic::Enable`, `Update-Package-Lists` or `Unattended-Upgrade` isn't 1, or is set nowhere (`automatic`) |
+| `package:unattended-upgrades` | it isn't installed (`automatic`) |
+| `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`) |
+| `uu:automatic-reboot` | `Unattended-Upgrade::Automatic-Reboot` is true, or set nowhere (`automatic`) |
+| `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
+| `held:<package>` | an owner's hold on a pending package |
+| `database:<name>` | a cluster database no `datastore` line names |
+| `ordering:<service>` | a `service` with no `After=` on a data store |
+| `journal:volatile` | the journal doesn't survive a reboot |
+| `session:adj` | the session's chain to PID 1 runs at `oom_score_adj` -1000 |
+| `keep:<component>` | a dormant component the owner keeps; a prune stage is `disabled:`, `removed:` or `purged:` |
+
+The rest take no exception, because each is fixed where it is:
+- a provisioning leftover, such as the setup script;
+- a knob gap: an undeclared restarter, backup regime or third-party origin;
+- a failing health check;
+- a pending reboot.
+
 ## Dormant components
 
 An installed engine or daemon that nothing uses is patch surface, disk and attack surface for no benefit. nginx was disabled on six hosts yet in every one's security set. The probe reports the evidence; it never removes anything.

@@ -193,8 +193,8 @@ base image, or an owner-approved remedy the profile documents.
    frontmatter, the core, the self-budget line and the five references,
    plus the README and `docs/KNOBS.md` rows. `skills-ref validate` and the
    structural suite pass. **Left for later steps:** each script's
-   per-script resolution block lands with that script, starting with
-   `probe.sh` in step 3.
+   per-script resolution block lands with that script (`read-knob.sh` in
+   step 2, `probe.sh` in step 3).
 2. **Policy and knob. Done 2026-09-30:** `scripts/_knob-lib.sh`, the shared
    reader, and `scripts/read-knob.sh`, which prints what it resolves for one
    host as JSON. Tested in `tests/structural/test_patching_hosts_knob.py`.
@@ -234,9 +234,31 @@ base image, or an owner-approved remedy the profile documents.
    - section precedence (global, then glob, then exact), plus the tie and the
      no-match cases;
    - every line kind above.
-3. **`probe.sh`, read-only.** Flags: `--help`, `--root DIR` (reads a filesystem
-   tree instead of `/`), `--config`, `--host NAME` (the output names the
-   section that matched), and `--refresh-into DIR` (refreshes apt
+3. **`probe.sh`, read-only. Done 2026-09-30:** `scripts/probe.sh` over
+   `scripts/_probe-lib.sh` and the knob library, tested in
+   `tests/structural/test_patching_hosts_probe.py`. It ran clean on a real
+   noble userland, and live in a throwaway container booting systemd 255 with
+   Postgres 16, Redis and nginx. That run caught four bugs the stubs couldn't:
+   - a held package never appears in `apt-get -s`, so holds are read from
+     `apt-cache policy`;
+   - a tab is IFS whitespace, so psql's empty fields collapsed;
+   - stock Ubuntu's release pocket in Allowed-Origins isn't a widening;
+   - idle time counts from when systemd started, not the kernel.
+
+   Building it settled these, now in the references:
+   - `--root DIR` reads a tree's files, and asks a running system only when
+     `DIR/run/systemd/system` exists, systemd's own test.
+     `--refresh-into` and `--dry-run-into` need a running system;
+   - root-only readings go through `sudo -n`, and a knob command never runs
+     as root. A reading the probe couldn't take is `null`, and named in
+     `not_read` with what it leaves to the operator (readings.md);
+   - each finding an exception can cover names its `<what>` (policy.md's
+     table), and a covered one moves to `excepted`;
+   - host strings print as ASCII, with `?` for any other byte.
+
+   What the step set out to do: flags `--help`, `--root DIR` (reads a
+   filesystem tree instead of `/`), `--config`, `--host NAME` (the output
+   names the section that matched), and `--refresh-into DIR` (refreshes apt
    lists into a scratch directory, never `/var/lib/apt/lists`). Masks are read
    from the filesystem so the probe works offline. It reads the effective
    `APT::Periodic::Enable` through `apt-config`, and reports security updates
