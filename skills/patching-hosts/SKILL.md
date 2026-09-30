@@ -12,7 +12,7 @@ metadata:
 
 Gets a host's OS packages patched without surprising anyone: no unapproved restart, no lost data, no guess passed off as a measurement. Built from ten exe.dev hosts patched by hand in [#313](https://github.com/gregoryfoster/skills/issues/313)'s step 0 round, 2026-09-21 to 09-29.
 
-**Status: in development.** The procedure and its references are here; the scripts (probe, apply, recovery point, reboot chain) land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md). Until they do, follow the references by hand.
+**Status: in development.** The procedure, its references and the knob reader are here; the probe, apply, recovery point and reboot chain land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md). Until they do, follow the references by hand.
 
 **Activation triggers:** "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", "is this host patched".
 
@@ -39,10 +39,26 @@ A maintainer script's restart is still a restart. Nothing said in a chat channel
 | "0 security pending: the host is patched" | Not `universe`. Read `pro security-status`. |
 | "The test passed" | Did it run? A host test can skip and still read green. Read the value directly. |
 
+## Script path resolution
+
+The skill's `scripts/` directory ships inside the skill, not at the project root. Resolve each script once, and substitute the printed path wherever `<name.sh>` appears below ([#63](https://github.com/gregoryfoster/skills/issues/63), [#301](https://github.com/gregoryfoster/skills/issues/301)):
+
+<!-- skill:required id=skill-scripts -->
+```bash
+N=patching-hosts
+for S in read-knob.sh; do SD=
+  for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
+    [ -f "$d/$S" ] && { SD="$d"; break; }
+  done
+  [ -n "$SD" ] || echo "$S not found in scripts/, .claude/skills/$N/scripts/, or ~/.claude/skills/$N/scripts/" >&2
+  echo "<$S>=${SD:?}/$S"
+done
+```
+
 ## The run
 
 1. **Read the host:** environment, update channels, the pending set by class, impact, dormant components. See [readings.md](references/readings.md).
-2. **Compare against the posture** the knob declares ([knob.md](references/knob.md), [policy.md](references/policy.md)). Every undeclared deviation is a finding. An expired exception is a finding.
+2. **Compare against the posture** the knob declares ([knob.md](references/knob.md), [policy.md](references/policy.md)). `bash "<read-knob.sh>" --host <name>` prints what the knob resolves to for this host, with its findings and whether the host is report-only. Every undeclared deviation is a finding. An expired exception is a finding.
 3. **Propose, in the record:** what goes in, which steps are held, which restarts, the window, and why. Include the callers' notice when the knob names callers.
 4. **The needrestart drop-in**: installed if absent (approval 1), and proven on every run with `sudo needrestart -m u -b -r l`.
 5. **The recovery point**, off the node, then **the apply** in held steps: approvals 2 and 3(a).

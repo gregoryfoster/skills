@@ -99,6 +99,7 @@ PUBLISHERS = sorted(
     + [
         "auditing-ci-cost",
         "curating-context",
+        "patching-hosts",
         "using-git-worktrees",
         "using-mayfly-chat",
         "writing-plans",

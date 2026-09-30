@@ -195,7 +195,18 @@ base image, or an owner-approved remedy the profile documents.
    structural suite pass. **Left for later steps:** each script's
    per-script resolution block lands with that script, starting with
    `probe.sh` in step 3.
-2. **Policy and knob.**
+2. **Policy and knob. Done 2026-09-30:** `scripts/_knob-lib.sh`, the shared
+   reader, and `scripts/read-knob.sh`, which prints what it resolves for one
+   host as JSON. Tested in `tests/structural/test_patching_hosts_knob.py`.
+   Building it settled three things knob.md now states:
+   - globs layer by specificity, so a narrower glob refines a broader one, and
+     only equally specific matches tie;
+   - one-value directives take the most specific scope, lists are replaced
+     whole, and keyed directives accumulate per key;
+   - a malformed line makes every host report-only, and a range that ends
+     where it starts is malformed.
+
+   What the step set out to do:
    - `references/policy.md`: the reference policy, what each deviation means,
      and the exception grammar (`exception <what> <review-by> <reason>`).
      Keeping a dormant component uses the same grammar, as

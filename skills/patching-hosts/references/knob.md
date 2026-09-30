@@ -2,7 +2,9 @@
 
 A consuming repo commits `.skills/patching-hosts` to tell the skill what only its owner knows. The skill reads it and never writes it. With no knob, every host is treated as `production` with posture `automatic`: the probe reports its deviations from that reference policy, and nothing is applied.
 
-The grammar is one directive per line, and blank lines are ignored. **`#` starts a comment only at the start of a line or after whitespace**, so a command can hold a `#` (a URL fragment) as long as no space precedes it. `inflight` and `health` take the rest of the line as their command, run with `sh -c`, so a pipe works. It's the other knobs' `#`-comment line grammar, plus `[host <glob>]` sections, so it parses on stock Ubuntu with nothing extra installed. A malformed line is a finding, never silently skipped.
+The grammar is one directive per line, and blank lines are ignored. **`#` starts a comment only at the start of a line or after whitespace**, so a command can hold a `#` (a URL fragment) as long as no space precedes it. `inflight` and `health` take the rest of the line as their command, run with `sh -c`, so a pipe works. It's the other knobs' `#`-comment line grammar, plus `[host <glob>]` sections, so it parses on stock Ubuntu with nothing extra installed. **A malformed line is a finding, never silently skipped**, reported by its line number and never echoed. It also makes every host report-only until it's fixed: a dropped `quiet` or `datastore` line would otherwise let a run through that the owner meant to stop.
+
+`read-knob.sh` prints what the knob resolves to for one host, as JSON ([SKILL.md](../SKILL.md) has its resolution block). The probe and `apply.sh` read it through the same library, so every script sees the same knob.
 
 ## Hosts and sections
 
@@ -16,15 +18,26 @@ posture scheduled
 class ephemeral
 ```
 
-- Lines outside any section apply to all hosts. A `[host <glob>]` section overrides them for the hosts it matches.
-- A host finds its section by `--host NAME`, or else by `hostname`.
-- **Precedence:** global, then a glob, then an exact name. An exact name beats a glob.
-- **Two globs that match equally** are a configuration finding, not a silent choice.
-- **A file with sections and no match** for this host gets the global lines only. With no global `posture`, that's `automatic`, report-only.
+- Lines outside any section apply to all hosts. A `[host <glob>]` section overrides them for the hosts it matches. A glob uses only `*` and `?`.
+- A host finds its sections by `--host NAME`, or else by `hostname`'s output as it stands.
+- **Precedence:** global, then each matching glob from the least specific to the most, then an exact name. A glob's specificity is its count of characters that aren't `*` or `?`, so `[host co-worker-*]` refines `[host co-*]`.
+- **Two matching globs equally specific** are a finding, not a silent choice. Neither applies, and the host is report-only until one is narrowed or an exact section is added.
+- **A host that matches no section** gets the global lines only. With no global `posture`, that's `automatic`, report-only.
+- A header that doesn't parse is malformed, and so is every line under it until the next header: they can't be placed, so they apply to no host. The same header twice is reported, and its lines are read as one section.
+
+**How values combine** across the global lines and the sections that match:
+
+| Kind | Directives | Rule |
+|---|---|---|
+| one value | `class`, `posture`, `image-owner`, `records` | the most specific scope that sets it wins |
+| a list | `window`, `quiet`, `inflight`, `health`, `restarter`, `service`, `backup`, `caller` | the most specific scope that declares any replaces the whole list |
+| keyed | `datastore` (per unit and database), `hold` (per step), `owner` (per component), `origin` (per origin), `exception` (per `<what>`) | entries accumulate across scopes; for one key, the most specific wins |
+
+A value set twice at the same precedence is a finding, and the later line wins. Two `datastore` lines for one unit add their databases together.
 
 ## Directives
 
-**Times are UTC**, always, and carry no suffix. A range `HH:MM-HH:MM` whose end is earlier than its start **wraps past midnight**: `window Tue 14:15-07:25` opens Tuesday at 14:15 and closes Wednesday at 07:25. A weekday names the day the range starts.
+**Times are UTC**, always, and carry no suffix. A range `HH:MM-HH:MM` whose end is earlier than its start **wraps past midnight**: `window Tue 14:15-07:25` opens Tuesday at 14:15 and closes Wednesday at 07:25. A weekday names the day the range starts. A range that ends where it starts is malformed: it could mean nothing or a whole day, and the reader won't guess.
 
 | Directive | Meaning |
 |---|---|
