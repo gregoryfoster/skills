@@ -82,6 +82,23 @@ Then:
 4. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
 5. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
 
+**The maintenance lane** runs in the same window, after the security steps, with the same command, holds, `choom`, `NEEDRESTART_MODE` and verdict. Only the selection widens, through an `APT_CONFIG` file:
+
+```
+# /var/backups/maintenance-<utc>.conf, root-owned
+Unattended-Upgrade::Origins-Pattern {
+  "origin=Ubuntu,archive=${distro_codename}-updates";
+  "origin=<each origin whose policy is follow>";
+};
+```
+
+```
+sudo APT_CONFIG=/var/backups/maintenance-<utc>.conf NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade --dry-run -d   # check the selection first
+sudo APT_CONFIG=/var/backups/maintenance-<utc>.conf NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v
+```
+
+apt lists accumulate across config files, so this widens the stock security selection rather than replacing it. **Never use a bare `apt-get upgrade`**: it takes every upgradable package from every origin, including those whose policy is *hold*. The dry run's selection must contain nothing from a *hold* or *pin* origin.
+
 **The verdict** comes from the exit code, `All upgrades installed`, and an empty `dpkg --audit`. **Never count `Failed` or `error` lines**: a clean apply logged about 100 needrestart "kernel versions" lines.
 
 **A data-store step checks recovery, not just health.** A fail-open cache or audit writer hides a database outage from callers, and from the operator. So prove the path works:

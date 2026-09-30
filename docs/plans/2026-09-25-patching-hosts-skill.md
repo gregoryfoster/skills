@@ -416,8 +416,12 @@ base image, or an owner-approved remedy the profile documents.
     - **`apply.sh --lane maintenance`** reuses the security lane's gates,
       recovery point, window and reboot decision. Only the selection
       differs: Ubuntu `-updates` plus the origins the profile marks
-      *follow*. It applies through `apt-get upgrade`, with the same holds
-      and the same `NEEDRESTART_MODE=l`.
+      *follow*. It uses the same `unattended-upgrade` command, with an
+      `APT_CONFIG` file whose `Unattended-Upgrade::Origins-Pattern` adds
+      `-updates` and each *follow* origin. The holds, `NEEDRESTART_MODE=l`,
+      `choom` and the verdict are unchanged. It never runs a bare
+      `apt-get upgrade`, which takes every origin, *hold* ones included
+      ([run.md](../../skills/patching-hosts/references/run.md)).
     - **Tailscale** goes in the maintenance lane, because upgrading
       tailscaled drops every host's tailnet path, so it needs a planned
       window. A Tailscale security bulletin expedites it into an
