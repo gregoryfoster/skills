@@ -124,8 +124,9 @@ decisions folded in:
   - `exe-init` builds that start sessions at -1000.
 
   **The image repo**, a new private CannObserv repo, is stood up as part of
-  this work (step 0b). It's the `image` owner that step 6c's notices go to, and the home
-  of the base image and provisioning template (step 9).
+  this work (step 0b). Each host's knob names it in an `image-owner` line,
+  so step 6c's notices go there. It's also the home of the base image and
+  provisioning template (step 9).
 - **A process log**, modelled on `orchestrating-issue-backlog`'s.
 
 The skill never unmasks a timer or edits apt or needrestart config on its own
@@ -184,8 +185,9 @@ base image, or an owner-approved remedy the profile documents.
     - Step 6c's rule keeps private identifiers out of notices to a **public**
       repo. The image repo is private, so its issues may name any host.
 
-    *Done when* the repo is bootstrapped, its four issues are filed, and the
-    knob grammar's default `image` owner names it.
+    *Done when* the repo is bootstrapped, its four issues are filed, and
+    each host's knob names it in an `image-owner` line (step 8b). The
+    global skill never names it.
 
 1. **Scaffold. Done 2026-09-29** (`4ac1799`): `SKILL.md` with its
    frontmatter, the core, the self-budget line and the five references,
@@ -427,9 +429,11 @@ base image, or an owner-approved remedy the profile documents.
       window. A Tailscale security bulletin expedites it into an
       out-of-cycle window. The profile records where those bulletins are
       watched, and by whom.
-    - **The knob gains `owner <component-glob> <repo>` lines.** The default
-      owner of something the image ships is `image`, meaning the
-      image-generation repo once it exists; until then, the host's own repo.
+    - **The knob gains `owner <component-glob> <repo>` lines, and an
+      `image-owner <owner/name>` line** naming whom `image` means. The
+      default owner of something the image ships is `image`. With no
+      `image-owner` line, its updates are reported and no notice is
+      proposed.
     - **`notify-owners.sh`** turns the probe's "update available, owner
       elsewhere" rows into issues in the owner's repo.
       - `--dry-run` is the default, and prints each issue it would file.
@@ -476,7 +480,8 @@ base image, or an owner-approved remedy the profile documents.
     - Every rough edge becomes an issue in this repo, fixed before the next
       host: a wrong reading, a missing knob line, or a step the scripts
       couldn't do.
-    - Each host commits its `.skills/patching-hosts` knob in this run.
+    - Each host commits its `.skills/patching-hosts` knob in this run,
+      including its `image-owner` line.
     - A Mayfly channel is optional: the skill carries what the round's
       briefs did.
 

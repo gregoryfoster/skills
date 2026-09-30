@@ -41,6 +41,7 @@ class ephemeral
 | `hold <package-glob>... <step>` | A package group applied as its own step: one or more globs, and the **last token is the step's name**. The defaults are `postgresql-* libpq5` as `postgres` and `docker.io containerd` as `docker`. A `hold` line naming a default step **replaces** that default; the other defaults stay. |
 | `caller <repo>` | A repo whose service calls this host, told before a restart. |
 | `owner <component-glob> <repo>` | The update owner of a component apt doesn't reach. `<repo>` is `owner/name`, `self` for this repo, or `image` for whoever owns the image. The default owner of what the image ships is `image`. |
+| `image-owner <owner/name>` | Whom `image` means: the repo that owns this host's image. The profile's image-level findings, and notices for what the image ships, go there. Absent: they're reported with owner `image`, and no notice is proposed. |
 | `origin <origin> follow\|pin <version>\|hold <reason>` | A third-party apt origin's policy in the maintenance lane. |
 | `exception <what> <review-by YYYY-MM-DD> <reason>` | A declared deviation, expiring on its date ([policy.md](policy.md)). |
 | `records <path-or-repo>` | Where run records go. |
@@ -71,7 +72,7 @@ datastore postgres postgresql@16-main app
 hold postgresql-* libpq5 postgres
 hold docker.io containerd docker
 
-owner /usr/local/bin/* image
+image-owner example-org/base-image
 owner scripts/bin/tailwindcss self
 
 exception keep:nginx 2026-12-31 ships with the image; the prune belongs in the base image
