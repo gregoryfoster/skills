@@ -318,8 +318,8 @@ base image, or an owner-approved remedy the profile documents.
      glob, and each held group is its own invocation under its own approval.
    - It refuses a step while the knob's `inflight` command prints non-zero.
      It also refuses when the step's span (now plus its expected duration,
-     from the dry run) falls outside every `window` or overlaps a `quiet`
-     range. `reboot-chain.sh` checks the chain's launch the same way.
+     from the dry run) isn't wholly inside one `window`, or overlaps a
+     `quiet` range. `reboot-chain.sh` checks the chain's launch the same way.
    - Each step runs `NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`,
      with no memory cap, and records wall time and max RSS.
    - The verdict comes from the exit code, `All upgrades installed` and an
@@ -334,7 +334,8 @@ base image, or an owner-approved remedy the profile documents.
      re-probes and runs the knob's health checks.
 
    *Done when* stub tests prove:
-   - each refusal, including a step that starts outside a `quiet` range
+   - each refusal, including a step that starts inside a `window` but
+     would run past its close, a step that starts outside a `quiet` range
      but would run into one, a missing or mismatched `--offnode-sha256`,
      one dump of two left unattested, and a `backup`-unit recovery point
      without its `--offnode-object`;
