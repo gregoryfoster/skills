@@ -14,8 +14,9 @@ The primitives probe.sh reads a host through:
   probe_init ROOT           sets P_ROOT ("" for /), P_LIVE, P_EUID, P_USER,
                             P_PRIV (root, sudo or none), P_KNOB_USER, P_NOW
                             and P_TMP, a scratch directory the caller removes
-  as_root CMD...            runs CMD as root, directly or through sudo -n;
-                            returns 126 without running it when neither works
+  as_root CMD...            runs CMD as root, directly or through sudo -n,
+                            with LC_ALL=C; returns 126 without running it
+                            when neither works
   as_user USER CMD...       runs CMD as USER, the same way
   knob_cmd CMD              runs a knob command with sh -c, never as root,
                             under timeout KNOB_CMD_TIMEOUT where timeout(1)
@@ -69,10 +70,14 @@ probe_init() {  # <root>
   P_TMP=$(mktemp -d "${TMPDIR:-/tmp}/probe.XXXXXX")
 }
 
+# Through sudo, LC_ALL=C is set again on the far side: sudoers' env_reset
+# can drop it, and the lines the probe parses (needrestart's "Disabling Ubuntu
+# mode", unattended-upgrade's "Packages that will be upgraded") are
+# translated by gettext. runuser keeps the environment.
 as_root() {
   case $P_PRIV in
     root) "$@" ;;
-    sudo) sudo -n -- "$@" ;;
+    sudo) sudo -n -- env LC_ALL=C "$@" ;;
     *) return 126 ;;
   esac
 }
@@ -86,7 +91,7 @@ as_user() {  # <user> <cmd>...
   fi
   case $P_PRIV in
     root) runuser -u "$u" -- "$@" ;;
-    sudo) sudo -n -u "$u" -- "$@" ;;
+    sudo) sudo -n -u "$u" -- env LC_ALL=C "$@" ;;
     *) return 126 ;;
   esac
 }

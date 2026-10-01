@@ -45,6 +45,7 @@ from review:
 - after a boot, a service's first start is read from the journal: a start by
   hand doesn't count in NRestarts.
 - a knob command runs under a time limit, so a hung check can't hang the probe.
+- a line parsed from a root command stays English when sudo resets the locale.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -146,7 +147,7 @@ class Host:
         *,
         live: bool = True,
         uptime_days: int = 40,
-        sudo: bool = True,
+        sudo: bool | str = True,
     ):
         self.tmp = tmp_path
         self.root = tmp_path / "root"
@@ -218,9 +219,16 @@ class Host:
     # --- the stubs ----------------------------------------------------------
 
     def on(
-        self, cmd: str, glob: str, stdout: str = "", rc: int = 0, stderr: str = ""
+        self,
+        cmd: str,
+        glob: str,
+        stdout: str = "",
+        rc: int = 0,
+        stderr: str = "",
+        script: str | None = None,
     ) -> "Host":
-        self.cases[cmd].append((glob, stdout, rc, stderr))
+        """Answer CMD's argv matching GLOB, or run SCRIPT, a shell snippet, instead."""
+        self.cases[cmd].append((glob, stdout, rc, stderr, script))
         return self
 
     def installed(self, *pkgs: str) -> "Host":
@@ -256,7 +264,11 @@ class Host:
         cases.mkdir(exist_ok=True)
         for name, rows in self.cases.items():
             lines = ['case "$*" in']
-            for i, (glob, out, rc, err) in enumerate(rows):
+            for i, row in enumerate(rows):
+                glob, out, rc, err = row[:4]
+                if len(row) > 4 and row[4]:
+                    lines.append(f"  {_pattern(glob)}) {row[4]} ;;")
+                    continue
                 o = cases / f".{name}.{i}.out"
                 o.write_text(out)
                 redirect = ""
@@ -269,11 +281,18 @@ class Host:
             lines += ["esac", fallback, ""]
             (cases / name).write_text("\n".join(lines))
         # sudo runs its command as root, or as -u's user, and id answers for
-        # whoever that is.
+        # whoever that is. sudo="reset" drops the environment, as sudoers'
+        # env_reset can: only PATH and the stubs' own variables survive.
+        sudo_exec = 'exec "$@"\n'
+        if self.sudo == "reset":
+            sudo_exec = (
+                'exec env -i PATH="$PATH" STUB_LOG="$STUB_LOG" '
+                'STUB_CASES="$STUB_CASES" STUB_USER="$STUB_USER" "$@"\n'
+            )
         (cases / "sudo").write_text(
             "STUB_USER=root\n"
             "while [ $# -gt 0 ]; do case $1 in -n) shift ;; -u) STUB_USER=$2; shift 2 ;; --) shift; break ;; *) break ;; esac; done\n"
-            'export STUB_USER\nexec "$@"\n'
+            "export STUB_USER\n" + sudo_exec
             if self.sudo
             else "echo 'sudo: a password is required' >&2\nexit 1\n"
         )
@@ -876,7 +895,11 @@ def test_a_database_no_datastore_line_names_is_a_finding(host):
         dbs["stray"]["provider"],
     ) == (None, "en_US.UTF-8", "c")
     # The catalogs are read as postgres, through sudo -n.
-    assert [c for c in host.calls("sudo") if c[1].startswith("-n -u postgres -- psql")]
+    assert [
+        c
+        for c in host.calls("sudo")
+        if c[1].startswith("-n -u postgres -- env LC_ALL=C psql")
+    ]
 
 
 def test_earlyoom_arguments_come_from_cmdline_not_the_journal(host):
@@ -1278,6 +1301,26 @@ def test_an_inactive_nginx_idle_past_30_days_is_dormant(host):
     d = _dormant(out, "nginx")
     assert d["verdict"] == "dormant"
     assert "40 days" in d["evidence"]
+
+
+def test_parsed_lines_stay_english_when_sudo_resets_the_locale(tmp_path):
+    # needrestart's "Disabling Ubuntu mode" and unattended-upgrade's "Packages
+    # that will be upgraded" are translated by gettext, and sudoers' env_reset
+    # can drop LC_ALL on the way to root.
+    h = Host(tmp_path, sudo="reset").knob("posture automatic\n")
+    h.installed("needrestart")
+    h.write("etc/needrestart/conf.d/x.conf", "$nrconf{restart} = 'l';\n")
+    h.on(
+        "needrestart",
+        "-m u -b -r l",
+        script='if [ "${LC_ALL:-}" = C ]; then '
+        'echo "Disabling Ubuntu mode, explicit restart mode configured"; '
+        'else echo "Ubuntu-Modus deaktiviert"; fi; '
+        "echo NEEDRESTART-VER: 3.6; exit 0",
+    )
+    out = h.run()
+    assert out["updates"]["needrestart"]["proof"] == "explicit"
+    assert "needrestart:restart" not in _ids(out)
 
 
 # --- privilege and writes -------------------------------------------------------------
