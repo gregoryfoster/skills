@@ -1387,7 +1387,8 @@ read_dry_run() {
     DRY_SECURITY_ONLY=1
   fi
   jaddb o security_only "$DRY_SECURITY_ONLY"
-  # apply.sh reads it: the dry run's cost is each step's expected duration.
+  # apply.sh reads it: the dry run's wall time is the floor of each step's
+  # expected duration.
   printf 'began=%s\nexit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\n' \
     "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
