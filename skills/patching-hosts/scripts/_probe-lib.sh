@@ -17,7 +17,9 @@ The primitives probe.sh reads a host through:
   as_root CMD...            runs CMD as root, directly or through sudo -n;
                             returns 126 without running it when neither works
   as_user USER CMD...       runs CMD as USER, the same way
-  knob_cmd CMD              runs a knob command with sh -c, never as root
+  knob_cmd CMD              runs a knob command with sh -c, never as root,
+                            under timeout KNOB_CMD_TIMEOUT where timeout(1)
+                            exists; 124 means it timed out
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
   unit_show UNIT PROP...    systemctl show, setting U_<PROP> for each PROP;
@@ -89,13 +91,18 @@ as_user() {  # <user> <cmd>...
   esac
 }
 
+# A knob command is bounded, so a check that hangs (a curl to a dead host)
+# can't hang the probe, or a gate that waits on it.
+KNOB_CMD_TIMEOUT=60
 knob_cmd() {  # <command>
+  local -a _kc_t=()
+  if command -v timeout >/dev/null 2>&1; then _kc_t=(timeout "$KNOB_CMD_TIMEOUT"); fi
   if [ -z "$P_KNOB_USER" ]; then
     return 126
   elif [ "$P_EUID" -ne 0 ]; then
-    sh -c "$1"
+    ${_kc_t[@]+"${_kc_t[@]}"} sh -c "$1"
   else
-    runuser -u "$P_KNOB_USER" -- sh -c "$1"
+    runuser -u "$P_KNOB_USER" -- ${_kc_t[@]+"${_kc_t[@]}"} sh -c "$1"
   fi
 }
 

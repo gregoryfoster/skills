@@ -44,6 +44,7 @@ from review:
 - a vendor's origin name stays literal: never globbed, and escaped as a key.
 - after a boot, a service's first start is read from the journal: a start by
   hand doesn't count in NRestarts.
+- a knob command runs under a time limit, so a hung check can't hang the probe.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -92,6 +93,7 @@ STUBBED = (
     "git",
     "hostname",
     "curl",
+    "timeout",
 )
 
 
@@ -262,7 +264,9 @@ class Host:
                     (cases / f".{name}.{i}.err").write_text(err)
                     redirect = f" cat '{cases}/.{name}.{i}.err' >&2;"
                 lines.append(f"  {_pattern(glob)}) cat '{o}';{redirect} exit {rc} ;;")
-            lines += ["esac", "exit 1", ""]
+            # timeout runs its command, after the cases a test set.
+            fallback = 'shift; exec "$@"' if name == "timeout" else "exit 1"
+            lines += ["esac", fallback, ""]
             (cases / name).write_text("\n".join(lines))
         # sudo runs its command as root, or as -u's user, and id answers for
         # whoever that is.
@@ -958,6 +962,15 @@ def test_health_checks_run_as_the_user_and_a_failing_one_is_a_finding(host):
     assert not [c for c in host.calls("sudo") if "touch" in c[1]]
     assert _finding(out, "health:3")["kind"] == "risk"
     assert not [c for c in host.calls("runuser")]
+
+
+def test_a_health_check_runs_under_a_time_limit(host):
+    # A check that hangs (a curl to a dead host) mustn't hang the probe.
+    host.knob("posture automatic\nhealth probe-check --slow\n")
+    host.on("timeout", "60 sh -c probe-check --slow", rc=124)
+    out = host.run()
+    assert out["impact"]["health"][0]["exit"] == 124
+    assert "times out after 60 s" in _finding(out, "health:2")["message"]
 
 
 # --- the environment ------------------------------------------------------------

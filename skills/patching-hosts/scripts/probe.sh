@@ -1655,10 +1655,18 @@ read_backups() {
   done
 }
 
+health_says() {  # <var> <exit status>: how a knob check ended, in words
+  if [ "$2" = 124 ]; then
+    printf -v "$1" 'times out after %s s' "$KNOB_CMD_TIMEOUT"
+  else
+    printf -v "$1" 'exits %s' "$2"
+  fi
+}
+
 HEALTH_RC=() HEALTH_LINE=()  # parallel to KNOB_HEALTH: each check's exit status, or empty, and its knob line
 FAILED_UNITS=""
 read_health() {  # <pre-run|post-boot>
-  local r e rc failed="" out line w kind=risk
+  local r e rc failed="" out line w kind=risk said
   local -a hf=()
   R_HEALTH="" HEALTH_RC=() HEALTH_LINE=()
   if [ "$1" = post-boot ]; then kind=post-boot; fi
@@ -1669,7 +1677,8 @@ read_health() {  # <pre-run|post-boot>
       rc=0
       knob_cmd "${hf[0]}" >/dev/null 2>&1 </dev/null || rc=$?
       if [ "$rc" -ne 0 ] && [ "$kind" = risk ]; then
-        finding risk "health:${hf[1]}" "" "The health check on knob line ${hf[1]} exits $rc before any change, so a run has no green baseline to compare against."
+        health_says said "$rc"
+        finding risk "health:${hf[1]}" "" "The health check on knob line ${hf[1]} $said before any change, so a run has no green baseline to compare against."
       fi
     fi
     HEALTH_RC+=("$rc")
@@ -2165,7 +2174,7 @@ first_start() {  # <unit>: FIRST_START := failed, held, or empty when the journa
 }
 
 read_post_boot() {
-  local svc ds t out line down="" i
+  local svc ds t out line down="" i said
   check_shutdown
   for svc in $KNOB_SERVICES; do
     if unit_show "$svc" ActiveState Result NRestarts After; then
@@ -2244,7 +2253,8 @@ read_post_boot() {
     elif [ "${HEALTH_RC[$i]}" -eq 0 ]; then
       check "health:${HEALTH_LINE[$i]}" 1 "exit 0"
     else
-      check "health:${HEALTH_LINE[$i]}" 0 "the check on knob line ${HEALTH_LINE[$i]} exits ${HEALTH_RC[$i]}"
+      health_says said "${HEALTH_RC[$i]}"
+      check "health:${HEALTH_LINE[$i]}" 0 "the check on knob line ${HEALTH_LINE[$i]} $said"
     fi
   done
   case $R_FAILED in

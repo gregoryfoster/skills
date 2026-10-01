@@ -63,6 +63,8 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 
 `inflight` and `health` are shell commands read from a committed file. **They never run as root.** They run as `$SUDO_USER` when a script is started with `sudo`, or else as the user who started it. The reboot chain, which is root, records that user's name when it's written and drops to it with `runuser -u <user> --`. A script refuses to run a knob command when the user resolves to root. The chain script prints each one verbatim, so the owner approves the exact commands with the chain. Otherwise, anyone who can commit the knob could get a command run as root at the next patch run.
 
+Each one runs under a 60-second limit where `timeout` exists, as it does on every Ubuntu host, and one that hits it is reported as timed out. A check that hangs, such as a `curl` to a dead host, can't hang the probe or a gate that waits on it.
+
 ## An example
 
 Illustrative, shaped like a host with local Postgres, scheduled ingest and a health timer that restarts the app. It isn't any one repo's file.
