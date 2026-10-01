@@ -2147,15 +2147,37 @@ check_shutdown() {
   fi
 }
 
+# The first start's result, from PID 1's lines for the unit in this boot's
+# journal. NRestarts counts only Restart='s own restarts, so a first start
+# that failed and was then started by hand reads 0
+# (CannObserv/address-validator#239). PID 1 logs to the console on exeuntu, so
+# a journal without its lines can't tell.
+first_start() {  # <unit>: FIRST_START := failed, held, or empty when the journal can't tell
+  local out
+  FIRST_START=""
+  live_cmd journalctl || return 0
+  capture out jctl -b 0 -u "$1" -o cat --no-pager -q
+  [ "$CAP_RC" -eq 0 ] || return 0
+  case $out in
+    *"$1: Failed with result"* | *"Failed to start $1"*) FIRST_START=failed ;;
+    *"Started $1"*) FIRST_START=held ;;
+  esac
+}
+
 read_post_boot() {
   local svc ds t out line down="" i
   check_shutdown
   for svc in $KNOB_SERVICES; do
     if unit_show "$svc" ActiveState Result NRestarts After; then
-      if [ "$U_ActiveState" = active ] && [ "${U_NRestarts:-0}" = 0 ]; then
-        check "service:$svc" 1 "active, 0 restarts: the first start held"
+      first_start "$svc"
+      if [ "$U_ActiveState" != active ] || [ "${U_NRestarts:-0}" != 0 ]; then
+        check "service:$svc" 0 "$U_ActiveState, ${U_NRestarts:-unknown} automatic restarts, result ${U_Result:-unknown}: the first start didn't hold"
+      elif [ "$FIRST_START" = failed ]; then
+        check "service:$svc" 0 "active now, but this boot's journal shows it failing first: a start by hand doesn't count in NRestarts"
+      elif [ "$FIRST_START" = held ]; then
+        check "service:$svc" 1 "active, 0 automatic restarts, and no failure in this boot's journal"
       else
-        check "service:$svc" 0 "$U_ActiveState, ${U_NRestarts:-unknown} restarts, result ${U_Result:-unknown}: the first start didn't hold"
+        check "service:$svc" "" "active with 0 automatic restarts, but this boot's journal has none of PID 1's lines for it, so whether the first start held is unknown"
       fi
       for ds in $DS_UNITS; do
         if ordering_ok "$ds" "$U_After"; then

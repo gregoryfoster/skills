@@ -42,6 +42,8 @@ from review:
 - stock Ubuntu's release pocket isn't a widening.
 - the output is ASCII.
 - a vendor's origin name stays literal: never globbed, and escaped as a key.
+- after a boot, a service's first start is read from the journal: a start by
+  hand doesn't count in NRestarts.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1420,3 +1422,39 @@ def test_post_boot_checks_fail_on_a_restarted_service_and_a_pending_reboot(host)
         "post-boot:failed-units",
     } <= set(_ids(out))
     assert "updates" not in out and "dormant" not in out
+
+
+@pytest.mark.parametrize(
+    "journal, ok",
+    [
+        (
+            "Starting app-web.service - App...\n"
+            "app-web.service: Main process exited, code=exited, status=1/FAILURE\n"
+            "app-web.service: Failed with result 'exit-code'.\n"
+            "Starting app-web.service - App...\n"
+            "Started app-web.service - App.\n",
+            False,
+        ),
+        ("Starting app-web.service - App...\nStarted app-web.service - App.\n", True),
+        ("app-web: Starting the server\n", None),
+    ],
+)
+def test_post_boot_reads_the_first_start_from_the_journal_not_nrestarts(
+    host, journal, ok
+):
+    # Started by hand after a failed first start, the service is active with
+    # 0 automatic restarts: only the journal shows the failure. App lines that
+    # merely say "Starting" aren't PID 1's.
+    host.knob("posture scheduled\nservice app-web.service\n")
+    host.show(
+        "app-web.service",
+        ActiveState="active",
+        NRestarts="0",
+        Result="success",
+        After="network.target",
+    )
+    host.on("journalctl", "-b 0 -u app-web.service*", journal)
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["service:app-web.service"]["ok"] is ok
+    assert ("post-boot:service:app-web.service" in _ids(out)) is (ok is False)
