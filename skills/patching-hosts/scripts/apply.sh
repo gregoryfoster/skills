@@ -1162,18 +1162,13 @@ do_bulk() {
 }
 
 do_held() {
-  local i out o="" a="" e names="" u st left x
+  local i out o="" a="" e names="" rel="" u st left x
   local -a w=()
   read_run_holds || true
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     [ "${RUN_HOLD_STEP[$i]}" != "$step" ] || names="$names ${RUN_HOLD_PKG[$i]}"
   done
   read -r -a w <<<"$names" || true
-  json_words e "$names"
-  jadd o released "$e"
-  json_words e "$BEFORE_HOLDS"
-  jadd o owner "$e"
-  J_HOLDS="{$o}"
   # Stopped around the restart, so a health timer doesn't restart the app
   # into a database that's down. Stopped before the release, too: a stop
   # that fails then leaves the group held, rather than open to the next
@@ -1190,6 +1185,14 @@ do_held() {
     ! as_root apt-mark unhold "${w[@]}" >/dev/null; then
     fail "apt-mark unhold failed: nothing was upgraded"
   fi
+  # Released once the unhold ran and exited 0. Whether showhold agrees is
+  # read after the upgrade.
+  if [ "${#FAILED[@]}" -eq 0 ]; then rel=$names; fi
+  json_words e "$rel"
+  jadd o released "$e"
+  json_words e "$BEFORE_HOLDS"
+  jadd o owner "$e"
+  J_HOLDS="{$o}"
   # The step starts with the upgrade: until then nothing it changed needs
   # the owner, and it isn't recorded, so it can run again.
   if [ "${#FAILED[@]}" -eq 0 ]; then

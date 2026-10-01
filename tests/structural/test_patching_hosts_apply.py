@@ -953,6 +953,7 @@ def test_a_held_step_that_fails_before_its_upgrade_can_run_again(host, fails):
         host.cases["apt-mark"].insert(0, ("unhold *", "", 100, "", None))
     out = host.run(step="postgres", rc=1)
     assert not host.calls("unattended-upgrade")[1:]
+    assert out["holds"]["released"] == []
     if fails == "stop":
         assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("unhold")]
     assert "postgres" not in host.record("steps")
