@@ -1933,6 +1933,8 @@ read_docker() {
       else
         UNK="docker couldn't be read, as the user or as root"
       fi
+    elif [ "$U_ActiveState" = active ]; then
+      UNK="active, but the docker CLI isn't on PATH, so its containers weren't read"
     elif [ -n "$U_ActiveState" ]; then
       idle_verdict docker.service "$U_ActiveState"
     else
@@ -2047,7 +2049,9 @@ read_redis() {
       else
         UNK="redis-cli INFO couldn't be read (a password?)"
       fi
-    elif [ -n "$U_ActiveState" ] && [ "$U_ActiveState" != active ]; then
+    elif [ "$U_ActiveState" = active ]; then
+      UNK="active, but redis-cli isn't on PATH, so its keys weren't read"
+    elif [ -n "$U_ActiveState" ]; then
       idle_verdict redis-server.service "$U_ActiveState"
     else
       UNK="its state couldn't be read"

@@ -52,6 +52,7 @@ from review:
 - an empty unit file is a mask, as systemd reads it.
 - a hold on a package that isn't installed defers nothing.
 - a refused run leaves no scratch directory behind.
+- an active engine whose CLI isn't on PATH says so.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -166,6 +167,7 @@ class Host:
             d.mkdir()
         self.now = int(time.time())
         self.sudo = sudo
+        self.missing: set[str] = set()
         self.cases: dict[str, list[tuple[str, str, int, str]]] = {
             n: [] for n in STUBBED
         }
@@ -258,6 +260,27 @@ class Host:
         )
         return self
 
+    def absent(self, *names: str) -> "Host":
+        """Take NAMES off PATH: no stub for them, and none of the system's."""
+        self.missing.update(names)
+        return self
+
+    def _system_path(self) -> str:
+        # With nothing missing, the system's own directories. Otherwise a
+        # directory of links to everything in them but the missing names, so
+        # a real /usr/bin/docker can't stand in for an absent one.
+        if not self.missing:
+            return SYSTEM_PATH
+        sysbin = self.tmp / "sysbin"
+        if not sysbin.exists():
+            sysbin.mkdir()
+            for d in SYSTEM_PATH.split(":"):
+                for entry in sorted(Path(d).iterdir()):
+                    link = sysbin / entry.name
+                    if entry.name not in self.missing and not link.is_symlink():
+                        link.symlink_to(entry)
+        return str(sysbin)
+
     def knob(self, text: str) -> "Host":
         self.knob_path.write_text(text)
         return self
@@ -312,7 +335,9 @@ class Host:
         )
         for name in (*STUBBED, "sudo", "id", "choom"):
             link = self.bin / name
-            if not link.is_symlink():
+            if name in self.missing:
+                link.unlink(missing_ok=True)
+            elif not link.is_symlink():
                 link.symlink_to(_DISPATCHER[0])
 
     def run(self, *args: str, rc: int = 0, root: bool = True):
@@ -334,7 +359,7 @@ class Host:
             *args,
         ]
         env = _clean_env()
-        env["PATH"] = f"{self.bin}:{SYSTEM_PATH}"
+        env["PATH"] = f"{self.bin}:{self._system_path()}"
         env["TMPDIR"] = str(self.tmpdir)
         env["STUB_LOG"] = str(self.log)
         env["STUB_CASES"] = str(self.tmp / "cases")
@@ -1292,6 +1317,22 @@ def test_idle_evidence_younger_than_30_days_is_unknown(tmp_path):
     assert d["verdict"] == "unknown"
     assert "fewer than 30" in d["evidence"]
     assert "dormant:docker" not in _ids(out)
+
+
+@pytest.mark.parametrize(
+    "engine, unit, package, cli",
+    [
+        ("docker", "docker.service", "docker.io", "docker"),
+        ("redis", "redis-server.service", "redis-server", "redis-cli"),
+    ],
+)
+def test_an_active_engine_without_its_cli_says_so(host, engine, unit, package, cli):
+    host.installed(package)
+    host.show(unit, ActiveState="active")
+    host.absent(cli)
+    d = _dormant(host.run(), engine)
+    assert d["verdict"] == "unknown"
+    assert f"{cli}" in d["evidence"] and "isn't on PATH" in d["evidence"]
 
 
 def test_a_postgres_whose_activity_needs_a_failed_login_is_unknown(host):
