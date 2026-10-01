@@ -80,7 +80,7 @@ generation from the profile's markers, each read on its own, and names none
 on a host no profile matches.
 
 Plan step 5, from the real image: an idle Docker is never asked, since
-docker.socket would start it.
+docker.socket would start it, and what it holds is read from disk.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1538,7 +1538,56 @@ def test_an_idle_docker_is_never_asked(host):
     assert _dormant(out, "docker")["verdict"] == "dormant"
     assert any("docker.socket" in n for n in out["not_read"])
     checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
-    assert checks["containers"]["ok"] is None
+    # No data root on disk: Docker never held a container.
+    assert checks["containers"]["ok"] is True
+    assert host.calls("docker") == []
+
+
+def _docker_disk(host: Host, root: str = "var/lib/docker") -> None:
+    """Three containers and a volume on disk, the way dockerd 29 writes them."""
+    for cid, policy, manual in (
+        ("a1", "unless-stopped", "false"),
+        ("b2", "unless-stopped", "true"),
+        ("c3", "no", "false"),
+    ):
+        host.write(
+            f"{root}/containers/{cid}/hostconfig.json",
+            '{"Binds":null,"RestartPolicy":{"Name":"%s","MaximumRetryCount":0}}'
+            % policy,
+        )
+        host.write(
+            f"{root}/containers/{cid}/config.v2.json",
+            '{"HasBeenManuallyStopped":%s}' % manual,
+        )
+    (host.root / root / "volumes" / "pgdata" / "_data").mkdir(parents=True)
+    host.write(f"{root}/volumes/metadata.db", "")
+
+
+@pytest.mark.parametrize("root", ["var/lib/docker", "srv/docker"])
+def test_containers_on_disk_count_while_dockerd_is_down(host, root):
+    # Measured in the exeuntu image: with docker.service disabled, a
+    # container with --restart unless-stopped stayed down after a reboot.
+    # Read from disk, it fails the post-boot check, and an idle Docker
+    # holding it isn't dormant.
+    host.installed("docker.io")
+    if root != "var/lib/docker":
+        host.write("etc/docker/daemon.json", '{"data-root": "/%s"}\n' % root)
+    _docker_disk(host, root)
+    host.show(
+        "docker.service",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - 40 * DAY}",
+    )
+    host.on("docker", "*", "")
+    d = _dormant(host.run(), "docker")
+    assert d["verdict"] == "unknown"
+    assert d["workload"] == {"containers": 3, "volumes": 1, "read_from": "disk"}
+    checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
+    assert checks["containers"]["ok"] is False
+    assert (
+        "1 containers with a restart policy aren't back"
+        in checks["containers"]["evidence"]
+    )
     assert host.calls("docker") == []
 
 

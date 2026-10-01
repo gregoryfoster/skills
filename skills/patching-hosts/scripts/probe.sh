@@ -264,6 +264,57 @@ docker_running() {
   [ "$U_ActiveState" = active ]
 }
 
+# What Docker holds, read from its data root as root, with no daemon to ask:
+# each container's restart policy from hostconfig.json, whether it was
+# stopped by hand, and each named volume. The data root is daemon.json's, or
+# /var/lib/docker.
+DISK_CONTAINERS="" DISK_RESTARTING="" DISK_VOLUMES=""
+docker_on_disk() {
+  local root=/var/lib/docker r out kind pol manual
+  DISK_CONTAINERS="" DISK_RESTARTING="" DISK_VOLUMES=""
+  if [ -r "$P_ROOT/etc/docker/daemon.json" ]; then
+    r=$(grep -o '"data-root": *"[^"]*"' "$P_ROOT/etc/docker/daemon.json" 2>/dev/null | head -n 1) || r=""
+    r=${r%\"}
+    r=${r##*\"}
+    if [ -n "$r" ]; then root=$r; fi
+  fi
+  [ "$P_PRIV" != none ] || return 0
+  # The script runs as root, in sh: its expansions are its own.
+  # shellcheck disable=SC2016
+  capture out as_root sh -c '
+    cd "$1" 2>/dev/null || exit 3
+    for d in containers/*/; do
+      [ -f "${d}hostconfig.json" ] || continue
+      p=$(grep -o "\"RestartPolicy\": *{ *\"Name\": *\"[a-z-]*\"" "${d}hostconfig.json" | head -n 1)
+      p=${p%\"}
+      p=${p##*\"}
+      m=no
+      if grep -q "\"HasBeenManuallyStopped\":true" "${d}config.v2.json" 2>/dev/null; then m=yes; fi
+      echo "container ${p:-no} $m"
+    done
+    for v in volumes/*/; do
+      if [ -d "$v" ]; then echo volume; fi
+    done' sh "$P_ROOT$root"
+  case $CAP_RC in
+    0) ;;
+    3) DISK_CONTAINERS=0 DISK_RESTARTING=0 DISK_VOLUMES=0; return 0 ;;
+    *) return 0 ;;
+  esac
+  DISK_CONTAINERS=0 DISK_RESTARTING=0 DISK_VOLUMES=0
+  while read -r kind pol manual; do
+    case $kind in
+      container)
+        DISK_CONTAINERS=$((DISK_CONTAINERS + 1))
+        # What dockerd starts again when it comes up: always, and
+        # unless-stopped unless it was stopped by hand.
+        case $pol/$manual in
+          always/* | unless-stopped/no) DISK_RESTARTING=$((DISK_RESTARTING + 1)) ;;
+        esac ;;
+      volume) DISK_VOLUMES=$((DISK_VOLUMES + 1)) ;;
+    esac
+  done <<<"$out"
+}
+
 docker_cmd() {  # docker, then docker as root when the user isn't in its group
   if docker "$@" 2>/dev/null; then return 0; fi
   if [ "$P_PRIV" = none ]; then return 1; fi
@@ -2076,7 +2127,7 @@ idle_verdict() {  # <unit> <state>: sets DORM or UNK from how long the unit has 
 }
 
 read_docker() {
-  local inst=0 out c im vol
+  local inst=0 out c im vol state
   WL="" INUSE="" DORM="" UNK=""
   if installed docker.io || installed docker-ce || [ -x "$P_ROOT/usr/bin/dockerd" ]; then inst=1; fi
   if [ "$inst" -eq 1 ]; then
@@ -2104,7 +2155,19 @@ read_docker() {
     elif [ "$U_ActiveState" = active ]; then
       UNK="active, but the docker CLI isn't on PATH, so its containers weren't read"
     elif [ -n "$U_ActiveState" ]; then
-      idle_verdict docker.service "$U_ActiveState"
+      # Idle isn't empty: what's on disk would go with a prune.
+      state=$U_ActiveState
+      docker_on_disk
+      if [ -z "$DISK_CONTAINERS" ]; then
+        UNK="$state, and what it holds on disk couldn't be read as root"
+      else
+        WL="{\"containers\": $DISK_CONTAINERS, \"volumes\": $DISK_VOLUMES, \"read_from\": \"disk\"}"
+        if [ "$DISK_CONTAINERS" -gt 0 ] || [ "$DISK_VOLUMES" -gt 0 ]; then
+          UNK="$state, but $DISK_CONTAINERS containers and $DISK_VOLUMES volumes are on disk, and a prune would take them"
+        else
+          idle_verdict docker.service "$state"
+        fi
+      fi
     else
       UNK="its state couldn't be read"
     fi
@@ -2532,7 +2595,16 @@ read_post_boot() {
       if [ -z "$down" ]; then check containers 1 "every container is running"; else check containers 0 "not running:$down"; fi
     fi
   elif live_cmd docker; then
-    check containers "" "docker.service isn't running, so its containers weren't read: asking would start it through docker.socket"
+    # Read from disk instead: with docker.service down, nothing brings a
+    # container back at boot, whatever its restart policy.
+    docker_on_disk
+    if [ -z "$DISK_CONTAINERS" ]; then
+      check containers "" "docker.service isn't running, and its containers on disk couldn't be read as root"
+    elif [ "$DISK_RESTARTING" -gt 0 ]; then
+      check containers 0 "docker.service isn't running, so $DISK_RESTARTING containers with a restart policy aren't back"
+    else
+      check containers 1 "docker.service isn't running, and none of the $DISK_CONTAINERS containers on disk has a restart policy that would bring it back"
+    fi
   fi
   read_health post-boot
   for i in ${HEALTH_RC[@]+"${!HEALTH_RC[@]}"}; do
