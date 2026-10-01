@@ -1293,9 +1293,11 @@ read_holds() {
     [ -n "$name" ] || continue
     held_versions "$name"
     flag=""
+    # A hold on a package that isn't installed defers nothing.
     if [ -n "$HV_INSTALLED" ] && [ -n "$HV_CANDIDATE" ]; then
       flag=0
-      if [ "$HV_CANDIDATE" != "$HV_INSTALLED" ] && [ "$HV_CANDIDATE" != "(none)" ]; then flag=1; fi
+      if [ "$HV_INSTALLED" != "(none)" ] && [ "$HV_CANDIDATE" != "$HV_INSTALLED" ] &&
+        [ "$HV_CANDIDATE" != "(none)" ]; then flag=1; fi
     fi
     if [ "$flag" = 1 ]; then
       if [ "$HV_SECURITY" -eq 1 ]; then e="a security update"; else e="an update"; fi

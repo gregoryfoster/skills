@@ -50,6 +50,7 @@ from review:
 - a dormant component lists only its pending security packages.
 - a dry run that exits 0 without a selection line is a finding, not silence.
 - an empty unit file is a mask, as systemd reads it.
+- a hold on a package that isn't installed defers nothing.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -788,6 +789,25 @@ def test_an_owner_hold_on_a_pending_package_needs_a_held_exception(host):
     out = host.run()
     assert "held:libxml2" not in _ids(out)
     assert _finding(out, "held:libxml2", "excepted")["exception_line"] == 2
+
+
+def test_a_hold_on_a_package_that_isnt_installed_defers_nothing(host):
+    host.on("apt-mark", "showhold", "ghost\n")
+    host.on(
+        "apt-cache",
+        "*policy ghost",
+        _policy("ghost", "(none)", "1.0", ["noble-security"]),
+    )
+    out = host.run()
+    assert out["pending"]["owner_holds"] == [
+        {
+            "package": "ghost",
+            "installed": "(none)",
+            "candidate": "1.0",
+            "pending": False,
+        }
+    ]
+    assert "held:ghost" not in _ids(out)
 
 
 def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
