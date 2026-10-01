@@ -4,17 +4,21 @@ This profile records how exe.dev's exeuntu image behaves where it differs from s
 
 ## Detection
 
-The guest can't see its own image digest (CannObserv/broker#65, 2026-09-25), so detect the image by markers:
+The guest can't see its own image digest (CannObserv/broker#65, 2026-09-25), so detect the image by markers. The probe reads each one on its own, and names the profile and the generation in `environment.profile`.
 
+The platform's exist only on an exe.dev VM:
 - the kernel's `init=/exe.dev/bin/exe-init` in `/proc/cmdline`;
-- no installed `linux-image-*` package, and a platform kernel (6.12.93 in the round);
-- `/exe.dev/` present;
-- `/usr/local/bin/exeuntu` (absent on older images);
-- `exe-setup.service` (absent on the Feb-2026 images).
+- `/exe.dev/`, which the platform supplies at boot. The image doesn't carry it;
+- a platform kernel (6.12.93 in the round), with no installed `linux-image-*` package.
+
+The image's are in any tree of it, so they're all an offline read sees. Their dates come from [boldsoftware/exeuntu](https://github.com/boldsoftware/exeuntu)'s history, read 2026-10-01:
+- the `exedev` account, named "exe.dev user", and `/usr/local/bin/init`, the init wrapper that names the image: since its import (`6f88f30`, 2026-01-22);
+- `exe-setup.service`: since `6d610ee`, 2026-03-26;
+- `/usr/local/bin/exeuntu`: since `f292b54`, 2026-06-12.
 
 ## Two image generations
 
-The round met two generations. The probe reports which one it's on, because the checks differ.
+The round met two generations. The probe reports which one it's on, because the checks differ. The image's history dates them: a Feb-2026 image predates `exe-setup.service` (2026-03-26), and a newer one has both it and the `exeuntu` binary (2026-06-12). The probe calls them `feb-2026` and `newer`, and dates a host only by the image's markers.
 
 | | Feb-2026 images | Newer images |
 |---|---|---|
@@ -26,7 +30,7 @@ The round met two generations. The probe reports which one it's on, because the 
 
 Not every row was read on every host. For the newer images, the unit's presence comes from all five hosts, but its re-run on every boot was counted on replicator and watcher only. notifier's failed on every boot, which is consistent with it. The journal row comes from notifier, replicator and watcher, and the session path from replicator and watcher. For the Feb-2026 images, the journal row comes from all three, and the `exe-init` and session rows from address-validator and wslcb.
 
-usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu`, and masks 3 units rather than 5 (CannObserv/usa-wa#430). Detect each marker on its own rather than inferring one from another.
+usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu`, and masks 3 units rather than 5 (CannObserv/usa-wa#430). The probe calls it `may-2026`. Detect each marker on its own rather than inferring one from another.
 
 On a volatile journal the reboot erases everything before it. That's how address-validator lost 51 days (CannObserv/address-validator#241, 2026-09-29), and wslcb 10 (CannObserv/wslcb-licensing-tracker#186). Copy the journal as the last step of the reboot chain ([run.md](../run.md)).
 
