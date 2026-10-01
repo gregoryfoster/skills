@@ -106,7 +106,7 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
 - `docker-clean` empties apt's `.deb` cache after every run, so a rollback fetches the recorded version from snapshot.ubuntu.com.
 - The ingress is exe.dev's own `sshd` in `init.scope`. `ssh.service` is disabled and `ssh.socket` masked, so an openssh-server upgrade touches nothing live (power-map, address-validator, wslcb).
 - nginx ships with the image, disabled, and was in the security set on six hosts: patched for nothing. A dormant-component candidate ([policy.md](../policy.md)).
-- **Docker is socket-activated:** the image disables `docker.service` and enables `docker.socket`, so the first `docker` call starts dockerd (read in the image built from `1b74aabd`, 2026-10-01). Don't ask an idle Docker anything you'd want to read as idle.
+- **Docker is socket-activated:** the image disables `docker.service` and enables `docker.socket`, so the first `docker` call starts dockerd (read in the image built from `1b74aabd`, 2026-10-01). Don't ask an idle Docker anything you'd want to read as idle. And a restart policy does nothing at boot: a container with `unless-stopped` stayed down after a reboot until dockerd was started, which is why power-map's qdrant waited for first use. A host whose containers must come back by themselves needs `docker.service` enabled, the owner's change.
 
 ## What belongs to the image owner
 

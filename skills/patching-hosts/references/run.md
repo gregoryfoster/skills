@@ -178,7 +178,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.
 - **needrestart is clean**, `sudo grep -c '(deleted)' /proc/1/maps` reads 0, and `reboot-required` is gone.
 - **The session adj, read directly** up the chain to PID 1. Never trust a test that can skip.
-- **Containers are back.** On power-map, qdrant waited for first use despite `unless-stopped`. On wslcb, with `docker.service` enabled, both came back at boot.
+- **Containers are back.** On power-map, qdrant waited for first use despite `unless-stopped`. On wslcb, with `docker.service` enabled, both came back at boot. The difference is `docker.service`: disabled, nothing starts dockerd at boot, so no restart policy runs until something asks Docker through `docker.socket` (measured in the exeuntu image, 2026-10-01). Check before the reboot whether it's enabled, and after it, start by hand what should be back. The probe reads the containers from disk while dockerd is down, and fails the check for each one a restart policy should have brought back.
 - **The downtime**, from the stop line or the last request to the first good response.
 - **Every `health` check passes**, and `systemctl --failed` is empty.
 
