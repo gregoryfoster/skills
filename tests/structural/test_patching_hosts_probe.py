@@ -1380,7 +1380,7 @@ INIT_WRAPPER = (
 def test_a_host_no_profile_matches_names_none_and_the_generic_path(host):
     p = host.run()["environment"]["profile"]
     assert (p["name"], p["generation"], p["reference"]) == (None, None, None)
-    assert "generic apt path" in p["fallback"]
+    assert 'SKILL.md\'s "Hosts no profile matches"' in p["fallback"]
     assert p["markers"]["exe_dev_dir"] is False
 
 

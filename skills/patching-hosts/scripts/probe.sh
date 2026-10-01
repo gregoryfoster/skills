@@ -48,8 +48,8 @@ couldn't take is null, never its default.
 
 environment.profile names the environment profile the host matches
 (references/environments/) and its image generation, read from the
-profile's markers. Its name is null when none matches: SKILL.md's generic
-apt path applies.
+profile's markers. Its name is null when none matches: read SKILL.md's
+"Hosts no profile matches".
 
 Exit codes:
   0  read; act on findings
@@ -729,7 +729,7 @@ read_profile() {
   jaddb o image "$image"
   jadd o markers "{$m}"
   if [ -z "$PROFILE" ]; then
-    jadds o fallback "no profile matches: SKILL.md's generic apt path applies"
+    jadds o fallback "no profile matches: read SKILL.md's \"Hosts no profile matches\""
   fi
   R_PROFILE=$o
 }
