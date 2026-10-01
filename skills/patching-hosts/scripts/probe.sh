@@ -1479,14 +1479,16 @@ read_pg_clusters() {
   return 0
 }
 
-PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(d.datlocprovider::text, ''), coalesce(d.datcollversion, ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, ''), coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), extract(epoch from pg_postmaster_start_time())::bigint from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
+PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(to_jsonb(d) ->> 'datlocprovider', ''), coalesce(to_jsonb(d) ->> 'datcollversion', ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, ''), coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), extract(epoch from pg_postmaster_start_time())::bigint from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
 
 # Fields split on the unit separator, not a tab: a tab is IFS whitespace, so
 # an empty stats_reset would vanish and shift every field after it. The last
 # counts the connected database's own tables, so only postgres's row has it:
 # it's the default database, and an app may keep its tables there. Then come
 # the database's creation, PG_VERSION's mtime (empty outside the default
-# tablespace), and the server's start.
+# tablespace), and the server's start. datlocprovider and datcollversion came
+# with Postgres 15: read through to_jsonb, they're null on 14 (jammy's), where
+# naming them fails the whole query.
 pg_databases() {  # <port>: rows of PG_Q, as the postgres user
   as_user postgres psql -XAtq -F "$KNOB_US" -p "$1" -d postgres -c "$PG_Q"
 }

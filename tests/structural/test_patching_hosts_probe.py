@@ -63,6 +63,7 @@ from review:
 - a database's statistics cover no more than its own life.
 - a knob command that ignores the time limit's TERM is killed.
 - pro isn't asked about an offline tree, which it can't read.
+- the catalog query names no column Postgres 14 lacks.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1018,6 +1019,16 @@ def test_a_database_no_datastore_line_names_is_a_finding(host):
         for c in host.calls("sudo")
         if c[1].startswith("-n -u postgres -- env LC_ALL=C psql")
     ]
+
+
+def test_the_catalog_query_names_no_column_postgres_14_lacks(host):
+    # datlocprovider and datcollversion came with 15: on 14 a query naming
+    # them fails whole ("column d.datlocprovider does not exist", measured).
+    _postgres(host, [("postgres", "7000000", "0", "", "C.UTF-8", "", "", "0")])
+    host.run()
+    [query] = [c[1] for c in host.calls("psql")]
+    assert "d.datlocprovider" not in query and "d.datcollversion" not in query
+    assert "to_jsonb(d) ->> 'datlocprovider'" in query
 
 
 def test_earlyoom_arguments_come_from_cmdline_not_the_journal(host):
