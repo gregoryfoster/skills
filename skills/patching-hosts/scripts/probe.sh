@@ -264,6 +264,11 @@ docker_running() {
   [ "$U_ActiveState" = active ]
 }
 
+docker_socket_listens() {  # whether docker.socket would start dockerd on a docker call
+  unit_show docker.socket ActiveState || return 1
+  [ "$U_ActiveState" = active ]
+}
+
 # What Docker holds, read from its data root as root, with no daemon to ask:
 # each container's restart policy from hostconfig.json, whether it was
 # stopped by hand, and each named volume. The data root is daemon.json's, or
@@ -1103,7 +1108,11 @@ read_outside_apt() {
       ci="[$ci]"
     fi
   elif live_cmd docker; then
-    not_read "container images: docker.service isn't running, and asking would start it through docker.socket"
+    if docker_socket_listens; then
+      not_read "container images: docker.service isn't running, and asking would start it through docker.socket"
+    else
+      not_read "container images: docker.service isn't running"
+    fi
   fi
   R_OUTSIDE=""
   jadd R_OUTSIDE binaries "[$list]"
@@ -2601,7 +2610,11 @@ read_post_boot() {
     if [ -z "$DISK_CONTAINERS" ]; then
       check containers "" "docker.service isn't running, and its containers on disk couldn't be read as root"
     elif [ "$DISK_RESTARTING" -gt 0 ]; then
-      check containers 0 "docker.service isn't running, so $DISK_RESTARTING containers with a restart policy aren't back"
+      if docker_socket_listens; then
+        check containers 0 "docker.service isn't running, so $DISK_RESTARTING containers with a restart policy aren't back: only docker.socket listens, and it starts dockerd on the first docker call"
+      else
+        check containers 0 "docker.service isn't running, so $DISK_RESTARTING containers with a restart policy aren't back"
+      fi
     else
       check containers 1 "docker.service isn't running, and none of the $DISK_CONTAINERS containers on disk has a restart policy that would bring it back"
     fi

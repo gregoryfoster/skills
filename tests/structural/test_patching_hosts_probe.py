@@ -1533,6 +1533,7 @@ def test_an_idle_docker_is_never_asked(host):
         ActiveState="inactive",
         InactiveEnterTimestamp=f"@{host.now - 40 * DAY}",
     )
+    host.show("docker.socket", ActiveState="active")
     host.on("docker", "*", "")
     out = host.run()
     assert _dormant(out, "docker")["verdict"] == "dormant"
@@ -1541,6 +1542,16 @@ def test_an_idle_docker_is_never_asked(host):
     # No data root on disk: Docker never held a container.
     assert checks["containers"]["ok"] is True
     assert host.calls("docker") == []
+
+
+def test_docker_socket_is_named_only_while_it_listens(host):
+    # A docker CLI with no socket of its own, say one pointed elsewhere.
+    host.installed("docker.io")
+    host.show("docker.service", ActiveState="inactive")
+    host.on("docker", "*", "")
+    out = host.run()
+    [n] = [n for n in out["not_read"] if n.startswith("container images")]
+    assert "docker.socket" not in n
 
 
 def _docker_disk(host: Host, root: str = "var/lib/docker") -> None:
