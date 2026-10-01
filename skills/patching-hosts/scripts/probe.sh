@@ -1481,7 +1481,14 @@ read_pg_clusters() {
   return 0
 }
 
-PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(to_jsonb(d) ->> 'datlocprovider', ''), coalesce(to_jsonb(d) ->> 'datcollversion', ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, ''), coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), extract(epoch from pg_postmaster_start_time())::bigint, coalesce(to_jsonb(s) ->> 'sessions', '') from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
+# The creation dates need pg_stat_file, which a role that isn't a superuser
+# may not run, and Postgres checks that before the query runs, so a CASE
+# around it doesn't help (measured on 16). Refused, pg_databases asks again
+# without it: only the dates are lost.
+PG_Q_HEAD="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(to_jsonb(d) ->> 'datlocprovider', ''), coalesce(to_jsonb(d) ->> 'datcollversion', ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, '')"
+PG_Q_TAIL="extract(epoch from pg_postmaster_start_time())::bigint, coalesce(to_jsonb(s) ->> 'sessions', '') from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
+PG_Q="$PG_Q_HEAD, coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), $PG_Q_TAIL"
+PG_Q_PLAIN="$PG_Q_HEAD, '', $PG_Q_TAIL"
 
 # Fields split on the unit separator, not a tab: a tab is IFS whitespace, so
 # an empty stats_reset would vanish and shift every field after it. The last
@@ -1492,8 +1499,15 @@ PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup
 # reset (Postgres 14 on). datlocprovider and datcollversion came
 # with Postgres 15: read through to_jsonb, they're null on 14 (jammy's), where
 # naming them fails the whole query.
-pg_databases() {  # <port>: rows of PG_Q, as the postgres user
-  as_user postgres psql -XAtq -F "$KNOB_US" -p "$1" -d postgres -c "$PG_Q"
+pg_databases() {  # <port>: rows of PG_Q, as the postgres user; of PG_Q_PLAIN when pg_stat_file is refused
+  local _pd_rc=0
+  as_user postgres psql -XAtq -F "$KNOB_US" -p "$1" -d postgres -c "$PG_Q" 2>"$P_TMP/pg_q.err" || _pd_rc=$?
+  if [ "$_pd_rc" -ne 0 ] && grep -q pg_stat_file "$P_TMP/pg_q.err"; then
+    as_user postgres psql -XAtq -F "$KNOB_US" -p "$1" -d postgres -c "$PG_Q_PLAIN"
+    return
+  fi
+  cat "$P_TMP/pg_q.err" >&2
+  return "$_pd_rc"
 }
 
 # Each cluster's databases, with collation and activity, and any database no

@@ -70,6 +70,7 @@ from review:
   expire, subscribes or connects.
 - every Postgres cluster counts toward the verdict: an unread or recently
   stopped one makes it unknown.
+- a refused pg_stat_file costs only the creation dates.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1035,6 +1036,31 @@ def test_the_catalog_query_names_no_column_postgres_14_lacks(host):
     [query] = [c[1] for c in host.calls("psql")]
     assert "d.datlocprovider" not in query and "d.datcollversion" not in query
     assert "to_jsonb(d) ->> 'datlocprovider'" in query
+
+
+def test_a_refused_pg_stat_file_costs_only_the_creation_dates(host):
+    # A role that isn't a superuser may not run pg_stat_file, and Postgres
+    # refuses the whole query for it, CASE or not (measured on 16).
+    host.on(
+        "psql",
+        "*pg_stat_file*",
+        rc=1,
+        stderr="ERROR:  permission denied for function pg_stat_file\n",
+    )
+    _postgres(
+        host,
+        [
+            ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0", "", "1", "3"),
+            ("stray", "8000000", "0", "", "C.UTF-8", "c", "", "", "", "1", "0"),
+        ],
+    )
+    out = host.run()
+    [cluster] = out["impact"]["datastores"]["postgres"]
+    assert {d["name"]: d["created"] for d in cluster["databases"]} == {
+        "postgres": None,
+        "stray": None,
+    }
+    assert _finding(out, "database:stray")["kind"] == "knob"
 
 
 def test_earlyoom_arguments_come_from_cmdline_not_the_journal(host):
