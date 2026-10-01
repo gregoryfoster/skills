@@ -49,6 +49,7 @@ from review:
 - every idle window counts from the component's own start, never the kernel's.
 - a dormant component lists only its pending security packages.
 - a dry run that exits 0 without a selection line is a finding, not silence.
+- an empty unit file is a mask, as systemd reads it.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -529,6 +530,18 @@ def test_the_scheduled_posture_wants_the_timers_masked(tmp_path):
     assert "enabled" in _finding(out, "timer:apt-daily-upgrade.timer")["message"]
     # The scheduled posture doesn't read Periodic at all.
     assert not [i for i in _ids(out) if i.startswith("periodic:")]
+
+
+def test_an_empty_unit_file_is_a_mask(tmp_path):
+    # systemd.unit(5): an empty unit file loads as masked, like a symlink to
+    # /dev/null.
+    h = Host(tmp_path, live=False).knob("posture scheduled\n")
+    h.write("etc/systemd/system/apt-daily.timer", "")
+    h.mask("apt-daily-upgrade.timer")
+    out = h.run()
+    units = {u["unit"]: u["disk"] for u in out["updates"]["units"]}
+    assert units["apt-daily.timer"] == "masked"
+    assert not [i for i in _ids(out) if i.startswith("timer:")]
 
 
 @pytest.mark.parametrize(

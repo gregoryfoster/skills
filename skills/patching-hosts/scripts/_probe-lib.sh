@@ -113,13 +113,15 @@ knob_cmd() {  # <command>
 
 # --- units on disk ---------------------------------------------------------
 # Read from the files, so the answer holds offline, in an image no systemd
-# runs: a mask is a symlink to /dev/null, and an enablement is a symlink in a
-# .wants or .requires directory.
+# runs: a mask is a symlink to /dev/null or an empty unit file
+# (systemd.unit(5)), and an enablement is a symlink in a .wants or .requires
+# directory.
 unit_disk_state() {  # <var> <unit>
   local _uds_u=$2 _uds_r=$P_ROOT _uds_d _uds_f _uds_file="" _uds_tmpl=""
   for _uds_d in etc/systemd/system run/systemd/system; do
     _uds_f=$_uds_r/$_uds_d/$_uds_u
-    if [ -L "$_uds_f" ] && [ "$(readlink "$_uds_f")" = /dev/null ]; then
+    if { [ -L "$_uds_f" ] && [ "$(readlink "$_uds_f")" = /dev/null ]; } ||
+      { [ -f "$_uds_f" ] && [ ! -s "$_uds_f" ]; }; then
       if [ "$_uds_d" = etc/systemd/system ]; then
         printf -v "$1" masked
       else
