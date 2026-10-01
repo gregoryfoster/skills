@@ -1457,7 +1457,7 @@ read_maps() {
 }
 
 PG_CLUSTERS=""  # " ver/name/port/status/logfile ..."
-PG_ROWS=""      # " ver/name|db|writes|stats_reset|own_tables ..."
+PG_ROWS=""      # " ver/name|db|writes|stats_reset|own_tables|created|started ..."
 PG_READ=""      # " ver/name ...": clusters whose catalogs were read
 read_pg_clusters() {
   local out line ver name port status owner dir log
@@ -1473,12 +1473,14 @@ read_pg_clusters() {
   return 0
 }
 
-PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(d.datlocprovider::text, ''), coalesce(d.datcollversion, ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, '') from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
+PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(d.datlocprovider::text, ''), coalesce(d.datcollversion, ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, ''), coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), extract(epoch from pg_postmaster_start_time())::bigint from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
 
 # Fields split on the unit separator, not a tab: a tab is IFS whitespace, so
 # an empty stats_reset would vanish and shift every field after it. The last
 # counts the connected database's own tables, so only postgres's row has it:
-# it's the default database, and an app may keep its tables there.
+# it's the default database, and an app may keep its tables there. Then come
+# the database's creation, PG_VERSION's mtime (empty outside the default
+# tablespace), and the server's start.
 pg_databases() {  # <port>: rows of PG_Q, as the postgres user
   as_user postgres psql -XAtq -F "$KNOB_US" -p "$1" -d postgres -c "$PG_Q"
 }
@@ -1486,7 +1488,7 @@ pg_databases() {  # <port>: rows of PG_Q, as the postgres user
 # Each cluster's databases, with collation and activity, and any database no
 # datastore line names: the recovery point wouldn't cover it.
 read_datastores() {
-  local r e c out db size writes reset coll prov cver own dbs d declared="" cls="" ver name port status what
+  local r e c out db size writes reset coll prov cver own created started dbs d declared="" cls="" ver name port status what
   local -a df=()
   R_DS=""
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
@@ -1507,7 +1509,7 @@ read_datastores() {
       capture out pg_databases "$port"
       if [ "$CAP_RC" -eq 0 ]; then
         PG_READ="$PG_READ $ver/$name"
-        while IFS=$KNOB_US read -r db size writes reset coll prov cver own; do
+        while IFS=$KNOB_US read -r db size writes reset coll prov cver own created started; do
           [ -n "$db" ] || continue
           d=""
           jadds d name "$db"
@@ -1518,8 +1520,9 @@ read_datastores() {
           jaddsn d provider "$prov"
           jaddsn d collversion "$cver"
           if [ -n "$own" ]; then jaddn d own_tables "$own"; fi
+          jaddn d created "$created"
           jpush dbs "{$d}"
-          PG_ROWS="$PG_ROWS $ver/$name|$db|${writes:-0}|${reset:-}|${own:-}"
+          PG_ROWS="$PG_ROWS $ver/$name|$db|${writes:-0}|${reset:-}|${own:-}|${created:-}|${started:-}"
           case $db in template0 | template1) continue ;; esac
           what="$db,"
           if [ "$db" = postgres ]; then
@@ -1969,7 +1972,7 @@ read_docker() {
 }
 
 read_postgres() {
-  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own ver name up="" pg_own=""
+  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started ver name up="" pg_own="" span_unknown=0
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if have dpkg-query; then
@@ -1997,7 +2000,7 @@ read_postgres() {
         UNK="its activity needs a login as postgres, and that failed"
       else
         for r in $PG_ROWS; do
-          IFS='|' read -r _ db writes reset own <<<"$r"
+          IFS='|' read -r _ db writes reset own created started <<<"$r"
           case $db in template0 | template1) continue ;; esac
           # postgres counts as a database of its own only with tables in it.
           if [ "$db" = postgres ]; then
@@ -2006,15 +2009,28 @@ read_postgres() {
           fi
           nusr=$((nusr + 1))
           if is_int "$writes"; then wr=$((wr + writes)); fi
+          # What its counters cover: since a reset, or else since the later of
+          # its creation and the server's start. Never reset, they outlive a
+          # clean restart but not a crash, and they begin with the database,
+          # so the server's start alone overstates one created after it
+          # (measured on 16).
+          d=""
           if is_int "$reset"; then
             d=$(((P_NOW - reset) / 86400))
-            if [ -z "$window" ] || [ "$d" -lt "$window" ]; then window=$d; fi
+          elif is_int "$created" && is_int "$started"; then
+            if [ "$created" -gt "$started" ]; then started=$created; fi
+            d=$(((P_NOW - started) / 86400))
+          fi
+          if [ -z "$d" ]; then
+            span_unknown=1
+          elif [ -z "$window" ] || [ "$d" -lt "$window" ]; then
+            window=$d
           fi
         done
-        # The servers' own uptime bounds the evidence: in a container, or
-        # after a soft reboot, the kernel booted long before them. Statistics
-        # never reset survive a clean restart, so it's a lower bound for them
-        # too.
+        if [ "$span_unknown" -eq 1 ]; then window=""; fi
+        # With no database to read, the servers' own uptime bounds the
+        # evidence: in a container, or after a soft reboot, the kernel booted
+        # long before them.
         for c in $PG_CLUSTERS; do
           case $c in */online/*)
             IFS=/ read -r ver name _ <<<"$c"
@@ -2022,7 +2038,6 @@ read_postgres() {
             if is_int "$ACTIVE" && { [ -z "$up" ] || [ "$ACTIVE" -lt "$up" ]; }; then up=$ACTIVE; fi ;;
           esac
         done
-        [ -n "$window" ] || window=$up
         WL="{\"databases\": $nusr, \"writes_since_stats_reset\": $wr}"
         if [ "$nusr" -eq 0 ] && [ -n "$pg_own" ]; then
           UNK="no database but postgres and the templates, but whether postgres holds tables of its own wasn't read"
@@ -2035,9 +2050,11 @@ read_postgres() {
         elif [ "$wr" -gt 0 ]; then
           INUSE=${INUSE:-"$wr rows written since the statistics were reset"}
         elif window_ok "$window"; then
-          DORM="$nusr databases, and no row written in the $window days since the statistics were reset"
+          DORM="$nusr databases, and no row written in the $window days their statistics cover"
+        elif [ -n "$window" ]; then
+          UNK="no row written, but the statistics cover only $window days: fewer than 30"
         else
-          UNK="no row written, but the statistics cover only ${window:-an unknown number of} days: fewer than 30"
+          UNK="no row written, but how many days the statistics cover couldn't be read"
         fi
       fi
     fi

@@ -60,6 +60,7 @@ from review:
   journal behind them.
 - the dry run's selection is security only while unattended-upgrades'
   origins are.
+- a database's statistics cover no more than its own life.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1504,6 +1505,55 @@ def test_tables_kept_in_the_postgres_database_are_data(host):
     assert d["verdict"] == "in-use"
     assert d["workload"] == {"databases": 1, "writes_since_stats_reset": 40}
     assert "3 tables of its own" in _finding(out, "database:postgres")["message"]
+
+
+@pytest.mark.parametrize(
+    "created, started, verdict, evidence",
+    [
+        (10, 40, "unknown", "cover only 10 days"),
+        (60, 35, "dormant", "no row written in the 35 days"),
+    ],
+)
+def test_a_databases_statistics_cover_no_more_than_its_own_life(
+    host, created, started, verdict, evidence
+):
+    # Never reset, a database's counters start with it: one created 10 days
+    # ago on a server up 40 has 10 days of evidence, not 40.
+    def ago(days: int) -> str:
+        return str(host.now - days * DAY - 60)
+
+    _postgres(
+        host,
+        [
+            (
+                "app",
+                "9000000",
+                "0",
+                "",
+                "C.UTF-8",
+                "c",
+                "",
+                "",
+                ago(created),
+                ago(started),
+            ),
+            (
+                "postgres",
+                "7000000",
+                "0",
+                "",
+                "C.UTF-8",
+                "c",
+                "",
+                "0",
+                ago(90),
+                ago(started),
+            ),
+        ],
+    )
+    d = _dormant(host.run(), "postgres")
+    assert d["verdict"] == verdict
+    assert evidence in d["evidence"]
 
 
 def test_an_unpackaged_engine_counts_from_its_own_start(host):
