@@ -1182,6 +1182,12 @@ read_simulation() {
 read_esm() {
   local pro re k po=""
   R_ESM=null
+  # pro takes no root: it reads the machine it runs on, which an offline
+  # tree under --root isn't. Inside the image itself, / is that tree.
+  if [ -n "$P_ROOT" ] && [ "$P_LIVE" -ne 1 ]; then
+    not_read "Ubuntu Pro / ESM: pro security-status reads only the machine it runs on, not a tree under --root, and \"0 security pending\" never covers universe"
+    return 0
+  fi
   if have pro; then
     capture pro pro security-status --format json
     if [ "$CAP_RC" -eq 0 ]; then

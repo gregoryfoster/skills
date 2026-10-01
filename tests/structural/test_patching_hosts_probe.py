@@ -62,6 +62,7 @@ from review:
   origins are.
 - a database's statistics cover no more than its own life.
 - a knob command that ignores the time limit's TERM is killed.
+- pro isn't asked about an offline tree, which it can't read.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -895,6 +896,17 @@ def test_a_dry_runs_empty_selection_line_counts_0(host, line):
     d = out["pending"]["dry_run"]
     assert (d["count"], d["packages"]) == (0, [])
     assert "dry-run" not in _ids(out)
+
+
+def test_pro_isnt_asked_about_a_tree_nothing_runs(tmp_path):
+    # pro reads the machine it runs on: its counts would describe that
+    # machine, not the tree under --root.
+    h = Host(tmp_path, live=False).knob("posture scheduled\n")
+    h.on("pro", "security-status --format json", '{"num_esm_apps_updates": 2}')
+    out = h.run()
+    assert out["pending"]["esm"] is None
+    assert any("not a tree under --root" in n for n in out["not_read"])
+    assert not h.calls("pro")
 
 
 def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):
