@@ -63,7 +63,7 @@ unattended-upgrade would reboot by itself (Automatic-Reboot), or would take
 more than -security without an unexpired exception uu:origins; when dpkg
 --audit isn't clean; when the step's span, from now to now plus its
 expected duration, isn't wholly inside one window or overlaps a quiet
-range; while an automatic apt run is in progress or due inside the span;
+range; while an automatic apt run is in progress, or could start inside the span;
 and when an inflight command prints anything but 0. On a host that
 declares a datastore, the bulk also refuses until the recovery point began
 within 24 hours, covers every datastore, and has left the node: each dump
@@ -572,12 +572,17 @@ gate_span() {
 }
 
 # Where the apt timers run, their unattended-upgrade takes the lock a step
-# needs: one running now, or due inside the span, fails the step with
-# nothing upgraded ("Lock file is already taken", 2.9.1), after a held step
-# has released its group and stopped its restarters. The timer's next run
-# already holds its random delay (systemd 255, read 2026-10-01).
+# needs: one running now, or one that starts inside the span, fails the step
+# with nothing upgraded ("Lock file is already taken", 2.9.1), after a held
+# step has released its group and stopped its restarters. The timer's next
+# run is no guide: systemd draws its random delay again at every
+# daemon-reload, and a step's maintainer scripts reload it. So the span must
+# miss the whole range the run can start in, each calendar time plus the
+# delay, read from busctl in microseconds (FixedRandomDelay=no; systemd 255,
+# measured 2026-10-01). A stopped timer still reports its calendar times.
+APT_TIMER=/org/freedesktop/systemd1/unit/apt_2ddaily_2dupgrade_2etimer
 gate_apt() {
-  local u st out next="" iso="" o="" a="" re='"next":([0-9]+)'
+  local u st out d=0 base end s_iso e_iso o="" a="" w="" e re='" ([0-9]+)(.*)$'
   for u in apt-daily.service apt-daily-upgrade.service; do
     st=$(systemctl is-active -- "$u" 2>/dev/null) || true
     case $st in
@@ -587,17 +592,29 @@ gate_apt() {
     esac
   done
   jadd o running "[$a]"
-  if [ -n "$SPAN_S" ]; then
-    capture out systemctl list-timers --all --output=json apt-daily-upgrade.timer
-    if [[ $out =~ $re ]]; then next=$((10#${BASH_REMATCH[1]} / 1000000)); fi
-    if is_int "$next" && [ "$next" -gt 0 ]; then
-      iso_utc iso "$next"
-      if [ "$SPAN_S" -le "$next" ] && [ "$next" -le "$SPAN_E" ]; then
-        refuse "apt-daily-upgrade.timer runs unattended-upgrade at $iso, inside the step's span: start the step where the span ends before then, or once that run has ended"
+  st=$(systemctl is-active -- apt-daily-upgrade.timer 2>/dev/null) || true
+  if [ -n "$SPAN_S" ] && [ "$st" = active ]; then
+    capture out busctl get-property org.freedesktop.systemd1 "$APT_TIMER" org.freedesktop.systemd1.Timer RandomizedDelayUSec
+    case $out in "t "*) d=${out#t } ;; esac
+    is_int "$d" || d=0
+    capture out busctl get-property org.freedesktop.systemd1 "$APT_TIMER" org.freedesktop.systemd1.Timer TimersCalendar
+    while [[ $out =~ $re ]]; do
+      out=${BASH_REMATCH[2]}
+      base=$((10#${BASH_REMATCH[1]} / 1000000))
+      [ "$base" -gt 0 ] || continue
+      end=$((base + d / 1000000))
+      iso_utc s_iso "$base"
+      iso_utc e_iso "$end"
+      e=""
+      jadds e from "$s_iso"
+      jadds e to "$e_iso"
+      jpush w "{$e}"
+      if [ "$base" -le "$SPAN_E" ] && [ "$SPAN_S" -le "$end" ]; then
+        refuse "apt-daily-upgrade.timer can start unattended-upgrade from $s_iso to $e_iso, which the step's span meets: start the step where its span misses that range"
       fi
-    fi
+    done
   fi
-  jaddsn o upgrade_timer_next "$iso"
+  jadd o upgrade_timer "[$w]"
   jadd J_GATE apt "{$o}"
 }
 

@@ -47,6 +47,7 @@ import calendar
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -95,7 +96,7 @@ class Host(RigHost):
     # The commands a run must never reach, stubbed so a call is seen, and
     # never the machine's own.
     NEVER = ("shutdown", "reboot", "poweroff", "halt", "systemd-run")
-    STUBBED = (*RigHost.STUBBED, "date", "sleep", *NEVER)
+    STUBBED = (*RigHost.STUBBED, "date", "sleep", "busctl", *NEVER)
     FALLBACKS = {
         **RigHost.FALLBACKS,
         "date": 'exec /bin/date "$@"',
@@ -467,22 +468,46 @@ def test_an_automatic_apt_run_in_progress_refuses(host, unit, state):
     assert _changed(host) == []
 
 
-@pytest.mark.parametrize("at, refused", [(10 * MIN, True), (20 * MIN, False)])
-def test_the_apt_upgrade_timer_mustnt_fire_inside_the_span(host, at, refused):
+@pytest.mark.parametrize(
+    "base, delay, state, refused",
+    [
+        # 15:00 plus up to an hour meets 15:30 to 15:44, wherever this draw
+        # fell: the next reload draws again.
+        (-30 * MIN, 3600, "active", True),
+        (10 * MIN, 0, "active", True),
+        (-90 * MIN, 3600, "active", False),
+        (20 * MIN, 0, "active", False),
+        # A stopped timer still reports its calendar times.
+        (-30 * MIN, 3600, "inactive", False),
+    ],
+)
+def test_the_apt_upgrade_timer_mustnt_be_able_to_start_inside_the_span(
+    host, base, delay, state, refused
+):
     # The span runs from 15:30 to 15:44: 540 s of dry run and 300 s of health
-    # checks. systemd 255 gives the next run in microseconds, with its random
-    # delay already in it.
-    usec = (TUE_1530 + at) * 1_000_000 + 81382
+    # checks. busctl gives the calendar time and the delay in microseconds.
+    usec = (TUE_1530 + base) * 1_000_000
+    host.on("systemctl", "is-active -- apt-daily-upgrade.timer", f"{state}\n")
+    host.on("busctl", "get-property*RandomizedDelayUSec", f"t {delay * 1_000_000}\n")
     host.on(
-        "systemctl",
-        "list-timers*apt-daily-upgrade.timer",
-        f'[{{"next":{usec},"left":{usec},"last":0,"passed":0,'
-        '"unit":"apt-daily-upgrade.timer","activates":"apt-daily-upgrade.service"}]\n',
+        "busctl",
+        "get-property*TimersCalendar",
+        f'a(sst) 1 "OnCalendar" "*-*-* 06:00:00" {usec}\n',
     )
     out = host.run(rc=3 if refused else 0)
-    iso = "2026-09-29T15:40:00Z" if refused else "2026-09-29T15:50:00Z"
-    assert out["gate"]["apt"]["upgrade_timer_next"] == iso
-    assert any("apt-daily-upgrade.timer" in r for r in out["refused"]) is refused
+    assert any("apt-daily-upgrade.timer can start" in r for r in out["refused"]) is (
+        refused
+    )
+    if state == "active":
+        [w] = out["gate"]["apt"]["upgrade_timer"]
+        assert calendar.timegm(time.strptime(w["from"], "%Y-%m-%dT%H:%M:%SZ")) == (
+            TUE_1530 + base
+        )
+        assert calendar.timegm(time.strptime(w["to"], "%Y-%m-%dT%H:%M:%SZ")) == (
+            TUE_1530 + base + delay
+        )
+    else:
+        assert out["gate"]["apt"]["upgrade_timer"] == []
 
 
 def test_knob_commands_never_run_as_root(host):
@@ -1152,11 +1177,12 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
                 "stop",
                 "start",
                 "show",
-                "list-timers",
             ), args
         if name == "apt-get":
             assert words[0] in ("update", "-s"), args
         if name == "apt-mark":
             assert words[0] in ("hold", "unhold", "showhold", "showauto"), args
+        if name == "busctl":
+            assert words[0] == "get-property", args
         assert name not in (*Host.NEVER, "needrestart"), name
     assert host.holds() == []
