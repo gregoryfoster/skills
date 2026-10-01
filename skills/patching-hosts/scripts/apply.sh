@@ -564,7 +564,7 @@ gate_span() {
 # name. A recovery point from another day isn't one for this run.
 RP_MAX_AGE=86400
 gate_recovery() {
-  local rec line kind engine unit rest db sha path key n=0 i r s x began="" o="" a="" e iso="" ok
+  local rec line kind engine unit rest db sha path key n=0 i r s x began="" o="" a="" e iso="" ok u
   local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=()
   [ "$step" = bulk ] || return 0
   if [ "${#KNOB_DATASTORE[@]}" -eq 0 ]; then
@@ -574,13 +574,15 @@ gate_recovery() {
     jadd J_GATE recovery_point null
     return 0
   fi
+  # Units compare with their suffix, whichever way each side spells them.
   for r in "${KNOB_DATASTORE[@]}"; do
     IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name u "${f[1]}"
     if [ "${f[0]}" = postgres ]; then
       read -r -a dbs <<<"${f[2]}"
-      for db in "${dbs[@]}"; do need+=("postgres ${f[1]} $db"); done
+      for db in "${dbs[@]}"; do need+=("postgres $u $db"); done
     else
-      need+=("redis ${f[1]}")
+      need+=("redis $u")
     fi
   done
   jadds o path "$run/recovery-point"
@@ -594,6 +596,7 @@ gate_recovery() {
     [ -n "$line" ] || continue
     kind="" engine="" unit="" rest="" db="" sha="" path=""
     read -r kind engine unit rest <<<"$line"
+    if [ -n "$unit" ]; then unit_name unit "$unit"; fi
     case $kind:$engine in
       began:*) began=$engine ;;
       dump:postgres) read -r db sha path <<<"$rest"; key="postgres $unit $db" ;;

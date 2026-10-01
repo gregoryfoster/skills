@@ -481,7 +481,25 @@ def test_a_database_the_recovery_point_missed_is_refused(host):
     )
     out = host.run("--offnode-sha256", SHA_A, rc=3)
     [r] = [r for r in out["refused"] if "no dump of" in r]
-    assert "postgres postgresql@16-main audit" in r
+    assert "postgres postgresql@16-main.service audit" in r
+
+
+def test_a_unit_is_the_same_with_its_suffix_or_without(host):
+    host.knob(
+        KNOB
+        + "datastore postgres postgresql@16-main app\n"
+        + "datastore redis redis-server.service\n"
+    )
+    _recovery(
+        host,
+        f"dump postgres postgresql@16-main.service app {SHA_A} /var/backups/app-1.dump",
+        f"dump redis redis-server {SHA_B} /var/backups/redis-1.rdb",
+    )
+    out = host.run("--offnode-sha256", SHA_A, "--offnode-sha256", SHA_B)
+    assert [d["datastore"] for d in out["gate"]["recovery_point"]["dumps"]] == [
+        "postgres postgresql@16-main.service app",
+        "redis redis-server.service",
+    ]
 
 
 def test_a_recovery_point_from_another_day_is_refused(host):
