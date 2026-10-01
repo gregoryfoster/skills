@@ -986,12 +986,13 @@ finish() {
     jadd o restarters_stopped "$a"
     J_ABORT="{$o}"
   else
-    # In the knob's order, not apt's.
+    # In the knob's order, not apt's, by this script's own path: from the
+    # project root, a bare apply.sh resolves to nothing (#63).
     for u in $HOLD_STEPS; do
       in_words "$u" "$RELEASED" && continue
       for i in ${RUN_HOLD_STEP[@]+"${!RUN_HOLD_STEP[@]}"}; do
         [ "${RUN_HOLD_STEP[$i]}" = "$u" ] || continue
-        NEXT+=("bash apply.sh --approve --step $u --run $run: approval 3(a), a restart")
+        NEXT+=("bash \"$_libdir/apply.sh\" --approve --step $u --run \"$run\": approval 3(a), a restart")
         break
       done
     done

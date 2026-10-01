@@ -599,9 +599,10 @@ def test_the_bulk_holds_each_groups_pending_packages_and_never_the_owners(host):
     assert changed.index("apt-mark hold postgresql-16 redis-server") < changed.index(
         "unattended-upgrade -v"
     )
+    apply = host.scripts.resolve() / "apply.sh"
     assert out["next"][:2] == [
-        f"bash apply.sh --approve --step postgres --run {host.run_dir}: approval 3(a), a restart",
-        f"bash apply.sh --approve --step redis --run {host.run_dir}: approval 3(a), a restart",
+        f'bash "{apply}" --approve --step postgres --run "{host.run_dir}": approval 3(a), a restart',
+        f'bash "{apply}" --approve --step redis --run "{host.run_dir}": approval 3(a), a restart',
     ]
 
 
@@ -761,7 +762,9 @@ def test_held_steps_release_only_their_own_holds_and_showhold_ends_as_recorded(h
     out = host.run(step="postgres")
     assert out["holds"]["released"] == ["postgresql-16", "libpq5"]
     assert host.holds() == ["nginx", "redis-server"]
-    assert out["next"][0].startswith("bash apply.sh --approve --step redis")
+    assert out["next"][0].startswith(
+        f'bash "{host.scripts.resolve() / "apply.sh"}" --approve --step redis'
+    )
     out = host.run(step="redis")
     assert out["verdict"]["ok"] is True
     assert host.holds() == ["nginx"]
