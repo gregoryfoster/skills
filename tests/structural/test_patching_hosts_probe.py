@@ -389,6 +389,17 @@ STOCK_ORIGINS = (
             'Unattended-Upgrade::Origins-Pattern:: "origin=Tailscale";\n',
             "origin=Tailscale",
         ),
+        # Every Ubuntu pocket carries the release's codename, so this takes
+        # -updates and -backports too (noble's Release files, 2026-10-01).
+        (
+            'Unattended-Upgrade::Origins-Pattern:: "origin=Ubuntu,codename=${distro_codename}";\n',
+            "codename=${distro_codename}",
+        ),
+        # unattended-upgrade matches each field with fnmatch.
+        (
+            'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:*";\n',
+            "${distro_id}:*",
+        ),
     ],
 )
 def test_unattended_upgrades_taking_more_than_security_is_a_deviation(

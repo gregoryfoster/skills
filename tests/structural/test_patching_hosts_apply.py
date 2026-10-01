@@ -408,6 +408,24 @@ def test_origins_wider_than_security_refuse_unless_excepted(host):
     assert host.run()["gate"]["unattended_upgrade"]["wider_excepted"] is True
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        # Every Ubuntu pocket carries the release's codename, -updates too.
+        'Unattended-Upgrade::Origins-Pattern:: "origin=Ubuntu,codename=${distro_codename}";',
+        # unattended-upgrade matches each field with fnmatch.
+        'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:*";',
+        'Unattended-Upgrade::Origins-Pattern:: "origin=Ubuntu,archive=${distro_codename}*";',
+    ],
+)
+def test_an_origin_that_takes_every_pocket_is_wider_than_security(host, entry):
+    host.cases["apt-config"] = [c for c in host.cases["apt-config"] if c[0] != "dump"]
+    host.on("apt-config", "dump", entry + "\n")
+    out = host.run(rc=3)
+    assert any("takes more than -security" in r for r in out["refused"])
+    assert out["gate"]["unattended_upgrade"]["wider"] == [entry.split('"')[1]]
+
+
 def test_an_unclean_dpkg_audit_refuses(host):
     host.cases["dpkg"] = []
     host.on("dpkg", "--audit", "The following packages are only half configured:\n")

@@ -192,12 +192,16 @@ rss_of() {  # <var> <text>: VAR := the max RSS in KiB a TIMER file holds, or emp
 # security set. The release pocket itself doesn't: Ubuntu's stock
 # 50unattended-upgrades lists "${distro_id}:${distro_codename}", which never
 # changes after release and is there for the dependencies.
+# Only an archive names one pocket. Every Ubuntu pocket carries the
+# release's codename (noble-updates' Release says "Codename: noble"), and
+# unattended-upgrade matches each field with fnmatch, so a glob takes every
+# pocket it matches (2.9.1's match_whitelist_string; both read 2026-10-01).
 widens() {  # <entry>
   local suite
   case $1 in *-security*) return 1 ;; esac
   case $1 in
     *archive=*) suite=${1#*archive=} suite=${suite%%,*} ;;
-    *codename=*) suite=${1#*codename=} suite=${suite%%,*} ;;
+    *=*) return 0 ;;
     *:*) suite=${1##*:} ;;
     *) return 0 ;;
   esac
@@ -205,7 +209,7 @@ widens() {  # <entry>
     "$UU_DISTRO_ID"* | Ubuntu* | *origin=Ubuntu* | *"origin=$UU_DISTRO_ID"*) ;;
     *) return 0 ;;
   esac
-  case $suite in *-*) return 0 ;; esac
+  case $suite in *-* | *[*?[]*) return 0 ;; esac
   return 1
 }
 
