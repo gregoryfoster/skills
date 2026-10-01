@@ -1808,10 +1808,16 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_DEPLOY 1 when deploy/ name
   if [ -r "$config" ] && grep -qiE -- "$1" "$config" 2>/dev/null; then jpushs NAMED "the knob"; fi
 }
 
-pending_in() {  # <var> <globs>: VAR := the pending packages they match
-  local _pi_n _pi_m=""
+# The security set only: what a dormant component costs is the security fixes
+# it takes for nothing (nginx was in the set on six hosts). The dry run's
+# selection counts as security, and so does the simulation's security class.
+pending_in() {  # <var> <globs>: VAR := the pending security packages they match
+  local _pi_i _pi_n _pi_m=""
   local -a _pi_all=()
-  read -r -a _pi_all <<<"$PEND $SEC_EXACT" || true
+  read -r -a _pi_all <<<"$SEC_EXACT" || true
+  for _pi_i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+    if [ "${PK_CLASS[$_pi_i]}" = security ]; then _pi_all+=("${PK_NAME[$_pi_i]}"); fi
+  done
   for _pi_n in ${_pi_all[@]+"${_pi_all[@]}"}; do
     if [ -n "$2" ] && glob_match "$_pi_n" "$2" && ! in_words "$_pi_n" "$_pi_m"; then _pi_m="$_pi_m $_pi_n"; fi
   done
@@ -1878,7 +1884,7 @@ engine() {
   jadd e named_by "[$NAMED]"
   pending_in w "$pkgs"
   json_list x "$w"
-  jadd e pending "$x"
+  jadd e pending_security "$x"
   jadds e verdict "$verdict"
   jaddsn e evidence "$why"
   if [ -n "$stage" ]; then jadds e exception "$stage:$name"; fi

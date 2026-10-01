@@ -47,6 +47,7 @@ from review:
 - a knob command runs under a time limit, so a hung check can't hang the probe.
 - a line parsed from a root command stays English when sudo resets the locale.
 - every idle window counts from the component's own start, never the kernel's.
+- a dormant component lists only its pending security packages.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1210,6 +1211,17 @@ def test_docker_active_with_no_container_is_dormant(host):
     assert d["workload"] == {"containers": 0, "images": 1, "volumes": 0}
     f = _finding(out, "dormant:docker")
     assert f["exception_what"] == "keep:docker"
+
+
+def test_a_dormant_component_lists_its_pending_security_packages_only(host):
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        "Inst docker.io [28.2] (29.1 Ubuntu:24.04/noble-security [amd64])\n"
+        "Inst containerd [1.7.27] (1.7.28 Ubuntu:24.04/noble-updates [amd64])\n",
+    )
+    d = _dormant(_docker(host).run(), "docker")
+    assert d["pending_security"] == ["docker.io"]
 
 
 def test_docker_under_a_keep_exception_is_kept(host):
