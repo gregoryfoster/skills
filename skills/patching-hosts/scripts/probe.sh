@@ -2093,7 +2093,7 @@ read_postgres() {
 }
 
 read_redis() {
-  local inst=0 out r keys=0 up=""
+  local inst=0 out r keys=0 up="" v look=0 exp=0 subs=0 clients="" seen=0
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if installed redis-server; then inst=1; fi
@@ -2114,13 +2114,37 @@ read_redis() {
               r=${r#*keys=}
               r=${r%%,*}
               if is_int "$r"; then keys=$((keys + r)); fi ;;
+            # No key isn't idleness: a cache whose keys expired, or a bus,
+            # holds none. A fresh server reads 0 for each of these, and 1
+            # client, the probe's own (measured on 7).
+            keyspace_hits:* | keyspace_misses:* | expired_keys:* | pubsub_channels:* | pubsub_patterns:* | connected_clients:*)
+              v=${r#*:}
+              if is_int "$v"; then
+                seen=$((seen + 1))
+                case $r in
+                  keyspace_*) look=$((look + v)) ;;
+                  expired_keys:*) exp=$v ;;
+                  pubsub_*) subs=$((subs + v)) ;;
+                  *) clients=$v ;;
+                esac
+              fi ;;
           esac
         done <<<"$out"
-        WL="{\"keys\": $keys, \"uptime_days\": ${up:-null}}"
+        WL="{\"keys\": $keys, \"uptime_days\": ${up:-null}, \"key_lookups\": $look, \"expired_keys\": $exp, \"subscriptions\": $subs, \"clients\": ${clients:-null}}"
         if [ "$keys" -gt 0 ]; then
           INUSE=${INUSE:-"$keys keys"}
+        elif [ "$look" -gt 0 ]; then
+          INUSE=${INUSE:-"no key now, but $look key lookups since it started"}
+        elif [ "$exp" -gt 0 ]; then
+          INUSE=${INUSE:-"no key now, but $exp keys expired since it started"}
+        elif [ "$subs" -gt 0 ]; then
+          INUSE=${INUSE:-"no key, but $subs pub/sub subscriptions"}
+        elif is_int "$clients" && [ "$clients" -gt 1 ]; then
+          INUSE=${INUSE:-"no key, but $((clients - 1)) clients besides the probe"}
+        elif [ "$seen" -lt 6 ]; then
+          UNK="no key, but INFO lacked the lookup, expiry, subscription or client counts"
         elif window_ok "$up"; then
-          DORM="no key, and up $up days"
+          DORM="no key, and no lookup, expiry, subscription or client but the probe in the $up days it's been up"
         else
           UNK="no key, but up only ${up:-an unknown number of} days: fewer than 30"
         fi

@@ -66,6 +66,8 @@ from review:
 - the catalog query names no column Postgres 14 lacks.
 - a database's name stays whole: never split or globbed.
 - a database only read isn't dormant: its sessions show the reads.
+- a Redis with no key isn't dormant while anything looks it up, lets keys
+  expire, subscribes or connects.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1647,6 +1649,45 @@ def test_a_database_only_read_isnt_dormant(host, sessions, verdict, evidence):
         ],
     )
     d = _dormant(host.run(), "postgres")
+    assert d["verdict"] == verdict
+    assert evidence in d["evidence"]
+
+
+REDIS_IDLE = {
+    "uptime_in_days": "40",
+    "connected_clients": "1",
+    "keyspace_hits": "0",
+    "keyspace_misses": "0",
+    "expired_keys": "0",
+    "pubsub_channels": "0",
+    "pubsub_patterns": "0",
+}
+
+
+@pytest.mark.parametrize(
+    "change, verdict, evidence",
+    [
+        ({}, "dormant", "no lookup"),
+        ({"keyspace_misses": "12"}, "in-use", "12 key lookups"),
+        ({"expired_keys": "5"}, "in-use", "5 keys expired"),
+        ({"pubsub_channels": "2"}, "in-use", "2 pub/sub"),
+        ({"connected_clients": "3"}, "in-use", "2 clients besides"),
+        ({"pubsub_patterns": None}, "unknown", "INFO lacked"),
+    ],
+)
+def test_a_redis_with_no_key_is_dormant_only_when_nothing_uses_it(
+    host, change, verdict, evidence
+):
+    # A cache whose keys expired, or a bus, holds no key (measured on 7).
+    info = {**REDIS_IDLE, **change}
+    host.installed("redis-server")
+    host.show("redis-server.service", ActiveState="active")
+    host.on(
+        "redis-cli",
+        "INFO",
+        "".join(f"{k}:{v}\r\n" for k, v in info.items() if v is not None),
+    )
+    d = _dormant(host.run(), "redis")
     assert d["verdict"] == verdict
     assert evidence in d["evidence"]
 
