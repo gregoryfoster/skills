@@ -76,7 +76,7 @@ The run's directory is root-only: 0700, and each file 0600.
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
   steps            "<step> ok|failed <start> <wall seconds> <max RSS KiB>"
-  <step>.log, <step>-health.log, probe-after-<step>.json
+  <step>.log, <step>-health.log, probe-after-<step>.json and .err
 
 Output: one JSON object on stdout. Keys: apply, refused, gate, then what the
 step did: holds, upgrade, health, restarters, verdict, abort, next and
@@ -1015,7 +1015,7 @@ holds_left() {  # <var>: JSON array
 
 STOPPED=""
 finish() {
-  local o="" a="" r rc=0 out result=ok ok=1 left u i
+  local o="" a="" r rc=0 out result=ok ok=1 left u i err=""
   if [ "${#FAILED[@]}" -gt 0 ]; then result=failed; fi
   if [ "$STARTED" -eq 1 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$step" "$result" "$P_NOW" "${UU_WALL:-}" "${UU_RSS:-}" | root_append "$run/steps" ||
@@ -1082,6 +1082,15 @@ finish() {
   else
     jadd o path null
   fi
+  # Its diagnostics too, which the scratch directory would lose at exit, and
+  # on a failure their last line, where the probe says why.
+  if root_write "$run/probe-after-$step.err" <"$P_TMP/reprobe.err"; then
+    jadds o stderr "$run/probe-after-$step.err"
+  else
+    jadd o stderr null
+  fi
+  if [ "$rc" -ne 0 ]; then err=$(tail -n 1 "$P_TMP/reprobe.err" 2>/dev/null) || err=""; fi
+  jaddsn o error "$err"
   J_REPROBE="{$o}"
   emit
   if [ "$result" = ok ]; then exit 0; fi

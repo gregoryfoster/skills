@@ -868,9 +868,27 @@ def test_the_bulk_reprobes_into_the_run(host):
         .startswith(f"--config {host.knob_path} --host web-1 --today {TODAY}")
     )
     assert json.loads(host.record("probe-after-bulk.json")) == {"probe": "stub"}
+    assert json.loads(host.result.stdout)["reprobe"]["error"] is None
     assert (
         oct((host.run_dir / "probe-after-bulk.json").stat().st_mode & 0o777) == "0o600"
     )
+
+
+def test_a_reprobe_that_fails_says_why(host):
+    (host.scripts / "probe.sh").write_text(
+        '#!/usr/bin/env bash\necho "probe: reading" >&2\n'
+        'echo "ERROR the probe broke" >&2\nexit 2\n'
+    )
+    out = host.run()
+    # Never part of the verdict.
+    assert out["verdict"]["ok"] is True
+    assert out["reprobe"]["exit"] == 2
+    assert out["reprobe"]["error"] == "ERROR the probe broke"
+    assert "probe: reading\nERROR the probe broke\n" == host.record(
+        "probe-after-bulk.err"
+    )
+    err = host.run_dir / "probe-after-bulk.err"
+    assert oct(err.stat().st_mode & 0o777) == "0o600"
 
 
 def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
