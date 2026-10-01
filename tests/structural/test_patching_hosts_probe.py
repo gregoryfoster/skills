@@ -71,6 +71,7 @@ from review:
 - every Postgres cluster counts toward the verdict: an unread or recently
   stopped one makes it unknown.
 - a refused pg_stat_file costs only the creation dates.
+- on Postgres 14 the provider reads libc, the only one it had.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1035,7 +1036,8 @@ def test_the_catalog_query_names_no_column_postgres_14_lacks(host):
     host.run()
     [query] = [c[1] for c in host.calls("psql")]
     assert "d.datlocprovider" not in query and "d.datcollversion" not in query
-    assert "to_jsonb(d) ->> 'datlocprovider'" in query
+    # Before 15, every database's provider was libc.
+    assert "coalesce(to_jsonb(d) ->> 'datlocprovider', 'c')" in query
 
 
 def test_a_refused_pg_stat_file_costs_only_the_creation_dates(host):
