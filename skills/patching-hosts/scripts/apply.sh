@@ -954,15 +954,17 @@ holds_left() {  # <var>: JSON array
 STOPPED=""
 finish() {
   local o="" a="" r rc=0 out result=ok ok=1 left u i
-  for r in ${FAILED[@]+"${FAILED[@]}"}; do jpushs a "$r"; done
-  if [ "${#FAILED[@]}" -gt 0 ]; then result=failed ok=0; fi
-  jaddb o ok "$ok"
-  jadd o why "[$a]"
-  J_VERDICT="{$o}"
+  if [ "${#FAILED[@]}" -gt 0 ]; then result=failed; fi
   if [ "$STARTED" -eq 1 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$step" "$result" "$P_NOW" "${UU_WALL:-}" "${UU_RSS:-}" | root_append "$run/steps" ||
       { fail "$run/steps couldn't be written: the run's state is unrecorded"; result=failed; }
   fi
+  # After the record, so a record that couldn't be written fails the verdict.
+  for r in ${FAILED[@]+"${FAILED[@]}"}; do jpushs a "$r"; done
+  if [ "$result" = failed ]; then ok=0; fi
+  jaddb o ok "$ok"
+  jadd o why "[$a]"
+  J_VERDICT="{$o}"
   if [ "$result" = failed ] && [ "$STARTED" -eq 0 ]; then
     o="" a="" left="[]"
     if [ "$step" = bulk ]; then

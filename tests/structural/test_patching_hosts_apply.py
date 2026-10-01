@@ -800,6 +800,21 @@ def test_a_release_that_didnt_take_is_still_left(host):
     ]
 
 
+def test_a_step_its_record_cant_hold_isnt_green(host):
+    # A directory where the steps file goes, as a full disk would refuse it.
+    host.run_dir.mkdir()
+    host.run_dir.chmod(0o700)
+    (host.run_dir / "steps").mkdir()
+    out = host.run(rc=1)
+    assert out["verdict"]["ok"] is False
+    assert any("steps couldn't be written" in w for w in out["verdict"]["why"])
+    assert [h["package"] for h in out["abort"]["holds_left"]] == [
+        "postgresql-16",
+        "libpq5",
+        "redis-server",
+    ]
+
+
 def test_nothing_to_upgrade_is_green(host):
     host.uu(
         "No packages found that can be upgraded unattended and no pending auto-removals\n"
