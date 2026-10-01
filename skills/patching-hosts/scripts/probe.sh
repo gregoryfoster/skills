@@ -1463,7 +1463,9 @@ read_maps() {
 }
 
 PG_CLUSTERS=""  # " ver/name/port/status/logfile ..."
-PG_ROWS=""      # " ver/name|db|writes|stats_reset|own_tables|created|started ..."
+# One record per database, its fields split on the unit separator: a name
+# may hold a space, a '*' or a '|', so it's never split on IFS or globbed.
+PG_ROWS=()     # ver/name db writes stats_reset own_tables created started
 PG_READ=""      # " ver/name ...": clusters whose catalogs were read
 read_pg_clusters() {
   local out line ver name port status owner dir log
@@ -1530,7 +1532,7 @@ read_datastores() {
           if [ -n "$own" ]; then jaddn d own_tables "$own"; fi
           jaddn d created "$created"
           jpush dbs "{$d}"
-          PG_ROWS="$PG_ROWS $ver/$name|$db|${writes:-0}|${reset:-}|${own:-}|${created:-}|${started:-}"
+          PG_ROWS+=("$ver/$name$KNOB_US$db$KNOB_US${writes:-0}$KNOB_US${reset:-}$KNOB_US${own:-}$KNOB_US${created:-}$KNOB_US${started:-}")
           case $db in template0 | template1) continue ;; esac
           what="$db,"
           if [ "$db" = postgres ]; then
@@ -2009,8 +2011,8 @@ read_postgres() {
       elif [ -z "${PG_READ// /}" ]; then
         UNK="its activity needs a login as postgres, and that failed"
       else
-        for r in $PG_ROWS; do
-          IFS='|' read -r _ db writes reset own created started <<<"$r"
+        for r in ${PG_ROWS[@]+"${PG_ROWS[@]}"}; do
+          IFS=$KNOB_US read -r _ db writes reset own created started <<<"$r"
           case $db in template0 | template1) continue ;; esac
           # postgres counts as a database of its own only with tables in it.
           if [ "$db" = postgres ]; then

@@ -64,6 +64,7 @@ from review:
 - a knob command that ignores the time limit's TERM is killed.
 - pro isn't asked about an offline tree, which it can't read.
 - the catalog query names no column Postgres 14 lacks.
+- a database's name stays whole: never split or globbed.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1587,6 +1588,21 @@ def test_a_databases_statistics_cover_no_more_than_its_own_life(
     d = _dormant(host.run(), "postgres")
     assert d["verdict"] == verdict
     assert evidence in d["evidence"]
+
+
+def test_a_database_name_stays_whole(host):
+    # Legal in Postgres: split on IFS it was two databases, and the '*'
+    # expanded against the current directory.
+    (host.tmp / "x").touch()
+    _postgres(
+        host,
+        [
+            ("a b|*", "9000000", "7", "1700000000", "C.UTF-8", "c", "", ""),
+            ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0"),
+        ],
+    )
+    d = _dormant(host.run(), "postgres")
+    assert d["workload"] == {"databases": 1, "writes_since_stats_reset": 7}
 
 
 def test_an_unpackaged_engine_counts_from_its_own_start(host):
