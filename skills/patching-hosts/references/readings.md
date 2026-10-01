@@ -5,6 +5,8 @@ What `probe.sh` reads, and the checklist for what it leaves to you. Each reading
 - `apt-get update` writes the package lists. The probe refreshes only with `--refresh-into DIR`, into `DIR/lists`.
 - **The security count's dry run** (`unattended-upgrade --dry-run -d`) runs as root and downloads the whole set into apt's cache: about 290 MB and 9 minutes on address-validator. The probe runs it only with `--dry-run-into DIR`, with apt's cache pointed at `DIR/archives` through an `APT_CONFIG` file, since `unattended-upgrade` takes no `-o`. Without it, the security count is a lower bound. With it, the count is exact only while the host's unattended-upgrades origins are `-security` alone: wider origins put `-updates` and third-party packages on the same line, and the probe's `security_only` says which.
 
+A read can change the host without writing a file: a socket-activated daemon starts on its first client. exeuntu enables `docker.socket` and disables `docker.service`, so the probe asks Docker only while `docker.service` already runs. Asking an idle Docker would start it, and restart the idle clock its dormant verdict reads.
+
 The probe reads the root-only readings through `sudo -n`, so it never prompts. With `--root DIR` it reads an image tree's files, and asks a running system only when `DIR/run/systemd/system` exists, the test systemd itself uses.
 
 **Report an absent setting as `unknown`, never as its default.** A reading the probe couldn't take is `unknown`, not clean. That includes a read that needed root and failed: `/proc/<pid>/maps` of another user's process, needrestart's check, the Postgres catalogs.

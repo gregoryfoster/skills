@@ -79,6 +79,9 @@ Plan step 4: the probe names the environment profile and the image
 generation from the profile's markers, each read on its own, and names none
 on a host no profile matches.
 
+Plan step 5, from the real image: an idle Docker is never asked, since
+docker.socket would start it.
+
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
 live, and stubs on PATH for every command that asks the running system. Each
@@ -1518,6 +1521,25 @@ def test_the_dry_runs_selection_is_security_only_while_its_origins_are(
     out = _docker(host).run("--dry-run-into", str(host.tmp / "dry"))
     assert out["pending"]["dry_run"]["security_only"] is security_only
     assert _dormant(out, "docker")["pending_security"] == listed
+
+
+def test_an_idle_docker_is_never_asked(host):
+    # exeuntu enables docker.socket and disables docker.service, so the first
+    # docker call starts dockerd: measured in the image, 2026-10-01. That
+    # changes the host, and restarts the idle clock the verdict reads.
+    host.installed("docker.io")
+    host.show(
+        "docker.service",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - 40 * DAY}",
+    )
+    host.on("docker", "*", "")
+    out = host.run()
+    assert _dormant(out, "docker")["verdict"] == "dormant"
+    assert any("docker.socket" in n for n in out["not_read"])
+    checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
+    assert checks["containers"]["ok"] is None
+    assert host.calls("docker") == []
 
 
 def test_docker_under_a_keep_exception_is_kept(host):

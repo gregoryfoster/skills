@@ -16,6 +16,8 @@ The image's are in any tree of it, so they're all an offline read sees. Their da
 - `exe-setup.service`: since `6d610ee`, 2026-03-26;
 - `/usr/local/bin/exeuntu`: since `f292b54`, 2026-06-12.
 
+Read in the image built from `1b74aabd` (2026-09-29), offline and booted, 2026-10-01: every image marker present, `/exe.dev/` absent, and the probe named it `newer`.
+
 ## Two image generations
 
 The round met two generations. The probe reports which one it's on, because the checks differ. The image's history dates them: a Feb-2026 image predates `exe-setup.service` (2026-03-26), and a newer one has both it and the `exeuntu` binary (2026-06-12). The probe calls them `feb-2026` and `newer`, and dates a host only by the image's markers.
@@ -38,7 +40,7 @@ On a volatile journal the reboot erases everything before it. That's how address
 
 | Channel | State on the image | Owner |
 |---|---|---|
-| apt (Ubuntu archive + security) | **off**: `apt-daily.timer`, `apt-daily-upgrade.timer` and `unattended-upgrades.service` are masked on every host the round read, and usa-wa's image masks only those 3. The newer images, and exeuntu `main` at `ae8be4d` (#313, 2026-09-24), mask both `update-notifier` timers too, for 5 | the host's run ([policy.md](../policy.md)) |
+| apt (Ubuntu archive + security) | **off**: `apt-daily.timer`, `apt-daily-upgrade.timer` and `unattended-upgrades.service` are masked on every host the round read, and usa-wa's image masks only those 3. The newer images, exeuntu `main` at `ae8be4d` (#313, 2026-09-24), and the image built from `1b74aabd` (read 2026-10-01) mask both `update-notifier` timers too, for 5 | the host's run ([policy.md](../policy.md)) |
 | `APT::Periodic::Enable` | **0**, from `/etc/apt/apt.conf.d/docker-disable-periodic-update`, a Docker-base-image file. It makes the timers no-ops even when they're unmasked (CannObserv/archiver#278). A policy that turns them on must set `"1"` in a file sorting after it. | image |
 | Kernel | the platform's; no guest kernel, so a kernel never decides a reboot | platform |
 | `exeuntu update` | the agent binaries the image ships under `/usr/local/bin` | image / platform |
@@ -104,6 +106,7 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
 - `docker-clean` empties apt's `.deb` cache after every run, so a rollback fetches the recorded version from snapshot.ubuntu.com.
 - The ingress is exe.dev's own `sshd` in `init.scope`. `ssh.service` is disabled and `ssh.socket` masked, so an openssh-server upgrade touches nothing live (power-map, address-validator, wslcb).
 - nginx ships with the image, disabled, and was in the security set on six hosts: patched for nothing. A dormant-component candidate ([policy.md](../policy.md)).
+- **Docker is socket-activated:** the image disables `docker.service` and enables `docker.socket`, so the first `docker` call starts dockerd (read in the image built from `1b74aabd`, 2026-10-01). Don't ask an idle Docker anything you'd want to read as idle.
 
 ## What belongs to the image owner
 

@@ -253,6 +253,17 @@ jctl() {  # journalctl, as root when it can: a user reads only their own journal
   if [ "$P_PRIV" != none ]; then as_root journalctl "$@"; else journalctl "$@"; fi
 }
 
+# Whether Docker can be asked without changing the host: docker.socket starts
+# dockerd on its first client, so a docker call to an idle Docker starts it,
+# and restarts the idle clock a dormant verdict reads. exeuntu ships
+# docker.service disabled and docker.socket enabled (read in the image,
+# 2026-10-01).
+docker_running() {
+  live_cmd docker || return 1
+  unit_show docker.service ActiveState || return 1
+  [ "$U_ActiveState" = active ]
+}
+
 docker_cmd() {  # docker, then docker as root when the user isn't in its group
   if docker "$@" 2>/dev/null; then return 0; fi
   if [ "$P_PRIV" = none ]; then return 1; fi
@@ -1028,7 +1039,7 @@ read_outside_apt() {
     jaddn e owner_line "$oline"
     jpush list "{$e}"
   done
-  if live_cmd docker; then
+  if docker_running; then
     capture out docker_cmd images --format '{{.Repository}}:{{.Tag}}|{{.CreatedSince}}'
     if [ "$CAP_RC" -eq 0 ]; then
       while IFS= read -r line; do
@@ -1040,6 +1051,8 @@ read_outside_apt() {
       done <<<"$out"
       ci="[$ci]"
     fi
+  elif live_cmd docker; then
+    not_read "container images: docker.service isn't running, and asking would start it through docker.socket"
   fi
   R_OUTSIDE=""
   jadd R_OUTSIDE binaries "[$list]"
@@ -2509,7 +2522,7 @@ read_post_boot() {
   elif [ -n "$R_SESSION_MIN" ]; then
     check session-adj 1 "lowest adj in the chain: $R_SESSION_MIN"
   fi
-  if live_cmd docker; then
+  if docker_running; then
     capture out docker_cmd ps -a --format '{{.Names}} {{.State}}'
     if [ "$CAP_RC" -eq 0 ]; then
       while IFS= read -r line; do
@@ -2518,6 +2531,8 @@ read_post_boot() {
       done <<<"$out"
       if [ -z "$down" ]; then check containers 1 "every container is running"; else check containers 0 "not running:$down"; fi
     fi
+  elif live_cmd docker; then
+    check containers "" "docker.service isn't running, so its containers weren't read: asking would start it through docker.socket"
   fi
   read_health post-boot
   for i in ${HEALTH_RC[@]+"${!HEALTH_RC[@]}"}; do

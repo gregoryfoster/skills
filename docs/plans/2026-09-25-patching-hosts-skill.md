@@ -355,6 +355,31 @@ base image, or an owner-approved remedy the profile documents.
    detection, the masked readings and the needrestart version. The digest
    and `NEEDRESTART_MODE` questions were answered in step 0. *Done when* the
    profile's detection matches the image.
+
+   **Done 2026-10-01**, on the image built from exeuntu `1b74aabd`
+   (2026-09-29): index `sha256:c811379e…`, arm64 manifest
+   `sha256:ede5b9a8…`. The amd64 manifest (`sha256:b613464b…`) wouldn't run
+   here: this Docker has no amd64 emulation. Same build, and nothing
+   checked depends on the architecture.
+   - **Offline**, as root and as `exedev` through `sudo`: `exe-dev-exeuntu`,
+     generation `newer`, from the image's markers alone (`/exe.dev/` is
+     absent); all 5 units masked; `Enable` 0 from
+     `docker-disable-periodic-update`; needrestart `3.6-7ubuntu4.5`. Under
+     `scheduled` it found what the image lacks: the needrestart drop-in, a
+     policy for its Tailscale origin, and fresh lists. Under `automatic` it
+     added both timers, `Enable` and `Automatic-Reboot`.
+   - **Booted under its own init**: `exe-setup.service`'s condition unmet,
+     the journal persistent, needrestart in Ubuntu mode.
+   - **A bug the stubs couldn't show**: the image enables `docker.socket`
+     and disables `docker.service`, so the probe's container-image reading
+     started dockerd. That changed the host, and restarted the idle clock
+     Docker's dormant verdict reads. The probe now asks Docker only while
+     `docker.service` runs.
+   - **The image's build date, in the guest**: the image's own files carry
+     the build's start, and apt's `history.log` ships with the build's
+     runs. A `.list` file's mtime isn't provenance, since an upgrade
+     rewrites it; a package's first `Install:` line in that history is.
+     Wiring it in is left for when the dormant verdicts need it.
 6. **`apply.sh` and steps 5–7 of the core.**
    - `apply.sh` refuses without `--approve`, refuses on a host that declares
      a `datastore` but has no recovery point off the node, and refuses on an
