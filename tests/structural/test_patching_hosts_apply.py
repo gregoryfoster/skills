@@ -111,7 +111,7 @@ class Host(RigHost):
         self.dry = tmp_path / "dry"
         self.dry.mkdir()
         (self.dry / "summary").write_text(
-            "exit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+            f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
         )
         self.state = tmp_path / "state"
         self.state.mkdir()
@@ -360,6 +360,23 @@ def test_a_dry_run_that_counted_nothing_refuses(host):
     (host.dry / "summary").write_text("exit=0\ncount=\nwall_seconds=4\n")
     out = host.run(rc=3)
     assert any("counted nothing" in r for r in out["refused"])
+    assert _changed(host) == []
+
+
+@pytest.mark.parametrize(
+    "began, refused",
+    [
+        (None, "doesn't say when the dry run began"),
+        (TUE_1530 - 25 * 3600, "more than 24 hours ago"),
+    ],
+)
+def test_a_dry_run_from_another_day_refuses(host, began, refused):
+    summary = "exit=0\ncount=4\nwall_seconds=540\n"
+    if began is not None:
+        summary = f"began={began}\n" + summary
+    (host.dry / "summary").write_text(summary)
+    out = host.run(rc=3)
+    assert any(refused in r for r in out["refused"])
     assert _changed(host) == []
 
 

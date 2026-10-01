@@ -38,8 +38,8 @@ Options:
                            was written to, or makes
                            /var/backups/patching-hosts-<UTC>
   --dry-run DIR            the bulk only: the directory probe.sh
-                           --dry-run-into wrote. Its wall time is the floor of
-                           each step's expected duration
+                           --dry-run-into wrote, within 24 hours. Its wall
+                           time is the floor of each step's expected duration
   --offnode-sha256 HEX     the bulk only: a dump's sha256, typed after the
                            owner checks their own copy off the node. One per
                            dump the recovery point recorded
@@ -457,9 +457,11 @@ gate_run() {
   is_int "$EXPECT" || refuse "$run/dry-run holds no wall time, so the step's span is unknown"
 }
 
-DRY_SUMMARY=""
+# A dry run counts the set pending that day: a month-old one counted
+# another, so its wall time isn't this run's floor.
+DRY_SUMMARY="" DRY_MAX_AGE=86400
 gate_dry() {
-  local line rc="" count=""
+  local line rc="" count="" began="" iso
   [ "$step" = bulk ] || return 0
   if [ -z "$dryrun" ]; then
     refuse "no --dry-run DIR: count first with probe.sh --dry-run-into DIR (run.md section 3). Its wall time is the floor of the step's expected duration"
@@ -472,6 +474,7 @@ gate_dry() {
   DRY_SUMMARY=$(cat "$dryrun/summary")
   while IFS= read -r line; do
     case $line in
+      began=*) began=${line#began=} ;;
       exit=*) rc=${line#exit=} ;;
       count=*) count=${line#count=} ;;
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
@@ -486,6 +489,12 @@ gate_dry() {
     refuse "the dry run exited 0 but counted nothing: read $dryrun/dry-run.log, and count again"
   fi
   is_int "$EXPECT" || refuse "$dryrun/summary holds no wall time"
+  if ! is_int "$began"; then
+    refuse "$dryrun/summary doesn't say when the dry run began: count again with this skill's probe.sh"
+  elif [ $((P_NOW - began)) -gt "$DRY_MAX_AGE" ]; then
+    iso_utc iso "$began"
+    refuse "the dry run began $iso, more than 24 hours ago: count again"
+  fi
 }
 
 # The step's span, from now to now plus its expected duration: the dry run's

@@ -617,10 +617,12 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     # apt fetches into archives/partial, which the fetcher never makes.
     assert (scratch / "archives" / "partial").is_dir()
     assert d["max_rss_kib"] == 2048
-    # apply.sh reads its cost from the summary.
+    # apply.sh reads its cost, and when it began, from the summary.
     summary = (scratch / "summary").read_text()
     assert "exit=0\ncount=4\n" in summary
     assert "wall_seconds=" in summary
+    began = int(summary.split("began=")[1].split("\n")[0])
+    assert host.now - 5 <= began <= host.now + 300
     [(_, _, apt_config)] = host.calls("unattended-upgrade")
     conf = Path(apt_config).read_text()
     assert f'Dir::Cache::archives "{scratch.resolve()}/archives/";' in conf
