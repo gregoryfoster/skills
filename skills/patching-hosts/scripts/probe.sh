@@ -46,6 +46,11 @@ component, a failed post-boot check, or a knob problem. One an unexpired
 exception covers is listed under excepted instead. A reading the probe
 couldn't take is null, never its default.
 
+environment.profile names the environment profile the host matches
+(references/environments/) and its image generation, read from the
+profile's markers. Its name is null when none matches: SKILL.md's generic
+apt path applies.
+
 Exit codes:
   0  read; act on findings
   2  usage error, an unreadable knob, or a library missing
@@ -643,8 +648,71 @@ read_tmp() {
   R_TMP=$o
 }
 
+# Which environment profile (references/environments/) the host matches. The
+# guest can't see its image digest, so the profile's markers decide, each
+# read on its own: usa-wa's image had exe-setup.service but no exeuntu.
+PROFILE="" GENERATION=""
+read_profile() {
+  local o="" m="" cmdline="" init="" dir=0 exeuntu=0 setup out p kimg="" kernel=""
+  if [ -r "$P_ROOT/proc/cmdline" ]; then
+    IFS= read -r cmdline <"$P_ROOT/proc/cmdline" || true
+    init=0
+    case " $cmdline " in *" init=/exe.dev/bin/exe-init "*) init=1 ;; esac
+  fi
+  if [ -d "$P_ROOT/exe.dev" ]; then dir=1; fi
+  if [ -e "$P_ROOT/usr/local/bin/exeuntu" ]; then exeuntu=1; fi
+  unit_disk_state setup exe-setup.service
+  # No linux-image package: the platform supplies the kernel.
+  if have dpkg-query; then
+    capture out dpkgq -W -f "$DPKG_PKG_STATUS" 'linux-image-*'
+    if [ "$CAP_RC" -eq 0 ]; then
+      kimg=0
+      while IFS= read -r p; do
+        case $p in *" ii"*) kimg=$((kimg + 1)) ;; esac
+      done <<<"$out"
+    else
+      case $CAP_ERR in *"no packages found"*) kimg=0 ;; esac
+    fi
+  fi
+  if [ -r "$P_ROOT/proc/sys/kernel/osrelease" ]; then
+    IFS= read -r kernel <"$P_ROOT/proc/sys/kernel/osrelease" || true
+  fi
+  if [ "$dir" -eq 1 ] || [ "$init" = 1 ]; then
+    PROFILE=exe-dev-exeuntu
+    # The generations differ by these two markers (the profile's table).
+    if [ "$setup" = not-found ] && [ "$exeuntu" -eq 0 ]; then
+      GENERATION=feb-2026
+    elif [ "$setup" != not-found ] && [ "$exeuntu" -eq 0 ]; then
+      GENERATION=may-2026
+    elif [ "$setup" != not-found ]; then
+      GENERATION=newer
+    else
+      GENERATION=unknown
+    fi
+  fi
+  jaddb m exe_init_cmdline "$init"
+  jaddb m exe_dev_dir "$dir"
+  jaddb m exeuntu "$exeuntu"
+  jadds m exe_setup_unit "$setup"
+  jaddn m linux_image_packages "$kimg"
+  jaddsn m kernel "$kernel"
+  jaddsn o name "$PROFILE"
+  if [ -n "$PROFILE" ]; then
+    jadds o reference "references/environments/$PROFILE.md"
+  else
+    jadd o reference null
+  fi
+  jaddsn o generation "$GENERATION"
+  jadd o markers "{$m}"
+  if [ -z "$PROFILE" ]; then
+    jadds o fallback "no profile matches: SKILL.md's generic apt path applies"
+  fi
+  R_PROFILE=$o
+}
+
 read_environment() {
   local o="" lt=""
+  read_profile
   read_boot
   read_journal
   if live_cmd systemd-analyze; then
@@ -654,6 +722,7 @@ read_environment() {
   read_session
   read_setup
   read_tmp
+  jadd o profile "{$R_PROFILE}"
   jadd o boot "{$R_BOOT}"
   jadd o journal "{$R_JOURNAL}"
   jaddsn o pid1_log_target "$lt"
@@ -1794,6 +1863,11 @@ read_reboot() {  # <pre-run|post-boot>
   json_list w "$NR_SVC"
   jadd R_REBOOT needrestart_services "$w"
   jaddsn R_REBOOT needrestart_kernel_status "$NR_KSTA"
+  # exe.dev has no guest kernel, so needrestart's kernel lines mean nothing
+  # there (the profile's update channels).
+  if [ "$PROFILE" = exe-dev-exeuntu ]; then
+    jadds R_REBOOT kernel_status_note "the platform's kernel: never decide a reboot from it"
+  fi
   if [ "$REBOOT_REQ" -eq 1 ] && [ "$1" = pre-run ]; then
     finding risk reboot:pending "" "A reboot is already pending from an earlier upgrade (/run/reboot-required${pk:+, packages listed under impact.reboot}). Plan it into this run's window."
   fi
@@ -2268,7 +2342,7 @@ read_dormant() {
   read_nginx
   read_unpackaged ollama ollama.service /usr/local/bin/ollama /usr/share/ollama/.ollama/models/manifests 11434
   read_unpackaged qdrant qdrant.service /usr/local/bin/qdrant /var/lib/qdrant/storage/collections '6333 6334'
-  not_read "whether each component came with the image or was installed later: that needs the image's date, which the environment profile supplies (plan step 4)"
+  not_read "whether each component came with the image or was installed later: that needs the image's build date, and the guest sees neither its image's digest nor its date (the profile's Detection)"
 }
 
 # --- after the boot (run.md §6) ---------------------------------------------

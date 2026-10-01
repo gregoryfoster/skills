@@ -78,5 +78,5 @@ A reading it couldn't take is `null` in its output and named in `not_read`: no r
 - **callers and traffic**, from the service's own access or audit log;
 - **what reads 200 while degraded**, from the code;
 - **the suite's pass and skip counts**, for the health baseline;
-- **whether a component came with the image**, until the profile supplies the image's date;
+- **whether a component came with the image**: that needs the image's build date, which the guest can't see;
 - **the downtime** after a boot, from the stop line or the last request to the first good response.

@@ -65,7 +65,18 @@ done
 6. **The reboot**, when needrestart's list or `reboot-required` calls for one: a detached in-guest chain, approval 3(b). Then verify: `bash "<probe.sh>" --post-boot`.
 7. **Record** what happened and what's left pending, by class.
 
-Steps 4–7 in full, with each trap: [run.md](references/run.md). The environment's quirks (image generations, which packages restart themselves, `/tmp`, clean-shutdown evidence): [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
+Steps 4–7 in full, with each trap: [run.md](references/run.md). The probe's `environment.profile` names the environment profile the host matches, and its image generation. That profile holds the environment's quirks: which packages restart themselves, `/tmp`, clean-shutdown evidence. The one so far: [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
+
+## Hosts no profile matches
+
+With `environment.profile.name` null, the run is the same, but nothing a profile measured holds. Read it from the host instead:
+
+- **The kernel is the host's.** A `linux-image-*` in the set takes effect only at a reboot, and `/run/reboot-required` and needrestart's kernel status say so. An exe.dev guest has no kernel of its own to update.
+- **Which packages restart their own services is unmeasured.** Hold each data store's packages as their own step, and read needrestart's list after each step, not a profile's table.
+- **The update channels are as found:** the timers, `APT::Periodic::Enable` through `apt-config`, and unattended-upgrades' origins. A stock Ubuntu host has its timers on and takes `-security`: the `automatic` posture, less the needrestart drop-in.
+- **Clean-shutdown evidence** is PID 1's own journal lines, where `environment.pid1_log_target` is the journal. On a volatile journal, it's the copy the reboot chain took.
+
+A second host on the same environment is the time to write its profile under `references/environments/`, with every fact's source and date, and to teach the probe its markers.
 
 ## What the skill never does on its own
 

@@ -331,6 +331,21 @@ base image, or an owner-approved remedy the profile documents.
 
    *Done when* the probe names the profile and the generation on each
    fixture, and the links and references tests pass.
+
+   **Done 2026-10-01.** The probe reports `environment.profile`: the name,
+   the reference, the generation and each marker as read. It settled:
+   - **the profile matches** on `/exe.dev/` or exe-init as `init=`. The
+     other markers (`exeuntu`, `exe-setup.service`, installed `linux-image-*`
+     packages, the kernel release) are reported, each read on its own;
+   - **the generation** comes from the two markers the profile's table
+     differs by: no `exe-setup.service` and no `exeuntu` is `feb-2026`,
+     `exe-setup.service` without `exeuntu` is `may-2026` (usa-wa's), both
+     are `newer`, and `exeuntu` alone is `unknown`;
+   - on exe.dev, the reboot reading says needrestart's kernel status means
+     nothing there (run.md §4);
+   - **whether a component came with the image** stays in `not_read`. It
+     needs the image's build date, which no marker gives; step 5 reads the
+     real image and can say what does.
 5. **Validate against the real image, offline.** Run `probe.sh` inside the
    exeuntu image, pinned by digest, in a throwaway container. Confirm the
    detection, the masked readings and the needrestart version. The digest

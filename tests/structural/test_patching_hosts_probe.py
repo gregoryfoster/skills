@@ -73,6 +73,10 @@ from review:
 - a refused pg_stat_file costs only the creation dates.
 - on Postgres 14 the provider reads libc, the only one it had.
 
+Plan step 4: the probe names the environment profile and the image
+generation from the profile's markers, each read on its own, and names none
+on a host no profile matches.
+
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
 live, and stubs on PATH for every command that asks the running system. Each
@@ -1355,6 +1359,83 @@ def test_an_exception_moves_a_deviation_to_excepted_until_it_expires(host):
     assert [
         f for f in out["findings"] if f["kind"] == "knob" and "line 3" in f["message"]
     ]
+
+
+# --- the environment profile -------------------------------------------------------
+
+LINUX_IMAGE = "*-W -f ${Package} ${db:Status-Abbrev}\\n linux-image-*"
+
+
+def test_a_host_no_profile_matches_names_none_and_the_generic_path(host):
+    p = host.run()["environment"]["profile"]
+    assert (p["name"], p["generation"], p["reference"]) == (None, None, None)
+    assert "generic apt path" in p["fallback"]
+    assert p["markers"]["exe_dev_dir"] is False
+
+
+@pytest.mark.parametrize(
+    "setup, exeuntu, generation",
+    [
+        (False, False, "feb-2026"),
+        (True, False, "may-2026"),
+        (True, True, "newer"),
+        (False, True, "unknown"),
+    ],
+)
+def test_an_exe_dev_host_names_its_profile_and_generation(
+    host, setup, exeuntu, generation
+):
+    # The guest can't see its image digest, so the profile's markers decide,
+    # each read on its own: usa-wa's May-2026 image had exe-setup.service but
+    # no exeuntu.
+    (host.root / "exe.dev" / "bin").mkdir(parents=True)
+    host.write(
+        "proc/cmdline",
+        "root=/dev/vda init=/exe.dev/bin/exe-init console=hvc0\n",
+    )
+    host.write("proc/sys/kernel/osrelease", "6.12.93\n")
+    host.on(
+        "dpkg-query",
+        LINUX_IMAGE,
+        rc=1,
+        stderr="dpkg-query: no packages found matching linux-image-*\n",
+    )
+    if setup:
+        host.write(
+            "usr/lib/systemd/system/exe-setup.service",
+            "[Service]\nExecStart=/exe.dev/setup\n[Install]\nWantedBy=multi-user.target\n",
+        )
+    if exeuntu:
+        host.write("usr/local/bin/exeuntu", "#!/bin/sh\n", mode=0o755)
+    out = host.run()
+    p = out["environment"]["profile"]
+    assert p["name"] == "exe-dev-exeuntu"
+    assert p["reference"] == "references/environments/exe-dev-exeuntu.md"
+    assert p["generation"] == generation
+    assert p["markers"] == {
+        "exe_init_cmdline": True,
+        "exe_dev_dir": True,
+        "exeuntu": exeuntu,
+        "exe_setup_unit": "disabled" if setup else "not-found",
+        "linux_image_packages": 0,
+        "kernel": "6.12.93",
+    }
+    # No guest kernel: needrestart's kernel lines mean nothing here.
+    assert "never decide a reboot" in out["impact"]["reboot"]["kernel_status_note"]
+
+
+def test_an_offline_image_tree_is_matched_by_its_files(tmp_path):
+    # Nothing runs the tree, so there's no /proc/cmdline: /exe.dev/ names the
+    # profile, and every marker is still reported on its own.
+    h = Host(tmp_path, live=False).knob("posture scheduled\n")
+    (h.root / "exe.dev").mkdir()
+    h.write("usr/local/bin/exeuntu", "#!/bin/sh\n")
+    h.write("etc/systemd/system/exe-setup.service", "[Service]\n")
+    h.on("dpkg-query", LINUX_IMAGE, "linux-image-6.8.0-45-generic ii \n")
+    p = h.run()["environment"]["profile"]
+    assert (p["name"], p["generation"]) == ("exe-dev-exeuntu", "newer")
+    assert p["markers"]["exe_init_cmdline"] is None
+    assert p["markers"]["linux_image_packages"] == 1
 
 
 # --- dormant components ---------------------------------------------------------
