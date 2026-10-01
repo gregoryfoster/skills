@@ -1491,15 +1491,16 @@ PG_Q="$PG_Q_HEAD, coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || 
 PG_Q_PLAIN="$PG_Q_HEAD, '', $PG_Q_TAIL"
 
 # Fields split on the unit separator, not a tab: a tab is IFS whitespace, so
-# an empty stats_reset would vanish and shift every field after it. The last
-# counts the connected database's own tables, so only postgres's row has it:
-# it's the default database, and an app may keep its tables there. Then come
-# the database's creation, PG_VERSION's mtime (empty outside the default
-# tablespace), the server's start, and the sessions since the statistics were
-# reset (Postgres 14 on). datlocprovider and datcollversion came
-# with Postgres 15: read through to_jsonb, they're null on 14 (jammy's), where
-# naming them fails the whole query. Before 15 every database's provider was
-# libc, so a missing one reads c.
+# an empty stats_reset would vanish and shift every field after it. In order:
+# name, size, writes, stats_reset, collate, provider, collversion; then
+# own_tables, the connected database's own tables, so only postgres's row has
+# it (the default database, where an app may keep its tables); created,
+# PG_VERSION's mtime (empty outside the default tablespace); the server's
+# start; and the sessions since the statistics were reset (Postgres 14 on).
+# datlocprovider and datcollversion came with Postgres 15: read through
+# to_jsonb, they're null on 14 (jammy's), where naming them fails the whole
+# query. Before 15 every database's provider was libc, so a missing one
+# reads c.
 pg_databases() {  # <port>: rows of PG_Q, as the postgres user; of PG_Q_PLAIN when pg_stat_file is refused
   local _pd_rc=0
   as_user postgres psql -XAtq -F "$KNOB_US" -p "$1" -d postgres -c "$PG_Q" 2>"$P_TMP/pg_q.err" || _pd_rc=$?
