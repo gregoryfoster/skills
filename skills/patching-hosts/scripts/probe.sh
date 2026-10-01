@@ -1933,7 +1933,7 @@ read_docker() {
 }
 
 read_postgres() {
-  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes
+  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes ver name up=""
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if have dpkg-query; then
@@ -1970,13 +1970,24 @@ read_postgres() {
             if [ -z "$window" ] || [ "$d" -lt "$window" ]; then window=$d; fi
           fi
         done
-        [ -n "$window" ] || window=$UPTIME_DAYS
+        # The servers' own uptime bounds the evidence: in a container, or
+        # after a soft reboot, the kernel booted long before them. Statistics
+        # never reset survive a clean restart, so it's a lower bound for them
+        # too.
+        for c in $PG_CLUSTERS; do
+          case $c in */online/*)
+            IFS=/ read -r ver name _ <<<"$c"
+            active_days "postgresql@$ver-$name.service"
+            if is_int "$ACTIVE" && { [ -z "$up" ] || [ "$ACTIVE" -lt "$up" ]; }; then up=$ACTIVE; fi ;;
+          esac
+        done
+        [ -n "$window" ] || window=$up
         WL="{\"databases\": $nusr, \"writes_since_stats_reset\": $wr}"
         if [ "$nusr" -eq 0 ]; then
-          if window_ok "$UPTIME_DAYS"; then
-            DORM="no database but postgres and the templates, $UPTIME_DAYS days since boot"
+          if window_ok "$up"; then
+            DORM="no database but postgres and the templates, up $up days"
           else
-            UNK="no database but postgres and the templates, but only ${UPTIME_DAYS:-an unknown number of} days since boot"
+            UNK="no database but postgres and the templates, but up only ${up:-an unknown number of} days: fewer than 30"
           fi
         elif [ "$wr" -gt 0 ]; then
           INUSE=${INUSE:-"$wr rows written since the statistics were reset"}
@@ -2084,8 +2095,13 @@ read_unpackaged() {  # <name> <unit> <binary> <store> <ports>
       INUSE="$n files under $4"
     elif [ -n "$U_ActiveState" ] && [ "$U_ActiveState" != active ]; then
       idle_verdict "$2" "$U_ActiveState"
-    elif [ "$n" = 0 ] && window_ok "$UPTIME_DAYS"; then
-      DORM="nothing stored under $4, $UPTIME_DAYS days since boot"
+    elif [ "$n" = 0 ] && [ "$U_ActiveState" = active ]; then
+      active_days "$2"
+      if window_ok "$ACTIVE"; then
+        DORM="active for $ACTIVE days with nothing stored under $4"
+      else
+        UNK="nothing stored under $4, but active for only ${ACTIVE:-an unknown number of} days: fewer than 30"
+      fi
     else
       UNK="whether anything calls it isn't read"
     fi

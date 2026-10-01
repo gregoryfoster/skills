@@ -46,6 +46,7 @@ from review:
   hand doesn't count in NRestarts.
 - a knob command runs under a time limit, so a hung check can't hang the probe.
 - a line parsed from a root command stays English when sudo resets the locale.
+- every idle window counts from the component's own start, never the kernel's.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1290,6 +1291,47 @@ def test_docker_counts_its_idle_window_from_its_own_start(host):
         ),
     )
     d = _dormant(host.run(), "docker")
+    assert d["verdict"] == "unknown"
+    assert "active for only 3 days" in d["evidence"]
+
+
+@pytest.mark.parametrize("days, verdict", [(3, "unknown"), (35, "dormant")])
+def test_an_empty_postgres_counts_from_its_own_start(host, days, verdict):
+    # The kernel booted 40 days ago, but the cluster only started `days` ago.
+    host.on(
+        "dpkg-query",
+        "*-W -f ${Package} ${db:Status-Abbrev}\\n postgresql-[0-9]*",
+        "postgresql-16 ii \n",
+    )
+    host.on(
+        "pg_lsclusters",
+        "-h",
+        "16 main 5432 online postgres /var/lib/postgresql/16/main "
+        "/var/log/postgresql/postgresql-16-main.log\n",
+    )
+    rows = ["postgres", "template0", "template1"]
+    host.on(
+        "psql", "*", "".join(f"{r}\x1f1\x1f0\x1f\x1fC.UTF-8\x1fc\x1f\n" for r in rows)
+    )
+    host.show(
+        "postgresql@16-main.service",
+        ActiveState="active",
+        ActiveEnterTimestamp=f"@{host.now - days * DAY - 60}",
+    )
+    d = _dormant(host.run(), "postgres")
+    assert d["verdict"] == verdict
+    assert f"up {'only ' if days < 30 else ''}{days} days" in d["evidence"]
+
+
+def test_an_unpackaged_engine_counts_from_its_own_start(host):
+    host.write("usr/lib/systemd/system/ollama.service", "[Service]\n")
+    (host.root / "usr/share/ollama/.ollama/models/manifests").mkdir(parents=True)
+    host.show(
+        "ollama.service",
+        ActiveState="active",
+        ActiveEnterTimestamp=f"@{host.now - 3 * DAY - 60}",
+    )
+    d = _dormant(host.run(), "ollama")
     assert d["verdict"] == "unknown"
     assert "active for only 3 days" in d["evidence"]
 
