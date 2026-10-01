@@ -1190,6 +1190,9 @@ read_esm() {
       done
       re='"attached": *(true|false)'
       if [[ $pro =~ $re ]]; then jadd po attached "${BASH_REMATCH[1]}"; fi
+      # pro reads apt's own lists: --refresh-into can't reach it, so these
+      # counts can be staler than the ones beside them.
+      jadds po lists "the host's own, even under --refresh-into"
       R_ESM="{$po}"
     fi
   fi

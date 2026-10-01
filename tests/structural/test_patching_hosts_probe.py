@@ -53,6 +53,7 @@ from review:
 - a hold on a package that isn't installed defers nothing.
 - a refused run leaves no scratch directory behind.
 - an active engine whose CLI isn't on PATH says so.
+- the ESM counts say they come from the host's own lists.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -869,7 +870,10 @@ def test_a_dry_run_without_a_selection_line_is_a_finding(host):
 def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):
     scratch = host.tmp / "fresh"
     host.on("apt-get", "update*", "Reading package lists...\n")
+    host.on("pro", "security-status --format json", '{"num_esm_apps_updates": 2}')
     out = host.run("--refresh-into", str(scratch))
+    # pro reads apt's own lists, which a refresh into scratch can't reach.
+    assert out["pending"]["esm"]["lists"] == "the host's own, even under --refresh-into"
     [(_, args, _)] = [
         c
         for c in host.calls("apt-get")
