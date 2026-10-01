@@ -698,7 +698,8 @@ gate_inflight() {
     c=${f[0]} l=${f[1]}
     rc=0
     out=$(knob_cmd "$c" 2>/dev/null) || rc=$?
-    out=${out%%$'\n'*}
+    # The whole output, not its first line: a check that prints a count per
+    # queue prints 0 only when every queue is empty.
     words_of out "$out"
     e=""
     jadds e command "$c"

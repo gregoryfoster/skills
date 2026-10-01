@@ -373,6 +373,8 @@ def test_no_window_refuses(host):
     "answer, said",
     [
         ({"stdout": "3\n"}, 'printed "3", not 0'),
+        # One count per queue: the second isn't empty.
+        ({"stdout": "0\n3\n"}, 'printed "0 3", not 0'),
         ({"stdout": "", "rc": 124}, "timed out after 60 s"),
     ],
 )
