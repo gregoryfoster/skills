@@ -61,6 +61,7 @@ from review:
 - the dry run's selection is security only while unattended-upgrades'
   origins are.
 - a database's statistics cover no more than its own life.
+- a knob command that ignores the time limit's TERM is killed.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -313,8 +314,13 @@ class Host:
                     (cases / f".{name}.{i}.err").write_text(err)
                     redirect = f" cat '{cases}/.{name}.{i}.err' >&2;"
                 lines.append(f"  {_pattern(glob)}) cat '{o}';{redirect} exit {rc} ;;")
-            # timeout runs its command, after the cases a test set.
-            fallback = 'shift; exec "$@"' if name == "timeout" else "exit 1"
+            # timeout runs its command, after its options and the cases a
+            # test set.
+            fallback = (
+                'while case $1 in -k | -s) shift 2 ;; -*) shift ;; *) false ;; esac; do :; done; shift; exec "$@"'
+                if name == "timeout"
+                else "exit 1"
+            )
             lines += ["esac", fallback, ""]
             (cases / name).write_text("\n".join(lines))
         # sudo runs its command as root, or as -u's user, and id answers for
@@ -1087,13 +1093,17 @@ def test_health_checks_run_as_the_user_and_a_failing_one_is_a_finding(host):
     assert not [c for c in host.calls("runuser")]
 
 
-def test_a_health_check_runs_under_a_time_limit(host):
-    # A check that hangs (a curl to a dead host) mustn't hang the probe.
+@pytest.mark.parametrize(
+    "rc, said", [(124, "times out after 60 s"), (137, "is killed")]
+)
+def test_a_health_check_runs_under_a_time_limit(host, rc, said):
+    # A check that hangs (a curl to a dead host) mustn't hang the probe, nor
+    # one that ignores the TERM: timeout waits for it unless -k sends a KILL.
     host.knob("posture automatic\nhealth probe-check --slow\n")
-    host.on("timeout", "60 sh -c probe-check --slow", rc=124)
+    host.on("timeout", "-k 10 60 sh -c probe-check --slow", rc=rc)
     out = host.run()
-    assert out["impact"]["health"][0]["exit"] == 124
-    assert "times out after 60 s" in _finding(out, "health:2")["message"]
+    assert out["impact"]["health"][0]["exit"] == rc
+    assert said in _finding(out, "health:2")["message"]
 
 
 # --- the environment ------------------------------------------------------------

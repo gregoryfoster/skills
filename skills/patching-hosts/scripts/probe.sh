@@ -1688,6 +1688,8 @@ read_backups() {
 health_says() {  # <var> <exit status>: how a knob check ended, in words
   if [ "$2" = 124 ]; then
     printf -v "$1" 'times out after %s s' "$KNOB_CMD_TIMEOUT"
+  elif [ "$2" = 137 ]; then
+    printf -v "$1" 'is killed (exit 137): it outlived the %s s limit and its TERM, or something else killed it' "$KNOB_CMD_TIMEOUT"
   else
     printf -v "$1" 'exits %s' "$2"
   fi

@@ -20,7 +20,8 @@ The primitives probe.sh reads a host through:
   as_user USER CMD...       runs CMD as USER, the same way
   knob_cmd CMD              runs a knob command with sh -c, never as root,
                             under timeout KNOB_CMD_TIMEOUT where timeout(1)
-                            exists; 124 means it timed out
+                            exists, with a KILL KNOB_CMD_KILL_AFTER seconds
+                            later; 124 means it timed out
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
   unit_show UNIT PROP...    systemctl show, setting U_<PROP> for each PROP;
@@ -97,11 +98,12 @@ as_user() {  # <user> <cmd>...
 }
 
 # A knob command is bounded, so a check that hangs (a curl to a dead host)
-# can't hang the probe, or a gate that waits on it.
-KNOB_CMD_TIMEOUT=60
+# can't hang the probe, or a gate that waits on it. timeout waits for the
+# command after its TERM, so one that ignores the TERM gets a KILL too.
+KNOB_CMD_TIMEOUT=60 KNOB_CMD_KILL_AFTER=10
 knob_cmd() {  # <command>
   local -a _kc_t=()
-  if command -v timeout >/dev/null 2>&1; then _kc_t=(timeout "$KNOB_CMD_TIMEOUT"); fi
+  if command -v timeout >/dev/null 2>&1; then _kc_t=(timeout -k "$KNOB_CMD_KILL_AFTER" "$KNOB_CMD_TIMEOUT"); fi
   if [ -z "$P_KNOB_USER" ]; then
     return 126
   elif [ "$P_EUID" -ne 0 ]; then
