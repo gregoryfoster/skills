@@ -1465,7 +1465,7 @@ read_maps() {
 PG_CLUSTERS=""  # " ver/name/port/status/logfile ..."
 # One record per database, its fields split on the unit separator: a name
 # may hold a space, a '*' or a '|', so it's never split on IFS or globbed.
-PG_ROWS=()     # ver/name db writes stats_reset own_tables created started
+PG_ROWS=()     # ver/name db writes stats_reset own_tables created started sessions
 PG_READ=""      # " ver/name ...": clusters whose catalogs were read
 read_pg_clusters() {
   local out line ver name port status owner dir log
@@ -1481,14 +1481,15 @@ read_pg_clusters() {
   return 0
 }
 
-PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(to_jsonb(d) ->> 'datlocprovider', ''), coalesce(to_jsonb(d) ->> 'datcollversion', ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, ''), coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), extract(epoch from pg_postmaster_start_time())::bigint from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
+PG_Q="select d.datname, pg_database_size(d.oid), coalesce(s.tup_inserted + s.tup_updated + s.tup_deleted, 0), coalesce(extract(epoch from s.stats_reset)::bigint::text, ''), d.datcollate, coalesce(to_jsonb(d) ->> 'datlocprovider', ''), coalesce(to_jsonb(d) ->> 'datcollversion', ''), coalesce(case when d.datname = current_database() then (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'p', 'm') and n.nspname <> 'information_schema' and n.nspname !~ '^pg_')::text end, ''), coalesce(extract(epoch from (pg_stat_file('base/' || d.oid || '/PG_VERSION', true)).modification)::bigint::text, ''), extract(epoch from pg_postmaster_start_time())::bigint, coalesce(to_jsonb(s) ->> 'sessions', '') from pg_database d left join pg_stat_database s on s.datid = d.oid where not d.datistemplate order by 1"
 
 # Fields split on the unit separator, not a tab: a tab is IFS whitespace, so
 # an empty stats_reset would vanish and shift every field after it. The last
 # counts the connected database's own tables, so only postgres's row has it:
 # it's the default database, and an app may keep its tables there. Then come
 # the database's creation, PG_VERSION's mtime (empty outside the default
-# tablespace), and the server's start. datlocprovider and datcollversion came
+# tablespace), the server's start, and the sessions since the statistics were
+# reset (Postgres 14 on). datlocprovider and datcollversion came
 # with Postgres 15: read through to_jsonb, they're null on 14 (jammy's), where
 # naming them fails the whole query.
 pg_databases() {  # <port>: rows of PG_Q, as the postgres user
@@ -1498,7 +1499,7 @@ pg_databases() {  # <port>: rows of PG_Q, as the postgres user
 # Each cluster's databases, with collation and activity, and any database no
 # datastore line names: the recovery point wouldn't cover it.
 read_datastores() {
-  local r e c out db size writes reset coll prov cver own created started dbs d declared="" cls="" ver name port status what
+  local r e c out db size writes reset coll prov cver own created started sess dbs d declared="" cls="" ver name port status what
   local -a df=()
   R_DS=""
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
@@ -1519,7 +1520,7 @@ read_datastores() {
       capture out pg_databases "$port"
       if [ "$CAP_RC" -eq 0 ]; then
         PG_READ="$PG_READ $ver/$name"
-        while IFS=$KNOB_US read -r db size writes reset coll prov cver own created started; do
+        while IFS=$KNOB_US read -r db size writes reset coll prov cver own created started sess; do
           [ -n "$db" ] || continue
           d=""
           jadds d name "$db"
@@ -1531,8 +1532,9 @@ read_datastores() {
           jaddsn d collversion "$cver"
           if [ -n "$own" ]; then jaddn d own_tables "$own"; fi
           jaddn d created "$created"
+          jaddn d sessions_since_stats_reset "$sess"
           jpush dbs "{$d}"
-          PG_ROWS+=("$ver/$name$KNOB_US$db$KNOB_US${writes:-0}$KNOB_US${reset:-}$KNOB_US${own:-}$KNOB_US${created:-}$KNOB_US${started:-}")
+          PG_ROWS+=("$ver/$name$KNOB_US$db$KNOB_US${writes:-0}$KNOB_US${reset:-}$KNOB_US${own:-}$KNOB_US${created:-}$KNOB_US${started:-}$KNOB_US${sess:-}")
           case $db in template0 | template1) continue ;; esac
           what="$db,"
           if [ "$db" = postgres ]; then
@@ -1984,7 +1986,7 @@ read_docker() {
 }
 
 read_postgres() {
-  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started ver name up="" pg_own="" span_unknown=0
+  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started sess ses=0 ses_why="" ver name up="" pg_own="" span_unknown=0
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if have dpkg-query; then
@@ -2012,7 +2014,7 @@ read_postgres() {
         UNK="its activity needs a login as postgres, and that failed"
       else
         for r in ${PG_ROWS[@]+"${PG_ROWS[@]}"}; do
-          IFS=$KNOB_US read -r _ db writes reset own created started <<<"$r"
+          IFS=$KNOB_US read -r _ db writes reset own created started sess <<<"$r"
           case $db in template0 | template1) continue ;; esac
           # postgres counts as a database of its own only with tables in it.
           if [ "$db" = postgres ]; then
@@ -2021,6 +2023,17 @@ read_postgres() {
           fi
           nusr=$((nusr + 1))
           if is_int "$writes"; then wr=$((wr + writes)); fi
+          # No row written isn't idleness: an app may only read. sessions
+          # counts client connections alone (a read moves it, autovacuum
+          # doesn't: measured on 16), so a database with none had no client.
+          # postgres's own include the probe's, and before 14 there's none.
+          if [ "$db" = postgres ]; then
+            ses_why="the postgres database's sessions include the probe's own"
+          elif is_int "$sess"; then
+            ses=$((ses + sess))
+          else
+            ses_why="the server counts no sessions (before Postgres 14)"
+          fi
           # What its counters cover: since a reset, or else since the later of
           # its creation and the server's start. Never reset, they outlive a
           # clean restart but not a crash, and they begin with the database,
@@ -2050,7 +2063,8 @@ read_postgres() {
             if is_int "$ACTIVE" && { [ -z "$up" ] || [ "$ACTIVE" -lt "$up" ]; }; then up=$ACTIVE; fi ;;
           esac
         done
-        WL="{\"databases\": $nusr, \"writes_since_stats_reset\": $wr}"
+        WL="{\"databases\": $nusr, \"writes_since_stats_reset\": $wr, \"sessions_since_stats_reset\": $ses}"
+        if [ -n "$ses_why" ]; then WL="{\"databases\": $nusr, \"writes_since_stats_reset\": $wr, \"sessions_since_stats_reset\": null}"; fi
         if [ "$nusr" -eq 0 ] && [ -n "$pg_own" ]; then
           UNK="no database but postgres and the templates, but whether postgres holds tables of its own wasn't read"
         elif [ "$nusr" -eq 0 ]; then
@@ -2061,8 +2075,12 @@ read_postgres() {
           fi
         elif [ "$wr" -gt 0 ]; then
           INUSE=${INUSE:-"$wr rows written since the statistics were reset"}
+        elif [ -n "$ses_why" ]; then
+          UNK="no row written, but whether anything read it isn't known: $ses_why"
+        elif [ "$ses" -gt 0 ]; then
+          UNK="no row written, but $ses sessions since the statistics were reset: a read and a backup look alike"
         elif window_ok "$window"; then
-          DORM="$nusr databases, and no row written in the $window days their statistics cover"
+          DORM="$nusr databases, and no row written and no session in the $window days their statistics cover"
         elif [ -n "$window" ]; then
           UNK="no row written, but the statistics cover only $window days: fewer than 30"
         else

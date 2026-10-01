@@ -64,7 +64,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts. W
 For each engine the probe knows (Docker, Postgres, Redis, nginx, Ollama, Qdrant to start with):
 - the unit's state and whether it's enabled;
 - its listeners;
-- its workload: containers, databases and their sizes, enabled sites;
+- its workload: containers, databases with their sizes and their writes and sessions since the statistics were reset, enabled sites;
 - whether the repo's units, docs or knob name it;
 - its packages in the security set;
 - whether it shipped with the image or was installed later.

@@ -65,6 +65,7 @@ from review:
 - pro isn't asked about an offline tree, which it can't read.
 - the catalog query names no column Postgres 14 lacks.
 - a database's name stays whole: never split or globbed.
+- a database only read isn't dormant: its sessions show the reads.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1537,7 +1538,11 @@ def test_tables_kept_in_the_postgres_database_are_data(host):
     out = host.run()
     d = _dormant(out, "postgres")
     assert d["verdict"] == "in-use"
-    assert d["workload"] == {"databases": 1, "writes_since_stats_reset": 40}
+    assert d["workload"] == {
+        "databases": 1,
+        "writes_since_stats_reset": 40,
+        "sessions_since_stats_reset": None,
+    }
     assert "3 tables of its own" in _finding(out, "database:postgres")["message"]
 
 
@@ -1545,7 +1550,7 @@ def test_tables_kept_in_the_postgres_database_are_data(host):
     "created, started, verdict, evidence",
     [
         (10, 40, "unknown", "cover only 10 days"),
-        (60, 35, "dormant", "no row written in the 35 days"),
+        (60, 35, "dormant", "no session in the 35 days"),
     ],
 )
 def test_a_databases_statistics_cover_no_more_than_its_own_life(
@@ -1570,6 +1575,7 @@ def test_a_databases_statistics_cover_no_more_than_its_own_life(
                 "",
                 ago(created),
                 ago(started),
+                "0",
             ),
             (
                 "postgres",
@@ -1597,12 +1603,52 @@ def test_a_database_name_stays_whole(host):
     _postgres(
         host,
         [
-            ("a b|*", "9000000", "7", "1700000000", "C.UTF-8", "c", "", ""),
+            (
+                "a b|*",
+                "9000000",
+                "7",
+                "1700000000",
+                "C.UTF-8",
+                "c",
+                "",
+                "",
+                "",
+                "",
+                "2",
+            ),
             ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0"),
         ],
     )
     d = _dormant(host.run(), "postgres")
-    assert d["workload"] == {"databases": 1, "writes_since_stats_reset": 7}
+    assert d["workload"] == {
+        "databases": 1,
+        "writes_since_stats_reset": 7,
+        "sessions_since_stats_reset": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    "sessions, verdict, evidence",
+    [
+        ("4", "unknown", "4 sessions"),
+        ("", "unknown", "before Postgres 14"),
+        ("0", "dormant", "no session"),
+    ],
+)
+def test_a_database_only_read_isnt_dormant(host, sessions, verdict, evidence):
+    # An app that only reads writes no row. sessions counts its connections,
+    # and autovacuum's don't (measured on 16).
+    old = str(host.now - 60 * DAY)
+    _postgres(
+        host,
+        [
+            ("ref", "9000000", "0", "", "C.UTF-8", "c", "", "", old, old, sessions),
+            ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0", old, old, "9"),
+        ],
+    )
+    d = _dormant(host.run(), "postgres")
+    assert d["verdict"] == verdict
+    assert evidence in d["evidence"]
 
 
 def test_an_unpackaged_engine_counts_from_its_own_start(host):
