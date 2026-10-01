@@ -453,6 +453,38 @@ def test_an_unclean_dpkg_audit_refuses(host):
     assert _changed(host) == []
 
 
+@pytest.mark.parametrize(
+    "unit, state",
+    [("apt-daily-upgrade.service", "activating"), ("apt-daily.service", "active")],
+)
+def test_an_automatic_apt_run_in_progress_refuses(host, unit, state):
+    host.on("systemctl", f"is-active -- {unit}", f"{state}\n")
+    out = host.run(rc=3)
+    assert any(
+        r.startswith(f"{unit} is {state}: an automatic apt run") for r in out["refused"]
+    )
+    assert out["gate"]["apt"]["running"] == [unit]
+    assert _changed(host) == []
+
+
+@pytest.mark.parametrize("at, refused", [(10 * MIN, True), (20 * MIN, False)])
+def test_the_apt_upgrade_timer_mustnt_fire_inside_the_span(host, at, refused):
+    # The span runs from 15:30 to 15:44: 540 s of dry run and 300 s of health
+    # checks. systemd 255 gives the next run in microseconds, with its random
+    # delay already in it.
+    usec = (TUE_1530 + at) * 1_000_000 + 81382
+    host.on(
+        "systemctl",
+        "list-timers*apt-daily-upgrade.timer",
+        f'[{{"next":{usec},"left":{usec},"last":0,"passed":0,'
+        '"unit":"apt-daily-upgrade.timer","activates":"apt-daily-upgrade.service"}]\n',
+    )
+    out = host.run(rc=3 if refused else 0)
+    iso = "2026-09-29T15:40:00Z" if refused else "2026-09-29T15:50:00Z"
+    assert out["gate"]["apt"]["upgrade_timer_next"] == iso
+    assert any("apt-daily-upgrade.timer" in r for r in out["refused"]) is refused
+
+
 def test_knob_commands_never_run_as_root(host):
     # Root with no invoking user: nobody to run the health check as.
     out = host.run(rc=3, env={"STUB_USER": "root"})
@@ -966,7 +998,13 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
     for name, args, _ in host.calls():
         words = args.split()
         if name == "systemctl":
-            assert words[0] in ("is-active", "stop", "start", "show"), args
+            assert words[0] in (
+                "is-active",
+                "stop",
+                "start",
+                "show",
+                "list-timers",
+            ), args
         if name == "apt-get":
             assert words[0] in ("update", "-s"), args
         if name == "apt-mark":

@@ -61,7 +61,8 @@ unattended-upgrade would reboot by itself (Automatic-Reboot), or would take
 more than -security without an unexpired exception uu:origins; when dpkg
 --audit isn't clean; when the step's span, from now to now plus its
 expected duration, isn't wholly inside one window or overlaps a quiet
-range; and when an inflight command prints anything but 0. On a host that
+range; while an automatic apt run is in progress or due inside the span;
+and when an inflight command prints anything but 0. On a host that
 declares a datastore, the bulk also refuses until the recovery point began
 within 24 hours, covers every datastore, and has left the node: each dump
 attested by its sha256, and each backup unit, one the knob declares, run
@@ -500,6 +501,7 @@ gate_dry() {
 # The step's span, from now to now plus its expected duration: the dry run's
 # wall time, plus the time the health checks may take. Checking only the
 # start lets a 9-minute apply begun 5 minutes before a quiet range run into it.
+SPAN_S="" SPAN_E=""
 gate_span() {
   local S E o="" a="" r d ws we len wk os oe day q dq hit="" s_iso e_iso
   local -a f=()
@@ -510,6 +512,7 @@ gate_span() {
   S=$P_NOW
   E=$((S + EXPECT))
   if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then E=$((E + health_within)); fi
+  SPAN_S=$S SPAN_E=$E
   iso_utc s_iso "$S"
   iso_utc e_iso "$E"
   jadds o start "$s_iso"
@@ -564,6 +567,36 @@ gate_span() {
   done
   jadd o quiet_overlaps "[$a]"
   jadd J_GATE span "{$o}"
+}
+
+# Where the apt timers run, their unattended-upgrade takes the lock a step
+# needs: one running now, or due inside the span, fails the step with
+# nothing upgraded ("Lock file is already taken", 2.9.1), after a held step
+# has released its group and stopped its restarters. The timer's next run
+# already holds its random delay (systemd 255, read 2026-10-01).
+gate_apt() {
+  local u st out next="" iso="" o="" a="" re='"next":([0-9]+)'
+  for u in apt-daily.service apt-daily-upgrade.service; do
+    st=$(systemctl is-active -- "$u" 2>/dev/null) || true
+    case $st in
+      active | activating | deactivating | reloading)
+        jpushs a "$u"
+        refuse "$u is $st: an automatic apt run is in progress. Wait for it to end, then gate again" ;;
+    esac
+  done
+  jadd o running "[$a]"
+  if [ -n "$SPAN_S" ]; then
+    capture out systemctl list-timers --all --output=json apt-daily-upgrade.timer
+    if [[ $out =~ $re ]]; then next=$((10#${BASH_REMATCH[1]} / 1000000)); fi
+    if is_int "$next" && [ "$next" -gt 0 ]; then
+      iso_utc iso "$next"
+      if [ "$SPAN_S" -le "$next" ] && [ "$next" -le "$SPAN_E" ]; then
+        refuse "apt-daily-upgrade.timer runs unattended-upgrade at $iso, inside the step's span: start the step where the span ends before then, or once that run has ended"
+      fi
+    fi
+  fi
+  jaddsn o upgrade_timer_next "$iso"
+  jadd J_GATE apt "{$o}"
 }
 
 # A dump can't be seen leaving the node from on it, so the bulk binds to the
@@ -798,6 +831,7 @@ gate_dpkg
 gate_run
 gate_dry
 gate_span
+gate_apt
 gate_recovery
 gate_restarters
 # Last, so its reading is the freshest.
