@@ -669,6 +669,110 @@ def test_an_attestation_with_no_datastore_is_refused(host):
     assert any("declares no datastore" in r for r in out["refused"])
 
 
+# --- every other refusal -----------------------------------------------------------
+
+
+def _summary(text: str):
+    """A dry run's summary, begun an hour before the clock."""
+
+    def write(h: Host) -> None:
+        (h.dry / "summary").write_text(f"began={TUE_1530 - 3600}\n{text}")
+
+    return write
+
+
+def _no_origin(h: Host) -> None:
+    h.cases["apt-config"] = [c for c in h.cases["apt-config"] if c[0] != "dump"]
+    h.on("apt-config", "dump", "")
+
+
+def _run_dir(mode: int):
+    def make(h: Host) -> None:
+        h.run_dir.mkdir()
+        h.run_dir.chmod(mode)
+
+    return make
+
+
+def _record(*lines: str):
+    """A datastore, and a recovery point of exactly LINES."""
+
+    def write(h: Host) -> None:
+        h.knob(DATASTORE)
+        _run_dir(0o700)(h)
+        (h.run_dir / "recovery-point").write_text("".join(x + "\n" for x in lines))
+
+    return write
+
+
+@pytest.mark.parametrize(
+    "setup, kw, refused",
+    [
+        (lambda h: setattr(h, "sudo", False), {}, "no root: run apply.sh as root"),
+        (lambda h: h.absent("choom"), {}, "choom isn't on PATH"),
+        (
+            lambda h: h.absent("unattended-upgrade"),
+            {},
+            "unattended-upgrade isn't on PATH",
+        ),
+        (lambda h: h.absent("apt-config"), {}, "apt-config isn't on PATH"),
+        (lambda h: h.knob(KNOB + "hold nginx bulk\n"), {}, "names a hold step bulk"),
+        (_no_origin, {}, "takes no origin"),
+        (_run_dir(0o755), {}, "is mode 0755, not 0700"),
+        (lambda h: None, {"dry": False}, "no --dry-run DIR"),
+        (lambda h: (h.dry / "summary").unlink(), {}, "summary is missing"),
+        (
+            _summary("exit=100\ncount=\nwall_seconds=3\n"),
+            {},
+            "the dry run exited 100",
+        ),
+        (_summary("exit=0\ncount=4\n"), {}, "holds no wall time"),
+        (
+            _record(
+                f"began {TUE_1530 - 3600}", "dump postgres postgresql@16-main app x /x"
+            ),
+            {},
+            "line 2 isn't one apply.sh reads",
+        ),
+        (
+            _record(f"dump postgres postgresql@16-main app {SHA_A} /x"),
+            {},
+            "has no began line",
+        ),
+        (lambda h: None, {"step": "nginx"}, "no hold step nginx for this host"),
+    ],
+    ids=[
+        "no-root",
+        "no-choom",
+        "no-unattended-upgrade",
+        "no-apt-config",
+        "a-hold-step-named-bulk",
+        "no-origin",
+        "a-run-dir-not-0700",
+        "no-dry-run",
+        "no-summary",
+        "a-dry-run-that-failed",
+        "no-wall-time",
+        "a-record-line-it-cant-read",
+        "no-began-line",
+        "a-held-step-the-host-doesnt-have",
+    ],
+)
+def test_every_other_refusal_changes_nothing(host, setup, kw, refused):
+    setup(host)
+    out = host.run(rc=3, **kw)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert _changed(host) == []
+
+
+def test_a_held_step_the_bulk_held_nothing_for_is_refused(host):
+    # nginx wasn't pending at the bulk, so its group holds nothing.
+    host.knob(KNOB + "hold nginx web\n")
+    host.run()
+    out = host.run(step="web", rc=3)
+    assert any("the run holds nothing for web" in r for r in out["refused"])
+
+
 # --- the bulk ---------------------------------------------------------------------
 
 
@@ -754,6 +858,32 @@ def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
     assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
     host.cases["apt-get"] = green
     assert host.run()["verdict"]["ok"] is True
+
+
+@pytest.mark.parametrize(
+    "cmd, glob, why, held",
+    [
+        ("apt-get", "-s dist-upgrade", "apt-get -s dist-upgrade failed", False),
+        ("dpkg-query", "-W", "the before-versions couldn't be recorded", False),
+        ("apt-mark", "showauto", "apt-mark showauto couldn't be recorded", False),
+        ("apt-mark", "hold *", "apt-mark hold failed", True),
+    ],
+)
+def test_a_bulk_that_fails_before_its_upgrade_says_what_it_left(
+    host, cmd, glob, why, held
+):
+    host.cases[cmd].insert(0, (glob, "", 1, "", None))
+    out = host.run(rc=1)
+    assert any(why in w for w in out["verdict"]["why"])
+    assert not host.calls("unattended-upgrade")
+    if held:
+        # The holds were on record before apt-mark ran: the run is over.
+        assert "bulk\tfailed\t" in host.record("steps")
+    else:
+        assert out["abort"]["instructions"] == [
+            "Nothing was held or upgraded: fix what failed, then run this step again."
+        ]
+        assert not (host.run_dir / "holds").exists()
 
 
 def test_a_bulk_that_already_started_is_refused(host):
@@ -969,6 +1099,24 @@ def test_a_held_step_that_fails_before_its_upgrade_can_run_again(host, fails):
     # Once it's fixed, the same step runs.
     host.cases["systemctl"], host.cases["apt-mark"] = green
     assert host.run(step="postgres")["verdict"]["ok"] is True
+
+
+@pytest.mark.parametrize(
+    "rc, why",
+    [
+        (1, "systemctl start app-healthcheck.timer failed"),
+        # start exits 0, and the timer stays inactive.
+        (0, "restarter app-healthcheck.timer is inactive after its start"),
+    ],
+)
+def test_a_restarter_that_doesnt_come_back_fails_the_step(host, rc, why):
+    host.run()
+    host.cases["systemctl"].insert(
+        0, ("start -- app-healthcheck.timer", "", rc, "", None)
+    )
+    out = host.run(step="postgres", rc=1)
+    assert any(why in w for w in out["verdict"]["why"])
+    assert out["abort"]["restarters_stopped"] == ["app-healthcheck.timer"]
 
 
 def test_a_restarter_the_host_doesnt_have_is_refused(host):
