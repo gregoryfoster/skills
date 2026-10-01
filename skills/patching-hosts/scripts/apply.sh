@@ -26,7 +26,8 @@ Steps:
 Every step runs `NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v` as
 root, with no memory cap, then runs probe.sh into the run's directory. It
 never reboots, unmasks, enables, removes or purges anything, and never holds
-or releases a package the owner held.
+or releases a package the owner held. A step takes minutes: start it where
+nothing cuts it off, in the background, and read its JSON when it ends.
 
 Options:
   --step STEP              bulk, or a held step (required)
