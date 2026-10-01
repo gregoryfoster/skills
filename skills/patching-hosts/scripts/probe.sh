@@ -126,15 +126,6 @@ if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then
   echo "ERROR --post-boot takes neither --refresh-into nor --dry-run-into" >&2
   exit 2
 fi
-if [ -n "$refresh" ]; then
-  mkdir -p "$refresh"
-  refresh=$(cd "$refresh" && pwd -P)
-fi
-if [ -n "$dryrun" ]; then
-  mkdir -p "$dryrun"
-  dryrun=$(cd "$dryrun" && pwd -P)
-fi
-
 if [ -z "$host" ]; then
   if [ "$root" != / ] && [ -r "$root/etc/hostname" ]; then
     IFS= read -r host <"$root/etc/hostname" || true
@@ -161,6 +152,15 @@ SESSION_PID=${session_pid:-$$}
 if [ -n "$refresh$dryrun" ] && [ "$P_LIVE" -ne 1 ]; then
   echo "ERROR --refresh-into and --dry-run-into need a running system, and ${P_ROOT:-}/run/systemd/system is absent" >&2
   exit 2
+fi
+# Made only now, so a refused run leaves nothing behind.
+if [ -n "$refresh" ]; then
+  mkdir -p "$refresh"
+  refresh=$(cd "$refresh" && pwd -P)
+fi
+if [ -n "$dryrun" ]; then
+  mkdir -p "$dryrun"
+  dryrun=$(cd "$dryrun" && pwd -P)
 fi
 
 # --- helpers ------------------------------------------------------------------

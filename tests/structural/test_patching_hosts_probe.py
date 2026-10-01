@@ -51,6 +51,7 @@ from review:
 - a dry run that exits 0 without a selection line is a finding, not silence.
 - an empty unit file is a mask, as systemd reads it.
 - a hold on a package that isn't installed defers nothing.
+- a refused run leaves no scratch directory behind.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -423,6 +424,7 @@ def test_refresh_and_dry_run_refuse_a_tree_nothing_runs(tmp_path):
     h = Host(tmp_path, live=False).knob("posture scheduled\n")
     r = h.run("--refresh-into", str(tmp_path / "scratch"), rc=2)
     assert "running system" in r.stderr
+    assert not (tmp_path / "scratch").exists()
 
 
 def test_every_top_level_key_is_there_and_the_scratch_directory_goes(host):
