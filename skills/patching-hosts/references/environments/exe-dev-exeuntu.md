@@ -85,6 +85,7 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
   - the data store's own log (Postgres: `CHECKPOINT` → `fast shutdown request` → `database system is shut down`);
   - no EXT4 orphan recovery at the next boot;
   - on a volatile journal, the copy the reboot chain took.
+- **A service's first start** shows in its `InactiveEnterTimestamp`, not the journal: unset, the unit never stopped or failed after it started. `NRestarts` doesn't count a start by hand.
 - **A platform restart or resize is a hard reset.** replicator's resize left no stop line and forced orphan recovery. Reboot in-guest only.
 - `who -b` was wrong on three hosts. Read `/proc/stat` btime.
 

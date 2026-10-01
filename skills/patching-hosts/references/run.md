@@ -172,7 +172,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 
 - **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the chain's journal copy. For Postgres: `database system was shut down at …` and no `redo starts`.
 - **Each `service`:**
-  - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239);
+  - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239). A start by hand after a failure leaves `NRestarts` at 0, so read `InactiveEnterTimestamp`: unset, the unit never stopped or failed after it started. Set, only PID 1's lines in the journal tell a failure from a stop by hand;
   - **its ordering**: `systemd-analyze critical-chain <service>` includes its data store, and the unit has `After=` on it. wslcb's first start succeeded by luck, until `After=postgresql.service` made it configured. Don't add `Wants=`: it would start a cluster an operator stopped on purpose.
 - **Each `restarter`** is active.
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.

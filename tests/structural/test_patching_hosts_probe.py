@@ -56,6 +56,8 @@ from review:
 - the ESM counts say they come from the host's own lists.
 - tables kept in the `postgres` database are data like any other's.
 - a dry run's empty selection line counts 0.
+- a first start that never stopped holds by its own timestamps, with no
+  journal behind them.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1692,8 +1694,9 @@ def test_post_boot_reads_the_first_start_from_the_journal_not_nrestarts(
     host, journal, ok
 ):
     # Started by hand after a failed first start, the service is active with
-    # 0 automatic restarts: only the journal shows the failure. App lines that
-    # merely say "Starting" aren't PID 1's.
+    # 0 automatic restarts. It has stopped since it started, so only the
+    # journal tells a failure from a stop by hand. App lines that merely say
+    # "Starting" aren't PID 1's.
     host.knob("posture scheduled\nservice app-web.service\n")
     host.show(
         "app-web.service",
@@ -1701,9 +1704,34 @@ def test_post_boot_reads_the_first_start_from_the_journal_not_nrestarts(
         NRestarts="0",
         Result="success",
         After="network.target",
+        InactiveExitTimestamp=f"@{host.now - 600}",
+        InactiveEnterTimestamp=f"@{host.now - 590}",
     )
     host.on("journalctl", "-b 0 -u app-web.service*", journal)
     out = host.run("--post-boot")
     checks = {c["check"]: c for c in out["post_boot"]}
     assert checks["service:app-web.service"]["ok"] is ok
     assert ("post-boot:service:app-web.service" in _ids(out)) is (ok is False)
+
+
+@pytest.mark.parametrize("stopped, ok", [(False, True), (True, None)])
+def test_post_boot_reads_the_first_start_from_its_timestamps_without_the_journal(
+    host, stopped, ok
+):
+    # On exeuntu PID 1 logs to the console, so the journal has none of its
+    # lines. A unit that started and never stopped or failed has no
+    # InactiveEnterTimestamp (systemd 255); one that did can't be told apart.
+    host.knob("posture scheduled\nservice app-web.service\n")
+    host.show(
+        "app-web.service",
+        ActiveState="active",
+        NRestarts="0",
+        Result="success",
+        After="network.target",
+        InactiveExitTimestamp=f"@{host.now - 600}",
+        InactiveEnterTimestamp=f"@{host.now - 590}" if stopped else "",
+    )
+    host.on("journalctl", "-b 0 -u app-web.service*", "app-web: listening on :8080\n")
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["service:app-web.service"]["ok"] is ok

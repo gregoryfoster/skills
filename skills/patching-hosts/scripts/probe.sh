@@ -174,7 +174,7 @@ DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${P
 # unit_show sets these by name.
 U_LoadState="" U_ConditionResult="" U_Result="" U_ActiveState="" U_MainPID="" U_After=""
 U_RequiredBy="" U_BoundBy="" U_NRestarts="" U_ExecMainExitTimestamp="" U_InactiveEnterTimestamp=""
-U_NextElapseUSecRealtime="" U_ActiveEnterTimestamp=""
+U_NextElapseUSecRealtime="" U_ActiveEnterTimestamp="" U_InactiveExitTimestamp=""
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -2207,20 +2207,27 @@ check_shutdown() {
   fi
 }
 
-# The first start's result, from PID 1's lines for the unit in this boot's
-# journal. NRestarts counts only Restart='s own restarts, so a first start
-# that failed and was then started by hand reads 0
-# (CannObserv/address-validator#239). PID 1 logs to the console on exeuntu, so
-# a journal without its lines can't tell.
-first_start() {  # <unit>: FIRST_START := failed, held, or empty when the journal can't tell
+# Whether the first start held. NRestarts can't say: it counts only
+# Restart='s own restarts, so a first start that failed and was then started
+# by hand reads 0 (CannObserv/address-validator#239). systemd sets
+# InactiveEnterTimestamp only when a unit stops or fails, so one that started
+# (InactiveExitTimestamp) with it still unset has run since, whatever the
+# journal kept: measured on systemd 255. One that did stop needs PID 1's
+# lines in this boot's journal to tell a failure from a stop by hand, and PID
+# 1 logs to the console on exeuntu.
+first_start() {  # <unit>, after unit_show read its Inactive*Timestamps: FIRST_START := held, failed, stopped, or empty when nothing tells
   local out
   FIRST_START=""
+  if [ -n "$U_InactiveExitTimestamp" ] && [ -z "$U_InactiveEnterTimestamp" ]; then
+    FIRST_START=held
+    return 0
+  fi
   live_cmd journalctl || return 0
   capture out jctl -b 0 -u "$1" -o cat --no-pager -q
   [ "$CAP_RC" -eq 0 ] || return 0
   case $out in
     *"$1: Failed with result"* | *"Failed to start $1"*) FIRST_START=failed ;;
-    *"Started $1"*) FIRST_START=held ;;
+    *"Started $1"*) FIRST_START=stopped ;;
   esac
 }
 
@@ -2228,16 +2235,17 @@ read_post_boot() {
   local svc ds t out line down="" i said
   check_shutdown
   for svc in $KNOB_SERVICES; do
-    if unit_show "$svc" ActiveState Result NRestarts After; then
-      first_start "$svc"
+    if unit_show "$svc" ActiveState Result NRestarts After InactiveExitTimestamp InactiveEnterTimestamp; then
       if [ "$U_ActiveState" != active ] || [ "${U_NRestarts:-0}" != 0 ]; then
         check "service:$svc" 0 "$U_ActiveState, ${U_NRestarts:-unknown} automatic restarts, result ${U_Result:-unknown}: the first start didn't hold"
-      elif [ "$FIRST_START" = failed ]; then
-        check "service:$svc" 0 "active now, but this boot's journal shows it failing first: a start by hand doesn't count in NRestarts"
-      elif [ "$FIRST_START" = held ]; then
-        check "service:$svc" 1 "active, 0 automatic restarts, and no failure in this boot's journal"
       else
-        check "service:$svc" "" "active with 0 automatic restarts, but this boot's journal has none of PID 1's lines for it, so whether the first start held is unknown"
+        first_start "$svc"
+        case $FIRST_START in
+          held) check "service:$svc" 1 "active, 0 automatic restarts, and never stopped or failed since it started" ;;
+          failed) check "service:$svc" 0 "active now, but this boot's journal shows it failing: a start by hand doesn't count in NRestarts" ;;
+          stopped) check "service:$svc" 1 "active, 0 automatic restarts: it stopped since it started, and this boot's journal shows no failure" ;;
+          *) check "service:$svc" "" "active with 0 automatic restarts, but it stopped or failed since it started, and this boot's journal has none of PID 1's lines to say which" ;;
+        esac
       fi
       for ds in $DS_UNITS; do
         if ordering_ok "$ds" "$U_After"; then
