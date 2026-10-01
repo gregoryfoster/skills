@@ -728,9 +728,13 @@ def test_a_held_step_stops_its_restarters_around_the_restart_and_polls_health(ho
     host.run()
     out = host.run(step="postgres")
     changed = _changed(host)
+    # Stopped, then released, then upgraded, then started again.
     i = changed.index("systemctl stop -- app-healthcheck.timer")
-    assert changed[i + 1] == "unattended-upgrade -v"
-    assert changed[i + 2] == "systemctl start -- app-healthcheck.timer"
+    assert changed[i + 1 : i + 4] == [
+        "apt-mark unhold postgresql-16 libpq5",
+        "unattended-upgrade -v",
+        "systemctl start -- app-healthcheck.timer",
+    ]
     assert out["restarters"] == [
         {"unit": "app-healthcheck.timer", "before": "active", "left_stopped": False}
     ]
@@ -752,6 +756,40 @@ def test_a_restart_the_health_checks_never_pass_leaves_the_restarters_stopped(ho
     assert out["abort"]["restarters_stopped"] == ["app-healthcheck.timer"]
     assert "systemctl start -- app-healthcheck.timer" not in _changed(host)
     assert [h["package"] for h in out["abort"]["holds_left"]] == ["redis-server"]
+
+
+@pytest.mark.parametrize("fails", ["stop", "unhold"])
+def test_a_held_step_that_fails_before_its_upgrade_can_run_again(host, fails):
+    # Two restarters: the second won't stop, or the release fails after both
+    # have. Either way nothing was upgraded, so the step isn't recorded, the
+    # restarters it stopped start again, and the group stays held.
+    host.knob(KNOB + "restarter app-watchdog.service\n")
+    host.unit("app-watchdog.service")
+    host.run()
+    green = (list(host.cases["systemctl"]), list(host.cases["apt-mark"]))
+    if fails == "stop":
+        host.cases["systemctl"].insert(
+            0, ("stop -- app-watchdog.service", "", 1, "", None)
+        )
+    else:
+        host.cases["apt-mark"].insert(0, ("unhold *", "", 100, "", None))
+    out = host.run(step="postgres", rc=1)
+    assert not host.calls("unattended-upgrade")[1:]
+    if fails == "stop":
+        assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("unhold")]
+    assert "postgres" not in host.record("steps")
+    assert host.holds() == ["libpq5", "postgresql-16", "redis-server"]
+    assert out["abort"]["instructions"][0].startswith("Nothing was upgraded")
+    assert [h["package"] for h in out["abort"]["holds_left"]] == [
+        "postgresql-16",
+        "libpq5",
+        "redis-server",
+    ]
+    assert out["abort"]["restarters_stopped"] == []
+    assert (host.state / "unit.app-healthcheck.timer").read_text() == "active\n"
+    # Once it's fixed, the same step runs.
+    host.cases["systemctl"], host.cases["apt-mark"] = green
+    assert host.run(step="postgres")["verdict"]["ok"] is True
 
 
 def test_a_restarter_stopped_before_the_step_stays_stopped(host):

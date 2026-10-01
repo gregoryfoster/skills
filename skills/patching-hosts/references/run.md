@@ -94,8 +94,8 @@ Then:
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
    - `NEEDRESTART_MODE=l` backs up the drop-in. In apt's hook there's no `-r`, so the variable wins.
 4. **Each held group, under approval 3(a):**
-   - unhold the packages the run held, and only those;
    - stop each `restarter`;
+   - unhold the packages the run held, and only those. In this order, a stop that fails leaves the group held, and the step can run again;
    - run the same command;
    - poll every `health` command **every second, logging each result with its timestamp**, until all of them exit 0 twice in a row;
    - start each `restarter` again, and confirm `is-active`.

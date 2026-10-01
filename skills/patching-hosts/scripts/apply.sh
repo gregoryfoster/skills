@@ -930,11 +930,20 @@ finish() {
       { fail "$run/steps couldn't be written: the run's state is unrecorded"; result=failed; }
   fi
   if [ "$result" = failed ] && [ "$STARTED" -eq 0 ]; then
-    o="" a=""
-    jpushs a "Nothing was held or upgraded: fix what failed, then run this step again."
+    o="" a="" left="[]"
+    if [ "$step" = bulk ]; then
+      jpushs a "Nothing was held or upgraded: fix what failed, then run this step again."
+    else
+      holds_left left
+      jpushs a "Nothing was upgraded, and the step isn't recorded: fix what failed, then run it again."
+    fi
+    if [ -n "$STOPPED" ]; then
+      jpushs a "These restarters are still stopped:$STOPPED. Start each when the owner decides."
+    fi
     jadd o instructions "[$a]"
-    jadd o holds_left "[]"
-    jadd o restarters_stopped "[]"
+    jadd o holds_left "$left"
+    json_words a "$STOPPED"
+    jadd o restarters_stopped "$a"
     J_ABORT="{$o}"
   elif [ "$result" = failed ]; then
     holds_left left
@@ -1079,35 +1088,41 @@ do_held() {
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     [ "${RUN_HOLD_STEP[$i]}" != "$step" ] || names="$names ${RUN_HOLD_PKG[$i]}"
   done
-  STARTED=1
-  RELEASED="$RELEASED $step"
   read -r -a w <<<"$names" || true
   json_words e "$names"
   jadd o released "$e"
   json_words e "$BEFORE_HOLDS"
   jadd o owner "$e"
   J_HOLDS="{$o}"
-  if [ "${#w[@]}" -gt 0 ] && ! as_root apt-mark unhold "${w[@]}" >/dev/null; then
-    fail "apt-mark unhold failed: the step didn't run"
-    return 0
-  fi
   # Stopped around the restart, so a health timer doesn't restart the app
-  # into a database that's down.
+  # into a database that's down. Stopped before the release, too: a stop
+  # that fails then leaves the group held, rather than open to the next
+  # automatic upgrade with the step unable to run again.
   for i in ${R_UNIT[@]+"${!R_UNIT[@]}"}; do
     [ "${R_BEFORE[$i]}" = active ] || continue
     if ! as_root systemctl stop -- "${R_UNIT[$i]}"; then
-      fail "systemctl stop ${R_UNIT[$i]} failed: the step didn't run"
+      fail "systemctl stop ${R_UNIT[$i]} failed: nothing was released or upgraded"
       break
     fi
     STOPPED="$STOPPED ${R_UNIT[$i]}"
   done
+  if [ "${#FAILED[@]}" -eq 0 ] && [ "${#w[@]}" -gt 0 ] &&
+    ! as_root apt-mark unhold "${w[@]}" >/dev/null; then
+    fail "apt-mark unhold failed: nothing was upgraded"
+  fi
+  # The step starts with the upgrade: until then nothing it changed needs
+  # the owner, and it isn't recorded, so it can run again.
   if [ "${#FAILED[@]}" -eq 0 ]; then
+    STARTED=1
+    RELEASED="$RELEASED $step"
     run_uu
     check_holds
     poll_health
   fi
-  # Started again only on a green step: on a failed one, the owner decides.
-  if [ "${#FAILED[@]}" -eq 0 ]; then
+  # Started again on a green step, and on one that failed before the
+  # upgrade, which restarted nothing. After a failed upgrade, the owner
+  # decides.
+  if [ "${#FAILED[@]}" -eq 0 ] || [ "$STARTED" -eq 0 ]; then
     for i in ${R_UNIT[@]+"${!R_UNIT[@]}"}; do
       u=${R_UNIT[$i]}
       in_words "$u" "$STOPPED" || continue
