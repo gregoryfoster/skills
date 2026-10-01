@@ -1051,6 +1051,7 @@ evaluate_posture() {
 # --- the pending set --------------------------------------------------------
 PEND=""        # " name ... ": everything apt-get -s would install or upgrade
 SEC_EXACT=""   # the dry run's selection, when it ran
+DRY_SECURITY_ONLY=0  # 1 when that selection is security alone
 PK_NAME=() PK_CLASS=()
 
 class_of() {  # <var> <origins, ", "-separated>
@@ -1260,6 +1261,14 @@ read_dry_run() {
   jaddn o free_kib_apt_cache "$free"
   jadds o log "$dryrun/dry-run.log"
   jadds o cache "$dryrun/archives, root-owned: remove it when done"
+  # The selection is whatever the host's unattended-upgrades origins take:
+  # security alone only when apt-config was read, an origin is set, and none
+  # widens them (read_periodic). Otherwise it holds -updates or third-party
+  # packages too, and isn't a security count.
+  if [ "$APT_CONFIG_OK" -eq 1 ] && [ "$UU_ORIGINS_N" -gt 0 ] && [ -z "$UU_WIDE" ]; then
+    DRY_SECURITY_ONLY=1
+  fi
+  jaddb o security_only "$DRY_SECURITY_ONLY"
   R_DRY="{$o}"
   if [ "$rc" -ne 0 ]; then
     finding unknown dry-run "" "unattended-upgrade --dry-run exited $rc: read $dryrun/dry-run.log. The security count stays a lower bound."
@@ -1827,12 +1836,13 @@ named_by() {  # <ere>: NAMED (JSON array body); NAMED_DEPLOY 1 when deploy/ name
 }
 
 # The security set only: what a dormant component costs is the security fixes
-# it takes for nothing (nginx was in the set on six hosts). The dry run's
-# selection counts as security, and so does the simulation's security class.
+# it takes for nothing (nginx was in the set on six hosts). The simulation's
+# security class counts, and so does the dry run's selection when its
+# origins are security alone.
 pending_in() {  # <var> <globs>: VAR := the pending security packages they match
   local _pi_i _pi_n _pi_m=""
   local -a _pi_all=()
-  read -r -a _pi_all <<<"$SEC_EXACT" || true
+  if [ "$DRY_SECURITY_ONLY" -eq 1 ]; then read -r -a _pi_all <<<"$SEC_EXACT" || true; fi
   for _pi_i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
     if [ "${PK_CLASS[$_pi_i]}" = security ]; then _pi_all+=("${PK_NAME[$_pi_i]}"); fi
   done

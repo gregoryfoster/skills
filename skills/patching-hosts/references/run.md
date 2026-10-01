@@ -67,7 +67,7 @@ Every host records its before-versions (below). A host that declares a `datastor
 ## 3. The apply, in held steps
 
 Count first (`probe.sh --dry-run-into DIR` does both, with apt's cache in `DIR/archives`):
-- Count security from `sudo unattended-upgrade --dry-run -d`, from its `Packages that will be upgraded` line. The `pkgs that look like they should be upgraded:` header lists the whole selection one per line, and `apt list | grep -security` undercounts (usa-wa: 178 against 185).
+- Count security from `sudo unattended-upgrade --dry-run -d`, from its `Packages that will be upgraded` line, while its origins are `-security` alone (the probe's `security_only`): wider origins put other packages on that line too. The `pkgs that look like they should be upgraded:` header lists the whole selection one per line, and `apt list | grep -security` undercounts (usa-wa: 178 against 185).
 - Record the dry run's time and max RSS, and free disk against the download size.
 
 Then:

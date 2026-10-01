@@ -58,6 +58,8 @@ from review:
 - a dry run's empty selection line counts 0.
 - a first start that never stopped holds by its own timestamps, with no
   journal behind them.
+- the dry run's selection is security only while unattended-upgrades'
+  origins are.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1317,6 +1319,34 @@ def test_a_dormant_component_lists_its_pending_security_packages_only(host):
     )
     d = _dormant(_docker(host).run(), "docker")
     assert d["pending_security"] == ["docker.io"]
+
+
+@pytest.mark.parametrize(
+    "extra, security_only, listed",
+    [
+        ("", True, ["docker.io"]),
+        (
+            'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-updates";\n',
+            False,
+            [],
+        ),
+    ],
+)
+def test_the_dry_runs_selection_is_security_only_while_its_origins_are(
+    host, extra, security_only, listed
+):
+    # The dry run takes whatever unattended-upgrades' origins allow: with
+    # -updates among them, docker.io on its line may be a -updates fix.
+    host.apt_config(Enable="1", Lists="1", UU="1", Reboot="false")
+    host.on("apt-config", "dump", STOCK_ORIGINS + extra)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: docker.io\n",
+    )
+    out = _docker(host).run("--dry-run-into", str(host.tmp / "dry"))
+    assert out["pending"]["dry_run"]["security_only"] is security_only
+    assert _dormant(out, "docker")["pending_security"] == listed
 
 
 def test_docker_under_a_keep_exception_is_kept(host):

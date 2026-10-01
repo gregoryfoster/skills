@@ -57,7 +57,7 @@ done
 
 ## The run
 
-1. **Read the host:** `bash "<probe.sh>" --refresh-into <scratch>` prints its environment, update channels, the pending set by class, impact and dormant components as JSON. It changes nothing, and its lists go to the scratch directory. `--dry-run-into <scratch>` adds the exact security count, but downloads the set as root. What it leaves to you is in `not_read`: [readings.md](references/readings.md).
+1. **Read the host:** `bash "<probe.sh>" --refresh-into <scratch>` prints its environment, update channels, the pending set by class, impact and dormant components as JSON. It changes nothing, and its lists go to the scratch directory. `--dry-run-into <scratch>` adds the exact security count while unattended-upgrades takes `-security` alone (`security_only`), but downloads the set as root. What it leaves to you is in `not_read`: [readings.md](references/readings.md).
 2. **Compare against the posture** the knob declares ([knob.md](references/knob.md), [policy.md](references/policy.md)). The probe's `findings` are every deviation no unexpired exception covers, and `excepted` holds the rest. An expired exception is a finding. `bash "<read-knob.sh>" --host <name>` prints the knob alone, and whether the host is report-only.
 3. **Propose, in the record:** what goes in, which steps are held, which restarts, the window, and why. Include the callers' notice when the knob names callers.
 4. **The needrestart drop-in**: installed if absent (approval 1), and proven on every run with `sudo needrestart -m u -b -r l`.

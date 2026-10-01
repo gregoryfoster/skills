@@ -3,7 +3,7 @@
 What `probe.sh` reads, and the checklist for what it leaves to you. Each reading is paired with **the mistake it prevents**: in #313's step 0 round, every one was misread, or found by hand, on at least one host. The readings are read-only, with two exceptions:
 
 - `apt-get update` writes the package lists. The probe refreshes only with `--refresh-into DIR`, into `DIR/lists`.
-- **The security count's dry run** (`unattended-upgrade --dry-run -d`) runs as root and downloads the whole set into apt's cache: about 290 MB and 9 minutes on address-validator. The probe runs it only with `--dry-run-into DIR`, with apt's cache pointed at `DIR/archives` through an `APT_CONFIG` file, since `unattended-upgrade` takes no `-o`. Without it, the security count is a lower bound.
+- **The security count's dry run** (`unattended-upgrade --dry-run -d`) runs as root and downloads the whole set into apt's cache: about 290 MB and 9 minutes on address-validator. The probe runs it only with `--dry-run-into DIR`, with apt's cache pointed at `DIR/archives` through an `APT_CONFIG` file, since `unattended-upgrade` takes no `-o`. Without it, the security count is a lower bound. With it, the count is exact only while the host's unattended-upgrades origins are `-security` alone: wider origins put `-updates` and third-party packages on the same line, and the probe's `security_only` says which.
 
 The probe reads the root-only readings through `sudo -n`, so it never prompts. With `--root DIR` it reads an image tree's files, and asks a running system only when `DIR/run/systemd/system` exists, the test systemd itself uses.
 
