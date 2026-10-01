@@ -554,7 +554,8 @@ def test_a_recovery_point_from_another_day_is_refused(host):
 def test_a_backup_unit_must_have_run_since_the_recovery_point(
     host, started, objects, refused
 ):
-    host.knob(DATASTORE)
+    # Declared by its timer: the record names the service it starts.
+    host.knob(DATASTORE + "backup app-backup.timer\n")
     began = TUE_1530 - 3600
     _recovery(host, "backup app-backup", began=began)
     host.show(
@@ -582,7 +583,7 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     ],
 )
 def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refused):
-    host.knob(DATASTORE)
+    host.knob(DATASTORE + "backup app-backup\n")
     began = TUE_1530 - 3600
     _recovery(host, "backup app-backup", began=began)
     host.show(
@@ -594,6 +595,24 @@ def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refus
     out = host.run("--offnode-object", "s3://bucket/app-1", rc=3)
     assert any(refused in r for r in out["refused"])
     assert out["gate"]["recovery_point"]["backups"][0]["ok"] is False
+
+
+def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
+    # Any unit that ran since the recovery point began would otherwise waive
+    # every dump.
+    host.knob(DATASTORE + "backup app-backup\n")
+    began = TUE_1530 - 3600
+    _recovery(host, "backup apt-daily", began=began)
+    host.show(
+        "apt-daily.service",
+        Result="success",
+        ExecMainStartTimestamp=f"@{began + 10 * MIN}",
+        ExecMainExitTimestamp=f"@{began + 12 * MIN}",
+    )
+    out = host.run("--offnode-object", "s3://bucket/app-1", rc=3)
+    [r] = [r for r in out["refused"] if "isn't one the knob declares" in r]
+    assert r.startswith("backup unit apt-daily.service ")
+    assert out["gate"]["recovery_point"]["backups"][0]["declared"] is False
 
 
 def test_an_attestation_with_no_datastore_is_refused(host):

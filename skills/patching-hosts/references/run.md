@@ -74,7 +74,7 @@ Every host records its before-versions (below). A host that declares a `datastor
   local <path>
   ```
 
-  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself: its run must have *started* after `began` and succeeded, it stands in for every dump, and the owner names its object with `--offnode-object`. A `local` file, such as the globals dump, stays on the node and is never attested. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
+  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts): its run must have *started* after `began` and succeeded, it stands in for every dump, and the owner names its object with `--offnode-object`. A `local` file, such as the globals dump, stays on the node and is never attested. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
 - A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps

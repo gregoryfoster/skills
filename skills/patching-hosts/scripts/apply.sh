@@ -64,8 +64,8 @@ expected duration, isn't wholly inside one window or overlaps a quiet
 range; and when an inflight command prints anything but 0. On a host that
 declares a datastore, the bulk also refuses until the recovery point began
 within 24 hours, covers every datastore, and has left the node: each dump
-attested by its sha256, and each backup unit run successfully since the
-recovery point began, with its object named.
+attested by its sha256, and each backup unit, one the knob declares, run
+successfully since the recovery point began, with its object named.
 
 The run's directory is root-only: 0700, and each file 0600.
   recovery-point   written before the bulk (run.md §2 has its lines)
@@ -564,7 +564,7 @@ gate_span() {
 # name. A recovery point from another day isn't one for this run.
 RP_MAX_AGE=86400
 gate_recovery() {
-  local rec line kind engine unit rest db sha path key n=0 i r s x began="" o="" a="" e iso="" ok u
+  local rec line kind engine unit rest db sha path key n=0 i r s x began="" o="" a="" e iso="" ok u k declared
   local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=()
   [ "$step" = bulk ] || return 0
   if [ "${#KNOB_DATASTORE[@]}" -eq 0 ]; then
@@ -649,9 +649,19 @@ gate_recovery() {
   a=""
   for unit in ${backups[@]+"${backups[@]}"}; do
     unit_name unit "$unit"
-    e="" ok=0
+    e="" ok=0 declared=0
     jadds e unit "$unit"
-    if ! unit_show "$unit" Result ExecMainStartTimestamp ExecMainExitTimestamp; then
+    # Only the host's own regime stands in for a dump: a unit a backup line
+    # names, or the service a declared timer starts.
+    for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      unit_name k "${f[0]}"
+      if [ "$k" = "$unit" ] || [ "$k" = "${unit%.service}.timer" ]; then declared=1; fi
+    done
+    jaddb e declared "$declared"
+    if [ "$declared" -eq 0 ]; then
+      refuse "backup unit $unit isn't one the knob declares: only the host's own backup regime, named by a backup line (knob.md), stands in for a dump"
+    elif ! unit_show "$unit" Result ExecMainStartTimestamp ExecMainExitTimestamp; then
       refuse "backup unit $unit's last run couldn't be read"
     else
       s=${U_ExecMainStartTimestamp#@} x=${U_ExecMainExitTimestamp#@}
