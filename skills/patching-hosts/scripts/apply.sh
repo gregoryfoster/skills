@@ -25,8 +25,10 @@ Steps:
 
 Every step runs `NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v` as
 root, with no memory cap, then runs probe.sh into the run's directory. It
-never reboots, unmasks, enables, removes or purges anything, and never holds
-or releases a package the owner held. A step takes minutes: start it where
+never reboots, unmasks or enables anything, and never holds or releases a
+package the owner held. It runs no apt-get remove or purge; the packages
+unattended-upgrade auto-removes itself are reported, under
+upgrade.auto_removed. A step takes minutes: start it where
 nothing cuts it off, in the background, and read its JSON when it ends.
 
 Options:
