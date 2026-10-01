@@ -456,6 +456,18 @@ base image, or an owner-approved remedy the profile documents.
        it takes no `-o`, and `APT_CONFIG` loses to `apt.conf.d`;
      - origins wider than `-security` without `exception uu:origins`;
      - a `dpkg --audit` that isn't clean before the step;
+   - **four more from review (CR 99–124):**
+     - a restarter that isn't a unit on the host: `is-active` reads a
+       missing unit as inactive, so it would never be stopped;
+     - a dry run that counted nothing, or began more than 24 hours ago;
+     - a recovery point whose `backup` unit the knob doesn't declare;
+     - an automatic apt run in progress, or a span that meets the range
+       `apt-daily-upgrade.timer` can start in: systemd draws its random
+       delay again at every reload, and a step's maintainer scripts reload
+       it;
+   - **a held step stops its restarters before it releases its group,** so
+     a stop that fails leaves the group held, and a step that fails before
+     its upgrade starts them again and can run again;
    - **a recovery point must have begun within 24 hours,** and a backup
      unit's run must have *started* after it began. The record's lines are in
      run.md §2, for step 6a to write;

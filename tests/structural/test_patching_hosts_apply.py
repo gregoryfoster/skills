@@ -38,6 +38,19 @@ image:
   touches, and a refresh that fails holds nothing;
 - exit 0 without "All upgrades installed" or "No packages found" isn't green.
 
+From review (CR 99-124):
+
+- a restarter that isn't a unit on the host is refused: is-active reads a
+  missing unit as inactive (systemd 255), so it would never be stopped;
+- a dry run that counted nothing, or began more than 24 hours ago, is
+  refused, and so is a recovery point whose backup unit the knob doesn't
+  declare;
+- an automatic apt run in progress, or a span that meets the range
+  apt-daily-upgrade.timer can start in, is refused: that run's
+  unattended-upgrade would hold the lock;
+- a held step stops its restarters before it releases its group, and one
+  that fails before its upgrade starts them again and can run again.
+
 Each case runs apply.sh from a copy of the skill's scripts, with probe.sh
 replaced by a stub that logs its arguments, so the re-probe after a step
 never reads the machine running the tests. `date +%s` answers a fixed time.
