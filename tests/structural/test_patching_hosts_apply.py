@@ -92,7 +92,10 @@ def _dispatcher(tmp_path_factory):
 
 
 class Host(RigHost):
-    STUBBED = (*RigHost.STUBBED, "date", "sleep")
+    # The commands a run must never reach, stubbed so a call is seen, and
+    # never the machine's own.
+    NEVER = ("shutdown", "reboot", "poweroff", "halt", "systemd-run")
+    STUBBED = (*RigHost.STUBBED, "date", "sleep", *NEVER)
     FALLBACKS = {
         **RigHost.FALLBACKS,
         "date": 'exec /bin/date "$@"',
@@ -871,5 +874,5 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
             assert words[0] in ("update", "-s"), args
         if name == "apt-mark":
             assert words[0] in ("hold", "unhold", "showhold", "showauto"), args
-        assert name not in ("shutdown", "reboot", "needrestart"), name
+        assert name not in (*Host.NEVER, "needrestart"), name
     assert host.holds() == []
