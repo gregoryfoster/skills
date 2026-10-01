@@ -353,6 +353,13 @@ def test_a_window_that_wraps_past_midnight_holds_the_span(host, window, clock):
     assert out["gate"]["span"]["window"]["line"] == 3
 
 
+def test_a_dry_run_that_counted_nothing_refuses(host):
+    (host.dry / "summary").write_text("exit=0\ncount=\nwall_seconds=4\n")
+    out = host.run(rc=3)
+    assert any("counted nothing" in r for r in out["refused"])
+    assert _changed(host) == []
+
+
 def test_no_window_refuses(host):
     host.knob(KNOB.replace("window Tue 15:00-21:00\n", ""))
     out = host.run(rc=3)

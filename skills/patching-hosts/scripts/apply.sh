@@ -458,7 +458,7 @@ gate_run() {
 
 DRY_SUMMARY=""
 gate_dry() {
-  local line rc=""
+  local line rc="" count=""
   [ "$step" = bulk ] || return 0
   if [ -z "$dryrun" ]; then
     refuse "no --dry-run DIR: count first with probe.sh --dry-run-into DIR (run.md section 3). Its wall time is the floor of the step's expected duration"
@@ -472,11 +472,17 @@ gate_dry() {
   while IFS= read -r line; do
     case $line in
       exit=*) rc=${line#exit=} ;;
+      count=*) count=${line#count=} ;;
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
     esac
   done <<<"$DRY_SUMMARY"
   if [ "$rc" != 0 ]; then
     refuse "the dry run exited ${rc:-unknown}: read $dryrun/dry-run.log, and count again"
+  elif ! is_int "$count"; then
+    # Exit 0 with nothing counted: Update-Days, InstallOnShutdown or a lock
+    # made unattended-upgrade skip the run, and the step would skip it the
+    # same way, after holding every group.
+    refuse "the dry run exited 0 but counted nothing: read $dryrun/dry-run.log, and count again"
   fi
   is_int "$EXPECT" || refuse "$dryrun/summary holds no wall time"
 }
