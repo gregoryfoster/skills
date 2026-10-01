@@ -1986,7 +1986,7 @@ read_docker() {
 }
 
 read_postgres() {
-  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started sess ses=0 ses_why="" ver name up="" pg_own="" span_unknown=0
+  local inst=0 out p r c online=0 nusr=0 wr=0 window="" reset d db writes own created started sess ses=0 ses_why="" ver name status up="" pg_own="" span_unknown=0 gap="" down=""
   local -a df=()
   WL="" INUSE="" DORM="" UNK=""
   if have dpkg-query; then
@@ -2005,13 +2005,32 @@ read_postgres() {
     elif [ -z "$PG_CLUSTERS" ]; then
       UNK="no cluster"
     else
+      # Every cluster counts: an online one once its catalogs were read, a
+      # down one by its own unit's idle time. postgresql.service can't speak
+      # for them: on Debian it's an umbrella that stays active (exited) with
+      # every cluster down.
       for c in $PG_CLUSTERS; do
-        case $c in */online/*) online=1 ;; esac
+        IFS=/ read -r ver name _ status _ <<<"$c"
+        if [ "$status" = online ]; then
+          online=1
+          if ! in_words "$ver/$name" "$PG_READ"; then gap="$gap $ver/$name (unread)"; fi
+        else
+          idle_days "postgresql@$ver-$name.service"
+          if ! window_ok "$IDLE"; then
+            gap="$gap $ver/$name (down ${IDLE:-an unknown number of} days)"
+          elif [ -z "$down" ] || [ "$IDLE" -lt "$down" ]; then
+            down=$IDLE
+          fi
+        fi
       done
-      if [ "$online" -eq 0 ]; then
-        idle_verdict postgresql.service "every cluster down, postgresql.service inactive"
+      if [ "$online" -eq 0 ] && [ -z "$gap" ]; then
+        DORM="every cluster down, the latest for $down days"
+      elif [ "$online" -eq 0 ]; then
+        UNK="every cluster down, but not each for 30 days:$gap"
       elif [ -z "${PG_READ// /}" ]; then
         UNK="its activity needs a login as postgres, and that failed"
+      elif [ -n "$gap" ]; then
+        UNK="not every cluster could be judged:$gap"
       else
         for r in ${PG_ROWS[@]+"${PG_ROWS[@]}"}; do
           IFS=$KNOB_US read -r _ db writes reset own created started sess <<<"$r"

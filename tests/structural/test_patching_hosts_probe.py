@@ -68,6 +68,8 @@ from review:
 - a database only read isn't dormant: its sessions show the reads.
 - a Redis with no key isn't dormant while anything looks it up, lets keys
   expire, subscribes or connects.
+- every Postgres cluster counts toward the verdict: an unread or recently
+  stopped one makes it unknown.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -1648,6 +1650,55 @@ def test_a_database_only_read_isnt_dormant(host, sessions, verdict, evidence):
             ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0", old, old, "9"),
         ],
     )
+    d = _dormant(host.run(), "postgres")
+    assert d["verdict"] == verdict
+    assert evidence in d["evidence"]
+
+
+@pytest.mark.parametrize(
+    "main, b_down, verdict, evidence",
+    [
+        ("online", 2, "unknown", "16/b (down 2 days)"),
+        ("online", 45, "dormant", "no database but postgres"),
+        ("down", 45, "dormant", "every cluster down, the latest for 45 days"),
+        ("down", 2, "unknown", "16/b (down 2 days)"),
+    ],
+)
+def test_every_postgres_cluster_counts_toward_the_verdict(
+    host, main, b_down, verdict, evidence
+):
+    # A cluster stopped two days ago could be the busy one. postgresql.service
+    # stays active (exited) with every cluster down, so each cluster's own
+    # unit says how long it's been down.
+    _postgres(host, [("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0")])
+    host.cases["pg_lsclusters"].clear()
+    host.on(
+        "pg_lsclusters",
+        "-h",
+        f"16 main 5432 {main} postgres /var/lib/postgresql/16/main "
+        "/var/log/postgresql/postgresql-16-main.log\n"
+        "16 b 5433 down postgres /var/lib/postgresql/16/b "
+        "/var/log/postgresql/postgresql-16-b.log\n",
+    )
+    then = f"@{host.now - 45 * DAY - 60}"
+    if main == "online":
+        host.show(
+            "postgresql@16-main.service",
+            ActiveState="active",
+            ActiveEnterTimestamp=then,
+        )
+    else:
+        host.show(
+            "postgresql@16-main.service",
+            ActiveState="inactive",
+            InactiveEnterTimestamp=then,
+        )
+    host.show(
+        "postgresql@16-b.service",
+        ActiveState="inactive",
+        InactiveEnterTimestamp=f"@{host.now - b_down * DAY - 60}",
+    )
+    host.show("postgresql.service", ActiveState="active")
     d = _dormant(host.run(), "postgres")
     assert d["verdict"] == verdict
     assert evidence in d["evidence"]
