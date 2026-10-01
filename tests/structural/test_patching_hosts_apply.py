@@ -553,6 +553,29 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
         assert out["gate"]["recovery_point"]["backups"][0]["ok"] is True
 
 
+@pytest.mark.parametrize(
+    "result, ran, refused",
+    [
+        # Started since, but its exit is the run before's.
+        ("success", -60, "hasn't finished the run it started"),
+        ("exit-code", 120, "ended in exit-code, not success"),
+    ],
+)
+def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refused):
+    host.knob(DATASTORE)
+    began = TUE_1530 - 3600
+    _recovery(host, "backup app-backup", began=began)
+    host.show(
+        "app-backup.service",
+        Result=result,
+        ExecMainStartTimestamp=f"@{began + 10 * MIN}",
+        ExecMainExitTimestamp=f"@{began + 10 * MIN + ran}",
+    )
+    out = host.run("--offnode-object", "s3://bucket/app-1", rc=3)
+    assert any(refused in r for r in out["refused"])
+    assert out["gate"]["recovery_point"]["backups"][0]["ok"] is False
+
+
 def test_an_attestation_with_no_datastore_is_refused(host):
     out = host.run("--offnode-sha256", SHA_A, rc=3)
     assert any("declares no datastore" in r for r in out["refused"])
