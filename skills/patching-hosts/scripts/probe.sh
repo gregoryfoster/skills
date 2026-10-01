@@ -30,7 +30,8 @@ Options:
   --dry-run-into DIR  count the security set exactly with unattended-upgrade
                       --dry-run, as root, with apt's cache in DIR/archives. It
                       downloads the whole set (290 MB and 9 minutes on one
-                      host) and leaves it there for you to remove
+                      host) and leaves it there for you to remove. Its cost
+                      goes in DIR/summary, which apply.sh --dry-run reads
   --post-boot         the checks after a reboot (run.md §6), not the readings
                       before a run
   --session-pid PID   where the session's chain to PID 1 starts (default: the
@@ -172,25 +173,13 @@ fi
 # No function here ends on a bare `[ … ] && …`: a function that returns
 # non-zero stops the script under errexit, wherever it is called plainly.
 
-# dpkg-query's format fields and unattended-upgrades' own variable, not shell
-# expansions.
+# dpkg-query's format fields, not shell expansions.
 # shellcheck disable=SC2016
-DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${Package} ${db:Status-Abbrev}\n' UU_DISTRO_ID='${distro_id}'
+DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${Package} ${db:Status-Abbrev}\n'
 # unit_show sets these by name.
 U_LoadState="" U_ConditionResult="" U_Result="" U_ActiveState="" U_MainPID="" U_After=""
 U_RequiredBy="" U_BoundBy="" U_NRestarts="" U_ExecMainExitTimestamp="" U_InactiveEnterTimestamp=""
 U_NextElapseUSecRealtime="" U_ActiveEnterTimestamp="" U_InactiveExitTimestamp=""
-
-have() { command -v "$1" >/dev/null 2>&1; }
-
-capture() {  # <var> <cmd>...: VAR := its stdout; CAP_RC := its status; CAP_ERR := its first stderr line
-  local _cv=$1 _co
-  shift
-  CAP_RC=0 CAP_ERR=""
-  _co=$("$@" 2>"$P_TMP/stderr") || CAP_RC=$?
-  IFS= read -r CAP_ERR <"$P_TMP/stderr" || true
-  printf -v "$_cv" '%s' "$_co"
-}
 
 capture2() {  # <var> <cmd>...: as capture, with stderr in VAR too
   local _cv=$1 _co
@@ -214,23 +203,6 @@ json_list() {  # <var> <space-separated words>: VAR := a JSON array of them
   read -r -a _jl_w <<<"$2" || true
   for _jl in ${_jl_w[@]+"${_jl_w[@]}"}; do jpushs _jl_a "$_jl"; done
   printf -v "$1" '[%s]' "$_jl_a"
-}
-
-in_words() {  # <word> <space-separated list>
-  case " $2 " in *" $1 "*) return 0 ;; esac
-  return 1
-}
-
-glob_match() {  # <name> <space-separated globs>
-  local _g
-  local -a _gs=()
-  read -r -a _gs <<<"$2" || true
-  for _g in ${_gs[@]+"${_gs[@]}"}; do
-    # The knob's hold globs are patterns on purpose.
-    # shellcheck disable=SC2254
-    case $1 in $_g) return 0 ;; esac
-  done
-  return 1
 }
 
 apt_env() {  # an apt command, reading ROOT's configuration and state
@@ -328,13 +300,6 @@ docker_cmd() {  # docker, then docker as root when the user isn't in its group
 
 live_cmd() {  # <cmd>: whether a reading from the running system can be taken with it
   [ "$P_LIVE" -eq 1 ] && have "$1"
-}
-
-unit_name() {  # <var> <unit>: a knob's unit name, with .service when it has no suffix
-  case $2 in
-    *.*) printf -v "$1" '%s' "$2" ;;
-    *) printf -v "$1" '%s.service' "$2" ;;
-  esac
 }
 
 F_KIND=() F_ID=() F_WHAT=() F_MSG=()
@@ -886,27 +851,6 @@ read_units() {
   done
 }
 
-# Whether an Allowed-Origins or Origins-Pattern entry takes more than the
-# security set. The release pocket itself doesn't: Ubuntu's stock
-# 50unattended-upgrades lists "${distro_id}:${distro_codename}", which never
-# changes after release and is there for the dependencies.
-widens() {  # <entry>
-  local suite
-  case $1 in *-security*) return 1 ;; esac
-  case $1 in
-    *archive=*) suite=${1#*archive=} suite=${suite%%,*} ;;
-    *codename=*) suite=${1#*codename=} suite=${suite%%,*} ;;
-    *:*) suite=${1##*:} ;;
-    *) return 0 ;;
-  esac
-  case $1 in
-    "$UU_DISTRO_ID"* | Ubuntu* | *origin=Ubuntu* | *"origin=$UU_DISTRO_ID"*) ;;
-    *) return 0 ;;
-  esac
-  case $suite in *-*) return 0 ;; esac
-  return 1
-}
-
 # The effective values, through apt-config: a file named after Docker sets
 # Enable to 0 on the base image, whatever 20auto-upgrades says.
 read_periodic() {
@@ -1376,7 +1320,7 @@ read_esm() {
 
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0
-  local -a timer=() words=()
+  local -a words=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
     not_read "the exact security count and the dry run's cost: only with --dry-run-into DIR, which downloads the whole set as root"
@@ -1387,21 +1331,22 @@ read_dry_run() {
     return 0
   fi
   conf=$dryrun/apt.conf
-  mkdir -p "$dryrun/archives"
+  # apt fetches into archives/partial, and the dry run's fetcher never makes
+  # it: without it, every download failed (noble, 2026-10-01).
+  mkdir -p "$dryrun/archives/partial"
   {
     if [ -n "$P_ROOT" ]; then printf 'Dir "%s/";\n' "$P_ROOT"; fi
     printf 'Dir::Cache::archives "%s/archives/";\n' "$dryrun"
     if [ "$REFRESHED" -eq 1 ]; then printf 'Dir::State::Lists "%s/";\n' "$LISTS_DIR"; fi
   } >"$conf"
-  # GNU time only: BSD's takes no -f.
-  if /usr/bin/time -f %M -o /dev/null true 2>/dev/null; then timer=(/usr/bin/time -f %M -o "$dryrun/max-rss-kib"); fi
+  rss_timer "$dryrun/max-rss-kib"
   t0=$(date +%s)
   rc=0
   # At adj 0: the session may run at -1000, and the dry run would inherit it.
   if have choom; then
-    as_root env "APT_CONFIG=$conf" choom -n 0 -- ${timer[@]+"${timer[@]}"} unattended-upgrade --dry-run -d >"$dryrun/dry-run.log" 2>&1 || rc=$?
+    as_root env "APT_CONFIG=$conf" choom -n 0 -- ${TIMER[@]+"${TIMER[@]}"} unattended-upgrade --dry-run -d >"$dryrun/dry-run.log" 2>&1 || rc=$?
   else
-    as_root env "APT_CONFIG=$conf" ${timer[@]+"${timer[@]}"} unattended-upgrade --dry-run -d >"$dryrun/dry-run.log" 2>&1 || rc=$?
+    as_root env "APT_CONFIG=$conf" ${TIMER[@]+"${TIMER[@]}"} unattended-upgrade --dry-run -d >"$dryrun/dry-run.log" 2>&1 || rc=$?
   fi
   t1=$(date +%s)
   # The selection line can be empty: with nothing to upgrade but auto-removals
@@ -1418,7 +1363,8 @@ read_dry_run() {
     n=${#words[@]}
     SEC_EXACT=" ${words[*]-} "
   fi
-  if [ -f "$dryrun/max-rss-kib" ]; then IFS= read -r rss <"$dryrun/max-rss-kib" || true; fi
+  out=$(cat "$dryrun/max-rss-kib" 2>/dev/null) || out=""
+  rss_of rss "$out"
   out=$(du -sk "$dryrun/archives" 2>/dev/null) || out=""
   dlk=${out%%[[:space:]]*}
   out=$(df -Pk "$P_ROOT/var/cache/apt/archives" 2>/dev/null) || out=""
@@ -1441,6 +1387,10 @@ read_dry_run() {
     DRY_SECURITY_ONLY=1
   fi
   jaddb o security_only "$DRY_SECURITY_ONLY"
+  # apply.sh reads it: the dry run's cost is each step's expected duration.
+  printf 'exit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\n' \
+    "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" >"$dryrun/summary"
+  jadds o summary "$dryrun/summary"
   R_DRY="{$o}"
   if [ "$rc" -ne 0 ]; then
     finding unknown dry-run "" "unattended-upgrade --dry-run exited $rc: read $dryrun/dry-run.log. The security count stays a lower bound."

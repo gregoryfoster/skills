@@ -12,7 +12,7 @@ metadata:
 
 Gets a host's OS packages patched without surprising anyone: no unapproved restart, no lost data, no guess passed off as a measurement. Built from ten exe.dev hosts patched by hand in [#313](https://github.com/gregoryfoster/skills/issues/313)'s step 0 round, 2026-09-21 to 09-29.
 
-**Status: in development.** The procedure, its references, the knob reader and the read-only probe are here; apply, the recovery point and the reboot chain land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md). Until they do, follow [run.md](references/run.md) by hand.
+**Status: in development.** The procedure, its references, the knob reader, the read-only probe and the gated apply are here; the recovery point and the reboot chain land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md). Until they do, take those two by hand from [run.md](references/run.md).
 
 **Activation triggers:** "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", "is this host patched".
 
@@ -46,7 +46,7 @@ The skill's `scripts/` directory ships inside the skill, not at the project root
 <!-- skill:required id=skill-scripts -->
 ```bash
 N=patching-hosts
-for S in read-knob.sh probe.sh; do SD=
+for S in read-knob.sh probe.sh apply.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -61,7 +61,7 @@ done
 2. **Compare against the posture** the knob declares ([knob.md](references/knob.md), [policy.md](references/policy.md)). The probe's `findings` are every deviation no unexpired exception covers, and `excepted` holds the rest. An expired exception is a finding. `bash "<read-knob.sh>" --host <name>` prints the knob alone, and whether the host is report-only.
 3. **Propose, in the record:** what goes in, which steps are held, which restarts, the window, and why. Include the callers' notice when the knob names callers.
 4. **The needrestart drop-in**: installed if absent (approval 1), and proven on every run with `sudo needrestart -m u -b -r l`.
-5. **The recovery point**, off the node, then **the apply** in held steps: approvals 2 and 3(a).
+5. **The recovery point**, off the node, then **the apply** in held steps. `bash "<apply.sh>" --approve --step bulk --run <dir> --dry-run <scratch>` is approval 2, and `--step <group> --run <dir>` runs each held group under its own approval 3(a). Until every gate in [run.md](references/run.md) passes, it changes nothing and says why; a step that fails prints the abort branch and the holds it left.
 6. **The reboot**, when needrestart's list or `reboot-required` calls for one: a detached in-guest chain, approval 3(b). Then verify: `bash "<probe.sh>" --post-boot`.
 7. **Record** what happened and what's left pending, by class.
 

@@ -74,7 +74,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `timer:<unit>` | `apt-daily.timer` or `apt-daily-upgrade.timer` isn't enabled under `automatic`, or isn't masked under `scheduled` |
 | `periodic:<key>` | `APT::Periodic::Enable` isn't 1, `Update-Package-Lists` or `Unattended-Upgrade` is under 1, or one is set nowhere (`automatic`) |
 | `package:unattended-upgrades` | it isn't installed (`automatic`) |
-| `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`) |
+| `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`). `apply.sh` refuses the first under either posture unless this covers it, since the security lane would apply the rest too |
 | `uu:automatic-reboot` | `Unattended-Upgrade::Automatic-Reboot` is true, or set nowhere (`automatic`) |
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
 | `held:<package>` | an owner's hold on a pending package |

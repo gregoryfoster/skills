@@ -435,6 +435,34 @@ base image, or an owner-approved remedy the profile documents.
    - no `systemctl unmask`, `enable` or `reboot`, and no `apt-get remove` or
      `purge`, was run.
 
+   **Done 2026-10-01:** `scripts/apply.sh`, tested in
+   `tests/structural/test_patching_hosts_apply.py`. The probe's stub rig is
+   now shared, in `tests/structural/patching_hosts_rig.py`. It ran live in a
+   booted noble container, with Postgres 16.2 and Redis 7.0.15 from the
+   release pocket and a timer as the restarter:
+   - the bulk held five packages and left both daemons' PIDs alone;
+   - each held step upgraded its group, and the maintainer scripts restarted
+     Postgres and Redis;
+   - health passed, the restarter came back, and `showhold` ended as
+     recorded.
+
+   Building it settled:
+   - **the bulk refreshes the host's own lists first.** The probe's dry run
+     counts against a scratch copy, and on a host whose timers are masked,
+     the host's lists may be months old. Holds expand against
+     `apt-get -s dist-upgrade` after that refresh, from any origin;
+   - **three refusals beyond the list:**
+     - `Automatic-Reboot` true: unattended-upgrade then reboots by itself,
+       it takes no `-o`, and `APT_CONFIG` loses to `apt.conf.d`;
+     - origins wider than `-security` without `exception uu:origins`;
+     - a `dpkg --audit` that isn't clean before the step;
+   - **a recovery point must have begun within 24 hours,** and a backup
+     unit's run must have *started* after it began. The record's lines are in
+     run.md §2, for step 6a to write;
+   - **two probe bugs the live run caught.** `--dry-run-into` never made
+     `archives/partial`, so every download failed once anything was pending.
+     GNU time's status line on a failed command hid the max RSS.
+
 6a. **The recovery point and the reboot chain.**
     - **`recovery-point.sh --approve`** dumps each declared `datastore`.
       - Postgres: `pg_dump -Fc` through `sudo sh -c 'umask 077; cat > …'`.

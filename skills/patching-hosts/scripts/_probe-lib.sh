@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# _probe-lib.sh — what probe.sh reads a host through: the root it reads
-# under, how it reaches root for the few readings that need it, a unit's state
-# on disk, stat and date on GNU or BSD, and a small JSON builder.
+# _probe-lib.sh — what probe.sh and apply.sh reach a host through: the root
+# they read under, how they reach root, a knob command's user and time limit,
+# a unit's state on disk, stat and date on GNU or BSD, and a small JSON
+# builder.
 # The P_* and U_* variables are this library's output; its callers read them.
 # shellcheck disable=SC2034
 set -euo pipefail
 
 probe_lib_usage() {
   cat <<'USAGE'
-Usage: . _probe-lib.sh    (sourced by probe.sh; running it does nothing)
+Usage: . _probe-lib.sh    (sourced by probe.sh and apply.sh; running it does nothing)
 
-The primitives probe.sh reads a host through:
+The primitives probe.sh and apply.sh reach a host through:
   probe_init ROOT           sets P_ROOT ("" for /), P_LIVE, P_EUID, P_USER,
                             P_PRIV (root, sudo or none), P_KNOB_USER, P_NOW
                             and P_TMP, a scratch directory the caller removes
@@ -22,6 +23,17 @@ The primitives probe.sh reads a host through:
                             under timeout KNOB_CMD_TIMEOUT where timeout(1)
                             exists, with a KILL KNOB_CMD_KILL_AFTER seconds
                             later; 124 means it timed out
+  have CMD                  whether CMD is on PATH
+  capture VAR CMD...        VAR := CMD's stdout, CAP_RC := its status,
+                            CAP_ERR := its first stderr line
+  in_words WORD LIST        whether WORD is in a space-separated LIST
+  glob_match NAME GLOBS     whether NAME matches one of space-separated GLOBS
+  unit_name VAR UNIT        a knob's unit, with .service when it has no suffix
+  widens ENTRY              whether an unattended-upgrades origin entry takes
+                            more than the security set
+  rss_timer FILE            TIMER := GNU time's words to record a command's
+                            max RSS in FILE, or none where there's no GNU time
+  rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
   unit_show UNIT PROP...    systemctl show, setting U_<PROP> for each PROP;
@@ -111,6 +123,90 @@ knob_cmd() {  # <command>
   else
     runuser -u "$P_KNOB_USER" -- ${_kc_t[@]+"${_kc_t[@]}"} sh -c "$1"
   fi
+}
+
+# --- shared by probe.sh and apply.sh ------------------------------------------
+have() { command -v "$1" >/dev/null 2>&1; }
+
+capture() {  # <var> <cmd>...: VAR := its stdout; CAP_RC := its status; CAP_ERR := its first stderr line
+  local _cv=$1 _co
+  shift
+  CAP_RC=0 CAP_ERR=""
+  _co=$("$@" 2>"$P_TMP/stderr") || CAP_RC=$?
+  IFS= read -r CAP_ERR <"$P_TMP/stderr" || true
+  printf -v "$_cv" '%s' "$_co"
+}
+
+in_words() {  # <word> <space-separated list>
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+glob_match() {  # <name> <space-separated globs>
+  local _g
+  local -a _gs=()
+  read -r -a _gs <<<"$2" || true
+  for _g in ${_gs[@]+"${_gs[@]}"}; do
+    # The knob's hold globs are patterns on purpose.
+    # shellcheck disable=SC2254
+    case $1 in $_g) return 0 ;; esac
+  done
+  return 1
+}
+
+unit_name() {  # <var> <unit>: a knob's unit name, with .service when it has no suffix
+  case $2 in
+    *.*) printf -v "$1" '%s' "$2" ;;
+    *) printf -v "$1" '%s.service' "$2" ;;
+  esac
+}
+
+# unattended-upgrades' own variable, not a shell expansion.
+# shellcheck disable=SC2016
+UU_DISTRO_ID='${distro_id}'
+
+# GNU time, for a command's max RSS: BSD's takes no -f. Found on PATH rather
+# than at /usr/bin/time, so a test can stand in for it. Its line is keyed:
+# when the command fails, GNU time writes "Command exited with non-zero
+# status N" above it (noble's time 1.9, read 2026-10-01).
+TIMER=()
+rss_timer() {  # <file>: TIMER := the words that time a command into FILE, or none
+  local _rt
+  TIMER=()
+  _rt=$(type -P time 2>/dev/null) || return 0
+  if "$_rt" -f max_rss_kib=%M -o /dev/null true 2>/dev/null; then
+    TIMER=("$_rt" -f max_rss_kib=%M -o "$1")
+  fi
+}
+
+rss_of() {  # <var> <text>: VAR := the max RSS in KiB a TIMER file holds, or empty
+  local _ro_l _ro=""
+  while IFS= read -r _ro_l; do
+    case $_ro_l in max_rss_kib=*) _ro=${_ro_l#max_rss_kib=} ;; esac
+  done <<<"$2"
+  is_int "$_ro" || _ro=""
+  printf -v "$1" '%s' "$_ro"
+}
+
+# Whether an Allowed-Origins or Origins-Pattern entry takes more than the
+# security set. The release pocket itself doesn't: Ubuntu's stock
+# 50unattended-upgrades lists "${distro_id}:${distro_codename}", which never
+# changes after release and is there for the dependencies.
+widens() {  # <entry>
+  local suite
+  case $1 in *-security*) return 1 ;; esac
+  case $1 in
+    *archive=*) suite=${1#*archive=} suite=${suite%%,*} ;;
+    *codename=*) suite=${1#*codename=} suite=${suite%%,*} ;;
+    *:*) suite=${1##*:} ;;
+    *) return 0 ;;
+  esac
+  case $1 in
+    "$UU_DISTRO_ID"* | Ubuntu* | *origin=Ubuntu* | *"origin=$UU_DISTRO_ID"*) ;;
+    *) return 0 ;;
+  esac
+  case $suite in *-*) return 0 ;; esac
+  return 1
 }
 
 # --- units on disk ---------------------------------------------------------

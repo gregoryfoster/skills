@@ -59,32 +59,48 @@ Every host records its before-versions (below). A host that declares a `datastor
   - the before-versions, `dpkg-query -W`;
   - `apt-mark showauto` and `apt-mark showhold`.
 
+  `apply.sh --step bulk` writes the last two into the run's directory itself.
+
   A `>` from the session shell can't write there, and `sudo tee` creates the file at 644, readable by every user on the host.
 - **Secrets never travel:** the service's env file, keys and DSNs stay put.
 - **State a retention** for every recovery-point file, and flag a dump that holds personal data. address-validator's held its audit log's raw input.
+- **The record `apply.sh` reads**, `recovery-point` in the run's directory (0700, the file 0600), one line each:
+
+  ```
+  began <epoch seconds>
+  dump postgres <unit> <database> <sha256> <path>
+  dump redis <unit> <sha256> <path>
+  backup <unit>
+  local <path>
+  ```
+
+  A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself: its run must have *started* after `began` and succeeded, it stands in for every dump, and the owner names its object with `--offnode-object`. A `local` file, such as the globals dump, stays on the node and is never attested. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
 - A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps
 
-Count first (`probe.sh --dry-run-into DIR` does both, with apt's cache in `DIR/archives`):
+`apply.sh` runs this section: `--step bulk` (approval 2), then `--step <group>` for each held group (approval 3(a)). Besides the gate, it refuses a host where `unattended-upgrade` would reboot by itself: with `Automatic-Reboot` true it reboots once `reboot-required` appears, it takes no `-o`, and `APT_CONFIG` is read before `apt.conf.d`, so nothing passed to it overrides the host's setting. It also refuses origins wider than `-security` without `exception uu:origins`, and a `dpkg --audit` that isn't clean before the step.
+
+Count first (`probe.sh --dry-run-into DIR` does both, with apt's cache in `DIR/archives`, and leaves `DIR/summary` for `apply.sh --dry-run DIR`):
 - Count security from `sudo unattended-upgrade --dry-run -d`, from its `Packages that will be upgraded` line, while its origins are `-security` alone (the probe's `security_only`): wider origins put other packages on that line too. The `pkgs that look like they should be upgraded:` header lists the whole selection one per line, and `apt list | grep -security` undercounts (usa-wa: 178 against 185).
 - Record the dry run's time and max RSS, and free disk against the download size.
 
 Then:
 
-1. **Hold** each `hold` group in the set. Expand its globs against the pending set, record the names, and `sudo apt-mark hold` those names: the recorded list is exactly what step 3 releases. **Leave the owner's own holds alone:** a package in `apt-mark showhold` before the run was held on purpose, so the run never holds or unholds it. Report it as held by the owner. If it's in the pending set, that's a finding unless a `held:<package>` exception covers it ([policy.md](policy.md#exceptions)).
-2. **Bulk:** `sudo NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`.
+1. **Refresh the host's own lists** (`apt-get update`): the probe counted against a scratch copy, and on a host whose timers are masked, the host's may be months old.
+2. **Hold** each `hold` group in the set. Expand its globs against what's pending once the lists are fresh (`apt-get -s dist-upgrade`, any origin), record the names, and `sudo apt-mark hold` those names: the recorded list is exactly what step 4 releases. **Leave the owner's own holds alone:** a package in `apt-mark showhold` before the run was held on purpose, so the run never holds or unholds it. Report it as held by the owner. If it's in the pending set, that's a finding unless a `held:<package>` exception covers it ([policy.md](policy.md#exceptions)).
+3. **Bulk:** `sudo NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`.
    - `choom -n 0` puts the apply at adj 0, so the kernel doesn't sacrifice a production service to protect a -1000 session.
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
    - `NEEDRESTART_MODE=l` backs up the drop-in. In apt's hook there's no `-r`, so the variable wins.
-3. **Each held group, under approval 3(a):**
+4. **Each held group, under approval 3(a):**
    - unhold the packages the run held, and only those;
    - stop each `restarter`;
    - run the same command;
    - poll every `health` command **every second, logging each result with its timestamp**, until all of them exit 0 twice in a row;
    - start each `restarter` again, and confirm `is-active`.
-4. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
-5. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
+5. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
+6. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
 
 **The maintenance lane** runs in the same window, after the security steps, with the same command, holds, `choom`, `NEEDRESTART_MODE` and verdict. Only the selection widens, through an `APT_CONFIG` file:
 

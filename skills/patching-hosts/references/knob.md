@@ -4,7 +4,7 @@ A consuming repo commits `.skills/patching-hosts` to tell the skill what only it
 
 The grammar is one directive per line, and blank lines are ignored. **`#` starts a comment only at the start of a line or after whitespace**, so a command can hold a `#` (a URL fragment) as long as no space precedes it. `inflight` and `health` take the rest of the line as their command, run with `sh -c`, so a pipe works. It's the other knobs' `#`-comment line grammar, plus `[host <glob>]` sections, so it parses on stock Ubuntu with nothing extra installed. **A malformed line is a finding, never silently skipped**, reported by its line number and never echoed. It also makes every host report-only until it's fixed: a dropped `quiet` or `datastore` line would otherwise let a run through that the owner meant to stop.
 
-`read-knob.sh` prints what the knob resolves to for one host, as JSON ([SKILL.md](../SKILL.md) has its resolution block). `probe.sh` reads it through the same library, and `apply.sh` will, so every script sees the same knob.
+`read-knob.sh` prints what the knob resolves to for one host, as JSON ([SKILL.md](../SKILL.md) has its resolution block). `probe.sh` and `apply.sh` read it through the same library, so every script sees the same knob.
 
 ## Hosts and sections
 
@@ -43,7 +43,7 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 |---|---|
 | `class production\|staging\|dev\|ephemeral` | An `ephemeral` host is patched by rebuilding its image, so it gets a report and never an apply. |
 | `posture automatic\|scheduled` | [policy.md](policy.md). Absent: compared against `automatic`, report-only. |
-| `window <weekday> <HH:MM-HH:MM>` | When the monthly run may happen. May repeat. |
+| `window <weekday> <HH:MM-HH:MM>` | When the monthly run may happen. Each step's whole span must fit inside one, or `apply.sh` refuses it, so a host with none gets no apply. May repeat. |
 | `quiet <HH:MM-HH:MM> [<weekday>]` | A range no step may overlap: an ingest run, a backup, the callers' busy hours. Without a weekday, every day. May repeat. |
 | `inflight <command>` | Must print `0` before each step, and again inside the reboot chain. For a job queue, the in-flight count. For oneshot ingest, the active task units. |
 | `restarter <unit>` | An in-host automatic restarter (a health timer, a watchdog, an `OnFailure=` chain). Stopped for a data-store restart, then proven active again. |
