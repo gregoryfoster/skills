@@ -510,6 +510,20 @@ def test_the_apt_upgrade_timer_mustnt_be_able_to_start_inside_the_span(
         assert out["gate"]["apt"]["upgrade_timer"] == []
 
 
+@pytest.mark.parametrize(
+    "which, refused",
+    [
+        ("shell*", "apt-config couldn't be read"),
+        ("dump", "apt-config dump couldn't be read"),
+    ],
+)
+def test_an_apt_config_that_cant_be_read_refuses(host, which, refused):
+    host.cases["apt-config"].insert(0, (which, "", 1, "", None))
+    out = host.run(rc=3)
+    assert any(refused in r for r in out["refused"])
+    assert _changed(host) == []
+
+
 def test_knob_commands_never_run_as_root(host):
     # Root with no invoking user: nobody to run the health check as.
     out = host.run(rc=3, env={"STUB_USER": "root"})
@@ -1052,6 +1066,36 @@ def test_nothing_to_upgrade_is_green(host):
 def test_a_held_step_needs_a_green_bulk(host):
     out = host.run(step="postgres", rc=3)
     assert any("holds no bulk step" in r for r in out["refused"])
+
+
+@pytest.mark.parametrize(
+    "case, refused",
+    [
+        ("steps-unreadable", "steps couldn't be read"),
+        ("no-bulk-line", "the run's bulk isn't green"),
+        ("holds-unreadable", "holds couldn't be read"),
+        ("no-before-showhold", "before-showhold couldn't be read"),
+        ("no-wall-time", "dry-run holds no wall time"),
+    ],
+)
+def test_a_held_step_refuses_a_run_whose_records_it_cant_read(host, case, refused):
+    host.run()
+    d = host.run_dir
+    if case == "steps-unreadable":
+        (d / "steps").unlink()
+        (d / "steps").mkdir()
+    elif case == "no-bulk-line":
+        (d / "steps").write_text("redis\tok\t1\t1\t1\n")
+    elif case == "holds-unreadable":
+        (d / "holds").unlink()
+        (d / "holds").mkdir()
+    elif case == "no-before-showhold":
+        (d / "before-showhold").unlink()
+    else:
+        (d / "dry-run").write_text("exit=0\ncount=4\n")
+    out = host.run(step="postgres", rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("unhold")]
 
 
 def test_held_steps_release_only_their_own_holds_and_showhold_ends_as_recorded(host):
