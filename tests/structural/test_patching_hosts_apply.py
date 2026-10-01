@@ -119,6 +119,7 @@ class Host(RigHost):
         """A unit whose state stop and start change, and is-active reads."""
         f = self.state / f"unit.{name}"
         f.write_text(state + "\n")
+        self.show(name, LoadState="loaded")
         self.on(
             "systemctl",
             f"is-active -- {name}",
@@ -810,6 +811,16 @@ def test_a_held_step_that_fails_before_its_upgrade_can_run_again(host, fails):
     # Once it's fixed, the same step runs.
     host.cases["systemctl"], host.cases["apt-mark"] = green
     assert host.run(step="postgres")["verdict"]["ok"] is True
+
+
+def test_a_restarter_the_host_doesnt_have_is_refused(host):
+    # Misspelled: is-active reads it as inactive, and it would never stop.
+    host.knob(KNOB.replace("app-healthcheck.timer", "app-healthchek.timer"))
+    host.on("systemctl", "is-active -- app-healthchek.timer", "inactive\n", rc=4)
+    host.show("app-healthchek.timer", LoadState="not-found")
+    out = host.run(rc=3)
+    [r] = [r for r in out["refused"] if "restarter" in r]
+    assert "app-healthchek.timer (line 5) isn't a unit on this host" in r
 
 
 def test_a_restarter_stopped_before_the_step_stays_stopped(host):

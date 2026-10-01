@@ -207,7 +207,7 @@ trap 'rm -rf "$P_TMP"' EXIT
 # takes asks that system: the probe's test for an offline tree doesn't apply.
 P_LIVE=1
 # unit_show sets these by name.
-U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp=""
+U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState=""
 
 if [ -z "$run" ]; then
   _stamp=""
@@ -720,6 +720,13 @@ gate_restarters() {
   for r in ${KNOB_RESTARTER[@]+"${KNOB_RESTARTER[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[0]}"
+    # is-active reads a unit that doesn't exist as inactive (exit 4, systemd
+    # 255), so a misspelled restarter would never be stopped.
+    if ! unit_show "$u" LoadState; then
+      refuse "restarter $u (line ${f[1]}): whether it's a unit on this host couldn't be read"
+    elif [ "$U_LoadState" = not-found ]; then
+      refuse "restarter $u (line ${f[1]}) isn't a unit on this host: a misspelled one leaves the real restarter running through the restart"
+    fi
     st=$(systemctl is-active -- "$u" 2>/dev/null) || true
     R_UNIT+=("$u") R_BEFORE+=("${st:-unknown}")
     e=""
