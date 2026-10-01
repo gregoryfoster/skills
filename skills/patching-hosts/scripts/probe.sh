@@ -1202,7 +1202,7 @@ read_esm() {
 }
 
 read_dry_run() {
-  local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w
+  local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0
   local -a timer=() words=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
@@ -1231,16 +1231,19 @@ read_dry_run() {
     as_root env "APT_CONFIG=$conf" ${timer[@]+"${timer[@]}"} unattended-upgrade --dry-run -d >"$dryrun/dry-run.log" 2>&1 || rc=$?
   fi
   t1=$(date +%s)
+  # The selection line can be empty: with nothing to upgrade but auto-removals
+  # pending, unattended-upgrade still logs it (2.9.1's run()). Seen, it's the
+  # count, 0 included, whether or not a space follows the colon.
   while IFS= read -r line; do
     case $line in
-      *"Packages that will be upgraded:"*) names=${line#*Packages that will be upgraded:} ;;
+      *"Packages that will be upgraded:"*) names=${line#*Packages that will be upgraded:} sel=1 ;;
       *"No packages found that can be upgraded unattended"*) n=0 ;;
     esac
   done <"$dryrun/dry-run.log"
-  if [ -n "$names" ]; then
+  if [ "$sel" -eq 1 ]; then
     read -r -a words <<<"$names" || true
     n=${#words[@]}
-    SEC_EXACT=" ${words[*]} "
+    SEC_EXACT=" ${words[*]-} "
   fi
   if [ -f "$dryrun/max-rss-kib" ]; then IFS= read -r rss <"$dryrun/max-rss-kib" || true; fi
   out=$(du -sk "$dryrun/archives" 2>/dev/null) || out=""

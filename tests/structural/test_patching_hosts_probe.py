@@ -55,6 +55,7 @@ from review:
 - an active engine whose CLI isn't on PATH says so.
 - the ESM counts say they come from the host's own lists.
 - tables kept in the `postgres` database are data like any other's.
+- a dry run's empty selection line counts 0.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -866,6 +867,23 @@ def test_a_dry_run_without_a_selection_line_is_a_finding(host):
     assert out["pending"]["dry_run"]["count"] is None
     f = _finding(out, "dry-run")
     assert "neither" in f["message"] and "dry-run.log" in f["message"]
+
+
+@pytest.mark.parametrize("line", ["upgraded: ", "upgraded:"])
+def test_a_dry_runs_empty_selection_line_counts_0(host, line):
+    # Nothing to upgrade, but auto-removals pending: unattended-upgrade 2.9.1
+    # logs the selection line with no name on it. Its trailing space is all
+    # that kept the count from reading as missing, and on bash 3.2 the empty
+    # list was an unbound variable.
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        f"Packages that will be {line}\nPackages that are auto removed: libfoo1\n",
+    )
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    d = out["pending"]["dry_run"]
+    assert (d["count"], d["packages"]) == (0, [])
+    assert "dry-run" not in _ids(out)
 
 
 def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):
