@@ -48,6 +48,7 @@ from review:
 - a line parsed from a root command stays English when sudo resets the locale.
 - every idle window counts from the component's own start, never the kernel's.
 - a dormant component lists only its pending security packages.
+- a dry run that exits 0 without a selection line is a finding, not silence.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -794,6 +795,15 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     assert f'Dir::Cache::archives "{scratch.resolve()}/archives/";' in conf
     assert f'Dir "{host.root.resolve()}/";' in conf
     assert [c for c in host.calls("choom") if "-n 0" in c[1]]
+
+
+def test_a_dry_run_without_a_selection_line_is_a_finding(host):
+    # Exit 0, but nothing to count: the operator who asked hears why.
+    host.on("unattended-upgrade", "--dry-run -d", "Lock could not be acquired\n")
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    assert out["pending"]["dry_run"]["count"] is None
+    f = _finding(out, "dry-run")
+    assert "neither" in f["message"] and "dry-run.log" in f["message"]
 
 
 def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):

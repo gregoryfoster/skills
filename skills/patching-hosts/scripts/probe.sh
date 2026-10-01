@@ -1257,6 +1257,8 @@ read_dry_run() {
   R_DRY="{$o}"
   if [ "$rc" -ne 0 ]; then
     finding unknown dry-run "" "unattended-upgrade --dry-run exited $rc: read $dryrun/dry-run.log. The security count stays a lower bound."
+  elif [ -z "$n" ]; then
+    finding unknown dry-run "" "unattended-upgrade --dry-run exited 0, but its log has neither a \"Packages that will be upgraded\" line nor \"No packages found\": read $dryrun/dry-run.log. The security count stays a lower bound."
   fi
 }
 
