@@ -29,8 +29,8 @@ What this file pins, against the plan's step 3 list:
   first start went;
 - the session's chain is read to PID 1, whatever its parents are called;
 - an owner's hold on a pending package needs a `held:` exception;
-- a database no `datastore` line names is a finding, but `postgres` and the
-  templates are not.
+- a database no `datastore` line names is a finding, but the templates are
+  not, nor `postgres` while it holds no table of its own.
 
 Beyond that list, from running it live against a booted systemd 255, and
 from review:
@@ -54,6 +54,7 @@ from review:
 - a refused run leaves no scratch directory behind.
 - an active engine whose CLI isn't on PATH says so.
 - the ESM counts say they come from the host's own lists.
+- tables kept in the `postgres` database are data like any other's.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -945,7 +946,7 @@ def test_a_database_no_datastore_line_names_is_a_finding(host):
         "16 main 5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log\n",
     )
     rows = [
-        ("postgres", "7000000", "0", "", "C.UTF-8", "c", ""),
+        ("postgres", "7000000", "0", "", "C.UTF-8", "c", "", "0"),
         ("template0", "7000000", "0", "", "C.UTF-8", "c", ""),
         ("template1", "7000000", "0", "", "C.UTF-8", "c", ""),
         ("app", "90000000", "1200", "1700000000", "en_US.UTF-8", "c", "2.39"),
@@ -1413,7 +1414,9 @@ def test_an_empty_postgres_counts_from_its_own_start(host, days, verdict):
     )
     rows = ["postgres", "template0", "template1"]
     host.on(
-        "psql", "*", "".join(f"{r}\x1f1\x1f0\x1f\x1fC.UTF-8\x1fc\x1f\n" for r in rows)
+        "psql",
+        "*",
+        "".join(f"{r}\x1f1\x1f0\x1f\x1fC.UTF-8\x1fc\x1f\x1f0\n" for r in rows),
     )
     host.show(
         "postgresql@16-main.service",
@@ -1423,6 +1426,34 @@ def test_an_empty_postgres_counts_from_its_own_start(host, days, verdict):
     d = _dormant(host.run(), "postgres")
     assert d["verdict"] == verdict
     assert f"up {'only ' if days < 30 else ''}{days} days" in d["evidence"]
+
+
+def _postgres(host: Host, rows: list[tuple[str, ...]]) -> Host:
+    """An installed, online 16/main cluster whose catalog query returns ROWS."""
+    host.on(
+        "dpkg-query",
+        "*-W -f ${Package} ${db:Status-Abbrev}\\n postgresql-[0-9]*",
+        "postgresql-16 ii \n",
+    )
+    host.on(
+        "pg_lsclusters",
+        "-h",
+        "16 main 5432 online postgres /var/lib/postgresql/16/main "
+        "/var/log/postgresql/postgresql-16-main.log\n",
+    )
+    host.on("psql", "*", "".join("\x1f".join(r) + "\n" for r in rows))
+    return host
+
+
+def test_tables_kept_in_the_postgres_database_are_data(host):
+    # The default database: an app pointed at .../postgres keeps its tables
+    # there, and they're neither dormant nor outside the recovery point.
+    _postgres(host, [("postgres", "9000000", "40", "", "C.UTF-8", "c", "", "3")])
+    out = host.run()
+    d = _dormant(out, "postgres")
+    assert d["verdict"] == "in-use"
+    assert d["workload"] == {"databases": 1, "writes_since_stats_reset": 40}
+    assert "3 tables of its own" in _finding(out, "database:postgres")["message"]
 
 
 def test_an_unpackaged_engine_counts_from_its_own_start(host):
