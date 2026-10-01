@@ -650,16 +650,31 @@ read_tmp() {
 
 # Which environment profile (references/environments/) the host matches. The
 # guest can't see its image digest, so the profile's markers decide, each
-# read on its own: usa-wa's image had exe-setup.service but no exeuntu.
+# read on its own: usa-wa's image had exe-setup.service but no exeuntu. The
+# platform's (/exe.dev/, exe-init as init=) exist only on an exe.dev VM: the
+# image doesn't carry /exe.dev/. The image's are in any tree of it, which is
+# all an offline read sees, and only they can date it.
 PROFILE="" GENERATION=""
 read_profile() {
-  local o="" m="" cmdline="" init="" dir=0 exeuntu=0 setup out p kimg="" kernel=""
+  local o="" m="" cmdline="" init="" dir=0 account=0 wrapper=0 exeuntu=0 setup out p kimg="" kernel=""
+  local platform=0 image=0
   if [ -r "$P_ROOT/proc/cmdline" ]; then
     IFS= read -r cmdline <"$P_ROOT/proc/cmdline" || true
     init=0
     case " $cmdline " in *" init=/exe.dev/bin/exe-init "*) init=1 ;; esac
   fi
   if [ -d "$P_ROOT/exe.dev" ]; then dir=1; fi
+  # The image's since its import (boldsoftware/exeuntu 6f88f30, 2026-01-22):
+  # the ubuntu account renamed exedev, "exe.dev user", and /usr/local/bin/init,
+  # the init wrapper, which names the image.
+  if [ -r "$P_ROOT/etc/passwd" ] &&
+    grep -q '^exedev:[^:]*:[^:]*:[^:]*:exe\.dev user[,:]' "$P_ROOT/etc/passwd"; then
+    account=1
+  fi
+  if [ -r "$P_ROOT/usr/local/bin/init" ] &&
+    grep -q 'boldsoftware/exeuntu' "$P_ROOT/usr/local/bin/init"; then
+    wrapper=1
+  fi
   if [ -e "$P_ROOT/usr/local/bin/exeuntu" ]; then exeuntu=1; fi
   unit_disk_state setup exe-setup.service
   # No linux-image package: the platform supplies the kernel.
@@ -677,21 +692,28 @@ read_profile() {
   if [ -r "$P_ROOT/proc/sys/kernel/osrelease" ]; then
     IFS= read -r kernel <"$P_ROOT/proc/sys/kernel/osrelease" || true
   fi
-  if [ "$dir" -eq 1 ] || [ "$init" = 1 ]; then
+  if [ "$dir" -eq 1 ] || [ "$init" = 1 ]; then platform=1; fi
+  if [ "$account" -eq 1 ] || [ "$wrapper" -eq 1 ]; then image=1; fi
+  if [ "$platform" -eq 1 ] || [ "$image" -eq 1 ]; then
     PROFILE=exe-dev-exeuntu
-    # The generations differ by these two markers (the profile's table).
-    if [ "$setup" = not-found ] && [ "$exeuntu" -eq 0 ]; then
-      GENERATION=feb-2026
-    elif [ "$setup" != not-found ] && [ "$exeuntu" -eq 0 ]; then
-      GENERATION=may-2026
-    elif [ "$setup" != not-found ]; then
-      GENERATION=newer
-    else
-      GENERATION=unknown
+    # Only the image's markers date it: on the platform alone, the image
+    # could be another. The generations differ by these two (the profile's
+    # table).
+    GENERATION=unknown
+    if [ "$image" -eq 1 ]; then
+      if [ "$setup" = not-found ] && [ "$exeuntu" -eq 0 ]; then
+        GENERATION=feb-2026
+      elif [ "$setup" != not-found ] && [ "$exeuntu" -eq 0 ]; then
+        GENERATION=may-2026
+      elif [ "$setup" != not-found ]; then
+        GENERATION=newer
+      fi
     fi
   fi
   jaddb m exe_init_cmdline "$init"
   jaddb m exe_dev_dir "$dir"
+  jaddb m exedev_account "$account"
+  jaddb m init_wrapper "$wrapper"
   jaddb m exeuntu "$exeuntu"
   jadds m exe_setup_unit "$setup"
   jaddn m linux_image_packages "$kimg"
@@ -703,6 +725,8 @@ read_profile() {
     jadd o reference null
   fi
   jaddsn o generation "$GENERATION"
+  jaddb o platform "$platform"
+  jaddb o image "$image"
   jadd o markers "{$m}"
   if [ -z "$PROFILE" ]; then
     jadds o fallback "no profile matches: SKILL.md's generic apt path applies"

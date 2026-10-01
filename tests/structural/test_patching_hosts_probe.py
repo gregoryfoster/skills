@@ -72,6 +72,8 @@ from review:
   stopped one makes it unknown.
 - a refused pg_stat_file costs only the creation dates.
 - on Postgres 14 the provider reads libc, the only one it had.
+- the image's own markers name the profile in an offline tree, and only
+  they date the generation.
 
 Plan step 4: the probe names the environment profile and the image
 generation from the profile's markers, each read on its own, and names none
@@ -1364,6 +1366,15 @@ def test_an_exception_moves_a_deviation_to_excepted_until_it_expires(host):
 # --- the environment profile -------------------------------------------------------
 
 LINUX_IMAGE = "*-W -f ${Package} ${db:Status-Abbrev}\\n linux-image-*"
+# The image's own markers, since its import (boldsoftware/exeuntu 6f88f30).
+EXEDEV_PASSWD = (
+    "root:x:0:0:root:/root:/bin/bash\n"
+    "exedev:x:1000:1000:exe.dev user:/home/exedev:/bin/bash\n"
+)
+INIT_WRAPPER = (
+    "#!/bin/bash\n# Wraps systemd init with two important precursor commands.\n"
+    "# \tdocker run -it ghcr.io/boldsoftware/exeuntu:latest\n"
+)
 
 
 def test_a_host_no_profile_matches_names_none_and_the_generic_path(host):
@@ -1374,21 +1385,26 @@ def test_a_host_no_profile_matches_names_none_and_the_generic_path(host):
 
 
 @pytest.mark.parametrize(
-    "setup, exeuntu, generation",
+    "setup, exeuntu, image, generation",
     [
-        (False, False, "feb-2026"),
-        (True, False, "may-2026"),
-        (True, True, "newer"),
-        (False, True, "unknown"),
+        (False, False, True, "feb-2026"),
+        (True, False, True, "may-2026"),
+        (True, True, True, "newer"),
+        (False, True, True, "unknown"),
+        # On the platform alone, the image could be another: not dated.
+        (False, False, False, "unknown"),
     ],
 )
 def test_an_exe_dev_host_names_its_profile_and_generation(
-    host, setup, exeuntu, generation
+    host, setup, exeuntu, image, generation
 ):
     # The guest can't see its image digest, so the profile's markers decide,
     # each read on its own: usa-wa's May-2026 image had exe-setup.service but
     # no exeuntu.
     (host.root / "exe.dev" / "bin").mkdir(parents=True)
+    if image:
+        host.write("etc/passwd", EXEDEV_PASSWD)
+        host.write("usr/local/bin/init", INIT_WRAPPER, mode=0o755)
     host.write(
         "proc/cmdline",
         "root=/dev/vda init=/exe.dev/bin/exe-init console=hvc0\n",
@@ -1412,9 +1428,12 @@ def test_an_exe_dev_host_names_its_profile_and_generation(
     assert p["name"] == "exe-dev-exeuntu"
     assert p["reference"] == "references/environments/exe-dev-exeuntu.md"
     assert p["generation"] == generation
+    assert (p["platform"], p["image"]) == (True, image)
     assert p["markers"] == {
         "exe_init_cmdline": True,
         "exe_dev_dir": True,
+        "exedev_account": image,
+        "init_wrapper": image,
         "exeuntu": exeuntu,
         "exe_setup_unit": "disabled" if setup else "not-found",
         "linux_image_packages": 0,
@@ -1425,16 +1444,19 @@ def test_an_exe_dev_host_names_its_profile_and_generation(
 
 
 def test_an_offline_image_tree_is_matched_by_its_files(tmp_path):
-    # Nothing runs the tree, so there's no /proc/cmdline: /exe.dev/ names the
-    # profile, and every marker is still reported on its own.
+    # Nothing runs the tree, and the platform supplies /exe.dev/ at boot, so
+    # only the image's own files name the profile here.
     h = Host(tmp_path, live=False).knob("posture scheduled\n")
-    (h.root / "exe.dev").mkdir()
+    h.write("etc/passwd", EXEDEV_PASSWD)
+    h.write("usr/local/bin/init", INIT_WRAPPER)
     h.write("usr/local/bin/exeuntu", "#!/bin/sh\n")
     h.write("etc/systemd/system/exe-setup.service", "[Service]\n")
     h.on("dpkg-query", LINUX_IMAGE, "linux-image-6.8.0-45-generic ii \n")
     p = h.run()["environment"]["profile"]
     assert (p["name"], p["generation"]) == ("exe-dev-exeuntu", "newer")
+    assert (p["platform"], p["image"]) == (False, True)
     assert p["markers"]["exe_init_cmdline"] is None
+    assert p["markers"]["exe_dev_dir"] is False
     assert p["markers"]["linux_image_packages"] == 1
 
 

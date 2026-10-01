@@ -334,13 +334,17 @@ base image, or an owner-approved remedy the profile documents.
 
    **Done 2026-10-01.** The probe reports `environment.profile`: the name,
    the reference, the generation and each marker as read. It settled:
-   - **the profile matches** on `/exe.dev/` or exe-init as `init=`. The
-     other markers (`exeuntu`, `exe-setup.service`, installed `linux-image-*`
+   - **the profile matches** on the platform's markers (`/exe.dev/`,
+     exe-init as `init=`) or the image's (the `exedev` account, the init
+     wrapper at `/usr/local/bin/init`). The image doesn't carry
+     `/exe.dev/`, so only the image's markers hold in an offline tree. The
+     others (`exeuntu`, `exe-setup.service`, installed `linux-image-*`
      packages, the kernel release) are reported, each read on its own;
    - **the generation** comes from the two markers the profile's table
      differs by: no `exe-setup.service` and no `exeuntu` is `feb-2026`,
      `exe-setup.service` without `exeuntu` is `may-2026` (usa-wa's), both
-     are `newer`, and `exeuntu` alone is `unknown`;
+     are `newer`, and `exeuntu` alone is `unknown`. Only the image's
+     markers date it: on the platform's alone, it's `unknown`;
    - on exe.dev, the reboot reading says needrestart's kernel status means
      nothing there (run.md §4);
    - **whether a component came with the image** stays in `not_read`. It
