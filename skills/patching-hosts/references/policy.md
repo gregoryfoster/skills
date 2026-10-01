@@ -72,7 +72,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `<what>` | The deviation |
 |---|---|
 | `timer:<unit>` | `apt-daily.timer` or `apt-daily-upgrade.timer` isn't enabled under `automatic`, or isn't masked under `scheduled` |
-| `periodic:<key>` | `APT::Periodic::Enable`, `Update-Package-Lists` or `Unattended-Upgrade` isn't 1, or is set nowhere (`automatic`) |
+| `periodic:<key>` | `APT::Periodic::Enable` isn't 1, `Update-Package-Lists` or `Unattended-Upgrade` is under 1, or one is set nowhere (`automatic`) |
 | `package:unattended-upgrades` | it isn't installed (`automatic`) |
 | `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`) |
 | `uu:automatic-reboot` | `Unattended-Upgrade::Automatic-Reboot` is true, or set nowhere (`automatic`) |
