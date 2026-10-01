@@ -688,6 +688,26 @@ def test_a_hold_that_didnt_take_stops_the_bulk_before_it_upgrades(host):
     ]
 
 
+def test_a_hold_that_took_nothing_leaves_nothing_held(host):
+    # showhold reads empty: no hold is left to release or declare.
+    host.cases["apt-mark"].insert(0, ("hold *", "", 0, "", "exit 0"))
+    out = host.run(rc=1)
+    assert out["abort"]["holds_left"] == []
+
+
+def test_a_release_that_didnt_take_is_still_left(host):
+    # apt-mark exits 0, and the group stays held.
+    host.run()
+    host.cases["apt-mark"].insert(0, ("unhold *", "", 0, "", "exit 0"))
+    out = host.run(step="postgres", rc=1)
+    assert any("held besides" in w for w in out["verdict"]["why"])
+    assert [h["package"] for h in out["abort"]["holds_left"]] == [
+        "postgresql-16",
+        "libpq5",
+        "redis-server",
+    ]
+
+
 def test_nothing_to_upgrade_is_green(host):
     host.uu(
         "No packages found that can be upgraded unattended and no pending auto-removals\n"

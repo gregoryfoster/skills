@@ -900,15 +900,21 @@ poll_health() {
     fail "the health checks didn't pass twice in a row within $health_within s: read $log"
 }
 
-# The holds this run still has on, for the abort and the record.
+# The holds this run still has on, for the abort and the record: each one
+# apt-mark still shows, whatever its step, since a release can fail part-way
+# and a hold can fail to take. Only when showhold can't be read, those of the
+# steps that haven't released theirs.
 holds_left() {  # <var>: JSON array
-  local _hl="" _i _e _now=""
+  local _hl="" _i _e _now="" _read=1
   capture _now apt-mark showhold
-  [ "$CAP_RC" -eq 0 ] || _now=""
+  if [ "$CAP_RC" -ne 0 ]; then _read=0 _now=""; fi
   words_of _now "$_now"
   for _i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
-    in_words "${RUN_HOLD_STEP[$_i]}" "$RELEASED" && continue
-    if [ -n "$_now" ] && ! in_words "${RUN_HOLD_PKG[$_i]}" "$_now"; then continue; fi
+    if [ "$_read" -eq 1 ]; then
+      in_words "${RUN_HOLD_PKG[$_i]}" "$_now" || continue
+    else
+      in_words "${RUN_HOLD_STEP[$_i]}" "$RELEASED" && continue
+    fi
     _e=""
     jadds _e step "${RUN_HOLD_STEP[$_i]}"
     jadds _e package "${RUN_HOLD_PKG[$_i]}"
