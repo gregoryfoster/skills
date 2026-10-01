@@ -32,11 +32,16 @@ What this file pins, against the plan's step 3 list:
 - a database no `datastore` line names is a finding, but `postgres` and the
   templates are not.
 
-Beyond that list, from running it live against a booted systemd 255: a hold
-is read from `apt-cache policy`, since `apt-get -s` keeps a held package
-back; an empty psql field keeps its place; idle time counts from systemd's
-start, not the kernel's; stock Ubuntu's release pocket isn't a widening; and
-the output is ASCII.
+Beyond that list, from running it live against a booted systemd 255, and
+from review:
+
+- a hold is read from `apt-cache policy`, since `apt-get -s` keeps a held
+  package back.
+- an empty psql field keeps its place.
+- idle time counts from systemd's start, not the kernel's.
+- stock Ubuntu's release pocket isn't a widening.
+- the output is ASCII.
+- a vendor's origin name stays literal: never globbed, and escaped as a key.
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -302,7 +307,10 @@ class Host:
         env["TMPDIR"] = str(self.tmpdir)
         env["STUB_LOG"] = str(self.log)
         env["STUB_CASES"] = str(self.tmp / "cases")
-        r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=180)
+        # From tmp_path, so a stray glob in the probe could only expand there.
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, env=env, timeout=180, cwd=self.tmp
+        )
         self.result = r
         assert r.returncode == rc, f"exit {r.returncode}\n{r.stderr}"
         return json.loads(r.stdout) if rc == 0 else r
@@ -608,6 +616,19 @@ def test_a_third_party_origin_without_a_policy_is_a_knob_finding(host):
         "posture automatic\norigin Tailscale hold its upgrade drops the tailnet\n"
     )
     assert "origin:Tailscale" not in _ids(host.run())
+
+
+def test_a_vendors_origin_name_stays_literal_and_valid_json(host):
+    # A repository names its own origin. Split unquoted, a "*" would expand
+    # against the current directory; written raw, a quote would break the JSON.
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        'Inst a [1] (2 Ev"il\\x:1/stable [all])\nInst b [1] (2 *:1/stable [all])\n',
+    )
+    out = host.run()
+    assert out["pending"]["by_class"]["third_party"] == {'Ev"il\\x': 1, "*": 1}
+    assert host.result.stdout.isascii()
 
 
 # --- the pending set --------------------------------------------------------

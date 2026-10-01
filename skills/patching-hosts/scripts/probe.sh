@@ -871,9 +871,12 @@ read_sources() {
   done
 }
 
-THIRD_PARTY=""  # " origin|site ..."
+# "origin|site" entries. A repository names its own origin, so the names stay
+# in arrays: split unquoted, a '*' in one would expand against the current
+# directory.
+THIRD_PARTY=()
 read_origins() {
-  local out line v os="" oa="" osite third po seen=""
+  local out line v os="" oa="" osite third po seen="" third_seen=""
   local -a kv=()
   R_ORIGINS=""
   have apt-cache || return 0
@@ -898,8 +901,9 @@ read_origins() {
           jadds po site "$osite"
           jaddb po third_party "$third"
           jpush R_ORIGINS "{$po}"
-          if [ "$third" -eq 1 ] && ! in_words "${os// /_}|$osite" "$THIRD_PARTY"; then
-            THIRD_PARTY="$THIRD_PARTY ${os// /_}|$osite"
+          if [ "$third" -eq 1 ] && ! in_words "${os// /_}|$osite" "$third_seen"; then
+            third_seen="$third_seen ${os// /_}|$osite"
+            THIRD_PARTY+=("${os// /_}|$osite")
           fi
         fi
         os="" oa="" ;;
@@ -1031,7 +1035,7 @@ evaluate_posture() {
     fi
   fi
   # Each third-party origin needs a policy for the maintenance lane.
-  for t in $THIRD_PARTY; do
+  for t in ${THIRD_PARTY[@]+"${THIRD_PARTY[@]}"}; do
     os=${t%%|*} site=${t#*|}
     found=0
     for r in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
@@ -1096,8 +1100,9 @@ read_lists_age() {
 # shows only that one, and unattended-upgrade still takes the security one
 # (usa-wa: 178 against 185). --dry-run-into gives the exact count.
 read_simulation() {
-  local out line rest name paren origins cls rem="" w t n c tpo="" pk="" tp=""
-  local sec=0 upd=0 esm=0 other=0 thirds="" ns="" nu="" ne="" nt="" no=""
+  local out line rest name paren origins cls rem="" w t n c tpo="" pk="" seen
+  local sec=0 upd=0 esm=0 other=0 ns="" nu="" ne="" nt="" no=""
+  local -a thirds=() tp=()
   R_BYCLASS=null R_PACKAGES=null R_REMOVALS=null
   if ! have apt-get; then
     finding unknown pending:simulate "" "apt-get isn't on PATH, so the pending set is unknown."
@@ -1125,7 +1130,9 @@ read_simulation() {
           security) sec=$((sec + 1)) ns="$ns $name" ;;
           updates) upd=$((upd + 1)) nu="$nu $name" ;;
           esm) esm=$((esm + 1)) ne="$ne $name" ;;
-          third-party:*) nt="$nt $name" thirds="$thirds ${cls#third-party:}" ;;
+          third-party:*)
+            nt="$nt $name"
+            thirds+=("${cls#third-party:}") ;;
           *) other=$((other + 1)) no="$no $name" ;;
         esac ;;
       "Remv "*)
@@ -1134,12 +1141,17 @@ read_simulation() {
     esac
   done <<<"$out"
   PEND="$PEND "
-  for t in $thirds; do
-    in_words "$t" "$tp" || tp="$tp $t"
+  # Arrays, not split strings: the origin is the vendor's name (above).
+  for t in ${thirds[@]+"${thirds[@]}"}; do
+    seen=0
+    for c in ${tp[@]+"${tp[@]}"}; do
+      if [ "$c" = "$t" ]; then seen=1; fi
+    done
+    if [ "$seen" -eq 0 ]; then tp+=("$t"); fi
   done
-  for t in $tp; do
+  for t in ${tp[@]+"${tp[@]}"}; do
     n=0
-    for c in $thirds; do
+    for c in ${thirds[@]+"${thirds[@]}"}; do
       if [ "$c" = "$t" ]; then n=$((n + 1)); fi
     done
     jaddn tpo "${t//_/ }" "$n"

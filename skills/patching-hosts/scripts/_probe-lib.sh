@@ -204,11 +204,17 @@ json_str() {  # <var> <string>
   printf -v "$1" '"%s"' "$_js"
 }
 
+# A key is escaped like a value: some come from the host too, such as a
+# third-party origin's name, which its repository chooses.
 jadd() {  # <var> <key> <json>
+  local _jadd_k=$2
+  _jadd_k=${_jadd_k//[![:print:]]/?}
+  _jadd_k=${_jadd_k//\\/\\\\}
+  _jadd_k=${_jadd_k//\"/\\\"}
   if [ -n "${!1}" ]; then
-    printf -v "$1" '%s, "%s": %s' "${!1}" "$2" "$3"
+    printf -v "$1" '%s, "%s": %s' "${!1}" "$_jadd_k" "$3"
   else
-    printf -v "$1" '"%s": %s' "$2" "$3"
+    printf -v "$1" '"%s": %s' "$_jadd_k" "$3"
   fi
 }
 
