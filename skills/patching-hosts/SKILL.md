@@ -73,7 +73,7 @@ With `environment.profile.name` null, the run is the same, but nothing a profile
 
 - **The kernel is the host's.** A `linux-image-*` in the set takes effect only at a reboot, and `/run/reboot-required` and needrestart's kernel status say so. An exe.dev guest has no kernel of its own to update.
 - **Which packages restart their own services is unmeasured.** Hold each data store's packages as their own step, and read needrestart's list after each step, not a profile's table.
-- **The update channels are as found:** the timers, `APT::Periodic::Enable` through `apt-config`, and unattended-upgrades' origins. A stock Ubuntu host has its timers on and takes `-security`: the `automatic` posture, less the needrestart drop-in.
+- **The update channels are as found:** the timers, `APT::Periodic::Enable` through `apt-config`, and unattended-upgrades' origins. A stock Ubuntu host has its timers on and takes `-security`, but sets neither `APT::Periodic::Enable` nor `Automatic-Reboot`, and has no needrestart drop-in: under `automatic`, the probe reports each.
 - **Clean-shutdown evidence** is PID 1's own journal lines, where `environment.pid1_log_target` is the journal. On a volatile journal, it's the copy the reboot chain took.
 
 A second host on the same environment is the time to write its profile under `references/environments/`, with every fact's source and date, and to teach the probe its markers.
