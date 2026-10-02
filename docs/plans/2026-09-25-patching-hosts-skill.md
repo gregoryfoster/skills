@@ -554,7 +554,9 @@ base image, or an owner-approved remedy the profile documents.
         an attempt that fails leaves none for the bulk to take;
       - the chain copies only the volatile journal. A persistent one
         survives the boot, and a copy of it, up to journald's 4 GiB cap,
-        would land on the disk the data stores boot from.
+        would land on the disk the data stores boot from;
+      - the chain's timer gets the delay less the time the gate took, so it
+        fires at the time its span was gated from.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical

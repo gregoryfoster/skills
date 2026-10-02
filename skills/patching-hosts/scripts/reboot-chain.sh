@@ -37,7 +37,9 @@ Options:
   --run DIR          the run's directory, an absolute path (required)
   --approve          the owner's approval of the reboot, 3(b), given in the
                      host's own session
-  --delay SECONDS    how long after the launch the chain starts (default 120)
+  --delay SECONDS    the seconds from reboot-chain.sh's start to the chain's
+                     (default 120). The gate's own time comes out of it, so
+                     the chain starts where its span was gated from
   --expect SECONDS   how long the boot and the post-boot checks take
                      (default 600). The span is the delay plus this
   --config FILE      the knob (default: .skills/patching-hosts at the repo
@@ -58,7 +60,8 @@ Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 
 Exit codes:
   0  the chain is launched
-  1  systemd-run failed: nothing is scheduled
+  1  systemd-run failed, or the gate took the whole delay: nothing is
+     scheduled
   2  usage error, an unreadable knob, or a library missing
   3  refused: nothing was changed
 USAGE
@@ -431,17 +434,28 @@ if [ "${#REFUSED[@]}" -gt 0 ]; then
 fi
 
 # --- the launch ------------------------------------------------------------------
-_o="" _rc=0 _fire=$((P_NOW + delay)) _iso=""
+_o="" _rc=0 _fire=$((P_NOW + delay)) _iso="" _now="" _left=""
 # An absolute path, so no --: BSD chmod reads it as a file.
 if ! printf '%s' "$CHAIN" | root_write "$script" || ! as_root chmod 700 "$script"; then
   fail "$script couldn't be written"
 else
-  as_root systemd-run --unit="$unit" --on-active="$delay" --timer-property=AccuracySec=1s "$script" >&2 || _rc=$?
-  [ "$_rc" -eq 0 ] || fail "systemd-run exited $_rc: nothing is scheduled"
+  # The span was gated from P_NOW, and every inflight command has run
+  # since: the timer gets what's left of the delay, so the chain starts at
+  # the time its span was gated from.
+  _now=$(date +%s) || _now=""
+  is_int "$_now" || _now=$P_NOW
+  _left=$((_fire - _now))
+  if [ "$_left" -lt 1 ]; then
+    fail "the gate took $((_now - P_NOW)) s, the whole --delay of $delay s: nothing is scheduled. Run reboot-chain.sh again"
+  else
+    as_root systemd-run --unit="$unit" --on-active="$_left" --timer-property=AccuracySec=1s "$script" >&2 || _rc=$?
+    [ "$_rc" -eq 0 ] || fail "systemd-run exited $_rc: nothing is scheduled"
+  fi
 fi
 iso_utc _iso "$_fire"
 jaddn _o exit "$_rc"
 jadds _o unit "$unit"
+jaddn _o on_active_seconds "$_left"
 if [ "${#FAILED[@]}" -eq 0 ]; then
   jadds _o fires_at "$_iso"
   printf '%s %s\n' "$unit" "$_iso" | root_write "$run/reboot-chain.unit" ||

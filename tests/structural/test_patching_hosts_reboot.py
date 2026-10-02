@@ -26,7 +26,9 @@ Beyond that list:
 
 - the chain is printed, the knob's inflight commands verbatim, before
   anything is written, and the approved text is the text that runs;
-- it's written at 0700 and launched with --on-active and AccuracySec=1s;
+- it's written at 0700 and launched with --on-active and AccuracySec=1s,
+  less the time the gate took, so it fires at the time its span was gated
+  from;
 - it refuses a run that aborted, a chain that's scheduled, running or
   already ran, a span outside a window or into a quiet range, a package
   manager that's running, and work in flight;
@@ -76,8 +78,23 @@ class Host(ApplyHost):
         "sync": "exit 0",
     }
 
-    def reboot(self, *args: str, rc: int = 0, approve: bool = True) -> dict:
-        self.cases["date"] = [("+%s", f"{self.clock}\n", 0, "", None)]
+    def reboot(
+        self, *args: str, rc: int = 0, approve: bool = True, took: int = 0
+    ) -> dict:
+        # The clock reads TOOK seconds on after its first read: the gate's
+        # own time.
+        read = self.state / "clock-read"
+        read.unlink(missing_ok=True)
+        self.cases["date"] = [
+            (
+                "+%s",
+                "",
+                0,
+                "",
+                f'if [ -e "{read}" ]; then echo {self.clock + took}; '
+                f'else : > "{read}"; echo {self.clock}; fi; exit 0',
+            )
+        ]
         cmd = ["bash", str(self.scripts / "reboot-chain.sh")]
         cmd += ["--run", str(self.run_dir), "--config", str(self.knob_path)]
         cmd += ["--host", "web-1", "--today", "2026-09-29"]
@@ -262,6 +279,23 @@ def test_approved_it_writes_the_chain_at_0700_and_launches_it_detached(host):
         f"patching-hosts-reboot-{STAMP} 2026-09-29T15:32:00Z\n"
     )
     assert any("--post-boot" in n for n in out["next"])
+
+
+def test_the_chain_fires_at_the_time_its_span_was_gated_from(host):
+    # The inflight commands took 30 s: the timer gets the 90 s left.
+    out = host.reboot(took=30)
+    [launch] = [a for _, a, _ in host.calls("systemd-run")]
+    assert " --on-active=90 " in launch
+    assert out["launched"]["on_active_seconds"] == 90
+    assert out["launched"]["fires_at"] == "2026-09-29T15:32:00Z"
+
+
+def test_a_gate_that_takes_the_whole_delay_schedules_nothing(host):
+    out = host.reboot(took=120, rc=1)
+    assert not host.calls("systemd-run")
+    assert any("the whole --delay of 120 s" in w for w in out["launched"]["why"])
+    assert out["launched"]["fires_at"] is None
+    assert not (host.run_dir / "reboot-chain.unit").exists()
 
 
 def test_a_launch_that_fails_schedules_nothing(host):
