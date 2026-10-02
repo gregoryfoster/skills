@@ -224,7 +224,7 @@ gate_host() {
 
 # The plan is this host's, fresh, and names only what the component is.
 gate_plan() {
-  local o="" p before=${#REFUSED[@]}
+  local o="" p taken="" before=${#REFUSED[@]}
   if [ -z "$component" ]; then
     refuse "$plan couldn't be read, or isn't a plan prune-plan.sh wrote"
     jadd J_GATE plan null
@@ -232,7 +232,7 @@ gate_plan() {
   fi
   jadds o component "$component"
   jadds o host "$PLAN_HOST"
-  if is_int "$PLAN_TAKEN"; then iso_utc p "$PLAN_TAKEN"; jadds o taken "$p"; else jadd o taken null; fi
+  if is_int "$PLAN_TAKEN"; then iso_utc taken "$PLAN_TAKEN"; jadds o taken "$taken"; else jadd o taken null; fi
   jadd J_GATE plan "{$o}"
   if ! prune_component "$component"; then
     refuse "the plan names $component, a component the probe doesn't know"
@@ -242,8 +242,10 @@ gate_plan() {
   [ "$PLAN_HOST" = "$host" ] || refuse "the plan was taken on ${PLAN_HOST:-no host}, and this is $host"
   if ! is_int "$PLAN_TAKEN"; then
     refuse "the plan doesn't say when it was taken: take a fresh one"
-  elif [ $((P_NOW - PLAN_TAKEN)) -gt 86400 ] || [ $((PLAN_TAKEN - P_NOW)) -gt 300 ]; then
+  elif [ $((P_NOW - PLAN_TAKEN)) -gt 86400 ]; then
     refuse "the plan was taken more than 24 hours ago: take a fresh one for this stage, and approve that"
+  elif [ $((PLAN_TAKEN - P_NOW)) -gt 300 ]; then
+    refuse "the plan says it was taken at $taken, later than the clock says it is now: check the clock, and take a fresh plan"
   fi
   # A path or a group the component doesn't have is no plan of its.
   for p in $PLAN_CONFIG; do in_words "$p" "$C_CONFIG" || refuse "the plan names $p, which isn't $component's config"; done

@@ -994,6 +994,11 @@ def _drift_package(h):
             lambda h: setattr(h, "clock", h.clock + DAY + 60),
             "more than 24 hours ago",
         ),
+        (
+            "disable",
+            lambda h: setattr(h, "clock", h.clock - 600),
+            "later than the clock says it is now",
+        ),
         # Its body, without the line that says prune-plan.sh wrote it.
         (
             "disable",
@@ -1092,6 +1097,7 @@ def _drift_package(h):
         "not-a-plan",
         "another-host",
         "stale-plan",
+        "future-plan",
         "no-header",
         "a-path-not-its",
         "a-line-it-doesnt-write",
