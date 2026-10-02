@@ -331,6 +331,16 @@ def test_a_launch_that_fails_schedules_nothing(host):
             ),
             "this run's chain, x.timer, is active",
         ),
+        # Fired, and stopping services: its timer has elapsed.
+        (
+            lambda h: (
+                (h.run_dir / "reboot-chain.unit").write_text(
+                    "x 2026-09-29T15:00:00Z\n"
+                ),
+                h.on("systemctl", "is-active -- x.service", "active\n"),
+            ),
+            "this run's chain, x.service, is active",
+        ),
         (
             lambda h: (
                 (h.run_dir / "reboot-chain.unit").write_text(
@@ -375,6 +385,7 @@ def test_a_launch_that_fails_schedules_nothing(host):
     ids=[
         "the-run-aborted",
         "already-scheduled",
+        "already-running",
         "already-ran",
         "past-the-window",
         "into-a-quiet-range",

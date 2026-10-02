@@ -1231,6 +1231,16 @@ def test_no_step_runs_into_the_runs_scheduled_reboot(host, state, refused):
     ) is (refused)
 
 
+def test_no_step_runs_while_the_runs_reboot_chain_does(host):
+    host.run()
+    unit = "patching-hosts-reboot-20260929T153000Z"
+    (host.run_dir / "reboot-chain.unit").write_text(f"{unit} 2026-09-29T15:32:00Z\n")
+    # Its timer has fired, and the chain is stopping services.
+    host.on("systemctl", f"is-active -- {unit}.service", "active\n")
+    out = host.run(step="postgres", rc=3)
+    assert any(f"reboot chain, {unit}.service, is active" in r for r in out["refused"])
+
+
 def test_a_restarter_the_host_doesnt_have_is_refused(host):
     # Misspelled: is-active reads it as inactive, and it would never stop.
     host.knob(KNOB.replace("app-healthcheck.timer", "app-healthchek.timer"))
