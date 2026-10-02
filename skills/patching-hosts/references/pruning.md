@@ -19,7 +19,7 @@ The **review-by date is the soak**: 30 days by default, up to 90. A stage refuse
 
 **With a savepoint, the remove stage is skipped**: disable, soak, savepoint, then purge. That's the better path for security. `remove` leaves config behind, sometimes with secrets in it, and an `rc` package the probe then has to explain. Without a savepoint, the remove stage is the reversible step, and stays.
 
-`exception keep:<name>` stops every stage: the owner keeps it until its review-by date.
+`exception keep:<name>` stops every stage, wherever the prune got to: the owner keeps it until its review-by date, whatever stage lines the knob also holds.
 
 ## The plan
 

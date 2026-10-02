@@ -612,6 +612,11 @@ def test_the_plan_shows_what_a_purge_drags_along_and_deletes(tmp_path):
         ([f"removed:nginx {PAST} soaked"], "purge"),
         ([f"keep:nginx {FUTURE} the owner keeps it"], None),
         ([f"keep:nginx {PAST} it was kept"], "disable"),
+        # A keep stops the prune wherever it got to.
+        (
+            [f"disabled:nginx {PAST} soaked", f"keep:nginx {FUTURE} kept after all"],
+            None,
+        ),
     ],
 )
 def test_the_plan_names_the_next_stage(tmp_path, lines, next_stage):
@@ -849,6 +854,13 @@ def _drift_package(h):
             "the knob keeps nginx",
         ),
         (
+            "remove",
+            lambda h: h.declare(
+                f"disabled:nginx {PAST} soaked", f"keep:nginx {FUTURE} kept after all"
+            ),
+            "the knob keeps nginx",
+        ),
+        (
             "disable",
             lambda h: h.declare(f"removed:nginx {FUTURE} soaking"),
             "already removed",
@@ -910,6 +922,7 @@ def _drift_package(h):
         "a-path-not-its",
         "a-line-it-doesnt-write",
         "kept",
+        "kept-after-a-disable",
         "already-removed",
         "remove-before-disable",
         "remove-while-soaking",

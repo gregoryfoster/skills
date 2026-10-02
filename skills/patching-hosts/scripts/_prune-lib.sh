@@ -230,21 +230,23 @@ derive() {  # <name>
 }
 
 # The stage the knob declares, as policy.md's exceptions: keep:<name> while
-# the owner keeps it, else disabled:, removed: or purged:. CAL_PASSED is 1
-# once its review-by date has passed: the soak is over, and the next stage
-# may run. An earlier review-by date shortens a soak.
+# the owner keeps it, whatever stage the prune reached, else purged:,
+# removed: or disabled:. CAL_PASSED is 1 once its review-by date has passed:
+# the soak is over, and the next stage may run. An earlier review-by date
+# shortens a soak.
 CAL_STAGE="" CAL_PASSED=0 CAL_REVIEW="" CAL_LINE=""
 calendar() {  # <name>
   local _cl_x _cl_r
   local -a _cl_f=()
   CAL_STAGE=none CAL_PASSED=0 CAL_REVIEW="" CAL_LINE=""
-  for _cl_x in purged removed disabled keep; do
+  for _cl_x in keep purged removed disabled; do
     for _cl_r in ${KNOB_EXCEPTION[@]+"${KNOB_EXCEPTION[@]}"}; do
       IFS=$KNOB_US read -r -a _cl_f <<<"$_cl_r"
       [ "${_cl_f[0]}" = "$_cl_x:$1" ] || continue
+      # A keep that passed its review-by keeps nothing: the stage lines say
+      # where the prune is.
+      if [ "$_cl_x" = keep ] && [ "${_cl_f[3]}" = 1 ]; then continue; fi
       CAL_STAGE=$_cl_x CAL_REVIEW=${_cl_f[1]} CAL_PASSED=${_cl_f[3]} CAL_LINE=${_cl_f[4]}
-      # A keep that passed its review-by keeps nothing.
-      if [ "$_cl_x" = keep ] && [ "$CAL_PASSED" = 1 ]; then CAL_STAGE=none; fi
       return 0
     done
   done
