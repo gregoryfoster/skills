@@ -12,7 +12,7 @@ metadata:
 
 Gets a host's OS packages patched without surprising anyone: no unapproved restart, no lost data, no guess passed off as a measurement. Built from ten exe.dev hosts patched by hand in [#313](https://github.com/gregoryfoster/skills/issues/313)'s step 0 round, 2026-09-21 to 09-29.
 
-**Status: in development.** The procedure, its references, the knob reader, the read-only probe, the recovery point, the gated apply and the reboot chain are here; pruning and the maintenance lane land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md).
+**Status: in development.** The procedure, its references, the knob reader, the read-only probe, the recovery point, the gated apply, the reboot chain and pruning are here; the maintenance lane and owner notices land in later steps of [the plan](https://github.com/gregoryfoster/skills/blob/main/docs/plans/2026-09-25-patching-hosts-skill.md).
 
 **Activation triggers:** "patch the host", "OS updates", "security updates", "apply updates", "unattended-upgrades", "needrestart", "is this host patched".
 
@@ -46,7 +46,7 @@ The skill's `scripts/` directory ships inside the skill, not at the project root
 <!-- skill:required id=skill-scripts -->
 ```bash
 N=patching-hosts
-for S in read-knob.sh probe.sh recovery-point.sh apply.sh reboot-chain.sh; do SD=
+for S in read-knob.sh probe.sh recovery-point.sh apply.sh reboot-chain.sh prune-plan.sh prune.sh; do SD=
   for d in scripts ".claude/skills/$N/scripts" "$HOME/.claude/skills/$N/scripts"; do
     [ -f "$d/$S" ] && { SD="$d"; break; }
   done
@@ -67,6 +67,8 @@ done
 
 Steps 4–7 in full, with each trap: [run.md](references/run.md). The probe's `environment.profile` names the environment profile the host matches, and its image generation. That profile holds the environment's quirks: which packages restart themselves, `/tmp`, clean-shutdown evidence. The one so far: [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
 
+**A dormant component** is pruned apart from the run, one stage at a time: disable, then remove, then purge, each after the last one's soak, and a savepoint lets the purge skip the remove. `bash "<prune-plan.sh>" --component <name> --out <file>` reads what it would take; `bash "<prune.sh>" --stage <stage> --plan <file>` prints the stage's commands, and with `--approve` runs exactly those. The calendar, what each purge script deletes, and the traps: [pruning.md](references/pruning.md).
+
 ## Hosts no profile matches
 
 With `environment.profile.name` null, the run is the same, but nothing a profile measured holds. Read it from the host instead:
@@ -80,13 +82,14 @@ A second host on the same environment is the time to write its profile under `re
 
 ## What the skill never does on its own
 
-It never unmasks a timer, edits apt or needrestart config beyond the approved drop-in, removes a package by name, restarts through the platform (a hard reset), or files an issue in another repo without approval. Reaching a posture is provisioning's job: the base image, or an owner-approved remedy.
+It never unmasks a timer, edits apt or needrestart config beyond the approved drop-in, removes a package outside an approved prune plan, restarts through the platform (a hard reset), or files an issue in another repo without approval. Reaching a posture is provisioning's job: the base image, or an owner-approved remedy.
 
 ## Detail Docs
 
 - [references/readings.md](references/readings.md) — what to measure before proposing, and the mistake each reading prevents
 - [references/run.md](references/run.md) — approvals, the gate, the recovery point, held steps, the reboot chain, post-boot checks, the record
 - [references/policy.md](references/policy.md) — the two postures, the two lanes, pending classes, exceptions, dormant components, owners
+- [references/pruning.md](references/pruning.md) — pruning a dormant component: the calendar, the plan, the stages, and what a purge deletes
 - [references/knob.md](references/knob.md) — the `.skills/patching-hosts` grammar
 - [references/environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md) — the exe.dev exeuntu profile
 

@@ -215,14 +215,9 @@ gate_run() {
   fi
 }
 
-# Whether a package manager runs now. unattended-upgrade-shutdown runs all
-# the time where unattended-upgrades is installed, and its name is cut to
-# the same 15 characters, so unattended-upgrade is matched by its path.
-PKG_RE='/usr/bin/unattended-upgrade( |$)'
 gate_packages() {
   local who=""
-  if pgrep -x 'dpkg|apt|apt-get' >/dev/null 2>&1; then who="dpkg or apt"; fi
-  if pgrep -f "$PKG_RE" >/dev/null 2>&1; then who="${who:+$who and }unattended-upgrade"; fi
+  package_manager who
   if [ -n "$who" ]; then
     refuse "$who is running: a reboot now could cut it off mid-dpkg. Wait for it to end"
   fi

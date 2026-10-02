@@ -614,6 +614,32 @@ base image, or an owner-approved remedy the profile documents.
     - the drift refusal when the simulated set changes;
     - that no command outside the approved set was run.
 
+    **Done 2026-10-02:** `scripts/prune-plan.sh` and `scripts/prune.sh`, over
+    a new `scripts/_prune-lib.sh` both share, documented in
+    `references/pruning.md` and tested in
+    `tests/structural/test_patching_hosts_prune.py`. Building it settled:
+    - **a savepoint stage beyond the three:** the config tarball and the
+      packages' versions, as root at mode 600. With one, the purge may
+      follow the disable's soak. Data stays with the operator;
+    - **the calendar is the knob's exceptions:** a stage refuses until the
+      last stage's `disabled:` or `removed:` review-by date has passed, and
+      `keep:` stops every stage;
+    - **a plan binds packages, units and group members.** It's good on the
+      host it was taken on, for 24 hours, and only while a fresh read
+      matches it;
+    - **the disable stops, disables and masks in one systemctl call each,**
+      so systemd orders the stops: dockerd before the containerd it runs
+      on, whatever order apt lists them in;
+    - **data goes only by `--purge-data`,** and only a path the plan names. A
+      package's own purge script still runs, and the plan lists what each
+      deletes: postgresql-16's takes each cluster's data unless debconf's
+      `postrm_purge_data` is false;
+    - **the masks stay after the purge,** so a component installed again
+      stays down until someone unmasks it;
+    - **Ollama and Qdrant are disabled by script, and removed by hand;**
+    - **`postgresql-common` is part of the Postgres component:** its units
+      are the cluster's.
+
 6c. **The maintenance lane and owner notices.**
     - **`apply.sh --lane maintenance`** reuses the security lane's gates,
       recovery point, window and reboot decision. Only the selection

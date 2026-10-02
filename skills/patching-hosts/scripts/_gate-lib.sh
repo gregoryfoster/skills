@@ -31,6 +31,7 @@ Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
   gate_inflight             refuses unless every inflight command prints 0
   chain_active UNIT         whether a run's reboot chain is scheduled or
                             running; CHAIN_STATE says which unit, and how
+  package_manager VAR       which package manager runs now, or empty
   pg_port VAR UNIT          the port of the cluster a postgresql unit runs,
                             or 1 with PG_WHY
   redis_conn UNIT           REDIS_ARGS := redis-cli's connection words, and
@@ -264,6 +265,17 @@ chain_active() {  # <unit>: CHAIN_STATE := "<its timer or service> <state>"
     esac
   done
   return 1
+}
+
+# Whether a package manager runs now. unattended-upgrade-shutdown runs all
+# the time where unattended-upgrades is installed, and its name is cut to
+# the same 15 characters, so unattended-upgrade is matched by its path.
+PKG_RE='/usr/bin/unattended-upgrade( |$)'
+package_manager() {  # <var>
+  local _pm=""
+  if pgrep -x 'dpkg|apt|apt-get' >/dev/null 2>&1; then _pm="dpkg or apt"; fi
+  if pgrep -f "$PKG_RE" >/dev/null 2>&1; then _pm="${_pm:+$_pm and }unattended-upgrade"; fi
+  printf -v "$1" '%s' "$_pm"
 }
 
 # --- data stores ---------------------------------------------------------------
