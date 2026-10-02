@@ -394,8 +394,6 @@ gate_run() {
   is_int "$EXPECT" || refuse "$run/dry-run holds no wall time, so the step's span is unknown"
 }
 
-# A dry run counts the set pending that day: a month-old one counted
-# another, so its wall time isn't this run's floor.
 # A step never runs into the reboot its run scheduled: the chain stops at a
 # package manager running when it starts, but not at one that starts after.
 gate_reboot() {
@@ -407,6 +405,8 @@ gate_reboot() {
   fi
 }
 
+# A dry run counts the set pending that day: a month-old one counted
+# another, so its wall time isn't this run's floor.
 DRY_SUMMARY="" DRY_MAX_AGE=86400
 gate_dry() {
   local line rc="" count="" began="" iso
