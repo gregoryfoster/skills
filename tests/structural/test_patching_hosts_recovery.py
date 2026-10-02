@@ -485,6 +485,24 @@ def test_redis_is_reached_where_its_units_own_arguments_say(tmp_path):
     assert calls and all(a.startswith("-h 127.0.0.1 -p 6391 ") for a in calls)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "requirepass {pw}",
+        'requirepass "{pw}"',
+        "requirepass '{pw}'",
+        "requirepass {pw}   ",
+    ],
+    ids=["plain", "double-quoted", "single-quoted", "trailing-space"],
+)
+def test_the_password_is_read_as_redis_reads_it(tmp_path, line):
+    # Measured on Redis 7.0: each form sets the same password.
+    conf = "port 6380\n" + line.format(pw="s3cret-pass") + "\n"
+    host = _redis(_ready(Host(tmp_path)), conf=conf)
+    assert host.recover()["verdict"]["ok"] is True
+    assert set((host.state / "auth").read_text().split("\n")) - {""} == {"s3cret-pass"}
+
+
 def test_redis_is_reached_as_root_so_a_root_only_socket_is_too(tmp_path):
     # unixsocketperm 700, as Ubuntu's redis.conf suggests: only redis and
     # root can open the socket.

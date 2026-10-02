@@ -304,7 +304,7 @@ stop_line() {  # <unit>
 # The chain is sh text, written literally: its expansions are its own.
 # shellcheck disable=SC2016
 write_chain() {
-  local r q u kind conf rest l cmd user t m x ra
+  local r q u kind conf rest l cmd user t m x ra pw
   local -a f=() w=()
   sq q "$log"
   c '#!/bin/sh'
@@ -369,8 +369,10 @@ write_chain() {
         ra="$ra $x"
       done
       if [ "$conf" != - ]; then
+        # Read as redis_cli reads it, and as Redis does.
         sq l "$conf"
-        c "REDISCLI_AUTH=\$(sed -n 's/^requirepass[[:space:]][[:space:]]*//p' $l 2>/dev/null | tail -n 1 | tr -d '\"')"
+        sq pw "$REDIS_PW_SED"
+        c "REDISCLI_AUTH=\$(sed $pw $l 2>/dev/null | tail -n 1)"
         c '[ -n "$REDISCLI_AUTH" ] && export REDISCLI_AUTH || unset REDISCLI_AUTH'
       fi
       c "# Its stop saves the RDB file only where save points are set."

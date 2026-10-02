@@ -317,6 +317,11 @@ pg_port() {  # <var> <unit>
 # the chain when it runs, read it into REDISCLI_AUTH as root, so it reaches
 # no argv and no output.
 REDIS_ARGS=() REDIS_CONF=""
+# The password a file's last requirepass sets, as Redis reads it: without
+# trailing space, and without one pair of quotes, double or single
+# (measured on 7.0). redis_cli and the chain run this one script, so the
+# two read the same password.
+REDIS_PW_SED='/^requirepass[[:space:]]/!d;s/^requirepass[[:space:]]*//;s/[[:space:]]*$//;s/^"\(.*\)"$/\1/;s/^'\''\(.*\)'\''$/\1/'
 # unit_show sets it by name.
 U_ExecStart=""
 redis_conn() {  # <unit>
@@ -367,18 +372,16 @@ redis_conn() {  # <unit>
 # The script runs as root, in sh: its expansions are its own.
 # shellcheck disable=SC2016
 redis_cli() {  # <command>...
-  as_root sh -c 'c=$1
-shift
+  as_root sh -c 'c=$1 s=$2
+shift 2
 p=""
 if [ -n "$c" ]; then
   # An absolute path, so no --: BSD sed reads it as a file.
-  p=$(sed -n "s/^requirepass[[:space:]][[:space:]]*//p" "$c" 2>/dev/null | tail -n 1)
-  p=${p#\"}
-  p=${p%\"}
+  p=$(sed "$s" "$c" 2>/dev/null | tail -n 1)
 fi
 if [ -n "$p" ]; then
   REDISCLI_AUTH=$p
   export REDISCLI_AUTH
 fi
-exec redis-cli "$@"' sh "$REDIS_CONF" ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
+exec redis-cli "$@"' sh "$REDIS_CONF" "$REDIS_PW_SED" ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
 }

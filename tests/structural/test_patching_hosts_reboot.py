@@ -537,6 +537,25 @@ def test_redis_is_reached_where_its_units_own_arguments_say(host, args, words):
     assert any(f"redis-cli {words} CONFIG GET save" in line for line in chain)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "requirepass {pw}",
+        'requirepass "{pw}"',
+        "requirepass '{pw}'",
+        "requirepass {pw}   ",
+    ],
+    ids=["plain", "double-quoted", "single-quoted", "trailing-space"],
+)
+def test_the_chain_reads_the_password_as_redis_does(host, line):
+    # Measured on Redis 7.0: each form sets the same password.
+    conf = "port 6380\n" + line.format(pw="pw-in-the-file") + "\n"
+    (host.tmp / "redis.conf").write_text(conf)
+    host.reboot()
+    host.fire(_journals(host))
+    assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", ""]
+
+
 @pytest.mark.parametrize("save, saved", [("3600 1 300 100", False), ("", True)])
 def test_redis_is_saved_first_only_without_save_points(tmp_path, save, saved):
     host = _ready(Host(tmp_path), save=save)

@@ -559,7 +559,10 @@ base image, or an owner-approved remedy the profile documents.
         fires at the time its span was gated from;
       - Redis is reached where its unit's own `--port`, `--bind` or
         `--unixsocket` say, over its file's: a second Redis may share the
-        file, and its recovery point would otherwise be the first's data.
+        file, and its recovery point would otherwise be the first's data;
+      - the recovery point and the chain read a Redis password with one
+        script, as Redis does: a single-quoted value or one with trailing
+        space read wrong in the chain, and the SAVE before a stop failed.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical
