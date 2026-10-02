@@ -58,9 +58,9 @@ naming anything outside the component; for a stage the knob's calendar
 hasn't reached; when the host no longer matches the plan, or apt would
 install anything; for remove or purge while a package manager runs,
 dpkg --audit isn't clean or one of its packages is held, or of a component
-from outside apt; for a --purge-data path the plan doesn't name; and for a
+from outside apt; for a --purge-data path the plan doesn't name; for a
 purge whose packages' own scripts delete a data path --purge-data doesn't
-name.
+name; and for a stage the plan gives nothing to run.
 
 Output: one JSON object on stdout. Keys: prune, refused, gate, actions
 (each command, in order), done (each one's exit), verdict and next.
@@ -488,6 +488,12 @@ if [ "$PLAN_OK" -eq 1 ]; then
       [ -z "$PLAN_GROUP" ] || ACT+=("groupdel $PLAN_GROUP")
       for _p in ${purge_data[@]+"${purge_data[@]}"}; do ACT+=("rm -rf $_p"); done ;;
   esac
+fi
+
+# A stage with nothing to run would be declared in the knob all the same,
+# and the calendar would run from a stage that never happened.
+if [ "$PLAN_OK" -eq 1 ] && [ "${#ACT[@]}" -eq 0 ]; then
+  refuse "the plan gives the $stage stage nothing to run: $component has nothing left here for it. Take a fresh plan; if it shows nothing installed, there's nothing to prune"
 fi
 
 if [ "${#REFUSED[@]}" -gt 0 ]; then

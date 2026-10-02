@@ -1142,6 +1142,21 @@ def test_a_today_later_than_the_clock_ends_no_soak(tmp_path):
     assert host.changes() == []
 
 
+@pytest.mark.parametrize("stage, lines", [("disable", []), ("remove", ["disabled"])])
+def test_a_stage_with_nothing_to_run_is_refused_not_declared(tmp_path, stage, lines):
+    # nginx isn't installed here: no unit, no package.
+    gone = {**NGINX, "packages": {}, "units": {}, "paths": {}}
+    host = _host(tmp_path, gone, "nginx").declare(
+        *[f"{x}:nginx {PAST} soaked" for x in lines]
+    )
+    assert host.plan("nginx")["prune_plan"]["installed"] is False
+    out = host.prune(stage, rc=3)
+    assert any(
+        f"gives the {stage} stage nothing to run" in r for r in out["refused"]
+    ), out["refused"]
+    assert out["next"] == []
+
+
 def test_drift_names_what_changed(tmp_path):
     host = _host(tmp_path, DOCKER, "docker")
     host.plan("docker")
