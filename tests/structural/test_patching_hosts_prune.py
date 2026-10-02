@@ -1205,19 +1205,51 @@ def test_a_today_later_than_the_clock_ends_no_soak(tmp_path):
     assert host.changes() == []
 
 
-@pytest.mark.parametrize("stage, lines", [("disable", []), ("remove", ["disabled"])])
-def test_a_stage_with_nothing_to_run_is_refused_not_declared(tmp_path, stage, lines):
+@pytest.mark.parametrize(
+    "stage, lines, data, refused",
+    [
+        ("disable", [], {}, "no unit of nginx is left to disable"),
+        ("remove", ["disabled"], {}, "no package of nginx is left to remove"),
+        (
+            "purge",
+            ["removed"],
+            {"/var/www": 12},
+            "its data is still there (/var/www): delete it with --purge-data",
+        ),
+        (
+            "purge",
+            ["removed"],
+            {},
+            "replace the knob's stage line with exception purged:nginx",
+        ),
+    ],
+    ids=["disable", "remove", "purge-data-left", "purge-nothing-left"],
+)
+def test_a_stage_with_nothing_to_run_is_refused_not_declared(
+    tmp_path, stage, lines, data, refused
+):
     # nginx isn't installed here: no unit, no package.
-    gone = {**NGINX, "packages": {}, "units": {}, "paths": {}}
+    gone = {**NGINX, "packages": {}, "units": {}, "paths": data}
     host = _host(tmp_path, gone, "nginx").declare(
         *[f"{x}:nginx {PAST} soaked" for x in lines]
     )
     assert host.plan("nginx")["prune_plan"]["installed"] is False
     out = host.prune(stage, rc=3)
-    assert any(
-        f"gives the {stage} stage nothing to run" in r for r in out["refused"]
-    ), out["refused"]
+    assert any(refused in r for r in out["refused"]), out["refused"]
     assert out["next"] == []
+
+
+def test_a_remove_with_only_residue_left_says_the_purge_comes_next(tmp_path):
+    host = _host(tmp_path, NGINX, "nginx").declare(f"disabled:nginx {PAST} soaked")
+    del host.host_state["packages"]["nginx"]
+    host.host_state["packages"]["nginx-common"]["state"] = "rc"
+    host.plan("nginx")
+    out = host.prune("remove", rc=3)
+    assert any(
+        "only residue (nginx-common): the purge comes next" in r
+        and "exception removed:nginx" in r
+        for r in out["refused"]
+    ), out["refused"]
 
 
 def test_drift_names_what_changed(tmp_path):

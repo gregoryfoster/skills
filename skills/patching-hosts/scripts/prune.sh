@@ -528,9 +528,26 @@ if [ "$PLAN_OK" -eq 1 ]; then
 fi
 
 # A stage with nothing to run would be declared in the knob all the same,
-# and the calendar would run from a stage that never happened.
+# and the calendar would run from a stage that never happened. Each says
+# what the knob's stage line should say instead.
 if [ "$PLAN_OK" -eq 1 ] && [ "${#ACT[@]}" -eq 0 ]; then
-  refuse "the plan gives the $stage stage nothing to run: $component has nothing left here for it. Take a fresh plan; if it shows nothing installed, there's nothing to prune"
+  case $stage in
+    disable) _why="no unit of $component is left to disable: if a fresh plan shows it isn't installed, there's nothing to prune" ;;
+    remove)
+      if [ -n "$D_RESIDUE" ]; then
+        _why="no package of $component is left to remove, only residue ($D_RESIDUE): the purge comes next, so replace the knob's line with exception removed:$component <review-by> <reason>"
+      else
+        _why="no package of $component is left to remove: if a fresh plan shows it isn't installed, there's nothing to prune"
+      fi ;;
+    purge)
+      if [ -n "$PLAN_DATA" ]; then
+        _why="no package, group or member of $component is left to purge, and its data is still there ($PLAN_DATA): delete it with --purge-data, or keep it"
+      else
+        _why="nothing of $component is left to purge: replace the knob's stage line with exception purged:$component <review-by> <reason>"
+      fi ;;
+    *) _why="the plan gives the $stage stage nothing to run" ;;
+  esac
+  refuse "$_why"
 fi
 
 if [ "${#REFUSED[@]}" -gt 0 ]; then
