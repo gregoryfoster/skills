@@ -631,9 +631,10 @@ base image, or an owner-approved remedy the profile documents.
       so systemd orders the stops: dockerd before the containerd it runs
       on, whatever order apt lists them in;
     - **data goes only by `--purge-data`,** and only a path the plan names. A
-      package's own purge script still runs, and the plan lists what each
-      deletes: postgresql-16's takes each cluster's data unless debconf's
-      `postrm_purge_data` is false;
+      package's own purge script still runs, so where one deletes a data
+      path, the purge refuses until `--purge-data` names it. postgresql-16's
+      drops every cluster: it sets `postrm_purge_data` to true itself, so no
+      debconf answer keeps one without a terminal (CR 146);
     - **the masks stay after the purge,** so a component installed again
       stays down until someone unmasks it;
     - **Ollama and Qdrant are disabled by script, and removed by hand;**

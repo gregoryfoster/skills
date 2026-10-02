@@ -236,23 +236,18 @@ jadd J metapackages "$_x"
 
 # The lines in their purge scripts that delete: nginx-common's takes
 # /etc/nginx and /var/log/nginx with it, docker.io's leaves /var/lib/docker,
-# and postgresql-16's takes each cluster's data unless debconf says not to.
-rm_re='(^|[^[:alnum:]_-])(rm|rmdir|deluser|delgroup|userdel|groupdel)[[:space:]]'
+# and postgresql-16's drops every cluster. A purge refuses until
+# --purge-data names each data path one of them deletes.
 _a=""
-for _p in $_names; do
-  capture _x dpkg-query --control-show "$_p" postrm
-  [ "$CAP_RC" -eq 0 ] || continue
-  _n=0
-  while IFS= read -r _l; do
-    _n=$((_n + 1))
-    [[ $_l =~ $rm_re ]] || continue
-    _e=""
-    jadds _e package "$_p"
-    jaddn _e line "$_n"
-    words_of _y "$_l"
-    jadds _e text "$_y"
-    jpush _a "{$_e}"
-  done <<<"$_x"
+# A word list, each a package name.
+# shellcheck disable=SC2086
+purge_deletes $_names
+for _i in ${PD_PKG[@]+"${!PD_PKG[@]}"}; do
+  _e=""
+  jadds _e package "${PD_PKG[$_i]}"
+  jaddn _e line "${PD_LINE[$_i]}"
+  jadds _e text "${PD_TEXT[$_i]}"
+  jpush _a "{$_e}"
 done
 jadd J purge_scripts "[$_a]"
 

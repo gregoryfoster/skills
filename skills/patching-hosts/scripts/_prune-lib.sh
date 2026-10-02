@@ -4,7 +4,7 @@
 # ship, apt's simulation of a removal and a purge, its paths and its group),
 # and the plan file that carries it. Sourced after _knob-lib.sh,
 # _probe-lib.sh and _gate-lib.sh.
-# The C_*, D_*, SIM_* and PLAN_* variables are its output.
+# The C_*, D_*, PD_*, SIM_* and PLAN_* variables are its output.
 # shellcheck disable=SC2034
 set -euo pipefail
 
@@ -16,6 +16,7 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
   prune_component NAME      C_ROOTS, C_CONFIG, C_DATA, C_GROUP, and for one
                             from outside apt C_UNIT and C_BINARY; 1 for a
                             name the probe doesn't know
+  purge_deletes PACKAGE...  PD_*: the lines in their purge scripts that delete
   derive NAME               D_*: the component as the host stands now
   calendar NAME             CAL_*: the prune stage the knob declares for it
   signature VAR             the lines a plan and a fresh derive must share
@@ -142,6 +143,29 @@ units_of() {  # <package>...
     done <<<"$_uo_out"
   done
   read -r -a UNITS <<<"$_uo_first $_uo_last" || true
+}
+
+# The lines in the packages' purge scripts that delete: each postrm, which
+# dpkg runs with "purge". nginx-common's takes /var/log/nginx with it, and
+# postgresql-16's drops every cluster: it sets postrm_purge_data to true
+# itself before it asks, and with no terminal nothing answers, so a false
+# answer set beforehand keeps nothing (measured on noble).
+PRUNE_RM_RE='(^|[^[:alnum:]_-])(rm|rmdir|deluser|delgroup|userdel|groupdel)[[:space:]]'
+PD_PKG=() PD_LINE=() PD_TEXT=()
+purge_deletes() {  # <package>...
+  local _pd_p _pd_x _pd_l _pd_n
+  PD_PKG=() PD_LINE=() PD_TEXT=()
+  for _pd_p in "$@"; do
+    capture _pd_x dpkg-query --control-show "$_pd_p" postrm
+    [ "$CAP_RC" -eq 0 ] || continue
+    _pd_n=0
+    while IFS= read -r _pd_l; do
+      _pd_n=$((_pd_n + 1))
+      [[ $_pd_l =~ $PRUNE_RM_RE ]] || continue
+      words_of _pd_l "$_pd_l"
+      PD_PKG+=("$_pd_p") PD_LINE+=("$_pd_n") PD_TEXT+=("$_pd_l")
+    done <<<"$_pd_x"
+  done
 }
 
 # A path's size in KiB, read as root where it can be: data under a 0700

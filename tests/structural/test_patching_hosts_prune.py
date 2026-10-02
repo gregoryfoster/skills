@@ -728,6 +728,28 @@ def test_a_purge_after_a_savepoint_skips_the_remove(tmp_path):
     assert not any("/var/lib/docker is still" in n for n in out["next"])
 
 
+def test_a_purge_that_drops_postgres_clusters_waits_for_the_owner_to_name_them(
+    tmp_path,
+):
+    # postgresql-16's purge script drops every cluster, whatever debconf
+    # says: no --purge-data, no purge.
+    host = _host(tmp_path, POSTGRES, "postgres").declare(
+        f"removed:postgres {PAST} soaked"
+    )
+    host.plan("postgres")
+    out = host.prune("purge", rc=3)
+    assert any(
+        r.startswith("postgresql-16's purge script deletes /var/lib/postgresql")
+        and "--purge-data /var/lib/postgresql" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert host.changes() == []
+
+    out = host.prune("purge", "--purge-data", "/var/lib/postgresql")
+    assert out["verdict"]["ok"] is True
+    assert host.changes()[-1] == "rm -rf /var/lib/postgresql"
+
+
 def test_a_savepoint_of_another_components_lets_no_purge_skip_the_remove(tmp_path):
     host = _host(tmp_path, DOCKER, "docker").declare(f"disabled:docker {PAST} soaked")
     host.plan("docker")
@@ -912,6 +934,12 @@ def _drift_package(h):
             ),
             "apt would install apache2",
         ),
+        # Its own purge script deletes it, so the owner names it.
+        (
+            "purge",
+            lambda h: h.declare(f"removed:nginx {PAST} soaked"),
+            "nginx-common's purge script deletes /var/log/nginx (postrm line 3",
+        ),
     ],
     ids=[
         "report-only",
@@ -933,6 +961,7 @@ def _drift_package(h):
         "dpkg-unclean",
         "drift",
         "a-removal-that-installs",
+        "a-purge-script-deleting-data",
     ],
 )
 def test_a_stage_it_shouldnt_run_is_refused(tmp_path, stage, setup, refused):

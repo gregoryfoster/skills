@@ -31,7 +31,7 @@ It changes nothing. Its JSON is what the owner reads before approving a stage:
 - `units`: each unit, socket and timer, with its state now. For Docker that is `docker.socket` as well as `docker.service`, and `containerd.service`;
 - `packages`: what `apt-get -s remove` and `apt-get -s purge` would take, including anything dragged along. `metapackages` flags any among them, since a later autoremove could take what it held in;
 - `reverse_depends`: what else installed depends on them and stays;
-- `purge_scripts`: the lines in each package's purge script that delete files, and `debconf`, its answers. **Read these before a purge:** nginx-common's deletes `/etc/nginx` and `/var/log/nginx`, and postgresql-16's deletes each cluster's data unless `postrm_purge_data` is false. docker.io's leaves `/var/lib/docker`;
+- `purge_scripts`: the lines in each package's purge script that delete files, and `debconf`, its answers. **Read these before a purge:** nginx-common's deletes `/etc/nginx` and `/var/log/nginx`, and postgresql-16's drops every cluster, data and config. It sets `postrm_purge_data` to true itself before it asks, and with no terminal nothing answers, so a false answer set beforehand keeps nothing (measured on noble). docker.io's leaves `/var/lib/docker`;
 - `paths`: its config and data, with sizes;
 - `group`: the group it lets members into. watcher's Docker removal left `exedev` in the `docker` group, root-equivalent the moment Docker came back (CannObserv/watcher#336);
 - `residue`: its packages removed with their config left (`rc`);
@@ -52,7 +52,7 @@ bash "<prune.sh>" --stage purge --plan <file> --approve [--savepoint <dir>] [--p
 Without `--approve` a stage changes nothing, and its `actions` list every command it would run. With it, it runs those commands, in that order, and none other. Each command's output goes to `<run>/<stage>.log`, root's only (default run: `/var/backups/patching-hosts-prune-<name>`). Its `next` says the knob line to add.
 
 - **No autoremove, ever.** Each apt command names the plan's packages and sets `APT::Get::AutomaticRemove=false`. Afterwards, each package must be gone, and any other package apt took fails the stage.
-- **No data the plan doesn't name.** A purge deletes a data path only by `--purge-data`, and only one the plan names. The package's own purge script still runs: the plan shows what it deletes.
+- **No data the owner doesn't name.** A purge deletes a data path only by `--purge-data`, and only one the plan names. A package's own purge script runs too, so where one deletes a data path, the purge refuses until `--purge-data` names it: `/var/log/nginx` for nginx, `/var/lib/postgresql` for Postgres. To keep that data, dump it off the node first, or leave the component removed.
 - **The masks stay.** A unit masked at the disable stays masked after the purge, so a component that comes back with a later install stays down until someone unmasks it.
 - **Undo a disable** with `systemctl unmask`, then `systemctl enable --now`, for each unit it masked.
 - **The savepoint holds no data.** Data differs by component, so its backup stays with the owner: dump it off the node, with a stated retention, as for a recovery point ([run.md](run.md#2-the-recovery-point)).

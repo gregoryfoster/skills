@@ -28,7 +28,8 @@ The stages, each after the last one's soak (its review-by date, policy.md):
   purge      apt-get purge of exactly the plan's packages, the members
              dropped and the group deleted, then each --purge-data path.
              Each package's own purge script runs too: the plan lists what
-             each one deletes
+             each one deletes, and where one deletes a data path, the purge
+             refuses until --purge-data names it
 With a savepoint, the purge may follow the disable's soak, and the remove
 stage is skipped: that leaves no config, and no rc package, behind.
 
@@ -55,8 +56,9 @@ for a plan it can't read, another host's, one more than 24 hours old, or one
 naming anything outside the component; for a stage the knob's calendar
 hasn't reached; when the host no longer matches the plan, or apt would
 install anything; for remove or purge while a package manager runs or
-dpkg --audit isn't clean, or of a component from outside apt; and for a
---purge-data path the plan doesn't name.
+dpkg --audit isn't clean, or of a component from outside apt; for a
+--purge-data path the plan doesn't name; and for a purge whose packages'
+own scripts delete a data path --purge-data doesn't name.
 
 Output: one JSON object on stdout. Keys: prune, refused, gate, actions
 (each command, in order), done (each one's exit), verdict and next.
@@ -340,6 +342,28 @@ gate_drift() {
   jadd J_GATE drift "{$o}"
 }
 
+# A purge deletes data only where the owner names it. A package's own purge
+# script runs too, so where one deletes a data path, --purge-data must name
+# that path: postgresql-16's drops every cluster whatever debconf says
+# (_prune-lib.sh), and nginx-common's takes /var/log/nginx.
+gate_purge_scripts() {
+  local l i p n="" seen=""
+  if [ "$stage" != purge ] || [ "$PLAN_OK" -ne 1 ]; then return 0; fi
+  for l in ${D_PURGE[@]+"${D_PURGE[@]}"}; do n="$n ${l%% *}"; done
+  # A word list, each a package name.
+  # shellcheck disable=SC2086
+  purge_deletes $n
+  for i in ${PD_PKG[@]+"${!PD_PKG[@]}"}; do
+    for p in $D_DATA; do
+      case ${PD_TEXT[$i]} in *"$p"*) ;; *) continue ;; esac
+      in_words "$p" "${purge_data[*]-}" && continue
+      in_words "${PD_PKG[$i]}:$p" "$seen" && continue
+      seen="$seen ${PD_PKG[$i]}:$p"
+      refuse "${PD_PKG[$i]}'s purge script deletes $p (postrm line ${PD_LINE[$i]}: ${PD_TEXT[$i]}): pass --purge-data $p to approve that, or leave $component removed rather than purged"
+    done
+  done
+}
+
 emit() {
   local o="" a="" r
   jadds a component "$component"
@@ -370,6 +394,7 @@ gate_plan
 gate_calendar
 gate_packages
 gate_drift
+gate_purge_scripts
 
 # --- the actions ------------------------------------------------------------------
 # Each one a command line, printed before anything runs: the text the owner
