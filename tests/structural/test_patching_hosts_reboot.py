@@ -557,6 +557,19 @@ def test_the_chain_reads_the_password_as_redis_does(host, line):
     assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", ""]
 
 
+def test_a_redis_with_no_file_gets_no_other_redis_password(host):
+    host.knob(KNOB_CHAIN + "datastore redis redis-cache\n")
+    host.show(
+        "redis-cache.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server --port 6390 ; }",
+    )
+    host.reboot()
+    host.fire(_journals(host))
+    # The first Redis's CONFIG GET with its file's password, the second's
+    # with none.
+    assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", "", ""]
+
+
 def test_a_save_redis_refuses_is_logged(tmp_path):
     host = _ready(Host(tmp_path), save="")
     # An error reply, on which redis-cli exits 0 (measured on 7.0).

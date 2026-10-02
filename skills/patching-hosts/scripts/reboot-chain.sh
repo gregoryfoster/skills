@@ -374,6 +374,9 @@ write_chain() {
         sq pw "$REDIS_PW_SED"
         c "REDISCLI_AUTH=\$(sed $pw $l 2>/dev/null | tail -n 1)"
         c '[ -n "$REDISCLI_AUTH" ] && export REDISCLI_AUTH || unset REDISCLI_AUTH'
+      else
+        # No file to read one from, and the last Redis's isn't this one's.
+        c 'unset REDISCLI_AUTH'
       fi
       c "# Its stop saves the RDB file only where save points are set."
       # redis-cli exits 0 on an error reply (measured on 7.0): the reply
