@@ -562,7 +562,7 @@ dump_globals() {  # <unit> <port>
 copy_root() { as_root sh -c 'umask 077; cat -- "$1" >"$2"' sh "$1" "$2"; }
 
 dump_redis() {  # <unit> <rdb>
-  local u=$1 rdb=$2 path t0 now="" out line st="" busy="" crc="" rrc="" mode sha="" e="" ok=0 w0 n=0
+  local u=$1 rdb=$2 path t0 now="" out line st="" busy="" crc="" rrc="" mode sha="" e="" ok=0 w0 n=0 bg=""
   path=$run/${u%.service}-$stamp.rdb
   redis_conn "$u"
   echo "recovery-point: BGSAVE on $u, then a copy into $path" >&2
@@ -572,11 +572,16 @@ dump_redis() {  # <unit> <rdb>
   is_int "$t0" || t0=""
   line=${out:-${CAP_ERR:-no reply}}
   capture out redis_cli BGSAVE
+  # A reply that neither starts a save nor joins one means none is coming:
+  # it fails now, with Redis's own words, instead of after the wait.
   case $out in
     *"Background saving started"* | *"already in progress"* | *scheduled*) ;;
-    *) out="BGSAVE: ${out:-${CAP_ERR:-no reply}}" ;;
+    *)
+      bg=${out:-${CAP_ERR:-no reply}}
+      bg=${bg%%$'\n'*}
+      st=refused ;;
   esac
-  while [ -n "$t0" ]; do
+  while [ -n "$t0" ] && [ -z "$bg" ]; do
     capture out redis_cli INFO persistence
     busy="" st="" now=""
     while IFS= read -r line; do
@@ -612,6 +617,8 @@ dump_redis() {  # <unit> <rdb>
   jaddn e seconds "$((SECONDS - w0))"
   if [ -z "$t0" ]; then
     fail "redis-cli ${REDIS_ARGS[*]} LASTSAVE answered \"$line\", not a time, so a BGSAVE couldn't be told from an old save"
+  elif [ -n "$bg" ]; then
+    fail "redis-cli ${REDIS_ARGS[*]} BGSAVE answered \"$bg\": Redis started no save"
   elif [ "$st" != ok ]; then
     fail "the BGSAVE on $u didn't end ok (${st:-unknown}) within $redis_within s"
   elif [ "$crc" != 0 ]; then

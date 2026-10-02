@@ -29,7 +29,8 @@ Beyond that list:
   its password, where the file sets one, never reaches an argv or the
   output;
 - a run's filesystem with less free space than the data refuses: a full
-  disk mid-dump can stop the data store it shares the disk with.
+  disk mid-dump can stop the data store it shares the disk with;
+- a BGSAVE Redis refuses fails at once, with Redis's reply.
 
 Each case runs from a copy of the skill's scripts, with probe.sh replaced
 by a stub, through the apply tests' host.
@@ -458,6 +459,29 @@ def test_a_bgsave_that_doesnt_finish_records_nothing(tmp_path, kw):
     host = _redis(_ready(Host(tmp_path)), **kw)
     out = host.recover("--redis-within", "1", rc=1)
     assert any("didn't end ok (timeout)" in w for w in out["verdict"]["why"])
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+def test_a_bgsave_redis_refuses_fails_at_once_with_its_reply(tmp_path):
+    host = _redis(_ready(Host(tmp_path)))
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if "BGSAVE" not in c[0]
+    ]
+    host.on(
+        "redis-cli",
+        "* BGSAVE",
+        "ERR Another child process is active (AOF?): can't BGSAVE right now.\n",
+    )
+    out = host.recover("--redis-within", "2", rc=1)
+    assert out["dumps"][0]["bgsave"] == "refused"
+    assert any(
+        'BGSAVE answered "ERR Another child process is active' in w
+        for w in out["verdict"]["why"]
+    ), out["verdict"]
+    # No wait for a save that isn't coming.
+    assert not [
+        a for _, a, _ in host.calls("redis-cli") if a.endswith("INFO persistence")
+    ]
     assert not (host.run_dir / "recovery-point").exists()
 
 
