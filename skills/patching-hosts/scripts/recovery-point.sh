@@ -163,8 +163,9 @@ if [ -z "$config" ]; then
 fi
 [ -n "$today" ] || today=$(date -u +%Y-%m-%d)
 # A retention already past, such as a mistyped year, would have the files
-# deleted before the apply they're for.
-if [[ $retain < $today ]]; then
+# deleted before the apply they're for. Against a well-formed today only:
+# knob_load says what's wrong with another.
+if [[ $today =~ $date_re ]] && [[ $retain < $today ]]; then
   echo "ERROR --retain-until $retain is before today, $today: state when these files will be deleted" >&2
   exit 2
 fi

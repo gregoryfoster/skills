@@ -161,6 +161,10 @@ def test_help_names_the_gates_and_the_record():
             ["--retain-until", "2025-10-29", "--today", "2026-09-29"],
             "2025-10-29 is before today, 2026-09-29",
         ),
+        (
+            ["--retain-until", "2026-10-29", "--today", "2026-9-29"],
+            "knob_load takes the date as YYYY-MM-DD",
+        ),
     ],
 )
 def test_usage_errors_exit_2(args, message):
