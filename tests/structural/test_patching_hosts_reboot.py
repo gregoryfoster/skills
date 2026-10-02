@@ -14,7 +14,8 @@ What this file pins, against the plan's step 6a list:
   journal's sync and copy, then the reboot;
 - the abort when the gate fails at the chain's own start, which stops
   nothing;
-- the journal copy comes after every stop, and is root's only;
+- the journal copy comes after every stop, and it and the chain's log are
+  root's only;
 - every value in the chain is single-quoted, since it runs as root: a
   unit's name is the knob's, and Redis's address and a cluster's port come
   from files the redis and postgres users can write;
@@ -394,6 +395,8 @@ def test_the_chain_runs_in_order_and_copies_the_journal_after_every_stop(host):
     assert f.stat().st_mode & 0o077 == 0
     assert oct((host.run_dir / "journal").stat().st_mode & 0o777) == "0o700"
     log = host.record("reboot-chain.log")
+    # It holds the read-back's journal lines.
+    assert (host.run_dir / "reboot-chain.log").stat().st_mode & 0o077 == 0
     assert "gate passed" in log
     assert "and read back" in log
     assert "holds no journal: a persistent one survives the boot" in log

@@ -17,7 +17,7 @@ nothing, and prints the chain: every command it would run, the knob's
 inflight commands verbatim, so the owner approves exactly what runs
 (approval 3(b)).
 
-The chain, logged to the run's reboot-chain.log:
+The chain, logged to the run's reboot-chain.log, root's only:
   1. the gate again: no package manager running, and every inflight command
      prints 0, run as the user recorded here, never as root. Otherwise it
      stops nothing and ends;
@@ -309,6 +309,8 @@ write_chain() {
   c "# Written by reboot-chain.sh. Every command it runs is below."
   c 'set -u'
   c 'set -f'
+  c '# Its log holds journal lines, and a journal can hold secrets.'
+  c 'umask 077'
   c "LOG=$q"
   sq q "$run/journal"
   c "JOURNAL=$q"
