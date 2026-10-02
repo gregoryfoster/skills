@@ -241,9 +241,17 @@ def test_a_recovery_point_after_the_bulk_started_is_refused(host):
     assert any("bulk already started" in r for r in out["refused"])
 
 
-def test_personal_data_must_name_a_declared_datastore(host):
-    out = host.recover("--personal-data", "billing", rc=3)
-    assert any("--personal-data billing names no" in r for r in out["refused"])
+@pytest.mark.parametrize(
+    "name, refused",
+    [
+        ("billing", "--personal-data billing names no"),
+        # Its dumps are per database, so it's flagged by database.
+        ("postgresql@16-main", "--personal-data postgresql@16-main is a Postgres unit"),
+    ],
+)
+def test_personal_data_must_name_a_declared_datastore(host, name, refused):
+    out = host.recover("--personal-data", name, rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
 
 
 # --- the dumps --------------------------------------------------------------------
@@ -409,6 +417,15 @@ def test_redis_is_saved_then_copied_at_600_and_recorded(tmp_path):
     assert [a for _, a, _ in host.calls("redis-cli")][0].startswith(
         "-h 127.0.0.1 -p 6379 "
     )
+
+
+def test_a_redis_unit_is_flagged_with_or_without_its_suffix(tmp_path):
+    host = _redis(_ready(Host(tmp_path)))
+    host.knob(KNOB + "datastore redis redis-server.service\n")
+    out = host.recover("--personal-data", "redis-server")
+    [d] = out["dumps"]
+    assert d["personal_data"] is True
+    assert f"personal {d['path']}\n" in host.record("recovery-point")
 
 
 def test_redis_is_reached_where_its_config_binds_and_its_password_stays_hidden(

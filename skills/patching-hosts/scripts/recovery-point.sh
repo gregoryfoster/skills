@@ -185,7 +185,7 @@ NEXT=()
 DS=() DS_BYTES=() PG_UNITS="" PG_UNIT_PORT=() BACKUP_SVC=""
 
 gate_host() {
-  local why t r db
+  local why t r db u hit pgunit
   local -a f=() dbs=()
   [ "$approve" -eq 1 ] ||
     refuse "no --approve: the owner approves the recovery point in the host's own session (run.md, Approvals)"
@@ -211,15 +211,29 @@ gate_host() {
       have redis-cli || refuse "redis-cli isn't on PATH, and the knob declares a Redis datastore"
     fi
   done
+  # A Postgres datastore is flagged by database, as its dumps are; a Redis
+  # one by its unit, with or without .service, as the knob may write it.
   for t in ${personal[@]+"${personal[@]}"}; do
-    r=0
+    hit="" pgunit=""
+    unit_name u "$t"
     for why in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
       IFS=$KNOB_US read -r -a f <<<"$why"
-      read -r -a dbs <<<"${f[2]:-}" || true
       unit_name db "${f[1]}"
-      if [ "$t" = "${f[1]}" ] || [ "$t" = "$db" ] || in_words "$t" "${dbs[*]-}"; then r=1; fi
+      if [ "${f[0]}" = postgres ]; then
+        read -r -a dbs <<<"${f[2]:-}" || true
+        if in_words "$t" "${dbs[*]-}"; then hit=1; fi
+        if [ "$u" = "$db" ]; then pgunit=1; fi
+      elif [ "$u" = "$db" ]; then
+        hit=1
+      fi
     done
-    [ "$r" -eq 1 ] || refuse "--personal-data $t names no database or Redis unit the knob declares"
+    if [ -n "$hit" ]; then
+      :
+    elif [ -n "$pgunit" ]; then
+      refuse "--personal-data $t is a Postgres unit: name the database whose dump holds personal data"
+    else
+      refuse "--personal-data $t names no database or Redis unit the knob declares"
+    fi
   done
 }
 
