@@ -35,8 +35,9 @@ data store. A recovery point takes minutes: start it where nothing cuts it
 off, in the background, and read its JSON when it ends.
 
 Options:
-  --retain-until DATE      when the owner deletes these files (required: every
-                           recovery-point file has a stated retention)
+  --retain-until DATE      when the owner deletes these files, today or later
+                           (required: every recovery-point file has a stated
+                           retention)
   --approve                the owner's approval, given in the host's own
                            session
   --run DIR                the run's directory, an absolute path (default:
@@ -161,6 +162,12 @@ if [ -z "$config" ]; then
   config="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.skills/patching-hosts"
 fi
 [ -n "$today" ] || today=$(date -u +%Y-%m-%d)
+# A retention already past, such as a mistyped year, would have the files
+# deleted before the apply they're for.
+if [[ $retain < $today ]]; then
+  echo "ERROR --retain-until $retain is before today, $today: state when these files will be deleted" >&2
+  exit 2
+fi
 
 # Called plainly, never in a condition: bash turns errexit off for everything
 # a condition runs (read-knob.sh's note). A return of 2 exits 2 here.

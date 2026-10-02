@@ -156,6 +156,10 @@ def test_help_names_the_gates_and_the_record():
         (["--retain-until", "next month"], "takes a date"),
         (["--retain-until", RETAIN, "--run", "rel/dir"], "absolute path"),
         (["--retain-until", RETAIN, "--redis-within", "0"], "--redis-within"),
+        (
+            ["--retain-until", "2025-10-29", "--today", "2026-09-29"],
+            "2025-10-29 is before today, 2026-09-29",
+        ),
     ],
 )
 def test_usage_errors_exit_2(args, message):
