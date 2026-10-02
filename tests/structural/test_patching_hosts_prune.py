@@ -862,6 +862,26 @@ def test_a_savepoint_that_failed_or_changed_since_lets_no_purge_skip_the_remove(
     assert not [c for c in host.changes() if c.startswith("apt-get purge")]
 
 
+def test_a_failed_savepoint_leaves_its_error_in_the_log_it_points_to(tmp_path):
+    host = _host(tmp_path, DOCKER, "docker").declare(f"disabled:docker {PAST} soaked")
+    host.plan("docker")
+    host.host_state["tar_fail"] = "/var/backups: No space left on device"
+    out = host.prune("savepoint", rc=1)
+    assert any("savepoint.log" in w for w in out["verdict"]["why"])
+    log = (host.run_dir / "savepoint.log").read_text()
+    assert f"$ tar -cf {host.run_dir}/config.tar" in log
+    assert "tar: /var/backups: No space left on device" in log
+
+    # A record that can't be written: its path is a directory.
+    del host.host_state["tar_fail"]
+    (host.run_dir / "versions").mkdir()
+    host.plan("docker")
+    out = host.prune("savepoint", rc=1)
+    log = (host.run_dir / "savepoint.log").read_text()
+    assert f"$ write {host.run_dir}/versions\n" in log
+    assert "Is a directory" in log
+
+
 def test_a_savepoint_whose_tarball_cant_be_read_writes_no_record(tmp_path):
     host = _host(tmp_path, DOCKER, "docker").declare(f"disabled:docker {PAST} soaked")
     host.plan("docker")

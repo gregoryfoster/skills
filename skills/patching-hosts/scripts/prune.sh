@@ -499,24 +499,24 @@ done
 # The script runs as root, in sh: its expansions are its own.
 # shellcheck disable=SC2016
 run_act() {  # <action>: runs it as root, its output to the log; sets RC
-  local _ra=$1 _ra_out
+  local _ra=$1 _ra_o=$P_TMP/act.out
   local -a _ra_w=()
   read -r -a _ra_w <<<"$_ra"
   RC=0
+  # Each one's output, stdout and stderr in the order written, goes to the
+  # log under its command line: a failure points there.
   case $_ra in
-    'mkdir '*) RC=0; return 0 ;;
+    'mkdir '*) return 0 ;;
     'tar -cf '*)
-      as_root sh -c 'umask 077; f=$1; shift; exec tar -cf "$f" "$@"' sh "${_ra_w[2]}" "${_ra_w[@]:3}" >/dev/null 2>"$P_TMP/act.err" || RC=$? ;;
+      as_root sh -c 'umask 077; f=$1; shift; exec tar -cf "$f" "$@"' sh "${_ra_w[2]}" "${_ra_w[@]:3}" >"$_ra_o" 2>&1 || RC=$? ;;
     "write $run/versions")
-      printf '%s' "$PLAN_VERSIONS" | root_write "$run/versions" || RC=$? ;;
+      printf '%s' "$PLAN_VERSIONS" | root_write "$run/versions" >"$_ra_o" 2>&1 || RC=$? ;;
     "write $run/savepoint")
       printf 'component %s\nhost %s\ntaken %s\nconfig.tar %s\n' "$component" "$host" "$P_NOW" "$SP_SHA" |
-        root_write "$run/savepoint" || RC=$? ;;
-    *)
-      capture _ra_out as_root "${_ra_w[@]}"
-      RC=$CAP_RC
-      { printf '$ %s\n%s\n' "$_ra" "$_ra_out"; cat "$P_TMP/stderr"; } | root_append "$log" || true ;;
+        root_write "$run/savepoint" >"$_ra_o" 2>&1 || RC=$? ;;
+    *) as_root "${_ra_w[@]}" >"$_ra_o" 2>&1 || RC=$? ;;
   esac
+  { printf '$ %s\n' "$_ra"; cat "$_ra_o"; } | root_append "$log" || true
 }
 
 SP_SHA="" _done="" RC=0
