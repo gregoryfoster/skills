@@ -624,9 +624,9 @@ base image, or an owner-approved remedy the profile documents.
     - **the calendar is the knob's exceptions:** a stage refuses until the
       last stage's `disabled:` or `removed:` review-by date has passed, and
       `keep:` stops every stage;
-    - **a plan binds packages, units and group members.** It's good on the
-      host it was taken on, for 24 hours, and only while a fresh read
-      matches it;
+    - **a plan binds packages, units, conffiles, Postgres clusters and group
+      members.** It's good on the host it was taken on, for 24 hours, and
+      only while a fresh read matches it;
     - **the disable stops, disables and masks in one systemctl call each,**
       so systemd orders the stops: dockerd before the containerd it runs
       on, whatever order apt lists them in;

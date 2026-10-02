@@ -30,7 +30,7 @@ bash "<prune-plan.sh>" --component <name> --out <file>
 It changes nothing. Its JSON is what the owner reads before approving a stage:
 - `units`: each unit, socket and timer, with its state now. For Docker that is `docker.socket` as well as `docker.service`, and `containerd.service`;
 - `packages`: what `apt-get -s remove` and `apt-get -s purge` would take, including anything dragged along, and any held;
-- `autoremove_would_take`: what apt installed for them alone. No stage autoremoves, but a later `apt autoremove`, or unattended-upgrades' `Remove-Unused-Dependencies`, takes these: for docker.io on noble, `iptables` and its libraries;
+- `autoremove_would_take`: what apt installed for them alone. No stage autoremoves, but a later `apt autoremove`, or unattended-upgrades' `Remove-Unused-Dependencies`, takes these: for docker.io installed with its recommends on noble, 47 packages, `iptables`, `git` and `openssh-client` among them (measured);
 - `reverse_depends`: what else installed depends on them and stays;
 - `purge_scripts`: the lines in each package's purge script that delete files, and `debconf`, its answers. **Read these before a purge:** nginx-common's deletes `/etc/nginx` and `/var/log/nginx`, and postgresql-16's drops every cluster, data and config. It sets `postrm_purge_data` to true itself before it asks, and with no terminal nothing answers, so a false answer set beforehand keeps nothing (measured on noble). docker.io's leaves `/var/lib/docker`;
 - `paths`: its config and data, with sizes, and `conffiles`: its packages' conffiles outside its config, such as `/etc/default/nginx` and `/etc/logrotate.d/nginx`. A purge deletes those too, so the savepoint keeps them;
@@ -39,7 +39,7 @@ It changes nothing. Its JSON is what the owner reads before approving a stage:
 - `residue`: its packages removed with their config left (`rc`);
 - `stage`: what the knob declares now, and the next stage.
 
-The plan file binds an approval: **take a fresh one for each stage.** A stage refuses a plan from another host, or one more than 24 hours old, and any plan the host no longer matches. A package installed or removed, a unit or a group member added since, each counts, so what the owner approved is exactly what runs.
+The plan file binds an approval: **take a fresh one for each stage.** A stage refuses a plan from another host, or one more than 24 hours old, and any plan the host no longer matches. A package installed or removed, a unit, a conffile, a Postgres cluster or a group member added or gone since, each counts, so what the owner approved is exactly what runs.
 
 ## The stages
 

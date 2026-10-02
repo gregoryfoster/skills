@@ -26,9 +26,9 @@ For one component the probe knows, prints what pruning it would take
   - its residue: its packages removed with their config left (rc);
   - the stage the knob declares, and the next one.
 
---out FILE writes the plan prune.sh acts on: the exact packages, units and
-members. A stage refuses when the host no longer matches it, so an approval
-binds to exactly what it names.
+--out FILE writes the plan prune.sh acts on: the exact packages, units,
+conffiles, Postgres clusters and group members. A stage refuses when the
+host no longer matches it, so an approval binds to exactly what it names.
 
 Options:
   --component NAME   docker, postgres, redis, nginx, ollama or qdrant

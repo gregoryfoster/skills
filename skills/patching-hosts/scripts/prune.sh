@@ -14,8 +14,8 @@ Runs one stage of a prune (references/pruning.md) on exactly what the plan
 names. Without --approve it changes nothing, and prints every command the
 stage would run. A plan is good for the host it was taken on, for 24 hours,
 and only while the host still matches it: a stage refuses when a fresh read
-gives other packages, units or members, so an approval binds to exactly
-what the plan names.
+gives other packages, units, conffiles, Postgres clusters or group members,
+so an approval binds to exactly what the plan names.
 
 The stages, each after the last one's soak (its review-by date, policy.md):
   disable    stop, disable and mask the units its packages ship, each in one
