@@ -542,6 +542,16 @@ def test_a_redis_that_isnt_the_units_own_is_refused(tmp_path, answer, pid, why):
     assert not [a for _, a, _ in host.calls("redis-cli") if a.endswith("BGSAVE")]
 
 
+def test_a_key_is_read_in_any_case_after_leading_space(tmp_path):
+    # Redis takes both (measured on 7.0).
+    conf = "   PORT 6390\n\tRequirePass s3cret-pass\n"
+    host = _redis(_ready(Host(tmp_path)), conf=conf)
+    assert host.recover()["verdict"]["ok"] is True
+    calls = [a for _, a, _ in host.calls("redis-cli")]
+    assert calls and all(a.startswith("-h 127.0.0.1 -p 6390 ") for a in calls)
+    assert set((host.state / "auth").read_text().split("\n")) - {""} == {"s3cret-pass"}
+
+
 def test_redis_is_reached_as_root_so_a_root_only_socket_is_too(tmp_path):
     # unixsocketperm 700, as Ubuntu's redis.conf suggests: only redis and
     # root can open the socket.

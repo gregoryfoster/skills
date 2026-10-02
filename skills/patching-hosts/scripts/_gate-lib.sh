@@ -320,11 +320,13 @@ pg_port() {  # <var> <unit>
 # the chain when it runs, read it into REDISCLI_AUTH as root, so it reaches
 # no argv and no output.
 REDIS_ARGS=() REDIS_CONF=""
-# The password a file's last requirepass sets, as Redis reads it: without
-# trailing space, and without one pair of quotes, double or single
-# (measured on 7.0). redis_cli and the chain run this one script, so the
-# two read the same password.
-REDIS_PW_SED='/^requirepass[[:space:]]/!d;s/^requirepass[[:space:]]*//;s/[[:space:]]*$//;s/^"\(.*\)"$/\1/;s/^'\''\(.*\)'\''$/\1/'
+# The password a file's last requirepass sets, as Redis reads it: the key
+# in any case, after any leading space, and the value without trailing
+# space or one pair of quotes, double or single (measured on 7.0).
+# redis_cli and the chain run this one script, so the two read the same
+# password.
+_RPW='[[:space:]]*[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Pp][Aa][Ss][Ss][[:space:]]'
+REDIS_PW_SED="/^$_RPW/!d;s/^$_RPW*//;"'s/[[:space:]]*$//;s/^"\(.*\)"$/\1/;s/^'\''\(.*\)'\''$/\1/'
 # unit_show sets them by name.
 U_ExecStart="" U_MainPID=""
 redis_conn() {  # <unit>
@@ -341,11 +343,12 @@ redis_conn() {  # <unit>
   fi
   if [ -n "$REDIS_CONF" ] && root_read _rc_t "$REDIS_CONF"; then
     while IFS= read -r _rc_l; do
+      # read drops the leading space, and Redis reads a key in any case.
       read -r _rc_k _rc_v _rc_w <<<"$_rc_l" || true
       case $_rc_k in
-        port) _rc_port=$_rc_v ;;
-        bind) _rc_bind=${_rc_v#-} ;;
-        unixsocket) _rc_sock=$_rc_v ;;
+        [Pp][Oo][Rr][Tt]) _rc_port=$_rc_v ;;
+        [Bb][Ii][Nn][Dd]) _rc_bind=${_rc_v#-} ;;
+        [Uu][Nn][Ii][Xx][Ss][Oo][Cc][Kk][Ee][Tt]) _rc_sock=$_rc_v ;;
       esac
     done <<<"$_rc_t"
   fi

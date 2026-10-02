@@ -627,6 +627,15 @@ def test_a_redis_that_isnt_running_has_nothing_to_save(host):
     assert host.reboot()["refused"] == []
 
 
+def test_the_chain_reads_a_key_in_any_case_after_leading_space(host):
+    # Redis takes both (measured on 7.0).
+    (host.tmp / "redis.conf").write_text("  Port 6380\n  REQUIREPASS pw-in-the-file\n")
+    host.reboot()
+    host.fire(_journals(host))
+    assert "redis-cli -h 127.0.0.1 -p 6380 CONFIG GET save" in host.sequence()
+    assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", ""]
+
+
 def test_a_save_redis_refuses_is_logged(tmp_path):
     host = _ready(Host(tmp_path), save="")
     # An error reply, on which redis-cli exits 0 (measured on 7.0).
