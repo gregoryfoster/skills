@@ -1219,6 +1219,18 @@ def test_a_restarter_that_doesnt_come_back_fails_the_step(host, rc, why):
     assert out["abort"]["restarters_stopped"] == ["app-healthcheck.timer"]
 
 
+@pytest.mark.parametrize("state, refused", [("active", True), ("inactive", False)])
+def test_no_step_runs_into_the_runs_scheduled_reboot(host, state, refused):
+    host.run()
+    unit = "patching-hosts-reboot-20260929T153000Z"
+    (host.run_dir / "reboot-chain.unit").write_text(f"{unit} 2026-09-29T15:32:00Z\n")
+    host.on("systemctl", f"is-active -- {unit}.timer", f"{state}\n")
+    out = host.run(step="postgres", rc=3 if refused else 0)
+    assert any(
+        f"reboot chain, {unit}.timer, is active" in r for r in out["refused"]
+    ) is (refused)
+
+
 def test_a_restarter_the_host_doesnt_have_is_refused(host):
     # Misspelled: is-active reads it as inactive, and it would never stop.
     host.knob(KNOB.replace("app-healthcheck.timer", "app-healthchek.timer"))

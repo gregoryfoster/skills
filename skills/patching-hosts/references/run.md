@@ -34,7 +34,7 @@ $nrconf{restart} = 'l';
 
 ## 2. The recovery point
 
-Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump.
+Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump. `recovery-point.sh --approve --retain-until <date>` takes it, as below, and writes the record the bulk reads. Like a step, it takes minutes: run it in the background.
 
 - **Prefer the host's own backup regime** when one exists and succeeded recently. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
 - **Otherwise, dump each data store as root**, mode 600 from creation. A `>` from the session shell can't write to `/var/backups` (CannObserv/address-validator#235):
@@ -64,17 +64,19 @@ Every host records its before-versions (below). A host that declares a `datastor
   A `>` from the session shell can't write there, and `sudo tee` creates the file at 644, readable by every user on the host.
 - **Secrets never travel:** the service's env file, keys and DSNs stay put.
 - **State a retention** for every recovery-point file, and flag a dump that holds personal data. address-validator's held its audit log's raw input.
-- **The record `apply.sh` reads**, `recovery-point` in the run's directory (0700, the file 0600), one line each:
+- **The record**, `recovery-point` in the run's directory (0700, the file 0600), which `recovery-point.sh` writes and `apply.sh` reads, one line each:
 
   ```
   began <epoch seconds>
+  retain <YYYY-MM-DD>
   dump postgres <unit> <database> <sha256> <path>
   dump redis <unit> <sha256> <path>
   backup <unit>
   local <path>
+  personal <path>
   ```
 
-  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts): its run must have *started* after `began` and succeeded, it stands in for every dump, and the owner names its object with `--offnode-object`. A `local` file, such as the globals dump, stays on the node and is never attested. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
+  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts): its run must have *started* after `began` and succeeded, it stands in for every dump, and the owner names its object with `--offnode-object`. A `local` file, such as the globals dump, stays on the node and is never attested. `retain` is the stated retention, and `personal` flags a dump that holds personal data. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
 - A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps
@@ -152,15 +154,15 @@ Reboot when any of them calls for it: dbus, logind, `user@`, a data store, PID 1
 
 ## 5. The reboot chain
 
-Run it detached, as a 0700 root script, so the operator's disconnect can't cut it off. Log it to `/var/backups/`:
+Run it detached, as a 0700 root script, so the operator's disconnect can't cut it off. `reboot-chain.sh --run <dir>` prints the chain for the owner to read; with `--approve` it writes it into the run's directory, with its log and the journal copy beside it, and launches it:
 
 ```
-sudo systemd-run --unit=reboot-chain-<utc> --on-active=120 --timer-property=AccuracySec=1s /var/backups/reboot-chain-<utc>.sh
+sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-property=AccuracySec=1s <dir>/reboot-chain.sh
 ```
 
 `AccuracySec=1s` matters: by default the transient timer fired 41 s late (CannObserv/wslcb-licensing-tracker#184). The script's steps:
 
-1. **The gate** again: every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
+1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
 3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured; with none, run `SAVE` first.
 4. `journalctl --sync`.

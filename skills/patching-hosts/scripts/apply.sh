@@ -64,7 +64,8 @@ more than -security without an unexpired exception uu:origins; when dpkg
 --audit isn't clean; when the step's span, from now to now plus its
 expected duration, isn't wholly inside one window or overlaps a quiet
 range; while an automatic apt run is in progress, or could start inside the span;
-and when an inflight command prints anything but 0. On a host that
+while the run's reboot chain is scheduled or running; and when an inflight
+command prints anything but 0. On a host that
 declares a datastore, the bulk also refuses until the recovery point began
 within 24 hours, covers every datastore, and has left the node: each dump
 attested by its sha256, and each backup unit, one the knob declares, run
@@ -118,6 +119,7 @@ done
 
 step_re='^[a-z0-9][a-z0-9-]*$'
 sha_re='^[0-9a-f]{64}$'
+date_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
 if [ -z "$step" ]; then
   echo "ERROR --step is required: bulk, or a held step (see --help)" >&2
   exit 2
@@ -179,7 +181,7 @@ while [ -L "$_self" ] && [ "$_n" -lt 10 ]; do
   _n=$((_n + 1))
 done
 _libdir="$(cd "$(dirname "$_self")" 2>/dev/null && pwd -P)" || _libdir=""
-for _lib in _knob-lib.sh _probe-lib.sh probe.sh; do
+for _lib in _knob-lib.sh _probe-lib.sh _gate-lib.sh probe.sh; do
   if [ -z "$_libdir" ] || [ ! -f "$_libdir/$_lib" ]; then
     echo "ERROR $_lib not found next to $_self" >&2
     exit 2
@@ -189,6 +191,9 @@ done
 . "$_libdir/_knob-lib.sh"
 # shellcheck source=_probe-lib.sh
 . "$_libdir/_probe-lib.sh"
+ME=apply
+# shellcheck source=_gate-lib.sh
+. "$_libdir/_gate-lib.sh"
 
 # Every line parsed below is C-locale output, and so is the JSON builder's
 # '?' for a byte that isn't printable ASCII.
@@ -213,85 +218,14 @@ P_LIVE=1
 # unit_show sets these by name.
 U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState=""
 
-if [ -z "$run" ]; then
-  _stamp=""
-  iso_utc _stamp "$P_NOW"
-  run=/var/backups/patching-hosts-${_stamp//[-:]/}
-fi
-
-# --- helpers --------------------------------------------------------------------
-# No function here ends on a bare `[ … ] && …`: a function that returns
-# non-zero stops the script under errexit, wherever it is called plainly.
-
-REFUSED=() FAILED=() NEXT=()
-refuse() { REFUSED+=("$1"); }
-fail() {
-  FAILED+=("$1")
-  echo "apply: $1" >&2
-}
-
-# Root-only records. A `>` from this shell can't write under /var/backups,
-# and `sudo tee` would create the file at 644: each one is written by root's
-# own sh, mode 600 from creation (run.md §2).
-# The script runs as root, in sh: its expansion is its own.
-# shellcheck disable=SC2016
-root_write() { as_root sh -c 'umask 077; cat >"$1"' sh "$1"; }
-# The script runs as root, in sh: its expansion is its own.
-# shellcheck disable=SC2016
-root_append() { as_root sh -c 'umask 077; cat >>"$1"' sh "$1"; }
-# Runs CMD as root, with its output in LOG, a root-only file.
-# The script runs as root, in sh: its expansions are its own.
-# shellcheck disable=SC2016
-root_logged() {  # <log> <cmd>...
-  local _rl=$1
-  shift
-  as_root sh -c 'umask 077; l=$1; shift; "$@" >"$l" 2>&1' sh "$_rl" "$@"
-}
-root_has() { as_root test -e "$1"; }
-root_read() {  # <var> <path>: VAR := its contents; returns 1 when it can't be read
-  capture "$1" as_root cat -- "$2"
-  [ "$CAP_RC" -eq 0 ]
-}
-
-words_of() {  # <var> <text>: VAR := its words, one space apart
-  local -a _wo=()
-  read -r -d '' -a _wo <<<"$2" || true
-  printf -v "$1" '%s' "${_wo[*]-}"
-}
-
-json_words() {  # <var> <space-separated words>: VAR := a JSON array of them
-  local _jw_a="" _jw
-  local -a _jw_w=()
-  read -r -a _jw_w <<<"$2" || true
-  for _jw in ${_jw_w[@]+"${_jw_w[@]}"}; do jpushs _jw_a "$_jw"; done
-  printf -v "$1" '[%s]' "$_jw_a"
-}
-
-says() {  # <var> <rc>: what a knob command's exit status means
-  case $2 in
-    124) printf -v "$1" '%s' "timed out after $KNOB_CMD_TIMEOUT s" ;;
-    137) printf -v "$1" '%s' "was killed (exit 137): it ignored the time limit's TERM" ;;
-    *) printf -v "$1" '%s' "exited $2" ;;
-  esac
-}
-
-hm_sec() {  # <var> <HH:MM>
-  printf -v "$1" '%s' "$((10#${2%%:*} * 3600 + 10#${2##*:} * 60))"
-}
-
-dow_of() {  # <var> <Mon..Sun>: 0 for Monday
-  local _d _i=0
-  for _d in Mon Tue Wed Thu Fri Sat Sun; do
-    if [ "$_d" = "$2" ]; then
-      printf -v "$1" '%s' "$_i"
-      return 0
-    fi
-    _i=$((_i + 1))
-  done
-  return 1
-}
+[ -n "$run" ] || default_run run
 
 # --- the gate -------------------------------------------------------------------
+# _gate-lib.sh holds refuse and fail, the root-only records, the span and the
+# inflight gate. No function here ends on a bare `[ … ] && …`: a function that
+# returns non-zero stops the script under errexit, wherever it is called
+# plainly.
+NEXT=()
 J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null
 J_VERDICT=null J_ABORT=null J_REPROBE=null
 
@@ -462,6 +396,23 @@ gate_run() {
 
 # A dry run counts the set pending that day: a month-old one counted
 # another, so its wall time isn't this run's floor.
+# A step never runs into the reboot its run scheduled: the chain stops at a
+# package manager running when it starts, but not at one that starts after.
+gate_reboot() {
+  local out u x st
+  [ "$P_PRIV" != none ] || return 0
+  root_read out "$run/reboot-chain.unit" || return 0
+  read -r u x <<<"$out"
+  for x in "$u.timer" "$u.service"; do
+    st=$(systemctl is-active -- "$x" 2>/dev/null) || true
+    case $st in
+      active | activating | deactivating | reloading)
+        refuse "the run's reboot chain, $x, is $st: no step until the host is back. Read $run/reboot-chain.log"
+        return 0 ;;
+    esac
+  done
+}
+
 DRY_SUMMARY="" DRY_MAX_AGE=86400
 gate_dry() {
   local line rc="" count="" began="" iso
@@ -500,75 +451,15 @@ gate_dry() {
   fi
 }
 
-# The step's span, from now to now plus its expected duration: the dry run's
-# wall time, plus the time the health checks may take. Checking only the
-# start lets a 9-minute apply begun 5 minutes before a quiet range run into it.
-SPAN_S="" SPAN_E=""
-gate_span() {
-  local S E o="" a="" r d ws we len wk os oe day q dq hit="" s_iso e_iso
-  local -a f=()
-  if ! is_int "$EXPECT"; then
-    jadd J_GATE span null
-    return 0
+# The step's span: the dry run's wall time, plus the time the health checks
+# may take.
+gate_step_span() {
+  local x=""
+  if is_int "$EXPECT"; then
+    x=$EXPECT
+    if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then x=$((x + health_within)); fi
   fi
-  S=$P_NOW
-  E=$((S + EXPECT))
-  if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then E=$((E + health_within)); fi
-  SPAN_S=$S SPAN_E=$E
-  iso_utc s_iso "$S"
-  iso_utc e_iso "$E"
-  jadds o start "$s_iso"
-  jadds o end "$e_iso"
-  jaddn o expected_seconds "$((E - S))"
-  # Monday 00:00 UTC of the week holding S: 1970-01-01 was a Thursday.
-  wk=$((S - ((S / 86400 + 3) % 7) * 86400 - S % 86400))
-  for r in ${KNOB_WINDOW[@]+"${KNOB_WINDOW[@]}"}; do
-    IFS=$KNOB_US read -r -a f <<<"$r"
-    dow_of d "${f[0]}"
-    hm_sec ws "${f[1]}"
-    hm_sec we "${f[2]}"
-    len=$((we - ws))
-    [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
-    # Last week's occurrence too: one that wraps past Sunday midnight.
-    for os in $((wk - 7 * 86400 + d * 86400 + ws)) $((wk + d * 86400 + ws)); do
-      oe=$((os + len))
-      if [ -z "$hit" ] && [ "$os" -le "$S" ] && [ "$E" -le "$oe" ]; then
-        hit="{\"weekday\": \"${f[0]}\", \"start\": \"${f[1]}\", \"end\": \"${f[2]}\", \"line\": ${f[4]}}"
-      fi
-    done
-  done
-  if [ "${#KNOB_WINDOW[@]}" -eq 0 ]; then
-    refuse "no window is declared for this host, so no step's span can be inside one (knob.md)"
-  elif [ -z "$hit" ]; then
-    refuse "the step's span, $s_iso to $e_iso ($((E - S)) s expected), isn't wholly inside one window: start it where the whole span fits"
-  fi
-  jadd o window "${hit:-null}"
-  for r in ${KNOB_QUIET[@]+"${KNOB_QUIET[@]}"}; do
-    IFS=$KNOB_US read -r -a f <<<"$r"
-    hm_sec ws "${f[1]}"
-    hm_sec we "${f[2]}"
-    len=$((we - ws))
-    [ "${f[3]}" -eq 0 ] || len=$((len + 86400))
-    dq=""
-    if [ -n "${f[0]}" ]; then dow_of dq "${f[0]}"; fi
-    for ((day = S / 86400 - 1; day <= E / 86400; day++)); do
-      if [ -n "$dq" ] && [ $(((day + 3) % 7)) -ne "$dq" ]; then continue; fi
-      os=$((day * 86400 + ws))
-      oe=$((os + len))
-      if [ "$os" -lt "$E" ] && [ "$S" -lt "$oe" ]; then
-        q=""
-        jaddsn q weekday "${f[0]}"
-        jadds q start "${f[1]}"
-        jadds q end "${f[2]}"
-        jaddn q line "${f[4]}"
-        jpush a "{$q}"
-        refuse "the step's span runs into the quiet range ${f[1]}-${f[2]}${f[0]:+ ${f[0]}} (line ${f[4]})"
-        break
-      fi
-    done
-  done
-  jadd o quiet_overlaps "[$a]"
-  jadd J_GATE span "{$o}"
+  gate_span "$x"
 }
 
 # Where the apt timers run, their unattended-upgrade takes the lock a step
@@ -625,7 +516,7 @@ gate_apt() {
 # name. A recovery point from another day isn't one for this run.
 RP_MAX_AGE=86400
 gate_recovery() {
-  local rec line kind engine unit rest db sha path key n=0 i r s x began="" o="" a="" e iso="" ok u k declared
+  local rec line kind engine unit rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared
   local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=()
   [ "$step" = bulk ] || return 0
   if [ "${#KNOB_DATASTORE[@]}" -eq 0 ]; then
@@ -663,7 +554,8 @@ gate_recovery() {
       dump:postgres) read -r db sha path <<<"$rest"; key="postgres $unit $db" ;;
       dump:redis) read -r sha path <<<"$rest"; key="redis $unit" ;;
       backup:*) if [ -n "$engine" ] && [ -z "$unit" ]; then backups+=("$engine"); else kind=bad; fi ;;
-      local:*) ;;
+      local:* | personal:*) [ -n "$engine" ] || kind=bad ;;
+      retain:*) if [[ $engine =~ $date_re ]]; then retain=$engine; else kind=bad; fi ;;
       *) kind=bad ;;
     esac
     if [ "$kind" = dump ]; then
@@ -683,6 +575,7 @@ gate_recovery() {
   fi
   iso_utc iso "$began"
   jaddsn o began "$iso"
+  jaddsn o retain_until "$retain"
   for key in ${need[@]+"${need[@]}"}; do
     [ "${#backups[@]}" -eq 0 ] || continue
     s=0
@@ -754,45 +647,6 @@ gate_recovery() {
   jadd J_GATE recovery_point "{$o}"
 }
 
-# Knob commands never run as root (knob.md). Every inflight one must print 0,
-# read right before the step, not at the window's start.
-gate_inflight() {
-  local r c l out rc e="" a="" why
-  local -a f=()
-  if [ -z "$P_KNOB_USER" ] && [ $((${#KNOB_INFLIGHT[@]} + ${#KNOB_HEALTH[@]})) -gt 0 ]; then
-    refuse "the knob's inflight and health commands never run as root, and there's no invoking user to run them as: run apply.sh through sudo from your own account"
-    jadd J_GATE inflight null
-    return 0
-  fi
-  for r in ${KNOB_INFLIGHT[@]+"${KNOB_INFLIGHT[@]}"}; do
-    IFS=$KNOB_US read -r -a f <<<"$r"
-    c=${f[0]} l=${f[1]}
-    rc=0
-    out=$(knob_cmd "$c" 2>/dev/null) || rc=$?
-    # The whole output, not its first line: a check that prints a count per
-    # queue prints 0 only when every queue is empty.
-    words_of out "$out"
-    e=""
-    jadds e command "$c"
-    jaddn e line "$l"
-    jaddn e exit "$rc"
-    jadds e printed "$out"
-    if [ "$rc" -eq 0 ] && [ "$out" = 0 ]; then
-      jaddb e ok 1
-    else
-      jaddb e ok 0
-      if [ "$rc" -ne 0 ]; then
-        says why "$rc"
-        refuse "inflight (line $l) $why, so whether work is in flight is unknown"
-      else
-        refuse "inflight (line $l) printed \"$out\", not 0: let the work drain, then gate again"
-      fi
-    fi
-    jpush a "{$e}"
-  done
-  jadd J_GATE inflight "[$a]"
-}
-
 # Each restarter's state, read and recorded before the step. A held step
 # stops the active ones around its restart.
 R_UNIT=() R_BEFORE=()
@@ -848,8 +702,9 @@ gate_host
 gate_uu
 gate_dpkg
 gate_run
+gate_reboot
 gate_dry
-gate_span
+gate_step_span
 gate_apt
 gate_recovery
 gate_restarters

@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# _probe-lib.sh — what probe.sh and apply.sh reach a host through: the root
-# they read under, how they reach root, a knob command's user and time limit,
-# a unit's state on disk, stat and date on GNU or BSD, and a small JSON
-# builder.
+# _probe-lib.sh — what probe.sh and the scripts that act reach a host
+# through: the root they read under, how they reach root, a knob command's
+# user and time limit, a unit's state on disk, stat and date on GNU or BSD,
+# and a small JSON builder.
 # The P_* and U_* variables are this library's output; its callers read them.
 # shellcheck disable=SC2034
 set -euo pipefail
 
 probe_lib_usage() {
   cat <<'USAGE'
-Usage: . _probe-lib.sh    (sourced by probe.sh and apply.sh; running it does nothing)
+Usage: . _probe-lib.sh    (sourced by probe.sh, recovery-point.sh, apply.sh and
+                          reboot-chain.sh; running it does nothing)
 
-The primitives probe.sh and apply.sh reach a host through:
+The primitives these scripts reach a host through:
   probe_init ROOT           sets P_ROOT ("" for /), P_LIVE, P_EUID, P_USER,
                             P_PRIV (root, sudo or none), P_KNOB_USER, P_NOW
                             and P_TMP, a scratch directory the caller removes
@@ -125,7 +126,7 @@ knob_cmd() {  # <command>
   fi
 }
 
-# --- shared by probe.sh and apply.sh ------------------------------------------
+# --- shared by every script ---------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
 
 capture() {  # <var> <cmd>...: VAR := its stdout; CAP_RC := its status; CAP_ERR := its first stderr line

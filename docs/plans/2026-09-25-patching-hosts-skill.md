@@ -519,6 +519,30 @@ base image, or an owner-approved remedy the profile documents.
     - the journal copy comes after every stop;
     - no platform restart command appears.
 
+    **Done 2026-10-01:** `scripts/recovery-point.sh` and
+    `scripts/reboot-chain.sh`, tested in
+    `tests/structural/test_patching_hosts_recovery.py` and
+    `test_patching_hosts_reboot.py`. What the three acting scripts share
+    moved from `apply.sh` into `scripts/_gate-lib.sh`. Building it settled:
+    - **the record gained two lines,** `retain <date>` from the required
+      `--retain-until`, and `personal <path>` from `--personal-data`;
+      `apply.sh` reads both;
+    - **pg_dump runs as postgres under root's own sh,** its output opened by
+      that sh at mode 600: one stage, so its exit status is the pipeline's;
+    - **a backup regime is relied on only where its last run succeeded,**
+      and its run now must start after `began` and succeed, as the bulk
+      checks; otherwise it dumps, and `--dump` dumps anyway;
+    - **Redis is reached where its own config file binds,** since a host may
+      bind only its tailnet address, and its password never leaves that
+      file: redis-cli reads it from `REDISCLI_AUTH`, and the chain reads the
+      file when it runs;
+    - **two refusals beyond the list:** the recovery point refuses a
+      filesystem with less free space than the data, since a full disk
+      mid-dump can stop the data store on it, and the chain refuses, and
+      aborts at its own start, while a package manager runs;
+    - **without `--approve` the chain is printed, not written,** so the text
+      the owner approves is the text that runs.
+
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical
     enough to be the same on every host.
