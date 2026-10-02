@@ -18,6 +18,7 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                             name the probe doesn't know
   purge_deletes PACKAGE...  PD_*: the lines in their purge scripts that delete
   conffiles_of PACKAGE...   CONFFILES: their conffiles outside C_CONFIG
+  pg_clusters               D_CLUSTERS: each Postgres cluster and its data
   derive NAME               D_*: the component as the host stands now
   calendar NAME             CAL_*: the prune stage the knob declares for it
   signature VAR             the lines a plan and a fresh derive must share
@@ -212,6 +213,54 @@ conffiles_of() {  # <package>...
   CONFFILES=${CONFFILES# }
 }
 
+# Each Postgres cluster, and where its data is. A purge drops them wherever
+# they are, and which script does it decides what goes: with
+# postgresql-common still installed, pg_dropcluster deletes the data
+# directory wherever it is; with it purged first, postgresql-16's own
+# fallback deletes /var/lib/postgresql/<version>/<cluster>, or its pgdata
+# link's target, and a data_directory elsewhere stays (both measured on
+# noble). So a purge names every cluster's data. pg_lsclusters reads them
+# while postgresql-common is installed; after a remove, each cluster's own
+# config is read as both scripts read it: its pgdata link, else its
+# data_directory, else the default.
+PG_DATADIR_SED='s/^[[:space:]]*data_directory[[:space:]]*=[[:space:]]*'"'"'\([^'"'"']*\)'"'"'.*/\1/p'
+D_CLUSTERS="" D_CLUSTERS_WHY=""
+pg_clusters() {
+  local _pc_o _pc_v _pc_c _pc_x _pc_d
+  D_CLUSTERS="" D_CLUSTERS_WHY=""
+  if have pg_lsclusters; then
+    capture _pc_o pg_lsclusters -h
+    if [ "$CAP_RC" -ne 0 ]; then
+      D_CLUSTERS_WHY="pg_lsclusters couldn't be read (${CAP_ERR:-exit $CAP_RC})"
+      return 0
+    fi
+    while read -r _pc_v _pc_c _pc_x _pc_x _pc_x _pc_d _pc_x; do
+      [ -n "$_pc_v" ] || continue
+      D_CLUSTERS="$D_CLUSTERS$_pc_v/$_pc_c $_pc_d"$'\n'
+    done <<<"$_pc_o"
+    return 0
+  fi
+  if [ "$P_PRIV" = none ]; then
+    D_CLUSTERS_WHY="pg_lsclusters isn't on PATH, and each cluster's config needs root to read"
+    return 0
+  fi
+  # The script runs as root, in sh: its expansions are its own.
+  # shellcheck disable=SC2016
+  capture _pc_o as_root sh -c '
+    for c in /etc/postgresql/*/*/postgresql.conf; do
+      [ -f "$c" ] || continue
+      d=${c%/postgresql.conf} t=""
+      if [ -L "$d/pgdata" ]; then t=$(readlink -f "$d/pgdata"); fi
+      [ -n "$t" ] || t=$(sed -n "$1" "$c" | tail -n 1)
+      printf "%s %s\n" "${d#/etc/postgresql/}" "${t:-/var/lib/postgresql/${d#/etc/postgresql/}}"
+    done' sh "$PG_DATADIR_SED"
+  if [ "$CAP_RC" -ne 0 ]; then
+    D_CLUSTERS_WHY="the clusters' config couldn't be read (${CAP_ERR:-exit $CAP_RC})"
+    return 0
+  fi
+  if [ -n "$_pc_o" ]; then D_CLUSTERS="$_pc_o"$'\n'; fi
+}
+
 # A path's size in KiB, read as root where it can be: data under a 0700
 # directory can't be measured from outside it. Empty when it doesn't exist.
 path_kib() {  # <var> <path>
@@ -239,7 +288,7 @@ derive() {  # <name>
   local _d_i _d_p _d_u _d_k _d_names="" _d_line _d_pn=""
   D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
   D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
-  D_CONFFILES="" D_UNSAVED=()
+  D_CONFFILES="" D_UNSAVED=() D_CLUSTERS="" D_CLUSTERS_WHY=""
   prune_component "$1" || return 1
   if [ -n "$C_UNIT" ]; then
     D_UNPACKAGED=1
@@ -296,6 +345,7 @@ derive() {  # <name>
     # shellcheck disable=SC2086
     units_of $_d_names
     D_UNITS=(${UNITS[@]+"${UNITS[@]}"})
+    if [ "$1" = postgres ] && [ "$D_PRESENT" -eq 1 ]; then pg_clusters; fi
   fi
   for _d_p in $C_CONFIG $C_DATA; do
     path_kib _d_k "$_d_p"
@@ -338,16 +388,19 @@ calendar() {  # <name>
 }
 
 # What a plan binds: the packages, the units, the conffiles the savepoint
-# takes, and the group's members. A stage refuses when a fresh derive gives
-# other lines.
+# takes, Postgres's clusters and their data, and the group's members. A
+# stage refuses when a fresh derive gives other lines.
 signature() {  # <var>
-  local _sg_s="" _sg_x
+  local _sg_s="" _sg_x _sg_y
   for _sg_x in $D_ROOTS; do _sg_s="${_sg_s}root $_sg_x"$'\n'; done
   for _sg_x in $D_RESIDUE; do _sg_s="${_sg_s}residue $_sg_x"$'\n'; done
   for _sg_x in ${D_UNITS[@]+"${D_UNITS[@]}"}; do _sg_s="${_sg_s}unit $_sg_x"$'\n'; done
   for _sg_x in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do _sg_s="${_sg_s}remove ${_sg_x%% *}"$'\n'; done
   for _sg_x in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _sg_s="${_sg_s}purge ${_sg_x%% *}"$'\n'; done
   for _sg_x in $D_CONFFILES; do _sg_s="${_sg_s}conffile $_sg_x"$'\n'; done
+  while read -r _sg_x _sg_y; do
+    if [ -n "$_sg_x" ]; then _sg_s="${_sg_s}cluster $_sg_x $_sg_y"$'\n'; fi
+  done <<<"$D_CLUSTERS"
   for _sg_x in $D_MEMBERS; do _sg_s="${_sg_s}member $C_GROUP $_sg_x"$'\n'; done
   printf -v "$1" '%s' "$_sg_s"
 }
@@ -368,11 +421,11 @@ write_plan() {  # <host> <component>
 }
 
 PLAN_COMPONENT="" PLAN_HOST="" PLAN_TAKEN="" PLAN_SIG="" PLAN_CONFIG="" PLAN_DATA=""
-PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES=""
+PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES="" PLAN_CLUSTERS=""
 read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
   local _rd_t _rd_l _rd_k _rd_a _rd_b _rd_n=0
   PLAN_COMPONENT="" PLAN_HOST="" PLAN_TAKEN="" PLAN_SIG="" PLAN_CONFIG="" PLAN_DATA=""
-  PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES=""
+  PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES="" PLAN_CLUSTERS=""
   [ -f "$1" ] && [ -r "$1" ] || return 1
   _rd_t=$(cat -- "$1") || return 1
   while IFS= read -r _rd_l; do
@@ -391,6 +444,9 @@ read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
         PLAN_SIG="$PLAN_SIG$_rd_l"$'\n'
         PLAN_CONFFILES="$PLAN_CONFFILES $_rd_a" ;;
       member:?*) PLAN_SIG="$PLAN_SIG$_rd_l"$'\n' ;;
+      cluster:?*)
+        PLAN_SIG="$PLAN_SIG$_rd_l"$'\n'
+        PLAN_CLUSTERS="$PLAN_CLUSTERS$_rd_a $_rd_b"$'\n' ;;
       version:?*) PLAN_VERSIONS="$PLAN_VERSIONS$_rd_a $_rd_b"$'\n' ;;
       config:) PLAN_CONFIG="$PLAN_CONFIG $_rd_a" ;;
       data:) PLAN_DATA="$PLAN_DATA $_rd_a" ;;

@@ -228,6 +228,12 @@ if cmd == "du":
         sys.exit(1)
     print("%s\t%s" % (k, args[-1]))
     sys.exit(0)
+if cmd == "pg_lsclusters":
+    if db.get("clusters") is None:
+        sys.exit(1)
+    for v, c, d in db["clusters"]:
+        print("%s %s 5432 online postgres %s /var/log/postgresql/%s.log" % (v, c, d, c))
+    sys.exit(0)
 if cmd == "debconf-show":
     for n in args:
         for line in db.get("debconf", {}).get(n, []):
@@ -253,6 +259,7 @@ FAKED = (
     "du",
     "debconf-show",
     "tar",
+    "pg_lsclusters",
 )
 # What changes the host, as the stub log records it.
 MUTATING = ("apt-get", "gpasswd", "groupdel", "rm", "tar")
@@ -366,6 +373,7 @@ POSTGRES = {
         "/var/lib/postgresql": 39468,
     },
     "debconf": {"postgresql-16": ["* postgresql-16/postrm_purge_data: true"]},
+    "clusters": [["16", "main", "/var/lib/postgresql/16/main"]],
 }
 OLLAMA = {
     "packages": {},
@@ -812,6 +820,49 @@ def test_a_purge_that_drops_postgres_clusters_waits_for_the_owner_to_name_them(
     out = host.prune("purge", "--purge-data", "/var/lib/postgresql")
     assert out["verdict"]["ok"] is True
     assert host.changes()[-1] == "rm -rf /var/lib/postgresql"
+
+
+def test_a_postgres_cluster_kept_elsewhere_is_named_before_any_purge(tmp_path):
+    # Which script drops it decides whether /srv/pg/alt goes: the owner names
+    # it, and the purge deletes it whichever ran.
+    host = _host(tmp_path, POSTGRES, "postgres").declare(
+        f"removed:postgres {PAST} soaked"
+    )
+    host.host_state["clusters"].append(["16", "alt", "/srv/pg/alt"])
+    out = host.plan("postgres")
+    assert out["clusters"] == [
+        {"cluster": "16/main", "data": "/var/lib/postgresql/16/main"},
+        {"cluster": "16/alt", "data": "/srv/pg/alt"},
+    ]
+    assert "cluster 16/alt /srv/pg/alt" in (tmp_path / "postgres.plan").read_text()
+    out = host.prune("purge", "--purge-data", "/var/lib/postgresql", rc=3)
+    assert out["refused"] == [
+        "the purge drops Postgres cluster 16/alt and its data at /srv/pg/alt: pass"
+        " --purge-data /srv/pg/alt to approve that, or leave postgres removed rather"
+        " than purged"
+    ]
+    assert host.changes() == []
+
+    out = host.prune(
+        "purge", "--purge-data", "/var/lib/postgresql", "--purge-data", "/srv/pg/alt"
+    )
+    assert out["verdict"]["ok"] is True
+    assert host.changes()[-2:] == [
+        "rm -rf /var/lib/postgresql",
+        "rm -rf /srv/pg/alt",
+    ]
+
+
+def test_a_purge_with_clusters_it_cant_list_is_refused(tmp_path):
+    host = _host(tmp_path, POSTGRES, "postgres").declare(
+        f"removed:postgres {PAST} soaked"
+    )
+    host.host_state["clusters"] = None
+    out = host.plan("postgres")
+    assert any("Postgres's clusters" in n for n in out["not_read"])
+    out = host.prune("purge", "--purge-data", "/var/lib/postgresql", rc=3)
+    assert any("clusters couldn't be listed" in r for r in out["refused"])
+    assert host.changes() == []
 
 
 def test_a_savepoint_keeps_the_conffiles_a_purge_deletes_outside_the_config(

@@ -224,7 +224,7 @@ gate_host() {
 
 # The plan is this host's, fresh, and names only what the component is.
 gate_plan() {
-  local o="" p taken="" before=${#REFUSED[@]}
+  local o="" p x taken="" cdirs="" before=${#REFUSED[@]}
   if [ -z "$component" ]; then
     refuse "$plan couldn't be read, or isn't a plan prune-plan.sh wrote"
     jadd J_GATE plan null
@@ -258,8 +258,12 @@ gate_plan() {
       remove | purge) refuse "$component comes from outside apt: remove its unit, binary and data by hand (pruning.md)" ;;
     esac
   fi
+  # A Postgres cluster's data is a path the plan names too, wherever it is.
+  while read -r x p; do
+    if [ -n "$x" ]; then cdirs="$cdirs $p"; fi
+  done <<<"$PLAN_CLUSTERS"
   for p in ${purge_data[@]+"${purge_data[@]}"}; do
-    in_words "$p" "$PLAN_CONFIG $PLAN_DATA" || refuse "--purge-data $p isn't a path the plan names"
+    in_words "$p" "$PLAN_CONFIG $PLAN_DATA $cdirs" || refuse "--purge-data $p isn't a path the plan names"
   done
   # Its own refusals only: a run without --approve still prints the plan's
   # commands.
@@ -387,9 +391,10 @@ gate_drift() {
 # A purge deletes data only where the owner names it. A package's own purge
 # script runs too, so where one deletes a data path, --purge-data must name
 # that path: postgresql-16's drops every cluster whatever debconf says
-# (_prune-lib.sh), and nginx-common's takes /var/log/nginx.
+# (_prune-lib.sh), and nginx-common's takes /var/log/nginx. Each Postgres
+# cluster's data is named the same way, wherever it is.
 gate_purge_scripts() {
-  local l i p n="" seen=""
+  local l i p n="" seen="" vc dir hint covered
   if [ "$stage" != purge ] || [ "$PLAN_OK" -ne 1 ]; then return 0; fi
   for l in ${D_PURGE[@]+"${D_PURGE[@]}"}; do n="$n ${l%% *}"; done
   # A word list, each a package name.
@@ -404,6 +409,29 @@ gate_purge_scripts() {
       refuse "${PD_PKG[$i]}'s purge script deletes $p (postrm line ${PD_LINE[$i]}: ${PD_TEXT[$i]}): pass --purge-data $p to approve that, or leave $component removed rather than purged"
     done
   done
+  # Every Postgres cluster's data, wherever it is: which script drops a
+  # cluster decides what goes (_prune-lib.sh), so the owner names each one,
+  # and the purge deletes it after apt, whichever script ran.
+  if [ -n "$D_CLUSTERS_WHY" ]; then
+    refuse "Postgres's clusters couldn't be listed ($D_CLUSTERS_WHY), so what the purge drops is unknown"
+  fi
+  while read -r vc dir; do
+    [ -n "$vc" ] || continue
+    case $dir in *[[:space:]]*)
+      refuse "Postgres cluster $vc keeps its data at '$dir', a path with whitespace no command line here can name: move it, or drop the cluster by hand, first"
+      continue ;;
+    esac
+    covered=0
+    for p in ${purge_data[@]+"${purge_data[@]}"}; do
+      case $dir in "$p" | "$p"/*) covered=1 ;; esac
+    done
+    [ "$covered" -eq 0 ] || continue
+    hint=$dir
+    for p in $D_DATA; do
+      case $dir in "$p"/*) hint=$p ;; esac
+    done
+    refuse "the purge drops Postgres cluster $vc and its data at $dir: pass --purge-data $hint to approve that, or leave $component removed rather than purged"
+  done <<<"$D_CLUSTERS"
 }
 
 emit() {
