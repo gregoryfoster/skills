@@ -30,7 +30,8 @@ Beyond that list:
   output;
 - a run's filesystem with less free space than the data refuses: a full
   disk mid-dump can stop the data store it shares the disk with;
-- a BGSAVE Redis refuses fails at once, with Redis's reply.
+- a BGSAVE Redis refuses fails at once, with Redis's reply;
+- an attempt that fails leaves no record, not even an earlier attempt's.
 
 Each case runs from a copy of the skill's scripts, with probe.sh replaced
 by a stub, through the apply tests' host.
@@ -345,6 +346,18 @@ def test_a_dump_whose_pg_dump_failed_records_nothing(host):
     out = host.recover(rc=1)
     assert any("pg_dump of app" in w and "exited 1" in w for w in out["verdict"]["why"])
     assert out["dumps"][0]["list_exit"] is None
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+def test_an_attempt_that_fails_leaves_no_earlier_record(host):
+    host.recover()
+    # Taken again, an hour later, and this time pg_dump fails.
+    host.clock += 3600
+    host.cases["pg_dump"] = [
+        ("*", "PGDMP", 1, "pg_dump: error: connection lost\n", None)
+    ]
+    out = host.recover(rc=1)
+    assert out["next"][0].startswith("Nothing was recorded, so apply.sh's bulk refuses")
     assert not (host.run_dir / "recovery-point").exists()
 
 

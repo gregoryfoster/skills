@@ -549,7 +549,9 @@ base image, or an owner-approved remedy the profile documents.
         write: a `$( )` in any of them would run as root;
       - a chain that aborted at its own gate stopped nothing, so it can be
         launched again. Only one that's scheduled, running, or ran without
-        an ABORT refuses a second.
+        an ABORT refuses a second;
+      - a recovery point taken again removes the earlier record first, so
+        an attempt that fails leaves none for the bulk to take.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical

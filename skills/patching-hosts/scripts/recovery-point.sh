@@ -67,6 +67,9 @@ The record, one line each (run.md section 2):
 Output: one JSON object on stdout. Keys: recovery_point, refused, gate, then
 what it did: backup, dumps, local, verdict and next.
 
+A record an earlier attempt left in the run is removed first, so an attempt
+that fails leaves none.
+
 Exit codes:
   0  the recovery point is taken and recorded
   1  a dump or the backup failed: nothing was recorded
@@ -641,6 +644,14 @@ dump_redis() {  # <unit> <rdb>
 
 if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
   fail "$run couldn't be made"
+fi
+# An earlier attempt's record goes first: otherwise an attempt that fails
+# leaves it standing, and the bulk would take it.
+if [ "${#FAILED[@]}" -eq 0 ] && root_has "$run/recovery-point"; then
+  echo "recovery-point: removing $run/recovery-point, an earlier attempt's record" >&2
+  # An absolute path, so no --.
+  as_root rm -f "$run/recovery-point" ||
+    fail "$run/recovery-point, an earlier attempt's record, couldn't be removed"
 fi
 if [ "${#FAILED[@]}" -eq 0 ]; then
   if [ -n "$BACKUP_SVC" ]; then
