@@ -571,6 +571,12 @@ def test_help_names_the_stages_and_the_exit_codes():
             ["--stage", "purge", "--plan", "p", "--purge-data", "var/www"],
             "absolute paths",
         ),
+        # An action runs as the words of its line.
+        (
+            PRUNE,
+            ["--stage", "savepoint", "--plan", "p", "--run", "/var/backups/a b"],
+            "--run takes a path without whitespace",
+        ),
     ],
 )
 def test_usage_errors_exit_2(script, args, message):

@@ -44,6 +44,7 @@ Options:
   --purge-data PATH    (purge) delete this config or data path, one the plan
                        names. Repeatable. Without it, its data stays
   --run DIR            where the logs and the savepoint go, an absolute path
+                       without whitespace
                        (default: /var/backups/patching-hosts-prune-<component>)
   --config FILE        the knob (default: .skills/patching-hosts at the repo
                        root, or in the current directory)
@@ -122,6 +123,12 @@ for _v in "$savepoint" "$run" ${purge_data[@]+"${purge_data[@]}"}; do
     *) echo "ERROR --savepoint, --run and --purge-data take absolute paths" >&2; exit 2 ;;
   esac
 done
+# The run's directory is a word in the actions, and each action runs as the
+# words of its line: the text approved is the text that runs.
+case $run in *[[:space:]]*)
+  echo "ERROR --run takes a path without whitespace: each command is approved, and run, as one line of words" >&2
+  exit 2 ;;
+esac
 
 # --- shared libraries ---------------------------------------------------------
 # Resolved through a symlink chain first, as probe.sh does: the skill is
