@@ -39,7 +39,8 @@ Beyond that list:
 - only the volatile journal is copied: a persistent one survives the boot;
 - Redis is saved first only when it has no save points, and its password
   stays in its own config file;
-- Redis is reached where its unit's own arguments say, over the file's.
+- Redis is reached where its unit's own arguments say, over the file's;
+- a SAVE Redis refuses is logged, although redis-cli exits 0 on it.
 """
 
 import json
@@ -554,6 +555,21 @@ def test_the_chain_reads_the_password_as_redis_does(host, line):
     host.reboot()
     host.fire(_journals(host))
     assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", ""]
+
+
+def test_a_save_redis_refuses_is_logged(tmp_path):
+    host = _ready(Host(tmp_path), save="")
+    # An error reply, on which redis-cli exits 0 (measured on 7.0).
+    host.cases["redis-cli"] = [c for c in host.cases["redis-cli"] if c[0] != "* SAVE"]
+    host.on("redis-cli", "* SAVE", "NOAUTH Authentication required.\n")
+    host.reboot()
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    assert "SAVE failed: NOAUTH Authentication required." in host.record(
+        "reboot-chain.log"
+    )
+    # The stop goes on: the boot would stop it anyway.
+    assert "systemctl stop -- redis-server.service" in host.sequence()
 
 
 @pytest.mark.parametrize("save, saved", [("3600 1 300 100", False), ("", True)])
