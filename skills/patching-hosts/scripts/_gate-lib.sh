@@ -35,6 +35,8 @@ Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
                             or 1 with PG_WHY
   redis_conn UNIT           REDIS_ARGS := redis-cli's connection words, and
                             REDIS_CONF := the file the unit starts from
+  redis_cli CMD...          redis-cli at REDIS_ARGS, as root, with the
+                            password root's own sh reads from REDIS_CONF
 USAGE
 }
 
@@ -311,8 +313,9 @@ pg_port() {  # <var> <unit>
 
 # redis-cli reaches the server the unit starts, through the address its own
 # config file binds: a host may bind only its tailnet address. The password,
-# where the file sets one, never leaves the host's own file: callers read it
-# into REDISCLI_AUTH themselves, so it reaches no argv and no output.
+# where the file sets one, never leaves the host's own file: redis_cli, and
+# the chain when it runs, read it into REDISCLI_AUTH as root, so it reaches
+# no argv and no output.
 REDIS_ARGS=() REDIS_CONF=""
 # unit_show sets it by name.
 U_ExecStart=""
@@ -347,16 +350,25 @@ redis_conn() {  # <unit>
   fi
 }
 
-redis_cli() {  # <command>...: redis-cli at REDIS_ARGS, with the file's password in REDISCLI_AUTH
-  local _pw=""
-  if [ -n "$REDIS_CONF" ]; then
-    # An absolute path, so no option: BSD sed reads -- as a file.
-    _pw=$(as_root sed -n 's/^requirepass[[:space:]][[:space:]]*//p' "$REDIS_CONF" 2>/dev/null | tail -n 1) || _pw=""
-    _pw=${_pw#\"} _pw=${_pw%\"}
-  fi
-  if [ -n "$_pw" ]; then
-    REDISCLI_AUTH=$_pw redis-cli ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
-  else
-    redis-cli ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
-  fi
+# As root, so a socket only redis and root can open, as unixsocketperm 700
+# makes it, is reached too. The password goes from the file into
+# REDISCLI_AUTH inside root's own sh, never through a process of the
+# invoking user's.
+# The script runs as root, in sh: its expansions are its own.
+# shellcheck disable=SC2016
+redis_cli() {  # <command>...
+  as_root sh -c 'c=$1
+shift
+p=""
+if [ -n "$c" ]; then
+  # An absolute path, so no --: BSD sed reads it as a file.
+  p=$(sed -n "s/^requirepass[[:space:]][[:space:]]*//p" "$c" 2>/dev/null | tail -n 1)
+  p=${p#\"}
+  p=${p%\"}
+fi
+if [ -n "$p" ]; then
+  REDISCLI_AUTH=$p
+  export REDISCLI_AUTH
+fi
+exec redis-cli "$@"' sh "$REDIS_CONF" ${REDIS_ARGS[@]+"${REDIS_ARGS[@]}"} "$@"
 }

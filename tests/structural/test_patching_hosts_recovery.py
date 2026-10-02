@@ -25,9 +25,9 @@ Beyond that list:
 
 - a stated retention is required, and recorded;
 - a dump that holds personal data is flagged in the record;
-- Redis is reached at the address and port its own config file binds, and
-  its password, where the file sets one, never reaches an argv or the
-  output;
+- Redis is reached at the address and port its own config file binds, as
+  root, so a socket only redis and root can open is reached too, and its
+  password, where the file sets one, never reaches an argv or the output;
 - a run's filesystem with less free space than the data refuses: a full
   disk mid-dump can stop the data store it shares the disk with;
 - a BGSAVE Redis refuses fails at once, with Redis's reply;
@@ -455,6 +455,39 @@ def test_redis_is_reached_where_its_config_binds_and_its_password_stays_hidden(
     assert calls and all(a.startswith("-h 10.1.2.3 -p 6380 ") for a in calls)
     # In redis-cli's environment, never its argv or the output.
     assert set((host.state / "auth").read_text().split()) == {"s3cret-pass"}
+    assert "s3cret" not in host.log.read_text()
+    assert "s3cret" not in host.result.stdout + host.result.stderr
+
+
+def test_redis_is_reached_as_root_so_a_root_only_socket_is_too(tmp_path):
+    # unixsocketperm 700, as Ubuntu's redis.conf suggests: only redis and
+    # root can open the socket.
+    host = _redis(
+        _ready(Host(tmp_path)),
+        conf=(
+            "port 6379\nunixsocket /run/redis/redis-server.sock\n"
+            "unixsocketperm 700\nrequirepass s3cret-pass\n"
+        ),
+    )
+    s = host.state
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if "LASTSAVE" not in c[0]
+    ]
+    host.on(
+        "redis-cli",
+        "* LASTSAVE",
+        script=f'echo "${{STUB_USER:-}}" >> "{s}/users"; echo 1000; exit 0',
+    )
+    out = host.recover()
+    assert out["verdict"]["ok"] is True
+    calls = [a for _, a, _ in host.calls("redis-cli")]
+    assert calls and all(
+        a.startswith("-s /run/redis/redis-server.sock ") for a in calls
+    )
+    assert (s / "users").read_text().split() == ["root"]
+    # Read by root's own sh: in redis-cli's environment, never an argv or
+    # the output.
+    assert set((s / "auth").read_text().split()) == {"s3cret-pass"}
     assert "s3cret" not in host.log.read_text()
     assert "s3cret" not in host.result.stdout + host.result.stderr
 
