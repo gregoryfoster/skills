@@ -16,7 +16,8 @@ What this file pins, against the plan's step 6b list:
 Beyond that list:
 
 - the plan: units with sockets first, a template's loaded instances, what a
-  removal and a purge take and drag along, metapackages, what else depends
+  removal and a purge take and drag along, what a later autoremove would
+  take, what else depends
   on them, the purge scripts' deleting lines, debconf's answers, paths with
   sizes, the group and its members, the residue, and the stage the knob
   declares;
@@ -72,7 +73,7 @@ if cmd == "dpkg-query":
     if args[0] == "-W":
         for n in sorted(pk):
             p = pk[n]
-            print("%s |%s|%s|%s" % (p["state"], n, p["version"], p.get("section", "misc")))
+            print("%s |%s|%s" % (p["state"], n, p["version"]))
     elif args[0] == "-L":
         p = pk.get(args[1])
         if not p or p["state"] not in ("ii", "hi"):
@@ -93,6 +94,13 @@ if cmd == "apt-cache":
     sys.exit(0)
 if cmd == "apt-get":
     sim = "-s" in args
+    # What autoremove takes already: apt lists it as "no longer required"
+    # after any removal too.
+    gone = db.get("autoremovable", [])
+    if "autoremove" in args:
+        for n in gone:
+            print("Remv %s [1.0]" % n)
+        sys.exit(0)
     kind = next(a for a in args if a in ("remove", "purge"))
     names, skip = [], False
     for a in args[args.index(kind) + 1:]:
@@ -120,6 +128,14 @@ if cmd == "apt-get":
         )
         sys.exit(100)
     if sim:
+        orphans = gone + [o for n in want for o in pk.get(n, {}).get("orphans", [])]
+        if orphans:
+            print(
+                "The following packages were automatically installed and are"
+                " no longer required:"
+            )
+            print("  " + " ".join(orphans))
+            print("Use 'apt autoremove' to remove them.")
         for n in db.get("installs", []):
             print("Inst %s (1.0 Ubuntu:24.04/noble [amd64])" % n)
     for n in want:
@@ -245,13 +261,11 @@ DOCKER = {
         "containerd": {
             "state": "ii",
             "version": "2.2.1",
-            "section": "admin",
             "files": [LIB + "containerd.service"],
         },
         "docker.io": {
             "state": "ii",
             "version": "29.1.3",
-            "section": "admin",
             "files": [
                 LIB + "docker.service",
                 LIB + "docker.socket",
@@ -260,11 +274,10 @@ DOCKER = {
             ],
             "postrm": '#!/bin/sh\nif [ "$1" = purge ]; then\n    rm -f /etc/apparmor.d/local/docker.io || true\nfi\n',
         },
-        "runc": {"state": "ii", "version": "1.3.4", "section": "devel"},
+        "runc": {"state": "ii", "version": "1.3.4"},
         "openssh-server": {
             "state": "ii",
             "version": "1:9.6",
-            "section": "net",
             "files": [LIB + "ssh.service"],
         },
     },
@@ -283,13 +296,11 @@ NGINX = {
         "nginx": {
             "state": "ii",
             "version": "1.24.0",
-            "section": "httpd",
             "depends": ["nginx-common"],
         },
         "nginx-common": {
             "state": "ii",
             "version": "1.24.0",
-            "section": "httpd",
             "files": [LIB + "nginx.service"],
             "drags": ["nginx"],
             "postrm": '#!/bin/sh\nif [ "$1" = purge ]; then\n    rm -rf /var/lib/nginx /var/log/nginx /etc/nginx\nfi\n',
@@ -304,25 +315,21 @@ POSTGRES = {
         "postgresql": {
             "state": "ii",
             "version": "16+257",
-            "section": "metapackages",
             "depends": ["postgresql-16"],
         },
         "postgresql-16": {
             "state": "ii",
             "version": "16.2",
-            "section": "database",
             "postrm": '#!/bin/sh\n    rm -rf "/var/lib/postgresql/$VERSION/$1/"\n',
         },
         "postgresql-common": {
             "state": "ii",
             "version": "257",
-            "section": "database",
             "files": [LIB + "postgresql.service", LIB + "postgresql@.service"],
         },
         "postgresql-client-16": {
             "state": "ii",
             "version": "16.2",
-            "section": "database",
             "depends": ["postgresql-16"],
         },
     },
@@ -595,7 +602,6 @@ def test_the_plan_shows_what_a_purge_drags_along_and_deletes(tmp_path):
         "postgresql.service",
         "postgresql@16-main.service",
     ]
-    assert out["metapackages"] == ["postgresql"]
     assert out["reverse_depends"] == [
         {"package": "postgresql-client-16", "depends_on": "postgresql-16"}
     ]
@@ -631,6 +637,16 @@ def test_the_plan_shows_what_a_purge_drags_along_and_deletes(tmp_path):
 def test_the_plan_names_the_next_stage(tmp_path, lines, next_stage):
     host = _host(tmp_path, NGINX, "nginx").declare(*lines)
     assert host.plan("nginx")["stage"]["next"] == next_stage
+
+
+def test_the_plan_names_what_a_later_autoremove_would_take(tmp_path):
+    host = _host(tmp_path, DOCKER, "docker")
+    host.host_state["packages"]["docker.io"]["orphans"] = ["iptables", "libnftables1"]
+    # An old kernel autoremove takes already is no part of the prune.
+    host.host_state["autoremovable"] = ["linux-image-6.8.0-31-generic"]
+    out = host.plan("docker")
+    assert out["autoremove_would_take"] == ["iptables", "libnftables1"]
+    assert not any("autoremove" in n for n in out["not_read"])
 
 
 def test_a_component_from_outside_apt_is_its_unit_and_binary(tmp_path):
@@ -821,7 +837,6 @@ def test_apt_taking_a_package_outside_the_plan_fails_the_stage(tmp_path):
     host.host_state["packages"]["libgd3"] = {
         "state": "ii",
         "version": "2.3",
-        "section": "libs",
     }
     host.plan("nginx")
     host.host_state["also_takes"] = ["libgd3"]
@@ -839,7 +854,6 @@ def _drift_package(h):
     h.host_state["packages"]["nginx-doc"] = {
         "state": "ii",
         "version": "1.24.0",
-        "section": "doc",
     }
     h.host_state["packages"]["nginx-common"]["drags"] = ["nginx", "nginx-doc"]
 

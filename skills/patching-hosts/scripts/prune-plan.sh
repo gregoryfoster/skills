@@ -14,7 +14,8 @@ For one component the probe knows, prints what pruning it would take
   - the units, sockets and timers its packages ship, with each one's state
     now: what the disable stage stops, disables and masks;
   - the packages apt-get -s remove and apt-get -s purge would take, with
-    what each drags along, any metapackage among them, and any held;
+    what each drags along, and any held;
+  - what a later autoremove would take that it doesn't take now;
   - what else installed depends on them;
   - the lines in their purge scripts that delete files, and their debconf
     answers;
@@ -37,7 +38,7 @@ Options:
   -h, --help         show this help
 
 Output: one JSON object on stdout. Keys: prune_plan, units, packages,
-reverse_depends, metapackages, purge_scripts, debconf, paths, group,
+reverse_depends, autoremove_would_take, purge_scripts, debconf, paths, group,
 residue, stage, plan_file, not_read.
 
 Exit codes:
@@ -226,15 +227,25 @@ for _p in $D_ROOTS; do
 done
 jadd J reverse_depends "[$_a]"
 
-# A metapackage among them: once it's gone, a later autoremove can take
-# everything it held in.
-_meta=""
-for _i in ${PKG_NAME[@]+"${!PKG_NAME[@]}"}; do
-  [ "${PKG_SECTION[$_i]}" = metapackages ] || continue
-  in_words "${PKG_NAME[$_i]}" "$_names" && _meta="$_meta ${PKG_NAME[$_i]}"
-done
-json_words _x "$_meta"
-jadd J metapackages "$_x"
+# What a later autoremove would take that it doesn't take now: what apt
+# installed for these packages alone. No stage autoremoves, but anyone's apt
+# autoremove does, as does unattended-upgrades' Remove-Unused-Dependencies.
+# apt's "no longer required" list holds what autoremove takes already, so
+# that's taken off.
+capture _x apt-get -s autoremove
+if [ "$CAP_RC" -eq 0 ]; then
+  _now=""
+  while read -r _l _p _y; do
+    if [ "$_l" = Remv ]; then _now="$_now $_p"; fi
+  done <<<"$_x"
+  _y=""
+  for _p in $D_ORPHANS; do in_words "$_p" "$_now" || _y="$_y $_p"; done
+  json_words _x "$_y"
+  jadd J autoremove_would_take "$_x"
+else
+  not_read "what a later autoremove would take: apt-get -s autoremove failed (${CAP_ERR:-exit $CAP_RC})"
+  jadd J autoremove_would_take null
+fi
 
 # The lines in their purge scripts that delete: nginx-common's takes
 # /etc/nginx and /var/log/nginx with it, docker.io's leaves /var/lib/docker,

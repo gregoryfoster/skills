@@ -65,31 +65,32 @@ prune_component() {  # <name>
 }
 
 # Every package dpkg knows, and its state: ii installed, hi installed and
-# held, rc removed with its config left. Fields split on |, which no name,
-# version or section holds: a tab is whitespace to read, so an empty field
-# would collapse.
-PKG_STATE=() PKG_NAME=() PKG_VER=() PKG_SECTION=()
+# held, rc removed with its config left. Fields split on |, which no name or
+# version holds: a tab is whitespace to read, so an empty field would
+# collapse.
+PKG_STATE=() PKG_NAME=() PKG_VER=()
 read_packages() {
-  local _rp_out _rp_s _rp_n _rp_v _rp_x
-  PKG_STATE=() PKG_NAME=() PKG_VER=() PKG_SECTION=()
+  local _rp_out _rp_s _rp_n _rp_v
+  PKG_STATE=() PKG_NAME=() PKG_VER=()
   # dpkg-query's own fields, not shell expansions.
   # shellcheck disable=SC2016
-  capture _rp_out dpkg-query -W -f '${db:Status-Abbrev}|${Package}|${Version}|${Section}\n'
+  capture _rp_out dpkg-query -W -f '${db:Status-Abbrev}|${Package}|${Version}\n'
   [ "$CAP_RC" -eq 0 ] || return 1
-  while IFS='|' read -r _rp_s _rp_n _rp_v _rp_x; do
+  while IFS='|' read -r _rp_s _rp_n _rp_v; do
     [ -n "$_rp_n" ] || continue
-    PKG_STATE+=("${_rp_s%% *}") PKG_NAME+=("$_rp_n") PKG_VER+=("$_rp_v") PKG_SECTION+=("$_rp_x")
+    PKG_STATE+=("${_rp_s%% *}") PKG_NAME+=("$_rp_n") PKG_VER+=("$_rp_v")
   done <<<"$_rp_out"
 }
 
 # apt's own answer to a removal or a purge: every package it would take,
 # with what the request drags along. A removal that would install anything
-# is no removal (SIM_INST).
-SIM_SET=() SIM_INST="" SIM_WHY=""
+# is no removal (SIM_INST). SIM_ORPHANS is what apt says it leaves "no
+# longer required": a later autoremove's, with any it would take already.
+SIM_SET=() SIM_INST="" SIM_WHY="" SIM_ORPHANS=""
 apt_sim() {  # <remove|purge> <package>...
-  local _as_k=$1 _as_out _as_l _as_x _as_n _as_v
+  local _as_k=$1 _as_out _as_l _as_x _as_n _as_v _as_in=0
   shift
-  SIM_SET=() SIM_INST="" SIM_WHY=""
+  SIM_SET=() SIM_INST="" SIM_WHY="" SIM_ORPHANS=""
   [ "$#" -gt 0 ] || return 0
   # Never an autoremove, whatever apt.conf.d says.
   capture _as_out apt-get -s -o APT::Get::AutomaticRemove=false "$_as_k" "$@"
@@ -98,7 +99,16 @@ apt_sim() {  # <remove|purge> <package>...
     return 1
   fi
   while IFS= read -r _as_l; do
+    # Its list's lines are indented; the line after them isn't.
+    if [ "$_as_in" -eq 1 ]; then
+      case $_as_l in
+        ' '*) SIM_ORPHANS="$SIM_ORPHANS $_as_l"; continue ;;
+        *) _as_in=0 ;;
+      esac
+    fi
     case $_as_l in
+      'The following package'*' automatically installed and '*' no longer required:')
+        _as_in=1 ;;
       'Remv '* | 'Purg '*)
         read -r _as_x _as_n _as_v _as_x <<<"$_as_l" || true
         _as_v=${_as_v#[}
@@ -110,6 +120,7 @@ apt_sim() {  # <remove|purge> <package>...
     esac
   done <<<"$_as_out"
   SIM_INST=${SIM_INST# }
+  words_of SIM_ORPHANS "$SIM_ORPHANS"
 }
 
 # The units the packages ship: sockets, timers and paths first, so none
@@ -188,11 +199,11 @@ path_kib() {  # <var> <path>
 # apt-mark holds: apt-get -s takes them, but apt-get -y refuses to
 # ("Held packages were changed and -y was used without
 # --allow-change-held-packages", measured on noble).
-D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD=""
+D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
 D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
 derive() {  # <name>
   local _d_i _d_p _d_u _d_k _d_names="" _d_line
-  D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD=""
+  D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
   D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
   prune_component "$1" || return 1
   if [ -n "$C_UNIT" ]; then
@@ -230,7 +241,7 @@ derive() {  # <name>
       D_WHY=$SIM_WHY
       return 2
     fi
-    D_PURGE=(${SIM_SET[@]+"${SIM_SET[@]}"}) D_INST="$D_INST $SIM_INST"
+    D_PURGE=(${SIM_SET[@]+"${SIM_SET[@]}"}) D_INST="$D_INST $SIM_INST" D_ORPHANS=$SIM_ORPHANS
     D_INST=${D_INST# }
     D_INST=${D_INST% }
     for _d_line in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do _d_names="$_d_names ${_d_line%% *}"; done

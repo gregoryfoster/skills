@@ -639,7 +639,10 @@ base image, or an owner-approved remedy the profile documents.
       stays down until someone unmasks it;
     - **Ollama and Qdrant are disabled by script, and removed by hand;**
     - **`postgresql-common` is part of the Postgres component:** its units
-      are the cluster's.
+      are the cluster's;
+    - **no metapackage flag:** dpkg marks none (`postgresql`'s Section is
+      `database`), so the plan names what a later autoremove would take
+      instead, from apt's own "no longer required" list (CR 148).
 
 6c. **The maintenance lane and owner notices.**
     - **`apply.sh --lane maintenance`** reuses the security lane's gates,
