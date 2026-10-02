@@ -26,9 +26,10 @@ Beyond that list:
 - the chain is printed, the knob's inflight commands verbatim, before
   anything is written, and the approved text is the text that runs;
 - it's written at 0700 and launched with --on-active and AccuracySec=1s;
-- it refuses a run that aborted, a chain already launched, a span outside a
-  window or into a quiet range, a package manager that's running, and work
-  in flight;
+- it refuses a run that aborted, a chain that's scheduled, running or
+  already ran, a span outside a window or into a quiet range, a package
+  manager that's running, and work in flight;
+- a chain that aborted at its own start stopped nothing, so it goes again;
 - the chain refuses to start while a package manager runs, since a reboot
   then could cut dpkg off mid-run;
 - a journal copy that fails still reboots: by then the services are down;
@@ -284,10 +285,24 @@ def test_a_launch_that_fails_schedules_nothing(host):
             "the run aborted at postgres",
         ),
         (
-            lambda h: (h.run_dir / "reboot-chain.unit").write_text(
-                "x 2026-09-29T15:00:00Z\n"
+            lambda h: (
+                (h.run_dir / "reboot-chain.unit").write_text(
+                    "x 2026-09-29T15:00:00Z\n"
+                ),
+                h.on("systemctl", "is-active -- x.timer", "active\n"),
             ),
-            "a chain was already launched",
+            "this run's chain, x.timer, is active",
+        ),
+        (
+            lambda h: (
+                (h.run_dir / "reboot-chain.unit").write_text(
+                    "x 2026-09-29T15:00:00Z\n"
+                ),
+                (h.run_dir / "reboot-chain.log").write_text(
+                    "2026-09-29T15:02:00Z start\n2026-09-29T15:02:09Z reboot\n"
+                ),
+            ),
+            "ran and didn't end in ABORT",
         ),
         # 120 s of delay and 600 s of boot from 20:55 end at 21:07.
         (
@@ -321,7 +336,8 @@ def test_a_launch_that_fails_schedules_nothing(host):
     ],
     ids=[
         "the-run-aborted",
-        "already-launched",
+        "already-scheduled",
+        "already-ran",
         "past-the-window",
         "into-a-quiet-range",
         "work-in-flight",
@@ -410,6 +426,24 @@ def test_a_chain_whose_gate_fails_at_its_start_stops_nothing(host):
     assert not [c for c in host.sequence() if c.startswith("systemctl")]
     log = host.record("reboot-chain.log")
     assert "printed: 3. Nothing was stopped." in log
+
+
+def test_a_chain_that_aborted_goes_again_once_the_gate_passes(host):
+    host.reboot()
+    host.on("pgrep", "-f *", "4243\n")
+    host.fire(_journals(host))
+    assert "ABORT: a package manager is running" in host.record("reboot-chain.log")
+    # It stopped nothing: once the package manager is done, it goes again.
+    host.cases["pgrep"].clear()
+    host.clock += 5 * MIN
+    out = host.reboot()
+    assert out["refused"] == []
+    assert out["gate"]["earlier_chain"]["last_line"].endswith("Nothing was stopped.")
+    [launch] = [a for _, a, _ in host.calls("systemd-run")]
+    assert launch.startswith("--unit=patching-hosts-reboot-20260929T153500Z ")
+    assert host.record("reboot-chain.unit").startswith(
+        "patching-hosts-reboot-20260929T153500Z "
+    )
 
 
 def test_a_chain_refuses_to_start_while_a_package_manager_runs(host):

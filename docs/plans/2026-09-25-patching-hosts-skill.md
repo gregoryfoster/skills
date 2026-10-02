@@ -546,7 +546,10 @@ base image, or an owner-approved remedy the profile documents.
       - every value in the chain is single-quoted, and a cluster's port must
         be a number. A unit's name is the knob's, and Redis's address and a
         cluster's port come from files the redis and postgres users can
-        write: a `$( )` in any of them would run as root.
+        write: a `$( )` in any of them would run as root;
+      - a chain that aborted at its own gate stopped nothing, so it can be
+        launched again. Only one that's scheduled, running, or ran without
+        an ABORT refuses a second.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical

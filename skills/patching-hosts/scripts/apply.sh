@@ -399,18 +399,12 @@ gate_run() {
 # A step never runs into the reboot its run scheduled: the chain stops at a
 # package manager running when it starts, but not at one that starts after.
 gate_reboot() {
-  local out u x st
+  local out
   [ "$P_PRIV" != none ] || return 0
   root_read out "$run/reboot-chain.unit" || return 0
-  read -r u x <<<"$out"
-  for x in "$u.timer" "$u.service"; do
-    st=$(systemctl is-active -- "$x" 2>/dev/null) || true
-    case $st in
-      active | activating | deactivating | reloading)
-        refuse "the run's reboot chain, $x, is $st: no step until the host is back. Read $run/reboot-chain.log"
-        return 0 ;;
-    esac
-  done
+  if chain_active "${out%% *}"; then
+    refuse "the run's reboot chain, ${CHAIN_STATE% *}, is ${CHAIN_STATE##* }: no step until the host is back. Read $run/reboot-chain.log"
+  fi
 }
 
 DRY_SUMMARY="" DRY_MAX_AGE=86400

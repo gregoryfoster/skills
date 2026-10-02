@@ -162,7 +162,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 `AccuracySec=1s` matters: by default the transient timer fired 41 s late (CannObserv/wslcb-licensing-tracker#184). The script's steps:
 
-1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
+1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise: an aborted chain stopped nothing, and `reboot-chain.sh` launches it again once the gate would pass. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
 3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured; with none, run `SAVE` first.
 4. `journalctl --sync`.

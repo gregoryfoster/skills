@@ -29,6 +29,8 @@ Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
                             isn't inside one window or meets a quiet range;
                             sets SPAN_S and SPAN_E. Empty: unknown, no span
   gate_inflight             refuses unless every inflight command prints 0
+  chain_active UNIT         whether a run's reboot chain is scheduled or
+                            running; CHAIN_STATE says which unit, and how
   pg_port VAR UNIT          the port of the cluster a postgresql unit runs,
                             or 1 with PG_WHY
   redis_conn UNIT           REDIS_ARGS := redis-cli's connection words, and
@@ -240,6 +242,23 @@ gate_inflight() {
     jpush a "{$e}"
   done
   jadd J_GATE inflight "[$a]"
+}
+
+# Whether the reboot chain a run launched is scheduled or running: its
+# timer or its service active, or on its way up or down.
+CHAIN_STATE=""
+chain_active() {  # <unit>: CHAIN_STATE := "<its timer or service> <state>"
+  local _ca_x _ca_s
+  CHAIN_STATE=""
+  for _ca_x in "$1.timer" "$1.service"; do
+    _ca_s=$(systemctl is-active -- "$_ca_x" 2>/dev/null) || true
+    case $_ca_s in
+      active | activating | deactivating | reloading)
+        CHAIN_STATE="$_ca_x $_ca_s"
+        return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # --- data stores ---------------------------------------------------------------

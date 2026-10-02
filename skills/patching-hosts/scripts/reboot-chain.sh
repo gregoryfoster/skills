@@ -46,10 +46,11 @@ Options:
   -h, --help         show this help
 
 It refuses (exit 3) without --approve; on a report-only host; without root;
-when the run aborted at a step, or a chain was already launched for it; when
-the span isn't wholly inside one window or meets a quiet range; while a
-package manager runs or an inflight command prints anything but 0; and when
-a datastore's cluster can't be found.
+when the run aborted at a step; while the run's chain is scheduled or
+running, or once one ran and didn't end in ABORT (an aborted one stopped
+nothing, and may go again); when the span isn't wholly inside one window or
+meets a quiet range; while a package manager runs or an inflight command
+prints anything but 0; and when a datastore's cluster can't be found.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 (its lines), launched, tmp_staged (what the boot will empty), next.
@@ -175,7 +176,7 @@ gate_host() {
 }
 
 gate_run() {
-  local mode out s r rest failed=""
+  local mode out s r rest failed="" u l last="" e=""
   [ "$P_PRIV" != none ] || return 0
   if ! root_has "$run"; then
     refuse "$run doesn't exist: the chain belongs to a run, after its last step"
@@ -192,8 +193,20 @@ gate_run() {
   if [ -n "$failed" ]; then
     refuse "the run aborted at $failed: no reboot until the owner decides (run.md, Abort branch)"
   fi
+  # A chain launched before goes again only where it stopped nothing: its
+  # log ends in ABORT, or it never started, since a boot drops a timer that
+  # hasn't fired.
   if root_read out "$run/reboot-chain.unit"; then
-    refuse "a chain was already launched for this run ($out): read $log"
+    u=${out%% *}
+    if root_read l "$log"; then last=${l##*$'\n'}; fi
+    jadds e unit "$u"
+    jaddsn e last_line "$last"
+    jadd J_GATE earlier_chain "{$e}"
+    if chain_active "$u"; then
+      refuse "this run's chain, ${CHAIN_STATE% *}, is ${CHAIN_STATE##* }: it's scheduled or running. Read $log"
+    elif [ -n "$last" ] && [[ $last != *" ABORT: "* ]]; then
+      refuse "this run's chain, $u, ran and didn't end in ABORT, so it stopped what it stops (its log ends: $last). Read $log"
+    fi
   fi
 }
 
@@ -403,7 +416,7 @@ done < <(find /tmp -mindepth 1 -maxdepth 1 2>/dev/null | sort)
 J_TMP="[$_a]"
 
 NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --config \"$config\" --host $host (run.md section 6).")
-NEXT+=("If $log ends in ABORT, the chain stopped nothing: read why, and gate again.")
+NEXT+=("If $log ends in ABORT, the chain stopped nothing: read why, then run reboot-chain.sh again once the gate would pass.")
 NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
 
 if [ "${#REFUSED[@]}" -gt 0 ]; then
