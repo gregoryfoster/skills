@@ -37,6 +37,9 @@ Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
                             REDIS_CONF := the file the unit starts from
   redis_cli CMD...          redis-cli at REDIS_ARGS, as root, with the
                             password root's own sh reads from REDIS_CONF
+  redis_owned UNIT          whether redis-cli at REDIS_ARGS reaches the unit's
+                            own process: 1 for another or none, 2 when the
+                            unit isn't running, each with REDIS_WHY
 USAGE
 }
 
@@ -322,8 +325,8 @@ REDIS_ARGS=() REDIS_CONF=""
 # (measured on 7.0). redis_cli and the chain run this one script, so the
 # two read the same password.
 REDIS_PW_SED='/^requirepass[[:space:]]/!d;s/^requirepass[[:space:]]*//;s/[[:space:]]*$//;s/^"\(.*\)"$/\1/;s/^'\''\(.*\)'\''$/\1/'
-# unit_show sets it by name.
-U_ExecStart=""
+# unit_show sets them by name.
+U_ExecStart="" U_MainPID=""
 redis_conn() {  # <unit>
   local _rc_t _rc_w _rc_l _rc_k _rc_v _rc_i _rc_port="" _rc_bind="" _rc_sock=""
   local -a _rc_a=()
@@ -362,6 +365,31 @@ redis_conn() {  # <unit>
   else
     is_int "$_rc_port" || _rc_port=6379
     REDIS_ARGS=(-h "$_rc_bind" -p "$_rc_port")
+  fi
+}
+
+# Whether the Redis reached is the unit's own: its main PID is the
+# process_id INFO reports (measured equal on 7.0). A port redis_conn can't
+# read, such as --port ${VAR}, which systemd expands only at exec, or one an
+# included file sets, would otherwise reach another Redis.
+REDIS_WHY=""
+redis_owned() {  # <unit>
+  local _ro_pid="" _ro_out _ro_l _ro_got="" _ro_what="no Redis"
+  REDIS_WHY=""
+  if unit_show "$1" MainPID; then _ro_pid=$U_MainPID; fi
+  if ! is_int "$_ro_pid" || [ "$_ro_pid" -eq 0 ]; then
+    REDIS_WHY="$1 has no main process: it isn't running"
+    return 2
+  fi
+  capture _ro_out redis_cli INFO server
+  while IFS= read -r _ro_l; do
+    case $_ro_l in process_id:*) _ro_got=${_ro_l#process_id:} ;; esac
+  done <<<"$_ro_out"
+  _ro_got=${_ro_got%$'\r'}
+  if [ "$_ro_got" != "$_ro_pid" ]; then
+    [ -z "$_ro_got" ] || _ro_what="process $_ro_got"
+    REDIS_WHY="redis-cli ${REDIS_ARGS[*]} reaches $_ro_what, and $1's main process is $_ro_pid: give its address in its file or its unit's own arguments"
+    return 1
   fi
 }
 

@@ -564,7 +564,10 @@ base image, or an owner-approved remedy the profile documents.
         script, as Redis does: a single-quoted value or one with trailing
         space read wrong in the chain, and the SAVE before a stop failed;
       - the chain logs a SAVE Redis refuses from its reply: redis-cli exits
-        0 on an error reply.
+        0 on an error reply;
+      - the Redis reached must be the unit's own process, its main PID the
+        `process_id` INFO reports: a port redis_conn can't read, such as
+        `--port ${VAR}`, would reach another Redis.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical

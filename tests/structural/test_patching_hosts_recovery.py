@@ -32,7 +32,9 @@ Beyond that list:
 - a run's filesystem with less free space than the data refuses: a full
   disk mid-dump can stop the data store it shares the disk with;
 - a BGSAVE Redis refuses fails at once, with Redis's reply;
-- an attempt that fails leaves no record, not even an earlier attempt's.
+- an attempt that fails leaves no record, not even an earlier attempt's;
+- a Redis is dumped only where what redis-cli reaches is the unit's own
+  process: its main PID is the process_id INFO reports.
 
 Each case runs from a copy of the skill's scripts, with probe.sh replaced
 by a stub, through the apply tests' host.
@@ -395,7 +397,9 @@ def _redis(
     host.show(
         "redis-server.service",
         ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf_path} ; ignore_errors=no ; }}",
+        MainPID="4242",
     )
+    host.on("redis-cli", "* INFO server", "# Server\r\nprocess_id:4242\r\n")
     s = host.state
     auth = f'echo "${{REDISCLI_AUTH:-}}" >> "{s}/auth"; '
     host.on(
@@ -482,6 +486,7 @@ def test_redis_is_reached_where_its_units_own_arguments_say(tmp_path):
             f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} "
             "--port 6391 --dir /var/lib/redis-cache ; ignore_errors=no ; }"
         ),
+        MainPID="4242",
     )
     out = host.recover()
     assert out["verdict"]["ok"] is True
@@ -505,6 +510,36 @@ def test_the_password_is_read_as_redis_reads_it(tmp_path, line):
     host = _redis(_ready(Host(tmp_path)), conf=conf)
     assert host.recover()["verdict"]["ok"] is True
     assert set((host.state / "auth").read_text().split("\n")) - {""} == {"s3cret-pass"}
+
+
+@pytest.mark.parametrize(
+    "answer, pid, why",
+    [
+        # --port ${VAR} reads as no port, and the fallback reaches another
+        # Redis (measured on 7.0).
+        (
+            "process_id:999\r\n",
+            "4242",
+            "reaches process 999, and redis-server.service's main process is 4242",
+        ),
+        ("", "4242", "reaches no Redis"),
+        ("process_id:4242\r\n", "0", "redis-server.service has no main process"),
+    ],
+    ids=["another-redis", "no-redis", "not-running"],
+)
+def test_a_redis_that_isnt_the_units_own_is_refused(tmp_path, answer, pid, why):
+    host = _redis(_ready(Host(tmp_path)))
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if c[0] != "* INFO server"
+    ]
+    host.on("redis-cli", "* INFO server", answer)
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
+    ]
+    host.show("redis-server.service", MainPID=pid)
+    out = host.recover(rc=3)
+    assert any(why in r for r in out["refused"]), out["refused"]
+    assert not [a for _, a, _ in host.calls("redis-cli") if a.endswith("BGSAVE")]
 
 
 def test_redis_is_reached_as_root_so_a_root_only_socket_is_too(tmp_path):

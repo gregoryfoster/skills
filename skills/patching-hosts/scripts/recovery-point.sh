@@ -56,8 +56,9 @@ Options:
 
 It refuses (exit 3) without --approve; on a report-only host; without root;
 when the knob declares no datastore; once the run's bulk has started; when a
-cluster or a database can't be found, or a Redis can't be reached; and when
-the run's filesystem has less free space than the data it would dump.
+cluster or a database can't be found, or a Redis can't be reached, or what
+answers isn't the unit's own process; and when the run's filesystem has less
+free space than the data it would dump.
 
 The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
@@ -342,6 +343,11 @@ gate_datastores() {
     elif [ -z "$BACKUP_SVC" ]; then
       # Raw replies, since stdout isn't a terminal: the key, then its value.
       redis_conn "$u"
+      # Another Redis's data would be dumped, and attested, as this one's.
+      if ! redis_owned "$u"; then
+        refuse "datastore redis $u: $REDIS_WHY"
+        continue
+      fi
       dir="" sz=""
       capture out redis_cli CONFIG GET dir
       [ "$CAP_RC" -ne 0 ] || dir=$(printf '%s\n' "$out" | sed -n '2p')

@@ -40,7 +40,9 @@ Beyond that list:
 - Redis is saved first only when it has no save points, and its password
   stays in its own config file;
 - Redis is reached where its unit's own arguments say, over the file's;
-- a SAVE Redis refuses is logged, although redis-cli exits 0 on it.
+- a SAVE Redis refuses is logged, although redis-cli exits 0 on it;
+- a running Redis whose address reaches another process refuses: the chain
+  would check and save that one.
 """
 
 import json
@@ -157,7 +159,9 @@ def _ready(host: Host, save: str = "3600 1 300 100") -> Host:
     host.show(
         "redis-server.service",
         ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} ; }}",
+        MainPID="4242",
     )
+    host.on("redis-cli", "* INFO server", "# Server\r\nprocess_id:4242\r\n")
     s = host.state
     host.on(
         "redis-cli",
@@ -579,6 +583,29 @@ def test_a_redis_with_no_file_gets_no_other_redis_password(host):
     # The first Redis's CONFIG GET with its file's password, the second's
     # with none.
     assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", "", ""]
+
+
+@pytest.mark.parametrize(
+    "answer, refused",
+    [("process_id:999\r\n", True), ("process_id:4242\r\n", False)],
+    ids=["another-redis", "its-own"],
+)
+def test_a_redis_address_that_reaches_another_process_is_refused(host, answer, refused):
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if c[0] != "* INFO server"
+    ]
+    host.on("redis-cli", "* INFO server", answer)
+    out = host.reboot(rc=3 if refused else 0)
+    hit = any("reaches process 999" in r for r in out["refused"])
+    assert hit is refused, out["refused"]
+
+
+def test_a_redis_that_isnt_running_has_nothing_to_save(host):
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
+    ]
+    host.show("redis-server.service", MainPID="0")
+    assert host.reboot()["refused"] == []
 
 
 def test_a_save_redis_refuses_is_logged(tmp_path):

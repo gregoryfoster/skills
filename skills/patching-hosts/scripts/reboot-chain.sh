@@ -53,7 +53,8 @@ when the run aborted at a step; while the run's chain is scheduled or
 running, or once one ran and didn't end in ABORT (an aborted one stopped
 nothing, and may go again); when the span isn't wholly inside one window or
 meets a quiet range; while a package manager runs or an inflight command
-prints anything but 0; and when a datastore's cluster can't be found.
+prints anything but 0; and when a datastore's cluster can't be found, or a
+running Redis's address reaches another process.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 (its lines), launched, tmp_staged (what the boot will empty), next.
@@ -232,7 +233,7 @@ gate_packages() {
 # Redis its address and the file that holds any password.
 DS_LINES=()
 gate_datastores() {
-  local r u port a="" e seen=""
+  local r u port a="" e seen="" rc
   local -a f=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -251,6 +252,14 @@ gate_datastores() {
       DS_LINES+=("postgres $u $port")
     else
       redis_conn "$u"
+      # The chain would check and save another Redis. One that isn't running
+      # has nothing to save.
+      rc=0
+      redis_owned "$u" || rc=$?
+      if [ "$rc" -eq 1 ]; then
+        refuse "datastore redis $u: $REDIS_WHY"
+        continue
+      fi
       jadds e address "${REDIS_ARGS[*]}"
       DS_LINES+=("redis $u ${REDIS_CONF:--} ${REDIS_ARGS[*]}")
     fi
