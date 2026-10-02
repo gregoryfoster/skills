@@ -49,7 +49,7 @@ Options:
                        root, or in the current directory)
   --host NAME          whose knob sections apply (default: `hostname`)
   --today DATE         the date exceptions expire against (default: today,
-                       UTC)
+                       UTC), never later than the clock's
   -h, --help           show this help
 
 It refuses (exit 3) without --approve; on a report-only host; without root;
@@ -69,7 +69,8 @@ Exit codes:
   0  the stage ran
   1  a command failed: done says which, and the run's <stage>.log has its
      output
-  2  usage error, an unreadable knob, or a library missing
+  2  usage error, a --today later than the clock's date, an unreadable
+     knob, or a library missing
   3  refused: nothing was changed
 USAGE
 }
@@ -167,6 +168,17 @@ fi
 knob_load "$config" "$host" "$today"
 probe_init /
 trap 'rm -rf "$P_TMP"' EXIT
+
+# --today stands in for the clock's date, as in a test. Later than the
+# clock, it would end a soak the knob hasn't: the soak is the review-by date
+# in the knob, which only the owner shortens.
+_clock=""
+iso_utc _clock "$P_NOW"
+_clock=${_clock%%T*}
+if [ -n "$_clock" ] && [[ $today > $_clock ]]; then
+  echo "ERROR --today $today is later than the clock's date, $_clock: a soak ends on its review-by date in the knob, which only the owner shortens" >&2
+  exit 2
+fi
 # It acts on the running system, never on a tree.
 P_LIVE=1
 # unit_show sets it by name.

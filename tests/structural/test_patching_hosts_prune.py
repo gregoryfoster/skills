@@ -1113,6 +1113,35 @@ def test_a_stage_it_shouldnt_run_is_refused(tmp_path, stage, setup, refused):
     assert host.changes() == []
 
 
+def test_a_today_later_than_the_clock_ends_no_soak(tmp_path):
+    host = _host(tmp_path, NGINX, "nginx").declare(f"disabled:nginx {PAST} soaked")
+    # On the clock it's still the soak's last day, PAST, which still counts.
+    host.clock -= DAY
+    host.plan("nginx")
+    r = host.execute(
+        [
+            "bash",
+            str(host.scripts / "prune.sh"),
+            "--stage",
+            "remove",
+            "--plan",
+            str(tmp_path / "nginx.plan"),
+            "--run",
+            str(host.run_dir),
+            "--approve",
+            "--config",
+            str(host.knob_path),
+            "--host",
+            "web-1",
+            "--today",
+            TODAY,
+        ],
+        2,
+    )
+    assert f"--today {TODAY} is later than the clock's date, {PAST}" in r.stderr
+    assert host.changes() == []
+
+
 def test_drift_names_what_changed(tmp_path):
     host = _host(tmp_path, DOCKER, "docker")
     host.plan("docker")
