@@ -14,7 +14,7 @@ For one component the probe knows, prints what pruning it would take
   - the units, sockets and timers its packages ship, with each one's state
     now: what the disable stage stops, disables and masks;
   - the packages apt-get -s remove and apt-get -s purge would take, with
-    what each drags along, and any metapackage among them;
+    what each drags along, any metapackage among them, and any held;
   - what else installed depends on them;
   - the lines in their purge scripts that delete files, and their debconf
     answers;
@@ -202,6 +202,8 @@ for _p in ${D_PURGE[@]+"${D_PURGE[@]}"}; do
 done
 json_words _x "$_drag"
 jadd _o dragged_along "$_x"
+json_words _x "$D_HELD"
+jadd _o held "$_x"
 jadd J packages "{$_o}"
 
 # What else installed depends on them and stays: apt drags along what must

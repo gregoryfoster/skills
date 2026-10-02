@@ -184,12 +184,15 @@ path_kib() {  # <var> <path>
 }
 
 # The component as the host stands now. D_REMOVE and D_PURGE hold
-# "<package> <version>" for each package apt would take.
-D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY=""
+# "<package> <version>" for each package apt would take. D_HELD names those
+# apt-mark holds: apt-get -s takes them, but apt-get -y refuses to
+# ("Held packages were changed and -y was used without
+# --allow-change-held-packages", measured on noble).
+D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD=""
 D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
 derive() {  # <name>
   local _d_i _d_p _d_u _d_k _d_names="" _d_line
-  D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY=""
+  D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD=""
   D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
   prune_component "$1" || return 1
   if [ -n "$C_UNIT" ]; then
@@ -231,6 +234,13 @@ derive() {  # <name>
     D_INST=${D_INST# }
     D_INST=${D_INST% }
     for _d_line in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do _d_names="$_d_names ${_d_line%% *}"; done
+    for _d_line in ${D_PURGE[@]+"${D_PURGE[@]}"}; do
+      for _d_i in ${PKG_NAME[@]+"${!PKG_NAME[@]}"}; do
+        [ "${PKG_NAME[$_d_i]}" = "${_d_line%% *}" ] || continue
+        case ${PKG_STATE[$_d_i]} in h*) in_words "${_d_line%% *}" "$D_HELD" || D_HELD="$D_HELD ${_d_line%% *}" ;; esac
+      done
+    done
+    D_HELD=${D_HELD# }
     # Word lists, each a package name.
     # shellcheck disable=SC2086
     units_of $_d_names

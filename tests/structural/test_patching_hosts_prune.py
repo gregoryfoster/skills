@@ -110,6 +110,15 @@ if cmd == "apt-get":
     if not sim and db.get("fail"):
         print("E: " + db["fail"], file=sys.stderr)
         sys.exit(100)
+    # As apt does: -s takes a held package, -y doesn't.
+    held = [n for n in want if pk.get(n, {}).get("state") == "hi"]
+    if not sim and held and "--allow-change-held-packages" not in args:
+        print(
+            "E: Held packages were changed and -y was used without "
+            "--allow-change-held-packages.",
+            file=sys.stderr,
+        )
+        sys.exit(100)
     if sim:
         for n in db.get("installs", []):
             print("Inst %s (1.0 Ubuntu:24.04/noble [amd64])" % n)
@@ -759,6 +768,18 @@ def test_a_savepoint_of_another_components_lets_no_purge_skip_the_remove(tmp_pat
     host.plan("docker")
     out = host.prune("purge", "--savepoint", str(host.run_dir), rc=3)
     assert any("holds no savepoint for docker on web-1" in r for r in out["refused"])
+
+
+def test_a_held_package_is_named_and_no_removal_of_it_runs(tmp_path):
+    host = _host(tmp_path, DOCKER, "docker").declare(f"disabled:docker {PAST} soaked")
+    host.host_state["packages"]["docker.io"]["state"] = "hi"
+    assert host.plan("docker")["packages"]["held"] == ["docker.io"]
+    out = host.prune("remove", rc=3)
+    assert any(
+        "apt-mark holds docker.io" in r and "apt-mark unhold docker.io" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert host.changes() == []
 
 
 def test_a_package_apt_leaves_installed_fails_the_stage(tmp_path):

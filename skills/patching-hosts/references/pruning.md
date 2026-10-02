@@ -57,7 +57,7 @@ Without `--approve` a stage changes nothing, and its `actions` list every comman
 - **Undo a disable** with `systemctl unmask`, then `systemctl enable --now`, for each unit it masked.
 - **The savepoint holds no data.** Data differs by component, so its backup stays with the owner: dump it off the node, with a stated retention, as for a recovery point ([run.md](run.md#2-the-recovery-point)).
 
-Remove and purge also refuse while a package manager runs, when `dpkg --audit` isn't clean, and when apt would install anything to take the component away.
+Remove and purge also refuse while a package manager runs, when `dpkg --audit` isn't clean, when apt would install anything to take the component away, and while one of its packages is held. `apt-get -s` takes a held package, but `apt-get -y` refuses to (measured on noble), and the hold is its owner's: the plan's `packages.held` names it, for the owner to release with `apt-mark unhold`.
 
 ## Components from outside apt
 

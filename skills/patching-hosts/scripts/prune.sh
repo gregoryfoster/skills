@@ -55,10 +55,11 @@ It refuses (exit 3) without --approve; on a report-only host; without root;
 for a plan it can't read, another host's, one more than 24 hours old, or one
 naming anything outside the component; for a stage the knob's calendar
 hasn't reached; when the host no longer matches the plan, or apt would
-install anything; for remove or purge while a package manager runs or
-dpkg --audit isn't clean, or of a component from outside apt; for a
---purge-data path the plan doesn't name; and for a purge whose packages'
-own scripts delete a data path --purge-data doesn't name.
+install anything; for remove or purge while a package manager runs,
+dpkg --audit isn't clean or one of its packages is held, or of a component
+from outside apt; for a --purge-data path the plan doesn't name; and for a
+purge whose packages' own scripts delete a data path --purge-data doesn't
+name.
 
 Output: one JSON object on stdout. Keys: prune, refused, gate, actions
 (each command, in order), done (each one's exit), verdict and next.
@@ -336,7 +337,8 @@ gate_drift() {
   fi
   case $stage in
     remove | purge)
-      [ -z "$D_INST" ] || refuse "apt would install $D_INST to take $component away: no stage runs a removal that installs" ;;
+      [ -z "$D_INST" ] || refuse "apt would install $D_INST to take $component away: no stage runs a removal that installs"
+      [ -z "$D_HELD" ] || refuse "apt-mark holds $D_HELD, and apt-get -y won't remove a held package. A hold is its owner's: release it with apt-mark unhold $D_HELD first, if that's the owner's call" ;;
   esac
   jaddb o matches "$([ "$now" = "$want" ] && echo 1 || echo 0)"
   jadd J_GATE drift "{$o}"
