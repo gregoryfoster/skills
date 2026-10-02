@@ -19,7 +19,8 @@ For one component the probe knows, prints what pruning it would take
   - what else installed depends on them;
   - the lines in their purge scripts that delete files, and their debconf
     answers;
-  - its config and data paths, with their sizes;
+  - its config and data paths, with their sizes, and its packages'
+    conffiles outside its config, which a purge deletes too;
   - its group, and the group's members;
   - its residue: its packages removed with their config left (rc);
   - the stage the knob declares, and the next one.
@@ -38,8 +39,8 @@ Options:
   -h, --help         show this help
 
 Output: one JSON object on stdout. Keys: prune_plan, units, packages,
-reverse_depends, autoremove_would_take, purge_scripts, debconf, paths, group,
-residue, stage, plan_file, not_read.
+reverse_depends, autoremove_would_take, purge_scripts, debconf, paths,
+conffiles, group, residue, stage, plan_file, not_read.
 
 Exit codes:
   0  the plan is printed, and written with --out
@@ -298,6 +299,14 @@ while read -r _p _k; do
   jpush _a "{$_e}"
 done <<<"$D_SIZES"
 jadd J paths "[$_a]"
+
+# Its packages' conffiles outside its config: a purge deletes them too, and
+# the savepoint keeps them.
+json_words _x "$D_CONFFILES"
+jadd J conffiles "$_x"
+for _p in ${D_UNSAVED[@]+"${D_UNSAVED[@]}"}; do
+  not_read "the conffile $_p: a path with whitespace can't be one word of the savepoint's tar, so save it by hand"
+done
 
 _o=""
 jaddsn _o name "$C_GROUP"

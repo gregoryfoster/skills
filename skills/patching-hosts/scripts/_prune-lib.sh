@@ -17,6 +17,7 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                             from outside apt C_UNIT and C_BINARY; 1 for a
                             name the probe doesn't know
   purge_deletes PACKAGE...  PD_*: the lines in their purge scripts that delete
+  conffiles_of PACKAGE...   CONFFILES: their conffiles outside C_CONFIG
   derive NAME               D_*: the component as the host stands now
   calendar NAME             CAL_*: the prune stage the knob declares for it
   signature VAR             the lines a plan and a fresh derive must share
@@ -47,7 +48,8 @@ prune_component() {  # <name>
       C_CONFIG=/etc/docker C_DATA='/var/lib/docker /var/lib/containerd' C_GROUP=docker ;;
     postgres)
       C_ROOTS='postgresql postgresql-[0-9]* postgresql-contrib postgresql-common'
-      C_CONFIG=/etc/postgresql C_DATA=/var/lib/postgresql ;;
+      # postgresql-common's purge script deletes its createcluster.conf.
+      C_CONFIG='/etc/postgresql /etc/postgresql-common' C_DATA=/var/lib/postgresql ;;
     redis)
       C_ROOTS='redis redis-server'
       C_CONFIG=/etc/redis C_DATA=/var/lib/redis ;;
@@ -179,6 +181,37 @@ purge_deletes() {  # <package>...
   done
 }
 
+# Each package's conffiles outside the component's config directories, that
+# exist: a purge deletes them with the rest, so the savepoint keeps them.
+# nginx-common's /etc/default/nginx and /etc/logrotate.d/nginx,
+# redis-server's /etc/default/redis-server (measured on noble). A path with
+# whitespace can't be one word of an action: CONFFILES_UNSAVED names it.
+CONFFILE_RE='^ (/.*) ([0-9a-f]{32}|newconffile)( obsolete| remove-on-upgrade)*$'
+CONFFILES="" CONFFILES_UNSAVED=()
+conffiles_of() {  # <package>...
+  local _co_out _co_l _co_f _co_c _co_k
+  CONFFILES="" CONFFILES_UNSAVED=()
+  [ "$#" -gt 0 ] || return 0
+  # dpkg-query's own field, not a shell expansion.
+  # shellcheck disable=SC2016
+  capture _co_out dpkg-query -W -f '${Conffiles}\n' "$@"
+  while IFS= read -r _co_l; do
+    [[ $_co_l =~ $CONFFILE_RE ]] || continue
+    _co_f=${BASH_REMATCH[1]}
+    for _co_c in $C_CONFIG; do
+      case $_co_f in "$_co_c"/*) continue 2 ;; esac
+    done
+    case $_co_f in *[[:space:]]*)
+      CONFFILES_UNSAVED+=("$_co_f")
+      continue ;;
+    esac
+    in_words "$_co_f" "$CONFFILES" && continue
+    path_kib _co_k "$_co_f"
+    if [ -n "$_co_k" ]; then CONFFILES="$CONFFILES $_co_f"; fi
+  done <<<"$_co_out"
+  CONFFILES=${CONFFILES# }
+}
+
 # A path's size in KiB, read as root where it can be: data under a 0700
 # directory can't be measured from outside it. Empty when it doesn't exist.
 path_kib() {  # <var> <path>
@@ -201,10 +234,12 @@ path_kib() {  # <var> <path>
 # --allow-change-held-packages", measured on noble).
 D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
 D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
+D_CONFFILES="" D_UNSAVED=()
 derive() {  # <name>
-  local _d_i _d_p _d_u _d_k _d_names="" _d_line
+  local _d_i _d_p _d_u _d_k _d_names="" _d_line _d_pn=""
   D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
   D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
+  D_CONFFILES="" D_UNSAVED=()
   prune_component "$1" || return 1
   if [ -n "$C_UNIT" ]; then
     D_UNPACKAGED=1
@@ -252,6 +287,11 @@ derive() {  # <name>
       done
     done
     D_HELD=${D_HELD# }
+    for _d_line in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _d_pn="$_d_pn ${_d_line%% *}"; done
+    # A word list, each a package name.
+    # shellcheck disable=SC2086
+    conffiles_of $_d_pn
+    D_CONFFILES=$CONFFILES D_UNSAVED=(${CONFFILES_UNSAVED[@]+"${CONFFILES_UNSAVED[@]}"})
     # Word lists, each a package name.
     # shellcheck disable=SC2086
     units_of $_d_names
@@ -297,8 +337,9 @@ calendar() {  # <name>
   done
 }
 
-# What a plan binds: the packages, the units, and the group's members. A
-# stage refuses when a fresh derive gives other lines.
+# What a plan binds: the packages, the units, the conffiles the savepoint
+# takes, and the group's members. A stage refuses when a fresh derive gives
+# other lines.
 signature() {  # <var>
   local _sg_s="" _sg_x
   for _sg_x in $D_ROOTS; do _sg_s="${_sg_s}root $_sg_x"$'\n'; done
@@ -306,6 +347,7 @@ signature() {  # <var>
   for _sg_x in ${D_UNITS[@]+"${D_UNITS[@]}"}; do _sg_s="${_sg_s}unit $_sg_x"$'\n'; done
   for _sg_x in ${D_REMOVE[@]+"${D_REMOVE[@]}"}; do _sg_s="${_sg_s}remove ${_sg_x%% *}"$'\n'; done
   for _sg_x in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _sg_s="${_sg_s}purge ${_sg_x%% *}"$'\n'; done
+  for _sg_x in $D_CONFFILES; do _sg_s="${_sg_s}conffile $_sg_x"$'\n'; done
   for _sg_x in $D_MEMBERS; do _sg_s="${_sg_s}member $C_GROUP $_sg_x"$'\n'; done
   printf -v "$1" '%s' "$_sg_s"
 }
@@ -326,11 +368,11 @@ write_plan() {  # <host> <component>
 }
 
 PLAN_COMPONENT="" PLAN_HOST="" PLAN_TAKEN="" PLAN_SIG="" PLAN_CONFIG="" PLAN_DATA=""
-PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD=""
+PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES=""
 read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
   local _rd_t _rd_l _rd_k _rd_a _rd_b _rd_n=0
   PLAN_COMPONENT="" PLAN_HOST="" PLAN_TAKEN="" PLAN_SIG="" PLAN_CONFIG="" PLAN_DATA=""
-  PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD=""
+  PLAN_GROUP="" PLAN_UNPACKAGED=0 PLAN_VERSIONS="" PLAN_BAD="" PLAN_CONFFILES=""
   [ -f "$1" ] && [ -r "$1" ] || return 1
   _rd_t=$(cat -- "$1") || return 1
   while IFS= read -r _rd_l; do
@@ -345,6 +387,9 @@ read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
       host:) PLAN_HOST=$_rd_a ;;
       taken:) PLAN_TAKEN=$_rd_a ;;
       root: | residue: | unit: | remove: | purge:) PLAN_SIG="$PLAN_SIG$_rd_l"$'\n' ;;
+      conffile:)
+        PLAN_SIG="$PLAN_SIG$_rd_l"$'\n'
+        PLAN_CONFFILES="$PLAN_CONFFILES $_rd_a" ;;
       member:?*) PLAN_SIG="$PLAN_SIG$_rd_l"$'\n' ;;
       version:?*) PLAN_VERSIONS="$PLAN_VERSIONS$_rd_a $_rd_b"$'\n' ;;
       config:) PLAN_CONFIG="$PLAN_CONFIG $_rd_a" ;;
@@ -354,5 +399,5 @@ read_plan() {  # <file>: returns 1 when it can't be read or isn't a plan
       *) PLAN_BAD="${PLAN_BAD:+$PLAN_BAD; }line $_rd_n" ;;
     esac
   done <<<"$_rd_t"
-  PLAN_CONFIG=${PLAN_CONFIG# } PLAN_DATA=${PLAN_DATA# }
+  PLAN_CONFIG=${PLAN_CONFIG# } PLAN_DATA=${PLAN_DATA# } PLAN_CONFFILES=${PLAN_CONFFILES# }
 }

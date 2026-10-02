@@ -11,7 +11,7 @@ A prune runs **disable → remove → purge**, each stage after the last one's s
 | Stage | What it does | Declared in the knob, after it ran |
 |---|---|---|
 | disable | stops, disables and masks every unit the packages ship, sockets and timers too, each in one `systemctl` call so systemd orders the stops: dockerd before the containerd it runs on | `exception disabled:<name> <review-by> <reason>` |
-| savepoint (optional) | a tarball of the config and the packages' versions, as root at mode 600 | (none: the purge names it) |
+| savepoint (optional) | a tarball of the config and of the packages' other conffiles, and the packages' versions, as root at mode 600 | (none: the purge names it) |
 | remove | `apt-get remove` of exactly the plan's packages, then the group's members dropped | `exception removed:<name> <review-by> <reason>` |
 | purge | `apt-get purge` of exactly the plan's packages, the members dropped and the group deleted, then each `--purge-data` path | `exception purged:<name> <review-by> <reason>` |
 
@@ -33,7 +33,7 @@ It changes nothing. Its JSON is what the owner reads before approving a stage:
 - `autoremove_would_take`: what apt installed for them alone. No stage autoremoves, but a later `apt autoremove`, or unattended-upgrades' `Remove-Unused-Dependencies`, takes these: for docker.io on noble, `iptables` and its libraries;
 - `reverse_depends`: what else installed depends on them and stays;
 - `purge_scripts`: the lines in each package's purge script that delete files, and `debconf`, its answers. **Read these before a purge:** nginx-common's deletes `/etc/nginx` and `/var/log/nginx`, and postgresql-16's drops every cluster, data and config. It sets `postrm_purge_data` to true itself before it asks, and with no terminal nothing answers, so a false answer set beforehand keeps nothing (measured on noble). docker.io's leaves `/var/lib/docker`;
-- `paths`: its config and data, with sizes;
+- `paths`: its config and data, with sizes, and `conffiles`: its packages' conffiles outside its config, such as `/etc/default/nginx` and `/etc/logrotate.d/nginx`. A purge deletes those too, so the savepoint keeps them;
 - `group`: the group it lets members into. watcher's Docker removal left `exedev` in the `docker` group, root-equivalent the moment Docker came back (CannObserv/watcher#336);
 - `residue`: its packages removed with their config left (`rc`);
 - `stage`: what the knob declares now, and the next stage.

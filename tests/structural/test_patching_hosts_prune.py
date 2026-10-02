@@ -70,7 +70,12 @@ def after(flag):
 
 
 if cmd == "dpkg-query":
-    if args[0] == "-W":
+    if args[0] == "-W" and "Conffiles" in args[2]:
+        for n in args[3:]:
+            for f in pk.get(n, {}).get("conffiles", []):
+                print(" %s %s" % (f, "0" * 32))
+            print("")
+    elif args[0] == "-W":
         for n in sorted(pk):
             p = pk[n]
             print("%s |%s|%s" % (p["state"], n, p["version"]))
@@ -303,12 +308,26 @@ NGINX = {
             "version": "1.24.0",
             "files": [LIB + "nginx.service"],
             "drags": ["nginx"],
+            # /etc/init.d/nginx is gone from this host.
+            "conffiles": [
+                "/etc/default/nginx",
+                "/etc/init.d/nginx",
+                "/etc/logrotate.d/nginx",
+                "/etc/nginx/nginx.conf",
+            ],
             "postrm": '#!/bin/sh\nif [ "$1" = purge ]; then\n    rm -rf /var/lib/nginx /var/log/nginx /etc/nginx\nfi\n',
         },
     },
     "units": {"nginx.service": _unit(LIB + "nginx.service")},
     "groups": {},
-    "paths": {"/etc/nginx": 84, "/var/www": 12, "/var/log/nginx": 8},
+    "paths": {
+        "/etc/nginx": 84,
+        "/var/www": 12,
+        "/var/log/nginx": 8,
+        "/etc/nginx/nginx.conf": 4,
+        "/etc/default/nginx": 4,
+        "/etc/logrotate.d/nginx": 4,
+    },
 }
 POSTGRES = {
     "packages": {
@@ -338,7 +357,11 @@ POSTGRES = {
         "postgresql@16-main.service": _unit(LIB + "postgresql@.service"),
     },
     "groups": {},
-    "paths": {"/etc/postgresql": 72, "/var/lib/postgresql": 39468},
+    "paths": {
+        "/etc/postgresql": 72,
+        "/etc/postgresql-common": 12,
+        "/var/lib/postgresql": 39468,
+    },
     "debconf": {"postgresql-16": ["* postgresql-16/postrm_purge_data: true"]},
 }
 OLLAMA = {
@@ -610,6 +633,10 @@ def test_the_plan_shows_what_a_purge_drags_along_and_deletes(tmp_path):
         'rm -rf "/var/lib/postgresql/$VERSION/$1/"'
     ]
     assert out["debconf"] == ["postgresql-16/postrm_purge_data: true"]
+    # postgresql-common's purge script deletes its createcluster.conf.
+    assert {"kind": "config", "path": "/etc/postgresql-common", "kib": 12} in out[
+        "paths"
+    ]
 
     (tmp_path / "n").mkdir()
     host = _host(tmp_path / "n", NGINX, "nginx")
@@ -773,6 +800,21 @@ def test_a_purge_that_drops_postgres_clusters_waits_for_the_owner_to_name_them(
     out = host.prune("purge", "--purge-data", "/var/lib/postgresql")
     assert out["verdict"]["ok"] is True
     assert host.changes()[-1] == "rm -rf /var/lib/postgresql"
+
+
+def test_a_savepoint_keeps_the_conffiles_a_purge_deletes_outside_the_config(
+    tmp_path,
+):
+    host = _host(tmp_path, NGINX, "nginx").declare(f"disabled:nginx {PAST} soaked")
+    out = host.plan("nginx")
+    assert out["conffiles"] == ["/etc/default/nginx", "/etc/logrotate.d/nginx"]
+    assert "conffile /etc/default/nginx" in (tmp_path / "nginx.plan").read_text()
+    out = host.prune("savepoint")
+    assert out["verdict"]["ok"] is True
+    assert (
+        f"tar -cf {host.run_dir}/config.tar /etc/nginx /etc/default/nginx"
+        " /etc/logrotate.d/nginx" in host.changes()
+    )
 
 
 def test_a_savepoint_of_another_components_lets_no_purge_skip_the_remove(tmp_path):

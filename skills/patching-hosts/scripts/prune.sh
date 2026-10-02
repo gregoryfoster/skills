@@ -20,9 +20,10 @@ what the plan names.
 The stages, each after the last one's soak (its review-by date, policy.md):
   disable    stop, disable and mask the units its packages ship, each in one
              systemctl call, so systemd orders the stops
-  savepoint  a tarball of its config, and its packages' versions, as root at
-             mode 600 in the run's directory. Its data stays with you: dump
-             it off the node yourself, with a stated retention
+  savepoint  a tarball of its config and its packages' other conffiles, and
+             its packages' versions, as root at mode 600 in the run's
+             directory. Its data stays with you: dump it off the node
+             yourself, with a stated retention
   remove     apt-get remove of exactly the plan's packages, never an
              autoremove, then its group's members dropped from the group
   purge      apt-get purge of exactly the plan's packages, the members
@@ -411,7 +412,7 @@ names_of() {  # <var> <sig kind>: the plan's packages of that kind, space-separa
   done <<<"$PLAN_SIG"
   printf -v "$1" '%s' "${_no_s# }"
 }
-MASKS_SKIPPED="" _units="" _pk=""
+MASKS_SKIPPED="" _units="" _pk="" TAR_ACT=""
 if [ "$PLAN_OK" -eq 1 ]; then
   _members=""
   while read -r _k _g _m; do
@@ -437,7 +438,11 @@ if [ "$PLAN_OK" -eq 1 ]; then
       fi ;;
     savepoint)
       ACT+=("mkdir -p -m 700 $run")
-      if [ -n "$PLAN_CONFIG" ]; then ACT+=("tar -cf $run/config.tar $PLAN_CONFIG"); else ACT+=("tar -cf $run/config.tar --files-from /dev/null"); fi
+      _files="$PLAN_CONFIG $PLAN_CONFFILES"
+      _files=${_files# }
+      _files=${_files% }
+      TAR_ACT="tar -cf $run/config.tar ${_files:---files-from /dev/null}"
+      ACT+=("$TAR_ACT")
       ACT+=("write $run/versions")
       ACT+=("write $run/savepoint") ;;
     remove)
@@ -499,7 +504,7 @@ for _act in ${ACT[@]+"${ACT[@]}"}; do
   [ "${#FAILED[@]}" -eq 0 ] || [ "$stage" = disable ] || break
   RC=0
   run_act "$_act"
-  if [ "$_act" = "tar -cf $run/config.tar ${PLAN_CONFIG:---files-from /dev/null}" ] && [ "$RC" -eq 0 ]; then
+  if [ "$_act" = "$TAR_ACT" ] && [ "$RC" -eq 0 ]; then
     capture SP_SHA as_root sha256sum "$run/config.tar"
     SP_SHA=${SP_SHA%% *}
   fi
@@ -567,6 +572,7 @@ else
       NEXT+=("To undo it: systemctl unmask, then systemctl enable --now, for each unit under actions.") ;;
     savepoint)
       [ -z "$PLAN_DATA" ] || NEXT+=("The savepoint holds no data: dump $PLAN_DATA off the node yourself, with a stated retention, before the purge.")
+      for _p in ${D_UNSAVED[@]+"${D_UNSAVED[@]}"}; do NEXT+=("The conffile $_p isn't in it: a path with whitespace can't be one word of the tar, so save it by hand."); done
       NEXT+=("The purge may follow the disable's soak: bash \"$_libdir/prune.sh\" --stage purge --savepoint $run --plan <a fresh plan>.") ;;
     remove)
       day_after _d 30
