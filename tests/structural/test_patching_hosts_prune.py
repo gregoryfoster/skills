@@ -16,16 +16,21 @@ What this file pins, against the plan's step 6b list:
 Beyond that list:
 
 - the plan: units with sockets first, a template's loaded instances, what a
-  removal and a purge take and drag along, what a later autoremove would
-  take, what else depends
-  on them, the purge scripts' deleting lines, debconf's answers, paths with
-  sizes, the group and its members, the residue, and the stage the knob
-  declares;
-- the calendar: each stage after the last one's review-by date, and a
-  savepoint that lets the purge follow the disable;
-- each apt command names the plan's packages, never autoremoves, and runs
-  with needrestart in list mode;
-- a data path goes only by --purge-data, and only one the plan names;
+  removal and a purge take and drag along, held packages, what a later
+  autoremove would take, what else depends on them, the purge scripts'
+  deleting lines, debconf's answers, paths with sizes, conffiles outside the
+  config, Postgres's clusters and their data, the group and its members,
+  the residue, and the stage the knob declares;
+- the calendar: each stage after the last one's review-by date, a live keep
+  that stops every stage, a --today that can't run ahead of the clock, and
+  a savepoint that lets the purge follow the disable, only while its
+  tarball matches its record;
+- each apt command names the plan's packages, never autoremoves, runs with
+  needrestart in list mode, and never under a hold;
+- a data path goes only by --purge-data, and only one the plan names: one a
+  purge script deletes, and every Postgres cluster's, wherever it is;
+- each action's output in the stage's log, and a stage with nothing to run
+  refused;
 - the group's members dropped, and the group deleted at the purge;
 - a component from outside apt is disabled, and removed by hand.
 
