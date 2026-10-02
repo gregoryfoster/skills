@@ -320,7 +320,7 @@ REDIS_ARGS=() REDIS_CONF=""
 # unit_show sets it by name.
 U_ExecStart=""
 redis_conn() {  # <unit>
-  local _rc_t _rc_w _rc_l _rc_k _rc_v _rc_port="" _rc_bind="" _rc_sock=""
+  local _rc_t _rc_w _rc_l _rc_k _rc_v _rc_i _rc_port="" _rc_bind="" _rc_sock=""
   local -a _rc_a=()
   REDIS_ARGS=() REDIS_CONF=""
   if unit_show "$1" ExecStart; then
@@ -341,6 +341,16 @@ redis_conn() {  # <unit>
       esac
     done <<<"$_rc_t"
   fi
+  # Then the unit's own arguments, which Redis takes over the file's: a
+  # second Redis may share the file and set its own --port.
+  for ((_rc_i = 0; _rc_i < ${#_rc_a[@]}; _rc_i++)); do
+    _rc_v=${_rc_a[_rc_i + 1]:-}
+    case ${_rc_a[_rc_i]} in
+      --port) _rc_port=$_rc_v ;;
+      --bind) _rc_bind=${_rc_v#-} ;;
+      --unixsocket) _rc_sock=$_rc_v ;;
+    esac
+  done
   case $_rc_bind in '' | '*' | 0.0.0.0 | '::' | '::*') _rc_bind=127.0.0.1 ;; esac
   if [ -n "$_rc_sock" ]; then
     REDIS_ARGS=(-s "$_rc_sock")

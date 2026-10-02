@@ -542,7 +542,7 @@ base image, or an owner-approved remedy the profile documents.
       aborts at its own start, while a package manager runs;
     - **without `--approve` the chain is printed, not written,** so the text
       the owner approves is the text that runs;
-    - **from review (CR 125–135):**
+    - **from review (CR 125–141):**
       - every value in the chain is single-quoted, and a cluster's port must
         be a number. A unit's name is the knob's, and Redis's address and a
         cluster's port come from files the redis and postgres users can
@@ -556,7 +556,10 @@ base image, or an owner-approved remedy the profile documents.
         survives the boot, and a copy of it, up to journald's 4 GiB cap,
         would land on the disk the data stores boot from;
       - the chain's timer gets the delay less the time the gate took, so it
-        fires at the time its span was gated from.
+        fires at the time its span was gated from;
+      - Redis is reached where its unit's own `--port`, `--bind` or
+        `--unixsocket` say, over its file's: a second Redis may share the
+        file, and its recovery point would otherwise be the first's data.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical

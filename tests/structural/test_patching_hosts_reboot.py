@@ -38,7 +38,8 @@ Beyond that list:
 - a journal copy that fails still reboots: by then the services are down;
 - only the volatile journal is copied: a persistent one survives the boot;
 - Redis is saved first only when it has no save points, and its password
-  stays in its own config file.
+  stays in its own config file;
+- Redis is reached where its unit's own arguments say, over the file's.
 """
 
 import json
@@ -513,6 +514,27 @@ def test_a_journal_copy_that_fails_still_reboots(host):
     assert r.returncode == 0
     assert host.sequence()[-1] == "systemctl reboot"
     assert "has no record of its own" in host.record("reboot-chain.log")
+
+
+@pytest.mark.parametrize(
+    "args, words",
+    [
+        ("--port 6391", "-h '127.0.0.1' -p '6391'"),
+        ("--unixsocket /run/redis/cache.sock", "-s '/run/redis/cache.sock'"),
+    ],
+)
+def test_redis_is_reached_where_its_units_own_arguments_say(host, args, words):
+    # Redis takes them over its file's: a second Redis may share the file.
+    conf = host.tmp / "redis.conf"
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
+    ]
+    host.show(
+        "redis-server.service",
+        ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} {args} ; }}",
+    )
+    chain = host.reboot(approve=False, rc=3)["chain"]
+    assert any(f"redis-cli {words} CONFIG GET save" in line for line in chain)
 
 
 @pytest.mark.parametrize("save, saved", [("3600 1 300 100", False), ("", True)])

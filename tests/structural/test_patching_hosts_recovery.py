@@ -25,9 +25,10 @@ Beyond that list:
 
 - a stated retention is required, and recorded;
 - a dump that holds personal data is flagged in the record;
-- Redis is reached at the address and port its own config file binds, as
-  root, so a socket only redis and root can open is reached too, and its
-  password, where the file sets one, never reaches an argv or the output;
+- Redis is reached at the address and port its own config file binds, or
+  its unit's own arguments set over the file, as root, so a socket only
+  redis and root can open is reached too, and its password, where the file
+  sets one, never reaches an argv or the output;
 - a run's filesystem with less free space than the data refuses: a full
   disk mid-dump can stop the data store it shares the disk with;
 - a BGSAVE Redis refuses fails at once, with Redis's reply;
@@ -461,6 +462,27 @@ def test_redis_is_reached_where_its_config_binds_and_its_password_stays_hidden(
     assert set((host.state / "auth").read_text().split()) == {"s3cret-pass"}
     assert "s3cret" not in host.log.read_text()
     assert "s3cret" not in host.result.stdout + host.result.stderr
+
+
+def test_redis_is_reached_where_its_units_own_arguments_say(tmp_path):
+    # A second Redis may share the file and set its own port: Redis takes
+    # the unit's arguments over the file's, so its RDB file is another.
+    host = _redis(_ready(Host(tmp_path)), conf="port 6379\n")
+    conf = host.tmp / "redis.conf"
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
+    ]
+    host.show(
+        "redis-server.service",
+        ExecStart=(
+            f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} "
+            "--port 6391 --dir /var/lib/redis-cache ; ignore_errors=no ; }"
+        ),
+    )
+    out = host.recover()
+    assert out["verdict"]["ok"] is True
+    calls = [a for _, a, _ in host.calls("redis-cli")]
+    assert calls and all(a.startswith("-h 127.0.0.1 -p 6391 ") for a in calls)
 
 
 def test_redis_is_reached_as_root_so_a_root_only_socket_is_too(tmp_path):
