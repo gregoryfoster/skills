@@ -572,6 +572,25 @@ def test_the_chain_reads_the_password_as_redis_does(host, line):
     assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", ""]
 
 
+def test_a_save_that_took_isnt_logged_as_failed_for_an_auth_warning(tmp_path):
+    host = _ready(Host(tmp_path), save="")
+    # The file sets a password the server doesn't: redis-cli warns on
+    # stderr, and the reply on stdout is OK (measured on 7.0).
+    host.cases["redis-cli"] = [c for c in host.cases["redis-cli"] if c[0] != "* SAVE"]
+    host.on(
+        "redis-cli",
+        "* SAVE",
+        "OK\n",
+        0,
+        "AUTH failed: ERR AUTH <password> called without any password configured for the default user.\n",
+    )
+    host.reboot()
+    host.fire(_journals(host))
+    log = host.record("reboot-chain.log")
+    assert "AUTH failed" in log
+    assert "SAVE failed" not in log
+
+
 def test_a_redis_with_no_file_gets_no_other_redis_password(host):
     host.knob(KNOB_CHAIN + "datastore redis redis-cache\n")
     host.show(

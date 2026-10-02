@@ -388,10 +388,11 @@ write_chain() {
         c 'unset REDISCLI_AUTH'
       fi
       c "# Its stop saves the RDB file only where save points are set."
-      # redis-cli exits 0 on an error reply (measured on 7.0): the reply
-      # says whether the SAVE took.
+      # redis-cli exits 0 on an error reply, and prints it on stdout; an
+      # AUTH warning goes to stderr, which is the log (measured on 7.0). So
+      # stdout alone says whether the SAVE took.
       sq m "SAVE $u"
-      c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ]; then say $m; reply=\$(redis-cli$ra SAVE 2>&1); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
+      c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ]; then say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
     fi
     stop_line "$u"
   done
