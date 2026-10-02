@@ -247,19 +247,37 @@ gate_plan() {
 
 # The calendar: each stage waits for the last one's review-by date, declared
 # in the knob (policy.md). A savepoint lets the purge follow the disable.
-SP_OK=0
-gate_savepoint() {  # <dir>: whether it holds this component's savepoint
-  local rec l k v c="" h=""
-  root_read rec "$1/savepoint" || return 1
+# The record is written last, and only once its tarball's sha256 was read,
+# so a tarball that doesn't match it is no savepoint.
+SP_OK=0 SP_WHY=""
+gate_savepoint() {  # <dir>: whether it holds this component's savepoint; SP_WHY when not
+  local rec l k v c="" h="" sha="" now=""
+  SP_WHY=""
+  if ! root_read rec "$1/savepoint"; then
+    SP_WHY="$1 holds no savepoint record"
+    return 1
+  fi
   while read -r k v l; do
     case $k in
       component) c=$v ;;
       host) h=$v ;;
+      config.tar) sha=$v ;;
     esac
   done <<<"$rec"
-  if [ "$c" != "$component" ] || [ "$h" != "$host" ]; then return 1; fi
-  root_has "$1/config.tar" || return 1
-  root_has "$1/versions"
+  if [ "$c" != "$component" ] || [ "$h" != "$host" ]; then
+    SP_WHY="$1 holds ${c:-no component}'s savepoint on ${h:-no host}, not $component's on $host"
+    return 1
+  fi
+  if ! root_has "$1/versions"; then
+    SP_WHY="$1/versions is missing"
+    return 1
+  fi
+  capture now as_root sha256sum "$1/config.tar"
+  now=${now%% *}
+  if [ "$CAP_RC" -ne 0 ] || [ -z "$sha" ] || [ "$now" != "$sha" ]; then
+    SP_WHY="$1/config.tar isn't the tarball its record names: its sha256 is ${now:-unreadable}, and the record's ${sha:-empty}"
+    return 1
+  fi
 }
 
 gate_calendar() {
@@ -292,7 +310,7 @@ gate_calendar() {
       if [ "$CAL_PASSED" != 1 ]; then
         refuse "$component is soaking until $CAL_REVIEW: the purge waits for it. An earlier review-by date shortens the soak"
       elif [ "$SP_OK" -ne 1 ]; then
-        refuse "the remove comes next, or a savepoint lets the purge skip it: --stage savepoint, then --savepoint DIR${savepoint:+ ($savepoint holds no savepoint for $component on $host)}"
+        refuse "the remove comes next, or a savepoint lets the purge skip it: --stage savepoint, then --savepoint DIR${SP_WHY:+ ($SP_WHY)}"
       fi ;;
     purge:none) refuse "disable $component first: the purge comes last" ;;
     purge:purged) refuse "$component is already purged" ;;
@@ -437,7 +455,9 @@ if [ "$PLAN_OK" -eq 1 ]; then
         [ -z "$_masks" ] || ACT+=("systemctl mask --${_masks}")
       fi ;;
     savepoint)
-      ACT+=("mkdir -p -m 700 $run")
+      # An earlier attempt's record goes first: a tar that fails now must
+      # leave no record vouching for its tarball.
+      ACT+=("mkdir -p -m 700 $run" "rm -f -- $run/savepoint")
       _files="$PLAN_CONFIG $PLAN_CONFFILES"
       _files=${_files# }
       _files=${_files% }
@@ -507,6 +527,10 @@ for _act in ${ACT[@]+"${ACT[@]}"}; do
   if [ "$_act" = "$TAR_ACT" ] && [ "$RC" -eq 0 ]; then
     capture SP_SHA as_root sha256sum "$run/config.tar"
     SP_SHA=${SP_SHA%% *}
+    # No record vouches for a tarball whose sha256 couldn't be read.
+    if [ "$CAP_RC" -ne 0 ] || [[ ! $SP_SHA =~ ^[0-9a-f]{64}$ ]]; then
+      fail "sha256sum couldn't read $run/config.tar (${CAP_ERR:-exit $CAP_RC}), so no savepoint record is written"
+    fi
   fi
   _e=""
   jadds _e action "$_act"

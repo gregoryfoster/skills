@@ -234,6 +234,9 @@ if cmd == "debconf-show":
             print(line)
     sys.exit(0)
 if cmd == "tar":
+    if db.get("tar_fail"):
+        print("tar: " + db["tar_fail"], file=sys.stderr)
+        sys.exit(2)
     open(after("-cf"), "w").close()
     sys.exit(0)
 sys.exit(1)
@@ -401,7 +404,10 @@ class Host(ApplyHost):
         ),
         # Only the test's own files are really removed: the scripts' scratch
         # directories. Anything else is recorded, and left.
-        "rm": 'case "$*" in *"$TMPDIR"*) exec /bin/rm "$@" ;; esac\nexit 0',
+        "rm": (
+            'case "$*" in *"$TMPDIR"* | *"/prune-run/"*) exec /bin/rm "$@" ;; esac\n'
+            "exit 0"
+        ),
     }
 
     def __init__(self, tmp_path, fixture: dict, **kw):
@@ -825,7 +831,44 @@ def test_a_savepoint_of_another_components_lets_no_purge_skip_the_remove(tmp_pat
     record.write_text(record.read_text().replace("component docker", "component nginx"))
     host.plan("docker")
     out = host.prune("purge", "--savepoint", str(host.run_dir), rc=3)
-    assert any("holds no savepoint for docker on web-1" in r for r in out["refused"])
+    assert any(
+        "holds nginx's savepoint on web-1, not docker's on web-1" in r
+        for r in out["refused"]
+    ), out["refused"]
+
+
+def test_a_savepoint_that_failed_or_changed_since_lets_no_purge_skip_the_remove(
+    tmp_path,
+):
+    host = _host(tmp_path, DOCKER, "docker").declare(f"disabled:docker {PAST} soaked")
+    host.plan("docker")
+    assert host.prune("savepoint")["verdict"]["ok"] is True
+    # A second attempt whose tar fails leaves no record of the first.
+    host.host_state["tar_fail"] = "/var/backups: No space left on device"
+    host.prune("savepoint", rc=1)
+    del host.host_state["tar_fail"]
+    host.plan("docker")
+    out = host.prune("purge", "--savepoint", str(host.run_dir), rc=3)
+    assert any("holds no savepoint record" in r for r in out["refused"]), out["refused"]
+
+    # A tarball that isn't the one its record names.
+    assert host.prune("savepoint")["verdict"]["ok"] is True
+    (host.run_dir / "config.tar").write_text("truncated")
+    host.plan("docker")
+    out = host.prune("purge", "--savepoint", str(host.run_dir), rc=3)
+    assert any(
+        "config.tar isn't the tarball its record names" in r for r in out["refused"]
+    ), out["refused"]
+    assert not [c for c in host.changes() if c.startswith("apt-get purge")]
+
+
+def test_a_savepoint_whose_tarball_cant_be_read_writes_no_record(tmp_path):
+    host = _host(tmp_path, DOCKER, "docker").declare(f"disabled:docker {PAST} soaked")
+    host.plan("docker")
+    host.on("sha256sum", "*", rc=1, stderr="sha256sum: Input/output error\n")
+    out = host.prune("savepoint", rc=1)
+    assert any("sha256sum couldn't read" in w for w in out["verdict"]["why"])
+    assert not (host.run_dir / "savepoint").exists()
 
 
 def test_a_held_package_is_named_and_no_removal_of_it_runs(tmp_path):

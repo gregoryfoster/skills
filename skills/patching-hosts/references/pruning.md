@@ -17,7 +17,7 @@ A prune runs **disable → remove → purge**, each stage after the last one's s
 
 The **review-by date is the soak**: 30 days by default, up to 90. A stage refuses while the last stage's date hasn't passed; an earlier date shortens a soak, and that is the owner's call. When a date passes, the exception expires and the probe reports it again; `prune-plan.sh`'s `stage` names the next one. A `purged:` line stays until the base image stops shipping the component.
 
-**With a savepoint, the remove stage is skipped**: disable, soak, savepoint, then purge. That's the better path for security. `remove` leaves config behind, sometimes with secrets in it, and an `rc` package the probe then has to explain. Without a savepoint, the remove stage is the reversible step, and stays.
+**With a savepoint, the remove stage is skipped**: disable, soak, savepoint, then purge. That's the better path for security. `remove` leaves config behind, sometimes with secrets in it, and an `rc` package the probe then has to explain. Without a savepoint, the remove stage is the reversible step, and stays. The purge takes `--savepoint DIR` only where its record is this component's, on this host, and its tarball still has the sha256 the record names: each attempt removes the last record first, and writes its own only once the tarball is read back.
 
 `exception keep:<name>` stops every stage, wherever the prune got to: the owner keeps it until its review-by date, whatever stage lines the knob also holds.
 
