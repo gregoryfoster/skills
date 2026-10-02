@@ -15,6 +15,9 @@ What this file pins, against the plan's step 6a list:
 - the abort when the gate fails at the chain's own start, which stops
   nothing;
 - the journal copy comes after every stop, and is root's only;
+- every value in the chain is single-quoted, since it runs as root: a
+  unit's name is the knob's, and Redis's address and a cluster's port come
+  from files the redis and postgres users can write;
 - no platform restart appears: the chain's one restart is
   `systemctl reboot`, in-guest.
 
@@ -219,7 +222,9 @@ def test_the_chains_one_restart_is_an_in_guest_reboot(host):
     commands = [line for line in chain if line and not line.startswith("#")]
     assert commands[-1] == "systemctl reboot"
     # Command words only: what the chain says in its log is quoted.
-    text = "\n".join(re.sub(r'say "[^"]*"', 'say ""', line) for line in commands)
+    text = "\n".join(
+        re.sub(r"""say ("[^"]*"|'[^']*')""", 'say ""', line) for line in commands
+    )
     for word in (
         "ssh ",
         "exe ",
@@ -305,6 +310,14 @@ def test_a_launch_that_fails_schedules_nothing(host):
             "report-only: class ephemeral",
         ),
         (lambda h: h.cases["pg_lsclusters"].clear(), "pg_lsclusters couldn't be read"),
+        # From postgresql.conf, which postgres can write: the chain is root's.
+        (
+            lambda h: (
+                h.cases["pg_lsclusters"].clear(),
+                h.on("pg_lsclusters", "-h", CLUSTER.replace(" 5432 ", " 5432;id ")),
+            ),
+            "port, 5432;id, isn't a number",
+        ),
     ],
     ids=[
         "the-run-aborted",
@@ -317,6 +330,7 @@ def test_a_launch_that_fails_schedules_nothing(host):
         "no-run",
         "report-only",
         "no-cluster",
+        "a-port-that-isnt-a-number",
     ],
 )
 def test_a_chain_it_shouldnt_launch_is_refused(host, setup, refused):
@@ -366,6 +380,22 @@ def test_the_chain_runs_in_order_and_copies_the_journal_after_every_stop(host):
     assert "gate passed" in log
     assert "and read back" in log
     assert log.rstrip().endswith("reboot")
+
+
+def test_no_value_reaches_the_chain_unquoted(host):
+    # A unit's name is the knob's, and Redis's address its own config
+    # file's, which the redis user can write. The chain runs as root, so a
+    # $( ) in either would too.
+    mark = host.tmp / "ran"
+    host.knob(KNOB_CHAIN + f"service app-$(id>{mark}-unit)\n")
+    (host.tmp / "redis.conf").write_text(f"bind 127.0.0.1;id>{mark}-bind\nport 6380\n")
+    host.reboot()
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    assert not list(host.tmp.glob("ran-*"))
+    seq = host.sequence()
+    assert f"systemctl stop -- app-$(id>{mark}-unit).service" in seq
+    assert f"redis-cli -h 127.0.0.1;id>{mark}-bind -p 6380 CONFIG GET save" in seq
 
 
 def test_a_chain_whose_gate_fails_at_its_start_stops_nothing(host):

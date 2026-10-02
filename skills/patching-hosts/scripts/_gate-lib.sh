@@ -281,6 +281,12 @@ pg_port() {  # <var> <unit>
     PG_WHY="cluster $_pn is $_ps, not online"
     return 1
   fi
+  # pg_lsclusters reads it from postgresql.conf, which postgres can write,
+  # and the reboot chain runs it as root.
+  if ! is_int "$_pp"; then
+    PG_WHY="cluster $_pn's port, $_pp, isn't a number"
+    return 1
+  fi
   printf -v "$1" '%s' "$_pp"
 }
 

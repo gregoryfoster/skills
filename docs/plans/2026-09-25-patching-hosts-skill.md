@@ -541,7 +541,12 @@ base image, or an owner-approved remedy the profile documents.
       mid-dump can stop the data store on it, and the chain refuses, and
       aborts at its own start, while a package manager runs;
     - **without `--approve` the chain is printed, not written,** so the text
-      the owner approves is the text that runs.
+      the owner approves is the text that runs;
+    - **from review (CR 125–135):**
+      - every value in the chain is single-quoted, and a cluster's port must
+        be a number. A unit's name is the knob's, and Redis's address and a
+        cluster's port come from files the redis and postgres users can
+        write: a `$( )` in any of them would run as root.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical

@@ -274,10 +274,20 @@ emit() {
 CHAIN=""
 c() { CHAIN="$CHAIN$*"$'\n'; }
 
+# Single quotes, the log's words too: a unit's name is the knob's, and a
+# $( ) in it would run as root.
+stop_line() {  # <unit>
+  local q m x
+  sq q "$1"
+  sq m "stop $1"
+  sq x "stop $1 failed"
+  c "say $m; systemctl stop -- $q || say $x"
+}
+
 # The chain is sh text, written literally: its expansions are its own.
 # shellcheck disable=SC2016
 write_chain() {
-  local r q u kind conf rest l cmd user t
+  local r q u kind conf rest l cmd user t m x ra
   local -a f=() w=()
   sq q "$log"
   c '#!/bin/sh'
@@ -319,28 +329,36 @@ write_chain() {
   for r in ${KNOB_RESTARTER[@]+"${KNOB_RESTARTER[@]}"} ${KNOB_SERVICE[@]+"${KNOB_SERVICE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[0]}"
-    sq q "$u"
-    c "say \"stop $u\"; systemctl stop -- $q || say \"stop $u failed\""
+    stop_line "$u"
   done
   c ''
   c '# 3. A checkpoint, then each data store.'
   for r in ${DS_LINES[@]+"${DS_LINES[@]}"}; do
     # "postgres <unit> <port>", or "redis <unit> <conf or -> <redis-cli words>".
     read -r kind u conf rest <<<"$r"
-    sq q "$u"
     if [ "$kind" = postgres ]; then
-      c "say \"checkpoint $u\"; runuser -u postgres -- psql -XAtq -p $conf -d postgres -c CHECKPOINT || say \"CHECKPOINT failed: the stop checkpoints anyway\""
+      # pg_port's port is a number.
+      sq m "checkpoint $u"
+      c "say $m; runuser -u postgres -- psql -XAtq -p $conf -d postgres -c CHECKPOINT || say \"CHECKPOINT failed: the stop checkpoints anyway\""
     else
+      # The address and the socket come from redis.conf, which the redis
+      # user can write: each one quoted.
       read -r -a w <<<"$rest"
+      ra=""
+      for x in ${w[@]+"${w[@]}"}; do
+        case $x in -h | -p | -s) ;; *) sq x "$x" ;; esac
+        ra="$ra $x"
+      done
       if [ "$conf" != - ]; then
         sq l "$conf"
         c "REDISCLI_AUTH=\$(sed -n 's/^requirepass[[:space:]][[:space:]]*//p' $l 2>/dev/null | tail -n 1 | tr -d '\"')"
         c '[ -n "$REDISCLI_AUTH" ] && export REDISCLI_AUTH || unset REDISCLI_AUTH'
       fi
       c "# Its stop saves the RDB file only where save points are set."
-      c "if [ -z \"\$(redis-cli ${w[*]} CONFIG GET save | sed -n 2p)\" ]; then say \"SAVE $u\"; redis-cli ${w[*]} SAVE || say \"SAVE failed\"; fi"
+      sq m "SAVE $u"
+      c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ]; then say $m; redis-cli$ra SAVE || say \"SAVE failed\"; fi"
     fi
-    c "say \"stop $u\"; systemctl stop -- $q || say \"stop $u failed\""
+    stop_line "$u"
   done
   c ''
   c '# 4.'
