@@ -33,6 +33,7 @@ Beyond that list:
 - the chain refuses to start while a package manager runs, since a reboot
   then could cut dpkg off mid-run;
 - a journal copy that fails still reboots: by then the services are down;
+- only the volatile journal is copied: a persistent one survives the boot;
 - Redis is saved first only when it has no save points, and its password
   stays in its own config file.
 """
@@ -89,7 +90,7 @@ class Host(ApplyHost):
         with JOURNALS in place of the host's journal directories."""
         script = self.run_dir / "reboot-chain.sh"
         text = script.read_text()
-        line = "JOURNAL_DIRS='/var/log/journal /run/log/journal'"
+        line = "JOURNAL_DIRS='/run/log/journal'"
         assert text.count(line) == 1
         script.write_text(text.replace(line, f"JOURNAL_DIRS='{' '.join(journals)}'"))
         self.log.write_text("")
@@ -395,6 +396,7 @@ def test_the_chain_runs_in_order_and_copies_the_journal_after_every_stop(host):
     log = host.record("reboot-chain.log")
     assert "gate passed" in log
     assert "and read back" in log
+    assert "holds no journal: a persistent one survives the boot" in log
     assert log.rstrip().endswith("reboot")
 
 
@@ -453,6 +455,18 @@ def test_a_chain_refuses_to_start_while_a_package_manager_runs(host):
     assert r.returncode == 1
     assert not [c for c in host.sequence() if c.startswith("systemctl")]
     assert "ABORT: a package manager is running" in host.record("reboot-chain.log")
+
+
+def test_only_the_volatile_journal_is_copied(host):
+    # A persistent journal survives the boot, and a copy of it, up to
+    # journald's 4 GiB cap, would land on the disk the data stores boot from.
+    chain = host.reboot(approve=False, rc=3)["chain"]
+    assert "JOURNAL_DIRS='/run/log/journal'" in chain
+    assert not [
+        line
+        for line in chain
+        if "/var/log/journal" in line and not line.startswith("#")
+    ]
 
 
 def test_a_journal_copy_that_fails_still_reboots(host):

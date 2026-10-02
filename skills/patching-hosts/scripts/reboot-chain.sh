@@ -25,9 +25,10 @@ The chain, logged to the run's reboot-chain.log:
   3. a checkpoint, then stop each data store (Postgres: CHECKPOINT; Redis:
      SAVE first when it has no save points);
   4. journalctl --sync;
-  5. copy the journal into the run, last, so it holds every stop line, and
-     read it back: on a volatile journal it's the only record of the
-     shutdown;
+  5. copy the volatile journal into the run, last, so it holds every stop
+     line, and read it back: it's the only record of the shutdown. A
+     persistent journal survives the boot, so it isn't copied: a copy would
+     land on the disk the data stores boot from;
   6. sync, then systemctl reboot. In-guest only: a platform restart is a
      hard reset.
 After a stop, nothing aborts it: the host comes back with what it stopped.
@@ -311,7 +312,7 @@ write_chain() {
   c "LOG=$q"
   sq q "$run/journal"
   c "JOURNAL=$q"
-  c "JOURNAL_DIRS='/var/log/journal /run/log/journal'"
+  c "JOURNAL_DIRS='/run/log/journal'"
   c 'exec >>"$LOG" 2>&1'
   c "say() { printf '%s %s\\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"\$*\"; }"
   c 'abort() { say "ABORT: $*. Nothing was stopped."; exit 1; }'
@@ -377,10 +378,12 @@ write_chain() {
   c '# 4.'
   c 'journalctl --sync'
   c ''
-  c '# 5. The journal, last, so it holds every stop line, readable by root only.'
+  c '# 5. The volatile journal, last, so it holds every stop line, readable by'
+  c '# root only. A persistent one, in /var/log/journal, survives the boot, and'
+  c '# a copy of it would land on the disk the data stores boot from.'
   c 'install -d -m 700 "$JOURNAL"'
   c 'for d in $JOURNAL_DIRS; do'
-  c '  [ -n "$(ls -A "$d" 2>/dev/null)" ] || continue'
+  c '  if [ -z "$(ls -A "$d" 2>/dev/null)" ]; then say "$d holds no journal: a persistent one survives the boot"; continue; fi'
   c '  t=$JOURNAL/$(printf %s "$d" | tr / _)'
   c '  if install -d -m 700 "$t" && cp -a "$d/." "$t/" && chmod -R go-rwx "$t" && journalctl -D "$t" -n 5 --no-pager; then'
   c '    say "journal $d copied to $t, and read back"'

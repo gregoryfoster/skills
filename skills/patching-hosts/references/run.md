@@ -166,16 +166,16 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
 3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured; with none, run `SAVE` first.
 4. `journalctl --sync`.
-5. **Copy the journal, last**, so it holds every stop line. On a volatile journal this copy is the only record of the shutdown:
+5. **Copy the volatile journal, last**, so it holds every stop line. This copy is the only record of the shutdown:
 
    ```
    install -d -m 700 /var/backups/journal-<utc>
-   cp -a /run/log/journal/<machine-id>/. /var/backups/journal-<utc>/   # or /var/log/journal/…
+   cp -a /run/log/journal/<machine-id>/. /var/backups/journal-<utc>/
    chmod -R go-rwx /var/backups/journal-<utc>
    journalctl -D /var/backups/journal-<utc> -n 5                       # the read-back
    ```
 
-   `cp -a` alone keeps the source's `systemd-journal` group and its 2755 mode, so the copy would stay readable by that group. A journal can hold secrets: archiver's setup-script key was in its journal. The copy is a recovery-point file, so it gets a stated retention (§2).
+   `cp -a` alone keeps the source's `systemd-journal` group and its 2755 mode, so the copy would stay readable by that group. A journal can hold secrets: archiver's setup-script key was in its journal. The copy is a recovery-point file, so it gets a stated retention (§2). A persistent journal, in `/var/log/journal`, survives the boot, so it isn't copied: a copy of one, up to journald's 4 GiB cap, would land on the disk the data stores boot from.
 6. `sync`, then `systemctl reboot`. **In-guest only**: a platform restart is a hard reset.
 
 Before launching:

@@ -551,7 +551,10 @@ base image, or an owner-approved remedy the profile documents.
         launched again. Only one that's scheduled, running, or ran without
         an ABORT refuses a second;
       - a recovery point taken again removes the earlier record first, so
-        an attempt that fails leaves none for the bulk to take.
+        an attempt that fails leaves none for the bulk to take;
+      - the chain copies only the volatile journal. A persistent one
+        survives the boot, and a copy of it, up to journald's 4 GiB cap,
+        would land on the disk the data stores boot from.
 
 6b. **Pruning: `references/pruning.md` and two scripts.** The skill proposes
     and the operator runs. Scripts cover only the steps that are mechanical
