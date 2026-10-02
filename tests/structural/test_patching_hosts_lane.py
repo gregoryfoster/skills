@@ -1,0 +1,260 @@
+"""patching-hosts' maintenance lane: `apply.sh --lane maintenance` (#313, plan
+step 6c).
+
+The maintenance lane reuses the security lane's gates, recovery point, window
+and reboot decision; only the selection differs. It adds Ubuntu's -updates
+and each origin the knob follows to the host's own unattended-upgrades
+origins, through an APT_CONFIG file, and never names a pinned or held one.
+
+What this file pins, against the plan's step 6c list:
+
+- `--lane maintenance` selects -updates and the followed origins, and never a
+  held one.
+
+Beyond that list:
+
+- the dry run counts the same lane, and a bulk refuses one of another lane;
+- the host's own origins can't take a held or pinned origin in this lane:
+  one naming it, one naming no origin, and one whose origin is a pattern;
+- apt must read the lane's file;
+- a held step runs its bulk's lane, and refuses a knob that follows other
+  origins since.
+
+Measured on noble with unattended-upgrade 2.9.1, 2026-10-02: an APT_CONFIG
+file's Origins-Pattern adds to the host's Allowed-Origins, `site=` is a key
+it matches, and the lane's dry run took noble-updates' libaudit1 besides the
+security set.
+"""
+
+import subprocess
+
+import pytest
+
+from tests.structural.patching_hosts_rig import SKILL, clean_env, dispatcher
+from tests.structural.test_patching_hosts_apply import KNOB, TUE_1530, _ready
+from tests.structural.test_patching_hosts_apply import Host as ApplyHost
+from tests.structural.test_patching_hosts_probe import Host as ProbeHost
+
+UPDATES = "o=Ubuntu,a=${distro_codename}-updates"
+ORIGINS = (
+    "origin Tailscale follow\n"
+    "origin deb.nodesource.com follow\n"
+    "origin Docker hold the image pins it\n"
+    "origin Grafana pin 10.4.1\n"
+)
+HOST_DUMP = (
+    'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}";\n'
+    'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";\n'
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _dispatcher(tmp_path_factory):
+    with dispatcher(tmp_path_factory):
+        yield
+
+
+def _dump(host: ApplyHost, extra: str = "", reads_apt_config: bool = True) -> None:
+    """apt-config dump as apt prints it: the host's own entries, then those
+    an APT_CONFIG file adds."""
+    host.cases["apt-config"] = [c for c in host.cases["apt-config"] if c[0] != "dump"]
+    text = host.state / "dump"
+    text.write_text(HOST_DUMP + extra)
+    adds = (
+        'if [ -n "${APT_CONFIG:-}" ]; then '
+        'sed -n \'s/^  "\\(.*\\)";$/Unattended-Upgrade::Origins-Pattern:: "\\1";/p\' '
+        '"$APT_CONFIG"; fi; '
+        if reads_apt_config
+        else ""
+    )
+    host.on("apt-config", "dump", script=f'cat "{text}"; {adds}exit 0')
+
+
+def _lane(tmp_path, knob: str = KNOB + ORIGINS, extra: str = "") -> ApplyHost:
+    host = _ready(ApplyHost(tmp_path))
+    host.knob(knob)
+    _dump(host, extra)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=6\nwall_seconds=540\n"
+        "security_only=0\nlane=maintenance\n"
+    )
+    return host
+
+
+def _uu_apt_config(host: ApplyHost) -> list[str]:
+    return [c for _, _, c in host.calls("unattended-upgrade")]
+
+
+def test_the_maintenance_lane_adds_updates_and_followed_origins_and_no_held_one(
+    tmp_path,
+):
+    host = _lane(tmp_path)
+    out = host.run("--lane", "maintenance")
+    assert out["verdict"]["ok"] is True, out
+    assert out["apply"]["lane"] == "maintenance"
+    want = [UPDATES, "o=Tailscale", "site=deb.nodesource.com"]
+    assert out["gate"]["lane"] == {"name": "maintenance", "patterns": want}
+    conf = host.record("lane.conf")
+    for p in want:
+        assert f'  "{p}";' in conf
+    assert "Docker" not in conf and "Grafana" not in conf
+    assert oct((host.run_dir / "lane.conf").stat().st_mode & 0o777) == "0o600"
+    # unattended-upgrade reads it, as NEEDRESTART_MODE and choom still reach it.
+    assert _uu_apt_config(host) == [str(host.run_dir / "lane.conf")]
+    assert "NEEDRESTART_MODE=l\n" in host.record("bulk.log")
+
+
+def test_the_security_lane_names_no_apt_config(tmp_path):
+    host = _ready(ApplyHost(tmp_path))
+    host.knob(KNOB + ORIGINS)
+    out = host.run()
+    assert out["apply"]["lane"] == "security"
+    assert out["gate"]["lane"] == {"name": "security", "patterns": []}
+    assert _uu_apt_config(host) == [""]
+    assert not (host.run_dir / "lane.conf").exists()
+
+
+@pytest.mark.parametrize(
+    "summary_lane, args, counted, runs",
+    [
+        ("", ["--lane", "maintenance"], "security", "maintenance"),
+        ("lane=maintenance\n", [], "maintenance", "security"),
+    ],
+    ids=["security-dry-run", "maintenance-dry-run"],
+)
+def test_a_dry_run_of_another_lane_is_refused(
+    tmp_path, summary_lane, args, counted, runs
+):
+    host = _lane(tmp_path)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=6\nwall_seconds=540\n{summary_lane}"
+    )
+    out = host.run(*args, rc=3)
+    assert any(
+        f"counted the {counted} lane, and this bulk runs the {runs} lane" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+@pytest.mark.parametrize(
+    "entry, refused",
+    [
+        ('"o=Docker,a=noble"', "which names Docker, an origin the knob holds or pins"),
+        ('"o=Grafana"', "which names Grafana, an origin the knob holds or pins"),
+        ('"a=stable"', "which names no origin or site"),
+        ('"o=Dock*,a=noble"', "whose Dock* is a pattern"),
+    ],
+    ids=["held", "pinned", "no-origin", "a-pattern"],
+)
+def test_host_origins_that_could_take_a_held_origin_are_refused(
+    tmp_path, entry, refused
+):
+    # The owner let the security lane take more (exception uu:origins); the
+    # maintenance lane, which adds to it, still never takes a held origin.
+    knob = KNOB + ORIGINS + "exception uu:origins 2026-12-31 the owner's call\n"
+    host = _lane(tmp_path, knob, f"Unattended-Upgrade::Origins-Pattern:: {entry};\n")
+    out = host.run("--lane", "maintenance", rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+def test_a_lane_file_apt_doesnt_read_is_refused(tmp_path):
+    host = _lane(tmp_path)
+    _dump(host, reads_apt_config=False)
+    out = host.run("--lane", "maintenance", rc=3)
+    assert any(
+        "apt-config didn't read the maintenance lane's patterns" in r
+        for r in out["refused"]
+    ), out["refused"]
+
+
+def test_an_origin_no_pattern_can_carry_is_refused(tmp_path):
+    host = _lane(tmp_path, KNOB + 'origin Evil"Co follow\n')
+    out = host.run("--lane", "maintenance", rc=3)
+    assert any('the origin Evil"Co holds a character' in r for r in out["refused"]), (
+        out["refused"]
+    )
+
+
+def test_a_held_step_runs_its_bulks_lane(tmp_path):
+    host = _lane(tmp_path)
+    assert host.run("--lane", "maintenance")["verdict"]["ok"] is True
+    host.uu("Packages that will be upgraded: postgresql-16\nAll upgrades installed\n")
+    out = host.run(step="postgres")
+    assert out["apply"]["lane"] == "maintenance"
+    assert _uu_apt_config(host) == [str(host.run_dir / "lane.conf")] * 2
+
+
+def test_a_held_step_refuses_a_knob_that_follows_other_origins_since_its_bulk(
+    tmp_path,
+):
+    host = _lane(tmp_path)
+    assert host.run("--lane", "maintenance")["verdict"]["ok"] is True
+    host.knob(KNOB + ORIGINS + "origin Grafana_Labs follow\n")
+    out = host.run(step="postgres", rc=3)
+    assert any(
+        "the knob follows other origins than it did at the bulk" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert len(host.calls("unattended-upgrade")) == 1
+
+
+def test_a_held_step_takes_no_lane_of_its_own(tmp_path):
+    host = _lane(tmp_path)
+    host.run("--lane", "maintenance")
+    r = host.execute(
+        [
+            "bash",
+            str(host.scripts / "apply.sh"),
+            "--step",
+            "postgres",
+            "--lane",
+            "security",
+            "--run",
+            str(host.run_dir),
+        ],
+        2,
+    )
+    assert "a held step runs its bulk's lane" in r.stderr
+
+
+# --- the dry run counts the lane ---------------------------------------------------
+
+
+def test_the_probes_dry_run_counts_the_maintenance_lane(tmp_path):
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n" + ORIGINS)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: libaudit1 libc6\n",
+    )
+    scratch = host.tmp / "dry"
+    out = host.run("--dry-run-into", str(scratch), "--lane", "maintenance")
+    d = out["pending"]["dry_run"]
+    assert d["lane"] == "maintenance"
+    assert d["security_only"] is False
+    assert "lane=maintenance\n" in (scratch / "summary").read_text()
+    [(_, _, apt_config)] = host.calls("unattended-upgrade")
+    conf = open(apt_config).read()
+    for p in (UPDATES, "o=Tailscale", "site=deb.nodesource.com"):
+        assert f'  "{p}";' in conf
+    assert "Docker" not in conf and "Grafana" not in conf
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (["--lane", "maintenance"], "it goes with --dry-run-into"),
+        (["--lane", "monthly", "--dry-run-into", "d"], "--lane takes security or"),
+    ],
+)
+def test_the_probes_lane_is_a_dry_runs(args, message):
+    r = subprocess.run(
+        ["bash", str(SKILL / "scripts" / "probe.sh"), *args],
+        capture_output=True,
+        text=True,
+        env=clean_env(),
+    )
+    assert r.returncode == 2
+    assert message in r.stderr

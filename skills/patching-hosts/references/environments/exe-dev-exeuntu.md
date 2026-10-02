@@ -47,6 +47,8 @@ On a volatile journal the reboot erases everything before it. That's how address
 | Third-party apt | NodeSource or Tailscale on some hosts; not on others | per origin ([policy.md](../policy.md)) |
 | Outside apt | `uv`, `claude`, `codex`, `gh`, `shelley`, container images, repo-installed pins | image, or the repo that installed it |
 
+**Tailscale**, where a host has it, goes in the maintenance lane: `origin pkgs.tailscale.com follow` in the knob, by its site. Upgrading tailscaled drops the host's tailnet path, so it waits for a planned window, unless a security bulletin expedites it into an out-of-cycle one. Tailscale publishes them at `https://tailscale.com/security-bulletins`, with a feed at `https://tailscale.com/security-bulletins/index.xml` (read 2026-10-02; the latest was TS-2026-011, 2026-08-18). Who watches the feed for the cohort isn't assigned yet.
+
 `20auto-upgrades` may say `1`/`1` while all of the above holds. Read the effective value with `apt-config shell E APT::Periodic::Enable`, never the file.
 
 ## Packages that restart their own services

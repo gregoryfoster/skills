@@ -5,6 +5,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash apply.sh --step bulk|<held step> [--approve] [--run DIR]
+                     [--lane security|maintenance]
                      [--dry-run DIR] [--offnode-sha256 HEX]...
                      [--offnode-object NAME]... [--health-within SECONDS]
                      [--config FILE] [--host NAME] [--today YYYY-MM-DD]
@@ -23,6 +24,14 @@ Steps:
                checks every second, and starts the restarters again.
                Approval 3(a): each group is its own invocation.
 
+Lanes (references/policy.md):
+  security     what the host's own unattended-upgrades origins take, which
+               must be -security alone unless exception uu:origins covers more
+  maintenance  those, plus Ubuntu's -updates and each origin the knob
+               follows, from an APT_CONFIG file in the run's directory. Never
+               a pinned or held origin. The bulk names the lane; its held
+               steps run the same one
+
 Every step runs `NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v` as
 root, with no memory cap, then runs probe.sh into the run's directory. It
 never reboots, unmasks or enables anything, and never holds or releases a
@@ -35,6 +44,8 @@ Options:
   --step STEP              bulk, or a held step (required)
   --approve                the owner's approval of this step, given in the
                            host's own session
+  --lane LANE              the bulk only: security (the default) or
+                           maintenance
   --run DIR                the run's directory, an absolute path. A held step
                            needs it. The bulk uses the one its recovery point
                            was written to, or makes
@@ -60,7 +71,11 @@ Options:
 It refuses (exit 3) without --approve; on a report-only host (no knob, no
 posture line, class ephemeral, a malformed line, a tie); without root; when
 unattended-upgrade would reboot by itself (Automatic-Reboot), or would take
-more than -security without an unexpired exception uu:origins; when dpkg
+more than -security without an unexpired exception uu:origins; in the
+maintenance lane, when the host's own origins could take an origin the knob
+holds or pins, or apt doesn't read the lane's file, or a held step's knob
+follows other origins than its bulk did; when the dry run counted another
+lane; when dpkg
 --audit isn't clean; when the step's span, from now to now plus its
 expected duration, isn't wholly inside one window or overlaps a quiet
 range; while an automatic apt run is in progress, or could start inside the span;
@@ -73,6 +88,7 @@ successfully since the recovery point began, with its object named.
 
 The run's directory is root-only: 0700, and each file 0600.
   recovery-point   written before the bulk (run.md §2 has its lines)
+  lane.conf        the maintenance lane's APT_CONFIG, which each step reads
   dry-run          the dry run's summary, for the held steps' gate
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
@@ -93,15 +109,16 @@ Exit codes:
 USAGE
 }
 
-step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300
+step="" approve=0 run="" dryrun="" config="" host="" today="" health_within=300 lane=""
 attest=() objects=()
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --step | --run | --dry-run | --offnode-sha256 | --offnode-object | --health-within | --config | --host | --today)
+    --step | --run | --lane | --dry-run | --offnode-sha256 | --offnode-object | --health-within | --config | --host | --today)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --step) step=$2 ;;
         --run) run=$2 ;;
+        --lane) lane=$2 ;;
         --dry-run) dryrun=$2 ;;
         --offnode-sha256) attest+=("$2") ;;
         --offnode-object) objects+=("$2") ;;
@@ -156,9 +173,13 @@ for _v in ${attest[@]+"${attest[@]}"}; do
   fi
   sums+=("$_v")
 done
+case $lane in
+  "" | security | maintenance) ;;
+  *) echo "ERROR --lane takes security or maintenance" >&2; exit 2 ;;
+esac
 if [ "$step" != bulk ]; then
-  if [ -n "$dryrun" ] || [ "${#sums[@]}" -gt 0 ] || [ "${#objects[@]}" -gt 0 ]; then
-    echo "ERROR --dry-run, --offnode-sha256 and --offnode-object belong to the bulk step" >&2
+  if [ -n "$dryrun$lane" ] || [ "${#sums[@]}" -gt 0 ] || [ "${#objects[@]}" -gt 0 ]; then
+    echo "ERROR --lane, --dry-run, --offnode-sha256 and --offnode-object belong to the bulk step: a held step runs its bulk's lane" >&2
     exit 2
   fi
   if [ -z "$run" ]; then
@@ -220,6 +241,16 @@ U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState="
 
 [ -n "$run" ] || default_run run
 
+# The lane: the bulk names it, and each held step runs its bulk's, as the
+# dry run that bulk recorded says.
+LANE=${lane:-security} _o=""
+if [ "$step" != bulk ] && [ "$P_PRIV" != none ] && root_read _o "$run/dry-run"; then
+  while IFS= read -r _l; do
+    case $_l in lane=*) LANE=${_l#lane=} ;; esac
+  done <<<"$_o"
+fi
+case $LANE in security | maintenance) ;; *) LANE=unknown ;; esac
+
 # --- the gate -------------------------------------------------------------------
 # _gate-lib.sh holds refuse and fail, the root-only records, the span and the
 # inflight gate. No function here ends on a bare `[ … ] && …`: a function that
@@ -260,6 +291,7 @@ gate_host() {
 # when Automatic-Reboot is true (2.9.1's reboot_if_requested_and_needed). It
 # takes no -o, and APT_CONFIG is read before apt.conf.d, so nothing passed
 # to it could override the host's setting: the step refuses instead.
+HOST_PATTERNS=()
 gate_uu() {
   local out line ur="" v n=0 wide="" wide_json="" origins="" o="" excepted=0 r
   local -a f=()
@@ -292,6 +324,7 @@ gate_uu() {
         v=${line#*:: \"}
         v=${v%\";}
         n=$((n + 1))
+        HOST_PATTERNS+=("$v")
         jpushs origins "$v"
         if widens "$v"; then
           wide="$wide, $v"
@@ -316,6 +349,101 @@ gate_uu() {
   jadd o wider "[$wide_json]"
   jaddb o wider_excepted "$excepted"
   jadd J_GATE unattended_upgrade "{$o}"
+}
+
+# The origins and sites an unattended-upgrades entry names, each as the knob
+# names it (_ for a space): an Origins-Pattern's o=, origin= and site=
+# fields, or an Allowed-Origins entry's part before the colon.
+pattern_names() {  # <var> <entry>
+  local _pn_e=$2 _pn_f _pn_n="" _pn_v
+  local -a _pn_fs=()
+  case $_pn_e in
+    *=*)
+      IFS=, read -r -a _pn_fs <<<"$_pn_e"
+      for _pn_f in ${_pn_fs[@]+"${_pn_fs[@]}"}; do
+        case $_pn_f in
+          o=* | origin=* | site=*) _pn_v=${_pn_f#*=} _pn_n="$_pn_n ${_pn_v// /_}" ;;
+        esac
+      done ;;
+    *:*)
+      _pn_v=${_pn_e%%:*}
+      _pn_v=${_pn_v//"$UU_DISTRO_ID"/Ubuntu}
+      _pn_n=" ${_pn_v// /_}" ;;
+  esac
+  printf -v "$1" '%s' "${_pn_n# }"
+}
+
+# The maintenance lane. The host's own origins, which it adds to, can't take
+# an origin the knob holds or pins, and apt must read the lane's file. A
+# held step runs its bulk's lane: the knob must follow the same origins now.
+LANE_CONF=""
+gate_lane() {
+  local o="" a="" p r v n names stops="" out got="" missing="" l
+  local -a f=()
+  if [ "$LANE" = unknown ]; then
+    refuse "$run/dry-run names a lane this apply.sh doesn't know: start a new run"
+    return 0
+  fi
+  jadds o name "$LANE"
+  if [ "$LANE" = security ]; then
+    jadd o patterns "[]"
+    jadd J_GATE lane "{$o}"
+    return 0
+  fi
+  if ! lane_patterns; then
+    refuse "$LANE_WHY"
+    jadd J_GATE lane "{$o}"
+    return 0
+  fi
+  LANE_CONF=$(lane_conf "${LANE_PATTERNS[@]}")
+  for r in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[1]}" = follow ] || stops="$stops ${f[0]}"
+  done
+  # The security entries name Ubuntu's own pockets: only a wider one, which
+  # exception uu:origins let through, could reach a third party.
+  if [ -n "$stops" ]; then
+    for p in ${HOST_PATTERNS[@]+"${HOST_PATTERNS[@]}"}; do
+      widens "$p" || continue
+      pattern_names names "$p"
+      if [ -z "$names" ]; then
+        refuse "the host's own unattended-upgrades origins take \"$p\", which names no origin or site, so the maintenance lane couldn't tell it from an origin the knob holds or pins:$stops. Narrow it first"
+        continue
+      fi
+      for n in $names; do
+        case $n in
+          *[*?[]*) refuse "the host's own unattended-upgrades origins take \"$p\", whose $n is a pattern, so the maintenance lane couldn't tell it from an origin the knob holds or pins:$stops. Narrow it first" ;;
+          *) in_words "$n" "$stops" && refuse "the host's own unattended-upgrades origins take \"$p\", which names ${n//_/ }, an origin the knob holds or pins: the maintenance lane would take it. Narrow the host's origins first" ;;
+        esac
+      done
+    done
+  fi
+  # apt reads the lane's file, and adds its patterns to the host's.
+  printf '%s\n' "$LANE_CONF" >"$P_TMP/lane.conf"
+  capture out env APT_CONFIG="$P_TMP/lane.conf" apt-config dump
+  while IFS= read -r l; do
+    case $l in
+      "Unattended-Upgrade::Origins-Pattern:: "*)
+        v=${l#*:: \"}
+        got="$got|${v%\";}" ;;
+    esac
+  done <<<"$out"
+  for p in "${LANE_PATTERNS[@]}"; do
+    case "$got|" in *"|$p|"*) ;; *) missing="$missing \"$p\"" ;; esac
+    jpushs a "$p"
+  done
+  if [ "$CAP_RC" -ne 0 ] || [ -n "$missing" ]; then
+    refuse "apt-config didn't read the maintenance lane's patterns (${missing# }) from APT_CONFIG${CAP_ERR:+: $CAP_ERR}, so unattended-upgrade wouldn't either"
+  fi
+  if [ "$step" != bulk ]; then
+    if ! root_read l "$run/lane.conf"; then
+      refuse "$run/lane.conf couldn't be read, so the lane its bulk ran is unknown"
+    elif [ "$l" != "$LANE_CONF" ]; then
+      refuse "the knob follows other origins than it did at the bulk, so this step would take another selection: restore its origin lines, or start a new run"
+    fi
+  fi
+  jadd o patterns "[$a]"
+  jadd J_GATE lane "{$o}"
 }
 
 gate_dpkg() {
@@ -409,7 +537,7 @@ gate_reboot() {
 # another, so its wall time isn't this run's floor.
 DRY_SUMMARY="" DRY_MAX_AGE=86400
 gate_dry() {
-  local line rc="" count="" began="" iso
+  local line rc="" count="" began="" iso dlane=security
   [ "$step" = bulk ] || return 0
   if [ -z "$dryrun" ]; then
     refuse "no --dry-run DIR: count first with probe.sh --dry-run-into DIR (run.md section 3). Its wall time is the floor of the step's expected duration"
@@ -426,8 +554,13 @@ gate_dry() {
       exit=*) rc=${line#exit=} ;;
       count=*) count=${line#count=} ;;
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
+      lane=*) dlane=${line#lane=} ;;
     esac
   done <<<"$DRY_SUMMARY"
+  # Its wall time is this step's floor only for the selection it counted.
+  if [ "$dlane" != "$LANE" ]; then
+    refuse "the dry run counted the $dlane lane, and this bulk runs the $LANE lane: count again with probe.sh --lane $LANE --dry-run-into DIR"
+  fi
   if [ "$rc" != 0 ]; then
     refuse "the dry run exited ${rc:-unknown}: read $dryrun/dry-run.log, and count again"
   elif ! is_int "$count"; then
@@ -670,6 +803,7 @@ gate_restarters() {
 emit() {
   local o="" a="" r
   jadds a step "$step"
+  jadds a lane "$LANE"
   jadds a run "$run"
   jaddb a approved "$approve"
   jadds a host "$host"
@@ -694,6 +828,7 @@ emit() {
 
 gate_host
 gate_uu
+gate_lane
 gate_dpkg
 gate_run
 gate_reboot
@@ -747,6 +882,10 @@ check_holds() {
 UU_RC="" UU_WALL="" UU_RSS="" UU_INSTALLED=0 UU_NOTHING=0 UU_UPGRADED="" UU_REMOVED=""
 run_uu() {
   local log=$run/$step.log rss=$run/$step.max-rss-kib t0 out line o="" w
+  local -a lenv=()
+  # The maintenance lane adds its origins to the host's own through
+  # APT_CONFIG, read before apt.conf.d.
+  if [ "$LANE" = maintenance ]; then lenv=("APT_CONFIG=$run/lane.conf"); fi
   rss_timer "$rss"
   echo "apply: running unattended-upgrade for $step; its log is $log" >&2
   t0=$SECONDS
@@ -755,7 +894,7 @@ run_uu() {
   # the variable wins. choom puts the step at adj 0, so the kernel doesn't
   # sacrifice a production service to protect a -1000 session. No memory
   # cap: a kill mid-dpkg leaves packages half-configured.
-  root_logged "$log" env NEEDRESTART_MODE=l choom -n 0 -- ${TIMER[@]+"${TIMER[@]}"} unattended-upgrade -v || UU_RC=$?
+  root_logged "$log" env ${lenv[@]+"${lenv[@]}"} NEEDRESTART_MODE=l choom -n 0 -- ${TIMER[@]+"${TIMER[@]}"} unattended-upgrade -v || UU_RC=$?
   UU_WALL=$((SECONDS - t0))
   if [ "${#TIMER[@]}" -gt 0 ] && root_read out "$rss"; then rss_of UU_RSS "$out"; fi
   root_read out "$log" || out=""
@@ -962,6 +1101,11 @@ do_bulk() {
     return 0
   fi
   printf '%s\n' "$DRY_SUMMARY" | root_write "$run/dry-run" || { fail "$run/dry-run couldn't be written"; return 0; }
+  # The lane's selection, which the bulk and each held step read.
+  if [ "$LANE" = maintenance ] && ! printf '%s\n' "$LANE_CONF" | root_write "$run/lane.conf"; then
+    fail "$run/lane.conf couldn't be written: nothing was held or upgraded"
+    return 0
+  fi
   capture out dpkg-query -W
   if [ "$CAP_RC" -ne 0 ] || ! printf '%s\n' "$out" | root_write "$run/before-versions"; then
     fail "the before-versions couldn't be recorded: nothing was held or upgraded"

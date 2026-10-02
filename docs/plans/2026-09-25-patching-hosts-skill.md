@@ -678,6 +678,28 @@ base image, or an owner-approved remedy the profile documents.
         secrets, and no private-repo identifiers when the owner's repo is
         public.
 
+    **The maintenance lane, done 2026-10-02:** `apply.sh --lane
+    maintenance` and `probe.sh --lane maintenance --dry-run-into`, over
+    `lane_patterns` in `scripts/_probe-lib.sh`, tested in
+    `tests/structural/test_patching_hosts_lane.py`. Building it settled:
+    - **one run covers both lanes:** `APT_CONFIG` is read before
+      `apt.conf.d`, and its list adds to the host's own, so the lane takes
+      the security set too (unattended-upgrade 2.9.1 on noble);
+    - **the dry run counts the lane,** and a bulk refuses one of the other;
+    - **a held step runs its bulk's lane,** from `<run>/lane.conf`, and
+      refuses a knob that follows other origins since;
+    - **the host's own origins can't reach a held or pinned one:** a wider
+      entry `uu:origins` let through refuses when it names one, names no
+      origin, or names one by a pattern;
+    - **an origin goes by its `o=` field or its site,** both of which
+      unattended-upgrade matches; Tailscale by its site,
+      `pkgs.tailscale.com`, whose bulletins the profile cites.
+
+    **The owner notices are open:** the probe has no "update available,
+    owner elsewhere" rows to file. Outside apt it reads a binary's age, not
+    an available version, which takes a network call the probe doesn't
+    make.
+
     *Done when* stub tests prove:
     - `--lane maintenance` selects `-updates` and the *follow* origins, and
       never a *hold* one;

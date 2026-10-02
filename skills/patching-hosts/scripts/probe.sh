@@ -5,7 +5,8 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
-                     [--refresh-into DIR] [--dry-run-into DIR] [--post-boot]
+                     [--refresh-into DIR] [--dry-run-into DIR]
+                     [--lane security|maintenance] [--post-boot]
                      [--session-pid PID] [--today YYYY-MM-DD]
 
 Reads the host and prints one JSON object on stdout: its environment, what
@@ -32,6 +33,11 @@ Options:
                       downloads the whole set (290 MB and 9 minutes on one
                       host) and leaves it there for you to remove. Its cost
                       goes in DIR/summary, which apply.sh --dry-run reads
+  --lane LANE         the dry run's selection: security (the default), what
+                      the host's unattended-upgrades origins take; or
+                      maintenance, which adds Ubuntu's -updates and each
+                      origin the knob follows, as apply.sh --lane
+                      maintenance does. With --dry-run-into only
   --post-boot         the checks after a reboot (run.md §6), not the readings
                       before a run
   --session-pid PID   where the session's chain to PID 1 starts (default: the
@@ -59,11 +65,11 @@ Exit codes:
 USAGE
 }
 
-config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today=""
+config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today="" lane=""
 repo_set=0
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --config | --host | --root | --repo | --refresh-into | --dry-run-into | --session-pid | --today)
+    --config | --host | --root | --repo | --refresh-into | --dry-run-into | --lane | --session-pid | --today)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --config) config=$2 ;;
@@ -72,6 +78,7 @@ while [ "$#" -gt 0 ]; do
         --repo) repo=$2 repo_set=1 ;;
         --refresh-into) refresh=$2 ;;
         --dry-run-into) dryrun=$2 ;;
+        --lane) lane=$2 ;;
         --session-pid) session_pid=$2 ;;
         --today) today=$2 ;;
       esac
@@ -128,6 +135,15 @@ if [ -n "$session_pid" ] && ! is_int "$session_pid"; then
   echo "ERROR --session-pid takes a process id" >&2
   exit 2
 fi
+case $lane in
+  "" | security | maintenance) ;;
+  *) echo "ERROR --lane takes security or maintenance" >&2; exit 2 ;;
+esac
+if [ -n "$lane" ] && [ -z "$dryrun" ]; then
+  echo "ERROR --lane names the dry run's selection: it goes with --dry-run-into" >&2
+  exit 2
+fi
+lane=${lane:-security}
 if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then
   echo "ERROR --post-boot takes neither --refresh-into nor --dry-run-into" >&2
   exit 2
@@ -1334,10 +1350,17 @@ read_dry_run() {
   # apt fetches into archives/partial, and the dry run's fetcher never makes
   # it: without it, every download failed (noble, 2026-10-01).
   mkdir -p "$dryrun/archives/partial"
+  # The maintenance lane counts what apply.sh --lane maintenance takes: the
+  # host's own origins, plus -updates and each origin the knob follows.
+  if [ "$lane" = maintenance ] && ! lane_patterns; then
+    finding unknown dry-run "" "the maintenance lane's dry run didn't run: $LANE_WHY."
+    return 0
+  fi
   {
     if [ -n "$P_ROOT" ]; then printf 'Dir "%s/";\n' "$P_ROOT"; fi
     printf 'Dir::Cache::archives "%s/archives/";\n' "$dryrun"
     if [ "$REFRESHED" -eq 1 ]; then printf 'Dir::State::Lists "%s/";\n' "$LISTS_DIR"; fi
+    if [ "$lane" = maintenance ]; then lane_conf "${LANE_PATTERNS[@]}"; fi
   } >"$conf"
   rss_timer "$dryrun/max-rss-kib"
   t0=$(date +%s)
@@ -1383,14 +1406,16 @@ read_dry_run() {
   # security alone only when apt-config was read, an origin is set, and none
   # widens them (read_periodic). Otherwise it holds -updates or third-party
   # packages too, and isn't a security count.
-  if [ "$APT_CONFIG_OK" -eq 1 ] && [ "$UU_ORIGINS_N" -gt 0 ] && [ -z "$UU_WIDE" ]; then
+  # The maintenance lane's never is.
+  if [ "$lane" = security ] && [ "$APT_CONFIG_OK" -eq 1 ] && [ "$UU_ORIGINS_N" -gt 0 ] && [ -z "$UU_WIDE" ]; then
     DRY_SECURITY_ONLY=1
   fi
+  jadds o lane "$lane"
   jaddb o security_only "$DRY_SECURITY_ONLY"
   # apply.sh reads it: the dry run's wall time is the floor of each step's
   # expected duration.
-  printf 'began=%s\nexit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\n' \
-    "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" >"$dryrun/summary"
+  printf 'began=%s\nexit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\nlane=%s\n' \
+    "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane" >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   R_DRY="{$o}"
   if [ "$rc" -ne 0 ]; then

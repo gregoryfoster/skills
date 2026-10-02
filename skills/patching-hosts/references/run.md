@@ -104,22 +104,17 @@ Then:
 5. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).
 6. Confirm `apt-mark showhold` matches the list recorded before the run: the run's own holds are gone, and the owner's are still there.
 
-**The maintenance lane** runs in the same window, after the security steps, with the same command, holds, `choom`, `NEEDRESTART_MODE` and verdict. Only the selection widens, through an `APT_CONFIG` file:
+**The maintenance lane** is the same run, with the same gates, recovery point, holds, `choom`, `NEEDRESTART_MODE` and verdict: `apply.sh --lane maintenance`, counted first with `probe.sh --lane maintenance --dry-run-into`. Only the selection widens, through an `APT_CONFIG` file the bulk writes to the run's directory, root-only, and each held step reads:
 
 ```
-# /var/backups/maintenance-<utc>.conf, root-owned
+// <run>/lane.conf
 Unattended-Upgrade::Origins-Pattern {
-  "origin=Ubuntu,archive=${distro_codename}-updates";
-  "origin=<each origin whose policy is follow>";
+  "o=Ubuntu,a=${distro_codename}-updates";
+  "o=<each origin the knob follows>";   // "site=<its site>" when the knob names a site
 };
 ```
 
-```
-sudo APT_CONFIG=/var/backups/maintenance-<utc>.conf NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade --dry-run -d   # check the selection first
-sudo APT_CONFIG=/var/backups/maintenance-<utc>.conf NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v
-```
-
-apt lists accumulate across config files, so this widens the stock security selection rather than replacing it. **Never use a bare `apt-get upgrade`**: it takes every upgradable package from every origin, including those whose policy is *hold*. The dry run's selection must contain nothing from a *hold* or *pin* origin.
+`APT_CONFIG` is read before `apt.conf.d`, and its list adds to the host's own (unattended-upgrade 2.9.1 on noble, 2026-10-02), so the lane takes everything the security lane takes, plus `-updates` and the followed origins: run alone, it covers both. **Never use a bare `apt-get upgrade`**: it takes every upgradable package from every origin, including those whose policy is *hold*. The lane never names a *hold* or *pin* origin, and the step refuses when the host's own origins could take one (a wider entry `uu:origins` let through), when apt doesn't read the file, and when a held step's knob follows other origins than its bulk's did.
 
 **The verdict** comes from the exit code, `All upgrades installed`, and an empty `dpkg --audit`. **Never count `Failed` or `error` lines**: a clean apply logged about 100 needrestart "kernel versions" lines.
 

@@ -32,6 +32,9 @@ The primitives these scripts reach a host through:
   unit_name VAR UNIT        a knob's unit, with .service when it has no suffix
   widens ENTRY              whether an unattended-upgrades origin entry takes
                             more than the security set
+  lane_patterns             LANE_PATTERNS := the maintenance lane's origins;
+                            1 with LANE_WHY for a knob origin it can't name
+  lane_conf PATTERN...      the APT_CONFIG text that adds them, on stdout
   rss_timer FILE            TIMER := GNU time's words to record a command's
                             max RSS in FILE, or none where there's no GNU time
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
@@ -212,6 +215,44 @@ widens() {  # <entry>
   esac
   case $suite in *-* | *[*?[]*) return 0 ;; esac
   return 1
+}
+
+# --- the maintenance lane --------------------------------------------------
+# Its selection is Ubuntu's -updates and each origin the knob follows, added
+# to the host's own unattended-upgrades origins: APT_CONFIG is read before
+# apt.conf.d, and a list there adds to the host's, so its -security stays
+# (unattended-upgrade 2.9.1 on noble, 2026-10-02). A pinned or held origin
+# is never named. The knob names an origin by its o= field, with _ for each
+# space, or by its site, which holds a dot: unattended-upgrade matches both.
+LANE_PATTERNS=() LANE_WHY=""
+lane_patterns() {
+  local _lp_r _lp_k
+  local -a _lp_f=()
+  # unattended-upgrade's own variable, which it expands; not the shell's.
+  # shellcheck disable=SC2016
+  LANE_PATTERNS=('o=Ubuntu,a=${distro_codename}-updates') LANE_WHY=""
+  for _lp_r in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+    IFS=$KNOB_US read -r -a _lp_f <<<"$_lp_r"
+    [ "${_lp_f[1]}" = follow ] || continue
+    _lp_k=${_lp_f[0]}
+    # A quote, a comma or a backslash would change the pattern apt reads.
+    case $_lp_k in *[!A-Za-z0-9._+:~-]*)
+      LANE_WHY="knob line ${_lp_f[3]}: the origin $_lp_k holds a character an unattended-upgrades pattern can't carry"
+      return 1 ;;
+    esac
+    case $_lp_k in
+      *.*) LANE_PATTERNS+=("site=$_lp_k") ;;
+      *) LANE_PATTERNS+=("o=${_lp_k//_/ }") ;;
+    esac
+  done
+}
+
+lane_conf() {  # <pattern>...
+  local _lc_p
+  printf '%s\n' "// patching-hosts: the maintenance lane, added to the host's own origins"
+  printf 'Unattended-Upgrade::Origins-Pattern {\n'
+  for _lc_p in "$@"; do printf '  "%s";\n' "$_lc_p"; done
+  printf '};\n'
 }
 
 # --- units on disk ---------------------------------------------------------

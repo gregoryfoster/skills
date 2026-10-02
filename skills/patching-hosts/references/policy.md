@@ -37,11 +37,11 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 | Lane | Selection | Cadence |
 |---|---|---|
 | **security** | Ubuntu `-security` | daily under `automatic` (the apt timers); monthly under `scheduled` |
-| **maintenance** | Ubuntu `-updates`, plus each third-party origin whose policy is *follow* | monthly |
+| **maintenance** | the security lane's, plus Ubuntu `-updates` and each third-party origin whose policy is *follow*: `apply.sh --lane maintenance` | monthly |
 
 - **Under `scheduled`, both lanes run in the same monthly window.**
 - **A security package never waits for the maintenance lane.** docker.io 29 and containerd 2.2 shipped in `noble-security`, so holding them "for the maintenance lane" leaves a security fix with no lane at all. Deferring one is an exception, with a reason and a review-by date.
-- **Third-party origins** each get a policy in the profile or the knob: *follow* (taken in the maintenance lane), *pin* (a stated version), or *hold, with a reason*.
+- **Third-party origins** each get a policy in the knob: *follow* (taken in the maintenance lane), *pin* (a stated version), or *hold, with a reason*. The lane never takes a pinned or held one: a pin moves only by hand.
 - **Tailscale** belongs in the maintenance lane, because upgrading tailscaled drops the host's tailnet path and needs a planned window. A Tailscale security bulletin expedites it into an out-of-cycle window.
 
 ## What a run leaves pending, by class
