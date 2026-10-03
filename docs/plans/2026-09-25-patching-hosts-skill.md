@@ -698,7 +698,26 @@ base image, or an owner-approved remedy the profile documents.
     **The owner notices are open:** the probe has no "update available,
     owner elsewhere" rows to file. Outside apt it reads a binary's age, not
     an available version, which takes a network call the probe doesn't
-    make.
+    make. The image repo was asked which notices it wants, and on what
+    evidence (2026-10-02).
+
+    **Tailscale's security bulletins (decided 2026-10-03):** the cohort's own
+    monitoring pipeline (CannObserv's archiver, replicator, processor,
+    watcher and notifier) will watch the feed, once it reads XML:
+    - **XML and RSS support starts in co-core,** with a feed extractor that
+      emits one line per item; Archiver's schema granularity is left to a
+      design pass on its issue;
+    - **what changed is #222's line diff,** in which a new bulletin is a `+`
+      line;
+    - **delivery is a webhook receiver the cohort runs,** reached through
+      notifier's `jsons://`. It files the issue, deduplicated by bulletin ID,
+      and can start a triage;
+    - **each bulletin opens one tracking issue in the image repo,** which
+      fans out to the hosts that run Tailscale;
+    - **no interim watch** until then.
+
+    The skill's part is a narrower lane: an expedited run that takes one
+    origin, such as `pkgs.tailscale.com`, and not all of `-updates`.
 
     *Done when* stub tests prove:
     - `--lane maintenance` selects `-updates` and the *follow* origins, and
