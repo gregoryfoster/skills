@@ -79,10 +79,10 @@ more than -security without an unexpired exception uu:origins; in another
 lane, when the host's own origins could take an origin the knob holds or
 pins, or apt doesn't read the lane's file, or a held step's knob follows
 other origins than its bulk did, or origin:<origin> names one the knob
-doesn't follow; when the dry run counted another lane; when dpkg
---audit isn't clean; when the step's span, from now to now plus its
-expected duration, isn't wholly inside one window or overlaps a quiet
-range; while an automatic apt run is in progress, or could start inside the span;
+doesn't follow; when the dry run counted another lane, or in the
+one-origin lane, nothing; when dpkg --audit isn't clean; when the step's
+span, from now to now plus its expected duration, isn't wholly inside one
+window or overlaps a quiet range; while an automatic apt run is in progress, or could start inside the span;
 while the run's reboot chain is scheduled or running; and when an inflight
 command prints anything but 0. On a host that
 declares a datastore, the bulk also refuses until the recovery point began
@@ -573,6 +573,10 @@ gate_dry() {
     # made unattended-upgrade skip the run, and the step would skip it the
     # same way, after holding every group.
     refuse "the dry run exited 0 but counted nothing: read $dryrun/dry-run.log, and count again"
+  elif [ "$count" -eq 0 ] && [ "$dlane" = "$LANE" ] && [[ $LANE == origin:* ]]; then
+    # It counts that origin's packages alone, so 0 is a window with nothing
+    # in it.
+    refuse "the dry run counted nothing from the ${LANE#origin:} origin, so this window would take nothing: its packages are current, the owner holds them, or unattended-upgrade passed them over. Read $dryrun/dry-run.log"
   fi
   is_int "$EXPECT" || refuse "$dryrun/summary holds no wall time"
   if ! is_int "$began"; then
@@ -884,6 +888,30 @@ check_holds() {
   fi
 }
 
+# The one-origin lane is there to take its origin's fix, and
+# unattended-upgrade passes a package over without failing. It logs why, in
+# a "Package <name> is ..." line: "kept back because a related package is
+# kept back" for one whose upgrade needs a package the lane skips, "is
+# blacklisted" for one the host's own Package-Blacklist names. With nothing
+# else to take, it logs "No packages found" and exits 0 (2.9.1's
+# find_kept_packages, read 2026-10-03; the blacklist's, seen live on noble the
+# same day). So what the step took is read from apt afterwards: each of
+# LANE_TAKE, the origin's packages this step is to take, must no longer be
+# pending.
+LANE_TAKE="" ORIGIN_LEFT="" ORIGIN_READ=0 ORIGIN_ERR=""
+read_origin_left() {
+  local out kw p rest
+  capture out as_root apt-get -s dist-upgrade
+  if [ "$CAP_RC" -ne 0 ]; then
+    ORIGIN_ERR=${CAP_ERR:-exit $CAP_RC}
+    return 0
+  fi
+  ORIGIN_READ=1
+  while read -r kw p rest; do
+    if [ "$kw" = Inst ] && in_words "$p" "$LANE_TAKE"; then ORIGIN_LEFT="$ORIGIN_LEFT $p"; fi
+  done <<<"$out"
+}
+
 UU_RC="" UU_WALL="" UU_RSS="" UU_INSTALLED=0 UU_NOTHING=0 UU_UPGRADED="" UU_REMOVED=""
 run_uu() {
   local log=$run/$step.log rss=$run/$step.max-rss-kib t0 out line o="" w
@@ -911,13 +939,24 @@ run_uu() {
       *"Packages that were successfully auto-removed:"*) UU_REMOVED=${line#*auto-removed:} ;;
     esac
   done <<<"$out"
-  jaddn o exit "$UU_RC"
-  # The one-origin lane's candidates: its own pending packages, as the bulk
-  # split them.
   case $LANE in
     origin:*)
-      json_words w "$LANE_KEEP"
-      jadd o origin_pending "$w" ;;
+      if [ -z "$LANE_TAKE" ]; then
+        ORIGIN_READ=1
+      elif [ "$UU_RC" -eq 0 ]; then
+        read_origin_left
+      fi ;;
+  esac
+  jaddn o exit "$UU_RC"
+  # The one-origin lane's: what the step was to take from the origin, and
+  # what apt still has pending of it, or null when that wasn't read.
+  case $LANE in
+    origin:*)
+      json_words w "$LANE_TAKE"
+      jadd o origin_pending "$w"
+      w=null
+      if [ "$ORIGIN_READ" -eq 1 ]; then json_words w "$ORIGIN_LEFT"; fi
+      jadd o origin_left "$w" ;;
   esac
   jaddn o wall_seconds "$UU_WALL"
   jaddn o max_rss_kib "$UU_RSS"
@@ -935,6 +974,10 @@ run_uu() {
     fail "unattended-upgrade exited $UU_RC: read $log"
   elif [ "$UU_INSTALLED" -eq 0 ] && [ "$UU_NOTHING" -eq 0 ]; then
     fail "unattended-upgrade exited 0, but logged neither \"All upgrades installed\" nor \"No packages found\": read $log. Update-Days or InstallOnShutdown can make it skip the run"
+  elif [ -n "$ORIGIN_ERR" ]; then
+    fail "apt-get -s dist-upgrade failed after the upgrade ($ORIGIN_ERR), so whether it took$LANE_TAKE from the ${LANE#origin:} origin is unknown"
+  elif [ -n "$ORIGIN_LEFT" ]; then
+    fail "unattended-upgrade exited 0 but left$ORIGIN_LEFT from the ${LANE#origin:} origin pending: $log says why, in a \"Package <name> is ...\" line for each. One kept back by a related package from another origin, which this lane skips, needs a lane that takes both, such as maintenance"
   fi
   capture out as_root dpkg --audit
   if [ "$CAP_RC" -ne 0 ] || [ -n "$out" ]; then
@@ -1158,6 +1201,15 @@ do_bulk() {
       fi
       origin_names onames "${LANE#origin:}" "$pol"
       origin_split LANE_KEEP oskip "$onames" "$out"
+      # A window with nothing from the origin in it fails here, before any
+      # hold: unattended-upgrade would log "No packages found" and exit 0.
+      if [ "$onames" = "|" ]; then
+        fail "apt-cache policy lists no origin at ${LANE#origin:}, so nothing from it is pending: is its source configured? Nothing was held or upgraded"
+        return 0
+      elif [ -z "$LANE_KEEP" ]; then
+        fail "nothing from the ${LANE#origin:} origin is pending against the refreshed lists: its packages are current, its source isn't configured, or the owner holds them (apt-mark showhold: ${BEFORE_HOLDS:-none}). Nothing was held or upgraded"
+        return 0
+      fi
       pend=""
       for p in $LANE_KEEP; do pend="$pend $p"; done
       # A word list, each a package name.
@@ -1185,6 +1237,9 @@ do_bulk() {
     out="$out${RUN_HOLD_STEP[$i]} ${RUN_HOLD_PKG[$i]}"$'\n'
     names="$names ${RUN_HOLD_PKG[$i]}"
   done
+  # The bulk takes the origin's packages no group holds; each held step, its
+  # own (do_held).
+  for p in $LANE_KEEP; do in_words "$p" "$names" || LANE_TAKE="$LANE_TAKE $p"; done
   # Written before the hold, so a hold that half-works is still on record.
   if ! printf '%s' "$out" | root_write "$run/holds"; then
     fail "$run/holds couldn't be written: nothing was held or upgraded"
@@ -1254,6 +1309,8 @@ do_held() {
   if [ "${#FAILED[@]}" -eq 0 ]; then
     STARTED=1
     RELEASED="$RELEASED $step"
+    # In the one-origin lane, a group holds only the origin's packages.
+    case $LANE in origin:*) LANE_TAKE=$rel ;; esac
     run_uu
     check_holds
     poll_health

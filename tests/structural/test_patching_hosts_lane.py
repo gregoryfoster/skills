@@ -281,15 +281,38 @@ EXTRA = (
     " Ubuntu:24.04/noble-updates [arm64])\n"
 )
 TS = "origin:pkgs.tailscale.com"
+TS_INST = EXTRA.splitlines(keepends=True)[0]
+TOOK = "Packages that will be upgraded: tailscale\nAll upgrades installed\n"
+# unattended-upgrade 2.9.1 on an upgrade whose dependency the lane skips: a
+# "kept back" line, then the nothing-to-do path, which exits 0.
+PASSED_OVER = (
+    "Package tailscale is kept back because a related package is kept back"
+    " or due to local apt_preferences(5).\n"
+    "No packages found that can be upgraded unattended and no pending auto-removals\n"
+)
 
 
 def _one_origin(
     tmp_path, knob: str = KNOB + ORIGINS.replace("Tailscale", "pkgs.tailscale.com")
 ):
+    """A host whose apt has tailscale pending until an upgrade takes it."""
     host = _lane(tmp_path, knob)
-    sim = [c for c in host.cases["apt-get"] if c[0] == "-s dist-upgrade"][0]
-    host.cases["apt-get"].insert(0, ("-s dist-upgrade", sim[1] + EXTRA, 0, "", None))
+    sim = [c for c in host.cases["apt-get"] if c[0] == "-s dist-upgrade"][0][1]
+    s = host.state
+    (s / "sim").write_text(sim + EXTRA)
+    (s / "sim-after").write_text(sim + EXTRA.replace(TS_INST, ""))
+    host.cases["apt-get"].insert(
+        0,
+        (
+            "-s dist-upgrade",
+            "",
+            0,
+            "",
+            f'if [ -e "{s}/took" ]; then cat "{s}/sim-after"; else cat "{s}/sim"; fi; exit 0',
+        ),
+    )
     host.on("apt-cache", "policy", POLICY)
+    host.uu(TOOK, before=f'touch "{s}/took"; ')
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\n"
         f"security_only=0\nlane={TS}\n"
@@ -319,7 +342,108 @@ def test_the_one_origin_lane_takes_that_origin_and_skips_everything_else(tmp_pat
     # Only the origin's own packages are candidates for a hold group.
     assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
     assert out["upgrade"]["origin_pending"] == ["tailscale"]
+    assert out["upgrade"]["origin_left"] == []
     assert _uu_apt_config(host) == [str(host.run_dir / "lane.conf")]
+
+
+def test_a_one_origin_dry_run_that_counted_nothing_is_refused(tmp_path):
+    host = _one_origin(tmp_path)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=60\nlane={TS}\n"
+    )
+    out = host.run("--lane", TS, rc=3)
+    assert any(
+        "the dry run counted nothing from the pkgs.tailscale.com origin" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+@pytest.mark.parametrize(
+    "case, failed",
+    [
+        ("current", "nothing from the pkgs.tailscale.com origin is pending"),
+        ("owner-held", "the owner holds them (apt-mark showhold: tailscale)"),
+        ("no-source", "apt-cache policy lists no origin at pkgs.tailscale.com"),
+    ],
+)
+def test_a_one_origin_bulk_with_nothing_from_it_pending_fails_before_any_hold(
+    tmp_path, case, failed
+):
+    host = _one_origin(tmp_path)
+    # Since the dry run: apt kept a held package back, or the source went.
+    if case == "no-source":
+        host.cases["apt-cache"] = []
+        host.on("apt-cache", "policy", POLICY[POLICY.index(" 500 http://ports") :])
+    else:
+        (host.state / "sim").write_text((host.state / "sim-after").read_text())
+    if case == "owner-held":
+        host.owner_holds = ["tailscale"]
+    out = host.run("--lane", TS, rc=1)
+    assert out["verdict"]["ok"] is False
+    assert any(failed in f for f in out["verdict"]["why"]), out["verdict"]
+    assert not host.calls("unattended-upgrade")
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+
+
+def test_a_package_unattended_upgrade_passes_over_fails_the_step(tmp_path):
+    host = _one_origin(tmp_path)
+    host.uu(PASSED_OVER)
+    out = host.run("--lane", TS, rc=1)
+    assert out["upgrade"]["nothing_to_do"] is True
+    assert out["upgrade"]["origin_pending"] == ["tailscale"]
+    assert out["upgrade"]["origin_left"] == ["tailscale"]
+    assert any(
+        "unattended-upgrade exited 0 but left tailscale from the pkgs.tailscale.com"
+        " origin pending: "
+        in f
+        and 'says why, in a "Package <name> is ..." line' in f
+        for f in out["verdict"]["why"]
+    ), out["verdict"]
+
+
+def test_what_the_step_took_unread_fails_it(tmp_path):
+    host = _one_origin(tmp_path)
+    host.uu(PASSED_OVER, before=f'touch "{host.state}/took"; ')
+    host.cases["apt-get"].insert(
+        0,
+        (
+            "-s dist-upgrade",
+            "",
+            0,
+            "",
+            f'[ -e "{host.state}/took" ] || {{ cat "{host.state}/sim"; exit 0; }}; '
+            'echo "E: Could not get lock" >&2; exit 100',
+        ),
+    )
+    out = host.run("--lane", TS, rc=1)
+    assert out["upgrade"]["origin_left"] is None
+    assert any(
+        "so whether it took tailscale from the pkgs.tailscale.com origin is unknown"
+        in f
+        for f in out["verdict"]["why"]
+    ), out["verdict"]
+
+
+@pytest.mark.parametrize("took", [True, False], ids=["took-it", "passed-over"])
+def test_a_one_origin_held_step_must_take_its_packages(tmp_path, took):
+    knob = KNOB + ORIGINS.replace("Tailscale", "pkgs.tailscale.com")
+    host = _one_origin(tmp_path, knob + "hold tailscale ts\n")
+    # The run holds tailscale, so the bulk has nothing of the origin to take.
+    host.uu("No packages found that can be upgraded unattended\n")
+    out = host.run("--lane", TS)
+    assert out["verdict"]["ok"] is True, out
+    assert out["holds"]["placed"] == {"ts": ["tailscale"]}
+    assert out["upgrade"]["origin_pending"] == []
+    assert out["upgrade"]["origin_left"] == []
+    if took:
+        host.uu(TOOK, before=f'touch "{host.state}/took"; ')
+    else:
+        host.uu(PASSED_OVER)
+    out = host.run(step="ts", rc=0 if took else 1)
+    assert out["verdict"]["ok"] is took, out
+    assert out["upgrade"]["origin_pending"] == ["tailscale"]
+    assert out["upgrade"]["origin_left"] == ([] if took else ["tailscale"])
 
 
 @pytest.mark.parametrize(
