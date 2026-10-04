@@ -708,6 +708,10 @@ def test_the_daemon_check_reads_the_daemon(doc):
     assert "`tailscale version --daemon`" in text
     assert "until `tailscale version` prints" not in text
     assert "`tailscale version` warns" not in text
+    if doc == "references/run.md":
+        # The probe's JSON path: reboot sits under impact.
+        assert "`impact.reboot.needrestart_services`" in text
+        assert "under `reboot.needrestart_services`" not in text
 
 
 def test_an_exception_covers_tailscales_auto_update(tmp_path):
