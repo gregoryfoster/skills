@@ -551,6 +551,19 @@ def _prefs(apply: str) -> str:
     )
 
 
+def _daemon_json(client: str, daemon: str) -> str:
+    """`tailscale version --daemon --json`, as 1.102 prints it (noble, 2026-10-04)."""
+    return (
+        "{\n"
+        f'\t"majorMinorPatch": "{client}",\n'
+        f'\t"short": "{client}",\n'
+        f'\t"long": "{client}-t3caf7d9e7-g084ee3b64",\n'
+        f'\t"daemonLong": "{daemon}-t6cac91817-g6ff0ddc72",\n'
+        '\t"cap": 142\n'
+        "}\n"
+    )
+
+
 @pytest.mark.parametrize(
     "apply, kind",
     [("true", "deviation"), ("null", "unknown"), ("false", None)],
@@ -559,10 +572,12 @@ def test_the_probe_reports_tailscales_own_auto_update(tmp_path, apply, kind):
     host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n")
     host.installed("tailscale")
     host.on("tailscale", "version", "1.102.2\n  tailscale commit: 6cac918\n")
+    host.on("tailscale", "version --daemon --json", _daemon_json("1.102.2", "1.102.2"))
     host.on("tailscale", "debug prefs", _prefs(apply))
     out = host.run()
     assert out["updates"]["tailscale"] == {
         "version": "1.102.2",
+        "daemon_version": "1.102.2",
         "auto_update": {"true": True, "false": False, "null": None}[apply],
     }
     hits = [f for f in out["findings"] if f["id"] == "tailscale:auto-update"]
@@ -576,6 +591,24 @@ def test_the_probe_reports_tailscales_own_auto_update(tmp_path, apply, kind):
         # A global skill: what an upgrade drops, said of any host.
         assert "anything that reaches it over the tailnet" in hits[0]["message"]
         assert "cohort" not in hits[0]["message"]
+
+
+def test_the_probe_reads_the_running_daemons_version_beside_the_clis(tmp_path):
+    # The package upgraded, tailscaled not yet restarted: the CLI is the new
+    # version, the daemon still the old one, and --daemon warns on stderr.
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n")
+    host.installed("tailscale")
+    host.on("tailscale", "version", "1.102.4\n  tailscale commit: 3caf7d9\n")
+    host.on(
+        "tailscale",
+        "version --daemon --json",
+        _daemon_json("1.102.4", "1.102.2"),
+        stderr='Warning: client version "1.102.4-t3caf7d9e7-g084ee3b64"'
+        ' != tailscaled server version "1.102.2-t6cac91817-g6ff0ddc72"\n',
+    )
+    host.on("tailscale", "debug prefs", _prefs("false"))
+    ts = host.run()["updates"]["tailscale"]
+    assert (ts["version"], ts["daemon_version"]) == ("1.102.4", "1.102.2")
 
 
 def test_tailscales_auto_update_is_unread_without_tailscaled_and_ignored_without_it(
@@ -596,6 +629,8 @@ def test_tailscales_auto_update_is_unread_without_tailscaled_and_ignored_without
     )
     out = host.run()
     assert out["updates"]["tailscale"]["auto_update"] is None
+    # No daemon to ask: --daemon exits 1 (noble, 2026-10-04).
+    assert out["updates"]["tailscale"]["daemon_version"] is None
     assert any("is tailscaled running?" in n for n in out["not_read"])
 
 

@@ -1104,6 +1104,16 @@ read_tailscale() {
   fi
   capture out tailscale version
   jaddsn R_TAILSCALE version "${out%%$'\n'*}"
+  # That's the CLI's. The daemon keeps running the old binary until it
+  # restarts, and only --daemon reads it: plain tailscale version printed
+  # 1.102.4 over a 1.102.2 tailscaled (noble, 2026-10-04). daemonLong is
+  # <major.minor.patch>-t<commit>-g<commit>; without a daemon it exits 1.
+  v=""
+  capture out tailscale version --daemon --json
+  re='"daemonLong": *"([0-9][^"-]*)'
+  if [ "$CAP_RC" -eq 0 ] && [[ $out =~ $re ]]; then v=${BASH_REMATCH[1]}; fi
+  jaddsn R_TAILSCALE daemon_version "$v"
+  v=""
   capture out tailscale debug prefs
   re='"AutoUpdate": *\{[^}]*"Apply": *(true|false|null)'
   if [ "$CAP_RC" -eq 0 ] && [[ $out =~ $re ]]; then
