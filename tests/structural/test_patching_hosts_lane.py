@@ -599,6 +599,18 @@ def test_tailscales_auto_update_is_unread_without_tailscaled_and_ignored_without
     assert any("is tailscaled running?" in n for n in out["not_read"])
 
 
+@pytest.mark.parametrize(
+    "doc", ["references/run.md", "references/environments/exe-dev-exeuntu.md"]
+)
+def test_the_daemon_check_reads_the_daemon(doc):
+    # Plain `tailscale version` prints the client's version and never warns,
+    # even over a stale tailscaled (noble, 2026-10-04): only --daemon reads it.
+    text = (SKILL / doc).read_text()
+    assert "`tailscale version --daemon`" in text
+    assert "until `tailscale version` prints" not in text
+    assert "`tailscale version` warns" not in text
+
+
 def test_an_exception_covers_tailscales_auto_update(tmp_path):
     host = ProbeHost(tmp_path).knob(
         "class production\nposture scheduled\n"
