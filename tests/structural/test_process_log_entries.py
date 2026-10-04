@@ -24,9 +24,10 @@ Kept in its own file per AGENTS.md: a new structural rule goes in
 `test_<rule>.py` rather than at the end of `test_context_surface.py`, so that
 parallel worktrees adding rules do not collide on one file.
 
-The check is deliberately generic over skills. Only `orchestrating-issue-backlog`
-keeps a process log today, but the vendoring cohort copies this layout, and a
-second skill that grows one should inherit the rule rather than rediscover it.
+The check is deliberately generic over skills. `orchestrating-issue-backlog`
+kept the first process log; `patching-hosts` grew the second (#313, plan step
+7) and inherited the rule rather than rediscovering it, as the vendoring cohort
+will when it copies this layout.
 """
 
 from __future__ import annotations

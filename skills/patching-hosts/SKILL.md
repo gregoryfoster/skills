@@ -63,7 +63,7 @@ done
 4. **The needrestart drop-in**: installed if absent (approval 1), and proven on every run with `sudo needrestart -m u -b -r l`.
 5. **The recovery point**, off the node: `bash "<recovery-point.sh>" --approve --retain-until <date>` prefers the host's own backup regime, or dumps each datastore as root and prints each dump's sha256 for the owner's off-node copy. Then **the apply** in held steps. `bash "<apply.sh>" --approve --step bulk --run <dir> --dry-run <scratch>` is approval 2, and `--step <group> --run <dir>` runs each held group under its own approval 3(a). Until every gate in [run.md](references/run.md) passes, it changes nothing and says why; a step that fails prints the abort branch and the holds it left. The monthly maintenance lane is the same run with `--lane maintenance` on the bulk and its dry run, and a bulletin's out-of-cycle window is `--lane origin:<origin>` ([policy.md](references/policy.md#two-lanes)). **Run each step in the background**, and read its JSON when it ends: a step takes minutes, and one cut off at a foreground call's limit leaves the run stuck.
 6. **The reboot**, when needrestart's list or `reboot-required` calls for one: a detached in-guest chain, approval 3(b). `bash "<reboot-chain.sh>" --run <dir>` prints the chain for the owner to read; with `--approve` it writes and launches it. Then verify: `bash "<probe.sh>" --post-boot`.
-7. **Record** what happened and what's left pending, by class.
+7. **Record** what happened and what's left pending, by class, then journal the run in the [process log](references/process-log.md): what the profile got wrong or lacked, the decisions, and the surprises.
 
 Steps 4–7 in full, with each trap: [run.md](references/run.md). The probe's `environment.profile` names the environment profile the host matches, and its image generation. That profile holds the environment's quirks: which packages restart themselves, `/tmp`, clean-shutdown evidence. The one so far: [environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md).
 
@@ -92,5 +92,6 @@ It never unmasks a timer, edits apt or needrestart config beyond the approved dr
 - [references/pruning.md](references/pruning.md) — pruning a dormant component: the calendar, the plan, the stages, and what a purge deletes
 - [references/knob.md](references/knob.md) — the `.skills/patching-hosts` grammar
 - [references/environments/exe-dev-exeuntu.md](references/environments/exe-dev-exeuntu.md) — the exe.dev exeuntu profile
+- [references/process-log.md](references/process-log.md) — one entry per run, the rules promoted from them, and how to add an entry
 
 **Self-budget:** held to a **6,000-token ratchet (estimate and exact)** by `tests/structural/test_skill_self_budget.py`; both readings must clear it. Each `references/` doc is held to the 10,000-token per-doc budget.

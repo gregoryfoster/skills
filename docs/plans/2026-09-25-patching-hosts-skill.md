@@ -820,6 +820,15 @@ base image, or an owner-approved remedy the profile documents.
      #313 comment. Host 6 stays anonymous.
 
    *Done when* `test_process_log_entries.py` passes.
+
+   **Done 2026-10-04:** `references/process-log.md`, its 2026 index, and 12
+   seed entries: the broker and archiver readings, and the ten hosts of step 0,
+   each from its #313 comment, with host 6 anonymous. The root lists the rules
+   promoted from them, and where each lives. Its "Adding an entry" carries the
+   orchestrator's two rules plus this one. A new
+   `test_patching_hosts_process_log.py` holds the log to it: no Debian package
+   version and no three-part upstream version. A two-part version reads like
+   a decimal, so that one stays the author's.
 8. **Gate.** *Done when* `bash scripts/pre-ship.sh` is green (budgets, ruff,
    shellcheck, the full structural suite) and every script's `--help` output
    is accurate.
