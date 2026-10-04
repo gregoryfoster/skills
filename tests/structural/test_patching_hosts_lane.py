@@ -32,7 +32,9 @@ Against step 6d's list:
 - `AutoUpdate.Apply` true is a deviation that says what an upgrade drops on
   any host (CR 162), null an unknown that says the node never set it (CR
   161), and false nothing; an exception covers it, and without tailscaled
-  it's not read.
+  it's not read;
+- the running daemon's version is read beside the CLI's (CR 169), and the
+  docs check it with `tailscale version --daemon` (CR 168).
 
 Beyond that list, the lane must take its origin (CR 160): a dry run that
 counted nothing, or would leave one of the origin's upgrades (CR 170), is
