@@ -120,6 +120,8 @@ Unattended-Upgrade::Origins-Pattern {
 
 **It must take the origin's packages, or fail.** unattended-upgrade passes over an upgrade that needs a package the lane skips: it logs a "kept back" line, and with nothing else to take, "No packages found", and exits 0 (2.9.1). So the gate refuses a dry run that counted nothing from the origin. The bulk fails before any hold when nothing from it is pending against the refreshed lists. And after each step, `apt-get -s dist-upgrade` must no longer list any of the origin's packages that the step was to take (`upgrade.origin_left`).
 
+**Then confirm the daemon runs the fix,** not just that the package is installed: a running daemon keeps its old binary until it restarts. For Tailscale, `tailscale version` warns `client version "…" != tailscaled server version "…"` while tailscaled still runs the old one (seen 2026-10-03, 1.102.4 over a 1.102.2 daemon). The step's reprobe, `<run>/probe-after-<step>.json`, lists under `reboot.needrestart_services` each service needrestart finds still running a replaced binary.
+
 **The verdict** comes from the exit code, `All upgrades installed`, an empty `dpkg --audit`, and in the one-origin lane, nothing of the origin's left pending. **Never count `Failed` or `error` lines**: a clean apply logged about 100 needrestart "kernel versions" lines.
 
 **A data-store step checks recovery, not just health.** A fail-open cache or audit writer hides a database outage from callers, and from the operator. So prove the path works:
