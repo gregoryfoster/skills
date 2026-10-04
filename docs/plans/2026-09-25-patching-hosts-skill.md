@@ -716,8 +716,15 @@ base image, or an owner-approved remedy the profile documents.
       fans out to the hosts that run Tailscale;
     - **no interim watch** until then.
 
-    The skill's part is a narrower lane: an expedited run that takes one
-    origin, such as `pkgs.tailscale.com`, and not all of `-updates`.
+    The skill's part is step 6d. The cohort's side is filed (2026-10-03):
+    co-core's feed extractor, watcher's and processor's matching steps,
+    archiver's source specs, broker's onboarding of a read-only
+    `content.revisions` consumer, and watcher described as general-purpose.
+    The image repo becomes a service that reads the change and opens the
+    tracking issue; the judgment and the window stay in a session the owner
+    approves. The window's order is a canary on the least-exposed service
+    node, then each other service node, then the broker last, since the
+    cohort's bus rides the tailnet.
 
     *Done when* stub tests prove:
     - `--lane maintenance` selects `-updates` and the *follow* origins, and
@@ -726,6 +733,27 @@ base image, or an owner-approved remedy the profile documents.
     - a second run finds the open issue by its marker and comments instead
       of filing a duplicate;
     - the body carries no value that matched a secret pattern.
+6d. **An expedited run of one origin, and Tailscale's own auto-update.**
+    - **`apply.sh --lane origin:<origin>`** takes one followed origin's
+      updates and nothing else, for a security bulletin's out-of-cycle
+      window. Proposed mechanism, to be measured first: the lane file adds
+      only that origin's pattern, and lists every other pending package in
+      `Unattended-Upgrade::Package-Blacklist`. So it uses the same
+      `unattended-upgrade` command, and leaves no hold to release. The
+      alternatives:
+      - holding everything else, which leaves holds behind on an abort;
+      - `apt-get install --only-upgrade`, which is another code path;
+      - pointing `Dir::Etc::Parts` at an empty directory, which drops the
+        host's needrestart hook with the rest.
+    - **The probe reports Tailscale's own auto-update** (`tailscale set
+      --auto-update`). Under `scheduled`, it's an update channel outside the
+      window, and on a node the cohort's bus rides, it's an unscheduled bus
+      interruption. Measured first, on a node with tailscaled running.
+
+    *Done when* stub tests prove the one-origin lane takes that origin's
+    pending packages alone, and the probe reports auto-update on and off;
+    and a live run on noble confirms the mechanism.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
