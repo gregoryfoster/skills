@@ -530,6 +530,11 @@ def test_the_probe_reports_tailscales_own_auto_update(tmp_path, apply, kind):
     }
     hits = [f for f in out["findings"] if f["id"] == "tailscale:auto-update"]
     assert [f["kind"] for f in hits] == ([kind] if kind else [])
+    if apply == "null":
+        # Never set on the node: the tailnet's setting configures a device
+        # only as it joins (Tailscale's KB 1067), so it isn't deciding now.
+        assert "was never set on this node" in hits[0]["message"]
+        assert "default decides" not in hits[0]["message"]
 
 
 def test_tailscales_auto_update_is_unread_without_tailscaled_and_ignored_without_it(

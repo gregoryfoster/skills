@@ -77,7 +77,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`). `apply.sh` refuses the first under either posture unless this covers it, since the security lane would apply the rest too |
 | `uu:automatic-reboot` | `Unattended-Upgrade::Automatic-Reboot` is true, or set nowhere (`automatic`) |
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
-| `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or the node never set it, so the tailnet's default decides (both postures) |
+| `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does: the tailnet's setting configures a device only as it joins (both postures) |
 | `held:<package>` | an owner's hold on a pending package |
 | `database:<name>` | a cluster database no `datastore` line names |
 | `ordering:<service>` | a `service` with no `After=` on a data store |

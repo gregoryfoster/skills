@@ -1087,7 +1087,9 @@ read_outside_apt() {
 # --auto-update): outside any window, and on a node the cohort's bus rides,
 # an unscheduled interruption. tailscale debug prefs reads it, no root
 # needed (the socket is 0666): AutoUpdate.Apply is true, false, or null when
-# the node never set it and the tailnet's default decides (noble, 2026-10-03).
+# nothing ever set it on the node, as on a daemon that never logged in (noble,
+# 2026-10-03). The tailnet's setting doesn't fill it in later: it configures a
+# device as it joins, and never changes an existing one (Tailscale's KB 1067).
 TS_APPLY=""
 read_tailscale() {
   local out re v=""
@@ -1213,7 +1215,7 @@ evaluate_posture() {
   # expedited window (policy.md), never in an update of its own choosing.
   case $TS_APPLY in
     true) finding deviation tailscale:auto-update tailscale:auto-update "Tailscale updates itself (AutoUpdate.Apply is true): outside any window, and where the cohort's bus rides the tailnet, an unscheduled interruption. Turn it off with tailscale set --auto-update=false, and take its updates in the maintenance lane (policy.md)." ;;
-    null) finding unknown tailscale:auto-update tailscale:auto-update "Tailscale's auto-update isn't set on this node (AutoUpdate.Apply is null), so the tailnet's default decides, which the probe can't read. Set it: tailscale set --auto-update=false (policy.md)." ;;
+    null) finding unknown tailscale:auto-update tailscale:auto-update "Tailscale's auto-update was never set on this node (AutoUpdate.Apply is null), and the tailnet's setting only configures a device as it joins, so nothing on record says whether it updates itself. Set it: tailscale set --auto-update=false (policy.md)." ;;
   esac
 }
 

@@ -761,7 +761,9 @@ base image, or an owner-approved remedy the profile documents.
     `+` escaped; apt keeps the backslashes. `apt-get -s` names the origin as
     `Tailscale:pkgs.tailscale.com`, and `apt-cache policy` maps a site to its
     `o=`. `tailscale debug prefs` reads `AutoUpdate.Apply` without root
-    (true, false, or null when the tailnet's default decides): true is a
+    (true, false, or null when nothing ever set it on the node; the
+    tailnet's setting configures a device only as it joins, and never
+    changes an existing one, per Tailscale's KB 1067): true is a
     deviation and null an unknown, under either posture, with exception
     `tailscale:auto-update`.
 
