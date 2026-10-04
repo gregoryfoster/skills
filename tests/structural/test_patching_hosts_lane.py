@@ -1,10 +1,12 @@
-"""patching-hosts' maintenance lane: `apply.sh --lane maintenance` (#313, plan
-step 6c).
+"""patching-hosts' other lanes: `apply.sh --lane maintenance` (#313, plan step
+6c), `--lane origin:<origin>`, and Tailscale's own auto-update (step 6d).
 
-The maintenance lane reuses the security lane's gates, recovery point, window
-and reboot decision; only the selection differs. It adds Ubuntu's -updates
-and each origin the knob follows to the host's own unattended-upgrades
-origins, through an APT_CONFIG file, and never names a pinned or held one.
+The other lanes reuse the security lane's gates, recovery point, window and
+reboot decision; only the selection differs. The maintenance lane adds
+Ubuntu's -updates and each origin the knob follows to the host's own
+unattended-upgrades origins, through an APT_CONFIG file, and never names a
+pinned or held one. The one-origin lane adds one followed origin, and skips
+every other pending package.
 
 What this file pins, against the plan's step 6c list:
 
@@ -18,12 +20,35 @@ Beyond that list:
   one naming it, one naming no origin, and one whose origin is a pattern;
 - apt must read the lane's file;
 - a held step runs its bulk's lane, and refuses a knob that follows other
-  origins since.
+  origins since;
+- each script's synopsis names every lane (CR 164).
 
-Measured on noble with unattended-upgrade 2.9.1, 2026-10-02: an APT_CONFIG
-file's Origins-Pattern adds to the host's Allowed-Origins, `site=` is a key
-it matches, and the lane's dry run took noble-updates' libaudit1 besides the
-security set.
+Against step 6d's list:
+
+- `--lane origin:<origin>` takes that origin alone: every other pending
+  package goes in the skip list, anchored and escaped, and only the origin's
+  own are hold candidates; a held, pinned or unknown origin is refused;
+- the probe's dry run counts one origin the same way;
+- `AutoUpdate.Apply` true is a deviation that says what an upgrade drops on
+  any host (CR 162), null an unknown that says the node never set it (CR
+  161), and false nothing; an exception covers it, and without tailscaled
+  it's not read.
+
+Beyond that list, the lane must take its origin (CR 160): a dry run that
+counted nothing is refused; a bulk with nothing from the origin pending, a
+site apt-cache policy doesn't list included, fails before any hold; and a
+step fails when apt still has one of its origin packages pending afterwards,
+or can't be read, the bulk's and a held step's alike.
+
+Measured on noble with unattended-upgrade 2.9.1: an APT_CONFIG file's
+Origins-Pattern adds to the host's Allowed-Origins, `site=` is a key it
+matches, and the maintenance lane's dry run took noble-updates' libaudit1
+besides the security set (2026-10-02). The one-origin lane took tailscale
+alone of 8 pending packages (2026-10-03). Read in 2.9.1's source the same
+day: a package it passes over gets a "Package <name> is ..." line saying why,
+and with nothing else to take, the run exits 0. Seen live then too: with
+tailscale in the host's own blacklist, the bulk failed on it, nothing
+upgraded.
 """
 
 import subprocess
