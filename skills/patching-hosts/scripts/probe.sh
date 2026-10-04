@@ -6,7 +6,7 @@ usage() {
   cat <<'USAGE'
 Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
                      [--refresh-into DIR] [--dry-run-into DIR]
-                     [--lane security|maintenance] [--post-boot]
+                     [--lane security|maintenance|origin:<origin>] [--post-boot]
                      [--session-pid PID] [--today YYYY-MM-DD]
 
 Reads the host and prints one JSON object on stdout: its environment, what
@@ -1470,7 +1470,8 @@ read_dry_run() {
   # security alone only when apt-config was read, an origin is set, and none
   # widens them (read_periodic). Otherwise it holds -updates or third-party
   # packages too, and isn't a security count.
-  # The maintenance lane's never is.
+  # No other lane's is: maintenance adds -updates and the followed origins,
+  # and origin:<key> takes one origin alone.
   if [ "$lane" = security ] && [ "$APT_CONFIG_OK" -eq 1 ] && [ "$UU_ORIGINS_N" -gt 0 ] && [ -z "$UU_WIDE" ]; then
     DRY_SECURITY_ONLY=1
   fi

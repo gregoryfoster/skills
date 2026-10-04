@@ -263,6 +263,18 @@ def test_the_probes_lane_is_a_dry_runs(args, message):
     assert message in r.stderr
 
 
+@pytest.mark.parametrize("script", ["probe.sh", "apply.sh"])
+def test_each_synopsis_names_every_lane(script):
+    r = subprocess.run(
+        ["bash", str(SKILL / "scripts" / script), "--help"],
+        capture_output=True,
+        text=True,
+        env=clean_env(),
+    )
+    synopsis = r.stdout.split("\n\n")[0]
+    assert "[--lane security|maintenance|origin:<origin>]" in synopsis
+
+
 # --- plan step 6d: one origin, for a bulletin's out-of-cycle window ---------------
 
 POLICY = (
