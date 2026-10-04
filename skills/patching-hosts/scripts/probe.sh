@@ -1085,11 +1085,12 @@ read_outside_apt() {
 
 # Tailscale updates itself when its own auto-update is on (tailscale set
 # --auto-update): outside any window, an upgrade drops the host's tailnet
-# path, and anything that reaches the host over it. tailscale debug prefs reads it, no root
-# needed (the socket is 0666): AutoUpdate.Apply is true, false, or null when
-# nothing ever set it on the node, as on a daemon that never logged in (noble,
-# 2026-10-03). The tailnet's setting doesn't fill it in later: it configures a
-# device as it joins, and never changes an existing one (Tailscale's KB 1067).
+# path, and anything that reaches the host over it. tailscale debug prefs
+# reads it, no root needed (the socket is 0666): AutoUpdate.Apply is true,
+# false, or null when nothing ever set it on the node, as on a daemon that
+# never logged in (noble, 2026-10-03). The tailnet's setting doesn't fill it
+# in later: it configures a device as it joins, and never changes an
+# existing one (Tailscale's KB 1067).
 TS_APPLY=""
 read_tailscale() {
   local out re v=""
