@@ -781,6 +781,33 @@ base image, or an owner-approved remedy the profile documents.
       `tailscale version` never shows a stale tailscaled; `--daemon` does,
       and the probe reports it as `daemon_version`.
 
+6e. **Scope a followed origin to its packages (#344; after step 7, before
+    8b).** The processor's NodeSource prototype (2026-09-30) found that a
+    followed origin, named by its site, selects every upgradable package
+    that site serves: NodeSource also serves `nsolid`. At apt's default
+    priority, 500, which ties Ubuntu's, a third-party package with an
+    Ubuntu name and a higher version would win. The maintenance lane and the
+    one-origin lane both take such a package. Its points 1 and 3 already
+    hold: the knob names an origin by its site (6c), and the bulk refreshes
+    the host's lists first (6).
+    - **`policy.md`:** a *follow* origin is scoped to the packages it was
+      added for, by an apt pin. A `Package: *` pin for the site goes below
+      500, and each package it was added for goes above.
+    - **`probe.sh`:** a finding for a followed origin with no catch-all pin
+      below 500, and one for an installed package whose candidate comes
+      from a followed origin that no package pin names. Both are read from
+      `apt-cache policy`.
+    - **NodeSource's class (point 4):** a third-party apt origin, policy
+      *follow*, since apt is how it updates. The "repo-owned component"
+      class is for what updates outside apt. Proposed 2026-10-04, for the
+      owner to confirm.
+    - The processor's pins are the measured example: `nodejs` at 600 and
+      `nsolid` at 100, and the `site=` dry run took `nodejs` alone.
+
+    *Done when* stub tests prove both findings and their absence under the
+    processor's pins, and `policy.md` and `knob.md` say how to scope a
+    followed origin.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
