@@ -122,6 +122,8 @@ Unattended-Upgrade::Origins-Pattern {
 
 **Then confirm the daemon runs the fix,** not just that the package is installed: a running daemon keeps its old binary until it restarts. For Tailscale, `tailscale version` warns `client version "…" != tailscaled server version "…"` while tailscaled still runs the old one (seen 2026-10-03, 1.102.4 over a 1.102.2 daemon). The step's reprobe, `<run>/probe-after-<step>.json`, lists under `reboot.needrestart_services` each service needrestart finds still running a replaced binary.
 
+**The recovery point applies to every lane.** On a host that declares a datastore, an expedited bulk refuses without one, like any other (§2). An origin can ship a data store itself, as PGDG ships Postgres, and the gate doesn't tell one origin from another. So take the recovery point before an urgent window opens, not inside it.
+
 **The verdict** comes from the exit code, `All upgrades installed`, an empty `dpkg --audit`, and in the one-origin lane, nothing of the origin's left pending. **Never count `Failed` or `error` lines**: a clean apply logged about 100 needrestart "kernel versions" lines.
 
 **A data-store step checks recovery, not just health.** A fail-open cache or audit writer hides a database outage from callers, and from the operator. So prove the path works:
