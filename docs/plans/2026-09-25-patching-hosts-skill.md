@@ -770,6 +770,17 @@ base image, or an owner-approved remedy the profile documents.
     deviation and null an unknown, under either posture, with exception
     `tailscale:auto-update`.
 
+    **Since its review (CR 160, 168–170, 2026-10-04):**
+    - **the lane must take its origin, or fail.** unattended-upgrade passes
+      over an upgrade it can't take and still exits 0, so the gate refuses
+      a dry run that counted nothing or would leave any of the origin's
+      upgrades. The bulk fails before any hold when nothing from the origin
+      is pending, and after each step apt must no longer list what the
+      step was to take.
+    - **the daemon's version is read apart from the CLI's.** Plain
+      `tailscale version` never shows a stale tailscaled; `--daemon` does,
+      and the probe reports it as `daemon_version`.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
