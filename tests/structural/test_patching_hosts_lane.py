@@ -35,7 +35,8 @@ Against step 6d's list:
   it's not read.
 
 Beyond that list, the lane must take its origin (CR 160): a dry run that
-counted nothing is refused; a bulk with nothing from the origin pending, a
+counted nothing, or would leave one of the origin's upgrades (CR 170), is
+refused, and the probe's dry run names what it would leave; a bulk with nothing from the origin pending, a
 site apt-cache policy doesn't list included, fails before any hold; and a
 step fails when apt still has one of its origin packages pending afterwards,
 or can't be read, the bulk's and a held step's alike.
@@ -352,7 +353,7 @@ def _one_origin(
     host.uu(TOOK, before=f'touch "{s}/took"; ')
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\n"
-        f"security_only=0\nlane={TS}\n"
+        f"security_only=0\nlane={TS}\norigin_left=\n"
     )
     return host
 
@@ -387,12 +388,39 @@ def test_a_one_origin_dry_run_that_counted_nothing_is_refused(tmp_path):
     host = _one_origin(tmp_path)
     (host.dry / "summary").write_text(
         f"began={TUE_1530 - 3600}\nexit=0\ncount=0\nwall_seconds=60\nlane={TS}\n"
+        "origin_left=\n"
     )
     out = host.run("--lane", TS, rc=3)
     assert any(
         "the dry run counted nothing from the pkgs.tailscale.com origin" in r
         for r in out["refused"]
     ), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+@pytest.mark.parametrize(
+    "left, refused",
+    [
+        (
+            "origin_left=tailscale\n",
+            "the dry run would leave tailscale from the pkgs.tailscale.com origin"
+            " pending",
+        ),
+        ("", "doesn't say which of the pkgs.tailscale.com origin's packages"),
+    ],
+    ids=["would-leave", "unsaid"],
+)
+def test_a_one_origin_dry_run_that_would_leave_its_packages_is_refused(
+    tmp_path, left, refused
+):
+    # The window would take the origin's other packages, then fail: it
+    # doesn't start.
+    host = _one_origin(tmp_path)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\nlane={TS}\n" + left
+    )
+    out = host.run("--lane", TS, rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
     assert not host.calls("unattended-upgrade")
 
 
@@ -525,12 +553,48 @@ def test_the_probes_dry_run_counts_one_origin(tmp_path):
     d = out["pending"]["dry_run"]
     assert d["lane"] == TS and d["count"] == 1
     assert d["origin_pending"] == ["tailscale"]
-    assert f"lane={TS}\n" in (scratch / "summary").read_text()
+    assert d["origin_left"] == []
+    assert f"lane={TS}\norigin_left=\n" in (scratch / "summary").read_text()
     [(_, _, apt_config)] = host.calls("unattended-upgrade")
     conf = open(apt_config).read()
     assert '  "site=pkgs.tailscale.com";' in conf
     assert '  "^libc6$";' in conf and '  "^libstdc\\+\\+6$";' in conf
     assert '"^tailscale$"' not in conf
+
+
+@pytest.mark.parametrize(
+    "selection, count, left",
+    [
+        ("Packages that will be upgraded: tailscale\n", 1, []),
+        (
+            "No packages found that can be upgraded unattended and no pending"
+            " auto-removals\n",
+            0,
+            ["tailscale"],
+        ),
+    ],
+    ids=["took-it", "passed-over"],
+)
+def test_the_probes_one_origin_dry_run_names_what_it_would_leave(
+    tmp_path, selection, count, left
+):
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+    )
+    # A new package from the origin comes with the upgrade that needs it,
+    # and is never in the selection: it isn't left.
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        EXTRA
+        + "Inst tailscale-archive-keyring (1.35.181 Tailscale:pkgs.tailscale.com [all])\n",
+    )
+    host.on("apt-cache", "*policy", POLICY)
+    host.on("unattended-upgrade", "--dry-run -d", selection)
+    scratch = host.tmp / "dry"
+    d = host.run("--dry-run-into", str(scratch), "--lane", TS)["pending"]["dry_run"]
+    assert (d["count"], d["origin_left"]) == (count, left)
+    assert f"origin_left={' '.join(left)}\n" in (scratch / "summary").read_text()
 
 
 # --- Tailscale's own auto-update ----------------------------------------------------

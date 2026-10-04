@@ -80,11 +80,12 @@ lane, when the host's own origins could take an origin the knob holds or
 pins, or apt doesn't read the lane's file, or a held step's knob follows
 other origins than its bulk did, or origin:<origin> names one the knob
 doesn't follow; when the dry run counted another lane, or in the
-one-origin lane, nothing; when dpkg --audit isn't clean; when the step's
-span, from now to now plus its expected duration, isn't wholly inside one
-window or overlaps a quiet range; while an automatic apt run is in progress, or could start inside the span;
-while the run's reboot chain is scheduled or running; and when an inflight
-command prints anything but 0. On a host that
+one-origin lane, nothing or not all of the origin's upgrades; when dpkg
+--audit isn't clean; when the step's span, from now to now plus its
+expected duration, isn't wholly inside one window or overlaps a quiet
+range; while an automatic apt run is in progress, or could start inside
+the span; while the run's reboot chain is scheduled or running; and when
+an inflight command prints anything but 0. On a host that
 declares a datastore, the bulk also refuses until the recovery point began
 within 24 hours, covers every datastore, and has left the node: each dump
 attested by its sha256, and each backup unit, one the knob declares, run
@@ -542,7 +543,7 @@ gate_reboot() {
 # another, so its wall time isn't this run's floor.
 DRY_SUMMARY="" DRY_MAX_AGE=86400
 gate_dry() {
-  local line rc="" count="" began="" iso dlane=security
+  local line rc="" count="" began="" iso dlane=security dleft="" dleft_seen=0
   [ "$step" = bulk ] || return 0
   if [ -z "$dryrun" ]; then
     refuse "no --dry-run DIR: count first with probe.sh --dry-run-into DIR (run.md section 3). Its wall time is the floor of the step's expected duration"
@@ -560,6 +561,7 @@ gate_dry() {
       count=*) count=${line#count=} ;;
       wall_seconds=*) EXPECT=${line#wall_seconds=} ;;
       lane=*) dlane=${line#lane=} ;;
+      origin_left=*) dleft=${line#origin_left=} dleft_seen=1 ;;
     esac
   done <<<"$DRY_SUMMARY"
   # Its wall time is this step's floor only for the selection it counted.
@@ -573,10 +575,17 @@ gate_dry() {
     # made unattended-upgrade skip the run, and the step would skip it the
     # same way, after holding every group.
     refuse "the dry run exited 0 but counted nothing: read $dryrun/dry-run.log, and count again"
-  elif [ "$count" -eq 0 ] && [ "$dlane" = "$LANE" ] && [[ $LANE == origin:* ]]; then
-    # It counts that origin's packages alone, so 0 is a window with nothing
-    # in it.
-    refuse "the dry run counted nothing from the ${LANE#origin:} origin, so this window would take nothing: its packages are current, the owner holds them, or unattended-upgrade passed them over. Read $dryrun/dry-run.log"
+  elif [ "$dlane" = "$LANE" ] && [[ $LANE == origin:* ]]; then
+    # It counts that origin's packages alone, and names the ones it would
+    # leave: a window that can't take them all fails after changing the
+    # host, so it doesn't start.
+    if [ "$dleft_seen" -eq 0 ]; then
+      refuse "$dryrun/summary doesn't say which of the ${LANE#origin:} origin's packages the dry run would leave: count again with this skill's probe.sh"
+    elif [ -n "$dleft" ]; then
+      refuse "the dry run would leave $dleft from the ${LANE#origin:} origin pending: unattended-upgrade passes over an upgrade that needs a package from another origin, which this lane skips, or one the host's own Package-Blacklist names. Read $dryrun/dry-run.log; one whose dependency is another origin's needs a lane that takes both, such as maintenance"
+    elif [ "$count" -eq 0 ]; then
+      refuse "the dry run counted nothing from the ${LANE#origin:} origin, so this window would take nothing: its packages are current, its source isn't configured, or the owner holds them. Read $dryrun/dry-run.log"
+    fi
   fi
   is_int "$EXPECT" || refuse "$dryrun/summary holds no wall time"
   if ! is_int "$began"; then

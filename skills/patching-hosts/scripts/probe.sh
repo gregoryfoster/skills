@@ -1394,6 +1394,7 @@ read_esm() {
 
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
+  local oleft="" left_read=0 kw p rest
   local -a words=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
@@ -1460,6 +1461,21 @@ read_dry_run() {
     n=${#words[@]}
     SEC_EXACT=" ${words[*]-} "
   fi
+  # The origin's upgrades the selection leaves out: unattended-upgrade would
+  # pass them over, so apply.sh refuses the window before it changes
+  # anything. Only upgrades count: a new package an upgrade needs comes with
+  # it, and is never named in the selection.
+  case $lane in
+    origin:*)
+      if [ -n "$n" ]; then
+        left_read=1
+        while read -r kw p rest; do
+          case $kw:$rest in
+            Inst:"["*) if in_words "$p" "$lkeep" && ! in_words "$p" "${words[*]-}"; then oleft="$oleft $p"; fi ;;
+          esac
+        done <<<"$SIM_DIST_OUT"
+      fi ;;
+  esac
   out=$(cat "$dryrun/max-rss-kib" 2>/dev/null) || out=""
   rss_of rss "$out"
   out=$(du -sk "$dryrun/archives" 2>/dev/null) || out=""
@@ -1487,10 +1503,19 @@ read_dry_run() {
   fi
   jadds o lane "$lane"
   jaddb o security_only "$DRY_SECURITY_ONLY"
+  case $lane in
+    origin:*)
+      w=null
+      if [ "$left_read" -eq 1 ]; then json_list w "$oleft"; fi
+      jadd o origin_left "$w" ;;
+  esac
   # apply.sh reads it: the dry run's wall time is the floor of each step's
-  # expected duration.
-  printf 'began=%s\nexit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\nlane=%s\n' \
-    "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane" >"$dryrun/summary"
+  # expected duration, and in the one-origin lane, what it would leave.
+  {
+    printf 'began=%s\nexit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\nlane=%s\n' \
+      "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane"
+    if [ "$left_read" -eq 1 ]; then printf 'origin_left=%s\n' "${oleft# }"; fi
+  } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   R_DRY="{$o}"
   if [ "$rc" -ne 0 ]; then
