@@ -709,9 +709,12 @@ base image, or an owner-approved remedy the profile documents.
       design pass on its issue;
     - **what changed is #222's line diff,** in which a new bulletin is a `+`
       line;
-    - **delivery is a webhook receiver the cohort runs,** reached through
-      notifier's `jsons://`. It files the issue, deduplicated by bulletin ID,
-      and can start a triage;
+    - **delivery is over the broker's bus, not through notifier,** which
+      stays for delivery outside the cohort. The image repo, run as a
+      service, reads watcher's `content.revisions` through its own read-only
+      consumer group, confirms a new bulletin ID, and opens or updates the
+      tracking issue, deduplicated by that ID. It reads and proposes, and
+      never applies;
     - **each bulletin opens one tracking issue in the image repo,** which
       fans out to the hosts that run Tailscale;
     - **no interim watch** until then.
