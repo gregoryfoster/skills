@@ -39,6 +39,7 @@ STUBBED = (
     "pro",
     "psql",
     "pg_lsclusters",
+    "tailscale",
     "docker",
     "redis-cli",
     "ss",

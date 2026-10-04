@@ -32,9 +32,13 @@ The primitives these scripts reach a host through:
   unit_name VAR UNIT        a knob's unit, with .service when it has no suffix
   widens ENTRY              whether an unattended-upgrades origin entry takes
                             more than the security set
-  lane_patterns             LANE_PATTERNS := the maintenance lane's origins;
-                            1 with LANE_WHY for a knob origin it can't name
+  lane_patterns LANE        LANE_PATTERNS := the origins maintenance or
+                            origin:<key> adds; 1 with LANE_WHY when it can't
   lane_conf PATTERN...      the APT_CONFIG text that adds them, on stdout
+  lane_skip_conf NAME...    the APT_CONFIG text that skips those packages
+  origin_names VAR KEY POLICY  VAR := |o=|names|: what a knob origin is
+  origin_split KEEP SKIP NAMES SIM  the pending packages from those origins,
+                            and every other one
   rss_timer FILE            TIMER := GNU time's words to record a command's
                             max RSS in FILE, or none where there's no GNU time
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
@@ -224,17 +228,36 @@ widens() {  # <entry>
 # (unattended-upgrade 2.9.1 on noble, 2026-10-02). A pinned or held origin
 # is never named. The knob names an origin by its o= field, with _ for each
 # space, or by its site, which holds a dot: unattended-upgrade matches both.
+# The one-origin lane, origin:<key>, takes one origin the knob follows and
+# nothing else, for a security bulletin's out-of-cycle window: its pattern
+# alone, with every other pending package in Package-Blacklist (lane_skip_conf).
 LANE_PATTERNS=() LANE_WHY=""
-lane_patterns() {
-  local _lp_r _lp_k
+lane_patterns() {  # <maintenance|origin:<key>>
+  local _lp_r _lp_k _lp_want="" _lp_seen=0
   local -a _lp_f=()
-  # unattended-upgrade's own variable, which it expands; not the shell's.
-  # shellcheck disable=SC2016
-  LANE_PATTERNS=('o=Ubuntu,a=${distro_codename}-updates') LANE_WHY=""
+  LANE_PATTERNS=() LANE_WHY=""
+  case $1 in
+    maintenance)
+      # unattended-upgrade's own variable, which it expands; not the shell's.
+      # shellcheck disable=SC2016
+      LANE_PATTERNS=('o=Ubuntu,a=${distro_codename}-updates') ;;
+    origin:?*) _lp_want=${1#origin:} ;;
+    *)
+      LANE_WHY="no lane $1: maintenance, or origin:<an origin the knob follows>"
+      return 1 ;;
+  esac
   for _lp_r in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
     IFS=$KNOB_US read -r -a _lp_f <<<"$_lp_r"
-    [ "${_lp_f[1]}" = follow ] || continue
     _lp_k=${_lp_f[0]}
+    if [ -n "$_lp_want" ]; then
+      [ "$_lp_k" = "$_lp_want" ] || continue
+      _lp_seen=1
+      if [ "${_lp_f[1]}" != follow ]; then
+        LANE_WHY="knob line ${_lp_f[3]} ${_lp_f[1]}s the origin $_lp_k: an expedited run takes a followed origin's updates alone"
+        return 1
+      fi
+    fi
+    [ "${_lp_f[1]}" = follow ] || continue
     # A quote, a comma or a backslash would change the pattern apt reads.
     case $_lp_k in *[!A-Za-z0-9._+:~-]*)
       LANE_WHY="knob line ${_lp_f[3]}: the origin $_lp_k holds a character an unattended-upgrades pattern can't carry"
@@ -245,14 +268,84 @@ lane_patterns() {
       *) LANE_PATTERNS+=("o=${_lp_k//_/ }") ;;
     esac
   done
+  if [ -n "$_lp_want" ] && [ "$_lp_seen" -eq 0 ]; then
+    LANE_WHY="the knob names no origin $_lp_want: an expedited run takes one it follows (origin $_lp_want follow)"
+    return 1
+  fi
 }
 
 lane_conf() {  # <pattern>...
   local _lc_p
-  printf '%s\n' "// patching-hosts: the maintenance lane, added to the host's own origins"
+  printf '%s\n' "// patching-hosts: the lane's origins, added to the host's own"
   printf 'Unattended-Upgrade::Origins-Pattern {\n'
   for _lc_p in "$@"; do printf '  "%s";\n' "$_lc_p"; done
   printf '};\n'
+}
+
+# unattended-upgrade matches its blacklist with re.match (2.9.1), so each
+# name is anchored and its . and + escaped: libstdc++6 is a pattern otherwise.
+lane_skip_conf() {  # <package>...
+  local _ls_p
+  printf 'Unattended-Upgrade::Package-Blacklist {\n'
+  for _ls_p in "$@"; do
+    _ls_p=${_ls_p//./\\.}
+    printf '  "^%s$";\n' "${_ls_p//+/\\+}"
+  done
+  printf '};\n'
+}
+
+# The o= names a knob origin stands for, as |name|name|: the key itself, _
+# for each space, or for a site, a key with a dot, each o= that
+# `apt-cache policy` (POLICY, its output) lists under that site.
+origin_names() {  # <var> <key> <policy output>
+  local _on_l _on_v _on_o="" _on_n="|"
+  local -a _on_kv=()
+  case $2 in
+    *.*)
+      while IFS= read -r _on_l; do
+        case $_on_l in
+          *" release "*)
+            _on_o=""
+            IFS=, read -r -a _on_kv <<<"${_on_l#*release }"
+            for _on_v in ${_on_kv[@]+"${_on_kv[@]}"}; do
+              case $_on_v in o=*) _on_o=${_on_v#o=} ;; esac
+            done ;;
+          *" origin "*)
+            if [ -n "$_on_o" ] && [ "${_on_l#*origin }" = "$2" ]; then
+              case $_on_n in *"|$_on_o|"*) ;; *) _on_n="$_on_n$_on_o|" ;; esac
+            fi
+            _on_o="" ;;
+        esac
+      done <<<"$3" ;;
+    *) _on_n="|${2//_/ }|" ;;
+  esac
+  printf -v "$1" '%s' "$_on_n"
+}
+
+# Each pending package from those origins, and every other one. An Inst line
+# of `apt-get -s dist-upgrade` (SIM, its output) names the candidate's
+# origins in its parentheses, each as <o>:<archive or site>, ", " apart:
+# "Inst tailscale [1.102.2] (1.102.4 Tailscale:pkgs.tailscale.com [arm64])".
+origin_split() {  # <keep var> <skip var> <|names|> <sim output>
+  local _os_l _os_n _os_r _os_e _os_k="" _os_s="" _os_hit
+  while IFS= read -r _os_l; do
+    case $_os_l in 'Inst '*) ;; *) continue ;; esac
+    _os_n=${_os_l#Inst }
+    _os_n=${_os_n%% *}
+    _os_r=${_os_l#*(}
+    _os_r=${_os_r%)*}
+    _os_r=${_os_r#* }
+    _os_r=${_os_r% \[*}
+    _os_hit=0
+    while [ -n "$_os_r" ]; do
+      _os_e=${_os_r%%, *}
+      if [ "$_os_e" = "$_os_r" ]; then _os_r=""; else _os_r=${_os_r#*, }; fi
+      case $3 in *"|${_os_e%%:*}|"*) _os_hit=1 ;; esac
+    done
+    if [ "$_os_hit" -eq 1 ]; then _os_k="$_os_k $_os_n"; else _os_s="$_os_s $_os_n"; fi
+  done <<<"$4"
+  printf -v "$1" '%s' "${_os_k# }"
+  printf -v "$2" '%s' "${_os_s# }"
 }
 
 # --- units on disk ---------------------------------------------------------

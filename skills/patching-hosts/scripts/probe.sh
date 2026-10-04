@@ -33,11 +33,12 @@ Options:
                       downloads the whole set (290 MB and 9 minutes on one
                       host) and leaves it there for you to remove. Its cost
                       goes in DIR/summary, which apply.sh --dry-run reads
-  --lane LANE         the dry run's selection: security (the default), what
-                      the host's unattended-upgrades origins take; or
-                      maintenance, which adds Ubuntu's -updates and each
-                      origin the knob follows, as apply.sh --lane
-                      maintenance does. With --dry-run-into only
+  --lane LANE         the dry run's selection, as apply.sh --lane takes it:
+                      security (the default), what the host's
+                      unattended-upgrades origins take; maintenance, which
+                      adds Ubuntu's -updates and each origin the knob
+                      follows; or origin:<key>, one followed origin and
+                      nothing else. With --dry-run-into only
   --post-boot         the checks after a reboot (run.md §6), not the readings
                       before a run
   --session-pid PID   where the session's chain to PID 1 starts (default: the
@@ -136,8 +137,8 @@ if [ -n "$session_pid" ] && ! is_int "$session_pid"; then
   exit 2
 fi
 case $lane in
-  "" | security | maintenance) ;;
-  *) echo "ERROR --lane takes security or maintenance" >&2; exit 2 ;;
+  "" | security | maintenance | origin:?*) ;;
+  *) echo "ERROR --lane takes security, maintenance or origin:<an origin the knob follows>" >&2; exit 2 ;;
 esac
 if [ -n "$lane" ] && [ -z "$dryrun" ]; then
   echo "ERROR --lane names the dry run's selection: it goes with --dry-run-into" >&2
@@ -1001,6 +1002,8 @@ read_origins() {
   R_ORIGINS=""
   have apt-cache || return 0
   capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy
+  # The one-origin lane's dry run maps a site to its o= names from it.
+  POLICY_OUT=$out
   while IFS= read -r line; do
     case $line in
       *" release "*)
@@ -1080,6 +1083,38 @@ read_outside_apt() {
   jadd R_OUTSIDE container_images "${ci:-null}"
 }
 
+# Tailscale updates itself when its own auto-update is on (tailscale set
+# --auto-update): outside any window, and on a node the cohort's bus rides,
+# an unscheduled interruption. tailscale debug prefs reads it, no root
+# needed (the socket is 0666): AutoUpdate.Apply is true, false, or null when
+# the node never set it and the tailnet's default decides (noble, 2026-10-03).
+TS_APPLY=""
+read_tailscale() {
+  local out re v=""
+  R_TAILSCALE=null TS_APPLY=""
+  installed tailscale || return 0
+  R_TAILSCALE=""
+  if [ "$P_LIVE" -ne 1 ] || ! have tailscale; then
+    not_read "Tailscale's auto-update: tailscale debug prefs needs a running system with the CLI"
+    jadd R_TAILSCALE auto_update null
+    R_TAILSCALE="{$R_TAILSCALE}"
+    return 0
+  fi
+  capture out tailscale version
+  jaddsn R_TAILSCALE version "${out%%$'\n'*}"
+  capture out tailscale debug prefs
+  re='"AutoUpdate": *\{[^}]*"Apply": *(true|false|null)'
+  if [ "$CAP_RC" -eq 0 ] && [[ $out =~ $re ]]; then
+    v=${BASH_REMATCH[1]}
+    TS_APPLY=$v
+    jadd R_TAILSCALE auto_update "$v"
+  else
+    not_read "Tailscale's auto-update: tailscale debug prefs couldn't be read (${CAP_ERR:-exit $CAP_RC}); is tailscaled running?"
+    jadd R_TAILSCALE auto_update null
+  fi
+  R_TAILSCALE="{$R_TAILSCALE}"
+}
+
 read_updates() {
   local o=""
   read_units
@@ -1088,6 +1123,7 @@ read_updates() {
   read_sources
   read_origins
   read_outside_apt
+  read_tailscale
   jadd o units "[$R_UNITS]"
   jadd o periodic "{$R_PERIODIC}"
   jaddb o apt_config_read "$APT_CONFIG_OK"
@@ -1096,6 +1132,7 @@ read_updates() {
   jadd o sources "[$R_SOURCES]"
   jadd o origins "[$R_ORIGINS]"
   jadd o outside_apt "{$R_OUTSIDE}"
+  jadd o tailscale "$R_TAILSCALE"
   R_UPD=$o
 }
 
@@ -1172,10 +1209,17 @@ evaluate_posture() {
       finding knob "origin:${os//_/ }" "" "The third-party origin ${os//_/ } ($site) has no policy: add origin $os follow, pin <version> or hold <reason> (knob.md). The maintenance lane takes nothing from it until then."
     fi
   done
+  # Either posture: Tailscale belongs in the maintenance lane, or in an
+  # expedited window (policy.md), never in an update of its own choosing.
+  case $TS_APPLY in
+    true) finding deviation tailscale:auto-update tailscale:auto-update "Tailscale updates itself (AutoUpdate.Apply is true): outside any window, and where the cohort's bus rides the tailnet, an unscheduled interruption. Turn it off with tailscale set --auto-update=false, and take its updates in the maintenance lane (policy.md)." ;;
+    null) finding unknown tailscale:auto-update tailscale:auto-update "Tailscale's auto-update isn't set on this node (AutoUpdate.Apply is null), so the tailnet's default decides, which the probe can't read. Set it: tailscale set --auto-update=false (policy.md)." ;;
+  esac
 }
 
 # --- the pending set --------------------------------------------------------
 PEND=""        # " name ... ": everything apt-get -s would install or upgrade
+SIM_DIST_OUT="" SIM_OK=0 POLICY_OUT=""  # apt-get -s dist-upgrade's and apt-cache policy's output
 SEC_EXACT=""   # the dry run's selection, when it ran
 DRY_SECURITY_ONLY=0  # 1 when that selection is security alone
 PK_NAME=() PK_CLASS=()
@@ -1240,6 +1284,8 @@ read_simulation() {
     finding unknown pending:simulate "" "apt-get -s dist-upgrade failed (exit $CAP_RC${CAP_ERR:+: $CAP_ERR}), so the pending set is unknown."
     return 0
   fi
+  # The one-origin lane's dry run splits it by origin.
+  SIM_DIST_OUT=$out SIM_OK=1
   while IFS= read -r line; do
     case $line in
       "Inst "*)
@@ -1335,7 +1381,7 @@ read_esm() {
 }
 
 read_dry_run() {
-  local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0
+  local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
   local -a words=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
@@ -1350,18 +1396,34 @@ read_dry_run() {
   # apt fetches into archives/partial, and the dry run's fetcher never makes
   # it: without it, every download failed (noble, 2026-10-01).
   mkdir -p "$dryrun/archives/partial"
-  # The maintenance lane counts what apply.sh --lane maintenance takes: the
-  # host's own origins, plus -updates and each origin the knob follows.
-  if [ "$lane" = maintenance ] && ! lane_patterns; then
-    finding unknown dry-run "" "the maintenance lane's dry run didn't run: $LANE_WHY."
+  # Another lane counts what apply.sh takes in it: the host's own origins,
+  # plus the lane's, and for one origin, every other pending package skipped.
+  if [ "$lane" != security ] && ! lane_patterns "$lane"; then
+    finding unknown dry-run "" "the $lane lane's dry run didn't run: $LANE_WHY."
     return 0
   fi
+  case $lane in
+    origin:*)
+      if [ "$SIM_OK" -ne 1 ]; then
+        finding unknown dry-run "" "the $lane lane's dry run didn't run: the pending set couldn't be simulated, so what it would skip is unknown."
+        return 0
+      fi
+      origin_names lnames "${lane#origin:}" "$POLICY_OUT"
+      origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;
+  esac
   {
     if [ -n "$P_ROOT" ]; then printf 'Dir "%s/";\n' "$P_ROOT"; fi
     printf 'Dir::Cache::archives "%s/archives/";\n' "$dryrun"
     if [ "$REFRESHED" -eq 1 ]; then printf 'Dir::State::Lists "%s/";\n' "$LISTS_DIR"; fi
-    if [ "$lane" = maintenance ]; then lane_conf "${LANE_PATTERNS[@]}"; fi
+    if [ "$lane" != security ]; then lane_conf "${LANE_PATTERNS[@]}"; fi
+    # Word lists, each a package name.
+    # shellcheck disable=SC2086
+    case $lane in origin:*) lane_skip_conf $lskip ;; esac
   } >"$conf"
+  if [ -n "$lkeep$lskip" ]; then
+    json_list w "$lkeep"
+    jadd o origin_pending "$w"
+  fi
   rss_timer "$dryrun/max-rss-kib"
   t0=$(date +%s)
   rc=0

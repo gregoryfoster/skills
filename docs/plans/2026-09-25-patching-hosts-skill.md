@@ -754,6 +754,17 @@ base image, or an owner-approved remedy the profile documents.
     pending packages alone, and the probe reports auto-update on and off;
     and a live run on noble confirms the mechanism.
 
+    **Done 2026-10-03:** the blacklist mechanism, measured on noble with
+    unattended-upgrade 2.9.1: with `site=pkgs.tailscale.com` added and the
+    other 7 pending packages skipped, the dry run took `tailscale` alone. The
+    list is matched with `re.match`, so each name is anchored and its `.` and
+    `+` escaped; apt keeps the backslashes. `apt-get -s` names the origin as
+    `Tailscale:pkgs.tailscale.com`, and `apt-cache policy` maps a site to its
+    `o=`. `tailscale debug prefs` reads `AutoUpdate.Apply` without root
+    (true, false, or null when the tailnet's default decides): true is a
+    deviation and null an unknown, under either posture, with exception
+    `tailscale:auto-update`.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an

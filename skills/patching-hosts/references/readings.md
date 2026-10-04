@@ -31,6 +31,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts. W
 | **The effective `Periodic::Enable`, and which file sets it** | `apt-config shell E APT::Periodic::Enable`; grep `/etc/apt/apt.conf.d/` | missing `docker-disable-periodic-update`'s `0`, which makes unmasked timers no-ops |
 | Every apt source, and each origin | `/etc/apt/sources.list.d/`, `apt-cache policy` | treating a third-party origin as Ubuntu's |
 | The needrestart config in force | `sudo needrestart -m u -b -r l`'s `Disabling Ubuntu mode` line | a drop-in that doesn't load, leaving the hook in automatic mode |
+| Tailscale's own auto-update | `tailscale debug prefs`: `AutoUpdate.Apply` is true, false, or null when the tailnet's default decides | a tailnet path, and the cohort's bus with it, dropped by an upgrade nobody scheduled |
 | **Everything outside apt, with its owner** | `/usr/local/bin`, `~/.local/bin`, container images and their age, pinned tools | a component nobody patches because nobody owns it |
 
 ## The pending set, by class

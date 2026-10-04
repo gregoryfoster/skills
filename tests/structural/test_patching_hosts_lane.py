@@ -246,7 +246,10 @@ def test_the_probes_dry_run_counts_the_maintenance_lane(tmp_path):
     "args, message",
     [
         (["--lane", "maintenance"], "it goes with --dry-run-into"),
-        (["--lane", "monthly", "--dry-run-into", "d"], "--lane takes security or"),
+        (
+            ["--lane", "monthly", "--dry-run-into", "d"],
+            "--lane takes security, maintenance or origin:",
+        ),
     ],
 )
 def test_the_probes_lane_is_a_dry_runs(args, message):
@@ -258,3 +261,181 @@ def test_the_probes_lane_is_a_dry_runs(args, message):
     )
     assert r.returncode == 2
     assert message in r.stderr
+
+
+# --- plan step 6d: one origin, for a bulletin's out-of-cycle window ---------------
+
+POLICY = (
+    " 500 https://pkgs.tailscale.com/stable/ubuntu noble/main arm64 Packages\n"
+    "     release o=Tailscale,n=noble,l=Tailscale,c=main,b=arm64\n"
+    "     origin pkgs.tailscale.com\n"
+    " 500 http://ports.ubuntu.com/ubuntu-ports noble-updates/main arm64 Packages\n"
+    "     release v=24.04,o=Ubuntu,a=noble-updates,n=noble,l=Ubuntu,c=main,b=arm64\n"
+    "     origin ports.ubuntu.com\n"
+)
+# As apt-get -s prints Tailscale's origin (noble, 2026-10-03), and a name
+# unattended-upgrade's regex blacklist would misread unescaped.
+EXTRA = (
+    "Inst tailscale [1.102.2] (1.102.4 Tailscale:pkgs.tailscale.com [arm64])\n"
+    "Inst libstdc++6 [14.2.0-4ubuntu2~24.04] (14.2.0-4ubuntu2~24.04.1"
+    " Ubuntu:24.04/noble-updates [arm64])\n"
+)
+TS = "origin:pkgs.tailscale.com"
+
+
+def _one_origin(
+    tmp_path, knob: str = KNOB + ORIGINS.replace("Tailscale", "pkgs.tailscale.com")
+):
+    host = _lane(tmp_path, knob)
+    sim = [c for c in host.cases["apt-get"] if c[0] == "-s dist-upgrade"][0]
+    host.cases["apt-get"].insert(0, ("-s dist-upgrade", sim[1] + EXTRA, 0, "", None))
+    host.on("apt-cache", "policy", POLICY)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\n"
+        f"security_only=0\nlane={TS}\n"
+    )
+    return host
+
+
+def test_the_one_origin_lane_takes_that_origin_and_skips_everything_else(tmp_path):
+    host = _one_origin(tmp_path)
+    out = host.run("--lane", TS)
+    assert out["verdict"]["ok"] is True, out
+    assert out["gate"]["lane"] == {"name": TS, "patterns": ["site=pkgs.tailscale.com"]}
+    conf = host.record("lane.conf")
+    assert '  "site=pkgs.tailscale.com";' in conf
+    assert "-updates" not in conf and "deb.nodesource.com" not in conf
+    skipped = conf.split("Package-Blacklist {")[1]
+    for name in (
+        "libc6",
+        "postgresql-16",
+        "libpq5",
+        "redis-server",
+        "linux-libc-dev-new",
+        "libstdc\\+\\+6",
+    ):
+        assert f'  "^{name}$";' in skipped, name
+    assert "tailscale" not in skipped
+    # Only the origin's own packages are candidates for a hold group.
+    assert not [a for _, a, _ in host.calls("apt-mark") if a.startswith("hold")]
+    assert out["upgrade"]["origin_pending"] == ["tailscale"]
+    assert _uu_apt_config(host) == [str(host.run_dir / "lane.conf")]
+
+
+@pytest.mark.parametrize(
+    "lane, refused",
+    [
+        ("origin:Docker", "holds the origin Docker"),
+        ("origin:Grafana", "pins the origin Grafana"),
+        ("origin:pkgs.example.com", "the knob names no origin pkgs.example.com"),
+    ],
+    ids=["held", "pinned", "unknown"],
+)
+def test_the_one_origin_lane_takes_only_an_origin_the_knob_follows(
+    tmp_path, lane, refused
+):
+    host = _one_origin(tmp_path)
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=1\nwall_seconds=60\nlane={lane}\n"
+    )
+    out = host.run("--lane", lane, rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not host.calls("unattended-upgrade")
+
+
+def test_the_probes_dry_run_counts_one_origin(tmp_path):
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+    )
+    host.on(
+        "apt-get",
+        "-s *dist-upgrade",
+        "Inst libc6 [2.39-0ubuntu8.3] (2.39-0ubuntu8.4 Ubuntu:24.04/noble-security [arm64])\n"
+        + EXTRA,
+    )
+    host.on("apt-cache", "*policy", POLICY)
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: tailscale\n",
+    )
+    scratch = host.tmp / "dry"
+    out = host.run("--dry-run-into", str(scratch), "--lane", TS)
+    d = out["pending"]["dry_run"]
+    assert d["lane"] == TS and d["count"] == 1
+    assert d["origin_pending"] == ["tailscale"]
+    assert f"lane={TS}\n" in (scratch / "summary").read_text()
+    [(_, _, apt_config)] = host.calls("unattended-upgrade")
+    conf = open(apt_config).read()
+    assert '  "site=pkgs.tailscale.com";' in conf
+    assert '  "^libc6$";' in conf and '  "^libstdc\\+\\+6$";' in conf
+    assert '"^tailscale$"' not in conf
+
+
+# --- Tailscale's own auto-update ----------------------------------------------------
+
+
+def _prefs(apply: str) -> str:
+    return (
+        "{\n"
+        '\t"ControlURL": "https://controlplane.tailscale.com",\n'
+        '\t"AutoUpdate": {\n'
+        '\t\t"Check": true,\n'
+        f'\t\t"Apply": {apply}\n'
+        "\t},\n"
+        '\t"AppConnector": {\n'
+        '\t\t"Advertise": false\n'
+        "\t}\n"
+        "}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "apply, kind",
+    [("true", "deviation"), ("null", "unknown"), ("false", None)],
+)
+def test_the_probe_reports_tailscales_own_auto_update(tmp_path, apply, kind):
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n")
+    host.installed("tailscale")
+    host.on("tailscale", "version", "1.102.2\n  tailscale commit: 6cac918\n")
+    host.on("tailscale", "debug prefs", _prefs(apply))
+    out = host.run()
+    assert out["updates"]["tailscale"] == {
+        "version": "1.102.2",
+        "auto_update": {"true": True, "false": False, "null": None}[apply],
+    }
+    hits = [f for f in out["findings"] if f["id"] == "tailscale:auto-update"]
+    assert [f["kind"] for f in hits] == ([kind] if kind else [])
+
+
+def test_tailscales_auto_update_is_unread_without_tailscaled_and_ignored_without_it(
+    tmp_path,
+):
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n")
+    out = host.run()
+    assert out["updates"]["tailscale"] is None
+    assert "tailscale:auto-update" not in [f["id"] for f in out["findings"]]
+
+    host.installed("tailscale")
+    host.on(
+        "tailscale",
+        "debug prefs",
+        "",
+        rc=1,
+        stderr="failed to connect to local tailscaled\n",
+    )
+    out = host.run()
+    assert out["updates"]["tailscale"]["auto_update"] is None
+    assert any("is tailscaled running?" in n for n in out["not_read"])
+
+
+def test_an_exception_covers_tailscales_auto_update(tmp_path):
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\n"
+        "exception tailscale:auto-update 2026-12-31 the owner takes them as they come\n"
+    )
+    host.installed("tailscale")
+    host.on("tailscale", "debug prefs", _prefs("true"))
+    out = host.run()
+    assert "tailscale:auto-update" not in [f["id"] for f in out["findings"]]
+    assert "tailscale:auto-update" in [f["id"] for f in out["excepted"]]

@@ -42,7 +42,7 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 - **Under `scheduled`, both lanes run in the same monthly window.**
 - **A security package never waits for the maintenance lane.** docker.io 29 and containerd 2.2 shipped in `noble-security`, so holding them "for the maintenance lane" leaves a security fix with no lane at all. Deferring one is an exception, with a reason and a review-by date.
 - **Third-party origins** each get a policy in the knob: *follow* (taken in the maintenance lane), *pin* (a stated version), or *hold, with a reason*. The lane never takes a pinned or held one: a pin moves only by hand.
-- **Tailscale** belongs in the maintenance lane, because upgrading tailscaled drops the host's tailnet path and needs a planned window. A Tailscale security bulletin expedites it into an out-of-cycle window.
+- **Tailscale** belongs in the maintenance lane, because upgrading tailscaled drops the host's tailnet path and needs a planned window. A Tailscale security bulletin expedites it into an out-of-cycle window: `apply.sh --lane origin:<its origin>` takes that one origin and nothing else. Its own auto-update takes it out of any window, so the probe reports it under either posture.
 
 ## What a run leaves pending, by class
 
@@ -77,6 +77,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`). `apply.sh` refuses the first under either posture unless this covers it, since the security lane would apply the rest too |
 | `uu:automatic-reboot` | `Unattended-Upgrade::Automatic-Reboot` is true, or set nowhere (`automatic`) |
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
+| `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or the node never set it, so the tailnet's default decides (both postures) |
 | `held:<package>` | an owner's hold on a pending package |
 | `database:<name>` | a cluster database no `datastore` line names |
 | `ordering:<service>` | a `service` with no `After=` on a data store |
