@@ -278,22 +278,32 @@ def test_an_origin_apt_doesnt_list_is_checked_against_nothing(tmp_path):
     assert not [a for _, a, _ in host.calls("dpkg-query") if a.endswith("\\n")]
 
 
-@pytest.mark.parametrize("fails", ["dpkg-query", "apt-cache"])
-def test_an_unreadable_package_list_is_null_not_empty(tmp_path, fails):
+@pytest.mark.parametrize(
+    "fails, why",
+    [
+        ("dpkg-query", "dpkg-query -W exited 1"),
+        ("apt-cache", "apt-cache policy over the installed packages exited 1"),
+        ("nothing-installed", "dpkg-query -W listed no installed package"),
+    ],
+)
+def test_an_unreadable_package_list_is_null_not_empty(tmp_path, fails, why):
     host = _host(tmp_path)
     if fails == "dpkg-query":
         host.cases["dpkg-query"] = []
-    else:
+    elif fails == "apt-cache":
         host.cases["apt-cache"] = [
             c for c in host.cases["apt-cache"] if c[0] == "*policy"
         ]
+    else:
+        host.cases["dpkg-query"] = []
+        host.on("dpkg-query", DPKG_ALL, "nsolid rc \n")
     out = host.run()
     assert _scope(out)[0]["unpinned"] is None
     assert f"unscoped:{SITE}" in _ids(out)
-    assert any(
-        "which installed packages a followed origin serves" in n
-        for n in out["not_read"]
-    )
+    # CR 184: it says which reading failed, and how.
+    assert (
+        "which installed packages a followed origin serves: " + why in out["not_read"]
+    ), out["not_read"]
 
 
 @pytest.mark.parametrize("case", ["fails", "absent"])

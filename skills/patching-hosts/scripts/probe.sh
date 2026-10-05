@@ -1051,7 +1051,7 @@ SCOPE_READ=""  # 1 when every installed package's candidate was read
 POLICY_WHY="not read"  # why apt-cache policy's own output isn't a reading, or empty
 R_SCOPE=""
 read_scope() {
-  local r line v o="" prio="" key sites max pins="" follow="" out pkg="" cand="" incand=0 host i e
+  local r line v o="" prio="" key sites max pins="" follow="" out pkg="" cand="" incand=0 host i e why=""
   local -a f=() kv=() rp=() ro=() rs=() scope_pkgs=()
   R_SCOPE=""
   # Each release's priority, o= and site, and the package pins.
@@ -1109,18 +1109,27 @@ read_scope() {
   fi
   if [ -z "$POLICY_WHY" ] && [ -n "${follow// /}" ]; then
     SCOPE_READ=0
-    if have dpkg-query && have apt-cache; then
+    if ! have dpkg-query; then
+      why="dpkg-query isn't installed"
+    else
       capture out dpkgq -W -f "$DPKG_PKG_STATUS"
-      if [ "$CAP_RC" -eq 0 ]; then
+      if [ "$CAP_RC" -ne 0 ]; then
+        why="dpkg-query -W exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+      else
         while read -r pkg v; do
           if [ "${v:1:1}" = i ]; then scope_pkgs+=("$pkg"); fi
         done <<<"$out"
-      fi
-      if [ "$CAP_RC" -eq 0 ] && [ "${#scope_pkgs[@]}" -gt 0 ]; then
-        capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "${scope_pkgs[@]}"
-        if [ "$CAP_RC" -eq 0 ]; then SCOPE_READ=1; fi
+        if [ "${#scope_pkgs[@]}" -eq 0 ]; then
+          why="dpkg-query -W listed no installed package"
+        else
+          capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "${scope_pkgs[@]}"
+          if [ "$CAP_RC" -ne 0 ]; then
+            why="apt-cache policy over the installed packages exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+          fi
+        fi
       fi
     fi
+    if [ -z "$why" ]; then SCOPE_READ=1; fi
     if [ "$SCOPE_READ" -eq 1 ]; then
       pkg=""
       while IFS= read -r line; do
@@ -1152,7 +1161,7 @@ read_scope() {
         esac
       done <<<"$out"
     else
-      not_read "which installed packages a followed origin serves: dpkg-query or apt-cache policy failed"
+      not_read "which installed packages a followed origin serves: $why"
     fi
   fi
   for i in ${SCOPE_KEY[@]+"${!SCOPE_KEY[@]}"}; do
