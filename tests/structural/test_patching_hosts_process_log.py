@@ -96,3 +96,9 @@ def test_the_skill_files_a_vendored_hosts_entry_upstream() -> None:
     assert step, f"SKILL.md has no step starting {prefix!r}: move this test with it"
     assert "process-log.md" in step
     assert "vendored" in step and "upstream" in step
+    # Filing in another repo needs the owner's approval ("What the skill
+    # never does on its own"), here as anywhere.
+    assert "owner's approval" in step
+    log = (LOG / "process-log.md").read_text()
+    first = log[log.index("**First: is this skill vendored here?**") :].split("\n\n")[0]
+    assert "owner's approval" in first

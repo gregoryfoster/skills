@@ -49,7 +49,7 @@ Which runs each rule came from, wherever it now lives. The 2026 entries are the 
 ---
 ## Adding an entry
 
-**First: is this skill vendored here?** Where the host repo consumes it as a git submodule, the entry does **not** go in the vendored copy. Draft it in the host repo, and file it upstream as an issue against this repo, which adds the entry. Writing it in place leaves the host reporting a modified submodule. This is the same rule as `orchestrating-issue-backlog`'s log.
+**First: is this skill vendored here?** Where the host repo consumes it as a git submodule, the entry does **not** go in the vendored copy. Draft it in the host repo, and file it upstream as an issue against this repo, with the owner's approval, as for any issue in another repo; this repo adds the entry. Writing it in place leaves the host reporting a modified submodule. This is the same rule as `orchestrating-issue-backlog`'s log.
 
 **Second: is the host's repo private?** This log is public. Where it is, the entry names no identifier of the host's own:
 - not its repo, issues, units, paths, databases or routes;
