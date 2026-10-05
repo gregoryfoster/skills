@@ -31,7 +31,8 @@ nothing serves. With Ubuntu's nodejs installed, unpinned NodeSource
 replaced it with its own; at 100 or 499 Ubuntu's stayed. With NodeSource's
 nodejs installed and no package pin, a catch-all at 100 still upgraded it,
 and at 99 kept it. A package pin sets the installed version's priority too:
-at 99 it didn't keep it, a pin on its installed version did. A version
+at 99 it didn't keep it, and a pin on its installed version did at 501, but
+not at 500 with no catch-all, nor at 100 under one. A version
 line has 5 columns before it, and a source line right-aligns its priority
 after 7 or more.
 """
@@ -131,7 +132,7 @@ def test_an_unpinned_followed_origin_and_its_package_are_findings(tmp_path):
     assert "at apt priority 500" in f[f"unscoped:{SITE}"]["message"]
     assert f["unpinned:nodejs"]["exception_what"] == "unpinned:nodejs"
     assert "only below 100" in f["unpinned:nodejs"]["message"]
-    assert "pin its installed version" in f["unpinned:nodejs"]["message"]
+    assert "pin its installed version above 500" in f["unpinned:nodejs"]["message"]
     assert "unpinned:libc6" not in f
 
 

@@ -1044,7 +1044,8 @@ read_origins() {
 # Ubuntu's stayed. But an installed NodeSource nodejs was still upgraded at
 # 100, and kept only at 99: only a package pin says which ones it serves.
 # A package pin sets the installed version's priority too, so one at 99
-# didn't keep it; a pin on its installed version did.
+# didn't keep it; a pin on its installed version did above 500, and at 500
+# tied the newer one, which won.
 SCOPE_KEY=() SCOPE_SITES=() SCOPE_PRIO=() SCOPE_UNPINNED=()
 SCOPE_READ=""  # 1 when every installed package's candidate was read
 POLICY_WHY="not read"  # why apt-cache policy's own output isn't a reading, or empty
@@ -1376,7 +1377,7 @@ evaluate_posture() {
       finding deviation "unscoped:$key" "unscoped:$key" "The followed origin $key is at apt priority ${SCOPE_PRIO[$i]}, at least Ubuntu's 500, so a package it serves under a name this host already has, at a higher version, replaces Ubuntu's in the maintenance lane, not only what it was added for. Scope it: a Package: * pin for its site below 500, and a package pin above 500 for each package it was added for (policy.md)."
     fi
     for pk in ${SCOPE_UNPINNED[$i]}; do
-      finding deviation "unpinned:$pk" "unpinned:$pk" "$pk is installed, and its candidate comes from the followed origin $key, but no package pin names it: the maintenance lane takes its upgrades, though nothing declares the origin was added for it, and a Package: * pin stops that only below 100. Pin it above 500 if the origin was added for it. To keep it where it is, pin its installed version: a package pin below 100 doesn't, since it lowers the installed version too (policy.md)."
+      finding deviation "unpinned:$pk" "unpinned:$pk" "$pk is installed, and its candidate comes from the followed origin $key, but no package pin names it: the maintenance lane takes its upgrades, though nothing declares the origin was added for it, and a Package: * pin stops that only below 100. Pin it above 500 if the origin was added for it. To keep it where it is, pin its installed version above 500: a lower pin can tie the newer version, which then wins, and a package pin below 100 lowers the installed version too (policy.md)."
     done
   done
   # Either posture: Tailscale belongs in the maintenance lane, or in an

@@ -823,7 +823,9 @@ base image, or an owner-approved remedy the profile documents.
       at 100 still upgraded it, and at 99 kept it. So the catch-all can't
       scope what's installed, and the second finding is needed;
     - a package pin sets the installed version's priority too: at 99 it
-      didn't keep `nodejs`, and a pin on its installed version did;
+      didn't keep `nodejs`. A pin on its installed version kept it at 501,
+      but not at 500 with no catch-all, nor at 100 under one: the newer
+      version tied it and won (CR 181);
     - `Pinned packages:` lists a package pin once per version it matches,
       never a catch-all, and never a pin on a package nothing serves;
     - NodeSource's `o=` is `. nodistro`, so the knob can name it only by its

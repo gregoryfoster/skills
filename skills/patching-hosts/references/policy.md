@@ -45,7 +45,7 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 - **A *follow* origin is scoped to the packages it was added for, by apt pins.** Named by its site, it selects every upgradable package that site serves. At apt's default priority, 500, which ties Ubuntu's, a package it serves under an Ubuntu name, at a higher version, replaces Ubuntu's: on noble, an unpinned NodeSource replaced Ubuntu's `nodejs` 18 with its own 22 (apt 2.8.3, 2026-10-05). So:
   - a `Package: *` pin for its site goes below 500, so Ubuntu's version stays for everything else;
   - each package it was added for gets a package pin above 500. The catch-all alone doesn't scope what's already installed from the origin: at 100, an installed NodeSource `nodejs` was still upgraded, and only below 100 was it kept;
-  - to keep one where it is, pin its installed version (`Pin: version <v>`). A package pin below 100 doesn't, since it lowers the installed version's priority too.
+  - to keep one where it is, pin its installed version (`Pin: version <v>`) above 500. At 501 it was kept; at 500 with no catch-all, and at 100 under one, the newer version tied it and won. A package pin below 100 doesn't keep it either, since it lowers the installed version's priority too.
 
   The processor's pins are the example (#344), in a file under `/etc/apt/preferences.d/`:
 
