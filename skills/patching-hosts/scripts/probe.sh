@@ -1299,7 +1299,14 @@ read_updates() {
   jadd o unattended_upgrades "{$R_UU}"
   jadd o needrestart "{$R_NR}"
   jadd o sources "[$R_SOURCES]"
-  jadd o origins "[$R_ORIGINS]"
+  # Unread, the origins are unknown, never none: a third-party one would
+  # go without its policy finding.
+  if [ -n "$POLICY_WHY" ]; then
+    jadd o origins null
+    not_read "apt's origins, and whether each third-party one has a policy: $POLICY_WHY"
+  else
+    jadd o origins "[$R_ORIGINS]"
+  fi
   jadd o origin_scope "[$R_SCOPE]"
   jadd o outside_apt "{$R_OUTSIDE}"
   jadd o tailscale "$R_TAILSCALE"

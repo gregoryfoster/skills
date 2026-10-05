@@ -339,3 +339,28 @@ def test_an_unread_policy_with_no_followed_origin_says_nothing_of_scope(tmp_path
     out = host.run()
     assert _scope(out) == []
     assert not [n for n in out["not_read"] if "followed origin" in n]
+
+
+@pytest.mark.parametrize("case", ["fails", "absent"])
+def test_unread_origins_are_null_never_none(tmp_path, case):
+    # CR 185: with nothing followed, the origins themselves are what's unread.
+    host = Host(tmp_path).knob("class production\nposture scheduled\n")
+    if case == "fails":
+        host.on(
+            "apt-cache",
+            "*policy",
+            rc=100,
+            stderr="E: The package lists or status file could not be parsed or opened.\n",
+        )
+        why = "apt-cache policy exited 100: E: The package lists"
+    else:
+        host.absent("apt-cache")
+        why = "apt-cache isn't installed"
+    out = host.run()
+    assert out["updates"]["origins"] is None
+    assert any(
+        n.startswith(
+            "apt's origins, and whether each third-party one has a policy: " + why
+        )
+        for n in out["not_read"]
+    ), out["not_read"]
