@@ -84,3 +84,13 @@ def test_no_entry_carries_a_package_version(doc: Path) -> None:
 )
 def test_the_pattern_tells_a_version_from_a_date_or_a_count(text, is_version):
     assert bool(VERSION.search(text)) is is_version
+
+
+def test_the_skill_files_a_vendored_hosts_entry_upstream() -> None:
+    # Step 8b's hosts vendor the skill: an agent following SKILL.md alone must
+    # not write its entry into the submodule copy (process-log.md, "Adding an
+    # entry").
+    skill = (LOG.parent / "SKILL.md").read_text()
+    step = next(line for line in skill.splitlines() if line.startswith("7. **Record**"))
+    assert "process-log.md" in step
+    assert "vendored" in step and "upstream" in step
