@@ -59,7 +59,7 @@ Call it "host N" and describe the mechanism instead ("the app fails every job in
 
 **Third: is anything still pending?** **An entry that lists pending security updates lands only after they're applied.** It records counts and package families ("PostgreSQL 16", "a major `docker.io` bump"), never versions. A published version that's still pending tells a reader what the host is exposed to. This is the same rule as a run's own record ([run.md](run.md) §7).
 
-1. Write `process-log/<year>/<date>-<host>.md`, opening with a `## Session <date> — <host>` heading. Use the date the run's apply ended, and the year it ran in; create the directory for a new year.
+1. Write `process-log/<year>/<date>-<host>.md`, opening with a `## Session <date> — <host>` heading. Date it by when the run closed, in UTC: the day its record was final, as its issue closed. watcher's run was on 2026-09-28 UTC, and its entry is 2026-09-29. Date a reading taken without a run by the day it was taken. Create the directory for a new year.
 2. Add one row to `process-log/<year>/index.md`. Link the date cell to the entry as a bare filename, since the index sits beside its entries. For a new year, create its index from the previous year's, and add it to the Years list above.
 
 **Keep the row to a headline of about 400 bytes,** and put the detail in the entry. A year's index is bound by the 10,000-token per-doc budget, and every run that year appends to it.
