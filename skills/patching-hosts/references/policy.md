@@ -42,6 +42,29 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 - **Under `scheduled`, both lanes run in the same monthly window.**
 - **A security package never waits for the maintenance lane.** docker.io 29 and containerd 2.2 shipped in `noble-security`, so holding them "for the maintenance lane" leaves a security fix with no lane at all. Deferring one is an exception, with a reason and a review-by date.
 - **Third-party origins** each get a policy in the knob: *follow* (taken in the maintenance lane), *pin* (a stated version), or *hold, with a reason*. The lane never takes a pinned or held one: a pin moves only by hand.
+- **A *follow* origin is scoped to the packages it was added for, by apt pins.** Named by its site, it selects every upgradable package that site serves. At apt's default priority, 500, which ties Ubuntu's, a package it serves under an Ubuntu name, at a higher version, replaces Ubuntu's: on noble, an unpinned NodeSource replaced Ubuntu's `nodejs` 18 with its own 22 (apt 2.8.3, 2026-10-05). So:
+  - a `Package: *` pin for its site goes below 500, so Ubuntu's version stays for everything else;
+  - each package it was added for gets a package pin above 500. The catch-all alone doesn't scope what's already installed from the origin: at 100, an installed NodeSource `nodejs` was still upgraded, and only below 100 was it kept;
+  - to keep one where it is, pin its installed version (`Pin: version <v>`). A package pin below 100 doesn't, since it lowers the installed version's priority too.
+
+  The processor's pins are the example (#344), in a file under `/etc/apt/preferences.d/`:
+
+  ```
+  Package: *
+  Pin: origin deb.nodesource.com
+  Pin-Priority: 100
+
+  Package: nodejs
+  Pin: origin deb.nodesource.com
+  Pin-Priority: 600
+
+  Package: nsolid
+  Pin: origin deb.nodesource.com
+  Pin-Priority: 100
+  ```
+
+  The probe reports each followed origin's priority, and each installed package it serves that no package pin names (`updates.origin_scope`): the findings `unscoped:<origin>` and `unpinned:<package>`.
+- **NodeSource is a third-party apt origin, policy *follow*** (decided 2026-10-05, #344): apt is how it updates, and the repo-owned class under [Owners](#owners) is for what updates outside apt. Its `o=` field is `. nodistro`, which holds a dot, so the knob names it by its site: `origin deb.nodesource.com follow`.
 - **Tailscale** belongs in the maintenance lane, because upgrading tailscaled drops the host's tailnet path and needs a planned window. A Tailscale security bulletin expedites it into an out-of-cycle window: `apply.sh --lane origin:<its origin>` takes that one origin and nothing else. Its own auto-update takes it out of any window, so the probe reports it under either posture.
 
 ## What a run leaves pending, by class
@@ -77,6 +100,8 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `uu:origins` | unattended-upgrades takes more than `-security` and the release pocket, or no origin is set (`automatic`). `apply.sh` refuses the first under either posture unless this covers it, since the security lane would apply the rest too |
 | `uu:automatic-reboot` | `Unattended-Upgrade::Automatic-Reboot` is true, or set nowhere (`automatic`) |
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
+| `unscoped:<origin>` | a followed origin at apt priority 500 or more: no `Package: *` pin below 500 for its site (both postures) |
+| `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
 | `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does: the tailnet's setting configures a device only as it joins (both postures) |
 | `held:<package>` | an owner's hold on a pending package |
 | `database:<name>` | a cluster database no `datastore` line names |

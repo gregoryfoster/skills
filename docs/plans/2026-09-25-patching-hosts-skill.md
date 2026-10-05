@@ -799,14 +799,40 @@ base image, or an owner-approved remedy the profile documents.
       `apt-cache policy`.
     - **NodeSource's class (point 4):** a third-party apt origin, policy
       *follow*, since apt is how it updates. The "repo-owned component"
-      class is for what updates outside apt. Proposed 2026-10-04, for the
-      owner to confirm.
+      class is for what updates outside apt. Proposed 2026-10-04;
+      confirmed by the owner 2026-10-05.
     - The processor's pins are the measured example: `nodejs` at 600 and
       `nsolid` at 100, and the `site=` dry run took `nodejs` alone.
 
     *Done when* stub tests prove both findings and their absence under the
     processor's pins, and `policy.md` and `knob.md` say how to scope a
     followed origin.
+
+    **Done 2026-10-05:** `probe.sh` reports `updates.origin_scope`, each
+    followed origin's sites, its highest release priority, and the installed
+    packages whose candidate it serves that no package pin names. Its
+    findings are `unscoped:<origin>` and `unpinned:<package>`, each with an
+    exception. `policy.md` states the rule, with the processor's pins as the
+    example, and NodeSource's class; `knob.md` and `readings.md` point to
+    it. `test_patching_hosts_scope.py` holds it. Measured on noble with apt
+    2.8.3 against NodeSource's own repository, and the probe run live there
+    in four states:
+    - unpinned at 500, NodeSource's `nodejs` 22 replaced Ubuntu's 18; under
+      a `Package: *` pin at 100 or 499, Ubuntu's stayed;
+    - with NodeSource's `nodejs` installed and no package pin, a catch-all
+      at 100 still upgraded it, and at 99 kept it. So the catch-all can't
+      scope what's installed, and the second finding is needed;
+    - a package pin sets the installed version's priority too: at 99 it
+      didn't keep `nodejs`, and a pin on its installed version did;
+    - `Pinned packages:` lists a package pin once per version it matches,
+      never a catch-all, and never a pin on a package nothing serves;
+    - NodeSource's `o=` is `. nodistro`, so the knob can name it only by its
+      site.
+
+    Every host that follows Tailscale's origin without pins will report
+    both findings at its step 8b run: `unscoped:pkgs.tailscale.com` (or
+    `unscoped:Tailscale`) and `unpinned:tailscale`. The fix is the same
+    two pins, or an exception that says why not.
 
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding

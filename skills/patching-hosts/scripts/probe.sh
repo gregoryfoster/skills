@@ -1034,6 +1034,136 @@ read_origins() {
   done <<<"$out"
 }
 
+# A followed origin is scoped to what it was added for (policy.md). A
+# "Package: *" pin for its site shows as the priority on its release lines,
+# and a package pin is listed under "Pinned packages:", by name, for each
+# version it matches. Measured on noble with NodeSource (apt 2.8.3,
+# 2026-10-05): unpinned at 500, its nodejs replaced Ubuntu's; at 100 or 499,
+# Ubuntu's stayed. But an installed NodeSource nodejs was still upgraded at
+# 100, and kept only at 99: only a package pin says which ones it serves.
+# A package pin sets the installed version's priority too, so one at 99
+# didn't keep it; a pin on its installed version did.
+SCOPE_KEY=() SCOPE_SITES=() SCOPE_PRIO=() SCOPE_UNPINNED=()
+SCOPE_READ=""  # 1 when every installed package's candidate was read
+R_SCOPE=""
+read_scope() {
+  local r line v o="" prio="" key sites max pins="" follow="" out pkg="" cand="" incand=0 host i e
+  local -a f=() kv=() rp=() ro=() rs=() scope_pkgs=()
+  R_SCOPE=""
+  # Each release's priority, o= and site, and the package pins.
+  while IFS= read -r line; do
+    if [ "$line" = "Pinned packages:" ]; then pins=" "; continue; fi
+    if [ -n "$pins" ]; then
+      case $line in *" -> "*)
+        v=${line%% -> *}
+        v=${v##* }
+        v=${v%%:*}
+        if ! in_words "$v" "$pins"; then pins="$pins$v "; fi ;;
+      esac
+      continue
+    fi
+    case $line in
+      *" release "*)
+        o=""
+        IFS=, read -r -a kv <<<"${line#*release }"
+        for v in ${kv[@]+"${kv[@]}"}; do
+          case $v in o=*) o=${v#o=} ;; esac
+        done ;;
+      *" origin "*)
+        if [ -n "$prio" ]; then rp+=("$prio") ro+=("$o") rs+=("${line#*origin }"); fi
+        o="" prio="" ;;
+      *)
+        if [[ $line =~ ^\ *(-?[0-9]+)\  ]]; then prio=${BASH_REMATCH[1]}; fi ;;
+    esac
+  done <<<"$POLICY_OUT"
+  # Each followed origin's sites, as origin_names reads its key, and its
+  # highest priority among them.
+  for r in ${KNOB_ORIGIN[@]+"${KNOB_ORIGIN[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[1]}" = follow ] || continue
+    key=${f[0]} sites=" " max=""
+    for i in ${rs[@]+"${!rs[@]}"}; do
+      case $key in
+        *.*) [ "${rs[$i]}" = "$key" ] || continue ;;
+        *) [ "${ro[$i]}" = "${key//_/ }" ] || continue ;;
+      esac
+      if ! in_words "${rs[$i]}" "$sites"; then sites="$sites${rs[$i]} "; fi
+      if [ -z "$max" ] || [ "${rp[$i]}" -gt "$max" ]; then max=${rp[$i]}; fi
+    done
+    SCOPE_KEY+=("$key") SCOPE_SITES+=("$sites") SCOPE_PRIO+=("$max") SCOPE_UNPINNED+=(" ")
+    follow="$follow$sites"
+  done
+  # Each installed package whose candidate one of those sites serves, from
+  # one apt-cache policy over every installed package: a version's sources
+  # are indented under it, a URL's host being the site. A version line has
+  # 5 columns before it; a source line right-aligns its priority after 7 or
+  # more, so 1001 has 7.
+  if [ -n "${follow// /}" ]; then
+    SCOPE_READ=0
+    if have dpkg-query && have apt-cache; then
+      capture out dpkgq -W -f "$DPKG_PKG_STATUS"
+      if [ "$CAP_RC" -eq 0 ]; then
+        while read -r pkg v; do
+          if [ "${v:1:1}" = i ]; then scope_pkgs+=("$pkg"); fi
+        done <<<"$out"
+      fi
+      if [ "$CAP_RC" -eq 0 ] && [ "${#scope_pkgs[@]}" -gt 0 ]; then
+        capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "${scope_pkgs[@]}"
+        if [ "$CAP_RC" -eq 0 ]; then SCOPE_READ=1; fi
+      fi
+    fi
+    if [ "$SCOPE_READ" -eq 1 ]; then
+      pkg=""
+      while IFS= read -r line; do
+        case $line in
+          [!\ ]*:)
+            pkg=${line%:}
+            pkg=${pkg%%:*}
+            cand="" incand=0 ;;
+          "  Candidate: "*) cand=${line#  Candidate: } ;;
+          " *** "* | "     "[!\ ]*)
+            v=${line:5}
+            incand=0
+            if [ "${v%% *}" = "$cand" ]; then incand=1; fi ;;
+          "       "*)
+            if [ "$incand" -eq 0 ] || [ -z "$pkg" ]; then continue; fi
+            in_words "$pkg" "$pins" && continue
+            v=${line#"${line%%[![:space:]]*}"}
+            v=${v#* }
+            case $v in *://*) ;; *) continue ;; esac
+            host=${v#*://}
+            host=${host%%/*}
+            host=${host##*@}
+            host=${host%%:*}
+            for i in ${SCOPE_KEY[@]+"${!SCOPE_KEY[@]}"}; do
+              if in_words "$host" "${SCOPE_SITES[$i]}" && ! in_words "$pkg" "${SCOPE_UNPINNED[$i]}"; then
+                SCOPE_UNPINNED[i]="${SCOPE_UNPINNED[$i]}$pkg "
+              fi
+            done ;;
+        esac
+      done <<<"$out"
+    else
+      not_read "which installed packages a followed origin serves: dpkg-query or apt-cache policy failed"
+    fi
+  fi
+  for i in ${SCOPE_KEY[@]+"${!SCOPE_KEY[@]}"}; do
+    e=""
+    jadds e origin "${SCOPE_KEY[$i]}"
+    json_list v "${SCOPE_SITES[$i]}"
+    jadd e sites "$v"
+    jaddn e priority "${SCOPE_PRIO[$i]}"
+    if [ "$SCOPE_READ" = 1 ]; then
+      json_list v "${SCOPE_UNPINNED[$i]}"
+      jadd e unpinned "$v"
+    elif [ -n "${SCOPE_SITES[$i]// /}" ]; then
+      jadd e unpinned null
+    else
+      jadd e unpinned "[]"
+    fi
+    jpush R_SCOPE "{$e}"
+  done
+}
+
 # Outside apt: binaries under /usr/local/bin and ~/.local/bin, with any owner
 # the knob names, and container images with their age.
 read_outside_apt() {
@@ -1135,6 +1265,7 @@ read_updates() {
   read_needrestart
   read_sources
   read_origins
+  read_scope
   read_outside_apt
   read_tailscale
   jadd o units "[$R_UNITS]"
@@ -1144,13 +1275,14 @@ read_updates() {
   jadd o needrestart "{$R_NR}"
   jadd o sources "[$R_SOURCES]"
   jadd o origins "[$R_ORIGINS]"
+  jadd o origin_scope "[$R_SCOPE]"
   jadd o outside_apt "{$R_OUTSIDE}"
   jadd o tailscale "$R_TAILSCALE"
   R_UPD=$o
 }
 
 evaluate_posture() {
-  local u st p=$KNOB_POSTURE key val files t os site r found
+  local u st p=$KNOB_POSTURE key val files t os site r found i pk
   local -a of=()
   for u in apt-daily.timer apt-daily-upgrade.timer; do
     state_of st "$u"
@@ -1221,6 +1353,16 @@ evaluate_posture() {
     if [ "$found" -eq 0 ]; then
       finding knob "origin:${os//_/ }" "" "The third-party origin ${os//_/ } ($site) has no policy: add origin $os follow, pin <version> or hold <reason> (knob.md). The maintenance lane takes nothing from it until then."
     fi
+  done
+  # Each followed origin is scoped to the packages it was added for.
+  for i in ${SCOPE_KEY[@]+"${!SCOPE_KEY[@]}"}; do
+    key=${SCOPE_KEY[$i]}
+    if is_int "${SCOPE_PRIO[$i]}" && [ "${SCOPE_PRIO[$i]}" -ge 500 ]; then
+      finding deviation "unscoped:$key" "unscoped:$key" "The followed origin $key is at apt priority ${SCOPE_PRIO[$i]}, at least Ubuntu's 500, so a package it serves under a name this host already has, at a higher version, replaces Ubuntu's in the maintenance lane, not only what it was added for. Scope it: a Package: * pin for its site below 500, and a package pin above 500 for each package it was added for (policy.md)."
+    fi
+    for pk in ${SCOPE_UNPINNED[$i]}; do
+      finding deviation "unpinned:$pk" "unpinned:$pk" "$pk is installed, and its candidate comes from the followed origin $key, but no package pin names it: the maintenance lane takes its upgrades, though nothing declares the origin was added for it, and a Package: * pin stops that only below 100. Pin it above 500 if the origin was added for it. To keep it where it is, pin its installed version: a package pin below 100 doesn't, since it lowers the installed version too (policy.md)."
+    done
   done
   # Either posture: Tailscale belongs in the maintenance lane, or in an
   # expedited window (policy.md), never in an update of its own choosing.

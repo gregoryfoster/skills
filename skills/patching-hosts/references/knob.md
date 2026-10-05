@@ -55,7 +55,7 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 | `caller <repo>` | A repo whose service calls this host, told before a restart. |
 | `owner <component-glob> <repo>` | The update owner of a component apt doesn't reach. `<repo>` is `owner/name`, `self` for this repo, or `image` for whoever owns the image. The default owner of what the image ships is `image`. |
 | `image-owner <owner/name>` | Whom `image` means: the repo that owns this host's image. The profile's image-level findings, and notices for what the image ships, go there. Absent: they're reported with owner `image`, and no notice is proposed. |
-| `origin <origin> follow\|pin <version>\|hold <reason>` | A third-party apt origin's policy in the maintenance lane: it takes a `follow` origin's updates, and never a `pin` or `hold` one's. `<origin>` is its `o=` field as `apt-cache policy` prints it, with `_` for each space, or its site, read as a site because it holds a dot. A third-party origin with no line is a finding. |
+| `origin <origin> follow\|pin <version>\|hold <reason>` | A third-party apt origin's policy in the maintenance lane: it takes a `follow` origin's updates, and never a `pin` or `hold` one's. `<origin>` is its `o=` field as `apt-cache policy` prints it, with `_` for each space, or its site, read as a site because it holds a dot. A third-party origin with no line is a finding. A *follow* origin is scoped by apt pins, not here: a `Package: *` pin below 500 for its site, and a package pin for each package it was added for ([policy.md](policy.md#two-lanes)). |
 | `exception <what> <review-by YYYY-MM-DD> <reason>` | A declared deviation, expiring on its date ([policy.md](policy.md)). |
 | `records <path-or-repo>` | Where run records go. |
 
