@@ -49,6 +49,20 @@ On a volatile journal the reboot erases everything before it. That's how address
 
 **Tailscale**, where a host has it, goes in the maintenance lane: `origin pkgs.tailscale.com follow` in the knob, by its site. Upgrading tailscaled drops the host's tailnet path, so it waits for a planned window, unless a security bulletin expedites it into an out-of-cycle one. Tailscale publishes them at `https://tailscale.com/security-bulletins`, with a feed at `https://tailscale.com/security-bulletins/index.xml` (read 2026-10-02; the latest was TS-2026-011, 2026-08-18). Whoever watches it should open one tracking issue per bulletin in the image owner's repo (the knob's `image-owner`), which fans out to the hosts that run Tailscale. Each host takes the fix in an expedited run, `apply.sh --lane origin:pkgs.tailscale.com`. The run isn't done until `tailscale version --daemon` prints a `Daemon:` line that matches its `Client:` line, or the reprobe's `updates.tailscale.daemon_version` matches its `version`: until tailscaled restarts, the old one is what runs. Plain `tailscale version` reads only the client, and never warns ([run.md](../run.md#3-the-apply-in-held-steps)). Tailscale's own auto-update would skip all of that, so the probe reports it ([policy.md](../policy.md)).
 
+**Scope Tailscale's origin with apt pins**, as every followed origin is ([policy.md](../policy.md#two-lanes)): a `Package: *` pin for its site below 500, and a package pin above 500 for `tailscale` and for `tailscale-archive-keyring`, which apt installed with it. In a file under `/etc/apt/preferences.d/`:
+
+```
+Package: *
+Pin: origin pkgs.tailscale.com
+Pin-Priority: 100
+
+Package: tailscale tailscale-archive-keyring
+Pin: origin pkgs.tailscale.com
+Pin-Priority: 600
+```
+
+Measured on noble with apt 2.8.3 against Tailscale's own repository (2026-10-05). Unpinned, the probe reported `unscoped:pkgs.tailscale.com` and both packages as `unpinned:`. With `tailscale` pinned alone, the keyring was still `unpinned:`. With both pinned, it reported neither, and apt still took a pending `tailscale`.
+
 `20auto-upgrades` may say `1`/`1` while all of the above holds. Read the effective value with `apt-config shell E APT::Periodic::Enable`, never the file.
 
 ## Packages that restart their own services

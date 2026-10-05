@@ -833,8 +833,10 @@ base image, or an owner-approved remedy the profile documents.
 
     Every host that follows Tailscale's origin without pins will report
     both findings at its step 8b run: `unscoped:pkgs.tailscale.com` (or
-    `unscoped:Tailscale`) and `unpinned:tailscale`. The fix is the same
-    two pins, or an exception that says why not.
+    `unscoped:Tailscale`), and `unpinned:` for `tailscale` and for
+    `tailscale-archive-keyring`, which apt installs with it. The fix is the
+    pins the exe.dev profile gives (CR 182), or an exception that says why
+    not.
 
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
