@@ -74,6 +74,14 @@ def after(flag):
     return args[args.index(flag) + 1]
 
 
+# A read a test breaks: its key is the command, or for dpkg-query its mode.
+read = cmd
+if cmd == "dpkg-query":
+    read = "Conffiles" if len(args) > 2 and "Conffiles" in args[2] else args[0]
+if read in db.get("broken", {}):
+    print(db["broken"][read], file=sys.stderr)
+    sys.exit(2)
+
 if cmd == "dpkg-query":
     if args[0] == "-W" and "Conffiles" in args[2]:
         for n in args[3:]:
@@ -90,9 +98,14 @@ if cmd == "dpkg-query":
             sys.exit(1)
         print("\n".join(p.get("files", [])))
     elif args[0] == "--control-show":
+        # As noble's dpkg-query 1.22 answers each (measured 2026-10-05).
         p = pk.get(args[1])
-        if not p or "postrm" not in p:
-            sys.exit(1)
+        if not p:
+            print("dpkg-query: error: package '%s' is not installed" % args[1], file=sys.stderr)
+            sys.exit(2)
+        if "postrm" not in p:
+            print("dpkg-query: error: control file 'postrm' does not exist", file=sys.stderr)
+            sys.exit(2)
         sys.stdout.write(p["postrm"])
     sys.exit(0)
 if cmd == "apt-cache":
@@ -667,6 +680,56 @@ def test_the_plan_shows_what_a_purge_drags_along_and_deletes(tmp_path):
     host = _host(tmp_path / "n", NGINX, "nginx")
     out = host.plan("nginx")
     assert [p["package"] for p in out["packages"]["purge"]] == ["nginx", "nginx-common"]
+
+
+@pytest.mark.parametrize(
+    "read, error",
+    [
+        ("--control-show", "'s purge script couldn't be read: E: lock"),
+        ("-L", "dpkg-query -L "),
+        ("Conffiles", "dpkg-query couldn't read the conffiles: E: lock"),
+    ],
+)
+def test_a_read_the_plan_stands_on_writes_no_plan(tmp_path, read, error):
+    # CR 190: a postrm, unit list or conffiles list it couldn't read was
+    # taken as none. An unread postrm would let a purge delete a data path
+    # nobody named.
+    host = _host(tmp_path, POSTGRES, "postgres")
+    host.host_state["broken"] = {read: "E: lock"}
+    out = host.plan("postgres", rc=1)
+    assert set(out) == {"prune_plan", "error"}
+    assert any(error in e for e in out["error"]), out["error"]
+    assert not (tmp_path / "postgres.plan").exists()
+
+
+@pytest.mark.parametrize(
+    "read, unread",
+    [
+        (
+            "apt-cache",
+            "what else depends on postgresql-16: apt-cache rdepends failed (E: lock)",
+        ),
+        ("debconf-show", "debconf's answers: debconf-show failed (E: lock)"),
+    ],
+)
+def test_a_read_the_plan_only_shows_is_not_read_never_none(tmp_path, read, unread):
+    host = _host(tmp_path, POSTGRES, "postgres")
+    host.host_state["broken"] = {read: "E: lock"}
+    out = host.plan("postgres")
+    assert unread in out["not_read"], out["not_read"]
+
+
+def test_a_purge_whose_purge_script_cant_be_read_is_refused(tmp_path):
+    host = _host(tmp_path, POSTGRES, "postgres").declare(
+        f"removed:postgres {PAST} soaked"
+    )
+    host.plan("postgres")
+    host.host_state["broken"] = {"--control-show": "E: lock"}
+    out = host.prune("purge", "--purge-data", "/var/lib/postgresql", rc=3)
+    assert any(
+        "'s purge script couldn't be read: E: lock" in r for r in out["refused"]
+    ), out["refused"]
+    assert host.changes() == []
 
 
 @pytest.mark.parametrize(

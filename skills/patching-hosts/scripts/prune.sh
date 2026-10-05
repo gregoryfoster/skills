@@ -399,7 +399,10 @@ gate_purge_scripts() {
   for l in ${D_PURGE[@]+"${D_PURGE[@]}"}; do n="$n ${l%% *}"; done
   # A word list, each a package name.
   # shellcheck disable=SC2086
-  purge_deletes $n
+  if ! purge_deletes $n; then
+    refuse "$PD_WHY: it may delete a data path, so no purge runs until it's read"
+    return 0
+  fi
   for i in ${PD_PKG[@]+"${!PD_PKG[@]}"}; do
     for p in $D_DATA; do
       case ${PD_TEXT[$i]} in *"$p"*) ;; *) continue ;; esac

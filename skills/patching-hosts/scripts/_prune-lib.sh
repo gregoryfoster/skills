@@ -129,12 +129,18 @@ apt_sim() {  # <remove|purge> <package>...
 # The units the packages ship: sockets, timers and paths first, so none
 # starts the service again once it's stopped, then services. A template's
 # loaded instances stand in for it: postgresql@.service is postgresql@16-main.
-UNITS=()
+# A list it couldn't read returns 1 with UNITS_WHY: no unit is never what
+# a failed read says.
+UNITS=() UNITS_WHY=""
 units_of() {  # <package>...
   local _uo_p _uo_out _uo_f _uo_u _uo_i _uo_l _uo_x _uo_first="" _uo_last=""
-  UNITS=()
+  UNITS=() UNITS_WHY=""
   for _uo_p in "$@"; do
     capture _uo_out dpkg-query -L "$_uo_p"
+    if [ "$CAP_RC" -ne 0 ]; then
+      UNITS_WHY="dpkg-query -L $_uo_p failed: ${CAP_ERR:-exit $CAP_RC}"
+      return 1
+    fi
     while IFS= read -r _uo_f; do
       case $_uo_f in
         */systemd/system/*/*) continue ;;
@@ -145,6 +151,10 @@ units_of() {  # <package>...
       case $_uo_u in
         *@.*)
           capture _uo_l systemctl list-units --all --plain --no-legend --full -- "${_uo_u%%@*}@*.${_uo_u##*.}"
+          if [ "$CAP_RC" -ne 0 ]; then
+            UNITS_WHY="systemctl couldn't list $_uo_u's instances: ${CAP_ERR:-exit $CAP_RC}"
+            return 1
+          fi
           while read -r _uo_i _uo_x; do
             [ -n "$_uo_i" ] || continue
             in_words "$_uo_i" "$_uo_first $_uo_last" || _uo_last="$_uo_last $_uo_i"
@@ -165,13 +175,20 @@ units_of() {  # <package>...
 # itself before it asks, and with no terminal nothing answers, so a false
 # answer set beforehand keeps nothing (measured on noble).
 PRUNE_RM_RE='(^|[^[:alnum:]_-])(rm|rmdir|deluser|delgroup|userdel|groupdel)[[:space:]]'
-PD_PKG=() PD_LINE=() PD_TEXT=()
+# A package with no postrm has nothing to run: dpkg-query says "control
+# file 'postrm' does not exist" (exit 2, noble). Any other failure returns
+# 1 with PD_WHY, since an unread script may delete a data path.
+PD_PKG=() PD_LINE=() PD_TEXT=() PD_WHY=""
 purge_deletes() {  # <package>...
   local _pd_p _pd_x _pd_l _pd_n
-  PD_PKG=() PD_LINE=() PD_TEXT=()
+  PD_PKG=() PD_LINE=() PD_TEXT=() PD_WHY=""
   for _pd_p in "$@"; do
     capture _pd_x dpkg-query --control-show "$_pd_p" postrm
-    [ "$CAP_RC" -eq 0 ] || continue
+    if [ "$CAP_RC" -ne 0 ]; then
+      case $CAP_ERR in *"control file 'postrm' does not exist"*) continue ;; esac
+      PD_WHY="$_pd_p's purge script couldn't be read: ${CAP_ERR:-exit $CAP_RC}"
+      return 1
+    fi
     _pd_n=0
     while IFS= read -r _pd_l; do
       _pd_n=$((_pd_n + 1))
@@ -188,14 +205,18 @@ purge_deletes() {  # <package>...
 # redis-server's /etc/default/redis-server (measured on noble). A path with
 # whitespace can't be one word of an action: CONFFILES_UNSAVED names it.
 CONFFILE_RE='^ (/.*) ([0-9a-f]{32}|newconffile)( obsolete| remove-on-upgrade)*$'
-CONFFILES="" CONFFILES_UNSAVED=()
-conffiles_of() {  # <package>...
+CONFFILES="" CONFFILES_UNSAVED=() CONFFILES_WHY=""
+conffiles_of() {  # <package>...: returns 1 with CONFFILES_WHY when unread
   local _co_out _co_l _co_f _co_c _co_k
-  CONFFILES="" CONFFILES_UNSAVED=()
+  CONFFILES="" CONFFILES_UNSAVED=() CONFFILES_WHY=""
   [ "$#" -gt 0 ] || return 0
   # dpkg-query's own field, not a shell expansion.
   # shellcheck disable=SC2016
   capture _co_out dpkg-query -W -f '${Conffiles}\n' "$@"
+  if [ "$CAP_RC" -ne 0 ]; then
+    CONFFILES_WHY="dpkg-query couldn't read the conffiles: ${CAP_ERR:-exit $CAP_RC}"
+    return 1
+  fi
   while IFS= read -r _co_l; do
     [[ $_co_l =~ $CONFFILE_RE ]] || continue
     _co_f=${BASH_REMATCH[1]}
@@ -339,11 +360,17 @@ derive() {  # <name>
     for _d_line in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _d_pn="$_d_pn ${_d_line%% *}"; done
     # A word list, each a package name.
     # shellcheck disable=SC2086
-    conffiles_of $_d_pn
+    if ! conffiles_of $_d_pn; then
+      D_WHY=$CONFFILES_WHY
+      return 2
+    fi
     D_CONFFILES=$CONFFILES D_UNSAVED=(${CONFFILES_UNSAVED[@]+"${CONFFILES_UNSAVED[@]}"})
     # Word lists, each a package name.
     # shellcheck disable=SC2086
-    units_of $_d_names
+    if ! units_of $_d_names; then
+      D_WHY=$UNITS_WHY
+      return 2
+    fi
     D_UNITS=(${UNITS[@]+"${UNITS[@]}"})
     if [ "$1" = postgres ] && [ "$D_PRESENT" -eq 1 ]; then pg_clusters; fi
   fi

@@ -139,16 +139,19 @@ U_ActiveState="" U_UnitFileState="" U_FragmentPath=""
 NOT_READ=""
 not_read() { jpushs NOT_READ "$1"; }
 
-_rc=0
-derive "$component" || _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  echo "prune-plan: $D_WHY" >&2
+# A read the plan can't stand without: no plan, and exit 1.
+plan_error() {  # <why>
+  echo "prune-plan: $1" >&2
   printf '{"prune_plan": {"component": "%s", "host": "%s"}, "error": ' "$component" "$host"
   _e=""
-  jpushs _e "$D_WHY"
+  jpushs _e "$1"
   printf '[%s]}\n' "$_e"
   exit 1
-fi
+}
+
+_rc=0
+derive "$component" || _rc=$?
+if [ "$_rc" -ne 0 ]; then plan_error "$D_WHY"; fi
 
 # --- what it prints -----------------------------------------------------------
 J="" _x="" _y="" _n=0
@@ -216,7 +219,10 @@ _names=""
 for _p in ${D_PURGE[@]+"${D_PURGE[@]}"}; do _names="$_names ${_p%% *}"; done
 for _p in $D_ROOTS; do
   capture _x apt-cache rdepends --installed "$_p"
-  [ "$CAP_RC" -eq 0 ] || continue
+  if [ "$CAP_RC" -ne 0 ]; then
+    not_read "what else depends on $_p: apt-cache rdepends failed (${CAP_ERR:-exit $CAP_RC})"
+    continue
+  fi
   while read -r _l; do
     case $_l in '' | "$_p" | 'Reverse Depends:') continue ;; esac
     _l=${_l#|}
@@ -256,7 +262,7 @@ fi
 _a=""
 # A word list, each a package name.
 # shellcheck disable=SC2086
-purge_deletes $_names
+purge_deletes $_names || plan_error "$PD_WHY"
 for _i in ${PD_PKG[@]+"${!PD_PKG[@]}"}; do
   _e=""
   jadds _e package "${PD_PKG[$_i]}"
@@ -274,6 +280,10 @@ elif [ -n "$_names" ]; then
   # A word list, each a package name.
   # shellcheck disable=SC2086
   capture _x as_root debconf-show $_names
+  if [ "$CAP_RC" -ne 0 ]; then
+    not_read "debconf's answers: debconf-show failed (${CAP_ERR:-exit $CAP_RC})"
+    _x=""
+  fi
   while IFS= read -r _l; do
     [ -n "$_l" ] || continue
     words_of _y "${_l#\*}"
