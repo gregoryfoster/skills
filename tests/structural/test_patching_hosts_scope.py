@@ -23,6 +23,18 @@ What this file pins, against the plan's step 6e list:
 - an exception covers each; an origin apt doesn't list is checked against
   nothing; an unreadable package list is null and not_read, never [].
 
+Beyond that list:
+
+- an origin is as high as its highest release, and a four-digit priority
+  is still read;
+- both messages name the one-origin lane beside the maintenance lane (CR
+  183), and the remedy pins an installed version above 500 (CR 181);
+- an unread `apt-cache policy` leaves each followed origin's scope null
+  (CR 180), and `updates.origins` null (CR 185), each with a not_read,
+  never the shape of an origin apt doesn't list;
+- each not_read names the reading that failed, and how; an empty
+  installed list is said as such, not as a failure (CR 184).
+
 Measured on noble with apt 2.8.3 against NodeSource's node_22.x repository
 (2026-10-05): the release line read 500, then 100 and 499 under a
 `Package: *` pin, and a package pin was listed under "Pinned packages:" for
