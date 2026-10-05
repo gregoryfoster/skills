@@ -314,6 +314,20 @@ def test_a_launch_that_fails_schedules_nothing(host):
     assert not (host.run_dir / "reboot-chain.unit").exists()
 
 
+def test_a_chain_it_cant_record_is_never_launched(host):
+    # CR 189: recorded after the launch, a failed record left a scheduled
+    # reboot behind an exit 1 that says nothing is, and out of the
+    # earlier-chain gate's sight.
+    (host.run_dir / "reboot-chain.unit").mkdir()
+    out = host.reboot(rc=1)
+    assert not host.calls("systemd-run")
+    assert out["launched"]["fires_at"] is None
+    assert any(
+        "reboot-chain.unit couldn't be written: nothing is scheduled" in w
+        for w in out["launched"]["why"]
+    )
+
+
 # --- refusals ---------------------------------------------------------------------
 
 

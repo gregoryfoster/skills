@@ -457,21 +457,27 @@ else
   _now=$(date +%s) || _now=""
   is_int "$_now" || _now=$P_NOW
   _left=$((_fire - _now))
+  iso_utc _iso "$_fire"
   if [ "$_left" -lt 1 ]; then
     fail "the gate took $((_now - P_NOW)) s, the whole --delay of $delay s: nothing is scheduled. Run reboot-chain.sh again"
+  # Recorded before it's launched: a launched chain is always one the
+  # earlier-chain gate can see, and one recorded but never launched is
+  # inactive with no log, which that gate lets go again.
+  elif ! printf '%s %s\n' "$unit" "$_iso" | root_write "$run/reboot-chain.unit"; then
+    fail "$run/reboot-chain.unit couldn't be written: nothing is scheduled"
   else
     as_root systemd-run --unit="$unit" --on-active="$_left" --timer-property=AccuracySec=1s "$script" >&2 || _rc=$?
-    [ "$_rc" -eq 0 ] || fail "systemd-run exited $_rc: nothing is scheduled"
+    if [ "$_rc" -ne 0 ]; then
+      fail "systemd-run exited $_rc: nothing is scheduled"
+      as_root rm -f -- "$run/reboot-chain.unit" || true
+    fi
   fi
 fi
-iso_utc _iso "$_fire"
 jaddn _o exit "$_rc"
 jadds _o unit "$unit"
 jaddn _o on_active_seconds "$_left"
 if [ "${#FAILED[@]}" -eq 0 ]; then
   jadds _o fires_at "$_iso"
-  printf '%s %s\n' "$unit" "$_iso" | root_write "$run/reboot-chain.unit" ||
-    fail "$run/reboot-chain.unit couldn't be written: the chain is launched, unrecorded"
 else
   jadd _o fires_at null
 fi
