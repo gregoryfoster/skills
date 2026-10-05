@@ -130,6 +130,9 @@ def test_an_unpinned_followed_origin_and_its_package_are_findings(tmp_path):
     assert f[f"unscoped:{SITE}"]["kind"] == "deviation"
     assert f[f"unscoped:{SITE}"]["exception_what"] == f"unscoped:{SITE}"
     assert "at apt priority 500" in f[f"unscoped:{SITE}"]["message"]
+    # CR 183: the one-origin lane takes them too.
+    for fid in (f"unscoped:{SITE}", "unpinned:nodejs"):
+        assert f"a one-origin run (--lane origin:{SITE})" in f[fid]["message"]
     assert f["unpinned:nodejs"]["exception_what"] == "unpinned:nodejs"
     assert "only below 100" in f["unpinned:nodejs"]["message"]
     assert "pin its installed version above 500" in f["unpinned:nodejs"]["message"]

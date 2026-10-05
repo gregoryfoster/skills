@@ -1374,10 +1374,10 @@ evaluate_posture() {
   for i in ${SCOPE_KEY[@]+"${!SCOPE_KEY[@]}"}; do
     key=${SCOPE_KEY[$i]}
     if is_int "${SCOPE_PRIO[$i]}" && [ "${SCOPE_PRIO[$i]}" -ge 500 ]; then
-      finding deviation "unscoped:$key" "unscoped:$key" "The followed origin $key is at apt priority ${SCOPE_PRIO[$i]}, at least Ubuntu's 500, so a package it serves under a name this host already has, at a higher version, replaces Ubuntu's in the maintenance lane, not only what it was added for. Scope it: a Package: * pin for its site below 500, and a package pin above 500 for each package it was added for (policy.md)."
+      finding deviation "unscoped:$key" "unscoped:$key" "The followed origin $key is at apt priority ${SCOPE_PRIO[$i]}, at least Ubuntu's 500, so a package it serves under a name this host already has, at a higher version, replaces Ubuntu's in the maintenance lane and in a one-origin run (--lane origin:$key), not only what it was added for. Scope it: a Package: * pin for its site below 500, and a package pin above 500 for each package it was added for (policy.md)."
     fi
     for pk in ${SCOPE_UNPINNED[$i]}; do
-      finding deviation "unpinned:$pk" "unpinned:$pk" "$pk is installed, and its candidate comes from the followed origin $key, but no package pin names it: the maintenance lane takes its upgrades, though nothing declares the origin was added for it, and a Package: * pin stops that only below 100. Pin it above 500 if the origin was added for it. To keep it where it is, pin its installed version above 500: a lower pin can tie the newer version, which then wins, and a package pin below 100 lowers the installed version too (policy.md)."
+      finding deviation "unpinned:$pk" "unpinned:$pk" "$pk is installed, and its candidate comes from the followed origin $key, but no package pin names it: the maintenance lane and a one-origin run (--lane origin:$key) take its upgrades, though nothing declares the origin was added for it, and a Package: * pin stops that only below 100. Pin it above 500 if the origin was added for it. To keep it where it is, pin its installed version above 500: a lower pin can tie the newer version, which then wins, and a package pin below 100 lowers the installed version too (policy.md)."
     done
   done
   # Either posture: Tailscale belongs in the maintenance lane, or in an
