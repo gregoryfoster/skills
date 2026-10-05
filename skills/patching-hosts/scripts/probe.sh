@@ -1576,6 +1576,13 @@ read_dry_run() {
     not_read "the exact security count and the dry run's cost: only with --dry-run-into DIR, which downloads the whole set as root"
     return 0
   fi
+  # apply.sh counts with DIR/summary: an earlier one goes first, so a dry
+  # run that doesn't run, or fails, never leaves another's behind.
+  rm -f -- "$dryrun/summary" 2>/dev/null || true
+  if [ -e "$dryrun/summary" ]; then
+    finding unknown dry-run "" "the dry run didn't run: an earlier $dryrun/summary couldn't be removed, and apply.sh would count with it. Remove it, then count again."
+    return 0
+  fi
   if [ "$P_PRIV" = none ]; then
     finding unknown dry-run "" "--dry-run-into needs root, and sudo -n needs a password: the dry run didn't run."
     return 0

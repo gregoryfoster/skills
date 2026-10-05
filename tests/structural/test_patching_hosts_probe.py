@@ -1761,6 +1761,25 @@ def test_without_root_the_root_only_readings_are_named_not_read(tmp_path):
     assert not h.calls("needrestart")
 
 
+@pytest.mark.parametrize("case", ["no-root", "unknown-lane"])
+def test_a_dry_run_that_doesnt_run_leaves_no_earlier_summary(tmp_path, case):
+    # CR 191: exit 0 with a dry-run finding, and an earlier summary in DIR
+    # that apply.sh would have counted with.
+    h = Host(tmp_path, sudo=case != "no-root").knob(
+        "class production\nposture scheduled\n"
+    )
+    scratch = h.tmp / "dry"
+    scratch.mkdir()
+    (scratch / "summary").write_text(
+        f"began={h.now - 600}\nexit=0\ncount=3\nwall_seconds=60\n"
+    )
+    args = ["--lane", "origin:pkgs.example.com"] if case == "unknown-lane" else []
+    out = h.run("--dry-run-into", str(scratch), *args)
+    assert _finding(out, "dry-run")["kind"] == "unknown"
+    assert not (scratch / "summary").exists()
+    assert not h.calls("unattended-upgrade")
+
+
 def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()
