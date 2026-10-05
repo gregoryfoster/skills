@@ -91,6 +91,8 @@ def test_the_skill_files_a_vendored_hosts_entry_upstream() -> None:
     # not write its entry into the submodule copy (process-log.md, "Adding an
     # entry").
     skill = (LOG.parent / "SKILL.md").read_text()
-    step = next(line for line in skill.splitlines() if line.startswith("7. **Record**"))
+    prefix = "7. **Record**"
+    step = next((line for line in skill.splitlines() if line.startswith(prefix)), "")
+    assert step, f"SKILL.md has no step starting {prefix!r}: move this test with it"
     assert "process-log.md" in step
     assert "vendored" in step and "upstream" in step
