@@ -1044,8 +1044,8 @@ read_origins() {
 # Ubuntu's stayed. But an installed NodeSource nodejs was still upgraded at
 # 100, and kept only at 99: only a package pin says which ones it serves.
 # A package pin sets the installed version's priority too, so one at 99
-# didn't keep it; a pin on its installed version did above 500, and at 500
-# tied the newer one, which won.
+# didn't keep it. A pin on its installed version kept it at 501; at 500
+# with no catch-all, and at 100 under one, it tied the newer one, which won.
 SCOPE_KEY=() SCOPE_SITES=() SCOPE_PRIO=() SCOPE_UNPINNED=()
 SCOPE_READ=""  # 1 when every installed package's candidate was read
 POLICY_WHY="not read"  # why apt-cache policy's own output isn't a reading, or empty
