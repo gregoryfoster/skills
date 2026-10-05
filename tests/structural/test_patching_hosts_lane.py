@@ -41,7 +41,9 @@ counted nothing, or would leave one of the origin's upgrades (CR 170), is
 refused, and the probe's dry run names what it would leave; a bulk with nothing from the origin pending, a
 site apt-cache policy doesn't list included, fails before any hold; and a
 step fails when apt still has one of its origin packages pending afterwards,
-or can't be read, the bulk's and a held step's alike.
+or can't be read, the bulk's and a held step's alike. The probe's one-origin
+dry run doesn't run when it can't tell the origin's packages from the rest:
+an unread apt-cache policy, or a site it lists no origin at (CR 188).
 
 Measured on noble with unattended-upgrade 2.9.1: an APT_CONFIG file's
 Origins-Pattern adds to the host's Allowed-Origins, `site=` is a key it
@@ -597,6 +599,48 @@ def test_the_probes_one_origin_dry_run_names_what_it_would_leave(
     d = host.run("--dry-run-into", str(scratch), "--lane", TS)["pending"]["dry_run"]
     assert (d["count"], d["origin_left"]) == (count, left)
     assert f"origin_left={' '.join(left)}\n" in (scratch / "summary").read_text()
+
+
+@pytest.mark.parametrize(
+    "case, why",
+    [
+        (
+            "policy-fails",
+            "apt-cache policy exited 100: E: The package lists or status file"
+            " could not be parsed or opened., so which pending packages come"
+            " from pkgs.tailscale.com is unknown.",
+        ),
+        (
+            "site-unlisted",
+            "apt-cache policy lists no origin at pkgs.tailscale.com, so nothing"
+            " from it is pending: is its source configured?",
+        ),
+    ],
+)
+def test_the_probes_one_origin_dry_run_needs_its_site_read(tmp_path, case, why):
+    # CR 188: a site maps to its o= names through apt-cache policy. Without
+    # them every pending package would be skipped and nothing counted, as if
+    # read.
+    host = ProbeHost(tmp_path).knob(
+        "class production\nposture scheduled\norigin pkgs.tailscale.com follow\n"
+    )
+    host.on("apt-get", "-s *dist-upgrade", EXTRA)
+    if case == "policy-fails":
+        host.on(
+            "apt-cache",
+            "*policy",
+            rc=100,
+            stderr="E: The package lists or status file could not be parsed or"
+            " opened.\n",
+        )
+    else:
+        host.on("apt-cache", "*policy", POLICY[POLICY.index(" 500 http://ports") :])
+    host.on("unattended-upgrade", "--dry-run -d", "Packages that will be upgraded:\n")
+    out = host.run("--dry-run-into", str(host.tmp / "dry"), "--lane", TS)
+    [f] = [f for f in out["findings"] if f["id"] == "dry-run"]
+    assert f["kind"] == "unknown"
+    assert f["message"] == f"the {TS} lane's dry run didn't run: {why}"
+    assert not host.calls("unattended-upgrade")
 
 
 # --- Tailscale's own auto-update ----------------------------------------------------

@@ -1596,7 +1596,20 @@ read_dry_run() {
         finding unknown dry-run "" "the $lane lane's dry run didn't run: the pending set couldn't be simulated, so what it would skip is unknown."
         return 0
       fi
+      # A site maps to its o= names through apt-cache policy: unread, or
+      # listing no origin there, nothing would be told from the rest, and
+      # the dry run would skip everything and count nothing.
+      case ${lane#origin:} in *.*)
+        if [ -n "$POLICY_WHY" ]; then
+          finding unknown dry-run "" "the $lane lane's dry run didn't run: $POLICY_WHY, so which pending packages come from ${lane#origin:} is unknown."
+          return 0
+        fi ;;
+      esac
       origin_names lnames "${lane#origin:}" "$POLICY_OUT"
+      if [ "$lnames" = "|" ]; then
+        finding unknown dry-run "" "the $lane lane's dry run didn't run: apt-cache policy lists no origin at ${lane#origin:}, so nothing from it is pending: is its source configured?"
+        return 0
+      fi
       origin_split lkeep lskip "$lnames" "$SIM_DIST_OUT" ;;
   esac
   {
