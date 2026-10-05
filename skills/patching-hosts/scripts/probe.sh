@@ -1000,10 +1000,12 @@ read_origins() {
   local out line v os="" oa="" osite third po seen="" third_seen=""
   local -a kv=()
   R_ORIGINS=""
+  POLICY_WHY="apt-cache isn't installed"
   have apt-cache || return 0
   capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy
   # The one-origin lane's dry run maps a site to its o= names from it.
   POLICY_OUT=$out
+  if [ "$CAP_RC" -eq 0 ]; then POLICY_WHY=""; else POLICY_WHY="apt-cache policy exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"; fi
   while IFS= read -r line; do
     case $line in
       *" release "*)
@@ -1045,6 +1047,7 @@ read_origins() {
 # didn't keep it; a pin on its installed version did.
 SCOPE_KEY=() SCOPE_SITES=() SCOPE_PRIO=() SCOPE_UNPINNED=()
 SCOPE_READ=""  # 1 when every installed package's candidate was read
+POLICY_WHY="not read"  # why apt-cache policy's own output isn't a reading, or empty
 R_SCOPE=""
 read_scope() {
   local r line v o="" prio="" key sites max pins="" follow="" out pkg="" cand="" incand=0 host i e
@@ -1098,7 +1101,12 @@ read_scope() {
   # are indented under it, a URL's host being the site. A version line has
   # 5 columns before it; a source line right-aligns its priority after 7 or
   # more, so 1001 has 7.
-  if [ -n "${follow// /}" ]; then
+  # Without the policy, no origin's sites or priority are known: each is
+  # unread, never an origin apt doesn't list.
+  if [ -n "$POLICY_WHY" ] && [ "${#SCOPE_KEY[@]}" -gt 0 ]; then
+    not_read "each followed origin's scope: $POLICY_WHY"
+  fi
+  if [ -z "$POLICY_WHY" ] && [ -n "${follow// /}" ]; then
     SCOPE_READ=0
     if have dpkg-query && have apt-cache; then
       capture out dpkgq -W -f "$DPKG_PKG_STATUS"
@@ -1149,6 +1157,13 @@ read_scope() {
   for i in ${SCOPE_KEY[@]+"${!SCOPE_KEY[@]}"}; do
     e=""
     jadds e origin "${SCOPE_KEY[$i]}"
+    if [ -n "$POLICY_WHY" ]; then
+      jadd e sites null
+      jadd e priority null
+      jadd e unpinned null
+      jpush R_SCOPE "{$e}"
+      continue
+    fi
     json_list v "${SCOPE_SITES[$i]}"
     jadd e sites "$v"
     jaddn e priority "${SCOPE_PRIO[$i]}"

@@ -290,3 +290,38 @@ def test_an_unreadable_package_list_is_null_not_empty(tmp_path, fails):
         "which installed packages a followed origin serves" in n
         for n in out["not_read"]
     )
+
+
+@pytest.mark.parametrize("case", ["fails", "absent"])
+def test_an_unread_policy_is_null_never_an_origin_apt_doesnt_list(tmp_path, case):
+    # CR 180: without apt-cache policy's own output, no origin's sites or
+    # priority are known, and a finding can't be ruled out.
+    host = _host(tmp_path)
+    if case == "fails":
+        host.cases["apt-cache"] = []
+        host.on(
+            "apt-cache",
+            "*policy",
+            rc=100,
+            stderr="E: The package lists or status file could not be parsed or opened.\n",
+        )
+        why = "apt-cache policy exited 100: E: The package lists"
+    else:
+        host.absent("apt-cache")
+        why = "apt-cache isn't installed"
+    out = host.run()
+    assert _scope(out) == [
+        {"origin": SITE, "sites": None, "priority": None, "unpinned": None}
+    ]
+    assert any(
+        n.startswith("each followed origin's scope: " + why) for n in out["not_read"]
+    ), out["not_read"]
+    assert not [a for _, a, _ in host.calls("dpkg-query") if a.endswith("\\n")]
+
+
+def test_an_unread_policy_with_no_followed_origin_says_nothing_of_scope(tmp_path):
+    host = _host(tmp_path, knob="class production\nposture scheduled\n")
+    host.absent("apt-cache")
+    out = host.run()
+    assert _scope(out) == []
+    assert not [n for n in out["not_read"] if "followed origin" in n]
