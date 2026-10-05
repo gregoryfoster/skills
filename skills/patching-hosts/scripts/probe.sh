@@ -149,11 +149,20 @@ if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then
   echo "ERROR --post-boot takes neither --refresh-into nor --dry-run-into" >&2
   exit 2
 fi
+# Under --root, the tree's own name: never the probing machine's, whose
+# knob sections aren't the tree's. A CR or blank a file ends with isn't part
+# of the name.
 if [ -z "$host" ]; then
-  if [ "$root" != / ] && [ -r "$root/etc/hostname" ]; then
-    IFS= read -r host <"$root/etc/hostname" || true
-  else
+  if [ "$root" = / ]; then
     host=$(hostname)
+  else
+    if [ -r "$root/etc/hostname" ]; then IFS= read -r host <"$root/etc/hostname" || true; fi
+    host=${host#"${host%%[![:space:]]*}"}
+    host=${host%%[[:space:]]*}
+    if [ -z "$host" ]; then
+      echo "ERROR --root $root has no readable etc/hostname naming the host: pass --host" >&2
+      exit 2
+    fi
   fi
 fi
 if [ -z "$config" ]; then

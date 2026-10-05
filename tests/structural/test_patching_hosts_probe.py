@@ -1780,6 +1780,48 @@ def test_a_dry_run_that_doesnt_run_leaves_no_earlier_summary(tmp_path, case):
     assert not h.calls("unattended-upgrade")
 
 
+@pytest.mark.parametrize(
+    "hostname, rc, host",
+    [
+        (None, 2, None),
+        ("", 2, None),
+        ("web-2\r\n", 0, "web-2"),
+        (" web-2 \n", 0, "web-2"),
+    ],
+    ids=["missing", "empty", "crlf", "blanks"],
+)
+def test_a_root_trees_host_is_its_own_never_the_probing_machines(
+    tmp_path, hostname, rc, host
+):
+    # CR 192: under --root, a tree without etc/hostname took `hostname`,
+    # the machine running the probe, and so its knob sections.
+    h = Host(tmp_path).knob("class production\nposture automatic\n")
+    if hostname is not None:
+        h.write("etc/hostname", hostname)
+    r = h.execute(
+        [
+            "bash",
+            str(PROBE),
+            "--root",
+            str(h.root),
+            "--config",
+            str(h.knob_path),
+            "--repo",
+            str(h.repo),
+            "--today",
+            TODAY,
+            "--session-pid",
+            "4242",
+        ],
+        rc,
+    )
+    if rc:
+        assert "has no readable etc/hostname naming the host: pass --host" in r.stderr
+        assert not h.calls("hostname")
+    else:
+        assert r["knob"]["host"] == host
+
+
 def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()
