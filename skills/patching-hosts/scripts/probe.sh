@@ -525,9 +525,14 @@ read_journal() {
 
 # The session's own processes end below the platform's agent: exe.dev's
 # exe-init stays at -1000 and, since its fix, starts each session's
-# processes at 0 (CannObserv/replicator#125, #353). Its adj is reported
-# apart, so the finding names the session's own -1000 only.
-PLATFORM_AGENTS="exe-init"
+# processes at 0 (CannObserv/replicator#125, #353). On the older layouts the
+# session runs under exe.dev's sshd instead, at -1000 on every build, while
+# sshd-session and the session read 0 on a fixed one (#346, 13 hosts,
+# 2026-10-01). Stock noble's sshd reads 0 and so does its session (measured
+# 2026-10-06), so stopping there changes nothing on a stock host (CR 201).
+# The agent's adj is reported apart, so the finding names the session's
+# own -1000 only.
+PLATFORM_AGENTS="exe-init sshd"
 read_session() {
   local o="" chain="" e pid=$SESSION_PID n=0 ppid adj comm line min="" complete=0 last="" agent="" below=1
   while [ -n "$pid" ] && [ "$n" -lt 64 ]; do

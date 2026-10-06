@@ -1072,6 +1072,25 @@ def test_the_platform_agents_own_adj_is_reported_apart_from_the_sessions(host):
     assert _finding(out, "session:adj")["kind"] == "risk"
 
 
+@pytest.mark.parametrize("adj, finds", [(0, False), (-1000, True)])
+def test_on_the_older_layouts_the_session_ends_below_exe_devs_sshd(host, adj, finds):
+    # CR 201: exe.dev's sshd is -1000 on every build; sshd-session and the
+    # session follow the build (#346 section 4).
+    host.chain(
+        [
+            (4242, "bash", adj),
+            (4100, "sshd-session", adj),
+            (300, "sshd", -1000),
+            (1, "systemd", 0),
+        ]
+    )
+    out = host.run()
+    s = out["environment"]["session"]
+    assert s["min_adj"] == adj
+    assert s["platform_agent"] == {"pid": 300, "comm": "sshd", "adj": -1000}
+    assert ("session:adj" in _ids(out)) is finds
+
+
 def test_a_chain_that_leaves_the_pid_namespace_says_so(host):
     # Under docker exec the session's parent is outside the container, so its
     # PPid reads 0 before PID 1 is reached.
