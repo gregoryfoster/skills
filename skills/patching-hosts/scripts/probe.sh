@@ -16,43 +16,68 @@ installs, removes, holds, restarts and configures nothing. The readings, and
 the mistake each one prevents: references/readings.md.
 
 Options:
-  --config FILE       the knob (default: .skills/patching-hosts at the repo root,
-                      or in the current directory outside a repo)
-  --host NAME         whose knob sections apply (default: `hostname`, or
-                      DIR/etc/hostname under --root)
+  --config FILE       the knob (default: .skills/patching-hosts at the root of
+                      the repo around the current directory, or in the
+                      current directory outside a repo; never --repo's)
+  --host NAME         whose knob sections apply (default: `hostname`; under
+                      --root, DIR/etc/hostname's first word, and without one,
+                      pass --host)
   --root DIR          read DIR's files instead of /'s: an image tree, or a
                       fixture. What only a running system can answer
-                      (systemctl, journalctl, docker, psql, needrestart, knob
-                      commands) is read only when DIR/run/systemd/system exists
+                      (systemctl, journalctl, docker, psql, needrestart, ss,
+                      redis-cli, tailscale, /proc, knob commands, among
+                      others) is read only when DIR/run/systemd/system
+                      exists, and then from the machine the probe runs on
   --repo DIR          the repo whose deploy/ units and docs may name an engine
                       (default: the repo around the current directory)
   --refresh-into DIR  refresh apt's lists into DIR/lists first, never into
-                      /var/lib/apt/lists, and count against them
-  --dry-run-into DIR  count the security set exactly with unattended-upgrade
-                      --dry-run, as root, with apt's cache in DIR/archives. It
-                      downloads the whole set (290 MB and 9 minutes on one
-                      host) and leaves it there for you to remove. Its cost
-                      goes in DIR/summary, which apply.sh --dry-run reads
+                      /var/lib/apt/lists, and count against them (the ESM
+                      count, from pro, still reads the host's own lists)
+  --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
+                      as root, with apt's cache in DIR/archives. It downloads
+                      the whole set (290 MB and 9 minutes on one host) and
+                      leaves it there for you to remove. The count is the
+                      security set exactly only while pending.dry_run's
+                      security_only is true; wider origins, or another lane,
+                      put other packages on the same line. DIR/summary holds
+                      when it began, its exit, count, wall time, lane and
+                      security_only, and in the one-origin lane what it
+                      would leave, which apply.sh --dry-run reads; its
+                      download size,
+                      memory and free disk are in the JSON. An earlier
+                      summary is removed first. A dry run that doesn't run
+                      (no root, a lane the knob doesn't resolve, an
+                      unsimulated set, an origin's site unread) still exits
+                      0: it's a finding with id dry-run, and leaves no
+                      summary
   --lane LANE         the dry run's selection, as apply.sh --lane takes it:
                       security (the default), what the host's
                       unattended-upgrades origins take; maintenance, which
                       adds Ubuntu's -updates and each origin the knob
-                      follows; or origin:<key>, one followed origin and
+                      follows; or origin:<origin>, one followed origin and
                       nothing else. With --dry-run-into only
-  --post-boot         the checks after a reboot (run.md §6), not the readings
-                      before a run
+  --post-boot         the checks after a reboot (run.md section 6), not the
+                      readings before a run. Takes neither --refresh-into nor
+                      --dry-run-into
   --session-pid PID   where the session's chain to PID 1 starts (default: the
                       probe itself)
-  --today DATE        the date exceptions expire against (default: today, UTC)
+  --today YYYY-MM-DD  the date exceptions expire against (default: today, UTC)
   -h, --help          show this help
 
+--refresh-into and --dry-run-into need a running system: without
+DIR/run/systemd/system, the probe exits 2 and reads nothing.
+
 Top-level keys: probe, knob, environment, then updates, pending, impact and
-dormant (or post_boot), then findings, excepted and not_read. A finding is a
-deviation from the posture, a provisioning leftover, a risk a run must plan
-around, a reading the posture depends on that couldn't be taken, a dormant
-component, a failed post-boot check, or a knob problem. One an unexpired
-exception covers is listed under excepted instead. A reading the probe
-couldn't take is null, never its default.
+dormant (or post_boot), then findings, excepted and not_read. A finding's
+kind is one of: deviation, from the posture; leftover, from provisioning;
+risk, which a run must plan around; unknown, a reading the posture depends
+on that couldn't be taken or isn't set anywhere; dormant, a component
+nothing uses; post-boot, a failed check after a reboot; knob, a problem with
+the knob. A finding that names an exception_what, and that an unexpired
+exception covers, is listed under excepted instead; one with none takes no
+exception. A dormant component the owner keeps (keep:, or a prune stage) is
+no finding at all: its dormant entry's verdict is kept. A reading the probe
+couldn't take is null, never its default, and not_read says why.
 
 environment.profile names the environment profile the host matches
 (references/environments/) and its image generation, read from the
@@ -60,8 +85,10 @@ profile's markers. Its name is null when none matches: read SKILL.md's
 "Hosts no profile matches".
 
 Exit codes:
-  0  read; act on findings
-  2  usage error, an unreadable knob, or a library missing
+  0  read; act on findings. A dry run asked for may not have run: look for
+     a finding with id dry-run
+  2  usage error (a host name that isn't one included), an unreadable knob,
+     or a library missing: nothing on stdout
   *  any other code: the probe failed; don't trust stdout
 USAGE
 }
