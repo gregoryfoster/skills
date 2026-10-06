@@ -9,8 +9,11 @@ set -euo pipefail
 
 gate_lib_usage() {
   cat <<'USAGE'
-Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
-                         reboot-chain.sh; running it does nothing)
+Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh,
+                         reboot-chain.sh, prune-plan.sh and prune.sh;
+                         running it does nothing)
+
+The gate_* functions add their readings to the caller's J_GATE.
 
   refuse WHY / fail WHY     add to REFUSED / FAILED; fail also tells stderr,
                             after the caller's ME
@@ -27,8 +30,11 @@ Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
   sq VAR TEXT               TEXT quoted for sh
   gate_span SECONDS         refuses a span, now to now plus SECONDS, that
                             isn't inside one window or meets a quiet range;
-                            sets SPAN_S and SPAN_E. Empty: unknown, no span
+                            sets SPAN_S and SPAN_E. Not a number: unknown,
+                            and SPAN_S and SPAN_E are left as they were
   gate_inflight             refuses unless every inflight command prints 0
+                            and exits 0, and when there's no invoking user
+                            to run the knob's inflight or health commands as
   chain_active UNIT         whether a run's reboot chain is scheduled or
                             running; CHAIN_STATE says which unit, and how
   package_manager VAR       which package manager runs now, or empty
@@ -41,6 +47,10 @@ Usage: . _gate-lib.sh    (sourced by apply.sh, recovery-point.sh and
   redis_owned UNIT          whether redis-cli at REDIS_ARGS reaches the unit's
                             own process: 1 for another or none, 2 when the
                             unit isn't running, each with REDIS_WHY
+  PKG_RE                    the pgrep pattern unattended-upgrade is matched
+                            by, at its path
+  REDIS_PW_SED              the sed program that reads a Redis file's
+                            password as Redis does
 USAGE
 }
 

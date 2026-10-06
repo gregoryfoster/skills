@@ -9,29 +9,36 @@ set -euo pipefail
 
 probe_lib_usage() {
   cat <<'USAGE'
-Usage: . _probe-lib.sh    (sourced by probe.sh, recovery-point.sh, apply.sh and
-                          reboot-chain.sh; running it does nothing)
+Usage: . _probe-lib.sh    (sourced by probe.sh, recovery-point.sh, apply.sh,
+                          reboot-chain.sh, prune-plan.sh and prune.sh;
+                          running it does nothing)
 
 The primitives these scripts reach a host through:
   probe_init ROOT           sets P_ROOT ("" for /), P_LIVE, P_EUID, P_USER,
                             P_PRIV (root, sudo or none), P_KNOB_USER, P_NOW
                             and P_TMP, a scratch directory the caller removes
-  as_root CMD...            runs CMD as root, directly or through sudo -n,
-                            with LC_ALL=C; returns 126 without running it
-                            when neither works
+  as_root CMD...            runs CMD as root, directly or through sudo -n
+                            (which sets LC_ALL=C again past sudo's
+                            env_reset); returns 126 without running it when
+                            neither works
   as_user USER CMD...       runs CMD as USER, the same way
   knob_cmd CMD              runs a knob command with sh -c, never as root,
                             under timeout KNOB_CMD_TIMEOUT where timeout(1)
                             exists, with a KILL KNOB_CMD_KILL_AFTER seconds
-                            later; 124 means it timed out
+                            later; 124 means it timed out, and 126 that
+                            there's no knob user to run it as
   have CMD                  whether CMD is on PATH
   capture VAR CMD...        VAR := CMD's stdout, CAP_RC := its status,
                             CAP_ERR := its first stderr line
+  is_int VALUE              whether VALUE is an integer, - allowed
   in_words WORD LIST        whether WORD is in a space-separated LIST
   glob_match NAME GLOBS     whether NAME matches one of space-separated GLOBS
   unit_name VAR UNIT        a knob's unit, with .service when it has no suffix
   widens ENTRY              whether an unattended-upgrades origin entry takes
-                            more than the security set
+                            more than the security set and the release
+                            pocket. UU_DISTRO_ID is the literal
+                            ${distro_id}, which unattended-upgrade itself
+                            reads as Ubuntu
   lane_patterns LANE        LANE_PATTERNS := the origins maintenance or
                             origin:<key> adds; 1 with LANE_WHY when it can't
   lane_conf PATTERN...      the APT_CONFIG text that adds them, on stdout

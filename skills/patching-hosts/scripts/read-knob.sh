@@ -11,24 +11,33 @@ sections that match this host, and prints what results as one JSON object on
 stdout. Read-only: it runs no command the knob names.
 
 Options:
-  --config FILE   the knob (default: .skills/patching-hosts at the repo root,
-                  or in the current directory outside a repo)
+  --config FILE   the knob (default: .skills/patching-hosts at the root of the
+                  repo around the current directory, or in the current
+                  directory outside a repo). A knob that doesn't exist isn't
+                  an error: knob.present is false, and the host report-only
   --host NAME     the host whose sections apply (default: `hostname`)
-  --today DATE    the date exceptions are checked against (default: today, UTC)
+  --today YYYY-MM-DD  the date exceptions are checked against (default:
+                  today, UTC)
   -h, --help      show this help
 
 Output keys: knob, host, sections, class, posture, report_only,
 report_only_reasons, window, quiet, inflight, health, restarter, service,
 backup, caller, datastore, hold, owner, image_owner, origin, exception,
-records, findings. Every value from the knob carries its line number; a
-default carries line null. The grammar: references/knob.md.
+records, findings. Every value from the knob carries its line number, but a
+datastore's databases, merged per unit, carry the line that first names the
+unit; sections are the matching headers' globs, with no line. A default
+carries line null. The grammar: references/knob.md.
 
-A malformed line, an expired exception or an ambiguous section is a finding
-in the output, not an error. A malformed line also makes the host report-only.
+A malformed line, an expired exception, an ambiguous section, a section
+repeated or a value set twice at the same precedence is a finding in the
+output, not an error. The host is report-only, each reason under
+report_only_reasons, with no knob, no posture line, class ephemeral, a
+malformed line or an ambiguous section.
 
 Exit codes:
   0  resolved; read findings and report_only
-  2  usage error, an unreadable knob, or the library missing
+  2  usage error, a knob that exists but can't be read, or the library
+     missing: nothing on stdout
   *  any other code: the reader failed; don't trust stdout
 USAGE
 }

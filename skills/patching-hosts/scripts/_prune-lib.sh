@@ -13,17 +13,31 @@ prune_lib_usage() {
 Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                           does nothing)
 
+  PRUNE_COMPONENTS          the components it knows
   prune_component NAME      C_ROOTS, C_CONFIG, C_DATA, C_GROUP, and for one
                             from outside apt C_UNIT and C_BINARY; 1 for a
                             name the probe doesn't know
-  purge_deletes PACKAGE...  PD_*: the lines in their purge scripts that delete
-  conffiles_of PACKAGE...   CONFFILES: their conffiles outside C_CONFIG
-  pg_clusters               D_CLUSTERS: each Postgres cluster and its data
-  derive NAME               D_*: the component as the host stands now
+  read_packages             PKG_NAME, PKG_STATE: every package dpkg knows;
+                            1 when it can't list them
+  path_kib VAR PATH         PATH's size in KiB, as root, or empty
+  units_of PACKAGE...       UNITS: the units they ship; 1 with UNITS_WHY
+                            when the list couldn't be read
+  purge_deletes PACKAGE...  PD_*: the lines in their purge scripts that
+                            delete; a package with no postrm has none, and
+                            any other failed read returns 1 with PD_WHY
+  conffiles_of PACKAGE...   CONFFILES: their conffiles outside C_CONFIG that
+                            exist, CONFFILES_UNSAVED those with whitespace;
+                            1 with CONFFILES_WHY when unread
+  pg_clusters               D_CLUSTERS: each Postgres cluster and its data,
+                            or D_CLUSTERS_WHY
+  derive NAME               D_*: the component as the host stands now; 1 for
+                            a name it doesn't know, 2 with D_WHY for a read
+                            that failed
   calendar NAME             CAL_*: the prune stage the knob declares for it
   signature VAR             the lines a plan and a fresh derive must share
-  write_plan                the plan file's lines, on stdout
-  read_plan FILE            PLAN_*: a plan file's lines, PLAN_BAD for the rest
+  write_plan HOST COMPONENT the plan file's lines, on stdout
+  read_plan FILE            PLAN_*: a plan file's lines, PLAN_BAD for the
+                            rest; 1 when FILE can't be read or isn't a plan
 USAGE
 }
 

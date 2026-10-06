@@ -27,13 +27,14 @@ KNOB_RANK_EXACT=100000
 
 knob_lib_usage() {
   cat <<'USAGE'
-_knob-lib.sh — the .skills/patching-hosts reader shared by patching-hosts' scripts
+_knob-lib.sh: the .skills/patching-hosts reader patching-hosts' scripts share
 
 This file is a library. Source it; do not run it:
 
   . "<dir>/_knob-lib.sh"
   knob_load <path> <host> <today YYYY-MM-DD>
-      returns 2 if <path> is unreadable, or the host or date isn't one
+      returns 2 if <path> exists but can't be read, or the host or date
+      isn't one; a <path> that doesn't exist returns 0, KNOB_PRESENT=0
 
 Call knob_load plainly, never inside if, && or ||: bash turns errexit off for
 everything a condition runs, and a failure in the library would go unseen.
