@@ -1122,6 +1122,87 @@ def test_journal_files_on_disk_are_persistent(host):
     assert "journal:volatile" not in _ids(out)
 
 
+RESTARTS = "#!/bin/sh\nsystemctl restart app.service\n"
+NOTIFIES = "#!/bin/sh\ncurl -sf http://notifier/x\n"
+
+
+@pytest.mark.parametrize(
+    "target, exec_line, files, finds, said",
+    [
+        # CR 199: what can't be read stays a restarter.
+        (
+            "app-notify.service",
+            "ExecStart=/usr/local/bin/watchdog %i",
+            {"usr/local/bin/watchdog": b"\x7fELF\x00\x00"},
+            True,
+            "/usr/local/bin/watchdog, a binary",
+        ),
+        (
+            "reboot.target",
+            None,
+            {},
+            True,
+            "reboot.target isn't a service",
+        ),
+        (
+            "app-notify.service",
+            "ExecStart=/usr/bin/python3 -m app.notify",
+            {},
+            True,
+            "a path relative to its working directory",
+        ),
+        # env, then the interpreter's script.
+        (
+            "app-notify.service",
+            "ExecStart=/usr/bin/env LANG=C bash /opt/app/r.sh",
+            {"opt/app/r.sh": RESTARTS},
+            True,
+            "its OnFailure= target starts or restarts one",
+        ),
+        (
+            "app-notify.service",
+            "ExecStart=/usr/bin/env LANG=C bash /opt/app/r.sh",
+            {"opt/app/r.sh": NOTIFIES},
+            False,
+            "",
+        ),
+        # A script named inside an inline command is read too.
+        (
+            "app-notify.service",
+            "ExecStart=/bin/sh -c '/opt/app/r.sh %i || true'",
+            {"opt/app/r.sh": RESTARTS},
+            True,
+            "its OnFailure= target starts or restarts one",
+        ),
+        # A program that starts nothing.
+        (
+            "app-notify.service",
+            "ExecStart=/usr/bin/curl -sf http://notifier/x",
+            {},
+            False,
+            "",
+        ),
+    ],
+)
+def test_an_onfailure_target_is_cleared_only_when_what_it_runs_was_read(
+    host, target, exec_line, files, finds, said
+):
+    host.write(
+        "etc/systemd/system/app.service",
+        f"[Unit]\nOnFailure={target}\n[Service]\nExecStart=/usr/bin/app\n",
+    )
+    if exec_line:
+        host.write(
+            f"etc/systemd/system/{target}", f"[Service]\nType=oneshot\n{exec_line}\n"
+        )
+    for rel, text in files.items():
+        host.write(rel, text)
+    out = host.run()
+    assert ("restarter:app.service" in _ids(out)) is finds
+    if finds:
+        assert said in _finding(out, "restarter:app.service")["message"]
+
+
 def test_a_readable_setup_script_holding_a_key_is_named_by_pattern_and_line_only(host):
     host.write(
         "exe.dev/setup",

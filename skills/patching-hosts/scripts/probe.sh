@@ -2212,14 +2212,47 @@ read_services() {
 # notifier mentions `systemctl status` in one.
 RESTART_RE='systemctl[^#]*(start|restart|try-restart|reload-or-restart)'
 
+# Programs that start no unit, whatever their arguments.
+INERT_PROGS="curl wget logger systemd-cat true echo printf"
+
+# Whether a script restarts anything: 0 when it can, 1 when it's read and
+# can't, 2 when it can't be read, with SV_WHY saying why.
+script_verdict() {  # <path>
+  SV_WHY=""
+  case $1 in
+    *%*) SV_WHY="$1, a path with a specifier" && return 2 ;;
+    /*) ;;
+    *) SV_WHY="$1, a path relative to its working directory" && return 2 ;;
+  esac
+  if [ ! -r "$P_ROOT$1" ] || [ ! -f "$P_ROOT$1" ]; then
+    SV_WHY="$1, which couldn't be read"
+    return 2
+  fi
+  if ! grep -qI '' "$P_ROOT$1" 2>/dev/null; then
+    SV_WHY="$1, a binary"
+    return 2
+  fi
+  if grep -v '^[[:space:]]*#' "$P_ROOT$1" 2>/dev/null | grep -qE "$RESTART_RE"; then return 0; fi
+  return 1
+}
+
 # Whether an OnFailure= target starts or restarts anything (#351): its unit
-# file, its template's, their drop-ins, and each script an Exec line runs.
-# 0 when it can, 1 when it can't, 2 when something it runs couldn't be read,
-# with OF_WHY saying what.
+# file, its template's, their drop-ins, and what each Exec line runs. It's
+# cleared only when everything it runs was read: an interpreter's script
+# (through env), a program that starts nothing, and any script an inline
+# command names. A binary, an unreadable script, or a unit that isn't a
+# service can't be, and stays a restarter (CR 199). 0 when it can restart,
+# 1 when it can't, 2 when that couldn't be read, with OF_WHY saying what.
 onfailure_restarts() {  # <target unit>
-  local t=$1 tmpl="" d f files="" line prog arg rc=1 w
+  local t=$1 tmpl="" d f files="" line prog base script rc=1 w i v
   local -a tok=()
   OF_WHY=""
+  case $t in
+    *.service) ;;
+    *)
+      OF_WHY="its OnFailure= target $t isn't a service, so what it does can't be read from Exec lines"
+      return 2 ;;
+  esac
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
   for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
     for f in "$P_ROOT/$d/$t" ${tmpl:+"$P_ROOT/$d/$tmpl"}; do
@@ -2230,7 +2263,7 @@ onfailure_restarts() {  # <target unit>
     OF_WHY="its OnFailure= target $t has no unit file to read"
     return 2
   fi
-  for d in etc/systemd/system run/systemd/system usr/lib/systemd/system lib/systemd/system; do
+  for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
     for f in "$P_ROOT/$d/$t.d"/*.conf ${tmpl:+"$P_ROOT/$d/$tmpl.d"/*.conf}; do
       [ -f "$f" ] && files="$files"$'\n'"$f"
     done
@@ -2239,38 +2272,46 @@ onfailure_restarts() {  # <target unit>
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in [[:space:]]*Exec*=* | Exec*=*) ;; *) continue ;; esac
       if [[ $line =~ $RESTART_RE ]]; then return 0; fi
+      # Quotes and shell punctuation off, so a path inside sh -c '...' is a
+      # word of its own.
       line=${line#*=}
+      line=${line//[\'\";()&|]/ }
       read -r -a tok <<<"$line" || true
       [ "${#tok[@]}" -gt 0 ] || continue
       prog=${tok[0]}
       while case $prog in [-@+!:]*) true ;; *) false ;; esac; do prog=${prog#?}; done
-      # An interpreter's script is its first argument that isn't an option.
-      # With -c, the command is the line itself, read above.
-      arg=""
-      case ${prog##*/} in
-        sh | bash | dash | python3 | python | perl)
-          for w in "${tok[@]:1}"; do
-            case $w in -c) arg="" && break ;; -*) ;; *) arg=$w && break ;; esac
+      i=1
+      # env runs the program after its own options and assignments.
+      while [ "${prog##*/}" = env ]; do
+        while [ "$i" -lt "${#tok[@]}" ] && case ${tok[$i]} in -* | *=*) true ;; *) false ;; esac; do i=$((i + 1)); done
+        prog=${tok[$i]:-}
+        i=$((i + 1))
+      done
+      base=${prog##*/}
+      script=""
+      case $base in
+        "") continue ;;
+        sh | bash | dash | zsh | python | python[0-9]* | perl | perl[0-9]* | ruby | node)
+          # Its script is its first argument that isn't an option. With -c,
+          # the command is on the line, read above.
+          for w in "${tok[@]:$i}"; do
+            case $w in -c) break ;; -*) ;; *) script=$w && break ;; esac
           done ;;
-        *) arg=$prog ;;
+        *) in_words "$base" "$INERT_PROGS" || script=$prog ;;
       esac
-      [ -n "$arg" ] || continue
-      case $arg in
-        *%*)
-          OF_WHY="its OnFailure= target $t runs $arg, a path with a specifier"
-          rc=2
-          continue ;;
-      esac
-      if [ ! -r "$P_ROOT$arg" ]; then
-        OF_WHY="its OnFailure= target $t runs $arg, which couldn't be read"
-        rc=2
-        continue
+      if [ -n "$script" ]; then
+        v=0
+        script_verdict "$script" || v=$?
+        case $v in
+          0) return 0 ;;
+          2) OF_WHY="its OnFailure= target $t runs $SV_WHY" rc=2 ;;
+        esac
       fi
-      # A binary isn't read: what it runs is on its own Exec line, read above.
-      if grep -qI '' "$P_ROOT$arg" 2>/dev/null &&
-        grep -v '^[[:space:]]*#' "$P_ROOT$arg" 2>/dev/null | grep -qE "$RESTART_RE"; then
-        return 0
-      fi
+      # Any other script the line names, read where it can be.
+      for w in "${tok[@]:1}"; do
+        case $w in /*) [ "$w" != "$script" ] || continue ;; *) continue ;; esac
+        if [ -f "$P_ROOT$w" ] && script_verdict "$w"; then return 0; fi
+      done
     done <"$f"
   done <<<"$files"
   return $rc
