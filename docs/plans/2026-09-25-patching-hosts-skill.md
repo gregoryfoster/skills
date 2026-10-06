@@ -875,9 +875,14 @@ base image, or an owner-approved remedy the profile documents.
    machine's host name; and four readings reported empty when unread. The
    rest were help that understated or omitted what the code does, each
    script's corrected in its own commit, with `pruning.md`'s advice on
-   undoing a disable. Held for the owner (CR 194): a `backup` line stands
-   in for every datastore's dump, since the knob doesn't bind one to a
-   datastore; the help and `knob.md` now say so.
+   undoing a disable. CR 194, decided by the owner 2026-10-06: a `backup`
+   line stood in for every datastore's dump, since nothing bound it to
+   one. It now names the datastore units it covers (`backup <unit>
+   <datastore unit>...`); one naming none is malformed, and one naming an
+   undeclared datastore is refused. `recovery-point.sh` runs each usable
+   backup for what it covers and dumps the rest, the record's `backup`
+   lines carry what each covered, and `apply.sh` needs each datastore
+   dumped or covered by a backup whose knob line names it.
 8b. **Exercise the skill by hand on every host** (decided 2026-09-29).
     - After the skills submodule bump, each host's own agent runs the skill
       end to end, with the owner approving in that session. The run is also

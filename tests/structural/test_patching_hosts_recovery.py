@@ -18,7 +18,9 @@ What this file pins, against the plan's step 6a list:
   recorded;
 - each dump's sha256, printed for the owner's off-node copy, and recorded;
 - the backup regime preferred where the knob declares one that succeeded,
-  started now, and recorded in place of every dump;
+  started now, and recorded in place of the dumps of the datastores its
+  line names, and no others: the rest are dumped, and a line naming an
+  undeclared datastore is refused (CR 194);
 - the record it writes is one apply.sh's bulk accepts.
 
 Beyond that list:
@@ -630,7 +632,7 @@ def test_a_bgsave_redis_refuses_fails_at_once_with_its_reply(tmp_path):
 def _regime(host: Host, last: str = "success", now: str = "success") -> Host:
     """app-backup.timer starts app-backup.service, whose last run ended in
     LAST; a start now ends in NOW."""
-    host.knob(PG + "backup app-backup.timer\n")
+    host.knob(PG + "backup app-backup.timer postgresql@16-main\n")
     host.show("app-backup.timer", Triggers="app-backup.service")
     s = host.state
     state = s / "backup"
@@ -653,14 +655,15 @@ def _regime(host: Host, last: str = "success", now: str = "success") -> Host:
 def test_the_hosts_own_backup_regime_stands_in_for_the_dumps(host):
     _regime(host)
     out = host.recover()
-    assert out["backup"]["unit"] == "app-backup.service"
-    assert out["backup"]["ok"] is True
+    [b] = out["backup"]
+    assert b["unit"] == "app-backup.service" and b["ok"] is True
+    assert b["datastores"] == ["postgresql@16-main.service"]
     assert out["dumps"] is None
     assert not host.calls("pg_dump")
     # The roles still stay on the node.
     assert [g["ok"] for g in out["local"]] == [True]
     rec = host.record("recovery-point")
-    assert "backup app-backup.service\n" in rec
+    assert "backup app-backup.service postgresql@16-main.service\n" in rec
     assert "dump " not in rec
     assert out["next"][0].startswith("Confirm the object app-backup.service wrote")
     # And the bulk takes it, with the object named.
@@ -669,10 +672,43 @@ def test_the_hosts_own_backup_regime_stands_in_for_the_dumps(host):
     assert out["gate"]["recovery_point"]["backups"][0]["ok"] is True
 
 
+def test_a_backup_unit_stands_in_only_for_the_datastores_it_names(host):
+    # CR 194: a backup line names what it covers, and whatever none covers
+    # is dumped: one unit that copies Postgres leaves Redis to a dump.
+    _redis(host)
+    _regime(host)
+    host.knob(
+        PG
+        + "datastore redis redis-server\n"
+        + "backup app-backup.timer postgresql@16-main\n"
+    )
+    out = host.recover()
+    [b] = out["backup"]
+    assert (b["ok"], b["datastores"]) == (True, ["postgresql@16-main.service"])
+    assert [d["datastore"] for d in out["dumps"]] == ["redis redis-server.service"]
+    assert not host.calls("pg_dump")
+    rec = host.record("recovery-point")
+    assert "backup app-backup.service postgresql@16-main.service\n" in rec
+    assert "dump redis redis-server.service " in rec
+    assert "dump postgres" not in rec
+
+
+def test_a_backup_line_naming_no_declared_datastore_is_refused(host):
+    _regime(host)
+    host.knob(PG + "backup app-backup.timer postgresql@15-main\n")
+    out = host.recover(rc=3)
+    assert any(
+        "backup app-backup.timer (knob line" in r
+        and "names postgresql@15-main.service, which no datastore line declares" in r
+        for r in out["refused"]
+    ), out["refused"]
+
+
 def test_dump_takes_dumps_even_with_a_backup_regime(host):
     _regime(host)
     out = host.recover("--dump")
-    assert out["gate"]["backup_regime"] == {"unit": None, "not_used": "--dump"}
+    [b] = out["gate"]["backup_regime"]["backups"]
+    assert (b["unit"], b["not_used"]) == ("app-backup.timer", "--dump")
     assert out["backup"] is None
     assert [d["ok"] for d in out["dumps"]] == [True]
 
@@ -680,7 +716,9 @@ def test_dump_takes_dumps_even_with_a_backup_regime(host):
 def test_a_backup_regime_whose_last_run_failed_isnt_relied_on(host):
     _regime(host, last="exit-code")
     out = host.recover()
-    assert "ended in exit-code" in out["gate"]["backup_regime"]["not_used"]
+    assert (
+        "ended in exit-code" in out["gate"]["backup_regime"]["backups"][0]["not_used"]
+    )
     assert [d["ok"] for d in out["dumps"]] == [True]
 
 
@@ -704,7 +742,7 @@ def test_a_backup_start_that_runs_nothing_now_records_nothing(host):
 def test_a_backup_run_that_fails_now_records_nothing(host):
     _regime(host, now="exit-code")
     out = host.recover(rc=1)
-    assert out["backup"]["ok"] is False
+    assert out["backup"][0]["ok"] is False
     assert any("Run again with --dump" in w for w in out["verdict"]["why"])
     assert not (host.run_dir / "recovery-point").exists()
 

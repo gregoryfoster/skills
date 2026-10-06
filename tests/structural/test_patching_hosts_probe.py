@@ -1913,7 +1913,7 @@ def test_no_command_installs_removes_holds_restarts_or_writes_lists(host):
         "posture scheduled\n"
         "service app-web.service\n"
         "restarter app-health.timer\n"
-        "backup app-backup.service\n"
+        "backup app-backup.service postgresql@16-main\n"
         "datastore postgres postgresql@16-main app\n"
         "datastore redis redis-server\n"
     )

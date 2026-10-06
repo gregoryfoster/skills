@@ -36,7 +36,7 @@ $nrconf{restart} = 'l';
 
 Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump. `recovery-point.sh --approve --retain-until <date>` takes it, as below, and writes the record the bulk reads. Like a step, it takes minutes: run it in the background.
 
-- **Prefer the host's own backup regime** when one exists and succeeded recently. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
+- **Prefer the host's own backup regime** when one exists and succeeded recently, for the datastores it covers: its `backup` line names them, and the rest are dumped. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
 - **Otherwise, dump each data store as root**, mode 600 from creation. A `>` from the session shell can't write to `/var/backups` (CannObserv/address-validator#235):
 
   ```
@@ -71,12 +71,12 @@ Every host records its before-versions (below). A host that declares a `datastor
   retain <YYYY-MM-DD>
   dump postgres <unit> <database> <sha256> <path>
   dump redis <unit> <sha256> <path>
-  backup <unit>
+  backup <unit> <datastore unit>...
   local <path>
   personal <path>
   ```
 
-  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts): its run must have *started* after `began` and succeeded, it stands in for every dump, and the owner names its object with `--offnode-object`. A `local` file, such as the globals dump, stays on the node and is never attested. `retain` is the stated retention, and `personal` flags a dump that holds personal data. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
+  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts), with the datastore units it covered: its run must have *started* after `began` and succeeded, it stands in for the dumps of those datastores and no others, which its knob line must name too, and the owner names its object with `--offnode-object`. A datastore no backup covered needs its own dump. A `local` file, such as the globals dump, stays on the node and is never attested. `retain` is the stated retention, and `personal` flags a dump that holds personal data. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
 - A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps

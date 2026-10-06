@@ -157,6 +157,11 @@ o_caller() { printf '{"repo": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_datastore() { printf '{"engine": %s, "unit": %s, "databases": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_words "$3")" "$4"; }
 o_hold() { printf '{"step": %s, "globs": %s, "line": %s}' "$(js "$1")" "$(js_words "$2")" "$(num_or_null "${3:-}")"; }
 o_owner() { printf '{"component": %s, "repo": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$3"; }
+o_backup() {
+  local -a d=()
+  read -r -a d <<<"$2"
+  printf '{"unit": %s, "datastores": %s, "line": %s}' "$(js "$1")" "$(js_list ${d[@]+"${d[@]}"})" "$3"
+}
 o_origin() { printf '{"origin": %s, "policy": %s, "value": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_or_null "$3")" "$4"; }
 o_exception() { printf '{"what": %s, "review_by": %s, "reason": %s, "expired": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js "$3")" "$(js_bool "$4")" "$5"; }
 o_finding() { printf '{"line": %s, "kind": %s, "message": %s}' "$(num_or_null "$1")" "$(js "$2")" "$(js "$3")"; }
@@ -175,7 +180,7 @@ emit_records inflight o_command , ${KNOB_INFLIGHT[@]+"${KNOB_INFLIGHT[@]}"}
 emit_records health o_command , ${KNOB_HEALTH[@]+"${KNOB_HEALTH[@]}"}
 emit_records restarter o_unit , ${KNOB_RESTARTER[@]+"${KNOB_RESTARTER[@]}"}
 emit_records service o_unit , ${KNOB_SERVICE[@]+"${KNOB_SERVICE[@]}"}
-emit_records backup o_unit , ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}
+emit_records backup o_backup , ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}
 emit_records caller o_caller , ${KNOB_CALLER[@]+"${KNOB_CALLER[@]}"}
 emit_records datastore o_datastore , ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}
 emit_records hold o_hold , ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}

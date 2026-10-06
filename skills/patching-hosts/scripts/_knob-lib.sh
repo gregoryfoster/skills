@@ -66,7 +66,8 @@ esac
 #   KNOB_WINDOW     weekday start end wraps line
 #   KNOB_QUIET      weekday-or-empty start end wraps line
 #   KNOB_INFLIGHT, KNOB_HEALTH                  command line
-#   KNOB_RESTARTER, KNOB_SERVICE, KNOB_BACKUP   unit line
+#   KNOB_RESTARTER, KNOB_SERVICE                unit line
+#   KNOB_BACKUP     unit datastore-units line (the units space-separated)
 #   KNOB_CALLER     repo line
 #   KNOB_DATASTORE  engine unit databases(space-separated) line
 #   KNOB_HOLD       step globs(space-separated) line-or-empty(default)
@@ -181,11 +182,19 @@ _knob_directive() {  # <line> <sec> <text>
       else
         _knob_malformed "$n" "$dir takes a command"
       fi ;;
-    restarter | service | backup)
+    restarter | service)
       if [ "$nt" -eq 1 ]; then
         _knob_record "$n" "$sec" "$dir" "" "${tok[0]}"
       else
         _knob_malformed "$n" "$dir takes one unit"
+      fi ;;
+    # A backup regime names what it covers: unbound, it would stand in for
+    # every datastore's dump, one it never copies included (CR 194).
+    backup)
+      if [ "$nt" -ge 2 ]; then
+        _knob_record "$n" "$sec" backup "" "${tok[0]}$u${tok[*]:1}"
+      else
+        _knob_malformed "$n" "backup takes <unit> and each datastore unit it covers, as datastore lines name them"
       fi ;;
     caller)
       if [ "$nt" -eq 1 ] && _knob_is_repo "${tok[0]}"; then

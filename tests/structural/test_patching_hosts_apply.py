@@ -44,7 +44,8 @@ From review (CR 99-124):
   missing unit as inactive (systemd 255), so it would never be stopped;
 - a dry run that counted nothing, or began more than 24 hours ago, is
   refused, and so is a recovery point whose backup unit the knob doesn't
-  declare;
+  declare, that covers a datastore it doesn't name, or that leaves one
+  neither dumped nor covered (CR 194);
 - an automatic apt run in progress, or a span that meets the range
   apt-daily-upgrade.timer can start in, is refused: that run's
   unattended-upgrade would hold the lock;
@@ -656,9 +657,9 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     host, started, objects, refused
 ):
     # Declared by its timer: the record names the service it starts.
-    host.knob(DATASTORE + "backup app-backup.timer\n")
+    host.knob(DATASTORE + "backup app-backup.timer postgresql@16-main\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup app-backup", began=began)
+    _recovery(host, "backup app-backup postgresql@16-main", began=began)
     host.show(
         "app-backup.service",
         Result="success",
@@ -684,9 +685,9 @@ def test_a_backup_unit_must_have_run_since_the_recovery_point(
     ],
 )
 def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refused):
-    host.knob(DATASTORE + "backup app-backup\n")
+    host.knob(DATASTORE + "backup app-backup postgresql@16-main\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup app-backup", began=began)
+    _recovery(host, "backup app-backup postgresql@16-main", began=began)
     host.show(
         "app-backup.service",
         Result=result,
@@ -701,9 +702,9 @@ def test_a_backup_unit_must_have_finished_and_succeeded(host, result, ran, refus
 def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
     # Any unit that ran since the recovery point began would otherwise waive
     # every dump.
-    host.knob(DATASTORE + "backup app-backup\n")
+    host.knob(DATASTORE + "backup app-backup postgresql@16-main\n")
     began = TUE_1530 - 3600
-    _recovery(host, "backup apt-daily", began=began)
+    _recovery(host, "backup apt-daily postgresql@16-main", began=began)
     host.show(
         "apt-daily.service",
         Result="success",
@@ -714,6 +715,50 @@ def test_a_backup_unit_the_knob_doesnt_declare_stands_in_for_nothing(host):
     [r] = [r for r in out["refused"] if "isn't one the knob declares" in r]
     assert r.startswith("backup unit apt-daily.service ")
     assert out["gate"]["recovery_point"]["backups"][0]["declared"] is False
+
+
+@pytest.mark.parametrize(
+    "knob_line, record_line, refused",
+    [
+        # The knob binds the unit to Postgres; Redis has nothing.
+        (
+            "backup app-backup postgresql@16-main",
+            "backup app-backup postgresql@16-main",
+            "no dump of redis redis-server.service, and no backup unit covered"
+            " redis-server.service",
+        ),
+        # The record says it covered Redis too; its line doesn't.
+        (
+            "backup app-backup postgresql@16-main",
+            "backup app-backup postgresql@16-main redis-server",
+            "is recorded as covering redis-server.service, which its backup line"
+            " doesn't name",
+        ),
+        # A record from before backup lines named their datastores.
+        (
+            "backup app-backup postgresql@16-main redis-server",
+            "backup app-backup",
+            "isn't one apply.sh reads",
+        ),
+    ],
+    ids=["uncovered", "over-claimed", "unbound-record"],
+)
+def test_a_backup_unit_stands_in_only_for_what_its_line_names(
+    host, knob_line, record_line, refused
+):
+    # CR 194: any backup unit used to waive every datastore's dump.
+    host.knob(DATASTORE + "datastore redis redis-server\n" + knob_line + "\n")
+    began = TUE_1530 - 3600
+    _recovery(host, record_line, began=began)
+    host.show(
+        "app-backup.service",
+        Result="success",
+        ExecMainStartTimestamp=f"@{began + 10 * MIN}",
+        ExecMainExitTimestamp=f"@{began + 12 * MIN}",
+    )
+    out = host.run("--offnode-object", "s3://bucket/app-1", rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert _changed(host) == []
 
 
 def test_an_attestation_with_no_datastore_is_refused(host):

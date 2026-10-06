@@ -106,8 +106,9 @@ it. On a host that declares a datastore, the bulk also refuses until the
 recovery point began within 24 hours, covers every datastore, and has left
 the node: each dump attested by its sha256, and each backup unit, one the
 knob declares, run successfully since the recovery point began, with its
-object named. A backup unit stands in for every datastore's dump: the knob
-doesn't say which datastores a backup line covers.
+object named. A backup unit stands in only for the datastores the record
+says it covered, which its knob line must name too: each other datastore
+needs its own dump.
 
 The run's directory is root-only: 0700, and each file 0600.
   recovery-point   written before the bulk (run.md section 2 has its lines)
@@ -689,8 +690,8 @@ gate_apt() {
 # name. A recovery point from another day isn't one for this run.
 RP_MAX_AGE=86400
 gate_recovery() {
-  local rec line kind engine unit rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared
-  local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=()
+  local rec line kind engine unit rest db sha path key n=0 i r s x began="" retain="" o="" a="" e iso="" ok u k declared d kc w
+  local -a f=() dbs=() need=() dkeys=() dsums=() dpaths=() backups=() bcovers=() kcovers=()
   [ "$step" = bulk ] || return 0
   if [ "${#KNOB_DATASTORE[@]}" -eq 0 ]; then
     if [ "${#sums[@]}" -gt 0 ] || [ "${#objects[@]}" -gt 0 ]; then
@@ -726,7 +727,15 @@ gate_recovery() {
       began:*) began=$engine ;;
       dump:postgres) read -r db sha path <<<"$rest"; key="postgres $unit $db" ;;
       dump:redis) read -r sha path <<<"$rest"; key="redis $unit" ;;
-      backup:*) if [ -n "$engine" ] && [ -z "$unit" ]; then backups+=("$engine"); else kind=bad; fi ;;
+      # A backup line names its unit and each datastore unit it covered.
+      backup:*)
+        if [ -n "$engine" ] && [ -n "$unit" ]; then
+          w=""
+          for d in $unit $rest; do unit_name d "$d"; w="$w $d"; done
+          backups+=("$engine") bcovers+=("${w# }")
+        else
+          kind=bad
+        fi ;;
       local:* | personal:*) [ -n "$engine" ] || kind=bad ;;
       retain:*) if [[ $engine =~ $date_re ]]; then retain=$engine; else kind=bad; fi ;;
       *) kind=bad ;;
@@ -749,11 +758,14 @@ gate_recovery() {
   iso_utc iso "$began"
   jaddsn o began "$iso"
   jaddsn o retain_until "$retain"
+  # Each datastore needs a dump, or a backup unit that covered its unit: a
+  # backup stands in only for what its line names (CR 194).
   for key in ${need[@]+"${need[@]}"}; do
-    [ "${#backups[@]}" -eq 0 ] || continue
     s=0
     for i in ${dkeys[@]+"${!dkeys[@]}"}; do [ "${dkeys[$i]}" != "$key" ] || s=1; done
-    [ "$s" -eq 1 ] || refuse "the recovery point holds no dump of $key, and no backup unit stands in for it"
+    u=${key#* } u=${u%% *}
+    for i in ${bcovers[@]+"${!bcovers[@]}"}; do in_words "$u" "${bcovers[$i]}" && s=1; done
+    [ "$s" -eq 1 ] || refuse "the recovery point holds no dump of $key, and no backup unit covered $u"
   done
   for i in ${dkeys[@]+"${!dkeys[@]}"}; do
     s=0
@@ -774,20 +786,32 @@ gate_recovery() {
       refuse "--offnode-sha256 $sha matches no dump the recovery point recorded: check which copy it came from"
   done
   a=""
-  for unit in ${backups[@]+"${backups[@]}"}; do
+  for i in ${backups[@]+"${!backups[@]}"}; do
+    unit=${backups[$i]}
     unit_name unit "$unit"
-    e="" ok=0 declared=0
+    e="" ok=0 declared=0 kc=""
     jadds e unit "$unit"
+    json_words w "${bcovers[$i]}"
+    jadd e datastores "$w"
     # Only the host's own regime stands in for a dump: a unit a backup line
-    # names, or the service a declared timer starts.
+    # names, or the service a declared timer starts, and only for the
+    # datastores that line names.
     for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
       IFS=$KNOB_US read -r -a f <<<"$r"
       unit_name k "${f[0]}"
-      if [ "$k" = "$unit" ] || [ "$k" = "${unit%.service}.timer" ]; then declared=1; fi
+      if [ "$k" = "$unit" ] || [ "$k" = "${unit%.service}.timer" ]; then
+        declared=1
+        read -r -a kcovers <<<"${f[1]}"
+        for d in ${kcovers[@]+"${kcovers[@]}"}; do unit_name d "$d"; kc="$kc $d"; done
+      fi
     done
     jaddb e declared "$declared"
+    w=""
+    for d in ${bcovers[$i]}; do in_words "$d" "$kc" || w="$w $d"; done
     if [ "$declared" -eq 0 ]; then
       refuse "backup unit $unit isn't one the knob declares: only the host's own backup regime, named by a backup line (knob.md), stands in for a dump"
+    elif [ -n "$w" ]; then
+      refuse "backup unit $unit is recorded as covering$w, which its backup line doesn't name: take the recovery point again"
     elif ! unit_show "$unit" Result ExecMainStartTimestamp ExecMainExitTimestamp; then
       refuse "backup unit $unit's last run couldn't be read"
     else

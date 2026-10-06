@@ -21,6 +21,8 @@ What this file pins, against references/knob.md:
   inside it, and it needs no tool beyond bash to order the sections;
 - the library ignores its caller's IFS, leaves the caller's own `--help` alone,
   and refuses a date or a host it can't use;
+- a backup line names the datastore units it covers, and one naming none is
+  malformed (CR 194);
 - nothing the reader prints carries an unescaped control character.
 
 Runs under whatever `bash` is on PATH, which is 3.2 on macOS: the library is
@@ -372,7 +374,7 @@ EVERY_DIRECTIVE = {
     "service": "service app-web.service",
     "health": "health curl -sf http://localhost:8000/health",
     "datastore": "datastore postgres postgresql@16-main app",
-    "backup": "backup app-backup.service",
+    "backup": "backup app-backup.service postgresql@16-main",
     "hold": "hold postgresql-* libpq5 postgres",
     "caller": "caller example-org/caller",
     "owner": "owner /usr/local/bin/* image",
@@ -408,6 +410,30 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
     ):
         assert out[key], f"{key} parsed to nothing"
     assert out["records"]["value"] == "example-org/host-records"
+
+
+def test_a_backup_line_names_the_datastores_it_covers(tmp_path):
+    # CR 194: a backup line with no datastore would stand in for them all.
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "datastore postgres postgresql@16-main app\n"
+        "datastore redis redis-server\n"
+        "backup app-backup.timer postgresql@16-main redis-server\n",
+    )
+    assert out["backup"] == [
+        {
+            "unit": "app-backup.timer",
+            "datastores": ["postgresql@16-main", "redis-server"],
+            "line": 4,
+        }
+    ]
+    out = _read(tmp_path, "posture scheduled\nbackup app-backup.timer\n")
+    assert out["report_only"] is True
+    assert any(
+        f["line"] == 2 and "backup takes <unit> and each datastore unit" in f["message"]
+        for f in out["findings"]
+    ), out["findings"]
 
 
 # --- invocation -------------------------------------------------------------------

@@ -14,9 +14,11 @@ Takes the recovery point in references/run.md section 2 for each datastore
 the knob declares, and writes its record, recovery-point, into the run's
 directory. Until every check passes it changes nothing, and prints why.
 
-  The host's own backup regime first: a backup unit the knob declares whose
-  last run succeeded is started, and must succeed again. It writes off the
-  node itself, so it stands in for every dump. --dump takes dumps instead.
+  The host's own backup regime first: each backup unit the knob declares
+  whose last run succeeded is started, and must succeed again. It writes off
+  the node itself, so it stands in for the dumps of the datastores its
+  backup line names, and no others: each datastore no usable unit covers is
+  dumped. --dump takes dumps of them all instead.
 
   Otherwise a dump of each declared Postgres database (pg_dump -Fc) and of
   each Redis (BGSAVE, then a copy of its RDB file), written as root at mode
@@ -46,8 +48,8 @@ Options:
                            one to apply.sh
   --personal-data NAME     a database, or a Redis unit, whose dump holds
                            personal data; the record flags it. Repeatable.
-                           Under a backup regime no dump is taken, so it
-                           flags nothing
+                           A datastore a backup unit covers isn't dumped, so
+                           it flags nothing
   --dump                   dump, even where a backup regime would stand in
   --redis-within SECONDS   how long a BGSAVE may take (default 300)
   --config FILE            the knob (default: .skills/patching-hosts at the
@@ -70,17 +72,20 @@ run's bulk has started; when --personal-data names a Postgres unit, or
 nothing the knob declares; when a cluster or a database can't be found, a
 cluster isn't online or its port can't be read, or a Redis can't be
 reached, can't say where its RDB file is, or what answers isn't the unit's
-own process; and when the run's filesystem has less free space than the
-data it would dump, or its free space can't be read.
+own process; when a backup line names a datastore no datastore line
+declares; and when the run's filesystem has less free space than the data it
+would dump, or its free space can't be read.
 
 The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
   dump postgres <unit> <database> <sha256> <path>
   dump redis <unit> <sha256> <path>
-  backup <unit>            local <path>            personal <path>
+  backup <unit> <datastore unit>...
+  local <path>             personal <path>
 
 Output: one JSON object on stdout. Keys: recovery_point, refused, gate, then
-what it did: backup, dumps, local, verdict and next.
+what it did: backup (one entry per unit run), dumps, local, verdict and
+next.
 
 A record an earlier attempt left in the run is removed first, so an attempt
 that fails leaves none; if that removal fails, it says so, and the earlier
@@ -206,12 +211,14 @@ stamp=${stamp//[-:]/}
 # --- the gate -------------------------------------------------------------------
 # No function here ends on a bare `[ … ] && …`: a function that returns
 # non-zero stops the script under errexit, wherever it is called plainly.
-J_GATE="" J_BACKUP=null J_DUMPS=null J_LOCAL=null J_VERDICT=null
+J_GATE="" J_BACKUP=null J_DUMPS=null J_LOCAL=null J_VERDICT=null BACKUP_A=""
 NEXT=()
 
 # The datastores, one entry each: "postgres <unit> <port> <database>" per
 # database, "redis <unit>" per Redis. Sizes in bytes, in the same order.
-DS=() DS_BYTES=() PG_UNITS="" PG_UNIT_PORT=() BACKUP_SVC=""
+DS=() DS_BYTES=() PG_UNITS="" PG_UNIT_PORT=()
+# Each backup unit that stands in, and the datastore units it covers.
+BACKUP_SVCS=() BACKUP_COVERS=()
 
 gate_host() {
   local why t r db u hit pgunit
@@ -278,20 +285,41 @@ gate_run() {
 }
 
 # The host's own backup regime, where the knob declares one whose last run
-# succeeded: a unit, or the service a declared timer starts.
+# succeeded: a unit, or the service a declared timer starts. Each stands in
+# for the dumps of the datastores its backup line names, and no other: a
+# datastore no usable unit covers is dumped (CR 194).
 gate_backup() {
-  local r u svc o="" why=""
-  local -a f=()
+  local r u svc o="" why e a="" d du dd covers declared r2
+  local -a f=() ds=() g=()
   for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[0]}"
-    svc=$u
+    read -r -a ds <<<"${f[1]}"
+    covers=""
+    for d in ${ds[@]+"${ds[@]}"}; do
+      unit_name du "$d"
+      declared=0
+      for r2 in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+        IFS=$KNOB_US read -r -a g <<<"$r2"
+        unit_name dd "${g[1]}"
+        [ "$dd" != "$du" ] || declared=1
+      done
+      if [ "$declared" -eq 0 ]; then
+        refuse "backup $u (knob line ${f[2]}) names $du, which no datastore line declares"
+      elif ! in_words "$du" "$covers"; then
+        covers="$covers $du"
+      fi
+    done
+    covers=${covers# }
+    svc=$u why=""
     case $u in
       *.timer)
         svc=""
         if unit_show "$u" Triggers; then svc=${U_Triggers%% *}; fi ;;
     esac
-    if [ -z "$svc" ]; then
+    if [ "$force_dump" -eq 1 ]; then
+      why="--dump"
+    elif [ -z "$svc" ]; then
       why="$u starts no unit that could be read"
     elif ! unit_show "$svc" LoadState Result ExecMainExitTimestamp; then
       why="$svc couldn't be read"
@@ -299,21 +327,28 @@ gate_backup() {
       why="$svc is ${U_LoadState:-unknown}, not loaded"
     elif [ "$U_Result" != success ] || [ -z "${U_ExecMainExitTimestamp#@}" ]; then
       why="$svc's last run ended in ${U_Result:-nothing}, so it isn't one to rely on"
-    else
-      BACKUP_SVC=$svc
-      break
     fi
+    e=""
+    jadds e unit "$u"
+    jaddsn e service "$svc"
+    json_words d "$covers"
+    jadd e datastores "$d"
+    jaddsn e not_used "$why"
+    jpush a "{$e}"
+    if [ -z "$why" ] && [ -n "$covers" ]; then BACKUP_SVCS+=("$svc") BACKUP_COVERS+=("$covers"); fi
   done
-  if [ "$force_dump" -eq 1 ]; then BACKUP_SVC=""; fi
-  jaddsn o unit "$BACKUP_SVC"
-  if [ "${#KNOB_BACKUP[@]}" -eq 0 ]; then
-    why="the knob declares no backup unit"
-  elif [ "$force_dump" -eq 1 ]; then
-    why="--dump"
-  fi
-  if [ -n "$BACKUP_SVC" ]; then why=""; fi
-  jaddsn o not_used "$why"
+  jadd o backups "[$a]"
+  if [ "${#KNOB_BACKUP[@]}" -eq 0 ]; then jadds o not_used "the knob declares no backup unit"; fi
   jadd J_GATE backup_regime "{$o}"
+}
+
+# Whether a usable backup unit covers this datastore unit.
+covered() {  # <unit>
+  local _cv
+  for _cv in ${BACKUP_COVERS[@]+"${BACKUP_COVERS[@]}"}; do
+    in_words "$1" "$_cv" && return 0
+  done
+  return 1
 }
 
 # A database's size, as postgres. psql substitutes a variable only in what
@@ -339,8 +374,9 @@ gate_datastores() {
         continue
       fi
       PG_UNITS="$PG_UNITS $u" PG_UNIT_PORT+=("$port")
-      # A backup regime stands in for the dumps: only the roles' ports count.
-      [ -z "$BACKUP_SVC" ] || continue
+      # A backup unit that covers it stands in for its dumps: only the
+      # roles' port counts.
+      if covered "$u"; then continue; fi
       read -r -a dbs <<<"${f[2]}"
       for db in "${dbs[@]}"; do
         capture out pg_size "$port" "$db"
@@ -357,7 +393,7 @@ gate_datastores() {
         DS+=("postgres $u $port $db") DS_BYTES+=("$sz")
         need=$((need + sz))
       done
-    elif [ -z "$BACKUP_SVC" ]; then
+    elif ! covered "$u"; then
       # Raw replies, since stdout isn't a terminal: the key, then its value.
       redis_conn "$u"
       # Another Redis's data would be dumped, and attested, as this one's.
@@ -393,7 +429,7 @@ gate_datastores() {
     fi
   done
   jadd J_GATE datastores "[$a]"
-  if [ -n "$BACKUP_SVC" ]; then return 0; fi
+  if [ "${#DS[@]}" -eq 0 ]; then return 0; fi
   dir=$run
   while [ ! -d "$dir" ] && [ "$dir" != / ]; do dir=$(dirname "$dir"); done
   out=$(df -Pk -- "$dir" 2>/dev/null | awk 'NR == 2 { print $4 }') || out=""
@@ -473,8 +509,8 @@ file_sha() {  # <var> <path>
 }
 sha_re='^[0-9a-f]{64}$'
 
-take_backup() {
-  local o="" s x iso ok=0
+take_backup() {  # <service> <datastore units it covers>
+  local o="" s x iso ok=0 w BACKUP_SVC=$1
   echo "recovery-point: starting $BACKUP_SVC, the host's own backup regime" >&2
   if ! as_root systemctl start -- "$BACKUP_SVC"; then
     fail "systemctl start $BACKUP_SVC failed: read its journal. Run again with --dump to take dumps instead"
@@ -484,6 +520,8 @@ take_backup() {
     s=${U_ExecMainStartTimestamp#@} x=${U_ExecMainExitTimestamp#@}
   fi
   jadds o unit "$BACKUP_SVC"
+  json_words w "$2"
+  jadd o datastores "$w"
   jaddsn o result "$U_Result"
   iso_utc iso "$s"
   jaddsn o started "$iso"
@@ -501,8 +539,8 @@ take_backup() {
     ok=1
   fi
   jaddb o ok "$ok"
-  J_BACKUP="{$o}"
-  [ "$ok" -eq 0 ] || REC_LINES="${REC_LINES}backup $BACKUP_SVC"$'\n'
+  jpush BACKUP_A "{$o}"
+  [ "$ok" -eq 0 ] || REC_LINES="${REC_LINES}backup $BACKUP_SVC $2"$'\n'
 }
 
 # pg_dump runs as postgres, its output opened by root's own sh at mode 600:
@@ -685,9 +723,12 @@ if [ "${#FAILED[@]}" -eq 0 ] && root_has "$run/recovery-point"; then
     fail "$run/recovery-point, an earlier attempt's record, couldn't be removed"
 fi
 if [ "${#FAILED[@]}" -eq 0 ]; then
-  if [ -n "$BACKUP_SVC" ]; then
-    take_backup
-  else
+  # Each backup unit for what it covers, then a dump of whatever none does.
+  for _i in ${BACKUP_SVCS[@]+"${!BACKUP_SVCS[@]}"}; do
+    take_backup "${BACKUP_SVCS[$_i]}" "${BACKUP_COVERS[$_i]}"
+  done
+  if [ "${#BACKUP_SVCS[@]}" -gt 0 ]; then J_BACKUP="[$BACKUP_A]"; fi
+  if [ "${#DS[@]}" -gt 0 ]; then
     for _i in ${DS[@]+"${!DS[@]}"}; do
       read -r _k _u _p _d <<<"${DS[$_i]}"
       if [ "$_k" = postgres ]; then dump_postgres "$_u" "$_p" "$_d"; else dump_redis "$_u" "$_p"; fi
@@ -715,11 +756,14 @@ jadd _o why "[$_a]"
 J_VERDICT="{$_o}"
 if [ "${#FAILED[@]}" -gt 0 ]; then
   NEXT+=("Nothing was recorded, so apply.sh's bulk refuses: fix what failed, then take the recovery point again. The files written so far are under dumps and local: delete them, or keep them to $retain.")
-elif [ -n "$BACKUP_SVC" ]; then
-  NEXT+=("Confirm the object $BACKUP_SVC wrote off the node, then name it to the bulk: --offnode-object <its name>.")
 else
-  NEXT+=("Copy each dump off the node with your own scp, and check your copy's sha256 against the one here before the apply.")
-  NEXT+=("Then name each copy that checks out to the bulk: --offnode-sha256 <your copy's sha256>, once per dump.")
+  for _i in ${BACKUP_SVCS[@]+"${!BACKUP_SVCS[@]}"}; do
+    NEXT+=("Confirm the object ${BACKUP_SVCS[$_i]} wrote off the node, then name it to the bulk: --offnode-object <its name>.")
+  done
+  if [ "${#DS[@]}" -gt 0 ]; then
+    NEXT+=("Copy each dump off the node with your own scp, and check your copy's sha256 against the one here before the apply.")
+    NEXT+=("Then name each copy that checks out to the bulk: --offnode-sha256 <your copy's sha256>, once per dump.")
+  fi
 fi
 if [ "${#FAILED[@]}" -eq 0 ]; then
   NEXT+=("bash \"$_libdir/apply.sh\" --approve --step bulk --run \"$run\" --dry-run <DIR>: approval 2")
