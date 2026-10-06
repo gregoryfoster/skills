@@ -2286,11 +2286,12 @@ script_verdict() {  # <path>
 
 # Whether an OnFailure= target starts or restarts anything (#351): its unit
 # file, its template's, their drop-ins, and what each Exec line runs. It's
-# cleared only when everything it runs was read, one script deep: an interpreter's script
-# (through env), a program that starts nothing, and any script an inline
-# command names. A binary, an unreadable script, or a unit that isn't a
-# service can't be, and stays a restarter (CR 199). 0 when it can restart,
-# 1 when it can't, 2 when that couldn't be read, with OF_WHY saying what.
+# cleared only when everything it runs was read, one script deep: an
+# interpreter's script (through env), a program that starts nothing, and
+# each command of an inline one. A binary, an unreadable script, or a unit
+# that isn't a service can't be, and stays a restarter (CR 199, CR 205). 0
+# when it can restart, 1 when it can't, 2 when that couldn't be read, with
+# OF_WHY saying what.
 onfailure_restarts() {  # <target unit>
   local t=$1 tmpl="" d f files="" line raw prog base script rc=1 w i v
   local -a tok=()
