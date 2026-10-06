@@ -528,8 +528,11 @@ read_journal() {
 # processes at 0 (CannObserv/replicator#125, #353). On the older layouts the
 # session runs under exe.dev's sshd instead, at -1000 on every build, while
 # sshd-session and the session read 0 on a fixed one (#346, 13 hosts,
-# 2026-10-01). Stock noble's sshd reads 0 and so does its session (measured
-# 2026-10-06), so stopping there changes nothing on a stock host (CR 201).
+# 2026-10-01). Stock OpenSSH does the same: noble's sshd puts its listener
+# at -1000 and each connection's sshd and session at 0 (measured with
+# CAP_SYS_RESOURCE, 2026-10-06; without it the listener can't lower itself
+# and reads 0). So stopping at the first sshd keeps a stock host's session
+# from reading as -1000 (CR 201, CR 206).
 # The agent's adj is reported apart, so the finding names the session's
 # own -1000 only.
 PLATFORM_AGENTS="exe-init sshd"

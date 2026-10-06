@@ -1104,6 +1104,24 @@ def test_on_the_older_layouts_the_session_ends_below_exe_devs_sshd(host, adj, fi
     assert ("session:adj" in _ids(out)) is finds
 
 
+def test_a_stock_hosts_session_ends_below_openssh(host):
+    # CR 206: noble's sshd puts its listener at -1000 and each connection's
+    # sshd and session at 0 (measured with CAP_SYS_RESOURCE).
+    host.chain(
+        [
+            (4242, "bash", 0),
+            (4100, "sshd", 0),
+            (900, "sshd", -1000),
+            (1, "systemd", 0),
+        ]
+    )
+    out = host.run()
+    s = out["environment"]["session"]
+    assert s["min_adj"] == 0
+    assert s["platform_agent"]["pid"] == 4100
+    assert "session:adj" not in _ids(out)
+
+
 def test_a_chain_that_leaves_the_pid_namespace_says_so(host):
     # Under docker exec the session's parent is outside the container, so its
     # PPid reads 0 before PID 1 is reached.
