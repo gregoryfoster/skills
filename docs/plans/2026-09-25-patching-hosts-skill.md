@@ -862,6 +862,22 @@ base image, or an owner-approved remedy the profile documents.
 8. **Gate.** *Done when* `bash scripts/pre-ship.sh` is green (budgets, ruff,
    shellcheck, the full structural suite) and every script's `--help` output
    is accurate.
+
+   **Done 2026-10-05.** The gate is green, shellcheck 0.8.0 runs, and both
+   budget readings pass, the exact one included. Every option each parser
+   takes is in its help, and every documented invocation uses a real flag.
+   Each help was then checked claim by claim against its code, in four
+   parallel read-only audits, with every discrepancy verified before acting
+   on it. Five were code that broke what its help promised, fixed with
+   tests (CR 189-193): a reboot chain launched before it was recorded; the
+   prune planner taking a failed read, a postrm's included, as none; an
+   earlier dry-run summary left behind; under `--root`, the probing
+   machine's host name; and four readings reported empty when unread. The
+   rest were help that understated or omitted what the code does, each
+   script's corrected in its own commit, with `pruning.md`'s advice on
+   undoing a disable. Held for the owner (CR 194): a `backup` line stands
+   in for every datastore's dump, since the knob doesn't bind one to a
+   datastore; the help and `knob.md` now say so.
 8b. **Exercise the skill by hand on every host** (decided 2026-09-29).
     - After the skills submodule bump, each host's own agent runs the skill
       end to end, with the owner approving in that session. The run is also
