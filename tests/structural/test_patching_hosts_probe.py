@@ -2312,42 +2312,59 @@ def test_post_boot_reads_a_persistent_journals_previous_boot_for_its_stop(
 
 
 RUN = "var/backups/patching-hosts-20261006T164500Z"
+COPIED = "2026-10-06T16:46:48Z journal /run/log/journal copied to /x/journal/_run_log_journal, and read back\n"
+FAILED = "2026-10-06T16:46:48Z the copy of /run/log/journal failed: the shutdown has no record of its own\n"
 
 
 @pytest.mark.parametrize(
-    "files, ok, said",
+    "log, partial, ok, said",
     [
-        # Where reboot-chain.sh copies it: one directory per journal.
+        (COPIED, False, True, "copied the volatile journal"),
+        # CR 200: the chain makes the directory before cp, so a failed copy
+        # leaves one behind; its log is what says.
+        (FAILED, True, False, "copy of the volatile journal failed"),
         (
-            {f"{RUN}/journal/_run_log_journal/system.journal": "x"},
-            True,
-            f"/{RUN}/journal/_run_log_journal",
-        ),
-        (
-            {f"{RUN}/reboot-chain.log": "x"},
+            "2026-10-06T16:46:48Z /run/log/journal holds no journal: a persistent one survives the boot\n",
             False,
-            "the chain ran, and",
+            False,
+            "found no volatile journal",
         ),
-        ({}, None, "no run directory"),
+        (
+            "2026-10-06T16:46:00Z start\n2026-10-06T16:46:01Z ABORT\n",
+            False,
+            None,
+            "has no journal step",
+        ),
+        (None, False, None, "no reboot chain log"),
     ],
 )
-def test_post_boot_finds_a_volatile_journals_copy_in_the_runs_journal(
-    host, files, ok, said
+def test_post_boot_reads_a_volatile_journals_record_from_the_chains_log(
+    host, log, partial, ok, said
 ):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
-    for rel, text in files.items():
-        host.write(rel, text)
+    (host.root / RUN).mkdir(parents=True)
+    if log is not None:
+        host.write(f"{RUN}/reboot-chain.log", log)
+    if partial:
+        host.write(f"{RUN}/journal/_run_log_journal/system.journal", "x")
     checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
     c = checks["shutdown:journal-copy"]
     assert c["ok"] is ok
     assert said in c["evidence"]
 
 
+def test_post_boot_without_a_run_says_to_pass_one(host):
+    host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
+    checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
+    assert checks["shutdown:journal-copy"]["ok"] is None
+    assert "pass --run" in checks["shutdown:journal-copy"]["evidence"]
+
+
 def test_post_boot_reads_the_run_it_is_given(host):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
-    host.write(f"{RUN}/journal/_run_log_journal/system.journal", "x")
+    host.write(f"{RUN}/reboot-chain.log", COPIED)
     other = "var/backups/patching-hosts-20261001T000000Z"
-    host.write(f"{other}/reboot-chain.log", "x")
+    host.write(f"{other}/reboot-chain.log", FAILED)
     checks = {
         c["check"]: c
         for c in host.run("--post-boot", "--run", "/" + other)["post_boot"]

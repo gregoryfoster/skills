@@ -3048,7 +3048,7 @@ check_shutdown() {
 # gone, and the chain's copy in <run>/journal is the record: reboot-chain.sh
 # writes it there, one directory per journal it copied.
 check_journal_record() {
-  local out d="" r=$run t
+  local out r=$run t
   if [ "$JOURNAL_VERDICT" = persistent ]; then
     if ! live_cmd journalctl; then
       check shutdown:journal-stopped "" "the previous boot's journal needs a running system to read"
@@ -3074,24 +3074,23 @@ check_journal_record() {
     check shutdown:journal-copy "" "no run directory under /var/backups/patching-hosts-<UTC>: pass --run, the run whose chain copied the journal"
     return 0
   fi
-  # The run is root's, at 0700.
-  capture out as_root ls -A "$P_ROOT$r/journal"
+  # The chain's own log says what step 5 did: a directory can hold a copy
+  # that failed partway (CR 200). The run is root's, at 0700.
+  capture out as_root cat "$P_ROOT$r/reboot-chain.log"
   if [ "$CAP_RC" -ne 0 ]; then
-    if as_root test -e "$P_ROOT$r/reboot-chain.log"; then
-      check shutdown:journal-copy 0 "the journal is volatile, the chain ran, and $r/journal holds no copy: the shutdown has no record"
+    if [ "$P_PRIV" = none ]; then
+      check shutdown:journal-copy "" "$r/reboot-chain.log needs root to read"
     else
-      check shutdown:journal-copy "" "$r/journal couldn't be read, and no reboot chain ran in $r"
+      check shutdown:journal-copy "" "no reboot chain log in $r (${CAP_ERR:-exit $CAP_RC}): pass --run, the run whose chain rebooted the host"
     fi
     return 0
   fi
-  read -r d _ <<<"$out" || true
-  if [ -n "$d" ]; then
-    check shutdown:journal-copy 1 "$r/journal/$d"
-  elif as_root test -e "$P_ROOT$r/reboot-chain.log"; then
-    check shutdown:journal-copy 0 "the journal is volatile, the chain ran, and $r/journal is empty: the shutdown has no record"
-  else
-    check shutdown:journal-copy "" "$r/journal is empty, and no reboot chain ran in $r"
-  fi
+  case $out in
+    *"the copy of "*" failed"*) check shutdown:journal-copy 0 "the chain's copy of the volatile journal failed ($r/reboot-chain.log): the shutdown has no record" ;;
+    *" copied to "*", and read back"*) check shutdown:journal-copy 1 "the chain copied the volatile journal into $r/journal, and read it back" ;;
+    *"holds no journal"*) check shutdown:journal-copy 0 "the chain found no volatile journal to copy, and the journal is volatile now: the shutdown has no record" ;;
+    *) check shutdown:journal-copy "" "$r/reboot-chain.log has no journal step: the chain ended before it" ;;
+  esac
 }
 
 # Whether the first start held. NRestarts can't say: it counts only
