@@ -1313,13 +1313,14 @@ def test_an_absent_setup_script_that_ran_every_boot_is_redelivered_not_clean(
         )
 
 
-def _root_owns_setup(host) -> None:
-    """stat answers root for /exe.dev/setup's owner, and runs the real stat
-    for everything else: a test can't chown to root."""
+def _setup_owned_by(host, uid: int) -> None:
+    """stat answers UID for /exe.dev/setup's owner, and runs the real stat
+    for everything else: a test can't chown to root, and a runner as root
+    owns every fixture."""
     host.STUBBED = (*host.STUBBED, "stat")
     host.FALLBACKS = {**host.FALLBACKS, "stat": 'exec /usr/bin/stat "$@"'}
     host.cases["stat"] = [
-        ("*%u */exe.dev/setup", "0\n", 0, "", None),
+        ("*%u */exe.dev/setup", f"{uid}\n", 0, "", None),
     ]
 
 
@@ -1356,8 +1357,7 @@ def test_a_setup_script_contained_in_place_is_not_a_leftover(
             "etc/systemd/system/multi-user.target.wants/exe-setup.service",
             "/usr/lib/systemd/system/exe-setup.service",
         )
-    if root:
-        _root_owns_setup(host)
+    _setup_owned_by(host, 0 if root else 1000)
     out = host.run()
     s = out["environment"]["setup_script"]
     assert s["verdict"] == verdict
@@ -1366,8 +1366,7 @@ def test_a_setup_script_contained_in_place_is_not_a_leftover(
         m = _finding(out, "setup-script:present")["message"]
         assert "chmod 600 /exe.dev/setup" in m
         assert "Don't shred it" in m
-    else:
-        assert s["file"]["owner_uid"] == 0
+    assert s["file"]["owner_uid"] == (0 if root else 1000)
     for text in (host.result.stdout, host.result.stderr, host.log.read_text()):
         assert SECRET not in text
 
