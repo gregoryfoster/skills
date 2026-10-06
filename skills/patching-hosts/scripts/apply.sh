@@ -10,7 +10,7 @@ Usage: bash apply.sh --step bulk|<held step> [--approve] [--run DIR]
                      [--offnode-object NAME]... [--health-within SECONDS]
                      [--config FILE] [--host NAME] [--today YYYY-MM-DD]
 
-Runs one step of the apply in references/run.md §3, under the gate before
+Runs one step of the apply in references/run.md section 3, under the gate before
 it, and records it as root in the run's directory. Until every check
 passes it changes nothing, and prints why.
 
@@ -19,14 +19,17 @@ Steps:
                pending packages of every hold group, runs unattended-upgrade
                on the rest, and polls the health checks. Approval 2.
   <held step>  one hold group: postgres, redis, docker, or a step the knob's
-               hold lines name. Releases what the bulk held for it, stops
-               each restarter, runs the same command, polls the health
-               checks every second, and starts the restarters again.
-               Approval 3(a): each group is its own invocation.
+               hold lines name. Stops each restarter that was active, then
+               releases what the bulk held for it, runs the same command,
+               polls the health checks every second, and starts the
+               restarters again: on a green step, or one that failed before
+               the upgrade. After a failed upgrade they stay stopped, for
+               the owner. Approval 3(a): each group is its own invocation.
 
 Lanes (references/policy.md):
   security     what the host's own unattended-upgrades origins take, which
-               must be -security alone unless exception uu:origins covers more
+               must be no wider than -security and the release pocket
+               unless exception uu:origins covers more
   maintenance  those, plus Ubuntu's -updates and each origin the knob
                follows, from an APT_CONFIG file in the run's directory. Never
                a pinned or held origin
@@ -51,12 +54,15 @@ Options:
   --lane LANE              the bulk only: security (the default),
                            maintenance or origin:<origin>
   --run DIR                the run's directory, an absolute path. A held step
-                           needs it. The bulk uses the one its recovery point
-                           was written to, or makes
-                           /var/backups/patching-hosts-<UTC>
-  --dry-run DIR            the bulk only: the directory probe.sh
-                           --dry-run-into wrote, within 24 hours. Its wall
-                           time is the floor of each step's expected duration
+                           needs it. On a host that declares a datastore,
+                           pass the bulk the directory recovery-point.sh
+                           wrote: without --run, the bulk makes
+                           /var/backups/patching-hosts-<UTC>, which holds no
+                           recovery point
+  --dry-run DIR            the bulk only, and required there: the directory
+                           probe.sh --dry-run-into wrote, within 24 hours,
+                           for the same lane. Its wall time is the floor of
+                           each step's expected duration
   --offnode-sha256 HEX     the bulk only: a dump's sha256, typed after the
                            owner checks their own copy off the node. One per
                            dump the recovery point recorded
@@ -66,51 +72,73 @@ Options:
   --health-within SECONDS  how long the health checks may take to pass twice
                            in a row after a step (default 300)
   --config FILE            the knob (default: .skills/patching-hosts at the
-                           repo root, or in the current directory)
+                           root of the repo around the current directory, or
+                           in the current directory outside a repo)
   --host NAME              whose knob sections apply (default: `hostname`)
-  --today DATE             the date exceptions expire against (default:
+  --today YYYY-MM-DD       the date exceptions expire against (default:
                            today, UTC)
   -h, --help               show this help
 
-It refuses (exit 3) without --approve; on a report-only host (no knob, no
-posture line, class ephemeral, a malformed line, a tie); without root; when
-unattended-upgrade would reboot by itself (Automatic-Reboot), or would take
-more than -security without an unexpired exception uu:origins; in another
-lane, when the host's own origins could take an origin the knob holds or
-pins, or apt doesn't read the lane's file, or a held step's knob follows
-other origins than its bulk did, or origin:<origin> names one the knob
-doesn't follow; when the dry run counted another lane, or in the
-one-origin lane, nothing or not all of the origin's upgrades; when dpkg
---audit isn't clean; when the step's span, from now to now plus its
-expected duration, isn't wholly inside one window or overlaps a quiet
-range; while an automatic apt run is in progress, or could start inside
-the span; while the run's reboot chain is scheduled or running; and when
-an inflight command prints anything but 0. On a host that
-declares a datastore, the bulk also refuses until the recovery point began
-within 24 hours, covers every datastore, and has left the node: each dump
-attested by its sha256, and each backup unit, one the knob declares, run
-successfully since the recovery point began, with its object named.
+It refuses (exit 3) for each reason under refused, among them: without
+--approve; on a report-only host (no knob, no posture line, class
+ephemeral, a malformed line, a tie); without root, or as root with no
+invoking user while the knob has inflight or health commands, which never
+run as root (run it through sudo from your own account); when a command it
+needs isn't on PATH (choom among them); when unattended-upgrade would
+reboot by itself (Automatic-Reboot), or would take more than -security
+without an unexpired exception uu:origins; in another lane, when the
+host's own origins could take an origin the knob holds or pins, or apt
+doesn't read the lane's file, or a held step's knob follows other origins
+than its bulk did, or origin:<origin> names one the knob doesn't follow;
+for the bulk, without --dry-run, or when its summary is missing, failed, is
+more than 24 hours old, or counted another lane, or in the one-origin lane,
+nothing or not all of the origin's upgrades; when dpkg --audit isn't
+clean; when the step's span, from now to now plus its expected duration,
+isn't wholly inside one window or overlaps a quiet range; while an
+automatic apt run is in progress, or apt-daily-upgrade.timer could start
+one inside the span (apt-daily.timer isn't read: on noble its 12-hour
+random delay, twice a day, spans the whole day); while the run's reboot
+chain is scheduled or
+running; when an inflight command prints anything but 0, or exits
+non-zero; and for a held step, when the run aborted at an earlier step,
+its bulk isn't green, the step already ran, or the run holds nothing for
+it. On a host that declares a datastore, the bulk also refuses until the
+recovery point began within 24 hours, covers every datastore, and has left
+the node: each dump attested by its sha256, and each backup unit, one the
+knob declares, run successfully since the recovery point began, with its
+object named. A backup unit stands in for every datastore's dump: the knob
+doesn't say which datastores a backup line covers.
 
 The run's directory is root-only: 0700, and each file 0600.
-  recovery-point   written before the bulk (run.md §2 has its lines)
+  recovery-point   written before the bulk (run.md section 2 has its lines)
   lane.conf        another lane's APT_CONFIG, which each step reads
   dry-run          the dry run's summary, for the held steps' gate
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
-  steps            "<step> ok|failed <start> <wall seconds> <max RSS KiB>"
-  <step>.log, <step>-health.log, probe-after-<step>.json and .err
+  steps            one tab-separated line per step that began its upgrade:
+                   <step>, ok or failed, when apply.sh started (epoch), and
+                   the upgrade's wall seconds and max RSS in KiB, either
+                   empty when it wasn't measured
+  apt-get-update.log, <step>.log, <step>.max-rss-kib, <step>-health.log,
+  probe-after-<step>.json and .err
 
-Output: one JSON object on stdout. Keys: apply, refused, gate, then what the
-step did: holds, upgrade, health, restarters, verdict, abort, next and
-reprobe.
+Output: one JSON object on stdout, for exits 0, 1 and 3. Keys: apply,
+refused, gate, then what the step did: holds, upgrade, health, restarters,
+verdict, abort, next and reprobe.
 
 Exit codes:
   0  the step ran, and its verdict is green
-  1  the step ran and failed: stop. Its abort says what to do, and lists
-     the holds the run left
-  2  usage error, an unreadable knob, or a library missing
+  1  the step failed. Before its upgrade (a refresh, a record, a release
+     or a stop that failed), abort.instructions says so: nothing was
+     upgraded and the step isn't recorded, so fix what failed and run it
+     again. After it: stop. Its abort says what to do, and lists the holds
+     the run left and any restarters still stopped. With nothing on
+     stdout, it failed before the gate: read stderr
+  2  usage error, an unreadable knob, or a library missing: nothing on
+     stdout
   3  refused: nothing was changed
-  *  any other code: apply.sh failed mid-step; read the run's directory
+  *  any other code: apply.sh failed unexpectedly; read the run's
+     directory, if it has one
 USAGE
 }
 
