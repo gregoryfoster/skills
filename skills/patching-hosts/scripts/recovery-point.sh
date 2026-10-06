@@ -21,10 +21,11 @@ directory. Until every check passes it changes nothing, and prints why.
   Otherwise a dump of each declared Postgres database (pg_dump -Fc) and of
   each Redis (BGSAVE, then a copy of its RDB file), written as root at mode
   600. A dump counts only when pg_dump exited 0, pg_restore --list reads it,
-  a full read (pg_restore -f /dev/null) does too, and its mode is 600:
-  --list alone passes a dump cut off after its table of contents. An RDB
-  copy counts when BGSAVE succeeded, the copy exited 0, redis-check-rdb
-  reads it where it's installed, and its mode is 600.
+  a full read (pg_restore -f /dev/null) does too, its mode is 600, and its
+  sha256 is read: --list alone passes a dump cut off after its table of
+  contents. An RDB copy counts when BGSAVE succeeded and LASTSAVE moved, the
+  copy exited 0, redis-check-rdb reads it where it's installed, its mode is
+  600, and its sha256 is read.
 
   Each cluster's roles (pg_dumpall --globals-only) stay on the node at mode
   600: they hold password hashes, so they're never copied off it or attested.
@@ -35,30 +36,42 @@ data store. A recovery point takes minutes: start it where nothing cuts it
 off, in the background, and read its JSON when it ends.
 
 Options:
-  --retain-until DATE      when the owner deletes these files, today or later
-                           (required: every recovery-point file has a stated
-                           retention)
+  --retain-until DATE      when the owner deletes these files, --today or
+                           later (required: every recovery-point file has a
+                           stated retention)
   --approve                the owner's approval, given in the host's own
                            session
   --run DIR                the run's directory, an absolute path (default:
                            /var/backups/patching-hosts-<UTC>). Pass the same
                            one to apply.sh
   --personal-data NAME     a database, or a Redis unit, whose dump holds
-                           personal data; the record flags it. Repeatable
+                           personal data; the record flags it. Repeatable.
+                           Under a backup regime no dump is taken, so it
+                           flags nothing
   --dump                   dump, even where a backup regime would stand in
   --redis-within SECONDS   how long a BGSAVE may take (default 300)
   --config FILE            the knob (default: .skills/patching-hosts at the
-                           repo root, or in the current directory)
+                           root of the repo around the current directory,
+                           or in the current directory outside a repo)
   --host NAME              whose knob sections apply (default: `hostname`)
-  --today DATE             the date exceptions expire against (default:
+  --today YYYY-MM-DD       the date exceptions expire against (default:
                            today, UTC)
   -h, --help               show this help
 
-It refuses (exit 3) without --approve; on a report-only host; without root;
-when the knob declares no datastore; once the run's bulk has started; when a
-cluster or a database can't be found, or a Redis can't be reached, or what
-answers isn't the unit's own process; and when the run's filesystem has less
-free space than the data it would dump.
+--run, --config and --personal-data may hold no whitespace: one that does is
+a usage error.
+
+It refuses (exit 3) for each reason under refused, among them: without
+--approve; on a report-only host; without root; when a tool it needs isn't
+on PATH (sha256sum and systemctl, and pg_lsclusters, pg_dump, pg_dumpall,
+pg_restore and runuser for Postgres, redis-cli for Redis); when the knob
+declares no datastore; when an existing --run isn't mode 0700; once the
+run's bulk has started; when --personal-data names a Postgres unit, or
+nothing the knob declares; when a cluster or a database can't be found, a
+cluster isn't online or its port can't be read, or a Redis can't be
+reached, can't say where its RDB file is, or what answers isn't the unit's
+own process; and when the run's filesystem has less free space than the
+data it would dump, or its free space can't be read.
 
 The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
@@ -70,12 +83,16 @@ Output: one JSON object on stdout. Keys: recovery_point, refused, gate, then
 what it did: backup, dumps, local, verdict and next.
 
 A record an earlier attempt left in the run is removed first, so an attempt
-that fails leaves none.
+that fails leaves none; if that removal fails, it says so, and the earlier
+record stays. A refused attempt leaves an earlier record as it was.
 
 Exit codes:
   0  the recovery point is taken and recorded
-  1  a dump or the backup failed: nothing was recorded
-  2  usage error, an unreadable knob, or a library missing
+  1  it failed, and recorded nothing: the run's directory couldn't be made,
+     an earlier record couldn't be removed, a dump, the roles' dump or the
+     backup failed, or the record couldn't be written
+  2  usage error, an unreadable knob, or a library missing: nothing on
+     stdout
   3  refused: nothing was changed
 USAGE
 }
