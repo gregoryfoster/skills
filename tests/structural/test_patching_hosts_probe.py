@@ -1214,6 +1214,28 @@ NOTIFIES = "#!/bin/sh\ncurl -sf http://notifier/x\n"
             False,
             "",
         ),
+        # CR 205: each simple command of an inline one is read.
+        (
+            "app-notify.service",
+            "ExecStart=/bin/sh -c '/usr/local/bin/helper %i'",
+            {"usr/local/bin/helper": b"\x7fELF\x00\x00"},
+            True,
+            "/usr/local/bin/helper, a binary",
+        ),
+        (
+            "app-notify.service",
+            "ExecStart=/bin/sh -c 'notify-send failed; exit 0'",
+            {},
+            True,
+            "notify-send, a command it can't read",
+        ),
+        (
+            "app-notify.service",
+            "ExecStart=/bin/sh -c 'curl -sf http://notifier/x || true; exit 0'",
+            {},
+            False,
+            "",
+        ),
     ],
 )
 def test_an_onfailure_target_is_cleared_only_when_what_it_runs_was_read(

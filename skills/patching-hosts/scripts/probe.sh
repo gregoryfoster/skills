@@ -2217,8 +2217,46 @@ read_services() {
 # notifier mentions `systemctl status` in one.
 RESTART_RE='systemctl[^#]*(start|restart|try-restart|reload-or-restart)'
 
-# Programs that start no unit, whatever their arguments.
+# Programs that start no unit, whatever their arguments, and the shell
+# builtins an inline command may use.
 INERT_PROGS="curl wget logger systemd-cat true echo printf"
+SHELL_BUILTINS=": [ test exit"
+
+# Whether an inline command (sh -c '...') restarts anything, read as simple
+# commands: 0 when it can, 1 when each command word was read and can't, 2
+# when one couldn't be, with IV_WHY saying which (CR 205). A path runs a
+# script, read like any other; a bare name must start nothing.
+inline_verdict() {  # <command>
+  local cmd=$1 seg w i rc=1 v
+  local -a ws=()
+  IV_WHY=""
+  cmd=${cmd//[\'\"]/ }
+  cmd=${cmd//&&/$'\n'}
+  cmd=${cmd//||/$'\n'}
+  cmd=${cmd//[;&|()]/$'\n'}
+  while IFS= read -r seg; do
+    read -r -a ws <<<"$seg" || true
+    i=0
+    while [ "$i" -lt "${#ws[@]}" ] && case ${ws[$i]} in *=* | exec | command | nohup) true ;; *) false ;; esac; do i=$((i + 1)); done
+    [ "$i" -lt "${#ws[@]}" ] || continue
+    w=${ws[$i]}
+    case $w in
+      /*)
+        v=0
+        script_verdict "$w" || v=$?
+        case $v in
+          0) return 0 ;;
+          2) IV_WHY=$SV_WHY rc=2 ;;
+        esac ;;
+      *)
+        if ! in_words "$w" "$INERT_PROGS $SHELL_BUILTINS"; then
+          IV_WHY="$w, a command it can't read"
+          rc=2
+        fi ;;
+    esac
+  done <<<"$cmd"
+  return $rc
+}
 
 # Whether a script restarts anything: 0 when it can, 1 when it's read and
 # can't, 2 when it can't be read, with SV_WHY saying why.
@@ -2249,7 +2287,7 @@ script_verdict() {  # <path>
 # service can't be, and stays a restarter (CR 199). 0 when it can restart,
 # 1 when it can't, 2 when that couldn't be read, with OF_WHY saying what.
 onfailure_restarts() {  # <target unit>
-  local t=$1 tmpl="" d f files="" line prog base script rc=1 w i v
+  local t=$1 tmpl="" d f files="" line raw prog base script rc=1 w i v
   local -a tok=()
   OF_WHY=""
   case $t in
@@ -2280,6 +2318,7 @@ onfailure_restarts() {  # <target unit>
       # Quotes and shell punctuation off, so a path inside sh -c '...' is a
       # word of its own.
       line=${line#*=}
+      raw=$line
       line=${line//[\'\";()&|]/ }
       read -r -a tok <<<"$line" || true
       [ "${#tok[@]}" -gt 0 ] || continue
@@ -2298,9 +2337,20 @@ onfailure_restarts() {  # <target unit>
         "") continue ;;
         sh | bash | dash | zsh | python | python[0-9]* | perl | perl[0-9]* | ruby | node)
           # Its script is its first argument that isn't an option. With -c,
-          # the command is on the line, read above.
+          # the command follows, and each simple command in it is read.
           for w in "${tok[@]:$i}"; do
-            case $w in -c) break ;; -*) ;; *) script=$w && break ;; esac
+            case $w in
+              -c)
+                v=0
+                inline_verdict "${raw#* -c }" || v=$?
+                case $v in
+                  0) return 0 ;;
+                  2) OF_WHY="its OnFailure= target $t runs $IV_WHY" rc=2 ;;
+                esac
+                break ;;
+              -*) ;;
+              *) script=$w && break ;;
+            esac
           done ;;
         *) in_words "$base" "$INERT_PROGS" || script=$prog ;;
       esac
