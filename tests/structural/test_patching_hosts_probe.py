@@ -1822,6 +1822,49 @@ def test_a_root_trees_host_is_its_own_never_the_probing_machines(
         assert r["knob"]["host"] == host
 
 
+def test_an_unsimulated_set_leaves_what_it_touches_null_never_none(host):
+    # CR 193: apt-get -s failing left the set empty, and maps read
+    # "nothing pending", each hold group's pending [].
+    host.on("apt-get", "-s *dist-upgrade", "", rc=100, stderr="E: lock\n")
+    out = host.run()
+    assert out["impact"]["maps"] is None
+    assert any(
+        "map a library in the set: the pending set couldn't be simulated" in n
+        for n in out["not_read"]
+    )
+    assert out["pending"]["hold_groups"]
+    assert all(g["pending"] is None for g in out["pending"]["hold_groups"])
+
+
+def test_unread_apt_config_leaves_the_uu_origins_null(host):
+    # CR 193: no apt-config reading, so no origin list, never an empty one.
+    host.installed("unattended-upgrades")
+    assert host.run()["updates"]["unattended_upgrades"]["origins"] is None
+    host.apt_config(Enable="1", Lists="1", UU="1", Reboot="false")
+    host.on("apt-config", "dump", STOCK_ORIGINS)
+    assert len(host.run()["updates"]["unattended_upgrades"]["origins"]) == 4
+
+
+@pytest.mark.parametrize(
+    "answer, services",
+    [
+        (
+            "NEEDRESTART-VER: 3.6\nNEEDRESTART-SVC: tailscaled.service\n",
+            ["tailscaled.service"],
+        ),
+        ("NEEDRESTART-VER: 3.6\n", []),
+        ("", None),
+    ],
+    ids=["one", "none", "unread"],
+)
+def test_needrestarts_services_are_null_unless_it_answered(host, answer, services):
+    # CR 193: [] meant both "nothing to restart" and "never asked".
+    host.installed("needrestart")
+    host.on("needrestart", "*", answer, rc=0 if answer else 1)
+    out = host.run()
+    assert out["impact"]["reboot"]["needrestart_services"] == services
+
+
 def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()

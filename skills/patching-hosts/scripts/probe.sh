@@ -818,7 +818,7 @@ read_environment() {
 APT_UNITS="apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service update-notifier-download.timer update-notifier-motd.timer"
 UNIT_STATE=""  # " unit=state ..." pairs: the live state when there is one, else the disk's
 PERIODIC_E="" PERIODIC_U="" PERIODIC_UU="" UU_REBOOT="" UU_WIDE="" UU_ORIGINS_N=0 APT_CONFIG_OK=0
-NR_RESTART="" NR_PROOF=unknown NR_INSTALLED=0 UU_INSTALLED=0 NR_SVC="" NR_KSTA=""
+NR_RESTART="" NR_PROOF=unknown NR_INSTALLED=0 UU_INSTALLED=0 NR_SVC="" NR_KSTA="" NR_READ=0
 
 state_of() {  # <var> <unit>: the state read_updates recorded
   local _so=${UNIT_STATE#* "$2"=}
@@ -927,7 +927,7 @@ read_periodic() {
     UU_WIDE=${UU_WIDE#, }
   fi
   jaddb R_UU installed "$UU_INSTALLED"
-  jadd R_UU origins "[$origins]"
+  if [ "$APT_CONFIG_OK" -eq 1 ]; then jadd R_UU origins "[$origins]"; else jadd R_UU origins null; fi
   jaddsn R_UU automatic_reboot "$UU_REBOOT"
 }
 
@@ -957,6 +957,8 @@ read_needrestart() {
       *"Disabling Ubuntu mode, explicit restart mode configured"*) NR_PROOF=explicit ;;
       *NEEDRESTART-VER*) NR_PROOF=ubuntu-mode ;;
     esac
+    # Its batch output names what it found, an empty list included.
+    case $out in *NEEDRESTART-VER*) NR_READ=1 ;; esac
     while IFS= read -r line; do
       case $line in
         NEEDRESTART-SVC:*) NR_SVC="$NR_SVC ${line#NEEDRESTART-SVC:}" ;;
@@ -1742,6 +1744,8 @@ read_holds() {
       if ! in_words "$name" "$m" && glob_match "$name" "${hf[1]}"; then m="$m $name"; fi
     done
     json_list hm "$m"
+    # Which of its globs are pending is unknown while the set is.
+    if [ "$SIM_OK" -ne 1 ]; then hm=null; fi
     e=""
     jadds e step "${hf[0]}"
     jadd e pending "$hm"
@@ -1836,6 +1840,11 @@ read_maps() {
   local p f out line pid pkg u e w pairs="" ulist="" pk pids np
   local -a maps=()
   R_MAPS=null
+  # An unsimulated set isn't an empty one: what maps it is unknown.
+  if [ "$SIM_OK" -ne 1 ]; then
+    not_read "which processes map a library in the set: the pending set couldn't be simulated"
+    return 0
+  fi
   if [ -z "${PEND// /}" ]; then
     R_MAPS='{"units": [], "note": "nothing pending"}'
     return 0
@@ -2238,6 +2247,7 @@ read_reboot() {  # <pre-run|post-boot>
   jadd R_REBOOT packages "[$pk]"
   jaddn R_REBOOT pid1_deleted_maps "$REBOOT_DEL"
   json_list w "$NR_SVC"
+  if [ "$NR_READ" -ne 1 ]; then w=null; fi
   jadd R_REBOOT needrestart_services "$w"
   jaddsn R_REBOOT needrestart_kernel_status "$NR_KSTA"
   # exe.dev has no guest kernel, so needrestart's kernel lines mean nothing
