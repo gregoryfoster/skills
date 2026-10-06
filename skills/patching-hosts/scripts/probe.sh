@@ -2262,7 +2262,9 @@ inline_verdict() {  # <command>
 }
 
 # Whether a script restarts anything: 0 when it can, 1 when it's read and
-# can't, 2 when it can't be read, with SV_WHY saying why.
+# can't, 2 when it can't be read, with SV_WHY saying why. One level deep: a
+# script it calls in turn isn't followed, so a restart two scripts down is
+# missed (CR 208).
 script_verdict() {  # <path>
   SV_WHY=""
   case $1 in
@@ -2284,7 +2286,7 @@ script_verdict() {  # <path>
 
 # Whether an OnFailure= target starts or restarts anything (#351): its unit
 # file, its template's, their drop-ins, and what each Exec line runs. It's
-# cleared only when everything it runs was read: an interpreter's script
+# cleared only when everything it runs was read, one script deep: an interpreter's script
 # (through env), a program that starts nothing, and any script an inline
 # command names. A binary, an unreadable script, or a unit that isn't a
 # service can't be, and stays a restarter (CR 199). 0 when it can restart,
