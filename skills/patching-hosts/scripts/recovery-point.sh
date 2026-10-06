@@ -289,7 +289,7 @@ gate_run() {
 # for the dumps of the datastores its backup line names, and no other: a
 # datastore no usable unit covers is dumped (CR 194).
 gate_backup() {
-  local r u svc o="" why e a="" d du dd covers declared r2
+  local r u svc o="" why e a="" d du dd covers declared r2 i j
   local -a f=() ds=() g=()
   for r in ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -335,7 +335,19 @@ gate_backup() {
     jadd e datastores "$d"
     jaddsn e not_used "$why"
     jpush a "{$e}"
-    if [ -z "$why" ] && [ -n "$covers" ]; then BACKUP_SVCS+=("$svc") BACKUP_COVERS+=("$covers"); fi
+    # One run per service: two lines naming it, or a timer and the service
+    # it starts, add their datastores together.
+    if [ -z "$why" ] && [ -n "$covers" ]; then
+      j=""
+      for i in ${BACKUP_SVCS[@]+"${!BACKUP_SVCS[@]}"}; do [ "${BACKUP_SVCS[$i]}" != "$svc" ] || j=$i; done
+      if [ -z "$j" ]; then
+        BACKUP_SVCS+=("$svc") BACKUP_COVERS+=("$covers")
+      else
+        for d in $covers; do
+          in_words "$d" "${BACKUP_COVERS[$j]}" || BACKUP_COVERS[j]="${BACKUP_COVERS[$j]} $d"
+        done
+      fi
+    fi
   done
   jadd o backups "[$a]"
   if [ "${#KNOB_BACKUP[@]}" -eq 0 ]; then jadds o not_used "the knob declares no backup unit"; fi

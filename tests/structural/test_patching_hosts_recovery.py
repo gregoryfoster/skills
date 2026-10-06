@@ -693,6 +693,33 @@ def test_a_backup_unit_stands_in_only_for_the_datastores_it_names(host):
     assert "dump postgres" not in rec
 
 
+@pytest.mark.parametrize(
+    "lines",
+    [
+        "backup app-backup.timer postgresql@16-main\nbackup app-backup.service redis-server\n",
+        "backup app-backup.timer postgresql@16-main\nbackup app-backup.timer redis-server\n",
+    ],
+    ids=["timer-and-its-service", "one-unit-twice"],
+)
+def test_one_backup_unit_on_two_lines_runs_once_for_both(host, lines):
+    # CR 197: each line was its own run, and its own --offnode-object.
+    _redis(host)
+    _regime(host)
+    host.knob(PG + "datastore redis redis-server\n" + lines)
+    out = host.recover()
+    [b] = out["backup"]
+    assert b["datastores"] == ["postgresql@16-main.service", "redis-server.service"]
+    starts = [a for _, a, _ in host.calls("systemctl") if a.startswith("start ")]
+    assert starts == ["start -- app-backup.service"]
+    assert out["dumps"] is None
+    rec = host.record("recovery-point")
+    assert rec.count("backup ") == 1
+    assert (
+        "backup app-backup.service postgresql@16-main.service redis-server.service\n"
+        in rec
+    )
+
+
 def test_a_backup_line_naming_no_declared_datastore_is_refused(host):
     _regime(host)
     host.knob(PG + "backup app-backup.timer postgresql@15-main\n")
