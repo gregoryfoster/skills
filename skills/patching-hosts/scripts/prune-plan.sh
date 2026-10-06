@@ -341,6 +341,9 @@ while read -r _p _y; do
 done <<<"$D_CLUSTERS"
 jadd J clusters "[$_a]"
 if [ -n "$D_CLUSTERS_WHY" ]; then not_read "Postgres's clusters: $D_CLUSTERS_WHY"; fi
+while IFS= read -r _l; do
+  if [ -n "$_l" ]; then not_read "a path's size, kept with kib null: $_l"; fi
+done <<<"$SIZES_UNREAD"
 
 _o=""
 jaddsn _o name "$C_GROUP"

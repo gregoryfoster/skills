@@ -19,7 +19,9 @@ Usage: . _prune-lib.sh    (sourced by prune-plan.sh and prune.sh; running it
                             name the probe doesn't know
   read_packages             PKG_NAME, PKG_STATE: every package dpkg knows;
                             1 when it can't list them
-  path_kib VAR PATH         PATH's size in KiB, as root, or empty
+  path_kib VAR PATH         PATH's size in KiB, as root; empty only when it
+                            isn't there, and - when it is at a size du
+                            couldn't read, with PATH_KIB_WHY
   units_of PACKAGE...       UNITS: the units they ship; 1 with UNITS_WHY
                             when the list couldn't be read
   purge_deletes PACKAGE...  PD_*: the lines in their purge scripts that
@@ -298,12 +300,28 @@ pg_clusters() {
 
 # A path's size in KiB, read as root where it can be: data under a 0700
 # directory can't be measured from outside it. Empty when it doesn't exist.
+# Empty only for a path that isn't there: GNU du says "cannot access '<path>':
+# No such file or directory" of the path itself (9.4, noble). Any other
+# failure, such as a file gone mid-walk, which a live data directory
+# often has, leaves it there at a size unknown, -, with PATH_KIB_WHY set:
+# a path taken as absent would drop out of what a purge must name. Each
+# such failure is kept in SIZES_UNREAD too, which derive resets.
+PATH_KIB_WHY="" SIZES_UNREAD=""
 path_kib() {  # <var> <path>
   local _pk=""
+  PATH_KIB_WHY=""
   if [ "$P_PRIV" != none ]; then
     capture _pk as_root du -sk "$2"
-    if [ "$CAP_RC" -eq 0 ]; then _pk=${_pk%%[[:space:]]*}; else _pk=""; fi
-    is_int "$_pk" || _pk=""
+    if [ "$CAP_RC" -eq 0 ]; then
+      _pk=${_pk%%[[:space:]]*}
+      is_int "$_pk" || { _pk=-; PATH_KIB_WHY="du -sk $2 printed no size"; }
+    else
+      case $CAP_ERR in
+        *"cannot access '$2': No such file or directory"*) _pk="" ;;
+        *) _pk=- PATH_KIB_WHY="du -sk $2 failed: ${CAP_ERR:-exit $CAP_RC}" ;;
+      esac
+    fi
+    if [ -n "$PATH_KIB_WHY" ]; then SIZES_UNREAD="$SIZES_UNREAD$PATH_KIB_WHY"$'\n'; fi
   elif [ -e "$P_ROOT$2" ]; then
     # Without root it exists, at a size unknown.
     _pk=-
@@ -323,7 +341,7 @@ derive() {  # <name>
   local _d_i _d_p _d_u _d_k _d_names="" _d_line _d_pn=""
   D_ROOTS="" D_RESIDUE="" D_UNITS=() D_REMOVE=() D_PURGE=() D_INST="" D_WHY="" D_HELD="" D_ORPHANS=""
   D_CONFIG="" D_DATA="" D_SIZES="" D_MEMBERS="" D_GROUP_EXISTS=0 D_UNPACKAGED=0 D_PRESENT=0
-  D_CONFFILES="" D_UNSAVED=() D_CLUSTERS="" D_CLUSTERS_WHY=""
+  D_CONFFILES="" D_UNSAVED=() D_CLUSTERS="" D_CLUSTERS_WHY="" SIZES_UNREAD=""
   prune_component "$1" || return 1
   if [ -n "$C_UNIT" ]; then
     D_UNPACKAGED=1

@@ -241,10 +241,17 @@ if cmd == "groupdel":
     save()
     sys.exit(0)
 if cmd == "du":
+    # As GNU du 9.4 answers on noble (measured 2026-10-05): a path that isn't
+    # there is named in its error; a tree it can't wholly read still gets a
+    # total, then exit 1.
     k = db["paths"].get(args[-1])
     if k is None:
+        print("du: cannot access '%s': No such file or directory" % args[-1], file=sys.stderr)
         sys.exit(1)
     print("%s\t%s" % (k, args[-1]))
+    if args[-1] in db.get("du_fail", {}):
+        print(db["du_fail"][args[-1]], file=sys.stderr)
+        sys.exit(1)
     sys.exit(0)
 if cmd == "pg_lsclusters":
     if db.get("clusters") is None:
@@ -730,6 +737,26 @@ def test_a_purge_whose_purge_script_cant_be_read_is_refused(tmp_path):
         "'s purge script couldn't be read: E: lock" in r for r in out["refused"]
     ), out["refused"]
     assert host.changes() == []
+
+
+def test_a_path_du_cant_wholly_read_stays_in_the_plan_and_the_purge_asks(tmp_path):
+    # CR 195: a du that failed read as "not there", so a data path dropped
+    # out of what a purge must name, though its purge script deletes it.
+    host = _host(tmp_path, NGINX, "nginx").declare(f"removed:nginx {PAST} soaked")
+    host.host_state["du_fail"] = {
+        "/var/log/nginx": "du: cannot read directory '/var/log/nginx/old': Permission denied"
+    }
+    plan = host.plan("nginx")
+    assert {"kind": "data", "path": "/var/log/nginx", "kib": None} in plan["paths"]
+    assert (
+        "a path's size, kept with kib null: du -sk /var/log/nginx failed: du: cannot"
+        " read directory '/var/log/nginx/old': Permission denied"
+    ) in plan["not_read"]
+    out = host.prune("purge", rc=3)
+    assert any(
+        "nginx-common's purge script deletes /var/log/nginx" in r
+        for r in out["refused"]
+    ), out["refused"]
 
 
 @pytest.mark.parametrize(
