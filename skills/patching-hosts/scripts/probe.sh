@@ -6,8 +6,9 @@ usage() {
   cat <<'USAGE'
 Usage: bash probe.sh [--config FILE] [--host NAME] [--root DIR] [--repo DIR]
                      [--refresh-into DIR] [--dry-run-into DIR]
-                     [--lane security|maintenance|origin:<origin>] [--post-boot]
-                     [--session-pid PID] [--today YYYY-MM-DD]
+                     [--lane security|maintenance|origin:<origin>]
+                     [--post-boot [--run DIR]] [--session-pid PID]
+                     [--today YYYY-MM-DD]
 
 Reads the host and prints one JSON object on stdout: its environment, what
 updates it, the pending set by class, what an apply would touch, dormant
@@ -59,6 +60,11 @@ Options:
   --post-boot         the checks after a reboot (run.md section 6), not the
                       readings before a run. Takes neither --refresh-into nor
                       --dry-run-into
+  --run DIR           with --post-boot: the run whose reboot chain copied a
+                      volatile journal into DIR/journal (default: the newest
+                      /var/backups/patching-hosts-<UTC>). A persistent
+                      journal isn't copied: the previous boot's own last
+                      lines are read instead
   --session-pid PID   where the session's chain to PID 1 starts (default: the
                       probe itself)
   --today YYYY-MM-DD  the date exceptions expire against (default: today, UTC)
@@ -93,11 +99,11 @@ Exit codes:
 USAGE
 }
 
-config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today="" lane=""
+config="" host="" root=/ repo="" refresh="" dryrun="" postboot=0 session_pid="" today="" lane="" run=""
 repo_set=0
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --config | --host | --root | --repo | --refresh-into | --dry-run-into | --lane | --session-pid | --today)
+    --config | --host | --root | --repo | --refresh-into | --dry-run-into | --lane | --session-pid | --today | --run)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --config) config=$2 ;;
@@ -109,6 +115,7 @@ while [ "$#" -gt 0 ]; do
         --lane) lane=$2 ;;
         --session-pid) session_pid=$2 ;;
         --today) today=$2 ;;
+        --run) run=$2 ;;
       esac
       shift 2 ;;
     --post-boot) postboot=1; shift ;;
@@ -176,6 +183,11 @@ if [ -n "$refresh$dryrun" ] && [ "$postboot" -eq 1 ]; then
   echo "ERROR --post-boot takes neither --refresh-into nor --dry-run-into" >&2
   exit 2
 fi
+if [ -n "$run" ] && [ "$postboot" -ne 1 ]; then
+  echo "ERROR --run names the run whose reboot --post-boot checks: it goes with --post-boot" >&2
+  exit 2
+fi
+case $run in "" | /*) ;; *) echo "ERROR --run takes an absolute path" >&2; exit 2 ;; esac
 # Under --root, the tree's own name: never the probing machine's, whose
 # knob sections aren't the tree's. A CR or blank a file ends with isn't part
 # of the name.
@@ -495,6 +507,7 @@ read_journal() {
     if [ -n "$oldest" ]; then reach=$(((P_NOW - oldest) / 86400)); fi
   fi
   iso_utc at "$oldest"
+  JOURNAL_VERDICT=$verdict
   jaddsn o storage "$storage"
   jaddsn o storage_set_in "$ssrc"
   jadds o flush "$flush"
@@ -2924,8 +2937,9 @@ check() {  # <name> <ok 1|0|""> <evidence>
   if [ "$2" = 0 ]; then finding post-boot "post-boot:$1" "" "$1: $3"; fi
 }
 
+JOURNAL_VERDICT=unknown
 check_shutdown() {
-  local c ver name port status log out line ok ev t d=""
+  local c ver name port status log out line ok ev
   if read_pg_clusters; then
     for c in $PG_CLUSTERS; do
       IFS=/ read -r ver name port status log <<<"$c"
@@ -2955,13 +2969,58 @@ check_shutdown() {
       esac
     fi
   fi
-  for t in "$P_ROOT"/var/backups/journal-*; do
-    if [ -d "$t" ]; then d=${t#"$P_ROOT"}; fi
-  done
+  check_journal_record
+}
+
+# The shutdown's own record (#356). A persistent journal survives the boot,
+# so the previous boot's last lines are read: journald's "Journal stopped"
+# is its last, written only when the shutdown reached it. A volatile one is
+# gone, and the chain's copy in <run>/journal is the record: reboot-chain.sh
+# writes it there, one directory per journal it copied.
+check_journal_record() {
+  local out d="" r=$run t
+  if [ "$JOURNAL_VERDICT" = persistent ]; then
+    if ! live_cmd journalctl; then
+      check shutdown:journal-stopped "" "the previous boot's journal needs a running system to read"
+      return 0
+    fi
+    capture out jctl -b -1 -n 20 -q --no-pager -o cat
+    if [ "$CAP_RC" -ne 0 ]; then
+      check shutdown:journal-stopped "" "the previous boot's journal couldn't be read (${CAP_ERR:-exit $CAP_RC})"
+    else
+      case $out in
+        *"Journal stopped"*) check shutdown:journal-stopped 1 "the persistent journal's previous boot ends with Journal stopped" ;;
+        *) check shutdown:journal-stopped 0 "the previous boot's last 20 journal lines have no Journal stopped: the shutdown never reached journald's stop" ;;
+      esac
+    fi
+    return 0
+  fi
+  if [ -z "$r" ]; then
+    for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
+      if [ -d "$t" ]; then r=${t#"$P_ROOT"}; fi
+    done
+  fi
+  if [ -z "$r" ]; then
+    check shutdown:journal-copy "" "no run directory under /var/backups/patching-hosts-<UTC>: pass --run, the run whose chain copied the journal"
+    return 0
+  fi
+  # The run is root's, at 0700.
+  capture out as_root ls -A "$P_ROOT$r/journal"
+  if [ "$CAP_RC" -ne 0 ]; then
+    if as_root test -e "$P_ROOT$r/reboot-chain.log"; then
+      check shutdown:journal-copy 0 "the journal is volatile, the chain ran, and $r/journal holds no copy: the shutdown has no record"
+    else
+      check shutdown:journal-copy "" "$r/journal couldn't be read, and no reboot chain ran in $r"
+    fi
+    return 0
+  fi
+  read -r d _ <<<"$out" || true
   if [ -n "$d" ]; then
-    check shutdown:journal-copy 1 "$d"
+    check shutdown:journal-copy 1 "$r/journal/$d"
+  elif as_root test -e "$P_ROOT$r/reboot-chain.log"; then
+    check shutdown:journal-copy 0 "the journal is volatile, the chain ran, and $r/journal is empty: the shutdown has no record"
   else
-    check shutdown:journal-copy "" "no /var/backups/journal-* copy found"
+    check shutdown:journal-copy "" "$r/journal is empty, and no reboot chain ran in $r"
   fi
 }
 

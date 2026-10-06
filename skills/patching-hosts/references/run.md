@@ -172,11 +172,13 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 5. **Copy the volatile journal, last**, so it holds every stop line. This copy is the only record of the shutdown:
 
    ```
-   install -d -m 700 /var/backups/journal-<utc>
-   cp -a /run/log/journal/<machine-id>/. /var/backups/journal-<utc>/
-   chmod -R go-rwx /var/backups/journal-<utc>
-   journalctl -D /var/backups/journal-<utc> -n 5                       # the read-back
+   install -d -m 700 <run>/journal/_run_log_journal
+   cp -a /run/log/journal/. <run>/journal/_run_log_journal/
+   chmod -R go-rwx <run>/journal/_run_log_journal
+   journalctl -D <run>/journal/_run_log_journal -n 5                   # the read-back
    ```
+
+   That's where `reboot-chain.sh` puts it, and where `probe.sh --post-boot` looks for it (#356).
 
    `cp -a` alone keeps the source's `systemd-journal` group and its 2755 mode, so the copy would stay readable by that group. A journal can hold secrets: archiver's setup-script key was in its journal. The copy is a recovery-point file, so it gets a stated retention (§2). A persistent journal, in `/var/log/journal`, survives the boot, so it isn't copied: a copy of one, up to journald's 4 GiB cap, would land on the disk the data stores boot from.
 6. `sync`, then `systemctl reboot`. **In-guest only**: a platform restart is a hard reset.
@@ -191,7 +193,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 
 `probe.sh --post-boot` takes these checks, and each one that fails is a finding. The downtime, and any `Persistent=` catch-up, are left to you.
 
-- **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the chain's journal copy. For Postgres: `database system was shut down at …` and no `redo starts`.
+- **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the journal's record. For Postgres: `database system was shut down at …` and no `redo starts`. A volatile journal's record is the chain's copy in `<run>/journal`: `--post-boot --run <dir>` names the run, and without it the newest `/var/backups/patching-hosts-<UTC>` is read. A persistent journal's is `Journal stopped` among the previous boot's last lines.
 - **Each `service`:**
   - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239). A start by hand after a failure leaves `NRestarts` at 0, so read `InactiveEnterTimestamp`: unset, the unit never stopped or failed after it started. Set, only PID 1's lines in the journal tell a failure from a stop by hand;
   - **its ordering**: `systemd-analyze critical-chain <service>` includes its data store, and the unit has `After=` on it. wslcb's first start succeeded by luck, until `After=postgresql.service` made it configured. Don't add `Wants=`: it would start a cluster an operator stopped on purpose.

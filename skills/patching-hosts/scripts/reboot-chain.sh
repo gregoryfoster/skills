@@ -454,7 +454,7 @@ if [ "$TMP_CLEARED" != 0 ]; then
 fi
 J_TMP="[$_a]"
 
-NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --config \"$config\" --host $host (run.md section 6).")
+NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --run \"$run\" --config \"$config\" --host $host (run.md section 6).")
 NEXT+=("If $log ends in ABORT, the chain stopped nothing: read why, then run reboot-chain.sh again once the gate would pass.")
 NEXT+=("The journal copy in $run/journal is a recovery-point file: delete it with the others, on their retention.")
 

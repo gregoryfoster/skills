@@ -2147,6 +2147,76 @@ def test_no_command_installs_removes_holds_restarts_or_writes_lists(host):
 # --- after the boot -------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "tail, ok",
+    [
+        (
+            "systemd-journald.service: Deactivated successfully.\nJournal stopped\n",
+            True,
+        ),
+        ("kernel: Linux version 6.12\n", False),
+    ],
+)
+def test_post_boot_reads_a_persistent_journals_previous_boot_for_its_stop(
+    host, tail, ok
+):
+    # #356: a persistent journal isn't copied, so a copy check read null
+    # there. Its previous boot's own last line says the shutdown was clean.
+    host.write("var/log/journal/" + "a" * 32 + "/system.journal", "x")
+    host.on("journalctl", "-b -1 -n 20 -q --no-pager -o cat", tail)
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["shutdown:journal-stopped"]["ok"] is ok
+    assert "shutdown:journal-copy" not in checks
+    assert ("post-boot:shutdown:journal-stopped" in _ids(out)) is not ok
+
+
+RUN = "var/backups/patching-hosts-20261006T164500Z"
+
+
+@pytest.mark.parametrize(
+    "files, ok, said",
+    [
+        # Where reboot-chain.sh copies it: one directory per journal.
+        (
+            {f"{RUN}/journal/_run_log_journal/system.journal": "x"},
+            True,
+            f"/{RUN}/journal/_run_log_journal",
+        ),
+        (
+            {f"{RUN}/reboot-chain.log": "x"},
+            False,
+            "the chain ran, and",
+        ),
+        ({}, None, "no run directory"),
+    ],
+)
+def test_post_boot_finds_a_volatile_journals_copy_in_the_runs_journal(
+    host, files, ok, said
+):
+    host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
+    for rel, text in files.items():
+        host.write(rel, text)
+    checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
+    c = checks["shutdown:journal-copy"]
+    assert c["ok"] is ok
+    assert said in c["evidence"]
+
+
+def test_post_boot_reads_the_run_it_is_given(host):
+    host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
+    host.write(f"{RUN}/journal/_run_log_journal/system.journal", "x")
+    other = "var/backups/patching-hosts-20261001T000000Z"
+    host.write(f"{other}/reboot-chain.log", "x")
+    checks = {
+        c["check"]: c
+        for c in host.run("--post-boot", "--run", "/" + other)["post_boot"]
+    }
+    assert checks["shutdown:journal-copy"]["ok"] is False
+    r = host.run("--run", "/" + RUN, rc=2)
+    assert "--run" in r.stderr
+
+
 def test_post_boot_checks_fail_on_a_restarted_service_and_a_pending_reboot(host):
     host.knob(
         "posture scheduled\nservice app-web.service\nrestarter app-health.timer\ndatastore postgres postgresql@16-main app\n"
