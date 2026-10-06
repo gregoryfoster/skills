@@ -2190,7 +2190,7 @@ read_backups() {
     in_words "$stem" "$cands" && continue
     cands="$cands $stem"
     if ! in_words "$stem.service" "$KNOB_BACKUPS" && ! in_words "$stem.timer" "$KNOB_BACKUPS"; then
-      finding knob "backup:$stem" "" "$base looks like a backup regime, and no backup line names it: declare it, so the recovery point can prefer a fresh success of it (run.md section 2)."
+      finding knob "backup:$stem" "" "$base looks like a backup regime, and no backup line names it: declare it with each datastore unit it copies, backup $stem <datastore unit>..., so the recovery point can prefer a fresh success of it for those (knob.md, run.md section 2)."
     fi
   done
 }

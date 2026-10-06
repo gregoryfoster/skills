@@ -1872,6 +1872,21 @@ def test_needrestarts_services_are_null_unless_it_answered(host, answer, service
     assert out["impact"]["reboot"]["needrestart_services"] == services
 
 
+def test_an_undeclared_backup_regime_is_named_with_the_grammar_to_declare_it(host):
+    # CR 198: "declare it" alone reads as `backup <unit>`, which CR 194 made
+    # malformed.
+    host.write("etc/systemd/system/app-backup.service", "[Service]\n")
+    f = _finding(host.run(), "backup:app-backup")
+    assert f["kind"] == "knob"
+    assert "backup app-backup <datastore unit>..." in f["message"]
+    host.knob(
+        "class production\nposture automatic\n"
+        "datastore postgres postgresql@16-main app\n"
+        "backup app-backup.service postgresql@16-main\n"
+    )
+    assert "backup:app-backup" not in _ids(host.run())
+
+
 def _mutating(name: str, args: str) -> bool:
     """Whether one stubbed call would change the host."""
     a = args.split()
