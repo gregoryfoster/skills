@@ -92,6 +92,19 @@ Plan step 8, where the code broke what its help promised:
 - maps, each hold group's pending, the unattended-upgrades origins and
   needrestart's services are null when unread, never empty (CR 193).
 
+Plan step 8b, from replicator's run under the scripts:
+- a phased update is in the pending set and flagged with its percentage, and
+  what a dry run selects that no class list names is a finding (#354);
+- the session's adj stops below the platform's agent, exe-init or exe.dev's
+  sshd, whose own -1000 is reported apart (#353, CR 201);
+- an OnFailure= target is a restarter when it starts or restarts something,
+  and is cleared only when everything it runs was read (#351, CR 199);
+- a redelivered setup script takes an exception, and one contained in place,
+  root's alone with its unit disabled, is no leftover (#352);
+- after a boot, a persistent journal's record is its previous boot's
+  "Journal stopped", and a volatile one's is the chain's own log line about
+  its copy (#356, CR 200).
+
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
 live, and stubs on PATH for every command that asks the running system. Each
