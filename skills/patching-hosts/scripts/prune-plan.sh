@@ -11,14 +11,15 @@ Usage: bash prune-plan.sh --component NAME [--out FILE] [--config FILE]
 
 For one component the probe knows, prints what pruning it would take
 (references/pruning.md), and changes nothing:
-  - the units, sockets and timers its packages ship, with each one's state
-    now: what the disable stage stops, disables and masks;
-  - the packages apt-get -s remove and apt-get -s purge would take, with
-    what each drags along, and any held;
+  - the units, sockets, timers and path units its packages ship, with each
+    one's state now: what the disable stage stops, disables and masks;
+  - the packages apt-get -s remove and apt-get -s purge would take, what
+    the purge drags along besides its roots, and any held;
   - what a later autoremove would take that it doesn't take now;
   - what else installed depends on them;
-  - the lines in their purge scripts that delete files, and their debconf
-    answers;
+  - the lines in their purge scripts that delete, as rm, rmdir, deluser,
+    delgroup, userdel or groupdel (a deletion any other way isn't seen),
+    and their debconf answers;
   - its config and data paths, with their sizes, and its packages'
     conffiles outside its config, which a purge deletes too;
   - Postgres's clusters, and where each keeps its data;
@@ -32,21 +33,30 @@ host no longer matches it, so an approval binds to exactly what it names.
 
 Options:
   --component NAME   docker, postgres, redis, nginx, ollama or qdrant
-  --out FILE         write the plan here (a new file, mode 600)
-  --config FILE      the knob (default: .skills/patching-hosts at the repo
-                     root, or in the current directory)
-  --host NAME        whose knob sections apply (default: `hostname`)
-  --today DATE       the date exceptions expire against (default: today, UTC)
+  --out FILE         write the plan here (a new file, mode 600: one that
+                     exists is a usage error). A write that fails is removed
+  --config FILE      the knob (default: .skills/patching-hosts at the root of
+                     the repo around the current directory, or in the
+                     current directory outside a repo)
+  --host NAME        whose knob sections apply, and the host the plan is for
+                     (default: `hostname`)
+  --today YYYY-MM-DD the date exceptions expire against (default: today, UTC)
   -h, --help         show this help
 
 Output: one JSON object on stdout. Keys: prune_plan, units, packages,
 reverse_depends, autoremove_would_take, purge_scripts, debconf, paths,
-conffiles, clusters, group, residue, stage, plan_file, not_read.
+conffiles, clusters, group, residue, stage, plan_file, not_read. A read
+that only shows something (what depends on it, debconf, autoremove, sizes)
+and failed is under not_read.
 
 Exit codes:
   0  the plan is printed, and written with --out
-  1  apt or dpkg couldn't be read, or --out couldn't be written
-  2  usage error, an unreadable knob, or a library missing
+  1  a read the plan stands on failed: the package list, apt's
+     simulations, a unit list, the conffiles or a purge script. Only
+     prune_plan and error are printed, and no plan is written. Or --out
+     couldn't be written
+  2  usage error, an unreadable knob, or a library missing: nothing on
+     stdout
 USAGE
 }
 
@@ -367,6 +377,8 @@ if [ -n "$out" ]; then
     jadds J plan_file "$out"
   else
     echo "prune-plan: $out couldn't be written" >&2
+    # Its own new file: a plan cut off part way is no plan.
+    rm -f -- "$out" 2>/dev/null || true
     jadd J plan_file null
     jadd J not_read "[$NOT_READ]"
     printf '{%s}\n' "$J"

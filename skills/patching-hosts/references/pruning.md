@@ -10,14 +10,14 @@ A prune runs **disable → remove → purge**, each stage after the last one's s
 
 | Stage | What it does | Declared in the knob, after it ran |
 |---|---|---|
-| disable | stops, disables and masks every unit the packages ship, sockets and timers too, each in one `systemctl` call so systemd orders the stops: dockerd before the containerd it runs on | `exception disabled:<name> <review-by> <reason>` |
+| disable | stops, disables and masks every unit the packages ship, sockets, timers and path units too, each in one `systemctl` call so systemd orders the stops: dockerd before the containerd it runs on. A unit whose file is under `/etc/systemd/system` is stopped and disabled, not masked: the mask would be that same path | `exception disabled:<name> <review-by> <reason>` |
 | savepoint (optional) | a tarball of the config and of the packages' other conffiles, and the packages' versions, as root at mode 600 | (none: the purge names it) |
 | remove | `apt-get remove` of exactly the plan's packages, then the group's members dropped | `exception removed:<name> <review-by> <reason>` |
 | purge | `apt-get purge` of exactly the plan's packages, the members dropped and the group deleted, then each `--purge-data` path | `exception purged:<name> <review-by> <reason>` |
 
 The **review-by date is the soak**: 30 days by default, up to 90. A stage refuses while the last stage's date hasn't passed; an earlier date shortens a soak, and that is the owner's call. `prune.sh --today` never runs ahead of the clock, so the knob is the only place a soak ends early. When a date passes, the exception expires and the probe reports it again; `prune-plan.sh`'s `stage` names the next one. A `purged:` line stays until the base image stops shipping the component.
 
-**With a savepoint, the remove stage is skipped**: disable, soak, savepoint, then purge. That's the better path for security. `remove` leaves config behind, sometimes with secrets in it, and an `rc` package the probe then has to explain. Without a savepoint, the remove stage is the reversible step, and stays. The purge takes `--savepoint DIR` only where its record is this component's, on this host, and its tarball still has the sha256 the record names: each attempt removes the last record first, and writes its own only once the tarball is read back.
+**With a savepoint, the remove stage is skipped**: disable, then the savepoint, which may be taken while the disable soaks, then the purge once the soak ends. That's the better path for security. `remove` leaves config behind, sometimes with secrets in it, and an `rc` package the probe then has to explain. Without a savepoint, the remove stage is the reversible step, and stays. The purge takes `--savepoint DIR` only where its record is this component's, on this host, and its tarball still has the sha256 the record names: each attempt removes the last record first, and writes its own only once the tarball is read back.
 
 `exception keep:<name>` stops every stage, wherever the prune got to: the owner keeps it until its review-by date, whatever stage lines the knob also holds.
 
@@ -51,12 +51,12 @@ bash "<prune.sh>" --stage remove --plan <file> --approve
 bash "<prune.sh>" --stage purge --plan <file> --approve [--savepoint <dir>] [--purge-data <path>]...
 ```
 
-Without `--approve` a stage changes nothing, and its `actions` list every command it would run. With it, it runs those commands, in that order, and none other. Each command's output goes to `<run>/<stage>.log`, root's only (default run: `/var/backups/patching-hosts-prune-<name>`). Its `next` says the knob line to add.
+Without `--approve` a stage changes nothing, and its `actions` list every command it would run. With it, it makes the run's directory, runs those commands in that order, and writes its own records there (the savepoint's versions and record); it changes nothing else. Each command's output goes to `<run>/<stage>.log`, root's only (default run: `/var/backups/patching-hosts-prune-<name>`). Its `next` says the knob line to add.
 
 - **No autoremove, ever.** Each apt command names the plan's packages and sets `APT::Get::AutomaticRemove=false`. Afterwards, each package must be gone, and any other package apt took fails the stage.
 - **No data the owner doesn't name.** A purge deletes a data path only by `--purge-data`, and only one the plan names. A package's own purge script runs too, so where one deletes a data path, the purge refuses until `--purge-data` names it: `/var/log/nginx` for nginx, `/var/lib/postgresql` for Postgres. So does each Postgres cluster's data, wherever it is: with postgresql-common still installed, `pg_dropcluster` deletes a data directory outside `/var/lib/postgresql`, and with it purged first, the data stays (both measured on noble). Named, it's deleted after apt whichever ran. To keep that data, dump it off the node first, or leave the component removed.
 - **The masks stay.** A unit masked at the disable stays masked after the purge, so a component that comes back with a later install stays down until someone unmasks it.
-- **Undo a disable** with `systemctl unmask`, then `systemctl enable --now`, for each unit it masked.
+- **Undo a disable** with `systemctl unmask` for each unit it masked, then `systemctl enable` only for the units the plan recorded as enabled (`units[].enabled`), and `systemctl start` only for those it recorded as active (`units[].active`): the disable acted on every unit, whatever its state, so `enable --now` on them all would turn on units that were off before.
 - **The savepoint holds no data.** Data differs by component, so its backup stays with the owner: dump it off the node, with a stated retention, as for a recovery point ([run.md](run.md#2-the-recovery-point)).
 
 Remove and purge also refuse while a package manager runs, when `dpkg --audit` isn't clean, when apt would install anything to take the component away, and while one of its packages is held. `apt-get -s` takes a held package, but `apt-get -y` refuses to (measured on noble), and the hold is its owner's: the plan's `packages.held` names it, for the owner to release with `apt-mark unhold`.

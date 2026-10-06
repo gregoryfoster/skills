@@ -12,14 +12,19 @@ Usage: bash prune.sh --stage disable|savepoint|remove|purge --plan FILE
 
 Runs one stage of a prune (references/pruning.md) on exactly what the plan
 names. Without --approve it changes nothing, and prints every command the
-stage would run. A plan is good for the host it was taken on, for 24 hours,
-and only while the host still matches it: a stage refuses when a fresh read
-gives other packages, units, conffiles, Postgres clusters or group members,
-so an approval binds to exactly what the plan names.
+stage would run, once the plan passes its own checks. A plan is good for the
+host --host names, for 24 hours, and only while the host still matches it:
+a stage refuses when a fresh read gives other packages, units, conffiles,
+Postgres clusters or group members, so an approval binds to exactly what
+the plan names. Whether the group still exists isn't part of that: one
+deleted since makes the purge's groupdel fail, after apt has run.
 
-The stages, each after the last one's soak (its review-by date, policy.md):
+The stages, each after the last one's soak (its review-by date, policy.md),
+but for the savepoint, which may come while the disable soaks:
   disable    stop, disable and mask the units its packages ship, each in one
-             systemctl call, so systemd orders the stops
+             systemctl call, so systemd orders the stops. A unit whose file
+             is under /etc/systemd/system is stopped and disabled but not
+             masked: the mask would be that very path
   savepoint  a tarball of its config and its packages' other conffiles, and
              its packages' versions, as root at mode 600 in the run's
              directory. Its data stays with you: dump it off the node
@@ -39,39 +44,51 @@ Options:
   --plan FILE          the plan prune-plan.sh --out wrote, within 24 hours
   --approve            the owner's approval of this stage, given in the
                        host's own session
-  --savepoint DIR      (purge) the component's savepoint: the purge may then
-                       follow the disable's soak
-  --purge-data PATH    (purge) delete this config or data path, one the plan
-                       names. Repeatable. Without it, its data stays
+  --savepoint DIR      (purge) the component's savepoint, an absolute path:
+                       the purge may then follow the disable's soak
+  --purge-data PATH    (purge) delete this config or data path, an absolute
+                       path the plan names. Repeatable. Without it, its
+                       data stays. Every Postgres cluster's data must be
+                       named before a purge of postgres
   --run DIR            where the logs and the savepoint go, an absolute path
                        without whitespace
                        (default: /var/backups/patching-hosts-prune-<component>)
-  --config FILE        the knob (default: .skills/patching-hosts at the repo
-                       root, or in the current directory)
-  --host NAME          whose knob sections apply (default: `hostname`)
-  --today DATE         the date exceptions expire against (default: today,
+  --config FILE        the knob (default: .skills/patching-hosts at the root
+                       of the repo around the current directory, or in the
+                       current directory outside a repo)
+  --host NAME          whose knob sections apply, and whose plan this must
+                       be (default: `hostname`)
+  --today YYYY-MM-DD   the date exceptions expire against (default: today,
                        UTC), never later than the clock's
   -h, --help           show this help
 
-It refuses (exit 3) without --approve; on a report-only host; without root;
-for a plan it can't read, another host's, one more than 24 hours old, or one
-naming anything outside the component; for a stage the knob's calendar
-hasn't reached; when the host no longer matches the plan, or apt would
-install anything; for remove or purge while a package manager runs,
-dpkg --audit isn't clean or one of its packages is held, or of a component
-from outside apt; for a --purge-data path the plan doesn't name; for a
-purge whose packages' own scripts delete a data path --purge-data doesn't
-name; and for a stage the plan gives nothing to run.
+It refuses (exit 3) for each reason under refused, among them: without
+--approve; on a report-only host; without root; when a tool the stage needs
+isn't on PATH; for a plan it can't read, another host's, one more than 24
+hours old or dated in the future, or one naming anything outside the
+component; for a stage the knob's calendar hasn't reached, or any stage
+while a keep: exception stands; when the host no longer matches the plan;
+for remove or purge, when apt would install anything, while a package
+manager runs, dpkg --audit isn't clean or one of its packages is held, or
+of a component from outside apt; for a --purge-data path the plan doesn't
+name; for a purge whose packages' purge scripts can't be read, or delete a
+data path --purge-data doesn't name, or of postgres while a cluster's data
+isn't named or its clusters can't be listed; and for a stage the plan gives
+nothing to run.
 
 Output: one JSON object on stdout. Keys: prune, refused, gate, actions
 (each command, in order), done (each one's exit), verdict and next.
 
 Exit codes:
   0  the stage ran
-  1  a command failed: done says which, and the run's <stage>.log has its
-     output
+  1  the stage failed: verdict.why says how. A command that failed is in
+     done, with its output in the run's <stage>.log; the run's directory
+     couldn't be made, the savepoint's sha256 couldn't be read, or the
+     check after the stage failed (a unit still active or unmasked, a
+     package still installed, or one apt took the plan doesn't name) with
+     every command in done exiting 0
   2  usage error, a --today later than the clock's date, an unreadable
-     knob, or a library missing
+     knob, or a library missing: nothing on stdout
   3  refused: nothing was changed
 USAGE
 }
@@ -661,14 +678,14 @@ day_after() {  # <var> <days>: the date that many days from now
   printf -v "$1" '%s' "${_da%%T*}"
 }
 if [ "${#FAILED[@]}" -gt 0 ]; then
-  NEXT+=("The stage didn't finish: read $log and the failures above before anything else. A disable is undone with systemctl unmask, then enable --now.")
+  NEXT+=("The stage didn't finish: read $log and the failures above before anything else. A disable is undone with systemctl unmask, then enable for the units the plan recorded as enabled and start for those it recorded as active (pruning.md).")
 else
   case $stage in
     disable)
       day_after _d 30
       NEXT+=("Declare it in the knob: exception disabled:$component $_d <reason>. The remove waits for that date, as does a purge after a savepoint.")
       [ -z "$MASKS_SKIPPED" ] || NEXT+=("Not masked, since its unit file is under /etc/systemd/system:$MASKS_SKIPPED. It's stopped and disabled.")
-      NEXT+=("To undo it: systemctl unmask, then systemctl enable --now, for each unit under actions.") ;;
+      NEXT+=("To undo it: systemctl unmask each unit under actions, then enable only those the plan recorded as enabled, and start only those it recorded as active: the rest were off before (pruning.md).") ;;
     savepoint)
       [ -z "$PLAN_DATA" ] || NEXT+=("The savepoint holds no data: dump $PLAN_DATA off the node yourself, with a stated retention, before the purge.")
       for _p in ${D_UNSAVED[@]+"${D_UNSAVED[@]}"}; do NEXT+=("The conffile $_p isn't in it: a path with whitespace can't be one word of the tar, so save it by hand."); done
