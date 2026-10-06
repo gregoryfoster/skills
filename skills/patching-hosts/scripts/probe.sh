@@ -3146,7 +3146,7 @@ check_journal_record() {
   case $out in
     *"the copy of "*" failed"*) check shutdown:journal-copy 0 "the chain's copy of the volatile journal failed ($r/reboot-chain.log): the shutdown has no record" ;;
     *" copied to "*", and read back"*) check shutdown:journal-copy 1 "the chain copied the volatile journal into $r/journal, and read it back" ;;
-    *"holds no journal"*) check shutdown:journal-copy 0 "the chain found no volatile journal to copy, and the journal is volatile now: the shutdown has no record" ;;
+    *"holds no journal"*) check shutdown:journal-copy 0 "the chain found no volatile journal to copy, and the journal isn't persistent (verdict $JOURNAL_VERDICT): the shutdown has no record" ;;
     *) check shutdown:journal-copy "" "$r/reboot-chain.log has no journal step: the chain ended before it" ;;
   esac
 }

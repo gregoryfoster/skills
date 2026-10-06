@@ -2398,7 +2398,7 @@ FAILED = "2026-10-06T16:46:48Z the copy of /run/log/journal failed: the shutdown
             "2026-10-06T16:46:48Z /run/log/journal holds no journal: a persistent one survives the boot\n",
             False,
             False,
-            "found no volatile journal",
+            "isn't persistent (verdict volatile)",
         ),
         (
             "2026-10-06T16:46:00Z start\n2026-10-06T16:46:01Z ABORT\n",
