@@ -1074,6 +1074,41 @@ def test_an_absent_setup_script_that_ran_every_boot_is_redelivered_not_clean(
         )
 
 
+def test_a_redelivered_setup_script_whose_key_is_revoked_is_declared_not_reported(
+    host,
+):
+    # #352: revoking the key changes nothing the probe reads, so without an
+    # exception a remedied host reported it on every run.
+    host.write(
+        "usr/lib/systemd/system/exe-setup.service",
+        "[Unit]\nConditionPathExists=/exe.dev/setup\n",
+    )
+    boot = "a" * 32
+    host.on(
+        "journalctl",
+        "--list-boots*",
+        "IDX BOOT ID                          FIRST ENTRY                 LAST ENTRY\n"
+        f" 0 {boot} Mon 2026-09-21 10:00:00 UTC Mon 2026-09-21 11:00:00 UTC\n",
+    )
+    host.on(
+        "journalctl",
+        f"-b {boot} -u exe-setup.service*",
+        "Finished exe-setup.service - Exe setup.\n",
+    )
+    out = host.run()
+    f = _finding(out, "setup-script:redelivered")
+    assert f["exception_what"] == "setup-script:redelivered"
+    assert "exception setup-script:redelivered" in f["message"]
+    host.knob(
+        "posture automatic\n"
+        "exception setup-script:redelivered 2099-01-01 key revoked 2026-10-06\n"
+    )
+    out = host.run()
+    assert "setup-script:redelivered" not in _ids(out)
+    e = _finding(out, "setup-script:redelivered", "excepted")
+    assert e["reason"] == "key revoked 2026-10-06"
+
+
 def test_anything_staged_under_tmp_is_listed_and_a_control_byte_never_printed(host):
     host.write("usr/lib/tmpfiles.d/tmp.conf", "D /tmp 1777 root root 30d\n")
     host.write("tmp/staged-binary", "x")

@@ -692,7 +692,9 @@ read_setup() {
       fi
       finding leftover setup-script:present "" "$msg" ;;
     redelivered)
-      finding leftover setup-script:redelivered "" "exe-setup.service ran on each of the $nb retained boots read, though /exe.dev/setup is absent now: the platform delivers the script again every boot, so an absent file isn't cleanup. Revoke any key the script carries." ;;
+      # Revoking the key changes nothing the probe can read, so the owner
+      # declares it: an exception, with a review-by date (#352).
+      finding leftover setup-script:redelivered setup-script:redelivered "exe-setup.service ran on each of the $nb retained boots read, though /exe.dev/setup is absent now: the platform delivers the script again every boot, so an absent file isn't cleanup. Revoke any key the script carries, then declare it: exception setup-script:redelivered <review-by> <reason> (policy.md)." ;;
   esac
 }
 

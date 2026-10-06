@@ -108,10 +108,11 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `ordering:<service>` | a `service` with no `After=` on a data store |
 | `journal:volatile` | the journal doesn't survive a reboot |
 | `session:adj` | the session's chain to PID 1 runs at `oom_score_adj` -1000 |
+| `setup-script:redelivered` | the platform runs the VM's creation-time setup script at every boot. Nothing on the host can stop that, and revoking the script's key changes nothing the probe reads, so the owner declares the remedy here, such as the key's revocation date. The review-by date makes someone re-check it |
 | `keep:<component>` | a dormant component the owner keeps; a prune stage is `disabled:`, `removed:` or `purged:` |
 
 The rest take no exception, because each is fixed where it is:
-- a provisioning leftover, such as the setup script;
+- a provisioning leftover the host can remove, such as the setup script on disk;
 - a knob gap: an undeclared restarter, backup regime or third-party origin;
 - a failing health check;
 - a pending reboot.
