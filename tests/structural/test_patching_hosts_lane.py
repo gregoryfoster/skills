@@ -32,7 +32,8 @@ Against step 6d's list:
 - `AutoUpdate.Apply` true is a deviation that says what an upgrade drops on
   any host (CR 162), null an unknown that says the node never set it (CR
   161), and false nothing; an exception covers it, and without tailscaled
-  it's not read;
+  it's not read; --post-boot reads it again, since the tailnet's default
+  re-applied at a boot (#357);
 - the running daemon's version is read beside the CLI's (CR 169), and the
   docs check it with `tailscale version --daemon` (CR 168).
 
@@ -693,14 +694,45 @@ def test_the_probe_reports_tailscales_own_auto_update(tmp_path, apply, kind):
     hits = [f for f in out["findings"] if f["id"] == "tailscale:auto-update"]
     assert [f["kind"] for f in hits] == ([kind] if kind else [])
     if apply == "null":
-        # Never set on the node: the tailnet's setting configures a device
-        # only as it joins (Tailscale's KB 1067), so it isn't deciding now.
+        # Never set on the node, and the tailnet's default can set it at a
+        # boot (#357): it says to turn it off for the tailnet too.
         assert "was never set on this node" in hits[0]["message"]
+        assert "for the tailnet" in hits[0]["message"]
         assert "default decides" not in hits[0]["message"]
     if apply == "true":
         # A global skill: what an upgrade drops, said of any host.
         assert "anything that reaches it over the tailnet" in hits[0]["message"]
         assert "cohort" not in hits[0]["message"]
+
+
+@pytest.mark.parametrize(
+    "apply, knob, ok",
+    [
+        ("true", "", False),
+        ("true", "exception tailscale:auto-update 2099-01-01 the owner's call\n", True),
+        ("false", "", True),
+        ("null", "", None),
+    ],
+)
+def test_post_boot_reads_tailscales_auto_update_again(tmp_path, apply, knob, ok):
+    # #357: the node's own false held through tailscaled's restart, then the
+    # tailnet's default set it true again at the boot. Caught by hand.
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n" + knob)
+    host.installed("tailscale")
+    host.on("tailscale", "debug prefs", _prefs(apply))
+    out = host.run("--post-boot")
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["tailscale:auto-update"]["ok"] is ok
+    ids = [f["id"] for f in out["findings"]]
+    assert ("post-boot:tailscale:auto-update" in ids) is (ok is False)
+    if ok is False:
+        assert "for the tailnet" in checks["tailscale:auto-update"]["evidence"]
+
+
+def test_post_boot_skips_tailscale_where_it_isnt_installed(tmp_path):
+    host = ProbeHost(tmp_path).knob("class production\nposture scheduled\n")
+    checks = {c["check"] for c in host.run("--post-boot")["post_boot"]}
+    assert "tailscale:auto-update" not in checks
 
 
 def test_the_probe_reads_the_running_daemons_version_beside_the_clis(tmp_path):

@@ -1292,9 +1292,10 @@ read_outside_apt() {
 # path, and anything that reaches the host over it. tailscale debug prefs
 # reads it, no root needed (the socket is 0666): AutoUpdate.Apply is true,
 # false, or null when nothing ever set it on the node, as on a daemon that
-# never logged in (noble, 2026-10-03). The tailnet's setting doesn't fill it
-# in later: it configures a device as it joins, and never changes an
-# existing one (Tailscale's KB 1067).
+# never logged in (noble, 2026-10-03). The node's own false doesn't hold:
+# on co-replicator, tailscaled logged "using tailnet default auto-update
+# setting: true" at a later boot and set Apply true again (2026-10-06,
+# #357). So --post-boot reads it again.
 TS_APPLY=""
 read_tailscale() {
   local out re v=""
@@ -1448,8 +1449,8 @@ evaluate_posture() {
   # Either posture: Tailscale belongs in the maintenance lane, or in an
   # expedited window (policy.md), never in an update of its own choosing.
   case $TS_APPLY in
-    true) finding deviation tailscale:auto-update tailscale:auto-update "Tailscale updates itself (AutoUpdate.Apply is true): outside any window, an upgrade drops this host's tailnet path, and anything that reaches it over the tailnet. Turn it off with tailscale set --auto-update=false, and take its updates in the maintenance lane (policy.md)." ;;
-    null) finding unknown tailscale:auto-update tailscale:auto-update "Tailscale's auto-update was never set on this node (AutoUpdate.Apply is null), and the tailnet's setting only configures a device as it joins, so nothing on record says whether it updates itself. Set it: tailscale set --auto-update=false (policy.md)." ;;
+    true) finding deviation tailscale:auto-update tailscale:auto-update "Tailscale updates itself (AutoUpdate.Apply is true): outside any window, an upgrade drops this host's tailnet path, and anything that reaches it over the tailnet. Turn it off for the tailnet (the admin console's auto-updates) as well as with tailscale set --auto-update=false: the tailnet's default re-applied over the node's setting at a boot. Take its updates in the maintenance lane (policy.md)." ;;
+    null) finding unknown tailscale:auto-update tailscale:auto-update "Tailscale's auto-update was never set on this node (AutoUpdate.Apply is null), so nothing on record says whether it updates itself, and the tailnet's default can set it at a boot. Turn it off for the tailnet, and on the node: tailscale set --auto-update=false (policy.md)." ;;
   esac
 }
 
@@ -2937,6 +2938,24 @@ check() {  # <name> <ok 1|0|""> <evidence>
   if [ "$2" = 0 ]; then finding post-boot "post-boot:$1" "" "$1: $3"; fi
 }
 
+# The boot is when the tailnet's default re-applied over the node's own
+# setting (#357), so it's read again after one.
+check_tailscale_auto_update() {
+  read_tailscale
+  installed tailscale || return 0
+  case $TS_APPLY in
+    false) check tailscale:auto-update 1 "AutoUpdate.Apply is false" ;;
+    true)
+      if exception_for tailscale:auto-update && [ "$EX_EXPIRED" = 0 ]; then
+        check tailscale:auto-update 1 "AutoUpdate.Apply is true, excepted by knob line $EX_LINE"
+      else
+        check tailscale:auto-update 0 "AutoUpdate.Apply is true after the boot: the tailnet's default re-applies over the node's setting, so turn it off for the tailnet too (policy.md)"
+      fi ;;
+    null) check tailscale:auto-update "" "AutoUpdate.Apply is null: nothing set it on the node" ;;
+    *) check tailscale:auto-update "" "tailscale debug prefs couldn't be read" ;;
+  esac
+}
+
 JOURNAL_VERDICT=unknown
 check_shutdown() {
   local c ver name port status log out line ok ev
@@ -3101,6 +3120,7 @@ read_post_boot() {
     check needrestart "" "needrestart couldn't be run as root"
   fi
   read_reboot post-boot
+  check_tailscale_auto_update
   if is_int "$REBOOT_DEL"; then
     if [ "$REBOOT_DEL" -eq 0 ]; then check pid1-deleted-maps 1 "PID 1 maps no deleted file"; else check pid1-deleted-maps 0 "PID 1 maps $REBOOT_DEL deleted files"; fi
   else

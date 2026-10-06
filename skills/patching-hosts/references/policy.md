@@ -102,7 +102,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `needrestart:restart` | no file sets `$nrconf{restart}` to `l`, or the file doesn't load (both postures) |
 | `unscoped:<origin>` | a followed origin at apt priority 500 or more: no `Package: *` pin below 500 for its site (both postures) |
 | `unpinned:<package>` | an installed package whose candidate comes from a followed origin, and that no package pin names (both postures) |
-| `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does: the tailnet's setting configures a device only as it joins (both postures) |
+| `tailscale:auto-update` | Tailscale updates itself (`tailscale set --auto-update`), or nothing ever set it on the node, so nothing on record says whether it does (both postures). The node's own setting isn't enough: on co-replicator, tailscaled re-applied the tailnet's default, on, over `--auto-update=false` at a later boot (2026-10-06, #357). Turn it off for the tailnet too, in the admin console's auto-updates. `--post-boot` reads it again |
 | `held:<package>` | an owner's hold on a pending package |
 | `database:<name>` | a cluster database no `datastore` line names |
 | `ordering:<service>` | a `service` with no `After=` on a data store |
