@@ -362,11 +362,6 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output>
   printf -v "$2" '%s' "${_os_s# }"
 }
 
-# --- units on disk ---------------------------------------------------------
-# Read from the files, so the answer holds offline, in an image no systemd
-# runs: a mask is a symlink to /dev/null or an empty unit file
-# (systemd.unit(5)), and an enablement is a symlink in a .wants or .requires
-# directory.
 # apt's resolver defers a phased update on a machine outside its phase, so
 # apt-get -s leaves it out. unattended-upgrade 2.9.1 takes it whatever the
 # phase: of 40 machine ids on noble, apt-get -s took a 10%-phased -updates
@@ -374,6 +369,11 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output>
 # simulation that stands for what a lane takes shows them all.
 APT_SIM_PHASED=(-o APT::Get::Always-Include-Phased-Updates=true)
 
+# --- units on disk ---------------------------------------------------------
+# Read from the files, so the answer holds offline, in an image no systemd
+# runs: a mask is a symlink to /dev/null or an empty unit file
+# (systemd.unit(5)), and an enablement is a symlink in a .wants or .requires
+# directory.
 unit_disk_state() {  # <var> <unit>
   local _uds_u=$2 _uds_r=$P_ROOT _uds_d _uds_f _uds_file="" _uds_tmpl=""
   for _uds_d in etc/systemd/system run/systemd/system; do
