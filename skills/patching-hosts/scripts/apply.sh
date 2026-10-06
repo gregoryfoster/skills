@@ -962,7 +962,7 @@ check_holds() {
 LANE_TAKE="" ORIGIN_LEFT="" ORIGIN_READ=0 ORIGIN_ERR=""
 read_origin_left() {
   local out kw p rest
-  capture out as_root apt-get -s dist-upgrade
+  capture out as_root apt-get -s "${APT_SIM_PHASED[@]}" dist-upgrade
   if [ "$CAP_RC" -ne 0 ]; then
     ORIGIN_ERR=${CAP_ERR:-exit $CAP_RC}
     return 0
@@ -1240,8 +1240,9 @@ do_bulk() {
   fi
   words_of BEFORE_HOLDS "$out"
   # What's pending now, against the refreshed lists: every upgrade, from any
-  # origin, so a group is held whichever origin its update comes from.
-  capture out as_root apt-get -s dist-upgrade
+  # origin, so a group is held whichever origin its update comes from, and
+  # whatever its phase: unattended-upgrade ignores phasing (_probe-lib.sh).
+  capture out as_root apt-get -s "${APT_SIM_PHASED[@]}" dist-upgrade
   if [ "$CAP_RC" -ne 0 ]; then
     fail "apt-get -s dist-upgrade failed (${CAP_ERR:-exit $CAP_RC}): nothing was held or upgraded"
     return 0

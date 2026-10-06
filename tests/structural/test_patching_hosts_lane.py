@@ -61,7 +61,7 @@ import subprocess
 import pytest
 
 from tests.structural.patching_hosts_rig import SKILL, clean_env, dispatcher
-from tests.structural.test_patching_hosts_apply import KNOB, TUE_1530, _ready
+from tests.structural.test_patching_hosts_apply import KNOB, SIM_ARGS, TUE_1530, _ready
 from tests.structural.test_patching_hosts_apply import Host as ApplyHost
 from tests.structural.test_patching_hosts_probe import Host as ProbeHost
 
@@ -339,14 +339,14 @@ def _one_origin(
 ):
     """A host whose apt has tailscale pending until an upgrade takes it."""
     host = _lane(tmp_path, knob)
-    sim = [c for c in host.cases["apt-get"] if c[0] == "-s dist-upgrade"][0][1]
+    sim = [c for c in host.cases["apt-get"] if c[0] == SIM_ARGS][0][1]
     s = host.state
     (s / "sim").write_text(sim + EXTRA)
     (s / "sim-after").write_text(sim + EXTRA.replace(TS_INST, ""))
     host.cases["apt-get"].insert(
         0,
         (
-            "-s dist-upgrade",
+            SIM_ARGS,
             "",
             0,
             "",
@@ -477,7 +477,7 @@ def test_what_the_step_took_unread_fails_it(tmp_path):
     host.cases["apt-get"].insert(
         0,
         (
-            "-s dist-upgrade",
+            SIM_ARGS,
             "",
             0,
             "",

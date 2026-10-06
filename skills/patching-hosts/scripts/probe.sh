@@ -1444,6 +1444,7 @@ evaluate_posture() {
 PEND=""        # " name ... ": everything apt-get -s would install or upgrade
 SIM_DIST_OUT="" SIM_OK=0 POLICY_OUT=""  # apt-get -s dist-upgrade's and apt-cache policy's output
 SEC_EXACT=""   # the dry run's selection, when it ran
+R_PHASED=null  # {package: percent} for each phased candidate in the set
 DRY_SECURITY_ONLY=0  # 1 when that selection is security alone
 PK_NAME=() PK_CLASS=()
 
@@ -1502,7 +1503,7 @@ read_simulation() {
     finding unknown pending:simulate "" "apt-get isn't on PATH, so the pending set is unknown."
     return 0
   fi
-  capture out apt_env apt-get -s -o Debug::NoLocking=1 "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} dist-upgrade
+  capture out apt_env apt-get -s -o Debug::NoLocking=1 "${APT_SIM_PHASED[@]}" "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} dist-upgrade
   if [ "$CAP_RC" -ne 0 ]; then
     finding unknown pending:simulate "" "apt-get -s dist-upgrade failed (exit $CAP_RC${CAP_ERR:+: $CAP_ERR}), so the pending set is unknown."
     return 0
@@ -1571,6 +1572,44 @@ read_simulation() {
   jadd pk ubuntu_other "$w"
   R_PACKAGES="{$pk}"
   R_REMOVALS="[$rem]"
+  read_phased
+}
+
+# Which pending candidates are phased, with their percentage: apt-cache
+# policy marks the version "(phased N%)". The simulation shows them all,
+# since unattended-upgrade takes them all (#354), so this only flags them.
+read_phased() {
+  local out line name="" cand="" v pct o=""
+  local -a pend_pkgs=()
+  R_PHASED=null
+  read -r -a pend_pkgs <<<"$PEND" || true
+  if [ "${#pend_pkgs[@]}" -eq 0 ]; then
+    R_PHASED="{}"
+    return 0
+  fi
+  if ! have apt-cache; then
+    not_read "which pending updates are phased: apt-cache isn't installed"
+    return 0
+  fi
+  capture out apt_env apt-cache "${APT_OPTS[@]}" ${LISTS_OPT[@]+"${LISTS_OPT[@]}"} policy "${pend_pkgs[@]}"
+  if [ "$CAP_RC" -ne 0 ]; then
+    not_read "which pending updates are phased: apt-cache policy exited $CAP_RC${CAP_ERR:+: $CAP_ERR}"
+    return 0
+  fi
+  while IFS= read -r line; do
+    case $line in
+      [!\ ]*:) name=${line%:} cand="" ;;
+      "  Candidate: "*) cand=${line#  Candidate: } ;;
+      *"(phased "*"%)")
+        read -r v _ <<<"${line# \*\*\* }"
+        if [ -n "$name" ] && [ "$v" = "$cand" ] && in_words "$name" "$PEND"; then
+          pct=${line##*(phased }
+          pct=${pct%\%)}
+          jaddn o "$name" "$pct"
+        fi ;;
+    esac
+  done <<<"$out"
+  R_PHASED="{$o}"
 }
 
 # Ubuntu Pro / ESM: noble-security doesn't patch universe.
@@ -1605,7 +1644,7 @@ read_esm() {
 
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
-  local oleft="" left_read=0 kw p rest
+  local oleft="" left_read=0 kw p rest unlisted=""
   local -a words=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
@@ -1691,6 +1730,13 @@ read_dry_run() {
     read -r -a words <<<"$names" || true
     n=${#words[@]}
     SEC_EXACT=" ${words[*]-} "
+    # What it selects and the class lists don't name would reach the host
+    # unseen in the proposal: replicator's phased package did (#354).
+    if [ "$SIM_OK" -eq 1 ]; then
+      for p in ${words[@]+"${words[@]}"}; do
+        in_words "$p" "$PEND" || unlisted="$unlisted $p"
+      done
+    fi
   fi
   # The origin's upgrades the selection leaves out: unattended-upgrade would
   # pass them over, so apply.sh refuses the window before it changes
@@ -1734,6 +1780,12 @@ read_dry_run() {
   fi
   jadds o lane "$lane"
   jaddb o security_only "$DRY_SECURITY_ONLY"
+  if [ "$SIM_OK" -eq 1 ] && [ "$sel" -eq 1 ]; then
+    json_list w "$unlisted"
+    jadd o unlisted "$w"
+  else
+    jadd o unlisted null
+  fi
   case $lane in
     origin:*)
       w=null
@@ -1749,6 +1801,9 @@ read_dry_run() {
   } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   R_DRY="{$o}"
+  if [ -n "$unlisted" ]; then
+    finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
+  fi
   if [ "$rc" -ne 0 ]; then
     finding unknown dry-run "" "unattended-upgrade --dry-run exited $rc: read $dryrun/dry-run.log. The security count stays a lower bound."
   elif [ -z "$n" ]; then
@@ -1837,6 +1892,7 @@ read_pending() {
   jadd o by_class "$R_BYCLASS"
   jadd o packages "$R_PACKAGES"
   jadd o removals "$R_REMOVALS"
+  jadd o phased "$R_PHASED"
   jadd o esm "$R_ESM"
   jadd o dry_run "$R_DRY"
   jadd o hold_groups "[$R_HOLDGROUPS]"

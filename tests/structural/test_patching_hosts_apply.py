@@ -106,6 +106,10 @@ def _dispatcher(tmp_path_factory):
         yield
 
 
+# apply.sh shows phased updates: unattended-upgrade takes them all (#354).
+SIM_ARGS = "-s -o APT::Get::Always-Include-Phased-Updates=true dist-upgrade"
+
+
 class Host(RigHost):
     # The commands a run must never reach, stubbed so a call is seen, and
     # never the machine's own.
@@ -206,7 +210,7 @@ def _ready(host: Host) -> Host:
     )
     host.on("dpkg", "--audit", "")
     host.on("apt-get", "update", "Hit:1 http://ports.ubuntu.com noble InRelease\n")
-    host.on("apt-get", "-s dist-upgrade", SIMULATION)
+    host.on("apt-get", SIM_ARGS, SIMULATION)
     host.on(
         "dpkg-query",
         "-W",
@@ -978,7 +982,7 @@ def test_lists_that_wont_refresh_hold_nothing_and_the_bulk_can_run_again(host):
 @pytest.mark.parametrize(
     "cmd, glob, why, held",
     [
-        ("apt-get", "-s dist-upgrade", "apt-get -s dist-upgrade failed", False),
+        ("apt-get", SIM_ARGS, "apt-get -s dist-upgrade failed", False),
         ("dpkg-query", "-W", "the before-versions couldn't be recorded", False),
         ("apt-mark", "showauto", "apt-mark showauto couldn't be recorded", False),
         ("apt-mark", "hold *", "apt-mark hold failed", True),

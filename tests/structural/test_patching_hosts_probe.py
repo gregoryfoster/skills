@@ -637,6 +637,58 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     assert [c for c in host.calls("choom") if "-n 0" in c[1]]
 
 
+PHASED_SIM = (
+    "Inst libc6 [2.39-0ubuntu8.3] (2.39-0ubuntu8.4 Ubuntu:24.04/noble-security [amd64])\n"
+    "Inst dnsmasq-base [2.90-2ubuntu0.4] (2.91-0ubuntu0.24.04.2 Ubuntu:24.04/noble-updates [amd64])\n"
+)
+PHASED_POLICY = (
+    "libc6:\n  Installed: 2.39-0ubuntu8.3\n  Candidate: 2.39-0ubuntu8.4\n  Version table:\n"
+    "     2.39-0ubuntu8.4 500\n"
+    "        500 http://archive.ubuntu.com/ubuntu noble-security/main amd64 Packages\n"
+    "dnsmasq-base:\n  Installed: 2.90-2ubuntu0.4\n  Candidate: 2.91-0ubuntu0.24.04.2\n"
+    "  Version table:\n"
+    "     2.91-0ubuntu0.24.04.2 500 (phased 10%)\n"
+    "        500 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages\n"
+    " *** 2.90-2ubuntu0.4 500\n"
+    "        100 /var/lib/dpkg/status\n"
+)
+
+
+def test_a_phased_update_is_in_the_pending_set_and_flagged(host):
+    # #354: apt-get -s defers a phased update outside the machine's phase,
+    # and unattended-upgrade takes it anyway, so the counts left it out.
+    host.on(
+        "apt-get",
+        "-s -o Debug::NoLocking=1 -o APT::Get::Always-Include-Phased-Updates=true *dist-upgrade",
+        PHASED_SIM,
+    )
+    host.on("apt-cache", "*policy libc6 dnsmasq-base", PHASED_POLICY)
+    out = host.run()
+    p = out["pending"]
+    assert p["by_class"]["updates"] == 1
+    assert p["packages"]["updates"] == ["dnsmasq-base"]
+    assert p["phased"] == {"dnsmasq-base": 10}
+
+
+def test_a_dry_run_selection_the_class_lists_dont_name_is_a_finding(host):
+    host.on("apt-get", "-s *dist-upgrade", PHASED_SIM.split("\n")[0] + "\n")
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: libc6 dnsmasq-base\n",
+    )
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    assert out["pending"]["dry_run"]["unlisted"] == ["dnsmasq-base"]
+    f = _finding(out, "dry-run:unlisted")
+    assert f["kind"] == "risk"
+    assert "dnsmasq-base" in f["message"]
+    # Nothing unlisted, no finding.
+    host.cases["apt-get"].insert(0, ("-s *dist-upgrade", PHASED_SIM, 0, "", None))
+    out = host.run("--dry-run-into", str(host.tmp / "dry2"))
+    assert out["pending"]["dry_run"]["unlisted"] == []
+    assert "dry-run:unlisted" not in _ids(out)
+
+
 def test_a_failed_dry_run_still_reports_its_cost(host):
     # GNU time writes the failed command's status line above its own.
     host.on("unattended-upgrade", "--dry-run -d", "An error occurred\n", rc=1)

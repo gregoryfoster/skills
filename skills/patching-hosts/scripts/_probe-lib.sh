@@ -49,6 +49,8 @@ The primitives these scripts reach a host through:
   rss_timer FILE            TIMER := GNU time's words to record a command's
                             max RSS in FILE, or none where there's no GNU time
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
+  APT_SIM_PHASED            the apt-get option that shows phased updates in a
+                            simulation: unattended-upgrade takes them all
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
   tmp_rule                  TMP_CLEARED := 1 when the boot empties /tmp, 0
@@ -364,6 +366,13 @@ origin_split() {  # <keep var> <skip var> <|names|> <sim output>
 # runs: a mask is a symlink to /dev/null or an empty unit file
 # (systemd.unit(5)), and an enablement is a symlink in a .wants or .requires
 # directory.
+# apt's resolver defers a phased update on a machine outside its phase, so
+# apt-get -s leaves it out. unattended-upgrade 2.9.1 takes it whatever the
+# phase: of 40 machine ids on noble, apt-get -s took a 10%-phased -updates
+# package for 3, and unattended-upgrade for all 40 (2026-10-06, #354). So a
+# simulation that stands for what a lane takes shows them all.
+APT_SIM_PHASED=(-o APT::Get::Always-Include-Phased-Updates=true)
+
 unit_disk_state() {  # <var> <unit>
   local _uds_u=$2 _uds_r=$P_ROOT _uds_d _uds_f _uds_file="" _uds_tmpl=""
   for _uds_d in etc/systemd/system run/systemd/system; do
