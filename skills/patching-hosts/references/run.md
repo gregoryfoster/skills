@@ -183,7 +183,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 Before launching:
 - post the post-boot checklist in the record;
-- list anything staged under `/tmp`, which the boot will empty.
+- list anything staged under `/tmp`, where the boot empties it. `reboot-chain.sh` reads the tmpfiles rule: under a `d` rule, as on the exeuntu images since 2026-07-17, the boot keeps `/tmp`, and nothing is listed (#355).
 
 If the reboot slips out of the window, say so, and redo the gate and the quiet-hour check.
 

@@ -65,7 +65,9 @@ online, or its port can't be read, so a stopped cluster blocks the reboot;
 and when a running Redis's address reaches no Redis, or another process.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
-(its lines), launched, tmp_staged (what the boot will empty), next.
+(its lines), launched, tmp (the tmpfiles rule for /tmp, and whether the
+boot empties it), tmp_staged (what the boot will empty: none where the
+rule keeps /tmp), next.
 
 Exit codes:
   0  the chain is launched
@@ -291,6 +293,7 @@ emit() {
   while IFS= read -r r; do jpushs a "$r"; done <<<"${CHAIN%$'\n'}"
   jadd o chain "[$a]"
   jadd o launched "$J_LAUNCHED"
+  jadd o tmp "{$J_TMPRULE}"
   jadd o tmp_staged "$J_TMP"
   a=""
   for r in ${NEXT[@]+"${NEXT[@]}"}; do jpushs a "$r"; done
@@ -434,14 +437,21 @@ gate_inflight
 write_chain
 
 # What the boot will empty: anything staged under /tmp, but this script's
-# own scratch directory, which goes when it exits.
-J_TMP="" _a=""
-while IFS= read -r _f; do
-  [ -n "$_f" ] || continue
-  [ "$_f" != "$P_TMP" ] || continue
-  case ${_f##*/} in systemd-private-* | .*-unix | snap-private-tmp) continue ;; esac
-  jpushs _a "$_f"
-done < <(find /tmp -mindepth 1 -maxdepth 1 2>/dev/null | sort)
+# own scratch directory, which goes when it exits. Where the rule keeps /tmp
+# nothing is, and a list of it would read as data the boot loses (#355).
+J_TMP="" J_TMPRULE="" _a=""
+tmp_rule
+jaddsn J_TMPRULE rule "$TMP_RULE"
+jaddsn J_TMPRULE rule_file "$TMP_RULE_FILE"
+jaddb J_TMPRULE cleared_at_boot "$TMP_CLEARED"
+if [ "$TMP_CLEARED" != 0 ]; then
+  while IFS= read -r _f; do
+    [ -n "$_f" ] || continue
+    [ "$_f" != "$P_TMP" ] || continue
+    case ${_f##*/} in systemd-private-* | .*-unix | snap-private-tmp) continue ;; esac
+    jpushs _a "$_f"
+  done < <(find "$P_ROOT/tmp" -mindepth 1 -maxdepth 1 2>/dev/null | sort)
+fi
 J_TMP="[$_a]"
 
 NEXT+=("After the boot: bash \"$_libdir/probe.sh\" --post-boot --config \"$config\" --host $host (run.md section 6).")

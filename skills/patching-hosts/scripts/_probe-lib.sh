@@ -51,6 +51,10 @@ The primitives these scripts reach a host through:
   rss_of VAR TEXT           VAR := the max RSS a TIMER file's TEXT holds
   unit_disk_state VAR UNIT  masked, masked-runtime, enabled, disabled, static
                             or not-found, read from the unit files under ROOT
+  tmp_rule                  TMP_CLEARED := 1 when the boot empties /tmp, 0
+                            when it keeps it, empty when no rule was found;
+                            TMP_RULE and TMP_RULE_FILE := the rule and its
+                            file, from tmpfiles' tmp.conf or tmp.mount
   unit_show UNIT PROP...    systemctl show, setting U_<PROP> for each PROP;
                             returns 1, every U_<PROP> empty, when it can't
   file_mode VAR PATH        permission bits as four octal digits, or empty
@@ -396,6 +400,31 @@ unit_disk_state() {  # <var> <unit>
   else
     printf -v "$1" static
   fi
+}
+
+# Whether the boot empties /tmp: the first tmp.conf in tmpfiles' order, or
+# an enabled tmp.mount. An image can override Ubuntu's D rule with d, which
+# keeps /tmp (boldsoftware/exeuntu 120bf12, #346).
+tmp_rule() {
+  local _tr_f _tr_line _tr_t _tr_p _tr_m
+  TMP_RULE="" TMP_RULE_FILE="" TMP_CLEARED=""
+  for _tr_f in "$P_ROOT/etc/tmpfiles.d/tmp.conf" "$P_ROOT/run/tmpfiles.d/tmp.conf" "$P_ROOT/usr/lib/tmpfiles.d/tmp.conf" "$P_ROOT/lib/tmpfiles.d/tmp.conf"; do
+    if [ -L "$_tr_f" ] && [ "$(readlink "$_tr_f")" = /dev/null ]; then
+      TMP_RULE_FILE=${_tr_f#"$P_ROOT"} TMP_RULE=masked TMP_CLEARED=0
+      break
+    fi
+    [ -f "$_tr_f" ] || continue
+    TMP_RULE_FILE=${_tr_f#"$P_ROOT"}
+    while IFS= read -r _tr_line || [ -n "$_tr_line" ]; do
+      read -r _tr_t _tr_p _ <<<"$_tr_line"
+      [ "$_tr_p" = /tmp ] || continue
+      TMP_RULE=$_tr_line
+      case $_tr_t in D | D! | Q | Q!) TMP_CLEARED=1 ;; *) TMP_CLEARED=0 ;; esac
+    done <"$_tr_f"
+    break
+  done
+  unit_disk_state _tr_m tmp.mount
+  if [ "$_tr_m" = enabled ]; then TMP_CLEARED=1 TMP_RULE="tmp.mount (tmpfs)"; fi
 }
 
 unit_show() {  # <unit> <prop>...

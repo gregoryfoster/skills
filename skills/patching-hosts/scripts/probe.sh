@@ -697,24 +697,8 @@ read_setup() {
 }
 
 read_tmp() {
-  local o="" f line rule="" rsrc="" cleared="" t p staged="" name count=0 tm
-  for f in "$P_ROOT/etc/tmpfiles.d/tmp.conf" "$P_ROOT/run/tmpfiles.d/tmp.conf" "$P_ROOT/usr/lib/tmpfiles.d/tmp.conf" "$P_ROOT/lib/tmpfiles.d/tmp.conf"; do
-    if [ -L "$f" ] && [ "$(readlink "$f")" = /dev/null ]; then
-      rsrc=${f#"$P_ROOT"} rule=masked cleared=0
-      break
-    fi
-    [ -f "$f" ] || continue
-    rsrc=${f#"$P_ROOT"}
-    while IFS= read -r line || [ -n "$line" ]; do
-      read -r t p _ <<<"$line"
-      [ "$p" = /tmp ] || continue
-      rule=$line
-      case $t in D | D! | Q | Q!) cleared=1 ;; *) cleared=0 ;; esac
-    done <"$f"
-    break
-  done
-  unit_disk_state tm tmp.mount
-  if [ "$tm" = enabled ]; then cleared=1 rule="tmp.mount (tmpfs)"; fi
+  local o="" staged="" name count=0
+  tmp_rule
   if [ -d "$P_ROOT/tmp" ]; then
     for name in "$P_ROOT"/tmp/* "$P_ROOT"/tmp/.[!.]*; do
       if [ ! -e "$name" ] && [ ! -L "$name" ]; then continue; fi
@@ -725,9 +709,9 @@ read_tmp() {
       if [ "$count" -le 50 ]; then jpushs staged "$name"; fi
     done
   fi
-  jaddsn o rule "$rule"
-  jaddsn o rule_file "$rsrc"
-  jaddb o cleared_at_boot "$cleared"
+  jaddsn o rule "$TMP_RULE"
+  jaddsn o rule_file "$TMP_RULE_FILE"
+  jaddb o cleared_at_boot "$TMP_CLEARED"
   jaddn o staged_count "$count"
   jadd o staged "[$staged]"
   R_TMP=$o

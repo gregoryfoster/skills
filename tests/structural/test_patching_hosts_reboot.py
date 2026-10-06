@@ -44,7 +44,9 @@ Beyond that list:
 - a running Redis whose address reaches another process refuses: the chain
   would check and save that one;
 - its unit is recorded before it's launched, and one it can't record is
-  never launched; a launch that fails removes the record (CR 189).
+  never launched; a launch that fails removes the record (CR 189);
+- where the tmpfiles rule keeps /tmp, nothing is listed as staged, since the
+  boot empties nothing (#355).
 """
 
 import json
@@ -245,6 +247,89 @@ def test_without_approve_it_prints_the_chain_and_writes_nothing(host):
     assert not host.calls("systemd-run")
     # The password stays in Redis's own file.
     assert "pw-in-the-file" not in host.result.stdout + host.result.stderr
+
+
+def _tmp_rule(host: Host, cleared: str) -> None:
+    """Answer tmp_rule from the copied library: the chain reads the real /."""
+    lib = host.scripts / "_probe-lib.sh"
+    lib.write_text(
+        lib.read_text()
+        + "\ntmp_rule() { TMP_RULE='d /tmp 1777 root root 30d' "
+        + f"TMP_RULE_FILE=/etc/tmpfiles.d/tmp.conf TMP_CLEARED={cleared}; }}\n"
+    )
+
+
+def test_where_the_rule_keeps_tmp_nothing_is_listed_as_staged(host):
+    # #355: replicator's 123 paths read as data the boot would lose, on a
+    # host whose d rule keeps /tmp.
+    _tmp_rule(host, "0")
+    out = host.reboot(approve=False, rc=3)
+    assert out["tmp"] == {
+        "rule": "d /tmp 1777 root root 30d",
+        "rule_file": "/etc/tmpfiles.d/tmp.conf",
+        "cleared_at_boot": False,
+    }
+    assert out["tmp_staged"] == []
+
+
+@pytest.mark.parametrize("cleared, expect", [("1", True), ("", None)])
+def test_where_the_boot_empties_tmp_or_it_is_unknown_the_list_stays(
+    host, cleared, expect
+):
+    _tmp_rule(host, cleared)
+    (host.tmp / "seen").mkdir()
+    host.cases["find"] = [("*", f"{host.tmp}/seen/staged\n", 0, "")]
+    host.STUBBED = (*Host.STUBBED, "find")
+    out = host.reboot(approve=False, rc=3)
+    assert out["tmp"]["cleared_at_boot"] is expect
+    assert out["tmp_staged"] == [f"{host.tmp}/seen/staged"]
+
+
+@pytest.mark.parametrize(
+    "files, cleared, rule",
+    [
+        ({}, "", ""),
+        (
+            {"usr/lib/tmpfiles.d/tmp.conf": "D /tmp 1777 root root -\n"},
+            "1",
+            "D /tmp 1777 root root -",
+        ),
+        # An image's own file overrides Ubuntu's (boldsoftware/exeuntu 120bf12).
+        (
+            {
+                "usr/lib/tmpfiles.d/tmp.conf": "D /tmp 1777 root root -\n",
+                "etc/tmpfiles.d/tmp.conf": "d /tmp 1777 root root 30d\n",
+            },
+            "0",
+            "d /tmp 1777 root root 30d",
+        ),
+        (
+            {"etc/systemd/system/local-fs.target.wants/tmp.mount": ""},
+            "1",
+            "tmp.mount (tmpfs)",
+        ),
+    ],
+)
+def test_tmp_rule_reads_whether_the_boot_empties_tmp(tmp_path, files, cleared, rule):
+    root = tmp_path / "root"
+    for rel, text in files.items():
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    root.mkdir(exist_ok=True)
+    r = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'. "{SKILL}/scripts/_probe-lib.sh"; P_ROOT="{root}"; tmp_rule; '
+            'printf "%s|%s\\n" "$TMP_CLEARED" "$TMP_RULE"',
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == f"{cleared}|{rule}\n"
 
 
 def test_the_chains_one_restart_is_an_in_guest_reboot(host):
