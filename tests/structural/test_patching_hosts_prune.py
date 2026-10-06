@@ -32,7 +32,13 @@ Beyond that list:
 - each action's output in the stage's log, and a stage with nothing to run
   refused;
 - the group's members dropped, and the group deleted at the purge;
-- a component from outside apt is disabled, and removed by hand.
+- a component from outside apt is disabled, and removed by hand;
+- a read the plan stands on (a purge script, a unit list, the conffiles)
+  that fails stops the plan, and a purge refuses a purge script it can't
+  read; one that only shows something is not_read (CR 190). A package with
+  no postrm has none, as noble's dpkg-query says;
+- a path du can't wholly read stays in the plan at a size unknown, so a
+  purge still asks for it (CR 195).
 
 Each case runs from a copy of the skill's scripts, against a fake host: one
 script answers dpkg-query, apt-get, systemctl and the rest from a JSON state

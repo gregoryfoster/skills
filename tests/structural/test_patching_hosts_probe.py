@@ -85,6 +85,13 @@ on a host no profile matches.
 Plan step 5, from the real image: an idle Docker is never asked, since
 docker.socket would start it, and what it holds is read from disk.
 
+Plan step 8, where the code broke what its help promised:
+- a dry run that doesn't run leaves no earlier summary behind (CR 191);
+- under --root the host is the tree's etc/hostname, trimmed, or a usage
+  error, never the probing machine's (CR 192);
+- maps, each hold group's pending, the unattended-upgrades origins and
+  needrestart's services are null when unread, never empty (CR 193).
+
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
 live, and stubs on PATH for every command that asks the running system. Each

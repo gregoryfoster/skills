@@ -42,7 +42,9 @@ Beyond that list:
 - Redis is reached where its unit's own arguments say, over the file's;
 - a SAVE Redis refuses is logged, although redis-cli exits 0 on it;
 - a running Redis whose address reaches another process refuses: the chain
-  would check and save that one.
+  would check and save that one;
+- its unit is recorded before it's launched, and one it can't record is
+  never launched; a launch that fails removes the record (CR 189).
 """
 
 import json
