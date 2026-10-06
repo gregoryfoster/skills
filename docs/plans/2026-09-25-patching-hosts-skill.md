@@ -911,6 +911,31 @@ base image, or an owner-approved remedy the profile documents.
 
     *Done when* every exe.dev host has had one run under the skill, and each
     rough-edge issue is closed or deferred with a reason.
+
+    **Replicator, 2026-10-06** (CannObserv/replicator#131): the first run
+    under the scripts, a maintenance-lane catch-up with a reboot, 17 s
+    down. It filed seven rough edges and its process-log entry (#351 to
+    #358), each fixed here before the next host, one commit each:
+    - an `OnFailure=` notifier read as a restarter (#351). CR 199 then
+      cleared a target only when everything it runs was read;
+    - a remedied setup script still reported (#352). Its key's revocation
+      takes an exception, and the measure CannObserv/notifier#99 verified,
+      the file kept at 0600 root's with its unit disabled, reads as
+      `contained`;
+    - `session:adj` on the platform's own -1000 (#353), on exe.dev's `sshd`
+      too (CR 201);
+    - a phased `-updates` package uncounted (#354). unattended-upgrade
+      takes phased updates whatever the phase, so every simulation that
+      stands for a lane now includes them. That also closed a gap in
+      `apply.sh`, whose hold groups could have let a phased Postgres or
+      Docker update through unheld;
+    - the reboot chain listing a kept `/tmp` as staged (#355);
+    - the post-boot journal check looking in the wrong place (#356), now
+      reading the chain's own log (CR 200);
+    - Tailscale's auto-update re-applied by the tailnet's default at the
+      boot (#357).
+
+    Next is a Postgres host.
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
