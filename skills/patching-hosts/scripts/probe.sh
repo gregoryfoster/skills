@@ -510,8 +510,13 @@ read_journal() {
   fi
 }
 
+# The session's own processes end below the platform's agent: exe.dev's
+# exe-init stays at -1000 and, since its fix, starts each session's
+# processes at 0 (CannObserv/replicator#125, #353). Its adj is reported
+# apart, so the finding names the session's own -1000 only.
+PLATFORM_AGENTS="exe-init"
 read_session() {
-  local o="" chain="" e pid=$SESSION_PID n=0 ppid adj comm line min="" complete=0 last=""
+  local o="" chain="" e pid=$SESSION_PID n=0 ppid adj comm line min="" complete=0 last="" agent="" below=1
   while [ -n "$pid" ] && [ "$n" -lt 64 ]; do
     n=$((n + 1))
     adj="" comm="" ppid=""
@@ -528,7 +533,13 @@ read_session() {
     jaddsn e comm "$comm"
     jaddn e adj "$adj"
     jpush chain "{$e}"
-    if [ -n "$adj" ] && { [ -z "$min" ] || [ "$adj" -lt "$min" ]; }; then min=$adj; fi
+    if [ "$below" -eq 1 ] && [ "$pid" != "$SESSION_PID" ] && in_words "$comm" "$PLATFORM_AGENTS"; then
+      below=0
+      jaddn agent pid "$pid"
+      jaddsn agent comm "$comm"
+      jaddn agent adj "$adj"
+    fi
+    if [ "$below" -eq 1 ] && [ -n "$adj" ] && { [ -z "$min" ] || [ "$adj" -lt "$min" ]; }; then min=$adj; fi
     last=$pid
     if [ "$pid" = 1 ]; then
       complete=1
@@ -541,11 +552,12 @@ read_session() {
   jadd o chain "[$chain]"
   jaddb o reaches_pid1 "$complete"
   jaddn o min_adj "$min"
-  jadds o source "each process's /proc/<pid>/oom_score_adj, read directly up the chain"
+  if [ -n "$agent" ]; then jadd o platform_agent "{$agent}"; else jadd o platform_agent null; fi
+  jadds o source "each process's /proc/<pid>/oom_score_adj, read directly up the chain; min_adj stops below the platform's agent"
   R_SESSION=$o
   R_SESSION_MIN=$min
   if [ -n "$min" ] && [ "$min" -le -1000 ]; then
-    finding risk session:adj session:adj "A process in this session's chain to PID 1 runs at oom_score_adj $min, so under memory pressure a production service is killed first. Run the apply and the dry run under choom -n 0 (run.md section 3)."
+    finding risk session:adj session:adj "A process in this session's chain runs at oom_score_adj $min, so under memory pressure a production service is killed first. Run the apply and the dry run under choom -n 0 (run.md section 3)."
   fi
   if [ "$complete" -ne 1 ]; then
     if [ "$ppid" = 0 ]; then
@@ -2895,7 +2907,7 @@ read_post_boot() {
   if [ -n "$R_SESSION_MIN" ] && [ "$R_SESSION_MIN" -le -1000 ]; then
     check session-adj 0 "the session's chain still runs at $R_SESSION_MIN"
   elif [ -n "$R_SESSION_MIN" ]; then
-    check session-adj 1 "lowest adj in the chain: $R_SESSION_MIN"
+    check session-adj 1 "lowest adj in the session's chain, below the platform's agent: $R_SESSION_MIN"
   fi
   if docker_running; then
     capture out docker_cmd ps -a --format '{{.Names}} {{.State}}'

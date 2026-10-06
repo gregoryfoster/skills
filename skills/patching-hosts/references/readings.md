@@ -19,7 +19,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts. W
 | Boot time | `/proc/stat` btime | `who -b` was wrong on three hosts |
 | **Where the journal actually lives** | files under `/var/log/journal`; `systemctl is-enabled systemd-journal-flush`; the days the oldest entry reaches back | `Storage=persistent` with the flush masked: address-validator's 51 days were lost at the reboot |
 | PID 1's log target | `systemd-analyze get-log-target` | expecting PID 1's lines as clean-shutdown evidence when it logs to `console` |
-| **The session's chain to PID 1** | the adj of every process from `$$` up, read directly | a host test that skips when the parent isn't `exe-init`/`sshd`, reading green (CannObserv/watcher#333) |
+| **The session's chain to PID 1** | the adj of every process from `$$` up, read directly. The session's own part ends below the platform's agent (`exe-init`), whose -1000 is reported apart (#353) | a host test that skips when the parent isn't `exe-init`/`sshd`, reading green (CannObserv/watcher#333) |
 | **What consumes a setup script** | `exe-setup.service`'s `LoadState`, and its `ConditionResult` and `Result` for each retained boot; `/exe.dev/setup`'s mode; secret patterns by name and line, **never the value** | taking an absent file as cleanup, when the platform delivers it again every boot |
 | **Anything staged under `/tmp`** | `ls -la /tmp`; `/usr/lib/tmpfiles.d/tmp.conf` and `/etc/tmpfiles.d/` | losing a staged binary to `D /tmp` at the reboot (CannObserv/wslcb-licensing-tracker#182) |
 

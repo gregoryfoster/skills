@@ -114,6 +114,7 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
 ## Sessions and OOM
 
 - Agent sessions run at `oom_score_adj` -1000 (CannObserv/notifier#88; the platform confirmed some `exe-init` builds do this, CannObserv/wslcb-licensing-tracker#182). Neither the kernel nor earlyoom will kill them, so under pressure a production service goes first.
+- **`exe-init` itself stays at -1000**, as the platform's agent. Its fixed build starts each session's processes at 0: on co-replicator on 2026-10-06, every process the session owned read 0 under an `exe-init` at -1000 (CannObserv/replicator#125, #131). So the probe stops its session minimum below `exe-init`, and reports that process's adj apart, as `platform_agent` (#353).
 - **Run an apply at adj 0**: `choom -n 0 -- …`. Don't use a hard memory cap: a kill mid-dpkg is worse than the risk it covers. A dry run peaked at 261–268 MiB in the round.
 - **A session's path to PID 1 changes over its life.** A long-lived VS Code server is reparented to PID 1 through an `sh`, so a host test that looks for `exe-init` or `sshd` as the parent skips and reads green (CannObserv/watcher#333, CannObserv/address-validator#236). Read the adj of every process up the chain directly.
 

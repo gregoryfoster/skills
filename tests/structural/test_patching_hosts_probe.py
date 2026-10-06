@@ -946,6 +946,38 @@ def test_the_session_chain_is_read_to_pid_1_whatever_its_parents_are(host):
     assert _finding(out, "session:adj")["kind"] == "risk"
 
 
+def test_the_platform_agents_own_adj_is_reported_apart_from_the_sessions(host):
+    # #353: exe-init stays at -1000 and starts the session's processes at 0.
+    # Taken over the whole chain, the minimum fired on every exe.dev host.
+    host.chain(
+        [
+            (4242, "bash", 0),
+            (4100, "claude", 0),
+            (218, "exe-init", -1000),
+            (1, "systemd", 0),
+        ]
+    )
+    out = host.run("--post-boot")
+    s = out["environment"]["session"]
+    assert s["min_adj"] == 0
+    assert s["platform_agent"] == {"pid": 218, "comm": "exe-init", "adj": -1000}
+    assert "session:adj" not in _ids(out)
+    checks = {c["check"]: c for c in out["post_boot"]}
+    assert checks["session-adj"]["ok"] is True
+    # A session process of its own at -1000, under the agent, still counts.
+    host.chain(
+        [
+            (4242, "bash", 0),
+            (4100, "claude", -1000),
+            (218, "exe-init", -1000),
+            (1, "systemd", 0),
+        ]
+    )
+    out = host.run()
+    assert out["environment"]["session"]["min_adj"] == -1000
+    assert _finding(out, "session:adj")["kind"] == "risk"
+
+
 def test_a_chain_that_leaves_the_pid_namespace_says_so(host):
     # Under docker exec the session's parent is outside the container, so its
     # PPid reads 0 before PID 1 is reached.
