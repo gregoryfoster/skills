@@ -199,7 +199,9 @@ def test_help_names_the_chain_and_the_exit_codes():
     )
     assert r.returncode == 0
     for word in (
-        "--on-active=DELAY --timer-property=AccuracySec=1s",
+        # What's left of the delay once the gate has run (step 8).
+        "--on-active=<left>",
+        "--timer-property=AccuracySec=1s",
         "systemctl reboot",
         "a platform restart is a",
         "  3  refused",

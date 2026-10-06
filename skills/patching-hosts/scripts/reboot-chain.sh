@@ -10,8 +10,10 @@ Usage: bash reboot-chain.sh --run DIR [--approve] [--delay SECONDS]
                             [--today YYYY-MM-DD]
 
 Writes the reboot chain in references/run.md section 5 into the run's
-directory, as a 0700 root script, and launches it detached:
-  systemd-run --on-active=DELAY --timer-property=AccuracySec=1s
+directory, as a 0700 root script, records its unit, and launches it
+detached, with what's left of the delay once the gate has run:
+  systemd-run --unit=patching-hosts-reboot-<UTC> --on-active=<left>
+              --timer-property=AccuracySec=1s
 By default the transient timer fired 41 s late. Without --approve it changes
 nothing, and prints the chain: every command it would run, the knob's
 inflight commands verbatim, so the owner approves exactly what runs
@@ -42,28 +44,35 @@ Options:
                      the chain starts where its span was gated from
   --expect SECONDS   how long the boot and the post-boot checks take
                      (default 600). The span is the delay plus this
-  --config FILE      the knob (default: .skills/patching-hosts at the repo
-                     root, or in the current directory)
+  --config FILE      the knob (default: .skills/patching-hosts at the root of
+                     the repo around the current directory, or in the
+                     current directory outside a repo)
   --host NAME        whose knob sections apply (default: `hostname`)
-  --today DATE       the date exceptions expire against (default: today, UTC)
+  --today YYYY-MM-DD the date exceptions expire against (default: today, UTC)
   -h, --help         show this help
 
-It refuses (exit 3) without --approve; on a report-only host; without root;
-when the run aborted at a step; while the run's chain is scheduled or
-running, or once one ran and didn't end in ABORT (an aborted one stopped
-nothing, and may go again); when the span isn't wholly inside one window or
-meets a quiet range; while a package manager runs or an inflight command
-prints anything but 0; and when a datastore's cluster can't be found, or a
-running Redis's address reaches another process.
+It refuses (exit 3) for each reason under refused, among them: without
+--approve; on a report-only host; without root, or as root with no invoking
+user while the knob has inflight or health commands (run it through sudo
+from your own account); when systemd-run, systemctl, journalctl, pgrep or
+runuser isn't on PATH; when --run doesn't exist or isn't mode 0700; when the
+run aborted at a step; while the run's chain is scheduled or running, or
+once one ran and didn't end in ABORT (an aborted one stopped nothing, and
+may go again); when the span isn't wholly inside one window or meets a
+quiet range; while a package manager runs or an inflight command prints
+anything but 0; when a Postgres datastore's cluster can't be found, isn't
+online, or its port can't be read, so a stopped cluster blocks the reboot;
+and when a running Redis's address reaches no Redis, or another process.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 (its lines), launched, tmp_staged (what the boot will empty), next.
 
 Exit codes:
   0  the chain is launched
-  1  systemd-run failed, or the gate took the whole delay: nothing is
-     scheduled
-  2  usage error, an unreadable knob, or a library missing
+  1  nothing is scheduled: the chain or its unit's record couldn't be
+     written, systemd-run failed, or the gate took the whole delay
+  2  usage error, an unreadable knob, or a library or probe.sh missing:
+     nothing on stdout
   3  refused: nothing was changed
 USAGE
 }
