@@ -1200,6 +1200,65 @@ def test_an_absent_setup_script_that_ran_every_boot_is_redelivered_not_clean(
         )
 
 
+def _root_owns_setup(host) -> None:
+    """stat answers root for /exe.dev/setup's owner, and runs the real stat
+    for everything else: a test can't chown to root."""
+    host.STUBBED = (*host.STUBBED, "stat")
+    host.FALLBACKS = {**host.FALLBACKS, "stat": 'exec /usr/bin/stat "$@"'}
+    host.cases["stat"] = [
+        ("*%u */exe.dev/setup", "0\n", 0, "", None),
+    ]
+
+
+@pytest.mark.parametrize(
+    "mode, disabled, root, verdict",
+    [
+        # notifier#99's measure: disabled, 0600, root's.
+        (0o600, True, True, "contained"),
+        # Still enabled: the next boot runs it again.
+        (0o600, False, True, "present"),
+        # Group-readable.
+        (0o640, True, True, "present"),
+        # exedev's own 0600: the unit's user can still read and run it.
+        (0o600, True, False, "present"),
+    ],
+)
+def test_a_setup_script_contained_in_place_is_not_a_leftover(
+    host, mode, disabled, root, verdict
+):
+    # #352: the preventative measure keeps the file, root's alone, with the
+    # unit disabled. Shredded, it comes back at 0755.
+    host.write(
+        "exe.dev/setup",
+        f"#!/bin/sh\nTS_AUTHKEY=tskey-auth-{SECRET}\n",
+        mode=mode,
+    )
+    host.write(
+        "usr/lib/systemd/system/exe-setup.service",
+        "[Unit]\nConditionPathExists=/exe.dev/setup\n"
+        "[Install]\nWantedBy=multi-user.target\n",
+    )
+    if not disabled:
+        host.link(
+            "etc/systemd/system/multi-user.target.wants/exe-setup.service",
+            "/usr/lib/systemd/system/exe-setup.service",
+        )
+    if root:
+        _root_owns_setup(host)
+    out = host.run()
+    s = out["environment"]["setup_script"]
+    assert s["verdict"] == verdict
+    assert ("setup-script:present" in _ids(out)) is (verdict == "present")
+    if verdict == "present":
+        m = _finding(out, "setup-script:present")["message"]
+        assert "chmod 600 /exe.dev/setup" in m
+        assert "Don't shred it" in m
+    else:
+        assert s["file"]["owner_uid"] == 0
+    for text in (host.result.stdout, host.result.stderr, host.log.read_text()):
+        assert SECRET not in text
+
+
 def test_a_redelivered_setup_script_whose_key_is_revoked_is_declared_not_reported(
     host,
 ):

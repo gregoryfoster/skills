@@ -97,6 +97,15 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
 - `ConditionPathExists=/exe.dev/setup`, `User=exedev`. Its cleanup is an `ExecStartPost=` `rm`, which runs only if `ExecStart` succeeded. So a failing script leaves itself, and any secret in it, on disk (CannObserv/notifier#93, 2026-09-28).
 - **The platform delivers the creation-time script again on every boot.** On replicator it ran 5 of 5 in-guest reboots and 1 of 1 platform reset (CannObserv/replicator#122). On watcher it ran 4 of 4 (CannObserv/watcher#331). The file is absent between boots, so an absent file isn't evidence of cleanup.
 - A VM created without a script has nothing to deliver ("condition unmet"). A Feb-2026 image has no consumer at all.
+- **Contain it in place, root's alone** (CannObserv/notifier#99, verified across an in-guest reboot on 2026-10-02):
+
+  ```
+  sudo systemctl disable exe-setup.service
+  sudo systemctl reset-failed exe-setup.service
+  sudo chmod 600 /exe.dev/setup                 # never print it
+  ```
+
+  At 0600 and owned by root, `exedev` can't read the script, so even a re-enabled unit fails at exec without running it. After the reboot, the unit hadn't started, and the file was still `600 root:root`, with the same inode and mtime: the platform left it alone. **Don't shred it**: with the unit disabled, the next boot delivers it again at 0755, and nothing then makes it 0600. **Don't run `systemctl preset` or `preset-all`**: the unit's preset is `enabled`. The probe reads this state as `contained`, not a finding.
 - **The remedy that lasts is revoking the key.** Shredding the file removes only the current copy. Asking the platform to clear its stored script is an open question. The probe can't see a revocation, so the owner records it in the knob, `exception setup-script:redelivered <review-by> <reason>`. Otherwise a remedied host reports the same finding on every run (#352).
 
 ## Clean-shutdown and boot evidence

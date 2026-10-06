@@ -635,7 +635,7 @@ scan_secrets() {  # <file>: SECRETS (JSON array body), SECRET_SUMMARY, SCAN_OK
 }
 
 read_setup() {
-  local o="" u="" fo="" f="$P_ROOT/exe.dev/setup" disk present=0 mode="" readable="" bootlist line id bo="" boots="" nb=0 nyes=0 nno=0 cond res verdict=unknown msg lines
+  local o="" u="" fo="" f="$P_ROOT/exe.dev/setup" disk present=0 mode="" readable="" owner="" contained=0 bootlist line id bo="" boots="" nb=0 nyes=0 nno=0 cond res verdict=unknown msg lines
   unit_disk_state disk exe-setup.service
   unit_show exe-setup.service LoadState ConditionResult Result ActiveState || true
   jadds u disk "$disk"
@@ -648,10 +648,17 @@ read_setup() {
     present=1
     file_mode mode "$f"
     case $mode in ???[4567]) readable=1 ;; ????) readable=0 ;; esac
+    file_owner owner "$f"
+    # Contained in place: root's alone, and the unit that runs it as exedev
+    # off. The platform leaves a 0600 file be, and delivers a shredded one
+    # again at 0755 (CannObserv/notifier#99, across an in-guest reboot,
+    # 2026-10-02).
+    case $owner:$mode:$disk in 0:??00:disabled | 0:??00:masked | 0:??00:masked-runtime) contained=1 ;; esac
     scan_secrets "$f"
   fi
   jaddb fo present "$present"
   jaddsn fo mode "$mode"
+  jaddn fo owner_uid "$owner"
   jaddb fo readable_by_all "$readable"
   jadd fo secrets "[$SECRETS]"
   if [ "$present" -eq 1 ]; then jaddb fo scanned "$SCAN_OK"; fi
@@ -691,7 +698,9 @@ read_setup() {
       jpush boots "{$bo}"
     done <<<"$bootlist"
   fi
-  if [ "$present" -eq 1 ]; then
+  if [ "$contained" -eq 1 ]; then
+    verdict=contained
+  elif [ "$present" -eq 1 ]; then
     verdict=present
   elif [ "$disk" = not-found ] && [ -z "$U_LoadState" ]; then
     verdict="no-consumer"
@@ -715,11 +724,12 @@ read_setup() {
       elif [ "$SCAN_OK" -ne 1 ]; then
         msg="$msg It couldn't be read to check for secrets."
       fi
+      msg="$msg Then contain it in place: sudo systemctl disable exe-setup.service, and sudo chmod 600 /exe.dev/setup, root's alone. Don't shred it: the platform delivers it again at the next boot, at 0755 (the profile)."
       finding leftover setup-script:present "" "$msg" ;;
     redelivered)
       # Revoking the key changes nothing the probe can read, so the owner
       # declares it: an exception, with a review-by date (#352).
-      finding leftover setup-script:redelivered setup-script:redelivered "exe-setup.service ran on each of the $nb retained boots read, though /exe.dev/setup is absent now: the platform delivers the script again every boot, so an absent file isn't cleanup. Revoke any key the script carries, then declare it: exception setup-script:redelivered <review-by> <reason> (policy.md)." ;;
+      finding leftover setup-script:redelivered setup-script:redelivered "exe-setup.service ran on each of the $nb retained boots read, though /exe.dev/setup is absent now: the platform delivers the script again every boot, so an absent file isn't cleanup. Revoke any key the script carries, then declare it: exception setup-script:redelivered <review-by> <reason> (policy.md). Once it's back on disk, contain it in place: disable exe-setup.service and chmod 600 /exe.dev/setup (the profile)." ;;
   esac
 }
 

@@ -61,6 +61,7 @@ The primitives these scripts reach a host through:
                             returns 1, every U_<PROP> empty, when it can't
   file_mode VAR PATH        permission bits as four octal digits, or empty
   file_mtime VAR PATH       modification time in epoch seconds, or empty
+  file_owner VAR PATH       the owner's uid, or empty
   iso_utc VAR EPOCH         the time as 2026-09-30T12:00:00Z, or empty
   json_str VAR STRING       VAR := STRING as a JSON string
   jadd VAR KEY JSON         appends "KEY": JSON to an object body in VAR;
@@ -471,6 +472,13 @@ file_mtime() {  # <var> <path>
   _ft=$(stat -c %Y "$2" 2>/dev/null || stat -f %m "$2" 2>/dev/null) || _ft=""
   case $_ft in '' | *[!0-9]*) _ft="" ;; esac
   printf -v "$1" '%s' "$_ft"
+}
+
+file_owner() {  # <var> <path>
+  local _fo
+  _fo=$(stat -c %u "$2" 2>/dev/null || stat -f %u "$2" 2>/dev/null) || _fo=""
+  case $_fo in '' | *[!0-9]*) _fo="" ;; esac
+  printf -v "$1" '%s' "$_fo"
 }
 
 iso_utc() {  # <var> <epoch>
