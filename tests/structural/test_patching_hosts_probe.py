@@ -901,6 +901,48 @@ def test_an_undeclared_restarter_is_a_knob_finding(host):
     assert not [i for i in _ids(out) if i.startswith("restarter:")]
 
 
+NOTIFY_UNIT = (
+    "[Service]\nType=oneshot\n"
+    "ExecStart=/bin/bash /home/exedev/app/scripts/notify_failure.sh %i\n"
+)
+
+
+@pytest.mark.parametrize(
+    "script, finds, said",
+    [
+        # replicator's shape (#351): it records and notifies, and mentions
+        # systemctl only in a comment.
+        (
+            "#!/usr/bin/env bash\n# shown in systemctl status + OnFailure=\ncurl -sf x\n",
+            False,
+            "",
+        ),
+        (
+            '#!/bin/sh\nsystemctl restart "$1"\n',
+            True,
+            "its OnFailure= target starts or restarts one",
+        ),
+        (None, True, "notify_failure.sh, which couldn't be read"),
+    ],
+)
+def test_an_onfailure_target_is_a_restarter_only_when_it_restarts_something(
+    host, script, finds, said
+):
+    host.write(
+        "etc/systemd/system/app.service",
+        "[Unit]\nOnFailure=app-notify@%n.service\n[Service]\nExecStart=/usr/bin/app\n",
+    )
+    host.write("etc/systemd/system/app-notify@.service", NOTIFY_UNIT)
+    if script is not None:
+        host.write("home/exedev/app/scripts/notify_failure.sh", script)
+    out = host.run()
+    assert ("restarter:app.service" in _ids(out)) is finds
+    if finds:
+        assert said in _finding(out, "restarter:app.service")["message"]
+    else:
+        assert not out["impact"]["restarters"]
+
+
 def test_health_checks_run_as_the_user_and_a_failing_one_is_a_finding(host):
     marker = host.tmp / "ran"
     host.knob(

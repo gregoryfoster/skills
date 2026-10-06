@@ -46,7 +46,7 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 | `window <weekday> <HH:MM-HH:MM>` | When the monthly run may happen. Each step's whole span must fit inside one, or `apply.sh` refuses it, so a host with none gets no apply. May repeat. |
 | `quiet <HH:MM-HH:MM> [<weekday>]` | A range no step may overlap: an ingest run, a backup, the callers' busy hours. Without a weekday, every day. May repeat. |
 | `inflight <command>` | Must print `0` before each step, and again inside the reboot chain. For a job queue, the in-flight count. For oneshot ingest, the active task units. |
-| `restarter <unit>` | An in-host automatic restarter (a health timer, a watchdog, an `OnFailure=` chain). Stopped for a data-store restart, then proven active again. |
+| `restarter <unit>` | An in-host automatic restarter (a health timer, a watchdog, an `OnFailure=` target that starts or restarts a service; one that only notifies isn't one). Stopped for a data-store restart, then proven active again. |
 | `service <unit>` | A runbook service: stopped in the reboot chain, and checked after boot for its first start's result and its ordering. |
 | `health <command>` | A health check. Must exit 0. May repeat. |
 | `datastore postgres <unit> <database>...` or `datastore redis <unit>` | What the recovery point captures, and what the reboot chain checkpoints and stops. A Postgres line names each database to dump. A database the cluster holds that no line names is a finding, because the recovery point wouldn't cover it. `template0` and `template1` are exempt, and so is `postgres` while it holds no table of its own: it's the default database, so an app may keep its tables there. May repeat; a unit named twice is checkpointed and stopped once. |

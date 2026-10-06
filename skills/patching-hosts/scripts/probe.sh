@@ -2127,12 +2127,85 @@ read_services() {
   done
 }
 
-# In-host restarters: a unit whose Exec line runs systemctl restart, or an
-# OnFailure= chain. One the knob doesn't name isn't stopped around a
-# data-store step.
+# What runs a unit's Exec lines can restart: a systemctl start or restart on
+# the line, or in a script it runs. Comment lines don't count: replicator's
+# notifier mentions `systemctl status` in one.
+RESTART_RE='systemctl[^#]*(start|restart|try-restart|reload-or-restart)'
+
+# Whether an OnFailure= target starts or restarts anything (#351): its unit
+# file, its template's, their drop-ins, and each script an Exec line runs.
+# 0 when it can, 1 when it can't, 2 when something it runs couldn't be read,
+# with OF_WHY saying what.
+onfailure_restarts() {  # <target unit>
+  local t=$1 tmpl="" d f files="" line prog arg rc=1 w
+  local -a tok=()
+  OF_WHY=""
+  case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
+  for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
+    for f in "$P_ROOT/$d/$t" ${tmpl:+"$P_ROOT/$d/$tmpl"}; do
+      if [ -f "$f" ] && [ -z "$files" ]; then files=$f; fi
+    done
+  done
+  if [ -z "$files" ]; then
+    OF_WHY="its OnFailure= target $t has no unit file to read"
+    return 2
+  fi
+  for d in etc/systemd/system run/systemd/system usr/lib/systemd/system lib/systemd/system; do
+    for f in "$P_ROOT/$d/$t.d"/*.conf ${tmpl:+"$P_ROOT/$d/$tmpl.d"/*.conf}; do
+      [ -f "$f" ] && files="$files"$'\n'"$f"
+    done
+  done
+  while IFS= read -r f; do
+    while IFS= read -r line || [ -n "$line" ]; do
+      case $line in [[:space:]]*Exec*=* | Exec*=*) ;; *) continue ;; esac
+      if [[ $line =~ $RESTART_RE ]]; then return 0; fi
+      line=${line#*=}
+      read -r -a tok <<<"$line" || true
+      [ "${#tok[@]}" -gt 0 ] || continue
+      prog=${tok[0]}
+      while case $prog in [-@+!:]*) true ;; *) false ;; esac; do prog=${prog#?}; done
+      # An interpreter's script is its first argument that isn't an option.
+      # With -c, the command is the line itself, read above.
+      arg=""
+      case ${prog##*/} in
+        sh | bash | dash | python3 | python | perl)
+          for w in "${tok[@]:1}"; do
+            case $w in -c) arg="" && break ;; -*) ;; *) arg=$w && break ;; esac
+          done ;;
+        *) arg=$prog ;;
+      esac
+      [ -n "$arg" ] || continue
+      case $arg in
+        *%*)
+          OF_WHY="its OnFailure= target $t runs $arg, a path with a specifier"
+          rc=2
+          continue ;;
+      esac
+      if [ ! -r "$P_ROOT$arg" ]; then
+        OF_WHY="its OnFailure= target $t runs $arg, which couldn't be read"
+        rc=2
+        continue
+      fi
+      # A binary isn't read: what it runs is on its own Exec line, read above.
+      if grep -qI '' "$P_ROOT$arg" 2>/dev/null &&
+        grep -v '^[[:space:]]*#' "$P_ROOT$arg" 2>/dev/null | grep -qE "$RESTART_RE"; then
+        return 0
+      fi
+    done <"$f"
+  done <<<"$files"
+  return $rc
+}
+
+# In-host restarters: a unit whose Exec line runs systemctl restart, or one
+# whose OnFailure= target starts or restarts a service. One that only
+# notifies isn't a restarter: declaring it would stop the service it watches
+# around every held step (#351). One the knob doesn't name isn't stopped
+# around a data-store step.
 read_restarters() {
-  local f u base found="" stem declared e how
+  local f u base found="" stem declared e how line t rc why
+  local -a tok=()
   R_RESTARTERS=""
+  OF_WHYS=""
   for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
     [ -f "$f" ] || continue
     case $f in
@@ -2145,9 +2218,17 @@ read_restarters() {
     if grep -qE '^[[:space:]]*Exec[A-Za-z]*=.*systemctl[^#]*(restart|try-restart|reload-or-restart)' "$f" 2>/dev/null; then
       in_words "$base:restart" "$found" || found="$found $base:restart"
     fi
-    if grep -qE '^[[:space:]]*OnFailure=' "$f" 2>/dev/null; then
-      in_words "$base:on-failure" "$found" || found="$found $base:on-failure"
-    fi
+    while IFS= read -r line; do
+      read -r -a tok <<<"${line#*=}" || true
+      for t in ${tok[@]+"${tok[@]}"}; do
+        rc=0
+        onfailure_restarts "$t" || rc=$?
+        if [ "$rc" -ne 1 ]; then
+          in_words "$base:on-failure" "$found" || found="$found $base:on-failure"
+          if [ "$rc" -eq 2 ]; then OF_WHYS="$OF_WHYS"$'\n'"$base:$OF_WHY"; fi
+        fi
+      done
+    done < <(grep -E '^[[:space:]]*OnFailure=' "$f" 2>/dev/null || true)
   done
   for f in $found; do
     u=${f%%:*}
@@ -2161,7 +2242,14 @@ read_restarters() {
     jpush R_RESTARTERS "{$e}"
     if [ "$declared" -eq 0 ]; then
       how="an Exec line runs systemctl restart"
-      if [ "${f#*:}" = on-failure ]; then how="it has OnFailure="; fi
+      if [ "${f#*:}" = on-failure ]; then
+        how="its OnFailure= target starts or restarts one"
+        why=""
+        while IFS= read -r line; do
+          if [ -z "$why" ] && [ "${line%%:*}" = "$u" ]; then why=${line#*:}; fi
+        done <<<"$OF_WHYS"
+        if [ -n "$why" ]; then how="it may: $why"; fi
+      fi
       finding knob "restarter:$u" "" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it (knob.md)."
     fi
   done
