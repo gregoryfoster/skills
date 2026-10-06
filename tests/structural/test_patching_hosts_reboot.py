@@ -373,7 +373,7 @@ def test_approved_it_writes_the_chain_at_0700_and_launches_it_detached(host):
     assert host.record("reboot-chain.unit") == (
         f"patching-hosts-reboot-{STAMP} 2026-09-29T15:32:00Z\n"
     )
-    assert any(f"--post-boot --run \"{host.run_dir}\"" in n for n in out["next"])
+    assert any(f'--post-boot --run "{host.run_dir}"' in n for n in out["next"])
 
 
 def test_the_chain_fires_at_the_time_its_span_was_gated_from(host):
