@@ -45,7 +45,7 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 | `posture automatic\|scheduled` | [policy.md](policy.md). Absent: compared against `automatic`, report-only. |
 | `window <weekday> <HH:MM-HH:MM>` | When the monthly run may happen. Each step's whole span must fit inside one, or `apply.sh` refuses it, so a host with none gets no apply. May repeat. |
 | `quiet <HH:MM-HH:MM> [<weekday>]` | A range no step may overlap: an ingest run, a backup, the callers' busy hours. Without a weekday, every day. May repeat. |
-| `inflight <command>` | Must print `0` before each step, and again inside the reboot chain. For a job queue, the in-flight count. For oneshot ingest, the active task units. |
+| `inflight <command>` | Must print `0` before each step, and again inside the reboot chain. For a job queue, the in-flight count. For oneshot ingest, the task units that are running: a `Type=oneshot` unit is `activating` while its command runs, and never `active` without `RemainAfterExit=`, so count `--state=activating,active,deactivating` (#359). |
 | `restarter <unit>` | An in-host automatic restarter (a health timer, a watchdog, an `OnFailure=` target that starts or restarts a service; one that only notifies isn't one). Stopped for a data-store restart, then proven active again. |
 | `service <unit>` | A runbook service: stopped in the reboot chain, and checked after boot for its first start's result and its ordering. |
 | `health <command>` | A health check. Must exit 0. May repeat. |
@@ -78,7 +78,7 @@ quiet 07:25-08:15                  # the 00:30 PT scrape and its backfill
 quiet 13:25-14:15
 quiet 08:55-10:10 Sun              # weekly backfill and disk hygiene
 
-inflight systemctl list-units 'app-task@*' --state=active --no-legend | wc -l
+inflight systemctl list-units 'app-task@*' --state=activating,active,deactivating --no-legend | wc -l
 service app-web.service
 restarter app-healthcheck.timer
 health curl -sf http://localhost:8000/api/v1/health

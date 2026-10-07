@@ -17,6 +17,8 @@ What this file pins, against references/knob.md:
   directives accumulate per key;
 - an exception expires the day after its review-by date;
 - the example in knob.md parses clean, and every directive in its table parses;
+- the example's inflight line counts a running oneshot, which is activating
+  (#359);
 - the reader calls the library outside any condition, so errexit stays on
   inside it, and it needs no tool beyond bash to order the sections;
 - the library ignores its caller's IFS, leaves the caller's own `--help` alone,
@@ -362,6 +364,13 @@ def test_the_example_in_knob_md_parses_clean(tmp_path):
     assert out["datastore"][0]["databases"] == ["app"]
 
 
+def test_the_examples_inflight_counts_a_running_oneshot():
+    # #359: a Type=oneshot unit is activating while it runs, so a copy of
+    # --state=active printed 0 mid-ingest and let the gate pass.
+    [line] = [x for x in _knob_md_example().splitlines() if x.startswith("inflight ")]
+    assert "--state=activating,active,deactivating" in line
+
+
 # One valid line per directive. The test below holds this to knob.md's table,
 # so a directive documented there and missing here (or the reverse) fails.
 EVERY_DIRECTIVE = {
@@ -369,7 +378,7 @@ EVERY_DIRECTIVE = {
     "posture": "posture scheduled",
     "window": "window Tue 15:00-21:00",
     "quiet": "quiet 07:25-08:15 Sun",
-    "inflight": "inflight systemctl list-units 'app-task@*' --state=active --no-legend | wc -l",
+    "inflight": "inflight systemctl list-units 'app-task@*' --state=activating,active,deactivating --no-legend | wc -l",
     "restarter": "restarter app-healthcheck.timer",
     "service": "service app-web.service",
     "health": "health curl -sf http://localhost:8000/health",
