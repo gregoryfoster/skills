@@ -240,7 +240,7 @@ fi
 
 # dpkg-query's format fields, not shell expansions.
 # shellcheck disable=SC2016
-DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${Package} ${db:Status-Abbrev}\n'
+DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${Package} ${db:Status-Abbrev}\n' DPKG_CONFFILES='${Conffiles}\n'
 # unit_show sets these by name.
 U_LoadState="" U_ConditionResult="" U_Result="" U_ActiveState="" U_MainPID="" U_After=""
 U_RequiredBy="" U_BoundBy="" U_NRestarts="" U_ExecMainExitTimestamp="" U_InactiveEnterTimestamp=""
@@ -1674,9 +1674,41 @@ read_esm() {
   fi
 }
 
+# A changed conffile's state on disk, for each conffile a package lists that
+# isn't obsolete: missing, modified, or unread. unattended-upgrade passes a
+# package over at a conffile prompt even where dpkg wouldn't ask, as for a
+# conffile the image deleted (wslcb's fwupd, #361). 1 when dpkg can't say.
+conffile_states() {  # <var> <package>: VAR := a JSON array body
+  local _cs_out _cs_p _cs_m _cs_o _cs_cur _cs_st _cs_e _cs_a=""
+  capture _cs_out dpkgq -W -f "$DPKG_CONFFILES" "$2"
+  [ "$CAP_RC" -eq 0 ] || return 1
+  while read -r _cs_p _cs_m _cs_o; do
+    [ -n "$_cs_p" ] || continue
+    if [ "$_cs_o" = obsolete ] || [ "$_cs_m" = newconffile ]; then continue; fi
+    if [ ! -e "$P_ROOT$_cs_p" ] && [ ! -L "$P_ROOT$_cs_p" ]; then
+      _cs_st=missing
+    else
+      capture _cs_cur as_reader md5sum -- "$P_ROOT$_cs_p"
+      _cs_cur=${_cs_cur%% *}
+      if [ "$CAP_RC" -ne 0 ] || [ -z "$_cs_cur" ]; then
+        _cs_st=unread
+      elif [ "$_cs_cur" != "$_cs_m" ]; then
+        _cs_st=modified
+      else
+        continue
+      fi
+    fi
+    _cs_e=""
+    jadds _cs_e path "$_cs_p"
+    jadds _cs_e state "$_cs_st"
+    jpush _cs_a "{$_cs_e}"
+  done <<<"$_cs_out"
+  printf -v "$1" '%s' "$_cs_a"
+}
+
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
-  local oleft="" left_read=0 kw p rest unlisted=""
+  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs=""
   local -a words=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
@@ -1756,6 +1788,11 @@ read_dry_run() {
     case $line in
       *"Packages that will be upgraded:"*) names=${line#*Packages that will be upgraded:} sel=1 ;;
       *"No packages found that can be upgraded unattended"*) n=0 ;;
+      # unattended-upgrade 2.9.1 prints it, and logs it as a warning.
+      *"Package "*" has conffile prompt and needs to be upgraded manually"*)
+        p=${line##*Package }
+        p=${p%% has conffile prompt*}
+        in_words "$p" "$prompts" || prompts="$prompts $p" ;;
     esac
   done <"$dryrun/dry-run.log"
   if [ "$sel" -eq 1 ]; then
@@ -1818,6 +1855,15 @@ read_dry_run() {
   else
     jadd o unlisted null
   fi
+  # Each package it passed over at a conffile prompt: the class counts still
+  # list it, though the lane won't install it (#361).
+  for p in $prompts; do
+    w=""
+    jadds w package "$p"
+    if conffile_states cfs "$p"; then jadd w conffiles "[$cfs]"; else jadd w conffiles null; fi
+    jpush cfp "{$w}"
+  done
+  jadd o conffile_prompts "[$cfp]"
   case $lane in
     origin:*)
       w=null
@@ -1833,11 +1879,23 @@ read_dry_run() {
   } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   R_DRY="{$o}"
+  for p in $prompts; do
+    cfs=""
+    if conffile_states cfs "$p"; then
+      cfs=$(printf '%s' "$cfs" | sed -e 's/{"path": "\([^"]*\)", "state": "\([^"]*\)"}/\1 (\2)/g')
+      cfs=${cfs:-none it could read as changed}
+    else
+      cfs="unknown: dpkg-query couldn't list them"
+    fi
+    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it though the class counts list it, and the dry run exits 1. Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
+  done
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
   fi
   if [ "$rc" -ne 0 ]; then
-    finding unknown dry-run "" "unattended-upgrade --dry-run exited $rc: read $dryrun/dry-run.log. The security count stays a lower bound."
+    w=""
+    if [ -n "$prompts" ]; then w=" It passed over${prompts} at a conffile prompt: see each dry-run:conffile finding."; fi
+    finding unknown dry-run "" "unattended-upgrade --dry-run exited $rc: read $dryrun/dry-run.log. The security count stays a lower bound.$w"
   elif [ -z "$n" ]; then
     finding unknown dry-run "" "unattended-upgrade --dry-run exited 0, but its log has neither a \"Packages that will be upgraded\" line nor \"No packages found\": read $dryrun/dry-run.log. The security count stays a lower bound."
   fi

@@ -703,6 +703,45 @@ def test_a_dry_run_selection_the_class_lists_dont_name_is_a_finding(host):
     assert "dry-run:unlisted" not in _ids(out)
 
 
+def test_a_package_passed_over_at_a_conffile_prompt_is_named_with_its_conffiles(host):
+    # #361: the exeuntu image deleted fwupd's motd conffile, and
+    # unattended-upgrade passed fwupd over at the prompt and exited 1. The
+    # probe said only "exit 1".
+    said = "Package fwupd has conffile prompt and needs to be upgraded manually\n"
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        said
+        + "Packages blacklist due to conffile prompts: ['fwupd$']\n"
+        + said
+        + "Packages that will be upgraded: libc6\n",
+        rc=1,
+    )
+    host.on(
+        "dpkg-query",
+        "*-W -f ${Conffiles}\\n fwupd",
+        " /etc/update-motd.d/85-fwupd 0123abcd\n"
+        " /etc/fwupd/fwupd.conf 4567cdef\n"
+        " /etc/fwupd/old.conf 89ab0123 obsolete\n",
+    )
+    host.write("etc/fwupd/fwupd.conf", "unchanged\n")
+    host.STUBBED = (*host.STUBBED, "md5sum")
+    host.cases["md5sum"] = [("*fwupd.conf", "4567cdef  x\n", 0, "", None)]
+    out = host.run("--dry-run-into", str(host.tmp / "dry"))
+    d = out["pending"]["dry_run"]
+    assert d["conffile_prompts"] == [
+        {
+            "package": "fwupd",
+            "conffiles": [{"path": "/etc/update-motd.d/85-fwupd", "state": "missing"}],
+        }
+    ]
+    f = _finding(out, "dry-run:conffile:fwupd")
+    assert f["kind"] == "risk"
+    assert "/etc/update-motd.d/85-fwupd (missing)" in f["message"]
+    assert "exception held:fwupd" in f["message"]
+    assert "dry-run:conffile" in _finding(out, "dry-run")["message"]
+
+
 def test_a_failed_dry_run_still_reports_its_cost(host):
     # GNU time writes the failed command's status line above its own.
     host.on("unattended-upgrade", "--dry-run -d", "An error occurred\n", rc=1)
