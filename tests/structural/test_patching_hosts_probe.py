@@ -520,6 +520,8 @@ def test_the_pending_set_is_counted_by_class(host):
         "esm_visible": 0,
         "ubuntu_other": 0,
         "third_party": {"Tailscale": 1},
+        # #361: unknown without a dry run.
+        "passed_over": None,
     }
     assert p["packages"]["security"] == ["libc6", "libxml2", "postgresql-16", "libpq5"]
     assert p["removals"] == ["libde265-0"]
@@ -708,6 +710,10 @@ def test_a_package_passed_over_at_a_conffile_prompt_is_named_with_its_conffiles(
     # unattended-upgrade passed fwupd over at the prompt and exited 1. The
     # probe said only "exit 1".
     said = "Package fwupd has conffile prompt and needs to be upgraded manually\n"
+    fwupd = "Inst fwupd [1.9.16-1] (1.9.30-0ubuntu1~24.04.1 Ubuntu:24.04/noble-updates [amd64])\n"
+    host.cases["apt-get"].insert(
+        0, ("-s *dist-upgrade", SIMULATION + fwupd, 0, "", None)
+    )
     host.on(
         "unattended-upgrade",
         "--dry-run -d",
@@ -732,13 +738,18 @@ def test_a_package_passed_over_at_a_conffile_prompt_is_named_with_its_conffiles(
     assert d["conffile_prompts"] == [
         {
             "package": "fwupd",
+            "class": "updates",
             "conffiles": [{"path": "/etc/update-motd.d/85-fwupd", "state": "missing"}],
         }
     ]
+    # #361: the class counts mark what the lane won't install.
+    assert out["pending"]["by_class"]["updates"] == 2
+    assert out["pending"]["by_class"]["passed_over"] == {"updates": 1}
     f = _finding(out, "dry-run:conffile:fwupd")
     assert f["kind"] == "risk"
     assert "/etc/update-motd.d/85-fwupd (missing)" in f["message"]
     assert "exception held:fwupd" in f["message"]
+    assert "though by_class.updates counts it" in f["message"]
     # CR 212: the exit code it read, not one assumed.
     assert "(the dry run exited 1)" in f["message"]
     assert "dry-run:conffile" in _finding(out, "dry-run")["message"]

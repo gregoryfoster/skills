@@ -1479,6 +1479,24 @@ SEC_EXACT=""   # the dry run's selection, when it ran
 R_PHASED=null  # {package: percent} for each phased candidate in the set
 DRY_SECURITY_ONLY=0  # 1 when that selection is security alone
 PK_NAME=() PK_CLASS=()
+R_PASSED_OVER=null  # {by_class key: n} the dry run passes over (#361)
+
+pk_class_key() {  # <var> <package>: by_class's key for it, or empty
+  local _pk_i _pk_k=""
+  for _pk_i in ${PK_NAME[@]+"${!PK_NAME[@]}"}; do
+    if [ "${PK_NAME[$_pk_i]}" = "$2" ]; then
+      case ${PK_CLASS[$_pk_i]} in
+        security) _pk_k=security_lower_bound ;;
+        updates) _pk_k=updates ;;
+        esm) _pk_k=esm_visible ;;
+        third-party:*) _pk_k=third_party ;;
+        *) _pk_k=ubuntu_other ;;
+      esac
+      break
+    fi
+  done
+  printf -v "$1" '%s' "$_pk_k"
+}
 
 class_of() {  # <var> <origins, ", "-separated>
   local _c_o _c_rest=$2 _c_origin _c_archive _c_sec=0 _c_esm=0 _c_upd=0 _c_ubu=0 _c_third=""
@@ -1708,9 +1726,9 @@ conffile_states() {  # <var> <package>: VAR := a JSON array body
 
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
-  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i
-  local -a words=() cf_states=()
-  R_DRY=null
+  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po=""
+  local -a words=() cf_states=() cf_keys=()
+  R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
     not_read "the exact security count and the dry run's cost: only with --dry-run-into DIR, which downloads the whole set as root"
     return 0
@@ -1855,12 +1873,21 @@ read_dry_run() {
   else
     jadd o unlisted null
   fi
-  # Each package it passed over at a conffile prompt: the class counts still
-  # list it, though the lane won't install it (#361).
-  # Read once each: the record and the finding say the same thing (CR 213).
+  # Each package it passed over at a conffile prompt: its class still counts
+  # it, though the lane won't install it, so by_class.passed_over marks it
+  # (#361). Read once each: the record and the finding say the same thing
+  # (CR 213).
   for p in $prompts; do
     w=""
     jadds w package "$p"
+    pk_class_key k "$p"
+    cf_keys+=("$k")
+    if [ -n "$k" ]; then
+      jadds w class "$k"
+      keys="$keys $k"
+    else
+      jadd w class null
+    fi
     if conffile_states cfs "$p"; then
       jadd w conffiles "[$cfs]"
       cf_states+=("$cfs")
@@ -1871,6 +1898,14 @@ read_dry_run() {
     jpush cfp "{$w}"
   done
   jadd o conffile_prompts "[$cfp]"
+  for k in security_lower_bound updates esm_visible ubuntu_other third_party; do
+    i=0
+    for w in $keys; do
+      if [ "$w" = "$k" ]; then i=$((i + 1)); fi
+    done
+    if [ "$i" -gt 0 ]; then jaddn po "$k" "$i"; fi
+  done
+  R_PASSED_OVER="{$po}"
   case $lane in
     origin:*)
       w=null
@@ -1889,6 +1924,7 @@ read_dry_run() {
   i=0
   for p in $prompts; do
     cfs=${cf_states[$i]}
+    k=${cf_keys[$i]}
     i=$((i + 1))
     if [ "$cfs" != "?" ]; then
       cfs=$(printf '%s' "$cfs" | sed -e 's/{"path": "\([^"]*\)", "state": "\([^"]*\)"}/\1 (\2)/g')
@@ -1896,7 +1932,7 @@ read_dry_run() {
     else
       cfs="unknown: dpkg-query couldn't list them"
     fi
-    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it though the class counts list it (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
+    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it${k:+, though by_class.$k counts it (by_class.passed_over marks it)} (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
   done
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
@@ -1988,6 +2024,12 @@ read_pending() {
   read_dry_run
   read_holds
   jadd o lists "{$R_LISTS}"
+  if [ "$R_BYCLASS" != null ]; then
+    R_BYCLASS=${R_BYCLASS#\{}
+    R_BYCLASS=${R_BYCLASS%\}}
+    jadd R_BYCLASS passed_over "$R_PASSED_OVER"
+    R_BYCLASS="{$R_BYCLASS}"
+  fi
   jadd o by_class "$R_BYCLASS"
   jadd o packages "$R_PACKAGES"
   jadd o removals "$R_REMOVALS"

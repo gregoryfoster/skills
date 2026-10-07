@@ -45,7 +45,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts. W
 | `-updates` and third-party | `apt list --upgradable` against each origin | treating the security count as "everything" |
 | **Ubuntu Pro / ESM** | `pro security-status` | "0 security pending" read as covering `universe` (wslcb: 29 esm-apps pending) |
 | **Phased updates** | the simulation with `APT::Get::Always-Include-Phased-Updates`, and `(phased N%)` in `apt-cache policy` | a count that leaves out what the lane takes: apt defers a phased update outside its phase, and unattended-upgrade takes it anyway (replicator: 34 counted, 35 taken; #354) |
-| The dry run against the classes | what the dry run selects that no class list names, and each package it passes over at a conffile prompt, with the state of its conffiles on disk (#361) | a package reaching the host that the proposal never showed |
+| The dry run against the classes | what the dry run selects that no class list names, and each package it passes over at a conffile prompt, with the state of its conffiles on disk. Its class still counts it, and `by_class.passed_over` marks it there (#361) | a package reaching the host that the proposal never showed, or a count promising one the lane won't install |
 | The dry run's cost | wall time, max RSS, download size, free disk | a disk-full or memory-starved apply on a host that shares memory with sessions |
 | Held-group candidates | which `hold` globs are in the set | a major version bump (docker.io 28→29) going in with the bulk |
 | **Owner holds** | `apt-mark showhold` against the pending set and the knob's `held:` exceptions | a security fix deferred indefinitely by a hold nobody declared ([policy.md](policy.md#exceptions)) |
