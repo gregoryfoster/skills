@@ -935,7 +935,24 @@ base image, or an owner-approved remedy the profile documents.
     - Tailscale's auto-update re-applied by the tailnet's default at the
       boot (#357).
 
-    Next is a Postgres host.
+    **wslcb-licensing-tracker, 2026-10-07** (CannObserv/wslcb-licensing-tracker#192):
+    the first host with a data store, and the second run under the scripts.
+    Two `pg_dump` recovery points left the node before the bulk, and the
+    host was down 14 s. It filed five rough edges and its process-log entry
+    (#359 to #364), each fixed here before the next host, one commit each:
+    - knob.md's `inflight` example missed a running oneshot, which is
+      `activating` (#359);
+    - the restarter scan read a 0600 unit file as the user and reported
+      `[]` (#360). Unit files and scripts are now read as root where the
+      user can't, and a file even root can't read leaves the scan
+      incomplete;
+    - a package passed over at a conffile prompt showed only as the dry
+      run's exit 1 (#361). It's now named, with its conffiles and the
+      remedies;
+    - a late bulk left the reboot no room in the window (#362). Decided
+      with the owner: the bulk's span is now the rest of the run, at three
+      times its dry run, plus its held steps and the reboot;
+    - the post-boot timer check misread a monotonic timer (#363).
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
