@@ -2272,15 +2272,15 @@ script_verdict() {  # <path>
     /*) ;;
     *) SV_WHY="$1, a path relative to its working directory" && return 2 ;;
   esac
-  if [ ! -r "$P_ROOT$1" ] || [ ! -f "$P_ROOT$1" ]; then
-    SV_WHY="$1, which couldn't be read"
-    return 2
-  fi
-  if ! grep -qI '' "$P_ROOT$1" 2>/dev/null; then
-    SV_WHY="$1, a binary"
-    return 2
-  fi
-  if grep -v '^[[:space:]]*#' "$P_ROOT$1" 2>/dev/null | grep -qE "$RESTART_RE"; then return 0; fi
+  local rc=0
+  # grep -I reads a binary as no match (1), and exits 2 on an error.
+  as_reader grep -qI '' "$P_ROOT$1" 2>/dev/null || rc=$?
+  case $rc in
+    0) ;;
+    1) SV_WHY="$1, a binary" && return 2 ;;
+    *) SV_WHY="$1, which couldn't be read" && return 2 ;;
+  esac
+  if as_reader grep -v '^[[:space:]]*#' "$P_ROOT$1" 2>/dev/null | grep -qE "$RESTART_RE"; then return 0; fi
   return 1
 }
 
@@ -2293,7 +2293,7 @@ script_verdict() {  # <path>
 # when it can restart, 1 when it can't, 2 when that couldn't be read, with
 # OF_WHY saying what.
 onfailure_restarts() {  # <target unit>
-  local t=$1 tmpl="" d f files="" line raw prog base script rc=1 w i v
+  local t=$1 tmpl="" d f files="" line raw prog base script rc=1 w i v text
   local -a tok=()
   OF_WHY=""
   case $t in
@@ -2318,6 +2318,12 @@ onfailure_restarts() {  # <target unit>
     done
   done
   while IFS= read -r f; do
+    capture text as_reader cat -- "$f"
+    if [ "$CAP_RC" -ne 0 ]; then
+      OF_WHY="its OnFailure= target's ${f#"$P_ROOT"} couldn't be read"
+      rc=2
+      continue
+    fi
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in [[:space:]]*Exec*=* | Exec*=*) ;; *) continue ;; esac
       if [[ $line =~ $RESTART_RE ]]; then return 0; fi
@@ -2373,7 +2379,7 @@ onfailure_restarts() {  # <target unit>
         case $w in /*) [ "$w" != "$script" ] || continue ;; *) continue ;; esac
         if [ -f "$P_ROOT$w" ] && script_verdict "$w"; then return 0; fi
       done
-    done <"$f"
+    done <<<"$text"
   done <<<"$files"
   return $rc
 }
@@ -2384,9 +2390,9 @@ onfailure_restarts() {  # <target unit>
 # around every held step (#351). One the knob doesn't name isn't stopped
 # around a data-store step.
 read_restarters() {
-  local f u base found="" stem declared e how line t rc why
+  local f u base found="" stem declared e how line t rc why text unread=""
   local -a tok=()
-  R_RESTARTERS=""
+  R_RESTARTERS="" R_RESTARTERS_READ=""
   OF_WHYS=""
   for f in "$P_ROOT"/etc/systemd/system/*.service "$P_ROOT"/etc/systemd/system/*.service.d/*.conf; do
     [ -f "$f" ] || continue
@@ -2397,7 +2403,14 @@ read_restarters() {
         base=${base%.d} ;;
       *) base=${f##*/} ;;
     esac
-    if grep -qE '^[[:space:]]*Exec[A-Za-z]*=.*systemctl[^#]*(restart|try-restart|reload-or-restart)' "$f" 2>/dev/null; then
+    # Read as root where the user can't: a file left unread would leave its
+    # restarter out of a list that then reads as clean (#360).
+    capture text as_reader cat -- "$f"
+    if [ "$CAP_RC" -ne 0 ]; then
+      unread="$unread ${f#"$P_ROOT"}"
+      continue
+    fi
+    if grep -qE '^[[:space:]]*Exec[A-Za-z]*=.*systemctl[^#]*(restart|try-restart|reload-or-restart)' <<<"$text"; then
       in_words "$base:restart" "$found" || found="$found $base:restart"
     fi
     while IFS= read -r line; do
@@ -2410,7 +2423,7 @@ read_restarters() {
           if [ "$rc" -eq 2 ]; then OF_WHYS="$OF_WHYS"$'\n'"$base:$OF_WHY"; fi
         fi
       done
-    done < <(grep -E '^[[:space:]]*OnFailure=' "$f" 2>/dev/null || true)
+    done < <(grep -E '^[[:space:]]*OnFailure=' <<<"$text" || true)
   done
   for f in $found; do
     u=${f%%:*}
@@ -2435,6 +2448,13 @@ read_restarters() {
       finding knob "restarter:$u" "" "$u can restart a service ($how), and no restarter line names it or its timer, so a data-store step wouldn't stop it. Declare it (knob.md)."
     fi
   done
+  # What was found is still listed; the list just isn't the whole answer.
+  R_RESTARTERS_READ=1
+  if [ -n "$unread" ]; then
+    R_RESTARTERS_READ=0
+    not_read "in-host restarters: ${unread# } couldn't be read, even as root, so a restarter among them is unknown"
+    finding unknown restarters:unread "" "The restarter scan couldn't read${unread}, even as root: a restarter there would go unstopped through a data-store step. Read it as root, and declare any restarter it holds (knob.md)."
+  fi
 }
 
 read_backups() {
@@ -2570,6 +2590,7 @@ read_impact() {
   jadd o live_args "[$R_ARGS]"
   jadd o services "[$R_SVC]"
   jadd o restarters "[$R_RESTARTERS]"
+  jaddb o restarters_complete "$R_RESTARTERS_READ"
   jadd o backups "[$R_BACKUPS]"
   jadd o health "[$R_HEALTH]"
   jadd o failed_units "$R_FAILED"

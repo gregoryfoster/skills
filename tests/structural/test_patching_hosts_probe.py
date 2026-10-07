@@ -112,6 +112,7 @@ stub logs its argv, which is what the no-writes test reads. The rig is
 patching_hosts_rig.py, shared with apply.sh's tests.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -1170,6 +1171,34 @@ def test_journal_files_on_disk_are_persistent(host):
     assert j["verdict"] == "persistent"
     assert j["reach_days"] == 12
     assert "journal:volatile" not in _ids(out)
+
+
+def test_a_unit_file_the_user_cant_read_is_read_as_root_or_reported_unread(host):
+    # #360: wslcb's health-check unit is 0600 root. Grepped as the user, the
+    # scan came back [], which reads as clean.
+    unit = host.write(
+        "etc/systemd/system/app-health.service",
+        "[Service]\nExecStart=/bin/sh -c 'curl -sf x || systemctl restart app'\n",
+        mode=0o000,
+    )
+    try:
+        out = host.run()
+    finally:
+        unit.chmod(0o644)
+    sudo_reads = [c for c in host.calls("sudo") if "cat -- " in c[1]]
+    if os.geteuid() == 0:
+        # A runner as root reads it, as the probe would through sudo.
+        assert _finding(out, "restarter:app-health.service")["kind"] == "knob"
+        assert out["impact"]["restarters_complete"] is True
+    else:
+        # The sudo stub runs as this user, so root's read fails too: unread,
+        # never an empty list read as clean.
+        assert sudo_reads
+        assert out["impact"]["restarters_complete"] is False
+        f = _finding(out, "restarters:unread")
+        assert f["kind"] == "unknown"
+        assert "/etc/systemd/system/app-health.service" in f["message"]
+        assert any("in-host restarters" in n for n in out["not_read"])
 
 
 RESTARTS = "#!/bin/sh\nsystemctl restart app.service\n"

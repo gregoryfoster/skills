@@ -22,6 +22,8 @@ The primitives these scripts reach a host through:
                             env_reset); returns 126 without running it when
                             neither works
   as_user USER CMD...       runs CMD as USER, the same way
+  as_reader CMD... FILE     runs CMD as the user when FILE is readable, as
+                            root otherwise; 126 when neither can
   knob_cmd CMD              runs a knob command with sh -c, never as root,
                             under timeout KNOB_CMD_TIMEOUT where timeout(1)
                             exists, with a KILL KNOB_CMD_KILL_AFTER seconds
@@ -115,6 +117,12 @@ as_root() {
     sudo) sudo -n -- env LC_ALL=C "$@" ;;
     *) return 126 ;;
   esac
+}
+
+# A unit file or a script can be root's alone: wslcb's health-check unit is
+# 0600 (#360). So a read the user can't take is taken as root.
+as_reader() {  # <cmd>... <file, the last argument>
+  if [ -r "${*: -1}" ]; then "$@"; else as_root "$@"; fi
 }
 
 as_user() {  # <user> <cmd>...
