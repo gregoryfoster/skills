@@ -43,7 +43,7 @@ A one-value or keyed directive set twice at the same precedence is a finding, an
 |---|---|
 | `class production\|staging\|dev\|ephemeral` | An `ephemeral` host is patched by rebuilding its image, so it gets a report and never an apply. |
 | `posture automatic\|scheduled` | [policy.md](policy.md). Absent: compared against `automatic`, report-only. |
-| `window <weekday> <HH:MM-HH:MM>` | When the monthly run may happen. Each step's whole span must fit inside one, or `apply.sh` refuses it, so a host with none gets no apply. May repeat. |
+| `window <weekday> <HH:MM-HH:MM>` | When the monthly run may happen. Each step's whole span must fit inside one, or `apply.sh` refuses it, so a host with none gets no apply. The bulk's span is the rest of the run, the reboot included ([run.md](run.md)). May repeat. |
 | `quiet <HH:MM-HH:MM> [<weekday>]` | A range no step may overlap: an ingest run, a backup, the callers' busy hours. Without a weekday, every day. May repeat. |
 | `inflight <command>` | Must print `0` before each step, and again inside the reboot chain. For a job queue, the in-flight count. For oneshot ingest, the task units that are running: a `Type=oneshot` unit is `activating` while its command runs, and never `active` without `RemainAfterExit=`, so count `--state=activating,active,deactivating` (#359). |
 | `restarter <unit>` | An in-host automatic restarter (a health timer, a watchdog, an `OnFailure=` target that starts or restarts a service; one that only notifies isn't one). Stopped for a data-store restart, then proven active again. |

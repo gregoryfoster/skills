@@ -155,8 +155,11 @@ dow_of() {  # <var> <Mon..Sun>: 0 for Monday
 # and clear of every quiet range. Checking only the start lets a 9-minute
 # apply begun 5 minutes before a quiet range run into it.
 SPAN_S="" SPAN_E=""
+# SPAN_WHAT names the span in a refusal, where it's more than the step's.
+SPAN_WHAT=""
 gate_span() {  # <expected seconds, or empty when unknown>
-  local S E o="" a="" r d ws we len wk os oe day q dq hit="" s_iso e_iso
+  local S E o="" a="" r d ws we len wk os oe day q dq hit="" s_iso e_iso what=$SPAN_WHAT
+  [ -n "$what" ] || what="the step's span"
   local -a f=()
   if ! is_int "$1"; then
     jadd J_GATE span null
@@ -190,7 +193,7 @@ gate_span() {  # <expected seconds, or empty when unknown>
   if [ "${#KNOB_WINDOW[@]}" -eq 0 ]; then
     refuse "no window is declared for this host, so no step's span can be inside one (knob.md)"
   elif [ -z "$hit" ]; then
-    refuse "the step's span, $s_iso to $e_iso ($((E - S)) s expected), isn't wholly inside one window: start it where the whole span fits"
+    refuse "$what, $s_iso to $e_iso ($((E - S)) s expected), isn't wholly inside one window: start it where the whole span fits"
   fi
   jadd o window "${hit:-null}"
   for r in ${KNOB_QUIET[@]+"${KNOB_QUIET[@]}"}; do
@@ -212,7 +215,7 @@ gate_span() {  # <expected seconds, or empty when unknown>
         jadds q end "${f[2]}"
         jaddn q line "${f[4]}"
         jpush a "{$q}"
-        refuse "the step's span runs into the quiet range ${f[1]}-${f[2]}${f[0]:+ ${f[0]}} (line ${f[4]})"
+        refuse "$what runs into the quiet range ${f[1]}-${f[2]}${f[0]:+ ${f[0]}} (line ${f[4]})"
         break
       fi
     done

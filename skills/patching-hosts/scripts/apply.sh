@@ -61,8 +61,10 @@ Options:
                            recovery point
   --dry-run DIR            the bulk only, and required there: the directory
                            probe.sh --dry-run-into wrote, within 24 hours,
-                           for the same lane. Its wall time is the floor of
-                           each step's expected duration
+                           for the same lane. Its wall time is a held step's
+                           expected duration; the bulk's is three times it,
+                           and its span is the rest of the run (below). Its
+                           dry-run.log names what the bulk selects
   --offnode-sha256 HEX     the bulk only: a dump's sha256, typed after the
                            owner checks their own copy off the node. One per
                            dump the recovery point recorded
@@ -94,7 +96,11 @@ for the bulk, without --dry-run, or when its summary is missing, failed, is
 more than 24 hours old, or counted another lane, or in the one-origin lane,
 nothing or not all of the origin's upgrades; when dpkg --audit isn't
 clean; when the step's span, from now to now plus its expected duration,
-isn't wholly inside one window or overlaps a quiet range; while an
+isn't wholly inside one window or overlaps a quiet range (the bulk's span is
+the rest of the run: itself, each held step its selection reaches, and the
+reboot chain's 720 s wherever a kernel or a package owning a file PID 1 maps
+makes a reboot certain, or PID 1's files can't be read; so the bulk also
+refuses when the dry run left no dry-run.log); while an
 automatic apt run is in progress, or apt-daily-upgrade.timer could start
 one inside the span (apt-daily.timer isn't read: on noble its 12-hour
 random delay, twice a day, spans the whole day); while the run's reboot
@@ -625,14 +631,117 @@ gate_dry() {
   fi
 }
 
-# The step's span: the dry run's wall time, plus the time the health checks
-# may take.
-gate_step_span() {
-  local x=""
-  if is_int "$EXPECT"; then
-    x=$EXPECT
-    if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then x=$((x + health_within)); fi
+# The bulk took 2.2 and 2.5 times its dry run on the two hosts measured
+# (replicator, wslcb-licensing-tracker, 2026-10-06 and 07), so it's budgeted
+# at three. A held step takes a group's few packages, and keeps the whole dry
+# run's wall time as its own.
+BULK_FACTOR=3
+# reboot-chain.sh's default span: its 120 s delay and 600 s for the boot and
+# the post-boot checks.
+CHAIN_SPAN=720
+# Read where PID 1's mapped files are; a test points it at a fixture.
+PID1_MAPS=/proc/1/maps
+
+# Whether the bulk's selection makes a reboot certain: a kernel, or a package
+# owning a file PID 1 maps, as libc6 and systemd do. On wslcb, PID 1 mapped
+# 15 deleted libraries after the bulk. 0 predicted, 1 not, 2 unknown, with
+# REBOOT_WHY saying why.
+predict_reboot() {  # <the selection, space-separated>
+  local maps out line p owners="" paths=""
+  local -a ps=()
+  REBOOT_WHY=""
+  for p in $1; do
+    case $p in linux-image-*)
+      REBOOT_WHY="$p, a kernel"
+      return 0 ;;
+    esac
+  done
+  capture maps as_root cat -- "$PID1_MAPS"
+  if [ "$CAP_RC" -ne 0 ]; then
+    REBOOT_WHY="$PID1_MAPS couldn't be read as root"
+    return 2
   fi
+  while read -r _ _ _ _ _ p _; do
+    case $p in /*) in_words "$p" "$paths" || paths="$paths $p" ;; esac
+  done <<<"$maps"
+  read -r -a ps <<<"$paths" || true
+  [ "${#ps[@]}" -gt 0 ] || return 1
+  # Exit 1 means some path has no package: the others still print.
+  capture out dpkg-query -S "${ps[@]}"
+  if [ "$CAP_RC" -gt 1 ]; then
+    REBOOT_WHY="dpkg-query -S over PID 1's files exited $CAP_RC"
+    return 2
+  fi
+  while IFS= read -r line; do
+    case $line in diversion* | "") continue ;; esac
+    line=${line%%: /*}
+    line=${line//,/ }
+    for p in $line; do owners="$owners ${p%%:*}"; done
+  done <<<"$out"
+  for p in $1; do
+    if in_words "$p" "$owners"; then
+      REBOOT_WHY="$p, which owns a file PID 1 maps"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The step's span: the dry run's wall time, plus the time the health checks
+# may take. The bulk's is the rest of the run (#362): itself at BULK_FACTOR
+# times its dry run, each held step its selection reaches, and, where the
+# selection makes a reboot certain or that can't be read, the reboot chain.
+# Otherwise a late bulk leaves the reboot no room, and the host runs on
+# deleted libraries until the next window.
+gate_step_span() {
+  local x="" h=0 line sel="" p r g groups="" o="" w rc=0
+  local -a f=()
+  if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then h=$health_within; fi
+  if ! is_int "$EXPECT"; then
+    gate_span ""
+    return 0
+  fi
+  if [ "$step" != bulk ]; then
+    gate_span "$((EXPECT + h))"
+    return 0
+  fi
+  if [ ! -r "$dryrun/dry-run.log" ]; then
+    refuse "$dryrun/dry-run.log is missing, so what the bulk selects, and so the run's span, is unknown: count again with probe.sh --dry-run-into"
+    gate_span ""
+    return 0
+  fi
+  while IFS= read -r line; do
+    case $line in *"Packages that will be upgraded:"*) sel=${line#*Packages that will be upgraded:} ;; esac
+  done <"$dryrun/dry-run.log"
+  x=$((EXPECT * BULK_FACTOR + h))
+  jaddn o bulk_seconds "$x"
+  for p in $sel; do
+    for r in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      if glob_match "$p" "${f[1]}"; then
+        in_words "${f[0]}" "$groups" || groups="$groups ${f[0]}"
+        break
+      fi
+    done
+  done
+  for g in $groups; do x=$((x + EXPECT + h)); done
+  json_words w "$groups"
+  jadd o held_steps "$w"
+  predict_reboot "$sel" || rc=$?
+  case $rc in
+    0) jadd o reboot true ;;
+    1) jadd o reboot false ;;
+    *) jadd o reboot null ;;
+  esac
+  jaddsn o reboot_why "$REBOOT_WHY"
+  w=""
+  if [ "$rc" -ne 1 ]; then
+    x=$((x + CHAIN_SPAN))
+    w=", and the reboot"
+  fi
+  jaddn o run_seconds "$x"
+  jadd J_GATE run_span "{$o}"
+  SPAN_WHAT="the run's span (the bulk at $BULK_FACTOR times its dry run${groups:+, held steps$groups}$w)"
   gate_span "$x"
 }
 

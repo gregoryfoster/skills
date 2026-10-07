@@ -52,6 +52,12 @@ From review (CR 99-124):
 - a held step stops its restarters before it releases its group, and one
   that fails before its upgrade starts them again and can run again.
 
+Plan step 8b, from wslcb-licensing-tracker's run: the bulk's span is the rest
+of the run, the bulk at three times its dry run, each held step its
+selection reaches, and the reboot chain wherever a kernel or a package
+owning a file PID 1 maps makes a reboot certain, or PID 1's files can't be
+read (#362).
+
 Each case runs apply.sh from a copy of the skill's scripts, with probe.sh
 replaced by a stub that logs its arguments, so the re-probe after a step
 never reads the machine running the tests. `date +%s` answers a fixed time.
@@ -126,11 +132,25 @@ class Host(RigHost):
         self.scripts = tmp_path / "scripts"
         shutil.copytree(SKILL / "scripts", self.scripts)
         (self.scripts / "probe.sh").write_text(STUB_PROBE)
+        # PID 1's mapped files, from a fixture: absent, the reboot is
+        # unknown, and the bulk's span budgets for it (#362).
+        self.pid1_maps = tmp_path / "pid1-maps"
+        apply_sh = self.scripts / "apply.sh"
+        text = apply_sh.read_text()
+        assert text.count("\nPID1_MAPS=/proc/1/maps\n") == 1
+        apply_sh.write_text(
+            text.replace(
+                "\nPID1_MAPS=/proc/1/maps\n", f"\nPID1_MAPS='{self.pid1_maps}'\n"
+            )
+        )
         self.run_dir = tmp_path / "run"
         self.dry = tmp_path / "dry"
         self.dry.mkdir()
         (self.dry / "summary").write_text(
             f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n"
+        )
+        (self.dry / "dry-run.log").write_text(
+            "Packages that will be upgraded: libc6 libxml2 libssl3t64 postgresql-16\n"
         )
         self.state = tmp_path / "state"
         self.state.mkdir()
@@ -336,17 +356,67 @@ def test_a_report_only_host_is_refused(host, knob, why):
 
 
 def test_a_span_that_starts_inside_a_window_but_runs_past_its_close_is_refused(host):
-    # 540 s of dry run and 300 s of health checks from 20:50 end at 21:04.
+    # The run from 20:50 ends at 21:48: the bulk at three times its 540 s dry
+    # run plus 300 s of health checks, the postgres step's 840 s, and the
+    # reboot chain's 720 s, PID 1's files being unread (#362).
     host.clock = TUE_1530 + 5 * 3600 + 20 * MIN
     out = host.run(rc=3)
     [r] = [r for r in out["refused"] if "window" in r]
-    assert "2026-09-29T20:50:00Z to 2026-09-29T21:04:00Z" in r
+    assert "2026-09-29T20:50:00Z to 2026-09-29T21:48:00Z" in r
+    assert r.startswith("the run's span (the bulk at 3 times its dry run")
     assert out["gate"]["span"]["window"] is None
     assert _changed(host) == []
 
 
+LIBC = "/usr/lib/x86_64-linux-gnu/libc.so.6"
+MAPS = f"7f00-7f01 r-xp 00000000 fd:01 1234 {LIBC}\n7f02-7f03 rw-p 00000000 00:00 0 [heap]\n"
+
+
+@pytest.mark.parametrize(
+    "selection, maps, reboot, why, seconds",
+    [
+        # libc6 owns a file PID 1 maps: the bulk, the postgres step and the
+        # reboot chain.
+        ("libc6 libxml2 postgresql-16", MAPS, True, "libc6, which owns", 3480),
+        # Nothing PID 1 maps, and no held group: the bulk alone.
+        ("libxml2 tzdata", MAPS, False, None, 1920),
+        # PID 1's files unread: the reboot is budgeted for.
+        ("libxml2 tzdata", None, None, "couldn't be read as root", 2640),
+        # A kernel needs no maps.
+        ("linux-image-6.8.0-45-generic", None, True, "a kernel", 2640),
+    ],
+)
+def test_the_bulks_span_is_the_rest_of_the_run(
+    host, selection, maps, reboot, why, seconds
+):
+    # #362: on wslcb the bulk ended at 23:18 in a window closing at 23:30, the
+    # chain's 720 s couldn't fit, and the reboot slipped a day.
+    (host.dry / "dry-run.log").write_text(
+        f"Packages that will be upgraded: {selection}\n"
+    )
+    if maps is not None:
+        host.pid1_maps.write_text(maps)
+    host.on("dpkg-query", "-S *", f"libc6:amd64: {LIBC}\n")
+    host.clock = TUE_1530 - 30 * MIN
+    out = host.run()
+    r = out["gate"]["run_span"]
+    assert r["reboot"] is reboot
+    if why:
+        assert why in r["reboot_why"]
+    assert r["run_seconds"] == seconds
+    assert out["gate"]["span"]["expected_seconds"] == seconds
+
+
+def test_a_bulk_whose_dry_run_left_no_log_is_refused(host):
+    (host.dry / "dry-run.log").unlink()
+    out = host.run(rc=3)
+    assert any("dry-run.log is missing" in r for r in out["refused"])
+    assert _changed(host) == []
+
+
 def test_a_span_that_starts_outside_a_quiet_range_but_runs_into_it_is_refused(host):
-    host.knob(KNOB + "quiet 15:40-16:00\nquiet 16:00-16:30\n")
+    # The run's span is 15:30 to 16:28 (#362): the second range starts after.
+    host.knob(KNOB + "quiet 15:40-16:00\nquiet 16:30-17:00\n")
     out = host.run(rc=3)
     [r] = [r for r in out["refused"] if "quiet" in r]
     assert "15:40-16:00 (line 6)" in r
@@ -364,8 +434,9 @@ def test_a_quiet_range_on_another_weekday_doesnt_count(host):
     [
         # Opens Tuesday at 22:00 and closes Wednesday at 02:00.
         ("window Tue 22:00-02:00", TUE_1530 + 9 * 3600 + 30 * MIN),
-        # Opens Sunday at 23:00, so a Monday 00:10 is in last week's.
-        ("window Sun 23:00-01:00", TUE_1530 - 39 * 3600 - 20 * MIN),
+        # Opens Sunday at 23:00, so a Monday 00:10 is in last week's: the
+        # run's 58 minutes end at 01:08 (#362).
+        ("window Sun 23:00-02:00", TUE_1530 - 39 * 3600 - 20 * MIN),
     ],
 )
 def test_a_window_that_wraps_past_midnight_holds_the_span(host, window, clock):
@@ -489,12 +560,12 @@ def test_an_automatic_apt_run_in_progress_refuses(host, unit, state):
 @pytest.mark.parametrize(
     "base, delay, state, refused",
     [
-        # 15:00 plus up to an hour meets 15:30 to 15:44, wherever this draw
-        # fell: the next reload draws again.
+        # 15:00 plus up to an hour meets the run's 15:30 to 16:28 (#362),
+        # wherever this draw fell: the next reload draws again.
         (-30 * MIN, 3600, "active", True),
         (10 * MIN, 0, "active", True),
         (-90 * MIN, 3600, "active", False),
-        (20 * MIN, 0, "active", False),
+        (70 * MIN, 0, "active", False),
         # A stopped timer still reports its calendar times.
         (-30 * MIN, 3600, "inactive", False),
     ],
