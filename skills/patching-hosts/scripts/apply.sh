@@ -644,8 +644,10 @@ PID1_MAPS=/proc/1/maps
 
 # Whether the bulk's selection makes a reboot certain: a kernel, or a package
 # owning a file PID 1 maps, as libc6 and systemd do. On wslcb, PID 1 mapped
-# 15 deleted libraries after the bulk. 0 predicted, 1 not, 2 unknown, with
-# REBOOT_WHY saying why.
+# 15 deleted libraries after the bulk. Only PID 1 is read: a package that
+# touches only dbus or logind, which list mode can't restart either, isn't
+# predicted, though in the round they always shared libc6 with PID 1 (CR
+# 214). 0 predicted, 1 not, 2 unknown, with REBOOT_WHY saying why.
 predict_reboot() {  # <the selection, space-separated>
   local maps out line p owners="" paths=""
   local -a ps=()
