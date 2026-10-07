@@ -2526,6 +2526,11 @@ def test_post_boot_reads_the_run_it_is_given(host):
             True,
         ),
         ({"NextElapseUSecRealtime": "", "NextElapseUSecMonotonic": "0"}, False),
+        # CR 211: a stopped timer reads infinity (systemd 255).
+        (
+            {"NextElapseUSecRealtime": "", "NextElapseUSecMonotonic": "infinity"},
+            False,
+        ),
     ],
 )
 def test_post_boot_reads_a_monotonic_restarter_timer_as_scheduled(host, props, ok):

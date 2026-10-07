@@ -3289,11 +3289,13 @@ read_post_boot() {
       if [ "$U_ActiveState" = active ]; then check "restarter:$t" 1 active; else check "restarter:$t" 0 "$U_ActiveState"; fi
       # A monotonic timer (OnBootSec=, OnUnitActiveSec=) has no realtime
       # elapse: systemd leaves NextElapseUSecRealtime empty for it (#363).
+      # A stopped one reads NextElapseUSecMonotonic=infinity, and a calendar
+      # one 0 (systemd 255, measured 2026-10-07; CR 211).
       case $t in
         *.timer)
           if [ -n "$U_NextElapseUSecRealtime" ] && [ "$U_NextElapseUSecRealtime" != 0 ]; then
             check "timer:$t" 1 "scheduled, realtime"
-          elif [ -n "$U_NextElapseUSecMonotonic" ] && [ "$U_NextElapseUSecMonotonic" != 0 ]; then
+          elif [ -n "$U_NextElapseUSecMonotonic" ] && [ "$U_NextElapseUSecMonotonic" != 0 ] && [ "$U_NextElapseUSecMonotonic" != infinity ]; then
             check "timer:$t" 1 "scheduled, monotonic: $U_NextElapseUSecMonotonic"
           else
             check "timer:$t" 0 "not scheduled"
