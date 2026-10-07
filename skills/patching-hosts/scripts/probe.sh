@@ -244,7 +244,7 @@ DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${P
 # unit_show sets these by name.
 U_LoadState="" U_ConditionResult="" U_Result="" U_ActiveState="" U_MainPID="" U_After=""
 U_RequiredBy="" U_BoundBy="" U_NRestarts="" U_ExecMainExitTimestamp="" U_InactiveEnterTimestamp=""
-U_NextElapseUSecRealtime="" U_ActiveEnterTimestamp="" U_InactiveExitTimestamp=""
+U_NextElapseUSecRealtime="" U_NextElapseUSecMonotonic="" U_ActiveEnterTimestamp="" U_InactiveExitTimestamp=""
 
 capture2() {  # <var> <cmd>...: as capture, with stderr in VAR too
   local _cv=$1 _co
