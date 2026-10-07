@@ -1896,7 +1896,7 @@ read_dry_run() {
     else
       cfs="unknown: dpkg-query couldn't list them"
     fi
-    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it though the class counts list it, and the dry run exits 1. Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
+    finding risk "dry-run:conffile:$p" "" "unattended-upgrade passes over $p at a conffile prompt, so the lane won't install it though the class counts list it (the dry run exited $rc). Its conffiles on disk: $cfs. Choose a remedy: hold it, declared as exception held:$p <review-by> <reason>; reinstall it with -o Dpkg::Options::=--force-confmiss (a deleted conffile) or settle the change by hand; or prune it (policy.md)."
   done
   if [ -n "$unlisted" ]; then
     finding risk dry-run:unlisted "" "The dry run selects${unlisted}, which the pending set's class lists don't name: the proposal's counts leave them out, and the apply would take them. Read each in apt-cache policy before proposing."
