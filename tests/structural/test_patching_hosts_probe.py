@@ -2445,6 +2445,28 @@ def test_post_boot_reads_the_run_it_is_given(host):
     assert "--run" in r.stderr
 
 
+@pytest.mark.parametrize(
+    "props, ok",
+    [
+        ({"NextElapseUSecRealtime": "@1790000000"}, True),
+        # #363: OnBootSec=/OnUnitActiveSec= leave the realtime elapse empty.
+        (
+            {
+                "NextElapseUSecRealtime": "",
+                "NextElapseUSecMonotonic": "12min 30.192576s",
+            },
+            True,
+        ),
+        ({"NextElapseUSecRealtime": "", "NextElapseUSecMonotonic": "0"}, False),
+    ],
+)
+def test_post_boot_reads_a_monotonic_restarter_timer_as_scheduled(host, props, ok):
+    host.knob("posture scheduled\nrestarter app-health.timer\n")
+    host.show("app-health.timer", ActiveState="active", **props)
+    checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
+    assert checks["timer:app-health.timer"]["ok"] is ok
+
+
 def test_post_boot_checks_fail_on_a_restarted_service_and_a_pending_reboot(host):
     host.knob(
         "posture scheduled\nservice app-web.service\nrestarter app-health.timer\ndatastore postgres postgresql@16-main app\n"

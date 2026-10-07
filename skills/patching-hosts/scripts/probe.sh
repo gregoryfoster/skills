@@ -3206,12 +3206,16 @@ read_post_boot() {
     fi
   done
   for t in $KNOB_RESTARTERS; do
-    if unit_show "$t" ActiveState NextElapseUSecRealtime; then
+    if unit_show "$t" ActiveState NextElapseUSecRealtime NextElapseUSecMonotonic; then
       if [ "$U_ActiveState" = active ]; then check "restarter:$t" 1 active; else check "restarter:$t" 0 "$U_ActiveState"; fi
+      # A monotonic timer (OnBootSec=, OnUnitActiveSec=) has no realtime
+      # elapse: systemd leaves NextElapseUSecRealtime empty for it (#363).
       case $t in
         *.timer)
           if [ -n "$U_NextElapseUSecRealtime" ] && [ "$U_NextElapseUSecRealtime" != 0 ]; then
-            check "timer:$t" 1 scheduled
+            check "timer:$t" 1 "scheduled, realtime"
+          elif [ -n "$U_NextElapseUSecMonotonic" ] && [ "$U_NextElapseUSecMonotonic" != 0 ]; then
+            check "timer:$t" 1 "scheduled, monotonic: $U_NextElapseUSecMonotonic"
           else
             check "timer:$t" 0 "not scheduled"
           fi ;;
