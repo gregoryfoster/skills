@@ -740,6 +740,9 @@ def test_a_package_passed_over_at_a_conffile_prompt_is_named_with_its_conffiles(
     assert "/etc/update-motd.d/85-fwupd (missing)" in f["message"]
     assert "exception held:fwupd" in f["message"]
     assert "dry-run:conffile" in _finding(out, "dry-run")["message"]
+    # CR 213: dpkg-query is asked once, for the record and the finding both.
+    asks = [c for c in host.calls("dpkg-query") if "Conffiles" in c[1]]
+    assert len(asks) == 1
 
 
 def test_a_failed_dry_run_still_reports_its_cost(host):

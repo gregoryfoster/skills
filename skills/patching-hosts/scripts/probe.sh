@@ -1708,8 +1708,8 @@ conffile_states() {  # <var> <package>: VAR := a JSON array body
 
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
-  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs=""
-  local -a words=()
+  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i
+  local -a words=() cf_states=()
   R_DRY=null
   if [ -z "$dryrun" ]; then
     not_read "the exact security count and the dry run's cost: only with --dry-run-into DIR, which downloads the whole set as root"
@@ -1857,10 +1857,17 @@ read_dry_run() {
   fi
   # Each package it passed over at a conffile prompt: the class counts still
   # list it, though the lane won't install it (#361).
+  # Read once each: the record and the finding say the same thing (CR 213).
   for p in $prompts; do
     w=""
     jadds w package "$p"
-    if conffile_states cfs "$p"; then jadd w conffiles "[$cfs]"; else jadd w conffiles null; fi
+    if conffile_states cfs "$p"; then
+      jadd w conffiles "[$cfs]"
+      cf_states+=("$cfs")
+    else
+      jadd w conffiles null
+      cf_states+=("?")
+    fi
     jpush cfp "{$w}"
   done
   jadd o conffile_prompts "[$cfp]"
@@ -1879,9 +1886,11 @@ read_dry_run() {
   } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   R_DRY="{$o}"
+  i=0
   for p in $prompts; do
-    cfs=""
-    if conffile_states cfs "$p"; then
+    cfs=${cf_states[$i]}
+    i=$((i + 1))
+    if [ "$cfs" != "?" ]; then
       cfs=$(printf '%s' "$cfs" | sed -e 's/{"path": "\([^"]*\)", "state": "\([^"]*\)"}/\1 (\2)/g')
       cfs=${cfs:-none it could read as changed}
     else
