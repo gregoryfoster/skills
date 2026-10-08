@@ -843,6 +843,57 @@ base image, or an owner-approved remedy the profile documents.
     pins the exe.dev profile gives (CR 182), or an exception that says why
     not.
 
+6f. **A Qdrant data store (#367; before the next 8b host).** co-index's
+    store is Qdrant, run by a systemd unit as `docker run --rm`, with its
+    storage on a volume. No knob line could name it, so `recovery-point.sh`
+    refused ("nothing to dump"), and the bulk's gate passed with no recovery
+    point. The owner's rule on that host is a snapshot off the node, since a
+    re-index is expensive and was never timed. It was taken by hand, and
+    CannObserv/index carries it as `deploy/qdrant-recovery.sh`. Decided with
+    the owner 2026-10-08: a native line, handled like Postgres and Redis.
+    - **The knob:** `datastore qdrant <unit> <container> <url> <key-file>`.
+      `<url>` is the API's base as its certificate names it (on co-index,
+      the tailnet name: the address fails TLS). `<key-file>` is an absolute
+      path to a root-only file holding the API key, or `-` for none. The
+      key reaches curl as a header file from a process substitution, never
+      as an argument. `read-knob.sh` reports it with engine `qdrant`.
+    - **`recovery-point.sh`:**
+      - exact per-collection point counts, at mode 600, recorded as
+        `counts qdrant <unit> <path>`;
+      - a full-storage snapshot, `POST /snapshots?wait=true`, within
+        `--qdrant-within` (default 1800 s);
+      - copied out of the container, because its snapshots directory
+        (`QDRANT__STORAGE__SNAPSHOTS_PATH` from `docker inspect`, else
+        `/qdrant/snapshots`) isn't on a volume, so `--rm` discards it at the
+        next restart. Then the copy inside the container is deleted;
+      - it counts only when the API named it, the copy exited 0, `tar -tf`
+        reads it, its mode is 600, and its sha256 is read. Recorded as
+        `dump qdrant <unit> <sha256> <path>`;
+      - the free-space gate reads the storage volume's size.
+    - **`apply.sh`:** the bulk takes a Qdrant dump's off-node attestation
+      like any other, and a `backup` line can cover the unit as before.
+    - **`reboot-chain.sh`:** the gate requires the unit active and its
+      container running. The chain stops the unit: `docker stop` is Qdrant's
+      clean shutdown, so there's no checkpoint.
+    - **The check after a restart** (`--post-boot --run`, and after a held
+      step that restarted the unit): the collections and their exact counts
+      against the recovery point's. Clients may still write, so a count
+      may move either way. Only a collection gone or emptied is a loss, and
+      a count that can't be read fails the check. A real search query stays
+      a host `health` line, since the embedding model is the host's own.
+    - **`probe.sh`:** a running container from a `qdrant/qdrant` image that
+      no `datastore qdrant` line names is a knob finding, the analogue of
+      `database:<name>`. A store the owner chooses to rebuild instead takes
+      `exception datastore:<container> <review-by> <reason>`. The chain then
+      stops it only as a `service`.
+
+    *Done when* stub tests cover the line and its malformed forms, the
+    snapshot and each of its refusals, the attestation, the chain's stop,
+    a loss against a moved count, and the probe's finding with its
+    exception; `knob.md`, `run.md` and `readings.md` say how to declare and
+    recover Qdrant; and co-index's `qdrant-recovery.sh` snapshot reads as the
+    same recovery point.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
