@@ -107,6 +107,7 @@ exception <what> <review-by YYYY-MM-DD> <reason>
 | `database:<name>` | a cluster database no `datastore` line names |
 | `ordering:<service>` | a `service` with no `After=` on a data store |
 | `journal:volatile` | the journal doesn't survive a reboot |
+| `not-restarter:<service>` | a timer's service runs a program the restarter scan can't follow (a binary, `uv run`), and the owner says it starts or restarts nothing (#368) |
 | `session:adj` | a process of the session's own, below the platform's agent (`exe-init` or `sshd`), runs at `oom_score_adj` -1000 |
 | `setup-script:redelivered` | the platform delivers the VM's creation-time setup script at every boot, and it ran at each one. The host can stop the runs and contain the file in place (the profile), which the probe reads as `contained`. Revoking the script's key changes nothing the probe reads, so the owner declares the remedy here, such as the key's revocation date. The review-by date makes someone re-check it |
 | `keep:<component>` | a dormant component the owner keeps; a prune stage is `disabled:`, `removed:` or `purged:` |

@@ -2393,24 +2393,35 @@ script_verdict() {  # <path>
   return 1
 }
 
-# Whether an OnFailure= target starts or restarts anything (#351): its unit
-# file, its template's, their drop-ins, and what each Exec line runs. It's
-# cleared only when everything it runs was read, one script deep: an
-# interpreter's script (through env), a program that starts nothing, and
-# each command of an inline one. A binary, an unreadable script, or a unit
-# that isn't a service can't be, and stays a restarter (CR 199, CR 205). 0
-# when it can restart, 1 when it can't, 2 when that couldn't be read, with
-# OF_WHY saying what.
+# Whether an OnFailure= target starts or restarts anything (#351). A unit
+# that isn't a service can't be read from Exec lines, and stays a restarter
+# (CR 199). 0 when it can restart, 1 when it can't, 2 when that couldn't be
+# read, with OF_WHY saying what.
 onfailure_restarts() {  # <target unit>
-  local t=$1 tmpl="" d f files="" line raw prog base script rc=1 w i v text
-  local -a tok=()
+  local rc=0
   OF_WHY=""
-  case $t in
+  case $1 in
     *.service) ;;
     *)
-      OF_WHY="its OnFailure= target $t isn't a service, so what it does can't be read from Exec lines"
+      OF_WHY="its OnFailure= target $1 isn't a service, so what it does can't be read from Exec lines"
       return 2 ;;
   esac
+  unit_restarts "$1" "its OnFailure= target $1" || rc=$?
+  OF_WHY=$UR_WHY
+  return $rc
+}
+
+# Whether what a service runs starts or restarts anything: its unit file,
+# its template's, their drop-ins, and what each Exec line runs. It's cleared
+# only when everything it runs was read, one script deep: an interpreter's
+# script (through env), a program that starts nothing, and each command of
+# an inline one. A binary or an unreadable script can't be (CR 205). 0 when
+# it can restart, 1 when it can't, 2 when that couldn't be read, with UR_WHY
+# saying what, after WHO.
+unit_restarts() {  # <service> <who>
+  local t=$1 who=$2 tmpl="" d f files="" line raw prog base script rc=1 w i v text
+  local -a tok=()
+  UR_WHY=""
   case $t in *@*.*) tmpl=${t%%@*}@.${t##*.} ;; esac
   for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
     for f in "$P_ROOT/$d/$t" ${tmpl:+"$P_ROOT/$d/$tmpl"}; do
@@ -2418,7 +2429,7 @@ onfailure_restarts() {  # <target unit>
     done
   done
   if [ -z "$files" ]; then
-    OF_WHY="its OnFailure= target $t has no unit file to read"
+    UR_WHY="$who has no unit file to read"
     return 2
   fi
   for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
@@ -2429,7 +2440,7 @@ onfailure_restarts() {  # <target unit>
   while IFS= read -r f; do
     capture text as_reader cat -- "$f"
     if [ "$CAP_RC" -ne 0 ]; then
-      OF_WHY="its OnFailure= target's ${f#"$P_ROOT"} couldn't be read"
+      UR_WHY="$who: ${f#"$P_ROOT"} couldn't be read"
       rc=2
       continue
     fi
@@ -2466,7 +2477,7 @@ onfailure_restarts() {  # <target unit>
                 inline_verdict "${raw#* -c }" || v=$?
                 case $v in
                   0) return 0 ;;
-                  2) OF_WHY="its OnFailure= target $t runs $IV_WHY" rc=2 ;;
+                  2) UR_WHY="$who runs $IV_WHY" rc=2 ;;
                 esac
                 break ;;
               -*) ;;
@@ -2480,7 +2491,7 @@ onfailure_restarts() {  # <target unit>
         script_verdict "$script" || v=$?
         case $v in
           0) return 0 ;;
-          2) OF_WHY="its OnFailure= target $t runs $SV_WHY" rc=2 ;;
+          2) UR_WHY="$who runs $SV_WHY" rc=2 ;;
         esac
       fi
       # Any other script the line names, read where it can be.
@@ -2499,7 +2510,7 @@ onfailure_restarts() {  # <target unit>
 # around every held step (#351). One the knob doesn't name isn't stopped
 # around a data-store step.
 read_restarters() {
-  local f u base found="" stem declared e how line t rc why text unread=""
+  local f u base found="" stem declared e how line t rc why text unread="" svc opaque="" open=0 runs=""
   local -a tok=()
   R_RESTARTERS="" R_RESTARTERS_READ=""
   OF_WHYS=""
@@ -2534,11 +2545,46 @@ read_restarters() {
       done
     done < <(grep -E '^[[:space:]]*OnFailure=' <<<"$text" || true)
   done
+  # A timer's service is read through what it runs, one script deep, as an
+  # OnFailure= target is: a restart "only if the cert changed" lives in a
+  # script (#368). One it can't follow leaves the list incomplete until it's
+  # declared, either way: a restarter, or not-restarter:<service>.
+  for f in "$P_ROOT"/etc/systemd/system/*.timer; do
+    [ -f "$f" ] || continue
+    base=${f##*/}
+    capture text as_reader cat -- "$f"
+    if [ "$CAP_RC" -ne 0 ]; then
+      unread="$unread ${f#"$P_ROOT"}"
+      continue
+    fi
+    svc=${base%.timer}.service
+    while IFS= read -r line; do
+      read -r svc <<<"${line#*=}" || true
+    done < <(grep -E '^[[:space:]]*Unit=' <<<"$text" || true)
+    # Which timer runs it: Unit= may name a service of another stem.
+    runs="$runs $svc=$base"
+    if in_words "$svc:restart" "$found"; then continue; fi
+    rc=0
+    unit_restarts "$svc" "$svc" || rc=$?
+    case $rc in
+      0) in_words "$svc:script" "$found" || found="$found $svc:script" ;;
+      2)
+        if in_words "$svc" "$KNOB_RESTARTERS" || in_words "$base" "$KNOB_RESTARTERS"; then continue; fi
+        if ! { exception_for "not-restarter:$svc" && [ "$EX_EXPIRED" = 0 ]; }; then open=1; fi
+        if ! in_words "$svc" "$opaque"; then
+          opaque="$opaque $svc"
+          finding unknown "restarters:unread:$svc" "not-restarter:$svc" "$base runs $svc, and the restarter scan can't follow it: $UR_WHY. If it can start or restart a service, declare restarter $base; if it can't, declare exception not-restarter:$svc <review-by> <reason> (knob.md)."
+        fi ;;
+    esac
+  done
   for f in $found; do
     u=${f%%:*}
     stem=${u%.service}
     declared=0
     if in_words "$u" "$KNOB_RESTARTERS" || in_words "$stem.timer" "$KNOB_RESTARTERS"; then declared=1; fi
+    for t in $runs; do
+      if [ "${t%%=*}" = "$u" ] && in_words "${t#*=}" "$KNOB_RESTARTERS"; then declared=1; fi
+    done
     e=""
     jadds e unit "$u"
     jadds e how "${f#*:}"
@@ -2546,6 +2592,7 @@ read_restarters() {
     jpush R_RESTARTERS "{$e}"
     if [ "$declared" -eq 0 ]; then
       how="an Exec line runs systemctl restart"
+      if [ "${f#*:}" = script ]; then how="the script its timer runs starts or restarts one"; fi
       if [ "${f#*:}" = on-failure ]; then
         how="its OnFailure= target starts or restarts one"
         why=""
@@ -2559,6 +2606,10 @@ read_restarters() {
   done
   # What was found is still listed; the list just isn't the whole answer.
   R_RESTARTERS_READ=1
+  if [ "$open" -eq 1 ]; then
+    R_RESTARTERS_READ=0
+    not_read "in-host restarters: a timer's service the scan can't follow, so whether it restarts one is unknown (each restarters:unread finding)"
+  fi
   if [ -n "$unread" ]; then
     R_RESTARTERS_READ=0
     not_read "in-host restarters: ${unread# } couldn't be read, even as root, so a restarter among them is unknown"

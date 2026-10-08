@@ -1260,6 +1260,58 @@ RESTARTS = "#!/bin/sh\nsystemctl restart app.service\n"
 NOTIFIES = "#!/bin/sh\ncurl -sf http://notifier/x\n"
 
 
+RENEW_TIMER = "[Timer]\nOnCalendar=Mon 04:00\nUnit=store-renew.service\n"
+RENEW_UNIT = "[Service]\nType=oneshot\nExecStart=/usr/local/bin/store-renew.sh\n"
+
+
+@pytest.mark.parametrize(
+    "program, finds, unread",
+    [
+        # co-index's shape (#368): the restart is in the script, not the unit.
+        ("#!/bin/sh\nif changed; then systemctl restart store; fi\n", True, False),
+        (NOTIFIES, False, False),
+        # A binary can't be followed: incomplete, not clean.
+        (b"\x7fELF\x00\x00", False, True),
+    ],
+)
+def test_a_timers_service_is_read_through_the_script_it_runs(
+    host, program, finds, unread
+):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
+    host.write("usr/local/bin/store-renew.sh", program)
+    out = host.run()
+    assert ("restarter:store-renew.service" in _ids(out)) is finds
+    assert ("restarters:unread:store-renew.service" in _ids(out)) is unread
+    assert out["impact"]["restarters_complete"] is (not unread)
+    if finds:
+        assert "the script" in _finding(out, "restarter:store-renew.service")["message"]
+    if unread:
+        f = _finding(out, "restarters:unread:store-renew.service")
+        assert f["kind"] == "unknown"
+        assert "/usr/local/bin/store-renew.sh, a binary" in f["message"]
+        assert "exception not-restarter:store-renew.service" in f["message"]
+    # Declared, it's a restarter either way: nothing left to find.
+    host.knob("posture scheduled\nrestarter store-cert.timer\n")
+    out = host.run()
+    assert not [i for i in _ids(out) if i.startswith("restarter")]
+    assert out["impact"]["restarters_complete"] is True
+
+
+def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
+    host.write("usr/local/bin/store-renew.sh", b"\x7fELF\x00\x00")
+    host.knob(
+        "posture scheduled\n"
+        "exception not-restarter:store-renew.service 2099-01-01 renews a cert only\n"
+    )
+    out = host.run()
+    assert "restarters:unread:store-renew.service" not in _ids(out)
+    assert "restarters:unread:store-renew.service" in _ids(out, "excepted")
+    assert out["impact"]["restarters_complete"] is True
+
+
 @pytest.mark.parametrize(
     "target, exec_line, files, finds, said",
     [
