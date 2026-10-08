@@ -159,6 +159,10 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "hold postgresql-* Postgres",  # step name case
         "datastore postgres pg@16-main",  # no database
         "datastore redis",
+        "datastore qdrant qdrant.service qdrant https://q:6333",  # no key file
+        "datastore qdrant qdrant.service qdrant q:6333 -",  # no scheme
+        "datastore qdrant qdrant.service qdrant https://q:6333 key",  # relative
+        "datastore qdrant qdrant.service -bad https://q:6333 -",  # container
         "owner /usr/local/bin/* someone",
         "image-owner not-a-repo",
         "caller notarepo",
@@ -329,6 +333,38 @@ def test_datastore_lines_naming_one_cluster_add_up(tmp_path):
             "line": 2,
         },
         {"engine": "redis", "unit": "redis-server.service", "databases": [], "line": 4},
+    ]
+
+
+def test_a_qdrant_datastore_names_its_container_url_and_key_file(tmp_path):
+    # #367: co-index's Qdrant runs as docker run --rm under a systemd unit.
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "datastore qdrant qdrant.service qdrant https://index.example.ts.net:6333"
+        " /etc/socraticode/qdrant.key\n"
+        "datastore qdrant search.service search http://127.0.0.1:6333 -\n",
+    )
+    assert out["findings"] == []
+    assert out["datastore"] == [
+        {
+            "engine": "qdrant",
+            "unit": "qdrant.service",
+            "databases": [],
+            "container": "qdrant",
+            "url": "https://index.example.ts.net:6333",
+            "key_file": "/etc/socraticode/qdrant.key",
+            "line": 2,
+        },
+        {
+            "engine": "qdrant",
+            "unit": "search.service",
+            "databases": [],
+            "container": "search",
+            "url": "http://127.0.0.1:6333",
+            "key_file": None,
+            "line": 3,
+        },
     ]
 
 

@@ -154,7 +154,19 @@ o_quiet() { printf '{"weekday": %s, "start": %s, "end": %s, "wraps": %s, "line":
 o_command() { printf '{"command": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_unit() { printf '{"unit": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_caller() { printf '{"repo": %s, "line": %s}' "$(js "$1")" "$2"; }
-o_datastore() { printf '{"engine": %s, "unit": %s, "databases": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_words "$3")" "$4"; }
+o_datastore() {
+  local key
+  local -a q=()
+  if [ "$1" = qdrant ]; then
+    read -r -a q <<<"$3"
+    key=${q[2]}
+    if [ "$key" = - ]; then key=""; fi
+    printf '{"engine": %s, "unit": %s, "databases": [], "container": %s, "url": %s, "key_file": %s, "line": %s}' \
+      "$(js "$1")" "$(js "$2")" "$(js "${q[0]}")" "$(js "${q[1]}")" "$(js_or_null "$key")" "$4"
+    return 0
+  fi
+  printf '{"engine": %s, "unit": %s, "databases": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_words "$3")" "$4"
+}
 o_hold() { printf '{"step": %s, "globs": %s, "line": %s}' "$(js "$1")" "$(js_words "$2")" "$(num_or_null "${3:-}")"; }
 o_owner() { printf '{"component": %s, "repo": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$3"; }
 o_backup() {

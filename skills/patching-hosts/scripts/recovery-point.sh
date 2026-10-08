@@ -7,7 +7,7 @@ usage() {
   cat <<'USAGE'
 Usage: bash recovery-point.sh --retain-until YYYY-MM-DD [--approve] [--run DIR]
                               [--personal-data NAME]... [--dump]
-                              [--redis-within SECONDS]
+                              [--redis-within SECONDS] [--qdrant-within SECONDS]
                               [--config FILE] [--host NAME] [--today YYYY-MM-DD]
 
 Takes the recovery point in references/run.md section 2 for each datastore
@@ -27,7 +27,13 @@ directory. Until every check passes it changes nothing, and prints why.
   sha256 is read: --list alone passes a dump cut off after its table of
   contents. An RDB copy counts when BGSAVE succeeded and LASTSAVE moved, the
   copy exited 0, redis-check-rdb reads it where it's installed, its mode is
-  600, and its sha256 is read.
+  600, and its sha256 is read. A Qdrant's (#367): each collection's exact
+  point count, written at mode 600 and kept on the node for the check after
+  a restart, then a full-storage snapshot through its API, copied out of
+  its container, since --rm discards the snapshots directory at the next
+  restart. It counts when the API named the snapshot, the copy exited 0,
+  tar -tf reads it, its mode is 600, and its sha256 is read; the copy left
+  inside the container is then deleted.
 
   Each cluster's roles (pg_dumpall --globals-only) stay on the node at mode
   600: they hold password hashes, so they're never copied off it or attested.
@@ -52,6 +58,7 @@ Options:
                            it flags nothing
   --dump                   dump, even where a backup regime would stand in
   --redis-within SECONDS   how long a BGSAVE may take (default 300)
+  --qdrant-within SECONDS  how long a Qdrant snapshot may take (default 1800)
   --config FILE            the knob (default: .skills/patching-hosts at the
                            root of the repo around the current directory,
                            or in the current directory outside a repo)
@@ -66,13 +73,16 @@ a usage error.
 It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host; without root; when a tool it needs isn't
 on PATH (sha256sum and systemctl, and pg_lsclusters, pg_dump, pg_dumpall,
-pg_restore and runuser for Postgres, redis-cli for Redis); when the knob
+pg_restore and runuser for Postgres, redis-cli for Redis, curl, docker and
+tar for Qdrant); when the knob
 declares no datastore; when an existing --run isn't mode 0700; once the
 run's bulk has started; when --personal-data names a Postgres unit, or
 nothing the knob declares; when a cluster or a database can't be found, a
 cluster isn't online or its port can't be read, or a Redis can't be
 reached, can't say where its RDB file is, or what answers isn't the unit's
-own process; when a backup line names a datastore no datastore line
+own process; when a Qdrant's container isn't running, its storage's size
+can't be read, its key file can't be read, or its collections can't be
+listed; when a backup line names a datastore no datastore line
 declares; and when the run's filesystem has less free space than the data it
 would dump, or its free space can't be read.
 
@@ -80,6 +90,8 @@ The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
   dump postgres <unit> <database> <sha256> <path>
   dump redis <unit> <sha256> <path>
+  dump qdrant <unit> <sha256> <path>
+  counts qdrant <unit> <path>
   backup <unit> <datastore unit>...
   local <path>             personal <path>
 
@@ -102,17 +114,18 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" retain="" config="" host="" today="" force_dump=0 redis_within=300
+approve=0 run="" retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800
 personal=()
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --run | --retain-until | --personal-data | --redis-within | --config | --host | --today)
+    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --config | --host | --today)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --run) run=$2 ;;
         --retain-until) retain=$2 ;;
         --personal-data) personal+=("$2") ;;
         --redis-within) redis_within=$2 ;;
+        --qdrant-within) qdrant_within=$2 ;;
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
@@ -146,6 +159,9 @@ case $run in
 esac
 case $redis_within in
   '' | *[!0-9]* | 0) echo "ERROR --redis-within takes a number of seconds, 1 or more" >&2; exit 2 ;;
+esac
+case $qdrant_within in
+  '' | *[!0-9]* | 0) echo "ERROR --qdrant-within takes a number of seconds, 1 or more" >&2; exit 2 ;;
 esac
 
 # --- shared libraries ---------------------------------------------------------
@@ -239,16 +255,21 @@ gate_host() {
   done
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
-    if [ "${f[0]}" = postgres ]; then
-      for t in pg_lsclusters pg_dump pg_dumpall pg_restore runuser; do
-        have "$t" || refuse "$t isn't on PATH, and the knob declares a Postgres datastore"
-      done
-    else
-      have redis-cli || refuse "redis-cli isn't on PATH, and the knob declares a Redis datastore"
-    fi
+    case ${f[0]} in
+      postgres)
+        for t in pg_lsclusters pg_dump pg_dumpall pg_restore runuser; do
+          have "$t" || refuse "$t isn't on PATH, and the knob declares a Postgres datastore"
+        done ;;
+      qdrant)
+        for t in curl docker tar; do
+          have "$t" || refuse "$t isn't on PATH, and the knob declares a Qdrant datastore"
+        done ;;
+      *) have redis-cli || refuse "redis-cli isn't on PATH, and the knob declares a Redis datastore" ;;
+    esac
   done
   # A Postgres datastore is flagged by database, as its dumps are; a Redis
-  # one by its unit, with or without .service, as the knob may write it.
+  # or Qdrant one by its unit, with or without .service, as the knob may
+  # write it.
   for t in ${personal[@]+"${personal[@]}"}; do
     hit="" pgunit=""
     unit_name u "$t"
@@ -268,7 +289,7 @@ gate_host() {
     elif [ -n "$pgunit" ]; then
       refuse "--personal-data $t is a Postgres unit: name the database whose dump holds personal data"
     else
-      refuse "--personal-data $t names no database or Redis unit the knob declares"
+      refuse "--personal-data $t names no database, or Redis or Qdrant unit, the knob declares"
     fi
   done
 }
@@ -374,7 +395,7 @@ pg_size() {  # <port> <database>
 # What each dump would hold, and whether the run's filesystem has room for
 # it: a full disk mid-dump can stop the data store it shares the disk with.
 gate_datastores() {
-  local r u port db out sz e a="" need=0 avail="" dir
+  local r u port db out sz e a="" need=0 avail="" dir qc qurl qkey snap store src line dst kib
   local -a f=() dbs=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -405,7 +426,67 @@ gate_datastores() {
         DS+=("postgres $u $port $db") DS_BYTES+=("$sz")
         need=$((need + sz))
       done
-    elif ! covered "$u"; then
+    elif covered "$u"; then
+      continue
+    elif [ "${f[0]}" = qdrant ]; then
+      # #367: "<container> <url> <key-file>".
+      read -r qc qurl qkey <<<"${f[2]}"
+      e=""
+      jadds e datastore "qdrant $u"
+      jadds e container "$qc"
+      if [ "$qkey" != - ] && ! as_root test -r "$qkey"; then
+        jpush a "{$e}"
+        refuse "datastore qdrant $u: its key file $qkey can't be read as root"
+        continue
+      fi
+      capture out as_root docker inspect -f '{{.State.Running}}' "$qc"
+      if [ "$CAP_RC" -ne 0 ] || [ "$out" != true ]; then
+        jpush a "{$e}"
+        refuse "datastore qdrant $u: its container $qc isn't running (docker inspect: ${out:-${CAP_ERR:-no answer}})"
+        continue
+      fi
+      # Where it writes a snapshot, and where its storage is: the snapshot
+      # is copied out of the first, and is about the size of the second.
+      snap=/qdrant/snapshots store=/qdrant/storage
+      capture out as_root docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$qc"
+      while IFS= read -r line; do
+        case $line in
+          QDRANT__STORAGE__SNAPSHOTS_PATH=*) snap=${line#*=} ;;
+          QDRANT__STORAGE__STORAGE_PATH=*) store=${line#*=} ;;
+        esac
+      done <<<"$out"
+      # Relative to its working directory, /qdrant, as its own default is.
+      case $snap in /*) ;; *) snap=/qdrant/${snap#./} ;; esac
+      case $store in /*) ;; *) store=/qdrant/${store#./} ;; esac
+      src="" sz=""
+      capture out as_root docker inspect -f '{{range .Mounts}}{{println .Destination .Source}}{{end}}' "$qc"
+      while read -r dst line; do
+        if [ "$dst" = "$store" ]; then src=$line; fi
+      done <<<"$out"
+      if [ -n "$src" ]; then
+        capture out as_root du -sk -- "$src"
+        kib=${out%%[[:space:]]*}
+        if [ "$CAP_RC" -eq 0 ] && is_int "$kib"; then sz=$((kib * 1024)); fi
+      fi
+      jaddsn e storage "$src"
+      jaddn e bytes "$sz"
+      jadds e snapshots_path "$snap"
+      jpush a "{$e}"
+      if [ -z "$sz" ]; then
+        refuse "datastore qdrant $u: the size of its storage, $store in $qc, couldn't be read: docker inspect names no volume for it"
+        continue
+      fi
+      capture out qdrant_api "$qurl/collections" "$qkey" 30
+      if [ "$CAP_RC" -ne 0 ]; then
+        refuse "datastore qdrant $u: GET $qurl/collections failed (exit $CAP_RC${CAP_ERR:+: $CAP_ERR})"
+        continue
+      fi
+      DS+=("qdrant $u $qc $qurl $qkey $snap") DS_BYTES+=("$sz")
+      # The snapshot is written inside the container first, under Docker's
+      # own directory, then copied here: twice the data, where the two
+      # share a disk.
+      need=$((need + 2 * sz))
+    else
       # Raw replies, since stdout isn't a terminal: the key, then its value.
       redis_conn "$u"
       # Another Redis's data would be dumped, and attested, as this one's.
@@ -723,6 +804,79 @@ dump_redis() {  # <unit> <rdb>
   jpush DUMPS_A "{$e}"
 }
 
+# A Qdrant's (#367): its counts, kept on the node for the check after a
+# restart, then a full-storage snapshot, copied out of its container, whose
+# snapshots directory --rm discards at the next restart. The copy inside is
+# deleted once this one reads back as a tar.
+dump_qdrant() {  # <unit> <container> <url> <key-file> <snapshots path>
+  local u=$1 qc=$2 qurl=$3 qkey=$4 snap=$5 path cpath counts="" cmode="" out name="" crc="" trc="" mode sha="" e="" ok=0 w0 deleted=0 why=""
+  path=$run/${u%.service}-$stamp.snapshot
+  cpath=$run/${u%.service}-counts-$stamp.txt
+  w0=$SECONDS
+  echo "recovery-point: counting $u's points, then a snapshot of it into $path" >&2
+  if ! qdrant_counts counts "$qurl" "$qkey"; then
+    why=$QC_WHY
+  elif ! printf '%s' "$counts" | root_write "$cpath"; then
+    why="its counts couldn't be written to $cpath"
+  else
+    root_mode cmode "$cpath"
+  fi
+  if [ -z "$why" ] && [ "$cmode" = 0600 ]; then
+    capture out qdrant_api "$qurl/snapshots?wait=true" "$qkey" "$qdrant_within" -X POST
+    if [ "$CAP_RC" -eq 0 ]; then
+      name=$(printf '%s\n' "$out" | grep -o '"name": *"[^"/]*"' | sed -n '1s/.*"\([^"]*\)"$/\1/p') || name=""
+    fi
+    if [ -n "$name" ]; then
+      crc=0
+      # The script runs as root, in bash: its expansions are its own.
+      # shellcheck disable=SC2016
+      as_root bash -c 'set -o pipefail; umask 077; docker cp "$1" - | tar -xO >"$2"' bash "$qc:$snap/$name" "$path" || crc=$?
+    fi
+    if [ "$crc" = 0 ]; then
+      trc=0
+      as_root tar -tf "$path" >/dev/null 2>&1 || trc=$?
+    fi
+    if [ -n "$name" ]; then
+      capture out qdrant_api "$qurl/snapshots/$name?wait=true" "$qkey" 300 -X DELETE
+      [ "$CAP_RC" -ne 0 ] || deleted=1
+    fi
+  fi
+  root_mode mode "$path"
+  if [ "$trc" = 0 ] && [ "$mode" = 0600 ]; then file_sha sha "$path"; fi
+  jadds e datastore "qdrant $u"
+  jadds e path "$path"
+  jadds e counts "$cpath"
+  jaddsn e snapshot "$name"
+  jaddn e copy_exit "$crc"
+  jaddn e tar_exit "$trc"
+  jaddsn e mode "$mode"
+  jaddsn e sha256 "$sha"
+  jaddb e container_copy_deleted "$deleted"
+  jaddn e seconds "$((SECONDS - w0))"
+  if [ -n "$why" ]; then
+    fail "$u's counts couldn't be taken: $why"
+  elif [ "$cmode" != 0600 ]; then
+    fail "$u's counts went to a file of mode ${cmode:-unknown}, not 0600"
+  elif [ -z "$name" ]; then
+    fail "POST $qurl/snapshots named no snapshot (exit $CAP_RC${CAP_ERR:+: $CAP_ERR}) within $qdrant_within s"
+  elif [ "$crc" != 0 ]; then
+    fail "copying $name out of $qc exited $crc: it's still inside, under $snap"
+  elif [ "$trc" != 0 ]; then
+    fail "the copy of $u's snapshot doesn't read as a tar: tar -tf exited $trc"
+  elif [ "$mode" != 0600 ]; then
+    fail "the copy of $u's snapshot is mode ${mode:-unknown}, not 0600"
+  elif [ -z "$sha" ]; then
+    fail "the copy of $u's snapshot couldn't be hashed"
+  else
+    ok=1
+    REC_LINES="${REC_LINES}dump qdrant $u $sha $path"$'\n'"counts qdrant $u $cpath"$'\n'
+    if is_personal "$u" ""; then PERSONAL_PATHS="$PERSONAL_PATHS $path"; fi
+  fi
+  jaddb e ok "$ok"
+  if is_personal "$u" ""; then jaddb e personal_data 1; else jaddb e personal_data 0; fi
+  jpush DUMPS_A "{$e}"
+}
+
 if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
   fail "$run couldn't be made"
 fi
@@ -742,8 +896,12 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
   if [ "${#BACKUP_SVCS[@]}" -gt 0 ]; then J_BACKUP="[$BACKUP_A]"; fi
   if [ "${#DS[@]}" -gt 0 ]; then
     for _i in ${DS[@]+"${!DS[@]}"}; do
-      read -r _k _u _p _d <<<"${DS[$_i]}"
-      if [ "$_k" = postgres ]; then dump_postgres "$_u" "$_p" "$_d"; else dump_redis "$_u" "$_p"; fi
+      read -r -a _ds <<<"${DS[$_i]}"
+      case ${_ds[0]} in
+        postgres) dump_postgres "${_ds[1]}" "${_ds[2]}" "${_ds[3]}" ;;
+        qdrant) dump_qdrant "${_ds[1]}" "${_ds[2]}" "${_ds[3]}" "${_ds[4]}" "${_ds[5]}" ;;
+        *) dump_redis "${_ds[1]}" "${_ds[2]}" ;;
+      esac
     done
     J_DUMPS="[$DUMPS_A]"
   fi

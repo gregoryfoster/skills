@@ -565,3 +565,55 @@ jpushs() {  # <var> <string>
   json_str _jp "$2"
   jpush "$1" "$_jp"
 }
+
+# --- Qdrant (#367) ---------------------------------------------------------------
+# Its API, as root, since the key file is root's alone: the key reaches curl
+# as a header file from a process substitution, never as an argument, which
+# /proc would show. A key file of - means none. The URL goes last.
+qdrant_api() {  # <url> <key-file> <seconds> <curl arguments>...
+  local _qa_u=$1 _qa_k=$2 _qa_t=$3
+  shift 3
+  # The script runs as root, in bash: its expansions are its own.
+  # shellcheck disable=SC2016
+  as_root bash -c 'u=$1 k=$2 t=$3
+shift 3
+if [ "$k" = - ]; then exec curl -sS --fail-with-body --max-time "$t" "$@" "$u"; fi
+if [ ! -r "$k" ]; then echo "the key file $k can'"'"'t be read" >&2; exit 2; fi
+curl -sS --fail-with-body --max-time "$t" -H @<(printf "api-key: %s\n" "$(cat -- "$k")") "$@" "$u"' \
+    bash "$_qa_u" "$_qa_k" "$_qa_t" "$@"
+}
+
+# Each collection's exact point count, one "<collection> <count>" line each,
+# sorted by name. 1 when any can't be read, with QC_WHY saying which.
+qdrant_counts() {  # <var> <url> <key-file>
+  local _qc_o _qc_n _qc_c _qc_all="" _qc_names
+  QC_WHY=""
+  capture _qc_o qdrant_api "$2/collections" "$3" 30
+  if [ "$CAP_RC" -ne 0 ]; then
+    QC_WHY="GET /collections failed (exit $CAP_RC${CAP_ERR:+: $CAP_ERR})"
+    return 1
+  fi
+  case $_qc_o in
+    *'"collections"'*) ;;
+    *)
+      QC_WHY="GET /collections answered no list of collections"
+      return 1 ;;
+  esac
+  _qc_names=$(printf '%s\n' "$_qc_o" | grep -o '"name": *"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/' | LC_ALL=C sort) || _qc_names=""
+  while IFS= read -r _qc_c; do
+    [ -n "$_qc_c" ] || continue
+    capture _qc_n qdrant_api "$2/collections/$_qc_c/points/count" "$3" 120 \
+      -X POST -H 'Content-Type: application/json' -d '{"exact": true}'
+    if [ "$CAP_RC" -ne 0 ]; then
+      QC_WHY="counting $_qc_c's points failed (exit $CAP_RC${CAP_ERR:+: $CAP_ERR})"
+      return 1
+    fi
+    _qc_n=$(printf '%s\n' "$_qc_n" | grep -o '"count": *[0-9][0-9]*' | grep -o '[0-9][0-9]*$') || _qc_n=""
+    if ! is_int "$_qc_n"; then
+      QC_WHY="counting $_qc_c's points answered no count"
+      return 1
+    fi
+    _qc_all="$_qc_all$_qc_c $_qc_n"$'\n'
+  done <<<"$_qc_names"
+  printf -v "$1" '%s' "$_qc_all"
+}

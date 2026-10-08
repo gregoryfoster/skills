@@ -43,8 +43,10 @@ by a stub, through the apply tests' host.
 """
 
 import hashlib
+import io
 import json
 import subprocess
+import tarfile
 
 import pytest
 
@@ -149,6 +151,8 @@ def test_help_names_the_gates_and_the_record():
         "pg_restore -f /dev/null",
         "--globals-only",
         "BGSAVE",
+        "tar -tf",
+        "--qdrant-within",
         "  3  refused",
     ):
         assert word in r.stdout, word
@@ -161,6 +165,7 @@ def test_help_names_the_gates_and_the_record():
         (["--retain-until", "next month"], "takes a date"),
         (["--retain-until", RETAIN, "--run", "rel/dir"], "absolute path"),
         (["--retain-until", RETAIN, "--redis-within", "0"], "--redis-within"),
+        (["--retain-until", RETAIN, "--qdrant-within", "x"], "--qdrant-within"),
         (
             ["--retain-until", "2025-10-29", "--today", "2026-09-29"],
             "2025-10-29 is before today, 2026-09-29",
@@ -777,3 +782,162 @@ def test_a_backup_run_that_fails_now_records_nothing(host):
 def test_a_recovery_point_restarts_nothing(host):
     host.recover()
     assert _changed(host) == []
+
+
+# --- Qdrant (#367) ------------------------------------------------------------------
+
+QURL = "https://index.example.ts.net:6333"
+SNAP = "full-snapshot-2026-10-08.snapshot"
+
+
+def _tar(name: str, data: bytes) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as t:
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        t.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _first(
+    host: Host,
+    cmd: str,
+    glob: str,
+    out: str = "",
+    rc: int = 0,
+    script: str | None = None,
+) -> None:
+    """A case ahead of the ones _ready set, which answer anything."""
+    host.cases[cmd].insert(0, (glob, out, rc, "", script))
+
+
+def _qdrant(host: Host, running: str = "true", snapshot: bytes | None = None) -> Host:
+    key = host.tmp / "qdrant.key"
+    key.write_text("s3cret-key\n")
+    key.chmod(0o600)
+    host.knob(KNOB + f"datastore qdrant qdrant.service qdrant {QURL} {key}\n")
+    storage = host.tmp / "qdrant-storage"
+    storage.mkdir()
+    (storage / "segment").write_bytes(b"x" * 4096)
+    # What docker cp writes: a tar holding the snapshot, itself a tar.
+    if snapshot is None:
+        snapshot = _tar("collections/a/segment", b"vectors")
+    outer = host.tmp / "outer.tar"
+    outer.write_bytes(_tar(SNAP, snapshot))
+    _first(host, "docker", "inspect -f {{.State.Running}} qdrant", f"{running}\n")
+    _first(
+        host, "docker", "inspect -f {{range .Config.Env}}*", "QDRANT__LOG_LEVEL=INFO\n"
+    )
+    _first(
+        host,
+        "docker",
+        "inspect -f {{range .Mounts}}*",
+        f"/tls /etc/tls\n/qdrant/storage {storage}\n",
+    )
+    _first(
+        host,
+        "docker",
+        f"cp qdrant:/qdrant/snapshots/{SNAP} -",
+        script=f'cat "{outer}"; exit 0',
+    )
+    # Each header file curl is handed is kept, to show where the key went.
+    keep = f'for a; do case $a in @*) cat "${{a#@}}" >> "{host.state}/headers" ;; esac; done; '
+    _first(
+        host,
+        "curl",
+        f"* {QURL}/collections",
+        script=keep
+        + """echo '{"result":{"collections":[{"name":"b"},{"name":"a"}]},"status":"ok"}'; exit 0""",
+    )
+    for c, n in (("a", 10), ("b", 20)):
+        _first(
+            host,
+            "curl",
+            f"* {QURL}/collections/{c}/points/count",
+            f'{{"result":{{"count":{n}}},"status":"ok"}}\n',
+        )
+    _first(
+        host,
+        "curl",
+        f"*-X POST {QURL}/snapshots?wait=true",
+        f'{{"result":{{"name":"{SNAP}","size":1}},"status":"ok"}}\n',
+    )
+    _first(
+        host,
+        "curl",
+        f"*-X DELETE {QURL}/snapshots/{SNAP}?wait=true",
+        '{"result":true}\n',
+    )
+    return host
+
+
+def test_qdrant_is_counted_then_snapshotted_out_of_its_container_and_recorded(
+    tmp_path,
+):
+    host = _qdrant(_ready(Host(tmp_path)))
+    out = host.recover()
+    [d] = out["dumps"]
+    path = f"{host.run_dir}/qdrant-{STAMP}.snapshot"
+    counts = f"{host.run_dir}/qdrant-counts-{STAMP}.txt"
+    assert (d["path"], d["snapshot"], d["copy_exit"], d["tar_exit"]) == (
+        path,
+        SNAP,
+        0,
+        0,
+    )
+    assert d["mode"] == "0600"
+    assert d["container_copy_deleted"] is True
+    assert open(path, "rb").read() == _tar("collections/a/segment", b"vectors")
+    assert open(counts).read() == "a 10\nb 20\n"
+    record = host.record("recovery-point")
+    assert f"dump qdrant qdrant.service {_sha(path)} {path}\n" in record
+    assert f"counts qdrant qdrant.service {counts}\n" in record
+    # The key reached curl in a header file, never in its arguments.
+    assert "api-key: s3cret-key" in (host.state / "headers").read_text()
+    assert not [a for _, a, _ in host.calls() if "s3cret" in a]
+    gate = out["gate"]["datastores"][0]
+    assert gate["snapshots_path"] == "/qdrant/snapshots"
+    assert gate["bytes"] >= 4096
+
+
+def test_the_bulk_accepts_a_qdrant_snapshot_once_attested(tmp_path):
+    host = _qdrant(_ready(Host(tmp_path)))
+    sha = host.recover()["dumps"][0]["sha256"]
+    out = host.run(rc=3)
+    assert any("isn't attested off the node" in r for r in out["refused"])
+    out = host.run("--offnode-sha256", sha)
+    assert out["refused"] == []
+    assert (
+        out["gate"]["recovery_point"]["dumps"][0]["datastore"]
+        == "qdrant qdrant.service"
+    )
+
+
+@pytest.mark.parametrize(
+    "setup, refused",
+    [
+        (lambda h: _qdrant(h, running="false"), "its container qdrant isn't running"),
+        (
+            lambda h: (
+                _qdrant(h)
+                .cases["curl"]
+                .insert(0, (f"* {QURL}/collections", "", 7, "connection refused", None))
+            ),
+            "GET https://index.example.ts.net:6333/collections failed (exit 7",
+        ),
+    ],
+)
+def test_a_qdrant_it_cant_reach_is_refused(tmp_path, setup, refused):
+    host = _ready(Host(tmp_path))
+    setup(host)
+    out = host.recover(rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+def test_a_qdrant_copy_that_isnt_a_tar_records_nothing(tmp_path):
+    host = _qdrant(_ready(Host(tmp_path)), snapshot=b"not a tar archive at all" * 40)
+    out = host.recover(rc=1)
+    assert out["dumps"][0]["tar_exit"] != 0
+    assert any("doesn't read as a tar" in w for w in out["verdict"]["why"])
+    assert not (host.run_dir / "recovery-point").exists()

@@ -815,12 +815,13 @@ gate_recovery() {
   for r in "${KNOB_DATASTORE[@]}"; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     unit_name u "${f[1]}"
-    if [ "${f[0]}" = postgres ]; then
-      read -r -a dbs <<<"${f[2]}"
-      for db in "${dbs[@]}"; do need+=("postgres $u $db"); done
-    else
-      need+=("redis $u")
-    fi
+    case ${f[0]} in
+      postgres)
+        read -r -a dbs <<<"${f[2]}"
+        for db in "${dbs[@]}"; do need+=("postgres $u $db"); done ;;
+      qdrant) need+=("qdrant $u") ;;
+      *) need+=("redis $u") ;;
+    esac
   done
   jadds o path "$run/recovery-point"
   if [ "$P_PRIV" = none ] || ! root_read rec "$run/recovery-point"; then
@@ -838,6 +839,9 @@ gate_recovery() {
       began:*) began=$engine ;;
       dump:postgres) read -r db sha path <<<"$rest"; key="postgres $unit $db" ;;
       dump:redis) read -r sha path <<<"$rest"; key="redis $unit" ;;
+      dump:qdrant) read -r sha path <<<"$rest"; key="qdrant $unit" ;;
+      # Kept on the node for the check after a restart (#367).
+      counts:qdrant) [ -n "$unit" ] && [ -n "$rest" ] || kind=bad ;;
       # A backup line names its unit and each datastore unit it covered.
       backup:*)
         if [ -n "$engine" ] && [ -n "$unit" ]; then

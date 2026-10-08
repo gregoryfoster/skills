@@ -69,7 +69,9 @@ esac
 #   KNOB_RESTARTER, KNOB_SERVICE                unit line
 #   KNOB_BACKUP     unit datastore-units line (the units space-separated)
 #   KNOB_CALLER     repo line
-#   KNOB_DATASTORE  engine unit databases(space-separated) line
+#   KNOB_DATASTORE  engine unit databases(space-separated) line; for
+#                   qdrant, the third field is "container url key-file"
+#                   (key-file - for none)
 #   KNOB_HOLD       step globs(space-separated) line-or-empty(default)
 #   KNOB_OWNER      component repo line
 #   KNOB_ORIGIN     origin policy value line
@@ -212,8 +214,15 @@ _knob_directive() {  # <line> <sec> <text>
         done
       elif [ "$nt" -eq 2 ] && [ "${tok[0]}" = redis ]; then
         _knob_record "$n" "$sec" datastore "${tok[1]}" "redis$u${tok[1]}$u"
+      elif [ "$nt" -eq 5 ] && [ "${tok[0]}" = qdrant ] \
+        && [[ ${tok[2]} =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+        && [[ ${tok[3]} =~ ^https?://[^/]+ ]] \
+        && case ${tok[4]} in - | /*) true ;; *) false ;; esac; then
+        # #367: the container its snapshot is copied out of, the API's base
+        # as its certificate names it, and a root-only key file, or - .
+        _knob_record "$n" "$sec" datastore "${tok[1]}" "qdrant$u${tok[1]}$u${tok[2]} ${tok[3]} ${tok[4]}"
       else
-        _knob_malformed "$n" "datastore takes postgres <unit> <database>..., or redis <unit>"
+        _knob_malformed "$n" "datastore takes postgres <unit> <database>..., redis <unit>, or qdrant <unit> <container> <http(s)://url> <key-file, an absolute path, or ->"
       fi ;;
     hold)
       # No tok[-1]: bash 3.2 rejects a negative subscript.
