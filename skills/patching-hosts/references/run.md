@@ -53,6 +53,8 @@ Every host records its before-versions (below). A host that declares a `datastor
   **Send the pipeline and gate 1 as one command.** `PIPESTATUS` belongs to the shell that ran the pipeline, and an agent's tool starts a fresh shell for each call. There, it describes whatever that shell ran last, not the dump.
 
   For Redis: `BGSAVE`, wait for it to finish, then copy the RDB file the same way.
+
+  For Qdrant (#367): each collection's exact point count, kept on the node, then a full-storage snapshot through its API (`POST /snapshots?wait=true`). **Copy it out of the container:** its snapshots directory isn't on a volume, so under `docker run --rm` the next restart deletes it (co-index: 1.56 GB in 48 s). The copy counts when it reads back with `tar -tf`, at mode 600, with its sha256 read; then delete the copy inside.
 - **The owner copies the dump off the node** with their own `scp`, and checks it against that sha256 **before the apply**.
 - **On the node only**, each written like the dump, through `| sudo sh -c 'umask 077; cat > /var/backups/<name>-<utc>'`, and checked with `stat` for mode 600:
   - `sudo -u postgres pg_dumpall --globals-only` (role password hashes);
@@ -71,12 +73,14 @@ Every host records its before-versions (below). A host that declares a `datastor
   retain <YYYY-MM-DD>
   dump postgres <unit> <database> <sha256> <path>
   dump redis <unit> <sha256> <path>
+  dump qdrant <unit> <sha256> <path>
+  counts qdrant <unit> <path>
   backup <unit> <datastore unit>...
   local <path>
   personal <path>
   ```
 
-  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts), with the datastore units it covered: its run must have *started* after `began` and succeeded, it stands in for the dumps of those datastores and no others, which its knob line must name too, and the owner names its object with `--offnode-object`. A datastore no backup covered needs its own dump. A `local` file, such as the globals dump, stays on the node and is never attested. `retain` is the stated retention, and `personal` flags a dump that holds personal data. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
+  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts), with the datastore units it covered: its run must have *started* after `began` and succeeded, it stands in for the dumps of those datastores and no others, which its knob line must name too, and the owner names its object with `--offnode-object`. A datastore no backup covered needs its own dump. A `local` file, such as the globals dump, stays on the node and is never attested, and so does a Qdrant's `counts` file, which the checks after a restart read. `retain` is the stated retention, and `personal` flags a dump that holds personal data. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
 - A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps
@@ -167,7 +171,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise: an aborted chain stopped nothing, and `reboot-chain.sh` launches it again once the gate would pass. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
-3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured; with none, run `SAVE` first.
+3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured; with none, run `SAVE` first. Qdrant: no checkpoint, since its container's `docker stop` is its clean shutdown.
 4. `journalctl --sync`.
 5. **Copy the volatile journal, last**, so it holds every stop line. This copy is the only record of the shutdown:
 
@@ -197,6 +201,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 - **Each `service`:**
   - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239). A start by hand after a failure leaves `NRestarts` at 0, so read `InactiveEnterTimestamp`: unset, the unit never stopped or failed after it started. Set, only PID 1's lines in the journal tell a failure from a stop by hand;
   - **its ordering**: `systemd-analyze critical-chain <service>` includes its data store, and the unit has `After=` on it. wslcb's first start succeeded by luck, until `After=postgresql.service` made it configured. Don't add `Wants=`: it would start a cluster an operator stopped on purpose.
+- **Each Qdrant** against its recovery point's counts, and after a held step that restarted it too (Docker's restart does, through `Requires=`). Clients may still be writing, so a count may move either way: only a collection gone or emptied is a loss, and counts that can't be read fail. A real query stays a `health` line, since the embedding model is the host's own.
 - **Each `restarter`** is active.
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.
 - **needrestart is clean**, `sudo grep -c '(deleted)' /proc/1/maps` reads 0, and `reboot-required` is gone.

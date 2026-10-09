@@ -2308,6 +2308,8 @@ read_services() {
       jaddn e restarts "$U_NRestarts"
       bad=""
       for ds in $DS_UNITS; do
+        # A service that is itself the data store, as co-index's Qdrant is.
+        [ "$ds" != "$svc" ] || continue
         ordering_ok "$ds" "$U_After" || bad="$bad $ds"
       done
       json_list w "$bad"
@@ -2735,10 +2737,50 @@ read_reboot() {  # <pre-run|post-boot>
   fi
 }
 
+# Each running Qdrant container, and whether a datastore qdrant line names
+# it (#367): one no line names is the analogue of database:<name>, a store
+# no recovery point covers. null when Docker couldn't be read.
+read_qdrant_containers() {
+  local r out name image base declared="" e a="" d
+  local -a f=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "${f[0]}" = qdrant ]; then declared="$declared ${f[2]%% *}"; fi
+  done
+  if ! docker_running; then
+    jadd R_DS qdrant null
+    return 0
+  fi
+  capture out docker_cmd ps --format '{{.Names}} {{.Image}}'
+  if [ "$CAP_RC" -ne 0 ]; then
+    jadd R_DS qdrant null
+    return 0
+  fi
+  while read -r name image; do
+    [ -n "$name" ] || continue
+    # Its repository, without a tag or a digest, from any registry.
+    base=${image%%@*}
+    case ${base##*/} in *:*) base=${base%:*} ;; esac
+    case $base in qdrant/qdrant | */qdrant/qdrant) ;; *) continue ;; esac
+    d=0
+    if in_words "$name" "$declared"; then d=1; fi
+    e=""
+    jadds e container "$name"
+    jadds e image "$image"
+    jaddb e declared "$d"
+    jpush a "{$e}"
+    if [ "$d" -eq 0 ]; then
+      finding knob "datastore:$name" "datastore:$name" "The container $name runs $image, and no datastore line names it, so no recovery point covers it, and the reboot chain doesn't stop it as a data store. Name it: datastore qdrant <unit> $name <url> <key-file>. A store the owner chooses to rebuild instead takes exception datastore:$name <review-by> <reason> (knob.md)."
+    fi
+  done <<<"$out"
+  jadd R_DS qdrant "[$a]"
+}
+
 read_impact() {
   local o=""
   read_maps
   read_datastores
+  read_qdrant_containers
   read_cmdlines
   read_services
   read_restarters
@@ -3422,6 +3464,7 @@ read_post_boot() {
         esac
       fi
       for ds in $DS_UNITS; do
+        [ "$ds" != "$svc" ] || continue
         if ordering_ok "$ds" "$U_After"; then
           check "ordering:$svc" 1 "After= $ds"
         else

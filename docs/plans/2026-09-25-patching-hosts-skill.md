@@ -894,6 +894,25 @@ base image, or an owner-approved remedy the profile documents.
     recover Qdrant; and co-index's `qdrant-recovery.sh` snapshot reads as the
     same recovery point.
 
+    **Done 2026-10-08** (8c2c2f2, a4c8d10, and the probe's finding with the
+    docs after them), as written, with three details settled in the
+    building:
+    - the record keeps the counts as their own line, `counts qdrant <unit>
+      <path>`, a node-only file like `local`, so the checks after a restart
+      find them;
+    - the held step's check runs only where the step restarted the unit,
+      read from its `ActiveEnterTimestamp`. Where the recovery point holds
+      no counts (a backup unit stood in), it asks for a check by hand
+      rather than failing;
+    - the probe records each Qdrant container under
+      `impact.datastores.qdrant`, `null` when Docker couldn't be read.
+
+    The ordering check no longer holds a `service` that is itself the data
+    store to ordering on itself, as co-index's knob names `qdrant.service`
+    both ways. co-index will still see `ordering:ollama.service` once it
+    declares the line, since the check holds every `service` to every data
+    store, and Ollama doesn't use Qdrant. It takes an exception.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
@@ -1004,6 +1023,19 @@ base image, or an owner-approved remedy the profile documents.
       with the owner: the bulk's span is now the rest of the run, at three
       times its dry run, plus its held steps and the reboot;
     - the post-boot timer check misread a monotonic timer (#363).
+
+    **co-index, 2026-10-08** (CannObserv/index#9): the third run under the
+    scripts, and the first host whose data store the skill couldn't name.
+    The owner snapshotted Qdrant by hand, the in-flight gate (Qdrant's
+    access log) held each step while clients wrote, and the host was down
+    26 s. It filed two rough edges and its process-log entry (#367 to
+    #369), each fixed here before the next host:
+    - no knob line named a Qdrant data store (#367). Decided with the owner:
+      a native `datastore qdrant` line, plan step 6f;
+    - the restarter scan didn't read the script a timer's service runs
+      (#368). It now does, one script deep, and a program it can't follow
+      leaves the scan incomplete until the knob declares it a restarter or
+      `not-restarter:<service>`, as decided with the owner.
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;

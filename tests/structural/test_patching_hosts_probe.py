@@ -1003,6 +1003,27 @@ def test_a_runbook_service_without_after_its_datastore_is_a_finding(host, after,
         assert "ordering:app-web.service" not in _ids(out)
 
 
+def test_a_service_that_is_its_own_datastore_isnt_held_to_ordering_on_itself(host):
+    # #367: co-index's knob names qdrant.service as a service and its store.
+    host.knob(
+        "posture scheduled\nservice qdrant.service\n"
+        "datastore qdrant qdrant.service qdrant https://q:6333 -\n"
+    )
+    host.show(
+        "qdrant.service",
+        After="network.target docker.service",
+        Result="success",
+        NRestarts="0",
+        ActiveState="active",
+        RequiredBy="",
+        BoundBy="",
+    )
+    out = host.run()
+    assert "ordering:qdrant.service" not in _ids(out)
+    checks = {c["check"] for c in host.run("--post-boot")["post_boot"]}
+    assert "ordering:qdrant.service" not in checks
+
+
 def test_an_undeclared_restarter_is_a_knob_finding(host):
     host.write(
         "etc/systemd/system/app-health.service",
@@ -1736,6 +1757,55 @@ def _docker(host: Host, containers: str = "") -> Host:
     host.on("docker", "images -q", "abc123\n")
     host.on("docker", "volume ls -q", "")
     return host
+
+
+@pytest.mark.parametrize(
+    "knob, finds",
+    [
+        ("posture scheduled\n", True),
+        (
+            "posture scheduled\ndatastore qdrant qdrant.service qdrant https://q:6333 -\n",
+            False,
+        ),
+    ],
+)
+def test_a_qdrant_container_no_datastore_line_names_is_a_knob_finding(
+    host, knob, finds
+):
+    # #367: on co-index nothing said the host held a data store.
+    host.knob(knob)
+    _docker(host, "c1\nc2\n")
+    host.on(
+        "docker",
+        "ps --format {{.Names}} {{.Image}}",
+        "qdrant docker.io/qdrant/qdrant:v1.17.0\nollama socraticode/ollama-slim:latest\n",
+    )
+    out = host.run()
+    assert out["impact"]["datastores"]["qdrant"] == [
+        {
+            "container": "qdrant",
+            "image": "docker.io/qdrant/qdrant:v1.17.0",
+            "declared": not finds,
+        }
+    ]
+    assert ("datastore:qdrant" in _ids(out)) is finds
+    if finds:
+        f = _finding(out, "datastore:qdrant")
+        assert f["kind"] == "knob"
+        assert f["exception_what"] == "datastore:qdrant"
+        assert "datastore qdrant <unit> qdrant <url> <key-file>" in f["message"]
+
+
+def test_a_qdrant_the_owner_rebuilds_instead_is_excepted(host):
+    host.knob(
+        "posture scheduled\n"
+        "exception datastore:qdrant 2099-01-01 the index rebuilds from git\n"
+    )
+    _docker(host, "c1\n")
+    host.on("docker", "ps --format {{.Names}} {{.Image}}", "qdrant qdrant/qdrant\n")
+    out = host.run()
+    assert "datastore:qdrant" not in _ids(out)
+    assert "datastore:qdrant" in _ids(out, "excepted")
 
 
 def test_docker_active_with_no_container_is_dormant(host):
