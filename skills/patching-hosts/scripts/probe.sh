@@ -2512,7 +2512,7 @@ unit_restarts() {  # <service> <who>
 # around every held step (#351). One the knob doesn't name isn't stopped
 # around a data-store step.
 read_restarters() {
-  local f u base found="" stem declared e how line t rc why text unread="" svc opaque="" open=0 runs=""
+  local f u base found="" stem declared e how line t rc why text unread="" svc opaque="" open=0 runs="" listed=""
   local -a tok=()
   R_RESTARTERS="" R_RESTARTERS_READ=""
   OF_WHYS=""
@@ -2581,6 +2581,10 @@ read_restarters() {
   done
   for f in $found; do
     u=${f%%:*}
+    # One entry, and one finding, a unit: the first way it was found
+    # names it (CR 224).
+    if in_words "$u" "$listed"; then continue; fi
+    listed="$listed $u"
     stem=${u%.service}
     declared=0
     if in_words "$u" "$KNOB_RESTARTERS" || in_words "$stem.timer" "$KNOB_RESTARTERS"; then declared=1; fi

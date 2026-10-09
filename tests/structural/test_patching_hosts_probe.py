@@ -1323,6 +1323,24 @@ def test_a_timers_service_is_read_through_the_script_it_runs(
     assert out["impact"]["restarters_complete"] is True
 
 
+def test_a_unit_found_two_ways_is_one_restarter(host):
+    # CR 224: its OnFailure= target restarts, and so does its timer's script.
+    host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
+    host.write(
+        "etc/systemd/system/store-renew.service",
+        RENEW_UNIT + "[Unit]\nOnFailure=store-fix.service\n",
+    )
+    host.write(
+        "etc/systemd/system/store-fix.service",
+        "[Service]\nExecStart=/bin/systemctl restart store.service\n",
+    )
+    host.write("usr/local/bin/store-renew.sh", RESTARTS)
+    out = host.run()
+    assert _ids(out).count("restarter:store-renew.service") == 1
+    units = [r["unit"] for r in out["impact"]["restarters"]]
+    assert units.count("store-renew.service") == 1
+
+
 def test_an_exception_clears_a_timers_service_the_scan_cant_follow(host):
     host.write("etc/systemd/system/store-cert.timer", RENEW_TIMER)
     host.write("etc/systemd/system/store-renew.service", RENEW_UNIT)
