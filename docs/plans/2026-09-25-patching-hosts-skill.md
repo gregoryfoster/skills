@@ -913,6 +913,76 @@ base image, or an owner-approved remedy the profile documents.
     declares the line, since the check holds every `service` to every data
     store, and Ollama doesn't use Qdrant. It takes an exception.
 
+6g. **A service's language dependencies (#366; before notifier's 8b run).**
+    notifier's apt security lane left 0 pending, while its venv held about 22
+    advisories, among them the OpenSSL bundled in the `cryptography` wheel,
+    which runs its credential encryption. apt can't see that copy, and no
+    reading took the tree. Decided with the owner 2026-10-09:
+    - **A sixth pending class, *language dependencies*,** and not part of
+      *outside apt*. It has its own signal (OSV advisories, not versions or
+      age), its own owner (the repo whose tree it is) and its own update
+      mechanism. Like Ubuntu Pro / ESM, "0 security pending" never covers
+      it. The class text names bundled native libraries: `cryptography`'s
+      OpenSSL, `psycopg[binary]`'s libpq, `lxml`'s libxml2, `grpcio`'s
+      BoringSSL. Patching the system copy doesn't patch these.
+    - **v1 audits `uv.lock` only.** Every cohort host already has uv. A tree
+      with another lockfile (`package-lock.json`, `poetry.lock`,
+      `Pipfile.lock`, `pnpm-lock.yaml`, `yarn.lock`) is reported as found but
+      not audited, with the reason, so it never reads as clean.
+    - **A deploy that restarts a declared `service` takes a window,** as any
+      restart does. An advisory with a fix may take an out-of-cycle window,
+      as a Tailscale bulletin does, and is recorded on the run. That's policy
+      text: the skill doesn't run deploys, and it updates no tree.
+    - **The repo's own update mechanism is a line in the run record,** read
+      by hand with `gh`: an audit gate in CI, a Dependabot or Renovate
+      config, the date of its last PR, and its open PRs against
+      `open-pull-requests-limit`. Not the probe: a config file alone reads
+      "on" while the bot is silent behind a full PR limit, which is exactly
+      what notifier's did.
+
+    **The reading** (`probe.sh`, on a live system, not under `--root` or in
+    `--post-boot`; `updates.language`):
+    - *Find the trees:* the `WorkingDirectory=` of every unit file under
+      `/etc/systemd/system`, plus each knob `service`, de-duplicated by
+      directory, with the units that run from each. A directory holding none
+      of the lockfiles above isn't a tree.
+    - *The owner:* an `owner <glob> <repo>` line matching the directory, as
+      for binaries, or else the checkout's `origin` remote, or else
+      `unknown`.
+    - *Audit:* copy `pyproject.toml` and `uv.lock` into a fresh mode-700
+      directory owned by the lockfile's owner. Run that user's uv there
+      (`command -v`, then `~/.local/bin/uv`), **as that user, never as
+      root**: a `~/.local/bin` binary is user-writable. The command is
+      `timeout 60 uv audit --frozen --no-cache --no-python-downloads
+      --no-config`. Nothing is run in the tree itself, and nothing is
+      written outside the temporary directory.
+      - Measured with uv 0.11.8: exit 0 is clean, exit 1 means advisories
+        were found, and exit 2 is an error (OSV unreachable, no lock, an
+        unknown flag, or a uv without `audit`). The output is text only,
+        with no JSON and no advisory dates. `audit` is a preview command
+        whose flag name has changed (`audit-command` in the issue, `audit`
+        here), so the probe passes no preview flag and accepts the warning.
+      - Parsed from `<name> <version> has <n> known vulnerabilities` and the
+        summary line. Exit 1 with nothing parsed, or any exit 2, is
+        `audited: false` with uv's last stderr line as the reason.
+    - Per tree: `dir`, `lockfile`, `units`, `owner`, `audited`,
+      `advisories` (null unless audited), `packages` [{name, version,
+      advisories}], and `why`. `language.complete` is false when any tree
+      wasn't audited. It's a pending class, not a finding, so it gates
+      nothing.
+
+    **Docs:** `policy.md` (the sixth class, the deploy rule beside "Two
+    lanes", and Owners), `readings.md` (a row, and the class under "The
+    pending set"), `run.md` (the record's classes, and the repo-mechanism
+    line), and anywhere SKILL.md says "five".
+
+    *Done when* stub tests cover a clean tree, a tree with advisories, uv's
+    exit 2, an unparsed exit 1, a non-uv lockfile, a tree two units share,
+    an `owner` line, no uv, and the probe running uv as the lockfile's owner
+    in a copy, never in the tree; the docs say the class, the deploy rule
+    and the record line; and a probe of a copy of notifier's lock reads 0
+    advisories, as measured here on 2026-10-09 (63 packages).
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
