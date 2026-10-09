@@ -383,6 +383,15 @@ def test_a_qdrant_key_may_go_over_plain_http_on_this_host(tmp_path, url):
     assert out["datastore"][0]["url"] == url
 
 
+def test_a_qdrant_urls_trailing_slash_is_dropped(tmp_path):
+    # CR 220: the scripts append /collections and /snapshots to it.
+    out = _read(
+        tmp_path,
+        "posture scheduled\ndatastore qdrant qdrant.service qdrant https://q:6333/ -\n",
+    )
+    assert out["datastore"][0]["url"] == "https://q:6333"
+
+
 def test_a_wrapping_range_is_marked(tmp_path):
     out = _read(
         tmp_path, "posture scheduled\nwindow Tue 14:15-07:25\nquiet 23:30-00:30 Sun\n"
