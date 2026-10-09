@@ -2594,7 +2594,7 @@ read_restarters() {
     jpush R_RESTARTERS "{$e}"
     if [ "$declared" -eq 0 ]; then
       how="an Exec line runs systemctl restart"
-      if [ "${f#*:}" = script ]; then how="the script its timer runs starts or restarts one"; fi
+      if [ "${f#*:}" = script ]; then how="what its timer runs starts or restarts one"; fi
       if [ "${f#*:}" = on-failure ]; then
         how="its OnFailure= target starts or restarts one"
         why=""

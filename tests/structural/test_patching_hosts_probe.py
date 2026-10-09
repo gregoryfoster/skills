@@ -1306,7 +1306,11 @@ def test_a_timers_service_is_read_through_the_script_it_runs(
     assert ("restarters:unread:store-renew.service" in _ids(out)) is unread
     assert out["impact"]["restarters_complete"] is (not unread)
     if finds:
-        assert "the script" in _finding(out, "restarter:store-renew.service")["message"]
+        # CR 221: it may be the unit's own Exec line, with no script.
+        assert (
+            "what its timer runs starts or restarts one"
+            in _finding(out, "restarter:store-renew.service")["message"]
+        )
     if unread:
         f = _finding(out, "restarters:unread:store-renew.service")
         assert f["kind"] == "unknown"
