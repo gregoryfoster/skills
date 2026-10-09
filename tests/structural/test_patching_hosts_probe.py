@@ -1008,6 +1008,19 @@ def test_a_working_directory_set_in_a_drop_in_is_read(host):
     assert (t["dir"], t["units"], t["audited"]) == (f"/{APP}", ["pkg.service"], True)
 
 
+def test_drop_ins_apply_in_name_order_and_etc_overrides_run(host):
+    # systemd merges /etc's and /run's drop-ins by name, and /etc's copy of
+    # a name both hold replaces /run's (CR 236).
+    _tree(host)
+    _uv(host)
+    d = "systemd/system/app.service.d"
+    host.write(f"run/{d}/05-early.conf", "[Service]\nWorkingDirectory=/srv/early\n")
+    host.write(f"etc/{d}/10-app.conf", f"[Service]\nWorkingDirectory=/{APP}\n")
+    host.write(f"run/{d}/10-app.conf", "[Service]\nWorkingDirectory=/srv/shadowed\n")
+    [t] = _lang(_audit(host))
+    assert t["dir"] == f"/{APP}"
+
+
 def test_the_owner_is_the_knobs_line_else_the_checkouts_github_origin(host):
     _tree(host)
     _uv(host)

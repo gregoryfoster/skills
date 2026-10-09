@@ -1848,7 +1848,7 @@ read_language() {
     return 0
   fi
   # Every unit file the host's admin installed, and each knob service.
-  local files="" d
+  local files="" d dn
   for f in "$P_ROOT"/etc/systemd/system/*.service; do
     [ -f "$f" ] && files="$files"$'\n'"$f"
   done
@@ -1872,12 +1872,23 @@ read_language() {
     [ -n "$f" ] || continue
     capture o as_reader cat -- "$f"
     [ "$CAP_RC" -eq 0 ] || continue
-    # Its drop-ins after it, so a later WorkingDirectory= wins, as in systemd.
+    # Its drop-ins after it, so a later WorkingDirectory= wins, as in
+    # systemd: /etc's and /run's merged in name order, /etc's copy of a name
+    # both hold taking its place (CR 236).
+    dn=""
     for d in "$P_ROOT"/etc/systemd/system/"${f##*/}".d/*.conf "$P_ROOT"/run/systemd/system/"${f##*/}".d/*.conf; do
-      [ -f "$d" ] || continue
+      [ -f "$d" ] && dn="$dn"$'\n'"${d##*/}"
+    done
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      if [ -f "$P_ROOT/etc/systemd/system/${f##*/}.d/$d" ]; then
+        d="$P_ROOT/etc/systemd/system/${f##*/}.d/$d"
+      else
+        d="$P_ROOT/run/systemd/system/${f##*/}.d/$d"
+      fi
       capture line as_reader cat -- "$d"
       [ "$CAP_RC" -ne 0 ] || o="$o"$'\n'"$line"
-    done
+    done <<<"$(printf '%s\n' "$dn" | LC_ALL=C sort -u)"
     dir="" user=""
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in
