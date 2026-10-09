@@ -617,3 +617,48 @@ qdrant_counts() {  # <var> <url> <key-file>
   done <<<"$_qc_names"
   printf -v "$1" '%s' "$_qc_all"
 }
+
+# The file of counts a run's recovery point took of a Qdrant unit, from the
+# record's counts line, or empty.
+qdrant_counts_path() {  # <var> <record text> <unit>
+  local _qp_k _qp_e _qp_u _qp_r _qp_p=""
+  while read -r _qp_k _qp_e _qp_u _qp_r; do
+    [ "$_qp_k $_qp_e" = "counts qdrant" ] || continue
+    unit_name _qp_u "$_qp_u"
+    if [ "$_qp_u" = "$3" ]; then _qp_p=$_qp_r; fi
+  done <<<"$2"
+  printf -v "$1" '%s' "$_qp_p"
+}
+
+# A Qdrant after a restart, against the counts its recovery point took.
+# Clients may still be writing, so a count may move either way: only a
+# collection gone or emptied is a loss, and counts that can't be read fail.
+# QL_OK 1 or 0, with QL_WHY saying what.
+qdrant_loss() {  # <url> <key-file> <the counts before>
+  local _ql_now _ql_c _ql_n _ql_m _ql_c2 _ql_n2 _ql_bad="" _ql_moved=0 _ql_k=0
+  QL_OK=0 QL_WHY=""
+  if ! qdrant_counts _ql_now "$1" "$2"; then
+    QL_WHY="its counts couldn't be read: $QC_WHY"
+    return 0
+  fi
+  while read -r _ql_c _ql_n; do
+    [ -n "$_ql_c" ] || continue
+    _ql_k=$((_ql_k + 1)) _ql_m=""
+    while read -r _ql_c2 _ql_n2; do
+      if [ "$_ql_c2" = "$_ql_c" ]; then _ql_m=$_ql_n2; fi
+    done <<<"$_ql_now"
+    if [ -z "$_ql_m" ]; then
+      _ql_bad="$_ql_bad $_ql_c (gone; it held $_ql_n)"
+    elif [ "$_ql_m" -eq 0 ] && [ "$_ql_n" -gt 0 ]; then
+      _ql_bad="$_ql_bad $_ql_c (emptied; it held $_ql_n)"
+    elif [ "$_ql_m" != "$_ql_n" ]; then
+      _ql_moved=$((_ql_moved + 1))
+    fi
+  done <<<"$3"
+  if [ -n "$_ql_bad" ]; then
+    QL_WHY="lost against the recovery point's counts:$_ql_bad"
+    return 0
+  fi
+  QL_OK=1
+  QL_WHY="each of the $_ql_k collections the recovery point counted is there and not emptied; $_ql_moved counts moved, as client writes move them"
+}

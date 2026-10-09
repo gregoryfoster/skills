@@ -2567,6 +2567,51 @@ def test_post_boot_without_a_run_says_to_pass_one(host):
     assert "pass --run" in checks["shutdown:journal-copy"]["evidence"]
 
 
+QURL = "https://q.example:6333"
+
+
+def _qdrant_after_boot(host, now: dict[str, int], counted: bool = True) -> dict:
+    host.knob(f"posture scheduled\ndatastore qdrant qdrant.service qdrant {QURL} -\n")
+    rec = "began 1\n"
+    if counted:
+        rec += f"counts qdrant qdrant.service /{RUN}/qdrant-counts.txt\n"
+    host.write(f"{RUN}/recovery-point", rec)
+    host.write(f"{RUN}/qdrant-counts.txt", "a 10\nb 20\nc 5\n")
+    names = ",".join(f'{{"name":"{c}"}}' for c in now)
+    cases = [(f"* {QURL}/collections", f'{{"result":{{"collections":[{names}]}}}}')]
+    for c, n in now.items():
+        cases.append(
+            (f"* {QURL}/collections/{c}/points/count", f'{{"result":{{"count":{n}}}}}')
+        )
+    for glob, out in cases:
+        host.cases["curl"].insert(0, (glob, out + "\n", 0, "", None))
+    checks = host.run("--post-boot", "--run", "/" + RUN)["post_boot"]
+    return {c["check"]: c for c in checks}["qdrant:qdrant.service"]
+
+
+@pytest.mark.parametrize(
+    "now, ok, said",
+    [
+        # #367: clients write through the run, so a count moves either way.
+        ({"a": 10, "b": 25, "c": 4}, True, "2 counts moved"),
+        ({"a": 10, "b": 20}, False, "c (gone; it held 5)"),
+        ({"a": 0, "b": 20, "c": 5}, False, "a (emptied; it held 10)"),
+    ],
+)
+def test_post_boot_checks_a_qdrant_against_its_recovery_points_counts(
+    host, now, ok, said
+):
+    c = _qdrant_after_boot(host, now)
+    assert c["ok"] is ok
+    assert said in c["evidence"]
+
+
+def test_post_boot_says_a_qdrant_with_no_counts_is_unchecked(host):
+    c = _qdrant_after_boot(host, {"a": 10}, counted=False)
+    assert c["ok"] is None
+    assert "holds no counts of it" in c["evidence"]
+
+
 def test_post_boot_reads_the_run_it_is_given(host):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
     host.write(f"{RUN}/reboot-chain.log", COPIED)

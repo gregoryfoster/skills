@@ -1403,3 +1403,80 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
             assert words[0] == "get-property", args
         assert name not in (*Host.NEVER, "needrestart"), name
     assert host.holds() == []
+
+
+# --- Qdrant (#367) ------------------------------------------------------------------
+
+QURL = "https://q.example:6333"
+
+
+def _qdrant_held(host: Host, now: dict[str, int], restarts: bool = True) -> Host:
+    """After a green bulk: a Qdrant the knob declares, its recovery point's
+    counts in the run, and an upgrade that restarts it, or doesn't."""
+    host.run()
+    host.knob(KNOB + f"datastore qdrant qdrant.service qdrant {QURL} -\n")
+    counts = host.run_dir / "qdrant-counts.txt"
+    counts.write_text("a 10\nb 20\n")
+    (host.run_dir / "recovery-point").write_text(
+        f"began 1\ncounts qdrant qdrant.service {counts}\n"
+    )
+    s = host.state
+    host.cases["systemctl"].insert(
+        0,
+        (
+            "show*-- qdrant.service",
+            "",
+            0,
+            "",
+            f'if [ -e "{s}/upgraded" ]; then echo ActiveEnterTimestamp=@200; '
+            "else echo ActiveEnterTimestamp=@100; fi; exit 0",
+        ),
+    )
+    if restarts:
+        host.uu("All upgrades installed\n", before=f'touch "{s}/upgraded"; ')
+    names = ",".join(f'{{"name":"{c}"}}' for c in now)
+    host.cases["curl"].insert(
+        0,
+        (
+            f"* {QURL}/collections",
+            f'{{"result":{{"collections":[{names}]}}}}\n',
+            0,
+            "",
+            None,
+        ),
+    )
+    for c, n in now.items():
+        host.cases["curl"].insert(
+            0,
+            (
+                f"* {QURL}/collections/{c}/points/count",
+                f'{{"result":{{"count":{n}}}}}\n',
+                0,
+                "",
+                None,
+            ),
+        )
+    return host
+
+
+def test_a_held_step_that_restarts_a_qdrant_checks_its_counts(host):
+    out = _qdrant_held(host, {"a": 12, "b": 20}).run(step="postgres")
+    [q] = out["qdrant"]
+    assert (q["unit"], q["restarted"], q["ok"]) == ("qdrant.service", True, True)
+    assert "1 counts moved" in q["evidence"]
+    assert out["verdict"]["ok"] is True
+
+
+def test_a_held_step_that_empties_a_qdrant_collection_fails(host):
+    out = _qdrant_held(host, {"a": 0, "b": 20}).run(step="postgres", rc=1)
+    assert out["qdrant"][0]["ok"] is False
+    assert any(
+        "qdrant.service after the step: lost" in w and "a (emptied; it held 10)" in w
+        for w in out["verdict"]["why"]
+    )
+
+
+def test_a_held_step_that_didnt_restart_a_qdrant_doesnt_count_it(host):
+    out = _qdrant_held(host, {"a": 10, "b": 20}, restarts=False).run(step="postgres")
+    assert out["qdrant"] == [{"unit": "qdrant.service", "restarted": False}]
+    assert not [a for _, a, _ in host.calls("curl") if "points/count" in a]

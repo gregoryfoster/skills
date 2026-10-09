@@ -62,7 +62,8 @@ may go again); when the span isn't wholly inside one window or meets a
 quiet range; while a package manager runs or an inflight command prints
 anything but 0; when a Postgres datastore's cluster can't be found, isn't
 online, or its port can't be read, so a stopped cluster blocks the reboot;
-and when a running Redis's address reaches no Redis, or another process.
+when a running Redis's address reaches no Redis, or another process; and
+when a Qdrant's unit isn't active or its container isn't running.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 (its lines), launched, tmp (the tmpfiles rule for /tmp, and whether the
@@ -235,11 +236,12 @@ gate_packages() {
   jaddsn J_GATE package_manager_running "$who"
 }
 
-# Each data store's checkpoint and stop: a Postgres cluster's port, and for
-# Redis its address and the file that holds any password.
+# Each data store's checkpoint and stop: a Postgres cluster's port, for
+# Redis its address and the file that holds any password, and for Qdrant
+# nothing to checkpoint: its container's stop is its clean shutdown (#367).
 DS_LINES=()
 gate_datastores() {
-  local r u port a="" e seen="" rc
+  local r u port a="" e seen="" rc qc out
   local -a f=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -256,6 +258,21 @@ gate_datastores() {
       fi
       jaddn e port "$port"
       DS_LINES+=("postgres $u $port")
+    elif [ "${f[0]}" = qdrant ]; then
+      read -r qc _ <<<"${f[2]}"
+      jadds e container "$qc"
+      U_ActiveState=""
+      unit_show "$u" ActiveState || true
+      if [ "$U_ActiveState" != active ]; then
+        refuse "datastore qdrant $u is ${U_ActiveState:-unknown}, not active: start it, and check its collections, before the reboot"
+        continue
+      fi
+      capture out as_root docker inspect -f '{{.State.Running}}' "$qc"
+      if [ "$CAP_RC" -ne 0 ] || [ "$out" != true ]; then
+        refuse "datastore qdrant $u: its container $qc isn't running (docker inspect: ${out:-${CAP_ERR:-no answer}})"
+        continue
+      fi
+      DS_LINES+=("qdrant $u")
     else
       redis_conn "$u"
       # The chain would check and save another Redis. One that isn't running
@@ -369,9 +386,12 @@ write_chain() {
   c ''
   c '# 3. A checkpoint, then each data store.'
   for r in ${DS_LINES[@]+"${DS_LINES[@]}"}; do
-    # "postgres <unit> <port>", or "redis <unit> <conf or -> <redis-cli words>".
+    # "postgres <unit> <port>", "redis <unit> <conf or -> <redis-cli words>",
+    # or "qdrant <unit>".
     read -r kind u conf rest <<<"$r"
-    if [ "$kind" = postgres ]; then
+    if [ "$kind" = qdrant ]; then
+      c "# Its container's stop is Qdrant's clean shutdown: no checkpoint."
+    elif [ "$kind" = postgres ]; then
       # pg_port's port is a number.
       sq m "checkpoint $u"
       c "say $m; runuser -u postgres -- psql -XAtq -p $conf -d postgres -c CHECKPOINT || say \"CHECKPOINT failed: the stop checkpoints anyway\""

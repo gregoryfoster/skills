@@ -765,3 +765,43 @@ def test_redis_is_saved_first_only_without_save_points(tmp_path, save, saved):
     # Read from its own file when the chain runs, not written into it.
     assert (host.state / "auth").read_text().split() == ["pw-in-the-file"]
     assert "pw-in-the-file" not in (host.run_dir / "reboot-chain.sh").read_text()
+
+
+# --- Qdrant (#367) ------------------------------------------------------------------
+
+
+def _qdrant(host: Host, running: str = "true", active: str = "active") -> Host:
+    host.knob(KNOB_CHAIN + "datastore qdrant qdrant.service qdrant https://q:6333 -\n")
+    host.show("qdrant.service", ActiveState=active)
+    host.cases["docker"].insert(
+        0, ("inspect -f {{.State.Running}} qdrant", f"{running}\n", 0, "", None)
+    )
+    return host
+
+
+def test_a_qdrants_stop_is_its_clean_shutdown_with_no_checkpoint(host):
+    out = _qdrant(host).reboot()
+    chain = "\n".join(out["chain"])
+    note = chain.index("Its container's stop is Qdrant's clean shutdown")
+    assert note < chain.index("systemctl stop -- 'qdrant.service'")
+    assert out["gate"]["datastores"][-1] == {
+        "unit": "qdrant.service",
+        "container": "qdrant",
+    }
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    stops = [c for c in host.sequence() if c.startswith("systemctl stop -- ")]
+    assert stops[-1] == "systemctl stop -- qdrant.service"
+
+
+@pytest.mark.parametrize(
+    "kw, refused",
+    [
+        ({"running": "false"}, "its container qdrant isn't running"),
+        ({"active": "failed"}, "qdrant.service is failed, not active"),
+    ],
+)
+def test_a_qdrant_that_isnt_up_blocks_the_reboot(host, kw, refused):
+    out = _qdrant(host, **kw).reboot(rc=3)
+    assert any(refused in r for r in out["refused"]), out["refused"]
+    assert not host.calls("systemd-run")

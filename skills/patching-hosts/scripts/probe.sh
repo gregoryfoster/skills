@@ -3289,8 +3289,58 @@ check_shutdown() {
 # is its last, written only when the shutdown reached it. A volatile one is
 # gone, and the chain's copy in <run>/journal is the record: reboot-chain.sh
 # writes it there, one directory per journal it copied.
+# The run a post-boot probe reads: --run, or the newest one under
+# /var/backups, or empty.
+post_run_dir() {  # <var>
+  local _pr_r=$run _pr_t
+  if [ -z "$_pr_r" ]; then
+    for _pr_t in "$P_ROOT"/var/backups/patching-hosts-2*; do
+      if [ -d "$_pr_t" ]; then _pr_r=${_pr_t#"$P_ROOT"}; fi
+    done
+  fi
+  printf -v "$1" '%s' "$_pr_r"
+}
+
+# Each Qdrant against the counts the run's recovery point took (#367).
+check_qdrant() {
+  local r u qurl qkey rd="" rec cpath before
+  local -a f=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[0]}" = qdrant ] || continue
+    unit_name u "${f[1]}"
+    read -r _ qurl qkey <<<"${f[2]}"
+    if [ "$P_LIVE" -ne 1 ] || [ "$P_PRIV" = none ]; then
+      check "qdrant:$u" "" "its counts need a running system, read as root"
+      continue
+    fi
+    [ -n "$rd" ] || post_run_dir rd
+    if [ -z "$rd" ]; then
+      check "qdrant:$u" "" "no run directory under /var/backups/patching-hosts-<UTC>: pass --run, the run whose recovery point counted it"
+      continue
+    fi
+    capture rec as_root cat "$P_ROOT$rd/recovery-point"
+    if [ "$CAP_RC" -ne 0 ]; then
+      check "qdrant:$u" "" "$rd/recovery-point couldn't be read as root"
+      continue
+    fi
+    qdrant_counts_path cpath "$rec" "$u"
+    if [ -z "$cpath" ]; then
+      check "qdrant:$u" "" "$rd/recovery-point holds no counts of it: its recovery point was a backup unit's, or older than #367"
+      continue
+    fi
+    capture before as_root cat "$P_ROOT$cpath"
+    if [ "$CAP_RC" -ne 0 ]; then
+      check "qdrant:$u" "" "$cpath couldn't be read as root"
+      continue
+    fi
+    qdrant_loss "$qurl" "$qkey" "$before"
+    check "qdrant:$u" "$QL_OK" "$QL_WHY"
+  done
+}
+
 check_journal_record() {
-  local out r=$run t
+  local out r
   if [ "$JOURNAL_VERDICT" = persistent ]; then
     if ! live_cmd journalctl; then
       check shutdown:journal-stopped "" "the previous boot's journal needs a running system to read"
@@ -3307,11 +3357,7 @@ check_journal_record() {
     fi
     return 0
   fi
-  if [ -z "$r" ]; then
-    for t in "$P_ROOT"/var/backups/patching-hosts-2*; do
-      if [ -d "$t" ]; then r=${t#"$P_ROOT"}; fi
-    done
-  fi
+  post_run_dir r
   if [ -z "$r" ]; then
     check shutdown:journal-copy "" "no run directory under /var/backups/patching-hosts-<UTC>: pass --run, the run whose chain copied the journal"
     return 0
@@ -3417,6 +3463,7 @@ read_post_boot() {
   else
     check needrestart "" "needrestart couldn't be run as root"
   fi
+  check_qdrant
   read_reboot post-boot
   check_tailscale_auto_update
   if is_int "$REBOOT_DEL"; then

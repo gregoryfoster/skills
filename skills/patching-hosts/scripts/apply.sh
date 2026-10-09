@@ -130,8 +130,10 @@ The run's directory is root-only: 0700, and each file 0600.
   probe-after-<step>.json and .err
 
 Output: one JSON object on stdout, for exits 0, 1 and 3. Keys: apply,
-refused, gate, then what the step did: holds, upgrade, health, restarters,
-verdict, abort, next and reprobe.
+refused, gate, then what the step did: holds, upgrade, health, qdrant
+(each Qdrant datastore, and for one the held step restarted, its counts
+against the recovery point's), restarters, verdict, abort, next and
+reprobe.
 
 Exit codes:
   0  the step ran, and its verdict is green
@@ -297,7 +299,7 @@ case $LANE in security | maintenance | origin:?*) ;; *) LANE=unknown ;; esac
 # returns non-zero stops the script under errexit, wherever it is called
 # plainly.
 NEXT=()
-J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null
+J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null J_QDRANT=null
 J_VERDICT=null J_ABORT=null J_REPROBE=null
 
 HOLD_STEPS=""
@@ -1001,6 +1003,7 @@ emit() {
   jadd o holds "$J_HOLDS"
   jadd o upgrade "$J_UPGRADE"
   jadd o health "$J_HEALTH"
+  jadd o qdrant "$J_QDRANT"
   jadd o restarters "$J_RESTARTERS"
   jadd o verdict "$J_VERDICT"
   jadd o abort "$J_ABORT"
@@ -1449,6 +1452,55 @@ do_bulk() {
   poll_health
 }
 
+# Each Qdrant datastore's start, before a held step, so a restart the step
+# caused (Docker's, through Requires=) is seen, and its counts are checked
+# against the recovery point's after it (#367).
+QD_UNITS=() QD_ENTER=() QD_LINE=()
+qdrant_mark() {
+  local r u
+  local -a f=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[0]}" = qdrant ] || continue
+    unit_name u "${f[1]}"
+    U_ActiveEnterTimestamp=""
+    unit_show "$u" ActiveEnterTimestamp || true
+    QD_UNITS+=("$u") QD_ENTER+=("$U_ActiveEnterTimestamp") QD_LINE+=("${f[2]}")
+  done
+}
+
+qdrant_after() {
+  local i u rec="" cpath before qurl qkey a="" e
+  for i in ${QD_UNITS[@]+"${!QD_UNITS[@]}"}; do
+    u=${QD_UNITS[$i]}
+    e=""
+    jadds e unit "$u"
+    U_ActiveEnterTimestamp=""
+    unit_show "$u" ActiveEnterTimestamp || true
+    if [ "$U_ActiveEnterTimestamp" = "${QD_ENTER[$i]}" ]; then
+      jaddb e restarted 0
+      jpush a "{$e}"
+      continue
+    fi
+    jaddb e restarted 1
+    read -r _ qurl qkey <<<"${QD_LINE[$i]}"
+    if [ -z "$rec" ] && ! root_read rec "$run/recovery-point"; then rec=""; fi
+    cpath=""
+    qdrant_counts_path cpath "$rec" "$u"
+    if [ -z "$cpath" ] || ! root_read before "$cpath"; then
+      jadd e ok null
+      NEXT+=("$u restarted in this step, and the run's recovery point holds no counts of it to check against: list its collections and their counts by hand.")
+    else
+      qdrant_loss "$qurl" "$qkey" "$before"
+      jaddb e ok "$QL_OK"
+      jadds e evidence "$QL_WHY"
+      [ "$QL_OK" = 1 ] || fail "$u after the step: $QL_WHY"
+    fi
+    jpush a "{$e}"
+  done
+  if [ "${#QD_UNITS[@]}" -gt 0 ]; then J_QDRANT="[$a]"; fi
+}
+
 do_held() {
   local i out o="" a="" e names="" rel="" u st left x
   local -a w=()
@@ -1488,9 +1540,11 @@ do_held() {
     RELEASED="$RELEASED $step"
     # In the one-origin lane, a group holds only the origin's packages.
     case $LANE in origin:*) LANE_TAKE=$rel ;; esac
+    qdrant_mark
     run_uu
     check_holds
     poll_health
+    qdrant_after
   fi
   # Started again on a green step, and on one that failed before the
   # upgrade, which restarted nothing. After a failed upgrade, the owner
