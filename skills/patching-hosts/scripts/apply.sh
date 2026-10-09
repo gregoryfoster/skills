@@ -1507,19 +1507,23 @@ qdrant_after() {
       NEXT+=("$u restarted in this step, and the run's recovery point holds no counts of it to check against: list its collections and their counts by hand.")
     else
       # A restarted Qdrant loads its collections before it answers, so it's
-      # asked once a second, as the health checks are, up to --health-within
-      # times (CR 218).
-      n=0
+      # asked once a second, as the health checks are (CR 218), for no
+      # longer than --health-within seconds, the time the step's span gave
+      # it: one slow attempt can take minutes (CR 226).
+      n=0 t=$SECONDS
       while :; do
         n=$((n + 1))
         qdrant_loss "$qurl" "$qkey" "$before"
-        if [ "$QL_OK" = 1 ] || [ "$n" -ge "$health_within" ]; then break; fi
+        if [ "$QL_OK" = 1 ] || [ "$n" -ge "$health_within" ] ||
+          [ $((SECONDS - t)) -ge "$health_within" ]; then
+          break
+        fi
         sleep 1
       done
       jaddb e ok "$QL_OK"
       jaddn e attempts "$n"
       jadds e evidence "$QL_WHY"
-      [ "$QL_OK" = 1 ] || fail "$u after the step, asked $n times a second apart: $QL_WHY"
+      [ "$QL_OK" = 1 ] || fail "$u after the step, asked $n times in $((SECONDS - t)) s: $QL_WHY"
     fi
     jpush a "{$e}"
   done

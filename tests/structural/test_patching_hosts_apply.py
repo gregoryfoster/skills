@@ -1497,7 +1497,8 @@ def test_a_held_step_that_empties_a_qdrant_collection_fails(host):
     assert out["qdrant"][0]["attempts"] == 2
     assert out["qdrant"][0]["ok"] is False
     assert any(
-        "qdrant.service after the step, asked 2 times a second apart: lost" in w
+        "qdrant.service after the step, asked 2 times in " in w
+        and "lost against" in w
         and "a (emptied; it held 10)" in w
         for w in out["verdict"]["why"]
     )
@@ -1516,3 +1517,14 @@ def test_a_qdrant_whose_start_cant_be_read_is_unknown_not_unrestarted(host):
     out = host.run(step="postgres")
     assert out["qdrant"] == [{"unit": "qdrant.service", "restarted": None}]
     assert any("whether qdrant.service restarted" in n for n in out["next"])
+
+
+def test_a_qdrant_that_answers_slowly_is_asked_only_as_long_as_the_span_budgets(host):
+    # CR 226: an attempt can take far longer than a second.
+    _qdrant_held(host, {"a": 10, "b": 20})
+    host.cases["curl"].insert(
+        0, (f"* {QURL}/collections", "", 0, "", "/bin/sleep 2; exit 28")
+    )
+    out = host.run("--health-within", "3", step="postgres", rc=1)
+    [q] = out["qdrant"]
+    assert (q["ok"], q["attempts"]) == (False, 2)
