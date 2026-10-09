@@ -228,8 +228,9 @@ _knob_directive() {  # <line> <sec> <text>
           \[*) qhost=${qhost%%]*}] ;;
           *) qhost=${qhost%:*} ;;
         esac
-        if [ "${tok[4]}" != - ] && [[ ${tok[3]} == http://* ]] &&
-          ! case $qhost in localhost | 127.* | '[::1]') true ;; *) false ;; esac; then
+        # Loopback by address, never by a name that starts 127. (CR 225).
+        local loop='^(localhost|\[::1\]|127(\.[0-9]{1,3}){3})$'
+        if [ "${tok[4]}" != - ] && [[ ${tok[3]} == http://* ]] && ! [[ $qhost =~ $loop ]]; then
           _knob_malformed "$n" "datastore qdrant would send its API key over plain http to another host: use https://, as its certificate names it, or this host's own address (127.0.0.1, localhost, [::1])"
         else
           # The scripts append /collections and /snapshots to it (CR 220).
