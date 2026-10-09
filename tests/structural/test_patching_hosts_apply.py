@@ -1465,13 +1465,40 @@ def test_a_held_step_that_restarts_a_qdrant_checks_its_counts(host):
     assert (q["unit"], q["restarted"], q["ok"]) == ("qdrant.service", True, True)
     assert "1 counts moved" in q["evidence"]
     assert out["verdict"]["ok"] is True
+    # CR 218: the dry run, the health checks, then the counts, as long again.
+    assert out["gate"]["span"]["expected_seconds"] == 540 + 300 + 300
+
+
+def test_a_held_step_waits_for_a_restarted_qdrant_to_answer(host):
+    # CR 218: Qdrant loads its collections before it serves its API.
+    _qdrant_held(host, {"a": 10, "b": 20})
+    n = host.state / "collections-asked"
+    host.cases["curl"].insert(
+        0,
+        (
+            f"* {QURL}/collections",
+            "",
+            0,
+            "",
+            f'echo x >> "{n}"; if [ "$(wc -l < "{n}")" -lt 3 ]; then exit 7; fi; '
+            """echo '{"result":{"collections":[{"name":"a"},{"name":"b"}]}}'; exit 0""",
+        ),
+    )
+    out = host.run(step="postgres")
+    [q] = out["qdrant"]
+    assert (q["ok"], q["attempts"]) == (True, 3)
+    assert out["verdict"]["ok"] is True
 
 
 def test_a_held_step_that_empties_a_qdrant_collection_fails(host):
-    out = _qdrant_held(host, {"a": 0, "b": 20}).run(step="postgres", rc=1)
+    out = _qdrant_held(host, {"a": 0, "b": 20}).run(
+        "--health-within", "2", step="postgres", rc=1
+    )
+    assert out["qdrant"][0]["attempts"] == 2
     assert out["qdrant"][0]["ok"] is False
     assert any(
-        "qdrant.service after the step: lost" in w and "a (emptied; it held 10)" in w
+        "qdrant.service after the step, asked 2 times a second apart: lost" in w
+        and "a (emptied; it held 10)" in w
         for w in out["verdict"]["why"]
     )
 

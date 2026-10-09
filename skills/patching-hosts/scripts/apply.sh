@@ -698,15 +698,22 @@ predict_reboot() {  # <the selection, space-separated>
 # Otherwise a late bulk leaves the reboot no room, and the host runs on
 # deleted libraries until the next window.
 gate_step_span() {
-  local x="" h=0 line sel="" p r g groups="" o="" w rc=0
+  local x="" h=0 hh line sel="" p r g groups="" o="" w rc=0
   local -a f=()
   if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then h=$health_within; fi
+  # A held step that restarts a Qdrant asks its counts for up to as long
+  # again (CR 218).
+  hh=$h
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "${f[0]}" = qdrant ]; then hh=$((h + health_within)); fi
+  done
   if ! is_int "$EXPECT"; then
     gate_span ""
     return 0
   fi
   if [ "$step" != bulk ]; then
-    gate_span "$((EXPECT + h))"
+    gate_span "$((EXPECT + hh))"
     return 0
   fi
   if [ ! -r "$dryrun/dry-run.log" ]; then
@@ -728,7 +735,7 @@ gate_step_span() {
       fi
     done
   done
-  for g in $groups; do x=$((x + EXPECT + h)); done
+  for g in $groups; do x=$((x + EXPECT + hh)); done
   json_words w "$groups"
   jadd o held_steps "$w"
   predict_reboot "$sel" || rc=$?
@@ -1470,7 +1477,7 @@ qdrant_mark() {
 }
 
 qdrant_after() {
-  local i u rec="" cpath before qurl qkey a="" e
+  local i u rec="" cpath before qurl qkey a="" e n
   for i in ${QD_UNITS[@]+"${!QD_UNITS[@]}"}; do
     u=${QD_UNITS[$i]}
     e=""
@@ -1491,10 +1498,20 @@ qdrant_after() {
       jadd e ok null
       NEXT+=("$u restarted in this step, and the run's recovery point holds no counts of it to check against: list its collections and their counts by hand.")
     else
-      qdrant_loss "$qurl" "$qkey" "$before"
+      # A restarted Qdrant loads its collections before it answers, so it's
+      # asked once a second, as the health checks are, up to --health-within
+      # times (CR 218).
+      n=0
+      while :; do
+        n=$((n + 1))
+        qdrant_loss "$qurl" "$qkey" "$before"
+        if [ "$QL_OK" = 1 ] || [ "$n" -ge "$health_within" ]; then break; fi
+        sleep 1
+      done
       jaddb e ok "$QL_OK"
+      jaddn e attempts "$n"
       jadds e evidence "$QL_WHY"
-      [ "$QL_OK" = 1 ] || fail "$u after the step: $QL_WHY"
+      [ "$QL_OK" = 1 ] || fail "$u after the step, asked $n times a second apart: $QL_WHY"
     fi
     jpush a "{$e}"
   done
