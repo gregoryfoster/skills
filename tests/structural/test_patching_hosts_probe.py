@@ -991,6 +991,23 @@ def test_two_units_running_one_tree_are_one_entry(host):
     assert len(host.calls("uv")) == 1
 
 
+def test_a_working_directory_set_in_a_drop_in_is_read(host):
+    # A packaged unit, customised in /etc: the drop-in names the tree, and
+    # a later setting wins over the unit's own (CR 234).
+    _tree(host, units=())
+    _uv(host)
+    host.write(
+        "usr/lib/systemd/system/pkg.service",
+        "[Service]\nWorkingDirectory=/srv/elsewhere\n",
+    )
+    host.write(
+        "etc/systemd/system/pkg.service.d/10-app.conf",
+        f"[Service]\nUser=exedev\nWorkingDirectory=/{APP}\n",
+    )
+    [t] = _lang(_audit(host))
+    assert (t["dir"], t["units"], t["audited"]) == (f"/{APP}", ["pkg.service"], True)
+
+
 def test_the_owner_is_the_knobs_line_else_the_checkouts_github_origin(host):
     _tree(host)
     _uv(host)

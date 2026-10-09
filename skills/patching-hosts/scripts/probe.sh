@@ -1852,7 +1852,15 @@ read_language() {
   for f in "$P_ROOT"/etc/systemd/system/*.service; do
     [ -f "$f" ] && files="$files"$'\n'"$f"
   done
-  for u in $KNOB_SERVICES; do
+  # A packaged unit an admin customised with a drop-in counts too: the
+  # drop-in may be what sets its WorkingDirectory= (CR 234).
+  local dropins=""
+  for f in "$P_ROOT"/etc/systemd/system/*.service.d; do
+    [ -d "$f" ] || continue
+    f=${f##*/}
+    dropins="$dropins ${f%.d}"
+  done
+  for u in $KNOB_SERVICES $dropins; do
     for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
       if [ -f "$P_ROOT/$d/$u" ]; then
         case $files in *$'\n'"$P_ROOT/$d/$u"*) ;; *) files="$files"$'\n'"$P_ROOT/$d/$u" ;; esac
@@ -1864,6 +1872,12 @@ read_language() {
     [ -n "$f" ] || continue
     capture o as_reader cat -- "$f"
     [ "$CAP_RC" -eq 0 ] || continue
+    # Its drop-ins after it, so a later WorkingDirectory= wins, as in systemd.
+    for d in "$P_ROOT"/etc/systemd/system/"${f##*/}".d/*.conf "$P_ROOT"/run/systemd/system/"${f##*/}".d/*.conf; do
+      [ -f "$d" ] || continue
+      capture line as_reader cat -- "$d"
+      [ "$CAP_RC" -ne 0 ] || o="$o"$'\n'"$line"
+    done
     dir="" user=""
     while IFS= read -r line || [ -n "$line" ]; do
       case $line in
