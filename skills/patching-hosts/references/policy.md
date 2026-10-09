@@ -65,17 +65,19 @@ The needrestart drop-in is part of both postures: every run relies on the hook r
 
   The probe reports each followed origin's priority, and each installed package it serves that no package pin names (`updates.origin_scope`): the findings `unscoped:<origin>` and `unpinned:<package>`.
 - **NodeSource is a third-party apt origin, policy *follow*** (decided 2026-10-05, #344): apt is how it updates, and the repo-owned class under [Owners](#owners) is for what updates outside apt. Its `o=` field is `. nodistro`, which holds a dot, so the knob names it by its site: `origin deb.nodesource.com follow`.
+- **A deploy that restarts a declared `service` takes a window**, as any restart does, though the skill runs no deploy. That includes a deploy of the repo's own dependency bumps: on notifier, merging them changed nothing until `systemctl restart`. A bump that fixes an advisory may take an out-of-cycle window, as a Tailscale bulletin does, and the run records it (decided 2026-10-09, #366).
 - **Tailscale** belongs in the maintenance lane, because upgrading tailscaled drops the host's tailnet path and needs a planned window. A Tailscale security bulletin expedites it into an out-of-cycle window: `apply.sh --lane origin:<its origin>` takes that one origin and nothing else. Its own auto-update takes it out of any window, so the probe reports it under either posture.
 
 ## What a run leaves pending, by class
 
-Every run records what it didn't take, in five classes:
+Every run records what it didn't take, in six classes:
 
 1. **security**: should be 0 after a security-lane run;
 2. **`-updates`**: the maintenance lane;
 3. **third-party**: by origin and its policy;
 4. **Ubuntu Pro / ESM**: `noble-security` doesn't patch `universe`. On wslcb, 546 of 1,617 installed packages came from universe, and 29 esm-apps security updates were pending on a host not attached to Pro (CannObserv/wslcb-licensing-tracker#184). Read it with `pro security-status` where `pro` exists. **"0 security pending" never covers this class.** Attaching Pro is the owner's decision; the skill only reports;
-5. **outside apt**: agent binaries, container images, pinned tools, each with its owner (below).
+5. **outside apt**: agent binaries, container images, pinned tools, each with its owner (below);
+6. **language dependencies**: the tree a service runs from, such as a venv built from `uv.lock`, with advisories from OSV and the repo whose tree it is as its owner (#366). **"0 security pending" never covers this class either.** A wheel bundles its own native libraries: `cryptography`'s OpenSSL, `psycopg[binary]`'s libpq, `lxml`'s libxml2, `grpcio`'s BoringSSL. Patching the system's copy patches none of these. On notifier, the apt lane left 0 pending while its venv held about 22 advisories, among them the OpenSSL its credential encryption runs on. The probe audits a `uv.lock` and reports any other lockfile as found but not audited ([readings.md](readings.md)). The skill updates no tree: the repo does, through its own deploy (below).
 
 ## Exceptions
 
@@ -133,7 +135,7 @@ An installed engine or daemon that nothing uses is patch surface, disk and attac
 Every component apt doesn't reach has an update owner:
 
 - **the image** (on exe.dev, also the platform's `exeuntu update`) owns what the image ships. A repo names whose image it is with a knob line, `image-owner <owner/name>`, and can assign one component elsewhere with `owner <glob> <repo>`. Until a knob names the image owner, what the image ships is recorded as owned by `image`, and no notice is proposed;
-- **the repo** that installed a component owns it (a pinned tool, a container image);
+- **the repo** that installed a component owns it (a pinned tool, a container image), and a service's dependency tree is its own repo's;
 - **the skill** only reports staleness and the owner. It updates none of them.
 
 When an update is available for a component another repo owns, the skill proposes an issue in that repo. It files one only on approval, one per component, and deduplicates against an open issue by a hidden marker. A notice to a public repo carries no private-repo identifier, and no notice carries a secret.

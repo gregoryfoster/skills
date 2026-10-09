@@ -218,6 +218,7 @@ Post the before and after readings where the knob's `records` says:
 - restarts by maintainer scripts;
 - auto-removals;
 - the downtime;
-- what's left pending, by class ([policy.md](policy.md)).
+- what's left pending, by class ([policy.md](policy.md)), language dependencies included;
+- for each tree with a repo as its owner, that repo's own update mechanism, read with `gh`: an audit gate in CI, a Dependabot or Renovate config, the date of its last PR, and its open PRs against `open-pull-requests-limit`. A config alone reads "on" while the bot is silent behind a full PR limit, as notifier's was for five weeks (#366).
 
 A record that lists pending security updates is published only after they're applied, and gives counts and families, not versions.

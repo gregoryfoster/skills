@@ -983,6 +983,20 @@ base image, or an owner-approved remedy the profile documents.
     and the record line; and a probe of a copy of notifier's lock reads 0
     advisories, as measured here on 2026-10-09 (63 packages).
 
+    **Done 2026-10-09**, as written, with three details settled in the
+    building:
+    - the reading sits at `pending.language`, beside `pending.esm`, rather
+      than under `updates`, since it's a pending class;
+    - a `uv.lock` owned by root isn't audited: uv never runs as root, and
+      the one found may be a user's to rewrite. Nor is one whose owner isn't
+      in `/etc/passwd`, or one with no `pyproject.toml` beside it;
+    - a GitHub `origin` gives the owner as `owner/name` only, since a
+      remote's URL can carry a token. Any other remote reads `unknown`.
+
+    The audit of notifier's lock was the owner's by hand in its run
+    (CannObserv/notifier#113): no known vulnerabilities in 63 packages, and
+    in 33 for its `clients/python` lock, which no unit runs from.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
