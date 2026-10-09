@@ -1916,6 +1916,13 @@ read_language() {
       if glob_match "$dir" "${of[0]}"; then owner=${of[1]} oline=${of[2]}; fi
     done
     if [ -z "$owner" ]; then git_origin owner "$dir"; fi
+    # A tree the probe can't enter, with no root to enter it as, would
+    # otherwise vanish while the class reads complete (CR 235).
+    if [ ! -x "$P_ROOT$dir" ] && [ "$P_PRIV" = none ]; then
+      not_read "language dependencies: $dir can't be entered without root, so its lockfiles weren't looked for: run the probe under sudo"
+      complete=0
+      continue
+    fi
     for lf in uv.lock $LANG_OTHER_LOCKS; do
       if [ ! -e "$P_ROOT$dir/$lf" ] && ! as_root test -e "$P_ROOT$dir/$lf" 2>/dev/null; then continue; fi
       e=""

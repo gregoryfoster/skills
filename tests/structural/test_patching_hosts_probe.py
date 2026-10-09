@@ -1107,6 +1107,24 @@ def test_a_uv_lock_whose_owner_isnt_in_passwd_says_which_uid(host):
     assert not host.calls("uv")
 
 
+def test_a_tree_an_unprivileged_probe_cant_enter_leaves_the_class_incomplete(tmp_path):
+    # With no root to look as, a tree it can't enter was skipped, and the
+    # class read complete (CR 235).
+    if os.getuid() == 0:
+        pytest.skip("root enters any directory")
+    h = _tree(Host(tmp_path, sudo=False).knob("class production\nposture automatic\n"))
+    _uv(h)
+    app = h.root / APP
+    app.chmod(0o600)
+    try:
+        out = _audit(h)
+    finally:
+        app.chmod(0o755)
+    assert out["pending"]["language"] == {"trees": [], "complete": False}
+    assert any(f"/{APP} can't be entered without root" in n for n in out["not_read"])
+    assert not h.calls("uv")
+
+
 def test_language_dependencies_arent_read_from_a_tree_nothing_runs(tmp_path):
     h = _tree(Host(tmp_path, live=False).knob("posture scheduled\n"))
     _uv(h)
