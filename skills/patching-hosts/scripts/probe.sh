@@ -33,7 +33,9 @@ Options:
                       (default: the repo around the current directory)
   --refresh-into DIR  refresh apt's lists into DIR/lists first, never into
                       /var/lib/apt/lists, and count against them (the ESM
-                      count, from pro, still reads the host's own lists)
+                      count, from pro, still reads the host's own lists).
+                      It also audits each service's uv.lock against OSV
+                      (pending.language), which nothing else asks for
   --dry-run-into DIR  count the selection with unattended-upgrade --dry-run,
                       as root, with apt's cache in DIR/archives. It downloads
                       the whole set (290 MB and 9 minutes on one host) and
@@ -1829,6 +1831,13 @@ read_language() {
   R_LANG=null
   if [ "$P_LIVE" -ne 1 ]; then
     not_read "language dependencies: uv audit runs only on the machine it audits, not a tree under --root"
+    return 0
+  fi
+  # An audit asks OSV, and takes up to a minute a tree. Like the lists'
+  # refresh, it's taken only when asked: apply.sh's probe after each step
+  # never asks, and an apt step can't change a lockfile (CR 231).
+  if [ -z "$refresh" ]; then
+    not_read "language dependencies: audited only with --refresh-into, which takes the probe's network readings"
     return 0
   fi
   # Every unit file the host's admin installed, and each knob service.

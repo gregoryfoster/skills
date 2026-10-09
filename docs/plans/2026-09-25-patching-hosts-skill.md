@@ -941,7 +941,7 @@ base image, or an owner-approved remedy the profile documents.
       what notifier's did.
 
     **The reading** (`probe.sh`, on a live system, not under `--root` or in
-    `--post-boot`; `updates.language`):
+    `--post-boot`, and only under `--refresh-into` (CR 231); `updates.language`):
     - *Find the trees:* the `WorkingDirectory=` of every unit file under
       `/etc/systemd/system`, plus each knob `service`, de-duplicated by
       directory, with the units that run from each. A directory holding none

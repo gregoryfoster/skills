@@ -889,10 +889,16 @@ def _lang(out: dict) -> list[dict]:
     return out["pending"]["language"]["trees"]
 
 
+def _audit(h: Host) -> dict:
+    # The audit asks OSV, so it's taken only under --refresh-into (CR 231).
+    h.on("apt-get", "update*", "Reading package lists...\n")
+    return h.run("--refresh-into", str(h.tmp / "fresh"))
+
+
 def test_a_clean_uv_lock_is_audited_in_a_copy_as_its_owner(host):
     _tree(host)
     seen = _uv(host)
-    out = host.run()
+    out = _audit(host)
     [t] = _lang(out)
     assert t == {
         "dir": f"/{APP}",
@@ -925,7 +931,7 @@ def test_a_uv_lock_with_advisories_counts_them_by_package(host):
         "Found 35 known vulnerabilities and no adverse project statuses in 4 packages\n",
         rc=1,
     )
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert (t["audited"], t["advisories"]) == (True, 35)
     assert t["packages"] == [
         {"name": "cryptography", "version": "42.0.0", "advisories": 15},
@@ -958,7 +964,7 @@ def test_a_uv_lock_with_advisories_counts_them_by_package(host):
 def test_an_audit_that_cant_be_read_is_not_audited(host, stdout, stderr, rc, why):
     _tree(host)
     _uv(host, stdout, stderr, rc)
-    out = host.run()
+    out = _audit(host)
     [t] = _lang(out)
     assert (t["audited"], t["advisories"], t["packages"]) == (False, None, None)
     assert t["why"] == why
@@ -968,7 +974,7 @@ def test_an_audit_that_cant_be_read_is_not_audited(host, stdout, stderr, rc, why
 def test_another_lockfile_is_found_but_not_audited(host):
     _tree(host, locks=("uv.lock", "package-lock.json"))
     _uv(host)
-    out = host.run()
+    out = _audit(host)
     by = {t["lockfile"]: t for t in _lang(out)}
     assert by["uv.lock"]["audited"] is True
     assert by["package-lock.json"]["audited"] is False
@@ -980,7 +986,7 @@ def test_another_lockfile_is_found_but_not_audited(host):
 def test_two_units_running_one_tree_are_one_entry(host):
     _tree(host, units=("app.service", "app-dev.service"))
     _uv(host)
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert sorted(t["units"]) == ["app-dev.service", "app.service"]
     assert len(host.calls("uv")) == 1
 
@@ -994,21 +1000,21 @@ def test_the_owner_is_the_knobs_line_else_the_checkouts_github_origin(host):
         '[core]\n\tbare = false\n[remote "origin"]\n'
         f"\turl = https://x-access-token:{SECRET}@github.com/CannObserv/app.git\n",
     )
-    out = host.run()
+    out = _audit(host)
     [t] = _lang(out)
     assert (t["owner"], t["owner_line"]) == ("CannObserv/app", None)
     assert SECRET not in host.result.stdout
     host.knob(
         "class production\nposture automatic\nowner /home/exedev/app CannObserv/other\n"
     )
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert (t["owner"], t["owner_line"]) == ("CannObserv/other", 3)
 
 
 def test_a_uv_lock_with_no_uv_says_so_and_a_users_own_is_found(host):
     _tree(host)
     host.absent("uv")
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert (t["audited"], t["why"]) == (
         False,
         "no uv on PATH or in exedev's ~/.local/bin",
@@ -1019,7 +1025,7 @@ def test_a_uv_lock_with_no_uv_says_so_and_a_users_own_is_found(host):
         'echo "Found no known vulnerabilities" >&2\nexit 0\n',
         mode=0o755,
     )
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert (t["audited"], t["advisories"]) == (True, 0)
     assert (host.tmp / "own-uv").read_text().startswith("audit --frozen")
 
@@ -1027,19 +1033,31 @@ def test_a_uv_lock_with_no_uv_says_so_and_a_users_own_is_found(host):
 def test_uv_runs_as_the_lockfiles_owner_and_never_as_root(host):
     _tree(host, user="app")
     seen = _uv(host)
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert t["audited"] is True
     assert seen.read_text().split(" ")[1] == "app"
     # A root-owned lock isn't audited: the uv found may be one its user can
     # rewrite.
     host.write("etc/passwd", f"root:x:{os.getuid()}:0:root:/root:/bin/bash\n")
     seen.unlink()
-    [t] = _lang(host.run())
+    [t] = _lang(_audit(host))
     assert (t["audited"], t["why"]) == (
         False,
         "its uv.lock is root's, and uv never runs as root here",
     )
     assert not seen.exists()
+
+
+def test_a_probe_without_refresh_into_audits_nothing(host):
+    # apply.sh's probe after each step passes no --refresh-into: an apt step
+    # can't change a lockfile, and an audit there would spend the step's
+    # window on a network call (CR 231).
+    _tree(host)
+    _uv(host)
+    out = host.run()
+    assert out["pending"]["language"] is None
+    assert any("only with --refresh-into" in n for n in out["not_read"])
+    assert not host.calls("uv")
 
 
 def test_language_dependencies_arent_read_from_a_tree_nothing_runs(tmp_path):
