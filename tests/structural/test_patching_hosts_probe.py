@@ -851,10 +851,12 @@ def _tree(
     units: tuple[str, ...] = ("app.service",),
     locks: tuple[str, ...] = ("uv.lock",),
 ) -> Host:
+    # The test's own uid first: under a root container it's 0, and the first
+    # entry for a uid is the one its files belong to.
     h.write(
         "etc/passwd",
-        "root:x:0:0:root:/root:/bin/bash\n"
-        f"{user}:x:{os.getuid()}:{os.getgid()}::/home/{user}:/bin/bash\n",
+        f"{user}:x:{os.getuid()}:{os.getgid()}::/home/{user}:/bin/bash\n"
+        "root:x:0:0:root:/root:/bin/bash\n",
     )
     for u in units:
         h.write(
