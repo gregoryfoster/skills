@@ -103,7 +103,10 @@ Plan step 8b, from replicator's run under the scripts:
   root's alone with its unit disabled, is no leftover (#352);
 - after a boot, a persistent journal's record is its previous boot's
   "Journal stopped", and a volatile one's is the chain's own log line about
-  its copy (#356, CR 200).
+  its copy (#356, CR 200);
+- a service's uv.lock is audited in a fresh copy, as the lockfile's owner and
+  never as root, and a tree it couldn't audit, or any other lockfile, is
+  "not audited", never clean (#366, plan 6g).
 
 Each case runs the whole script under the system's bash (3.2 on macOS)
 against a fixture root under tmp_path, with `run/systemd/system` marking it
@@ -822,6 +825,228 @@ def test_a_refresh_writes_lists_only_into_its_scratch_directory(host):
     assert sims and all(
         f"Dir::State::Lists={scratch.resolve()}/lists/" in s for s in sims
     )
+
+
+# --- language dependencies (#366, plan 6g) ------------------------------------
+
+APP = "home/exedev/app"
+UV_CLEAN = (
+    "warning: `uv audit` is experimental and may change without warning.\n"
+    "Resolved 64 packages in 7ms\n"
+    "Found no known vulnerabilities and no adverse project statuses in 63 packages\n"
+)
+UV_FOUND = (
+    "\nVulnerabilities:\n\n"
+    "cryptography 42.0.0 has 15 known vulnerabilities:\n\n"
+    "- GHSA-537c-gmf6-5ccf: Vulnerable OpenSSL included in cryptography wheels\n\n"
+    "urllib3 2.0.0 has 20 known vulnerabilities:\n\n"
+    "- GHSA-v845-jxx5-vc9f: urllib3's Cookie header isn't stripped\n"
+)
+
+
+def _tree(
+    h: Host,
+    *,
+    user: str = "exedev",
+    units: tuple[str, ...] = ("app.service",),
+    locks: tuple[str, ...] = ("uv.lock",),
+) -> Host:
+    h.write(
+        "etc/passwd",
+        "root:x:0:0:root:/root:/bin/bash\n"
+        f"{user}:x:{os.getuid()}:{os.getgid()}::/home/{user}:/bin/bash\n",
+    )
+    for u in units:
+        h.write(
+            f"etc/systemd/system/{u}",
+            f"[Service]\nUser=exedev\nWorkingDirectory=/{APP}\nExecStart=/{APP}/serve.sh\n",
+        )
+    h.write(f"{APP}/pyproject.toml", '[project]\nname = "app"\n')
+    for lf in locks:
+        h.write(f"{APP}/{lf}", "version = 1\n")
+    return h
+
+
+def _uv(h: Host, stdout: str = "", stderr: str = UV_CLEAN, rc: int = 0) -> Path:
+    # Records where uv ran, and as whom, then answers as uv 0.11.8 did.
+    seen = h.tmp / "uv.seen"
+    (h.tmp / "uv.out").write_text(stdout)
+    (h.tmp / "uv.err").write_text(stderr)
+    h.on(
+        "uv",
+        "audit *",
+        script=(
+            f'printf "%s %s %s\\n" "$PWD" "${{STUB_USER:-exedev}}" "$(ls)" > "{seen}"; '
+            f'cat "{h.tmp}/uv.out"; cat "{h.tmp}/uv.err" >&2; exit {rc}'
+        ),
+    )
+    return seen
+
+
+def _lang(out: dict) -> list[dict]:
+    return out["pending"]["language"]["trees"]
+
+
+def test_a_clean_uv_lock_is_audited_in_a_copy_as_its_owner(host):
+    _tree(host)
+    seen = _uv(host)
+    out = host.run()
+    [t] = _lang(out)
+    assert t == {
+        "dir": f"/{APP}",
+        "lockfile": "uv.lock",
+        "units": ["app.service"],
+        "owner": "unknown",
+        "owner_line": None,
+        "audited": True,
+        "advisories": 0,
+        "packages": [],
+        "why": None,
+    }
+    assert out["pending"]["language"]["complete"] is True
+    [(_, args, _)] = host.calls("uv")
+    assert args == "audit --frozen --no-cache --no-python-downloads --no-config"
+    # A fresh directory holding only the two files: never the tree itself,
+    # and gone afterwards.
+    where, who, files = seen.read_text().split(" ", 2)
+    assert where != str(host.root / APP) and not where.startswith(str(host.root))
+    assert who == "exedev" and files.split() == ["pyproject.toml", "uv.lock"]
+    assert not Path(where).exists()
+    assert list(host.tmpdir.iterdir()) == []
+
+
+def test_a_uv_lock_with_advisories_counts_them_by_package(host):
+    _tree(host)
+    _uv(
+        host,
+        UV_FOUND,
+        "Found 35 known vulnerabilities and no adverse project statuses in 4 packages\n",
+        rc=1,
+    )
+    [t] = _lang(host.run())
+    assert (t["audited"], t["advisories"]) == (True, 35)
+    assert t["packages"] == [
+        {"name": "cryptography", "version": "42.0.0", "advisories": 15},
+        {"name": "urllib3", "version": "2.0.0", "advisories": 20},
+    ]
+
+
+@pytest.mark.parametrize(
+    "stdout, stderr, rc, why",
+    [
+        # OSV unreachable: an error, never a clean tree.
+        (
+            "",
+            "warning: `uv audit` is experimental\nerror: Failed to query OSV\n  Caused by: tcp connect error\n",
+            2,
+            "uv audit exited 2: error: Failed to query OSV",
+        ),
+        # Exit 1 with nothing it can read: the format changed, or a status
+        # that isn't an advisory.
+        (
+            "Something new\n",
+            "Found 1 adverse project status\n",
+            1,
+            "uv audit exited 1, and no advisory in its output could be read: Found 1 adverse project status",
+        ),
+        # The time limit.
+        ("", "", 124, "uv audit exited 124"),
+    ],
+)
+def test_an_audit_that_cant_be_read_is_not_audited(host, stdout, stderr, rc, why):
+    _tree(host)
+    _uv(host, stdout, stderr, rc)
+    out = host.run()
+    [t] = _lang(out)
+    assert (t["audited"], t["advisories"], t["packages"]) == (False, None, None)
+    assert t["why"] == why
+    assert out["pending"]["language"]["complete"] is False
+
+
+def test_another_lockfile_is_found_but_not_audited(host):
+    _tree(host, locks=("uv.lock", "package-lock.json"))
+    _uv(host)
+    out = host.run()
+    by = {t["lockfile"]: t for t in _lang(out)}
+    assert by["uv.lock"]["audited"] is True
+    assert by["package-lock.json"]["audited"] is False
+    assert by["package-lock.json"]["why"] == "package-lock.json: v1 audits uv.lock only"
+    assert out["pending"]["language"]["complete"] is False
+    assert len(host.calls("uv")) == 1
+
+
+def test_two_units_running_one_tree_are_one_entry(host):
+    _tree(host, units=("app.service", "app-dev.service"))
+    _uv(host)
+    [t] = _lang(host.run())
+    assert sorted(t["units"]) == ["app-dev.service", "app.service"]
+    assert len(host.calls("uv")) == 1
+
+
+def test_the_owner_is_the_knobs_line_else_the_checkouts_github_origin(host):
+    _tree(host)
+    _uv(host)
+    # A token in the remote's URL never reaches the output.
+    host.write(
+        f"{APP}/.git/config",
+        '[core]\n\tbare = false\n[remote "origin"]\n'
+        f"\turl = https://x-access-token:{SECRET}@github.com/CannObserv/app.git\n",
+    )
+    out = host.run()
+    [t] = _lang(out)
+    assert (t["owner"], t["owner_line"]) == ("CannObserv/app", None)
+    assert SECRET not in host.result.stdout
+    host.knob(
+        "class production\nposture automatic\nowner /home/exedev/app CannObserv/other\n"
+    )
+    [t] = _lang(host.run())
+    assert (t["owner"], t["owner_line"]) == ("CannObserv/other", 3)
+
+
+def test_a_uv_lock_with_no_uv_says_so_and_a_users_own_is_found(host):
+    _tree(host)
+    host.absent("uv")
+    [t] = _lang(host.run())
+    assert (t["audited"], t["why"]) == (
+        False,
+        "no uv on PATH or in exedev's ~/.local/bin",
+    )
+    host.write(
+        "home/exedev/.local/bin/uv",
+        f'#!/bin/sh\nprintf "%s\\n" "$*" > "{host.tmp}/own-uv"\n'
+        'echo "Found no known vulnerabilities" >&2\nexit 0\n',
+        mode=0o755,
+    )
+    [t] = _lang(host.run())
+    assert (t["audited"], t["advisories"]) == (True, 0)
+    assert (host.tmp / "own-uv").read_text().startswith("audit --frozen")
+
+
+def test_uv_runs_as_the_lockfiles_owner_and_never_as_root(host):
+    _tree(host, user="app")
+    seen = _uv(host)
+    [t] = _lang(host.run())
+    assert t["audited"] is True
+    assert seen.read_text().split(" ")[1] == "app"
+    # A root-owned lock isn't audited: the uv found may be one its user can
+    # rewrite.
+    host.write("etc/passwd", f"root:x:{os.getuid()}:0:root:/root:/bin/bash\n")
+    seen.unlink()
+    [t] = _lang(host.run())
+    assert (t["audited"], t["why"]) == (
+        False,
+        "its uv.lock is root's, and uv never runs as root here",
+    )
+    assert not seen.exists()
+
+
+def test_language_dependencies_arent_read_from_a_tree_nothing_runs(tmp_path):
+    h = _tree(Host(tmp_path, live=False).knob("posture scheduled\n"))
+    _uv(h)
+    out = h.run()
+    assert out["pending"]["language"] is None
+    assert any("language dependencies" in n for n in out["not_read"])
+    assert not h.calls("uv")
 
 
 # --- impact -----------------------------------------------------------------

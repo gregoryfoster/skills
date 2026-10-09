@@ -50,6 +50,7 @@ STUBBED = (
     "curl",
     "timeout",
     "time",
+    "uv",
 )
 
 

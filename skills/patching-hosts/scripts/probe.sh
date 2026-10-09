@@ -1692,6 +1692,235 @@ read_esm() {
   fi
 }
 
+# Language dependencies (#366): the tree a service runs from, which apt never
+# sees. A wheel bundles its own native libraries (cryptography's OpenSSL), so
+# "0 security pending" never covers it. v1 audits uv.lock only; any other
+# lockfile is reported as found, not audited, so it never reads as clean.
+LANG_OTHER_LOCKS="package-lock.json poetry.lock Pipfile.lock pnpm-lock.yaml yarn.lock"
+
+passwd_entry() {  # <uid>: PW_NAME and PW_HOME from the tree's /etc/passwd, or both empty
+  local _pl _pf
+  local -a _pw=()
+  PW_NAME="" PW_HOME=""
+  [ -r "$P_ROOT/etc/passwd" ] || return 0
+  while IFS= read -r _pl || [ -n "$_pl" ]; do
+    IFS=: read -r -a _pw <<<"$_pl" || true
+    _pf=${_pw[2]:-}
+    if [ "$_pf" = "$1" ]; then
+      PW_NAME=${_pw[0]} PW_HOME=${_pw[5]:-}
+      return 0
+    fi
+  done <"$P_ROOT/etc/passwd"
+}
+
+passwd_home() {  # <var> <user>: that user's home from the tree's /etc/passwd, or empty
+  local _ph="" _pl
+  local -a _pw=()
+  if [ -r "$P_ROOT/etc/passwd" ]; then
+    while IFS= read -r _pl || [ -n "$_pl" ]; do
+      IFS=: read -r -a _pw <<<"$_pl" || true
+      if [ "${_pw[0]:-}" = "$2" ]; then _ph=${_pw[5]:-}; fi
+    done <"$P_ROOT/etc/passwd"
+  fi
+  printf -v "$1" '%s' "$_ph"
+}
+
+# The checkout's origin as owner/name, from .git/config read as a file. Only
+# a GitHub remote is named, and only by owner/name: a URL can carry a token.
+git_origin() {  # <var> <dir>
+  local _go="" _gl _gin=0 _gc re='github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$'
+  capture _gc as_reader cat -- "$P_ROOT$2/.git/config"
+  if [ "$CAP_RC" -eq 0 ]; then
+    while IFS= read -r _gl || [ -n "$_gl" ]; do
+      _gl=${_gl#"${_gl%%[![:space:]]*}"}
+      case $_gl in
+        '[remote "origin"]') _gin=1 ;;
+        '['*) _gin=0 ;;
+        url*=*)
+          if [ "$_gin" -eq 1 ]; then
+            _gl=${_gl#*=}
+            _gl=${_gl#"${_gl%%[![:space:]]*}"}
+            _gl=${_gl%/}
+            _gl=${_gl%.git}
+            if [[ $_gl =~ $re ]]; then _go="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; fi
+          fi
+          ;;
+      esac
+    done <<<"$_gc"
+  fi
+  printf -v "$1" '%s' "$_go"
+}
+
+# A tree's uv.lock, audited in a copy as the lockfile's owner: never in the
+# tree, and never as root, since the uv found may be ~/.local/bin's, which
+# its user can rewrite. uv 0.11.8 exits 0 clean, 1 with advisories and 2 on
+# an error; its output is text only. Sets LA_AUDITED, LA_N, LA_PKGS (a JSON
+# array body) and LA_WHY.
+lang_audit() {  # <dir> <user> <home>
+  local d=$1 u=$2 home=$3 uvb="" out err="" line re rc n=0 sum="" p
+  LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY=""
+  if [ "$u" = root ]; then
+    LA_WHY="its uv.lock is root's, and uv never runs as root here"
+    return 0
+  fi
+  if [ ! -e "$P_ROOT$d/pyproject.toml" ] && ! as_root test -e "$P_ROOT$d/pyproject.toml" 2>/dev/null; then
+    LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
+    return 0
+  fi
+  uvb=$(command -v uv 2>/dev/null) || uvb=""
+  if [ -z "$uvb" ] && [ -n "$home" ] && [ -x "$P_ROOT$home/.local/bin/uv" ]; then uvb=$P_ROOT$home/.local/bin/uv; fi
+  if [ -z "$uvb" ]; then
+    LA_WHY="no uv on PATH or in $u's ~/.local/bin"
+    return 0
+  fi
+  # The script's $1..$3 are expanded by the inner sh, from its arguments.
+  # shellcheck disable=SC2016
+  capture out as_user "$u" env HOME="${home:-/}" sh -c '
+    t=$(mktemp -d) || exit 2
+    if cp -- "$1" "$2" "$t"/ && cd "$t"; then
+      timeout -k 10 60 "$3" audit --frozen --no-cache --no-python-downloads --no-config
+      r=$?
+    else
+      r=2
+    fi
+    cd / && rm -rf "$t"
+    exit $r' sh "$P_ROOT$d/pyproject.toml" "$P_ROOT$d/uv.lock" "$uvb"
+  rc=$CAP_RC
+  err=$(cat "$P_TMP/stderr" 2>/dev/null) || err=""
+  re='^([^ ]+) ([^ ]+) has ([0-9]+) known vulnerabilit(y|ies):$'
+  while IFS= read -r line; do
+    if [[ $line =~ $re ]]; then
+      p=""
+      jadds p name "${BASH_REMATCH[1]}"
+      jadds p version "${BASH_REMATCH[2]}"
+      jaddn p advisories "${BASH_REMATCH[3]}"
+      jpush LA_PKGS "{$p}"
+      n=$((n + BASH_REMATCH[3]))
+    fi
+  done <<<"$out"
+  re='Found ([0-9]+) known vulnerabilit'
+  if [[ $err =~ $re ]]; then sum=${BASH_REMATCH[1]}; fi
+  if [ "$rc" -eq 0 ]; then
+    LA_AUDITED=1 LA_N=0 LA_PKGS=""
+  elif [ "$rc" -eq 1 ] && [ -n "$LA_PKGS" ]; then
+    LA_AUDITED=1 LA_N=${sum:-$n}
+  else
+    # The first error line, else the last line: the experimental warning
+    # comes first, and says nothing about this tree.
+    LA_WHY=""
+    while IFS= read -r line; do
+      case $line in error:*) [ -n "$LA_WHY" ] || LA_WHY=$line ;; esac
+    done <<<"$err"
+    if [ -z "$LA_WHY" ]; then
+      while IFS= read -r line; do [ -z "$line" ] || LA_WHY=$line; done <<<"$err"
+    fi
+    if [ "$rc" -eq 1 ]; then
+      LA_WHY="uv audit exited 1, and no advisory in its output could be read${LA_WHY:+: $LA_WHY}"
+    else
+      LA_WHY="uv audit exited $rc${LA_WHY:+: $LA_WHY}"
+    fi
+    LA_PKGS=""
+  fi
+}
+
+read_language() {
+  local f u dir user line trees="" complete=1 i e r o owner oline uid lf k
+  local -a dirs=() units=() of=()
+  R_LANG=null
+  if [ "$P_LIVE" -ne 1 ]; then
+    not_read "language dependencies: uv audit runs only on the machine it audits, not a tree under --root"
+    return 0
+  fi
+  # Every unit file the host's admin installed, and each knob service.
+  local files="" d
+  for f in "$P_ROOT"/etc/systemd/system/*.service; do
+    [ -f "$f" ] && files="$files"$'\n'"$f"
+  done
+  for u in $KNOB_SERVICES; do
+    for d in etc/systemd/system run/systemd/system usr/local/lib/systemd/system usr/lib/systemd/system lib/systemd/system; do
+      if [ -f "$P_ROOT/$d/$u" ]; then
+        case $files in *$'\n'"$P_ROOT/$d/$u"*) ;; *) files="$files"$'\n'"$P_ROOT/$d/$u" ;; esac
+        break
+      fi
+    done
+  done
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    capture o as_reader cat -- "$f"
+    [ "$CAP_RC" -eq 0 ] || continue
+    dir="" user=""
+    while IFS= read -r line || [ -n "$line" ]; do
+      case $line in
+        WorkingDirectory=*) dir=${line#WorkingDirectory=} ;;
+        User=*) user=${line#User=} ;;
+      esac
+    done <<<"$o"
+    dir=${dir#-}
+    case $dir in
+      '' | *%*) continue ;;
+      '~')
+        passwd_home dir "${user:-root}"
+        [ -n "$dir" ] || continue
+        ;;
+      /*) ;;
+      *) continue ;;
+    esac
+    dir=${dir%/}
+    [ -n "$dir" ] || dir=/
+    k=-1
+    for i in ${dirs[@]+"${!dirs[@]}"}; do
+      if [ "${dirs[$i]}" = "$dir" ]; then k=$i; fi
+    done
+    if [ "$k" -ge 0 ]; then
+      units[k]="${units[$k]} ${f##*/}"
+    else
+      dirs+=("$dir") units+=("${f##*/}")
+    fi
+  done <<<"$files"
+
+  for i in ${dirs[@]+"${!dirs[@]}"}; do
+    dir=${dirs[$i]}
+    owner="" oline=""
+    for r in ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}; do
+      IFS=$KNOB_US read -r -a of <<<"$r"
+      if glob_match "$dir" "${of[0]}"; then owner=${of[1]} oline=${of[2]}; fi
+    done
+    if [ -z "$owner" ]; then git_origin owner "$dir"; fi
+    for lf in uv.lock $LANG_OTHER_LOCKS; do
+      if [ ! -e "$P_ROOT$dir/$lf" ] && ! as_root test -e "$P_ROOT$dir/$lf" 2>/dev/null; then continue; fi
+      e=""
+      jadds e dir "$dir"
+      jadds e lockfile "$lf"
+      o=""
+      for u in ${units[$i]}; do jpushs o "$u"; done
+      jadd e units "[$o]"
+      jadds e owner "${owner:-unknown}"
+      jaddn e owner_line "$oline"
+      if [ "$lf" = uv.lock ]; then
+        file_owner uid "$P_ROOT$dir/$lf"
+        passwd_entry "$uid"
+        if [ -z "$PW_NAME" ]; then
+          LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY="its uv.lock's owner, uid ${uid:-unknown}, isn't in /etc/passwd"
+        else
+          lang_audit "$dir" "$PW_NAME" "$PW_HOME"
+        fi
+      else
+        LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY="$lf: v1 audits uv.lock only"
+      fi
+      jaddb e audited "$LA_AUDITED"
+      jaddn e advisories "$LA_N"
+      if [ "$LA_AUDITED" -eq 1 ]; then jadd e packages "[$LA_PKGS]"; else jadd e packages null; fi
+      jaddsn e why "$LA_WHY"
+      [ "$LA_AUDITED" -eq 1 ] || complete=0
+      jpush trees "{$e}"
+    done
+  done
+  o=""
+  jadd o trees "[$trees]"
+  jaddb o complete "$complete"
+  R_LANG="{$o}"
+}
+
 # A changed conffile's state on disk, for each conffile a package lists that
 # isn't obsolete: missing, modified, or unread. unattended-upgrade passes a
 # package over at a conffile prompt even where dpkg wouldn't ask, as for a
@@ -2021,6 +2250,7 @@ read_pending() {
   read_lists_age
   read_simulation
   read_esm
+  read_language
   read_dry_run
   read_holds
   jadd o lists "{$R_LISTS}"
@@ -2035,6 +2265,7 @@ read_pending() {
   jadd o removals "$R_REMOVALS"
   jadd o phased "$R_PHASED"
   jadd o esm "$R_ESM"
+  jadd o language "$R_LANG"
   jadd o dry_run "$R_DRY"
   jadd o hold_groups "[$R_HOLDGROUPS]"
   jadd o owner_holds "$R_OWNERHOLDS"
