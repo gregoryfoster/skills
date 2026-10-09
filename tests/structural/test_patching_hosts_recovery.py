@@ -324,6 +324,9 @@ def test_the_copy_it_hands_over_can_read_a_root_only_dump(host):
     name = path.rsplit("/", 1)[1]
     [copy] = [n for n in out["next"] if "sudo cat" in n]
     assert f"ssh <host> 'sudo cat {path}' > {name} && sha256sum {name}" in copy
+    # A password-prompting sudo needs a terminal, and ssh -t's corrupts the
+    # stream: say so, rather than let a mismatch blame the dump (CR 227).
+    assert "without a password" in copy and "ssh -t" in copy
     assert not any("own scp" in n for n in out["next"])
 
 

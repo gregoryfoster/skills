@@ -967,7 +967,7 @@ else
       [ "$_k" = dump ] || continue
       _p=${_rest##* }
       # unchecked-write-ok: a command printed for the owner, not a write
-      NEXT+=("Copy $_p off the node through sudo, since a plain scp can't read a root-only file: ssh <host> 'sudo cat $_p' > ${_p##*/} && sha256sum ${_p##*/}. Check that sha256 against the one here before the apply.")
+      NEXT+=("Copy $_p off the node through sudo, since a plain scp can't read a root-only file: ssh <host> 'sudo cat $_p' > ${_p##*/} && sha256sum ${_p##*/}. It needs sudo without a password: ssh -t would turn each LF of the stream into CRLF. Check that sha256 against the one here before the apply.")
     done <<<"$REC_LINES"
     NEXT+=("Then name each copy that checks out to the bulk: --offnode-sha256 <your copy's sha256>, once per dump.")
   fi
