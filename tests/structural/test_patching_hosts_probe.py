@@ -1017,7 +1017,7 @@ def test_a_uv_lock_with_no_uv_says_so_and_a_users_own_is_found(host):
     [t] = _lang(_audit(host))
     assert (t["audited"], t["why"]) == (
         False,
-        "no uv on PATH or in exedev's ~/.local/bin",
+        "no uv in exedev's ~/.local/bin, /usr/local/bin, /usr/bin or on PATH",
     )
     host.write(
         "home/exedev/.local/bin/uv",
@@ -1028,6 +1028,22 @@ def test_a_uv_lock_with_no_uv_says_so_and_a_users_own_is_found(host):
     [t] = _lang(_audit(host))
     assert (t["audited"], t["advisories"]) == (True, 0)
     assert (host.tmp / "own-uv").read_text().startswith("audit --frozen")
+
+
+def test_the_owners_own_uv_comes_before_the_probes_path(host):
+    # One on the probe user's PATH may sit in a home the owner can't enter
+    # (CR 233).
+    _tree(host)
+    _uv(host)
+    host.write(
+        "home/exedev/.local/bin/uv",
+        f'#!/bin/sh\ntouch "{host.tmp}/own-uv"\necho "Found no known vulnerabilities" >&2\n',
+        mode=0o755,
+    )
+    [t] = _lang(_audit(host))
+    assert t["audited"] is True
+    assert (host.tmp / "own-uv").exists()
+    assert not host.calls("uv")
 
 
 def test_uv_runs_as_the_lockfiles_owner_and_never_as_root(host):

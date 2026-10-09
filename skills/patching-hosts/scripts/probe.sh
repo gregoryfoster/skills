@@ -1769,10 +1769,17 @@ lang_audit() {  # <dir> <user> <home>
     LA_WHY="no pyproject.toml beside its uv.lock, which uv audit needs"
     return 0
   fi
-  uvb=$(command -v uv 2>/dev/null) || uvb=""
-  if [ -z "$uvb" ] && [ -n "$home" ] && [ -x "$P_ROOT$home/.local/bin/uv" ]; then uvb=$P_ROOT$home/.local/bin/uv; fi
+  # The owner's own uv first, then the system's, and the probe's PATH last:
+  # one in the probe user's home may be one the owner can't run (CR 233).
+  for p in ${home:+"$home/.local/bin/uv"} /usr/local/bin/uv /usr/bin/uv; do
+    if [ -x "$P_ROOT$p" ]; then
+      uvb=$P_ROOT$p
+      break
+    fi
+  done
+  [ -n "$uvb" ] || uvb=$(command -v uv 2>/dev/null) || uvb=""
   if [ -z "$uvb" ]; then
-    LA_WHY="no uv on PATH or in $u's ~/.local/bin"
+    LA_WHY="no uv in $u's ~/.local/bin, /usr/local/bin, /usr/bin or on PATH"
     return 0
   fi
   # The script's $1..$3 are expanded by the inner sh, from its arguments.
