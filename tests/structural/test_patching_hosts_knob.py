@@ -163,6 +163,8 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "datastore qdrant qdrant.service qdrant q:6333 -",  # no scheme
         "datastore qdrant qdrant.service qdrant https://q:6333 key",  # relative
         "datastore qdrant qdrant.service -bad https://q:6333 -",  # container
+        # CR 217: a key goes over plain http only to this host.
+        "datastore qdrant qdrant.service qdrant http://index.example:6333 /etc/q.key",
         "owner /usr/local/bin/* someone",
         "image-owner not-a-repo",
         "caller notarepo",
@@ -366,6 +368,19 @@ def test_a_qdrant_datastore_names_its_container_url_and_key_file(tmp_path):
             "line": 3,
         },
     ]
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://127.0.0.1:6333", "http://localhost:6333", "http://[::1]:6333"],
+)
+def test_a_qdrant_key_may_go_over_plain_http_on_this_host(tmp_path, url):
+    out = _read(
+        tmp_path,
+        f"posture scheduled\ndatastore qdrant qdrant.service qdrant {url} /etc/q.key\n",
+    )
+    assert out["findings"] == []
+    assert out["datastore"][0]["url"] == url
 
 
 def test_a_wrapping_range_is_marked(tmp_path):

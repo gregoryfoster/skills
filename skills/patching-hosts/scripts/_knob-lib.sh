@@ -220,7 +220,20 @@ _knob_directive() {  # <line> <sec> <text>
         && case ${tok[4]} in - | /*) true ;; *) false ;; esac; then
         # #367: the container its snapshot is copied out of, the API's base
         # as its certificate names it, and a root-only key file, or - .
-        _knob_record "$n" "$sec" datastore "${tok[1]}" "qdrant$u${tok[1]}$u${tok[2]} ${tok[3]} ${tok[4]}"
+        # A key goes over plain http only to this host, as SocratiCode's
+        # own rule has it (CR 217).
+        local qhost=${tok[3]#*://}
+        qhost=${qhost%%/*}
+        case $qhost in
+          \[*) qhost=${qhost%%]*}] ;;
+          *) qhost=${qhost%:*} ;;
+        esac
+        if [ "${tok[4]}" != - ] && [[ ${tok[3]} == http://* ]] &&
+          ! case $qhost in localhost | 127.* | '[::1]') true ;; *) false ;; esac; then
+          _knob_malformed "$n" "datastore qdrant would send its API key over plain http to another host: use https://, as its certificate names it, or this host's own address (127.0.0.1, localhost, [::1])"
+        else
+          _knob_record "$n" "$sec" datastore "${tok[1]}" "qdrant$u${tok[1]}$u${tok[2]} ${tok[3]} ${tok[4]}"
+        fi
       else
         _knob_malformed "$n" "datastore takes postgres <unit> <database>..., redis <unit>, or qdrant <unit> <container> <http(s)://url> <key-file, an absolute path, or ->"
       fi ;;
