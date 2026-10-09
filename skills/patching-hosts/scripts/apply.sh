@@ -279,7 +279,7 @@ trap 'rm -rf "$P_TMP"' EXIT
 # takes asks that system: the probe's test for an offline tree doesn't apply.
 P_LIVE=1
 # unit_show sets these by name.
-U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState=""
+U_Result="" U_ExecMainStartTimestamp="" U_ExecMainExitTimestamp="" U_LoadState="" U_ActiveEnterTimestamp=""
 
 [ -n "$run" ] || default_run run
 
@@ -1464,27 +1464,35 @@ do_bulk() {
 # against the recovery point's after it (#367).
 QD_UNITS=() QD_ENTER=() QD_LINE=()
 qdrant_mark() {
-  local r u
+  local r u t
   local -a f=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
     [ "${f[0]}" = qdrant ] || continue
     unit_name u "${f[1]}"
-    U_ActiveEnterTimestamp=""
-    unit_show "$u" ActiveEnterTimestamp || true
-    QD_UNITS+=("$u") QD_ENTER+=("$U_ActiveEnterTimestamp") QD_LINE+=("${f[2]}")
+    # "?" when it can't be read: two unread starts would compare equal
+    # (CR 222).
+    t="?"
+    if unit_show "$u" ActiveEnterTimestamp; then t=$U_ActiveEnterTimestamp; fi
+    QD_UNITS+=("$u") QD_ENTER+=("$t") QD_LINE+=("${f[2]}")
   done
 }
 
 qdrant_after() {
-  local i u rec="" cpath before qurl qkey a="" e n
+  local i u rec="" cpath before qurl qkey a="" e n t
   for i in ${QD_UNITS[@]+"${!QD_UNITS[@]}"}; do
     u=${QD_UNITS[$i]}
     e=""
     jadds e unit "$u"
-    U_ActiveEnterTimestamp=""
-    unit_show "$u" ActiveEnterTimestamp || true
-    if [ "$U_ActiveEnterTimestamp" = "${QD_ENTER[$i]}" ]; then
+    t="?"
+    if unit_show "$u" ActiveEnterTimestamp; then t=$U_ActiveEnterTimestamp; fi
+    if [ "$t" = "?" ] || [ "${QD_ENTER[$i]}" = "?" ]; then
+      jadd e restarted null
+      jpush a "{$e}"
+      NEXT+=("whether $u restarted in this step couldn't be read (systemctl show): list its collections and their counts by hand.")
+      continue
+    fi
+    if [ "$t" = "${QD_ENTER[$i]}" ]; then
       jaddb e restarted 0
       jpush a "{$e}"
       continue

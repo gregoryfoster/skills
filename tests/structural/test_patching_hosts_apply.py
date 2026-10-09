@@ -1507,3 +1507,12 @@ def test_a_held_step_that_didnt_restart_a_qdrant_doesnt_count_it(host):
     out = _qdrant_held(host, {"a": 10, "b": 20}, restarts=False).run(step="postgres")
     assert out["qdrant"] == [{"unit": "qdrant.service", "restarted": False}]
     assert not [a for _, a, _ in host.calls("curl") if "points/count" in a]
+
+
+def test_a_qdrant_whose_start_cant_be_read_is_unknown_not_unrestarted(host):
+    # CR 222: two unread start times compare equal.
+    _qdrant_held(host, {"a": 10, "b": 20})
+    host.cases["systemctl"].insert(0, ("show*-- qdrant.service", "", 1, "", None))
+    out = host.run(step="postgres")
+    assert out["qdrant"] == [{"unit": "qdrant.service", "restarted": None}]
+    assert any("whether qdrant.service restarted" in n for n in out["next"])
