@@ -974,3 +974,16 @@ def test_a_docker_root_on_another_disk_without_room_is_refused(tmp_path):
         for r in out["refused"]
     ), out["refused"]
     assert out["gate"]["space"]["docker_root_shares_run_disk"] is False
+
+
+def test_a_qdrant_snapshot_that_times_out_says_one_may_still_land_inside(tmp_path):
+    # CR 223: curl gave up, and Qdrant may not have.
+    host = _qdrant(_ready(Host(tmp_path)))
+    _first(host, "curl", f"*-X POST {QURL}/snapshots?wait=true", "", rc=28)
+    out = host.recover("--qdrant-within", "5", rc=1)
+    assert any(
+        "may still finish one inside qdrant, under /qdrant/snapshots" in w
+        and f"GET {QURL}/snapshots" in w
+        for w in out["verdict"]["why"]
+    ), out["verdict"]["why"]
+    assert not (host.run_dir / "recovery-point").exists()

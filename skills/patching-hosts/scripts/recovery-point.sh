@@ -886,7 +886,8 @@ dump_qdrant() {  # <unit> <container> <url> <key-file> <snapshots path>
   elif [ "$cmode" != 0600 ]; then
     fail "$u's counts went to a file of mode ${cmode:-unknown}, not 0600"
   elif [ -z "$name" ]; then
-    fail "POST $qurl/snapshots named no snapshot (exit $CAP_RC${CAP_ERR:+: $CAP_ERR}) within $qdrant_within s"
+    # curl giving up doesn't stop Qdrant writing one (CR 223).
+    fail "POST $qurl/snapshots named no snapshot (exit $CAP_RC${CAP_ERR:+: $CAP_ERR}) within $qdrant_within s. Qdrant may still finish one inside $qc, under $snap, which nothing deletes until the container restarts: list them with GET $qurl/snapshots, and delete each with DELETE $qurl/snapshots/<name>"
   elif [ "$crc" != 0 ]; then
     fail "copying $name out of $qc exited $crc: it's still inside, under $snap"
   elif [ "$trc" != 0 ]; then
