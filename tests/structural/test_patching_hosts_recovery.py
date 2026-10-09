@@ -316,6 +316,17 @@ def test_the_roles_stay_on_the_node_at_600_and_are_never_attested(host):
     assert not any("globals" in n for n in out["next"])
 
 
+def test_the_copy_it_hands_over_can_read_a_root_only_dump(host):
+    # notifier (#374): the dump and its directory are root's at 700/600, so
+    # the owner's own scp can't read them. The hint streams it through sudo.
+    out = host.recover()
+    path = host.dump_path()
+    name = path.rsplit("/", 1)[1]
+    [copy] = [n for n in out["next"] if "sudo cat" in n]
+    assert f"ssh <host> 'sudo cat {path}' > {name} && sha256sum {name}" in copy
+    assert not any("own scp" in n for n in out["next"])
+
+
 def test_a_dump_that_lists_but_fails_a_full_read_records_nothing(host):
     # A custom-format dump written to a pipe puts its table of contents
     # first: cut off mid-data, it still lists.

@@ -960,7 +960,15 @@ else
     NEXT+=("Confirm the object ${BACKUP_SVCS[$_i]} wrote off the node, then name it to the bulk: --offnode-object <its name>.")
   done
   if [ "${#DS[@]}" -gt 0 ]; then
-    NEXT+=("Copy each dump off the node with your own scp, and check your copy's sha256 against the one here before the apply.")
+    # Each dump and its directory are root's, so the owner's own scp can't
+    # read them: the copy streams through sudo, leaving no second copy on
+    # the node (#374).
+    while read -r _k _rest; do
+      [ "$_k" = dump ] || continue
+      _p=${_rest##* }
+      # unchecked-write-ok: a command printed for the owner, not a write
+      NEXT+=("Copy $_p off the node through sudo, since a plain scp can't read a root-only file: ssh <host> 'sudo cat $_p' > ${_p##*/} && sha256sum ${_p##*/}. Check that sha256 against the one here before the apply.")
+    done <<<"$REC_LINES"
     NEXT+=("Then name each copy that checks out to the bulk: --offnode-sha256 <your copy's sha256>, once per dump.")
   fi
 fi
