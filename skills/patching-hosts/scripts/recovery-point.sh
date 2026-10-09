@@ -84,7 +84,9 @@ own process; when a Qdrant's container isn't running, its storage's size
 can't be read, its key file can't be read, or its collections can't be
 listed; when a backup line names a datastore no datastore line
 declares; and when the run's filesystem has less free space than the data it
-would dump, or its free space can't be read.
+would dump, or its free space can't be read. A Qdrant snapshot is written
+under Docker's root first, then copied out: on one filesystem it counts
+twice, and on two, Docker's must hold it too.
 
 The record, one line each (run.md section 2):
   began <epoch seconds>    retain <date>
@@ -396,6 +398,7 @@ pg_size() {  # <port> <database>
 # it: a full disk mid-dump can stop the data store it shares the disk with.
 gate_datastores() {
   local r u port db out sz e a="" need=0 avail="" dir qc qurl qkey snap store src line dst kib
+  local qsnap=0 droot="" dfree="" dmount="" rmount=""
   local -a f=() dbs=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -481,11 +484,17 @@ gate_datastores() {
         refuse "datastore qdrant $u: GET $qurl/collections failed (exit $CAP_RC${CAP_ERR:+: $CAP_ERR})"
         continue
       fi
-      DS+=("qdrant $u $qc $qurl $qkey $snap") DS_BYTES+=("$sz")
       # The snapshot is written inside the container first, under Docker's
-      # own directory, then copied here: twice the data, where the two
-      # share a disk.
-      need=$((need + 2 * sz))
+      # root, then copied here: twice the data where the two share a disk,
+      # and each disk's own share where they don't (CR 219).
+      capture out as_root docker info --format '{{.DockerRootDir}}'
+      if [ "$CAP_RC" -ne 0 ] || [ "${out#/}" = "$out" ]; then
+        refuse "datastore qdrant $u: Docker's root directory couldn't be read (docker info), so the free space its snapshot is written into is unknown"
+        continue
+      fi
+      droot=$out
+      DS+=("qdrant $u $qc $qurl $qkey $snap") DS_BYTES+=("$sz")
+      need=$((need + sz)) qsnap=$((qsnap + sz))
     else
       # Raw replies, since stdout isn't a terminal: the key, then its value.
       redis_conn "$u"
@@ -525,9 +534,28 @@ gate_datastores() {
   if [ "${#DS[@]}" -eq 0 ]; then return 0; fi
   dir=$run
   while [ ! -d "$dir" ] && [ "$dir" != / ]; do dir=$(dirname "$dir"); done
-  out=$(df -Pk -- "$dir" 2>/dev/null | awk 'NR == 2 { print $4 }') || out=""
-  is_int "$out" && avail=$out
+  out=$(df -Pk -- "$dir" 2>/dev/null | awk 'NR == 2 { print $4, $6 }') || out=""
+  read -r avail rmount <<<"$out" || true
+  is_int "$avail" || avail=""
   e=""
+  if [ "$qsnap" -gt 0 ]; then
+    out=$(df -Pk -- "$droot" 2>/dev/null | awk 'NR == 2 { print $4, $6 }') || out=""
+    read -r dfree dmount <<<"$out" || true
+    is_int "$dfree" || dfree=""
+    jadds e docker_root "$droot"
+    jaddn e docker_root_free_kib "$dfree"
+    if [ -z "$dfree" ] || [ -z "$dmount" ] || [ -z "$rmount" ]; then
+      refuse "the free space under Docker's root, $droot, couldn't be read: a Qdrant snapshot is written there first"
+    elif [ "$dmount" = "$rmount" ]; then
+      jaddb e docker_root_shares_run_disk 1
+      need=$((need + qsnap))
+    else
+      jaddb e docker_root_shares_run_disk 0
+      if [ "$dfree" -lt $(((qsnap + 1023) / 1024)) ]; then
+        refuse "$droot has $dfree KiB free, and the snapshot is written there first, up to $(((qsnap + 1023) / 1024)) KiB: a full disk mid-snapshot can stop Qdrant"
+      fi
+    fi
+  fi
   jaddn e need_kib "$(((need + 1023) / 1024))"
   jaddn e free_kib "$avail"
   jadds e on "$dir"

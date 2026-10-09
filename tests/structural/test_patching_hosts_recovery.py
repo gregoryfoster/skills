@@ -825,6 +825,9 @@ def _qdrant(host: Host, running: str = "true", snapshot: bytes | None = None) ->
     outer = host.tmp / "outer.tar"
     outer.write_bytes(_tar(SNAP, snapshot))
     _first(host, "docker", "inspect -f {{.State.Running}} qdrant", f"{running}\n")
+    docker_root = host.tmp / "docker-root"
+    docker_root.mkdir(exist_ok=True)
+    _first(host, "docker", "info --format {{.DockerRootDir}}", f"{docker_root}\n")
     _first(
         host, "docker", "inspect -f {{range .Config.Env}}*", "QDRANT__LOG_LEVEL=INFO\n"
     )
@@ -941,3 +944,33 @@ def test_a_qdrant_copy_that_isnt_a_tar_records_nothing(tmp_path):
     assert out["dumps"][0]["tar_exit"] != 0
     assert any("doesn't read as a tar" in w for w in out["verdict"]["why"])
     assert not (host.run_dir / "recovery-point").exists()
+
+
+def test_a_qdrant_snapshot_counts_twice_where_dockers_root_shares_the_run_disk(
+    tmp_path,
+):
+    # CR 219: the snapshot is written under Docker's root first, then
+    # copied out.
+    host = _qdrant(_ready(Host(tmp_path)))
+    out = host.recover()
+    space = out["gate"]["space"]
+    assert space["docker_root"] == str(host.tmp / "docker-root")
+    assert space["docker_root_shares_run_disk"] is True
+
+
+def test_a_docker_root_on_another_disk_without_room_is_refused(tmp_path):
+    host = _qdrant(_ready(Host(tmp_path)))
+    root = host.tmp / "docker-root"
+    _first(
+        host,
+        "df",
+        f"-Pk -- {root}",
+        "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+        "/dev/vdb 100 99 1 99% /var/lib/docker\n",
+    )
+    out = host.recover(rc=3)
+    assert any(
+        f"{root} has 1 KiB free" in r and "the snapshot is written there first" in r
+        for r in out["refused"]
+    ), out["refused"]
+    assert out["gate"]["space"]["docker_root_shares_run_disk"] is False
