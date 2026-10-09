@@ -1907,9 +1907,19 @@ read_language() {
       jaddn e owner_line "$oline"
       if [ "$lf" = uv.lock ]; then
         file_owner uid "$P_ROOT$dir/$lf"
-        passwd_entry "$uid"
-        if [ -z "$PW_NAME" ]; then
-          LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY="its uv.lock's owner, uid ${uid:-unknown}, isn't in /etc/passwd"
+        # A tree in another user's private home was found as root, so its
+        # owner is read as root too (CR 232).
+        if [ -z "$uid" ]; then
+          uid=$(as_root stat -c %u -- "$P_ROOT$dir/$lf" 2>/dev/null ||
+            as_root stat -f %u -- "$P_ROOT$dir/$lf" 2>/dev/null) || uid=""
+          case $uid in *[!0-9]*) uid="" ;; esac
+        fi
+        PW_NAME=""
+        if [ -n "$uid" ]; then passwd_entry "$uid"; fi
+        if [ -z "$uid" ]; then
+          LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY="its uv.lock's owner couldn't be read, even as root"
+        elif [ -z "$PW_NAME" ]; then
+          LA_AUDITED=0 LA_N="" LA_PKGS="" LA_WHY="its uv.lock's owner, uid $uid, isn't in /etc/passwd"
         else
           lang_audit "$dir" "$PW_NAME" "$PW_HOME"
         fi

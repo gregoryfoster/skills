@@ -1060,6 +1060,20 @@ def test_a_probe_without_refresh_into_audits_nothing(host):
     assert not host.calls("uv")
 
 
+def test_a_uv_lock_whose_owner_isnt_in_passwd_says_which_uid(host):
+    _tree(host)
+    _uv(host)
+    host.write("etc/passwd", "root:x:0:0:root:/root:/bin/bash\n")
+    if os.getuid() == 0:
+        pytest.skip("a root container's files are uid 0, which root names")
+    [t] = _lang(_audit(host))
+    assert (t["audited"], t["why"]) == (
+        False,
+        f"its uv.lock's owner, uid {os.getuid()}, isn't in /etc/passwd",
+    )
+    assert not host.calls("uv")
+
+
 def test_language_dependencies_arent_read_from_a_tree_nothing_runs(tmp_path):
     h = _tree(Host(tmp_path, live=False).knob("posture scheduled\n"))
     _uv(h)
