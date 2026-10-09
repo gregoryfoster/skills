@@ -1527,4 +1527,7 @@ def test_a_qdrant_that_answers_slowly_is_asked_only_as_long_as_the_span_budgets(
     )
     out = host.run("--health-within", "3", step="postgres", rc=1)
     [q] = out["qdrant"]
-    assert (q["ok"], q["attempts"]) == (False, 2)
+    # The attempt cap is 3, and the time bound stops it first: after the
+    # second attempt, or the first when a loaded machine stretches it past
+    # 3 s. Never a fixed count, which a busy run made flaky (CR 230).
+    assert q["ok"] is False and 1 <= q["attempts"] < 3
