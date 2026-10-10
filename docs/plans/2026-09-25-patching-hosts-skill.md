@@ -1120,6 +1120,27 @@ base image, or an owner-approved remedy the profile documents.
       (#368). It now does, one script deep, and a program it can't follow
       leaves the scan incomplete until the knob declares it a restarter or
       `not-restarter:<service>`, as decided with the owner.
+
+    **notifier, 2026-10-09** (CannObserv/notifier#113): the fourth run
+    under the scripts, and the cohort's alert path. Three Postgres dumps
+    left the node, the in-flight gate counted open connections on the API
+    ports, and the host was down about 22 s. No dispatch arrived during the
+    run; nobody read the callers' side, since the host has no SSH edge to
+    them. It filed one rough edge and its process-log entry (#374, #375),
+    each fixed here:
+    - `recovery-point.sh`'s hint said to copy the dumps with the owner's
+      own `scp`, which can't read a root-only file (#374). It now prints a
+      stream through `sudo` per dump, with what that needs (CR 227).
+
+    Before it, #366 (filed from notifier's own dependency triage) became
+    the sixth pending class, plan step 6g.
+
+    **broker** is the fifth and last host this cycle (decided 2026-10-10),
+    tracked on CannObserv/broker#67: the first Redis data store, the first
+    host whose own backup stands in for the dump, and the first
+    `redis-server` held step. Its Redis is ACL'd with `default` off, which
+    the scripts' `requirepass`-based authentication is expected not to
+    reach.
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
