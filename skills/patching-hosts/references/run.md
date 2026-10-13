@@ -37,7 +37,7 @@ $nrconf{restart} = 'l';
 Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump. `recovery-point.sh --approve --retain-until <date>` takes it, as below, and writes the record the bulk reads. Like a step, it takes minutes: run it in the background.
 
 - **Prefer the host's own backup regime** when one exists and succeeded recently, for the datastores it covers: its `backup` line names them, and the rest are dumped. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
-  - **A Redis it covers is saved first.** A backup that ships the RDB file ships it as it stands, and Redis rewrites the file only at a save point: broker's was 44 minutes old (#382). `recovery-point.sh` takes a `BGSAVE` and waits for it, as a dump does, where it can log in. Where it can't (an `aclfile`, and no user and key file on the line), it reads the file's own time instead, and refuses one written more than `--rdb-within` (600 s) before the run began. Then `SAVE` by hand, as a user that may, and take the recovery point again.
+  A Redis it covers is saved first, since the unit ships the RDB file as it stands ([datastores.md](datastores.md#the-recovery-point)).
 - **Otherwise, dump each data store as root**, mode 600 from creation. A `>` from the session shell can't write to `/var/backups` (CannObserv/address-validator#235):
 
   ```
@@ -53,35 +53,10 @@ Every host records its before-versions (below). A host that declares a `datastor
 
   **Send the pipeline and gate 1 as one command.** `PIPESTATUS` belongs to the shell that ran the pipeline, and an agent's tool starts a fresh shell for each call. There, it describes whatever that shell ran last, not the dump.
 
-  For Redis: `BGSAVE`, wait for it to finish, then copy the RDB file the same way. That takes a login. Under an `aclfile` with `default` off (broker), give the `datastore redis` line a user and key file, or cover it with a `backup` line; never re-enable `default` to get past it. A refused login is an `ACL LOG` entry the host has to attribute, so the scripts try one only where a command needs it, and only once (#379).
+  For Redis and Qdrant, each with what it takes, the logins and the snapshots: [datastores.md](datastores.md).
 
-  For Qdrant (#367): each collection's exact point count, kept on the node, then a full-storage snapshot through its API (`POST /snapshots?wait=true`). **Copy it out of the container:** its snapshots directory isn't on a volume, so under `docker run --rm` the next restart deletes it (co-index: 1.56 GB in 48 s). The copy counts when it reads back with `tar -tf`, at mode 600, with its sha256 read; then delete the copy inside.
-- **The owner copies the dump off the node** and checks it against that sha256 **before the apply**. The dump and its directory are root's, so a plain `scp` can't read them. Stream it through `sudo` instead, which leaves no second copy on the node: `ssh <host> 'sudo cat <path>' > <name> && sha256sum <name>`, as `recovery-point.sh`'s `next` prints for each dump (notifier, #374). It needs sudo without a password, as on exe.dev. Don't reach for `ssh -t`: a remote terminal turns each LF of the stream into CRLF, so the copy's sha256 won't match, through no fault of the dump.
-- **On the node only**, each written like the dump, through `| sudo sh -c 'umask 077; cat > /var/backups/<name>-<utc>'`, and checked with `stat` for mode 600:
-  - `sudo -u postgres pg_dumpall --globals-only` (role password hashes);
-  - the before-versions, `dpkg-query -W`;
-  - `apt-mark showauto` and `apt-mark showhold`.
-
-  `apply.sh --step bulk` writes the last two into the run's directory itself.
-
-  A `>` from the session shell can't write there, and `sudo tee` creates the file at 644, readable by every user on the host.
-- **Secrets never travel:** the service's env file, keys and DSNs stay put.
-- **State a retention** for every recovery-point file, and flag a dump that holds personal data. address-validator's held its audit log's raw input.
-- **The record**, `recovery-point` in the run's directory (0700, the file 0600), which `recovery-point.sh` writes and `apply.sh` reads, one line each:
-
-  ```
-  began <epoch seconds>
-  retain <YYYY-MM-DD>
-  dump postgres <unit> <database> <sha256> <path>
-  dump redis <unit> <sha256> <path>
-  dump qdrant <unit> <sha256> <path>
-  counts qdrant <unit> <path>
-  backup <unit> <datastore unit>...
-  local <path>
-  personal <path>
-  ```
-
-  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts), with the datastore units it covered: its run must have *started* after `began` and succeeded, it stands in for the dumps of those datastores and no others, which its knob line must name too, and the owner names its object with `--offnode-object`. A datastore no backup covered needs its own dump. A `local` file, such as the globals dump, stays on the node and is never attested, and so does a Qdrant's `counts` file, which the checks after a restart read. `retain` is the stated retention, and `personal` flags a dump that holds personal data. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
+  A unit may carry its suffix or not: `postgresql@16-main` is `postgresql@16-main.service`, as in the knob. A `dump` is a file meant to leave the node, and the owner attests each one with `--offnode-sha256`, typed from their own copy. A `backup` is the host's own backup unit, which writes off the node itself, and one the knob's `backup` lines name (or the service a named timer starts), with the datastore units it covered: its run must have *started* after `began` and succeeded, it stands in for the dumps of those datastores and no others, which its knob line must name too, and the owner names its object with `--offnode-object`. A datastore no backup covered needs its own dump. A `local` file, such as the globals dump, stays on the node and is never attested, and so does a Qdrant's `counts` file, which the checks after a restart read. `retain` is the stated retention, and `personal` flags a dump that holds personal data. `persistence` says how each Redis keeps what it holds, read from its own file and arguments, whether it was dumped or shipped by a backup. The bulk refuses a record that began more than 24 hours ago, or that misses a database a `datastore` line names.
+- **A Redis restore under `appendonly yes` isn't a copy of the RDB file**, but the file staged as the AOF's base (#381; [datastores.md](datastores.md#a-restore-under-appendonly-yes)).
 - A package rollback reinstalls the recorded version. Where the image carries `docker-clean`, as exeuntu does, apt's `.deb` cache is emptied after every run, so fetch it from snapshot.ubuntu.com ([the profile](environments/exe-dev-exeuntu.md#other-facts)).
 
 ## 3. The apply, in held steps
@@ -172,7 +147,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise: an aborted chain stopped nothing, and `reboot-chain.sh` launches it again once the gate would pass. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
-3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured, and fsyncs the AOF under `appendonly yes`; with neither, run `SAVE` first. `reboot-chain.sh` reads which from the unit's own file and arguments, as root, so it logs in only for that `SAVE`. It asks Redis at the stop only where an `include` or an unreadable file leaves it unknown. Qdrant: no checkpoint, since its container's `docker stop` is its clean shutdown.
+3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file where save points are set, and fsyncs the AOF under `appendonly yes`; with neither, `SAVE` first ([datastores.md](datastores.md#the-chains-stop)). Qdrant: no checkpoint, since its container's `docker stop` is its clean shutdown.
 4. `journalctl --sync`.
 5. **Copy the volatile journal, last**, so it holds every stop line. This copy is the only record of the shutdown:
 
@@ -202,7 +177,7 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 - **Each `service`:**
   - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239). A start by hand after a failure leaves `NRestarts` at 0, so read `InactiveEnterTimestamp`: unset, the unit never stopped or failed after it started. Set, only PID 1's lines in the journal tell a failure from a stop by hand;
   - **its ordering**: `systemd-analyze critical-chain <service>` includes its data store, and the unit has `After=` on it. wslcb's first start succeeded by luck, until `After=postgresql.service` made it configured. Don't add `Wants=`: it would start a cluster an operator stopped on purpose.
-- **Each Qdrant** against its recovery point's counts, and after a held step that restarted it too (Docker's restart does, through `Requires=`), asked once a second for up to `--health-within` seconds while it loads its collections; a held step's span budgets that time on top of its health checks (CR 218). Clients may still be writing, so a count may move either way: only a collection gone or emptied is a loss, and counts that can't be read fail. A real query stays a `health` line, since the embedding model is the host's own.
+- **Each Qdrant** against its recovery point's counts, and after a held step that restarted it too ([datastores.md](datastores.md#after-a-restart)).
 - **Each `restarter`** is active.
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.
 - **needrestart is clean**, `sudo grep -c '(deleted)' /proc/1/maps` reads 0, and `reboot-required` is gone.

@@ -88,6 +88,7 @@ It never unmasks a timer, edits apt or needrestart config beyond the approved dr
 
 - [references/readings.md](references/readings.md) — what to measure before proposing, and the mistake each reading prevents
 - [references/run.md](references/run.md) — approvals, the gate, the recovery point, held steps, the reboot chain, post-boot checks, the record
+- [references/datastores.md](references/datastores.md) — Redis and Qdrant: reaching each, its recovery point, the chain's stop, a restore, the checks after a restart
 - [references/policy.md](references/policy.md) — the two postures, the two lanes, pending classes, exceptions, dormant components, owners
 - [references/pruning.md](references/pruning.md) — pruning a dormant component: the calendar, the plan, the stages, and what a purge deletes
 - [references/knob.md](references/knob.md) — the `.skills/patching-hosts` grammar

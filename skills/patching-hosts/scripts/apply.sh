@@ -851,6 +851,12 @@ gate_recovery() {
       dump:qdrant) read -r sha path <<<"$rest"; key="qdrant $unit" ;;
       # Kept on the node for the check after a restart (#367).
       counts:qdrant) [ -n "$unit" ] && [ -n "$rest" ] || kind=bad ;;
+      # How a Redis persists, for a restore (#381).
+      persistence:redis)
+        case $unit:$rest in
+          ?*:aof | ?*:rdb | ?*:none | ?*:unknown) ;;
+          *) kind=bad ;;
+        esac ;;
       # A backup line names its unit and each datastore unit it covered.
       backup:*)
         if [ -n "$engine" ] && [ -n "$unit" ]; then

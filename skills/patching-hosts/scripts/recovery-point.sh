@@ -104,6 +104,7 @@ The record, one line each (run.md section 2):
   dump qdrant <unit> <sha256> <path>
   counts qdrant <unit> <path>
   backup <unit> <datastore unit>...
+  persistence redis <unit> <aof, rdb, none or unknown>
   local <path>             personal <path>
 
 Output: one JSON object on stdout. Keys: recovery_point, refused, gate, then
@@ -390,6 +391,29 @@ gate_backup() {
   jadd J_GATE backup_regime "{$o}"
 }
 
+# How each Redis persists, dumped or shipped, from its own file and
+# arguments: under appendonly yes it loads the AOF at start and ignores
+# dump.rdb, so an RDB file restores nothing unless it's staged as the AOF's
+# base (#381; broker's docs/RECOVERY.md). The record says which.
+REDIS_PERSIST=()
+gate_persistence() {
+  local r u p e a=""
+  local -a f=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[0]}" = redis ] || continue
+    unit_name u "${f[1]}"
+    redis_conf "$u"
+    redis_persistence p
+    REDIS_PERSIST+=("$u $p")
+    e=""
+    jadds e unit "$u"
+    jadds e persistence "$p"
+    jpush a "{$e}"
+  done
+  [ -z "$a" ] || jadd J_GATE redis_persistence "[$a]"
+}
+
 # Whether a usable backup unit covers this datastore unit.
 covered() {  # <unit>
   local _cv
@@ -559,6 +583,7 @@ gate_datastores() {
     fi
   done
   jadd J_GATE datastores "[$a]"
+  gate_persistence
   if [ "${#DS[@]}" -eq 0 ]; then return 0; fi
   dir=$run
   while [ ! -d "$dir" ] && [ "$dir" != / ]; do dir=$(dirname "$dir"); done
@@ -1060,6 +1085,9 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
 fi
 
 for _p in $PERSONAL_PATHS; do REC_LINES="${REC_LINES}personal $_p"$'\n'; done
+for _r in ${REDIS_PERSIST[@]+"${REDIS_PERSIST[@]}"}; do
+  REC_LINES="${REC_LINES}persistence redis $_r"$'\n'
+done
 if [ "${#FAILED[@]}" -eq 0 ]; then
   printf '%s' "$REC_LINES" | root_write "$run/recovery-point" ||
     fail "$run/recovery-point couldn't be written"
@@ -1090,6 +1118,11 @@ else
   fi
 fi
 if [ "${#FAILED[@]}" -eq 0 ]; then
+  for _r in ${REDIS_PERSIST[@]+"${REDIS_PERSIST[@]}"}; do
+    read -r _u _p <<<"$_r"
+    [ "$_p" = aof ] || continue
+    NEXT+=("$_u runs appendonly yes: it loads its AOF at start and ignores dump.rdb, so a restore from this RDB file means staging it as the AOF's base, not copying it over dump.rdb (run.md section 2), or the host's own restore procedure.")
+  done
   NEXT+=("bash \"$_libdir/apply.sh\" --approve --step bulk --run \"$run\" --dry-run <DIR>: approval 2")
   NEXT+=("Delete every file in $run on $retain, the retention stated here.")
 fi

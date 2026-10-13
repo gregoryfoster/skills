@@ -473,6 +473,43 @@ def test_redis_is_saved_then_copied_at_600_and_recorded(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "conf, persistence",
+    [
+        ("appendonly yes\n", "aof"),
+        ("", "rdb"),
+        ('save ""\n', "none"),
+        ("include /etc/redis/more.conf\n", "unknown"),
+    ],
+)
+def test_the_record_says_how_each_redis_persists(tmp_path, conf, persistence):
+    # #381: under appendonly yes an RDB file restores nothing unless it's
+    # staged as the AOF's base.
+    host = _redis(_ready(Host(tmp_path)), conf=conf)
+    out = host.recover()
+    assert out["gate"]["redis_persistence"] == [
+        {"unit": "redis-server.service", "persistence": persistence}
+    ]
+    assert f"persistence redis redis-server.service {persistence}\n" in host.record(
+        "recovery-point"
+    )
+    staged = [n for n in out["next"] if "staging it as the AOF's base" in n]
+    assert len(staged) == (persistence == "aof")
+    # And the bulk reads the record.
+    out = host.run("--offnode-sha256", out["dumps"][0]["sha256"])
+    assert not [r for r in out["refused"] if "isn't one apply.sh reads" in r], out[
+        "refused"
+    ]
+
+
+def test_a_shipped_redis_is_recorded_too(host):
+    _shipped(host, conf="appendonly yes\n")
+    host.recover()
+    assert "persistence redis redis-server.service aof\n" in host.record(
+        "recovery-point"
+    )
+
+
 def test_a_redis_unit_is_flagged_with_or_without_its_suffix(tmp_path):
     host = _redis(_ready(Host(tmp_path)))
     host.knob(KNOB + "datastore redis redis-server.service\n")
