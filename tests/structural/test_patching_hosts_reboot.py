@@ -731,12 +731,29 @@ def test_a_redis_address_that_reaches_another_process_is_refused(host, pid, refu
     assert not [a for _, a, _ in host.calls("redis-cli") if "INFO" in a]
 
 
-def test_a_redis_that_isnt_running_has_nothing_to_save(host):
+@pytest.mark.parametrize("started", [False, True], ids=["still-down", "started-since"])
+def test_a_redis_that_isnt_running_is_saved_only_if_it_starts_before_the_chain(
+    host, started
+):
+    # CR 240: one whose stop wouldn't persist it is asked again at the stop.
     host.cases["systemctl"] = [
         c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
     ]
-    host.show("redis-server.service", MainPID="0")
-    assert host.reboot()["refused"] == []
+    conf = host.tmp / "redis.conf"
+    host.show(
+        "redis-server.service",
+        ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} ; }}",
+        MainPID="0",
+    )
+    out = host.reboot()
+    assert out["refused"] == []
+    assert "if systemctl is-active --quiet 'redis-server.service'; then" in out["chain"]
+    if started:
+        host.on("systemctl", "is-active --quiet redis-server.service", "")
+    r = host.fire(_journals(host))
+    assert r.returncode == 0, r.stderr
+    saved = "redis-cli -h 127.0.0.1 -p 6380 SAVE" in host.sequence()
+    assert saved is started
 
 
 def test_the_chain_reads_a_key_in_any_case_after_leading_space(host):
@@ -855,6 +872,13 @@ def test_an_acld_redis_that_isnt_running_needs_no_login(host):
         MainPID="0",
     )
     assert host.reboot()["refused"] == []
+    # CR 240: started since the gate, it's said, since it can't be saved.
+    host.on("systemctl", "is-active --quiet redis-server.service", "")
+    host.fire(_journals(host))
+    assert host.calls("redis-cli") == []
+    assert "started since the gate, and its stop may persist nothing" in host.record(
+        "reboot-chain.log"
+    )
 
 
 def test_the_chain_saves_as_the_knobs_user_with_its_key_file(host):

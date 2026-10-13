@@ -23,7 +23,7 @@ What each engine a `datastore` line names takes, beyond [run.md](run.md)'s steps
 
 ### The chain's stop
 
-`systemctl stop` fsyncs the AOF under `appendonly yes`, and saves the RDB file where save points are set. With no `save` line, Redis keeps its default save points; `save ""` clears them, and a later `save` line adds them back (measured on 7.0). `reboot-chain.sh` reads which from the file and the unit's arguments, as root, so it logs in only to `SAVE` a Redis with neither. Where an `include`, or a file root can't read, leaves it unknown, the chain asks at the stop. A Redis that isn't running at the gate has nothing to save.
+`systemctl stop` fsyncs the AOF under `appendonly yes`, and saves the RDB file where save points are set. With no `save` line, Redis keeps its default save points; `save ""` clears them, and a later `save` line adds them back (measured on 7.0). `reboot-chain.sh` reads which from the file and the unit's arguments, as root, so it logs in only to `SAVE` a Redis with neither. Where an `include`, or a file root can't read, leaves it unknown, the chain asks at the stop. A Redis that isn't running at the gate needs no login to pass it; where its stop wouldn't persist it, the chain asks at the stop whether it started since, and saves it, or logs that it can't for want of a login.
 
 ### A restore under `appendonly yes`
 

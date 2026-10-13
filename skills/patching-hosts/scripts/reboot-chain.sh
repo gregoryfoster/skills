@@ -303,8 +303,20 @@ gate_datastores() {
       # that needs a login the chain can make (#379).
       redis_persistence persist
       jadds e persistence "$persist"
-      # One that isn't running has nothing to save, and needs no login.
-      [ "$rc" -ne 2 ] || persist=stopped
+      # One that isn't running at the gate has nothing to save then, and
+      # needs no login to pass it. Its stop wouldn't persist it, so the chain
+      # asks again at the stop, in case it started since (CR 240).
+      if [ "$rc" -eq 2 ]; then
+        jaddb e running 0
+        case $persist in
+          none | unknown)
+            if [ "$REDIS_LOGIN" = none ] || ! redis_key_ok; then
+              persist=stopped-nologin
+            else
+              persist=stopped-$persist
+            fi ;;
+        esac
+      fi
       case $persist in
         none | unknown)
           if [ "$REDIS_LOGIN" = none ]; then
@@ -377,7 +389,7 @@ stop_line() {  # <unit>
 # The chain is sh text, written literally: its expansions are its own.
 # shellcheck disable=SC2016
 write_chain() {
-  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey
+  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey guard
   local -a f=() w=()
   sq q "$log"
   c '#!/bin/sh'
@@ -437,7 +449,7 @@ write_chain() {
       sq m "checkpoint $u"
       c "say $m; runuser -u postgres -- psql -XAtq -p $conf -d postgres -c CHECKPOINT || say \"CHECKPOINT failed: the stop checkpoints anyway\""
     else
-      persist=$conf
+      persist=$conf guard=""
       read -r conf login ruser rkey rest <<<"$rest"
       case $persist in
         aof)
@@ -448,10 +460,16 @@ write_chain() {
           c "# Its stop saves the RDB file (its file's save points): no SAVE, and no login."
           stop_line "$u"
           continue ;;
-        stopped)
-          c "# It wasn't running at the gate: nothing to save."
+        stopped-nologin)
+          sq x "$u"
+          sq m "$u started since the gate, and its stop may persist nothing it holds: the chain has no login to SAVE it"
+          c "# It wasn't running at the gate, and the chain has no login to SAVE it."
+          c "if systemctl is-active --quiet $x; then say $m; fi"
           stop_line "$u"
           continue ;;
+        stopped-*)
+          persist=${persist#stopped-}
+          sq guard "$u" ;;
       esac
       # The address and the socket come from redis.conf, which the redis
       # user can write: each one quoted.
@@ -488,6 +506,10 @@ write_chain() {
       # AUTH warning goes to stderr, which is the log (measured on 7.0). So
       # stdout alone says whether the SAVE took.
       sq m "SAVE $u"
+      if [ -n "$guard" ]; then
+        c "# It wasn't running at the gate: saved only if it started since."
+        c "if systemctl is-active --quiet $guard; then"
+      fi
       if [ "$persist" = none ]; then
         c "# Its file sets no save points and no appendonly: its stop would save nothing."
         c "say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\""
@@ -495,6 +517,7 @@ write_chain() {
         c "# Whether its stop saves can't be read from its file: asked now."
         c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ] && [ \"\$(redis-cli$ra CONFIG GET appendonly | sed -n 2p)\" != yes ]; then say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
       fi
+      if [ -n "$guard" ]; then c 'fi'; fi
     fi
     stop_line "$u"
   done
