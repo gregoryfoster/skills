@@ -1459,7 +1459,9 @@ def test_a_held_step_records_what_it_installed_against_the_dry_run(host):
         0,
         (
             "-W postgresql-16 libpq5",
-            f"postgresql-16\t{newer}\nlibpq5\t{PG_NOW}\n",
+            # libpq5 is Multi-Arch: same, so dpkg-query names its
+            # architecture (CR 237).
+            f"postgresql-16\t{newer}\nlibpq5:arm64\t{PG_NOW}\n",
             0,
             "",
             None,

@@ -1602,8 +1602,10 @@ held_installed() {  # <packages>...
   capture out dpkg-query -W "$@"
   for p in "$@"; do
     v=""
+    # A Multi-Arch package prints with its architecture, libpq5:arm64
+    # (measured on noble), and the hold names it without (CR 237).
     while read -r x y; do
-      if [ "$x" = "$p" ]; then v=$y; fi
+      if [ "${x%%:*}" = "$p" ]; then v=$y; fi
     done <<<"$out"
     version_in d "$dv" "$p"
     version_in c "$bv" "$p"
