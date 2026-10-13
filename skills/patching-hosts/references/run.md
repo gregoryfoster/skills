@@ -173,11 +173,11 @@ If the reboot slips out of the window, say so, and redo the gate and the quiet-h
 
 `probe.sh --post-boot` takes these checks, and each one that fails is a finding. The downtime, and any `Persistent=` catch-up, are left to you.
 
-- **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the journal's record. For Postgres: `database system was shut down at …` and no `redo starts`. A volatile journal's record is the chain's copy in `<run>/journal`: `--post-boot --run <dir>` names the run, and without it the newest `/var/backups/patching-hosts-<UTC>` is read. A persistent journal's is `Journal stopped` among the previous boot's last lines.
+- **A clean shutdown:** the data store's own log, no EXT4 orphan recovery, and the journal's record. For Postgres: `database system was shut down at …` and no `redo starts`; for Redis, `ready to exit, bye bye`. A volatile journal's record is the chain's copy in `<run>/journal`: `--post-boot --run <dir>` names the run, and without it the newest `/var/backups/patching-hosts-<UTC>` is read. A persistent journal's is `Journal stopped` among the previous boot's last lines.
 - **Each `service`:**
   - `NRestarts` and **the first start's result**, not just `is-active`. address-validator's first start failed on a dependency that wasn't ready yet (CannObserv/address-validator#239). A start by hand after a failure leaves `NRestarts` at 0, so read `InactiveEnterTimestamp`: unset, the unit never stopped or failed after it started. Set, only PID 1's lines in the journal tell a failure from a stop by hand;
   - **its ordering**: `systemd-analyze critical-chain <service>` includes its data store, and the unit has `After=` on it. wslcb's first start succeeded by luck, until `After=postgresql.service` made it configured. Don't add `Wants=`: it would start a cluster an operator stopped on purpose.
-- **Each Qdrant** against its recovery point's counts, and after a held step that restarted it too ([datastores.md](datastores.md#after-a-restart)).
+- **Each Redis**, from its own log: a clean shutdown before the boot, then a load and a ready. **Each Qdrant** against its recovery point's counts. Each also after a held step that restarted it ([datastores.md](datastores.md)).
 - **Each `restarter`** is active.
 - **The timers** are scheduled. Record any `Persistent=` catch-up, and whether any run was cut off: `Persistent=` catches up a run *missed* while down, not one *killed* part-way.
 - **needrestart is clean**, `sudo grep -c '(deleted)' /proc/1/maps` reads 0, and `reboot-required` is gone.

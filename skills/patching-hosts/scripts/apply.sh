@@ -72,7 +72,9 @@ Options:
                            the node, typed after the owner confirms it
                            exists. One per backup unit
   --health-within SECONDS  how long the health checks may take to pass twice
-                           in a row after a step (default 300)
+                           in a row after a step (default 300), and how
+                           long a Qdrant or Redis the step restarted may
+                           take to answer its own check after them
   --config FILE            the knob (default: .skills/patching-hosts at the
                            root of the repo around the current directory, or
                            in the current directory outside a repo)
@@ -132,8 +134,9 @@ The run's directory is root-only: 0700, and each file 0600.
 Output: one JSON object on stdout, for exits 0, 1 and 3. Keys: apply,
 refused, gate, then what the step did: holds, upgrade, health, qdrant
 (each Qdrant datastore, and for one the held step restarted, its counts
-against the recovery point's), restarters, verdict, abort, next and
-reprobe.
+against the recovery point's), redis (each Redis datastore, and for one the
+held step restarted, what its log says of the shutdown before and the load
+after), restarters, verdict, abort, next and reprobe.
 
 Exit codes:
   0  the step ran, and its verdict is green
@@ -299,7 +302,7 @@ case $LANE in security | maintenance | origin:?*) ;; *) LANE=unknown ;; esac
 # returns non-zero stops the script under errexit, wherever it is called
 # plainly.
 NEXT=()
-J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null J_QDRANT=null
+J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null J_QDRANT=null J_REDIS=null
 J_VERDICT=null J_ABORT=null J_REPROBE=null
 
 HOLD_STEPS=""
@@ -702,11 +705,11 @@ gate_step_span() {
   local -a f=()
   if [ "${#KNOB_HEALTH[@]}" -gt 0 ]; then h=$health_within; fi
   # A held step that restarts a Qdrant asks its counts for up to as long
-  # again (CR 218).
+  # again (CR 218), and one that restarts a Redis reads its log as long.
   hh=$h
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
-    if [ "${f[0]}" = qdrant ]; then hh=$((h + health_within)); fi
+    case ${f[0]} in qdrant | redis) hh=$((h + health_within)) ;; esac
   done
   if ! is_int "$EXPECT"; then
     gate_span ""
@@ -1017,6 +1020,7 @@ emit() {
   jadd o upgrade "$J_UPGRADE"
   jadd o health "$J_HEALTH"
   jadd o qdrant "$J_QDRANT"
+  jadd o redis "$J_REDIS"
   jadd o restarters "$J_RESTARTERS"
   jadd o verdict "$J_VERDICT"
   jadd o abort "$J_ABORT"
@@ -1536,6 +1540,69 @@ qdrant_after() {
   if [ "${#QD_UNITS[@]}" -gt 0 ]; then J_QDRANT="[$a]"; fi
 }
 
+# Each Redis datastore's start, before a held step, so a restart the step
+# caused (noble's redis-server postinst restarts it) is checked from its own
+# log after it, as --post-boot checks one after a boot (#380).
+RD_UNITS=() RD_ENTER=()
+redis_mark() {
+  local r u t
+  local -a f=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[0]}" = redis ] || continue
+    unit_name u "${f[1]}"
+    t="?"
+    if unit_show "$u" ActiveEnterTimestamp; then t=$U_ActiveEnterTimestamp; fi
+    RD_UNITS+=("$u") RD_ENTER+=("$t")
+  done
+}
+
+redis_after() {
+  local i u a="" e n t
+  for i in ${RD_UNITS[@]+"${!RD_UNITS[@]}"}; do
+    u=${RD_UNITS[$i]}
+    e=""
+    jadds e unit "$u"
+    t="?"
+    if unit_show "$u" ActiveEnterTimestamp; then t=$U_ActiveEnterTimestamp; fi
+    if [ "$t" = "?" ] || [ "${RD_ENTER[$i]}" = "?" ]; then
+      jadd e restarted null
+      jpush a "{$e}"
+      NEXT+=("whether $u restarted in this step couldn't be read (systemctl show): read its log by hand for a clean shutdown, then a load and a ready.")
+      continue
+    fi
+    if [ "$t" = "${RD_ENTER[$i]}" ]; then
+      jaddb e restarted 0
+      jpush a "{$e}"
+      continue
+    fi
+    jaddb e restarted 1
+    # Ready a moment after the unit is active: asked once a second, as the
+    # health checks are, for no longer than --health-within seconds.
+    n=0 t=$SECONDS
+    while :; do
+      n=$((n + 1))
+      redis_restart_check "$u"
+      # Once it's ready, what its log says is final.
+      if [ "$RL_READY" = 1 ] || [ "$n" -ge "$health_within" ] ||
+        [ $((SECONDS - t)) -ge "$health_within" ]; then
+        break
+      fi
+      sleep 1
+    done
+    jaddb e ok "$RL_OK"
+    jaddn e attempts "$n"
+    jadds e evidence "$RL_WHY"
+    jpush a "{$e}"
+    if [ "$RL_OK" = 0 ]; then
+      fail "$u after the step: $RL_WHY"
+    elif [ -z "$RL_OK" ]; then
+      NEXT+=("$u restarted in this step, and its log couldn't say how ($RL_WHY): read it by hand for a clean shutdown, then a load and a ready.")
+    fi
+  done
+  if [ "${#RD_UNITS[@]}" -gt 0 ]; then J_REDIS="[$a]"; fi
+}
+
 do_held() {
   local i out o="" a="" e names="" rel="" u st left x
   local -a w=()
@@ -1576,10 +1643,12 @@ do_held() {
     # In the one-origin lane, a group holds only the origin's packages.
     case $LANE in origin:*) LANE_TAKE=$rel ;; esac
     qdrant_mark
+    redis_mark
     run_uu
     check_holds
     poll_health
     qdrant_after
+    redis_after
   fi
   # Started again on a green step, and on one that failed before the
   # upgrade, which restarted nothing. After a failed upgrade, the owner

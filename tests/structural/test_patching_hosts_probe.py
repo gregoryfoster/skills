@@ -3038,6 +3038,133 @@ def test_post_boot_says_a_qdrant_with_no_counts_is_unchecked(host):
     assert "holds no counts of it" in c["evidence"]
 
 
+# --- a Redis after the boot (#380) ----------------------------------------------
+# broker's Redis logs to a file, not journald, so a journal-based check would
+# read an empty pass. Lines as Redis 7.0 writes them (measured on noble).
+
+BEFORE = (
+    "309128:C 12 Oct 2026 00:00:00.000 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo\n"
+    "309128:M 12 Oct 2026 00:00:00.100 * Ready to accept connections tcp\n"
+    "309128:M 13 Oct 2026 04:22:08.505 * Saving the final RDB snapshot before exiting.\n"
+)
+CLEAN_EXIT = (
+    "309128:M 13 Oct 2026 04:22:08.540 # Redis is now ready to exit, bye bye...\n"
+)
+BANNER = (
+    "414:C 13 Oct 2026 04:22:18.900 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo\n"
+)
+LOADED = (
+    "414:M 13 Oct 2026 04:22:18.996 * DB loaded from base file appendonly.aof.3.base.rdb: 0.014 seconds\n"
+    "414:M 13 Oct 2026 04:22:18.996 * Done loading RDB, keys loaded: 40, keys expired: 0.\n"
+)
+# A save's child logs as itself: it starts no run.
+CHILD = "415:C 13 Oct 2026 04:22:19.000 * DB saved on disk\n"
+READY = "414:M 13 Oct 2026 04:22:19.093 * Ready to accept connections tcp\n"
+NO_AOF = "414:M 13 Oct 2026 04:22:18.996 * Creating AOF base file appendonly.aof.1.base.rdb on server start\n"
+
+
+def _redis_after_boot(
+    host, log: str, conf: str = "appendonly yes\n", journal: bool = False
+) -> dict:
+    host.knob("posture scheduled\ndatastore redis redis-server\n")
+    if not journal:
+        conf += "logfile /var/log/redis/redis-server.log\n"
+        host.write("var/log/redis/redis-server.log", log)
+    else:
+        host.on("journalctl", "-u redis-server.service -o cat --no-pager -n 5000", log)
+    host.write("etc/redis/redis.conf", "port 6379\n" + conf)
+    host.show(
+        "redis-server.service",
+        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; }",
+        MainPID="414",
+    )
+    checks = host.run("--post-boot")["post_boot"]
+    return {c["check"]: c for c in checks}["redis:redis-server.service"]
+
+
+@pytest.mark.parametrize(
+    "log, conf, ok, said",
+    [
+        (
+            BEFORE + CLEAN_EXIT + BANNER + LOADED + CHILD + READY,
+            "appendonly yes\n",
+            True,
+            "logged a clean shutdown (ready to exit), and process 414 loaded its data",
+        ),
+        # The process before it was killed: no "ready to exit".
+        (
+            BEFORE + BANNER + LOADED + READY,
+            "appendonly yes\n",
+            False,
+            'didn\'t log a clean shutdown: its last line in /var/log/redis/redis-server.log was "Saving the final RDB snapshot before exiting."',
+        ),
+        # Under appendonly yes, a base created at start means no AOF was found.
+        (
+            BEFORE + CLEAN_EXIT + BANNER + NO_AOF + READY,
+            "appendonly yes\n",
+            False,
+            "found no AOF at its start, so it loaded nothing",
+        ),
+        (BEFORE + CLEAN_EXIT + BANNER + READY, "", False, 'logged no "DB loaded from"'),
+        (
+            BEFORE + CLEAN_EXIT + BANNER + LOADED,
+            "appendonly yes\n",
+            False,
+            'hasn\'t logged "Ready to accept connections"',
+        ),
+        # One that persists nothing loads nothing.
+        (
+            BEFORE + CLEAN_EXIT + BANNER + READY,
+            'save ""\n',
+            True,
+            "it persists nothing, so it loaded nothing",
+        ),
+        # Nothing from before it: the shutdown wasn't read.
+        (
+            BANNER + LOADED + READY,
+            "appendonly yes\n",
+            None,
+            "holds nothing from the process before it",
+        ),
+        ("", "appendonly yes\n", None, "holds no line from its main process, 414"),
+    ],
+    ids=[
+        "clean",
+        "killed",
+        "aof-lost",
+        "nothing-loaded",
+        "not-ready",
+        "persists-nothing",
+        "no-before",
+        "no-lines",
+    ],
+)
+def test_post_boot_reads_a_redis_from_its_own_log(host, log, conf, ok, said):
+    c = _redis_after_boot(host, log, conf)
+    assert c["ok"] is ok, c
+    assert said in c["evidence"]
+
+
+def test_post_boot_reads_a_redis_that_logs_to_the_journal_there(host):
+    c = _redis_after_boot(
+        host, BEFORE + CLEAN_EXIT + BANNER + LOADED + READY, journal=True
+    )
+    assert c["ok"] is True, c
+    assert "in redis-server.service's journal" in c["evidence"]
+
+
+def test_post_boot_starts_a_redis_run_at_its_banner_when_its_pid_comes_round(host):
+    # The PID before the boot was 414 too, and that run loaded its data:
+    # this one, from its banner on, loaded nothing.
+    before = (
+        BANNER + "414:M 12 Oct 2026 00:00:00.050 * DB loaded from disk: 0.001 seconds\n"
+    )
+    before += READY + CLEAN_EXIT.replace("309128:", "414:")
+    c = _redis_after_boot(host, before + BANNER + READY, conf="")
+    assert c["ok"] is False, c
+    assert 'logged no "DB loaded from"' in c["evidence"]
+
+
 def test_post_boot_reads_the_run_it_is_given(host):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
     host.write(f"{RUN}/reboot-chain.log", COPIED)

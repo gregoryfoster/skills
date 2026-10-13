@@ -66,6 +66,9 @@ The primitives these scripts reach a host through:
                             logfile, dir, dbfilename, save, appendonly, and
                             whether an aclfile or an include is there
   redis_persistence VAR     aof, rdb, none or unknown, from redis_conf
+  redis_restart_check UNIT  RL_OK (1, 0, or "" unread) and RL_WHY: a clean
+                            shutdown before, and a load and a ready after,
+                            from Redis's logfile or its unit's journal
   file_mode VAR PATH        permission bits as four octal digits, or empty
   file_mtime VAR PATH       modification time in epoch seconds, or empty
   file_owner VAR PATH       the owner's uid, or empty
@@ -680,8 +683,8 @@ qdrant_loss() {  # <url> <key-file> <the counts before>
 #   0 where the unit names a file root couldn't read.
 RC_CONF="" RC_PORT="" RC_BIND="" RC_SOCK="" RC_LOGFILE="" RC_DIR="" RC_DBFILENAME=""
 RC_SAVE="" RC_AOF="" RC_ACL=0 RC_INCLUDE=0 RC_READ=1
-# unit_show sets it by name.
-U_ExecStart=""
+# unit_show sets them by name.
+U_ExecStart="" U_MainPID=""
 _rc_unq() {  # <var> <value>: one pair of quotes off, as Redis reads it
   local _ru=$2
   case $_ru in
@@ -721,7 +724,7 @@ redis_conf() {  # <unit>
     done
   fi
   if [ -n "$RC_CONF" ]; then
-    capture _rf_t as_root cat -- "$RC_CONF"
+    capture _rf_t as_root cat -- "$P_ROOT$RC_CONF"
     if [ "$CAP_RC" -ne 0 ]; then RC_READ=0 _rf_t=""; fi
     while IFS= read -r _rf_l; do
       read -r _rf_k _rf_v _rf_w <<<"$_rf_l" || true
@@ -755,4 +758,92 @@ redis_persistence() {  # <var>
     _rp=rdb
   fi
   printf -v "$1" '%s' "$_rp"
+}
+
+# A Redis after a restart, from its own log (#380): the process before it
+# logged a clean shutdown, and its main process loaded what it persists and
+# is ready. Its logfile, read as root, or the unit's journal where the file
+# sets none: broker's logs to a file, so a journal-based check would read
+# an empty pass. A run starts at its main PID's banner, or at its first line
+# after another process's: a PID may come round again after a boot. The
+# process before it is the last main-process line ahead of that. Under
+# appendonly yes, "Creating AOF base file ... on server start" means it
+# found no AOF, so it loaded nothing; "keys loaded" counts the base alone,
+# not the incr, so it's no total (both measured on 7.0).
+# RL_OK 1, 0, or "" where it couldn't be read, with RL_WHY; RL_READY 1 once
+# it logged that it's ready.
+RL_OK="" RL_WHY="" RL_READY=0
+redis_restart_check() {  # <unit>
+  local _rl_pid="" _rl_src _rl_log _rl_p _rl_o _rl_s=0 _rl_l=0 _rl_c=0 _rl_prev=""
+  RL_OK="" RL_WHY="" RL_READY=0
+  redis_conf "$1"
+  redis_persistence _rl_p
+  if unit_show "$1" MainPID; then _rl_pid=$U_MainPID; fi
+  if ! is_int "$_rl_pid" || [ "$_rl_pid" -eq 0 ]; then
+    RL_OK=0 RL_WHY="$1 has no main process: it isn't running"
+    return 0
+  fi
+  if [ -n "$RC_LOGFILE" ]; then
+    case $RC_LOGFILE in
+      /*) ;;
+      *)
+        RL_WHY="its logfile, $RC_LOGFILE, is relative to a directory the file doesn't say: read it by hand"
+        return 0 ;;
+    esac
+    _rl_src=$RC_LOGFILE
+    capture _rl_log as_root tail -n 5000 -- "$P_ROOT$RC_LOGFILE"
+  else
+    _rl_src="$1's journal"
+    capture _rl_log as_root journalctl -u "$1" -o cat --no-pager -n 5000
+  fi
+  if [ "$CAP_RC" -ne 0 ]; then
+    RL_WHY="$_rl_src couldn't be read as root"
+    return 0
+  fi
+  _rl_o=$(printf '%s\n' "$_rl_log" | awk -v p="$_rl_pid" '
+    /^[0-9]+:[A-Z] / {
+      q = substr($0, 1, index($0, ":") - 1)
+      r = substr($0, index($0, ":") + 1, 1)
+      if (q == p && (cur != 1 || index($0, "Redis is starting"))) {
+        cur = 1; start = 1; loaded = 0; ready = 0; created = 0; prev = lastm
+      }
+      if (q == p) {
+        if (index($0, "DB loaded from")) loaded = 1
+        if (index($0, "Ready to accept connections")) ready = 1
+        if (index($0, "Creating AOF base file") && index($0, "on server start")) created = 1
+        if (r == "M") lastm = $0
+      } else if (r == "M") {
+        cur = 0; lastm = $0
+      }
+    }
+    END {
+      sub(/^[0-9]+:[A-Z] [0-9]+ [A-Za-z]+ [0-9]+ [0-9:.]+ . /, "", prev)
+      print start + 0, loaded + 0, ready + 0, created + 0
+      print prev
+    }') || _rl_o=""
+  read -r _rl_s _rl_l RL_READY _rl_c <<<"${_rl_o%%$'\n'*}" || true
+  case $_rl_o in *$'\n'*) _rl_prev=${_rl_o#*$'\n'} ;; esac
+  if [ "${_rl_s:-0}" != 1 ]; then
+    RL_WHY="$_rl_src holds no line from its main process, $_rl_pid: read where it logs by hand"
+    return 0
+  fi
+  RL_OK=0
+  if [ -n "$_rl_prev" ] && [[ $_rl_prev != *"ready to exit"* ]]; then
+    RL_WHY="the Redis before process $_rl_pid didn't log a clean shutdown: its last line in $_rl_src was \"$_rl_prev\""
+  elif [ "$_rl_c" = 1 ]; then
+    RL_WHY="process $_rl_pid found no AOF at its start, so it loaded nothing (\"Creating AOF base file ... on server start\" in $_rl_src): restore it from the recovery point (datastores.md)"
+  elif [ "$_rl_l" != 1 ] && { [ "$_rl_p" = aof ] || [ "$_rl_p" = rdb ]; }; then
+    RL_WHY="process $_rl_pid logged no \"DB loaded from\" in $_rl_src, though it persists by $_rl_p: it loaded nothing"
+  elif [ "$RL_READY" != 1 ]; then
+    RL_WHY="process $_rl_pid hasn't logged \"Ready to accept connections\" in $_rl_src"
+  elif [ -z "$_rl_prev" ]; then
+    RL_OK="" RL_WHY="process $_rl_pid loaded its data and is ready, but $_rl_src holds nothing from the process before it, so its shutdown wasn't read"
+  else
+    RL_OK=1
+    if [ "$_rl_p" = none ]; then
+      RL_WHY="the process before it logged a clean shutdown, and process $_rl_pid is ready; it persists nothing, so it loaded nothing"
+    else
+      RL_WHY="the process before it logged a clean shutdown (ready to exit), and process $_rl_pid loaded its data (DB loaded from) and is ready, in $_rl_src"
+    fi
+  fi
 }

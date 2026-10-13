@@ -1405,6 +1405,85 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
     assert host.holds() == []
 
 
+# --- Redis after a held step (#380) -------------------------------------------------
+# noble's redis-server postinst restarts it: its own log says whether the
+# process before shut down cleanly, and whether this one loaded its data.
+
+REDIS_LOG_BEFORE = (
+    "100:C 12 Oct 2026 00:00:00.000 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo\n"
+    "100:M 13 Oct 2026 04:17:26.829 # Redis is now ready to exit, bye bye...\n"
+    "414:C 13 Oct 2026 04:17:27.000 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo\n"
+)
+
+
+def _redis_held(host: Host, after: str, restarts: bool = True) -> Host:
+    """After a green bulk: a Redis the knob declares, logging to a file, and
+    an upgrade that restarts it, or doesn't."""
+    host.run()
+    host.knob(KNOB + "datastore redis redis-server\n")
+    (host.run_dir / "recovery-point").write_text("began 1\n")
+    log = host.tmp / "redis-server.log"
+    log.write_text(REDIS_LOG_BEFORE + after)
+    conf = host.tmp / "redis.conf"
+    conf.write_text(f"appendonly yes\nlogfile {log}\n")
+    s = host.state
+    host.cases["systemctl"].insert(
+        0,
+        (
+            "show*-- redis-server.service",
+            "",
+            0,
+            "",
+            f'if [ -e "{s}/upgraded" ]; then t=@200; else t=@100; fi; '
+            f'printf "ActiveEnterTimestamp=%s\\nMainPID=414\\n'
+            f'ExecStart={{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} ; }}\\n" "$t"; exit 0',
+        ),
+    )
+    if restarts:
+        host.uu("All upgrades installed\n", before=f'touch "{s}/upgraded"; ')
+    return host
+
+
+LOADED_READY = (
+    "414:M 13 Oct 2026 04:17:27.300 * DB loaded from base file appendonly.aof.3.base.rdb: 0.014 seconds\n"
+    "414:M 13 Oct 2026 04:17:27.346 * Ready to accept connections tcp\n"
+)
+
+
+def test_a_held_step_that_restarts_a_redis_reads_its_log(host):
+    out = _redis_held(host, LOADED_READY).run(step="postgres")
+    [r] = out["redis"]
+    assert (r["unit"], r["restarted"], r["ok"], r["attempts"]) == (
+        "redis-server.service",
+        True,
+        True,
+        1,
+    )
+    assert "logged a clean shutdown" in r["evidence"]
+    assert out["verdict"]["ok"] is True
+    # The dry run, the health checks, then its log, as long again.
+    assert out["gate"]["span"]["expected_seconds"] == 540 + 300 + 300
+
+
+def test_a_held_step_whose_redis_found_no_aof_fails(host):
+    lost = (
+        "414:M 13 Oct 2026 04:17:27.300 * Creating AOF base file appendonly.aof.1.base.rdb on server start\n"
+        "414:M 13 Oct 2026 04:17:27.346 * Ready to accept connections tcp\n"
+    )
+    out = _redis_held(host, lost).run(step="postgres", rc=1)
+    assert any(
+        "redis-server.service after the step: process 414 found no AOF at its start"
+        in w
+        for w in out["verdict"]["why"]
+    ), out["verdict"]
+
+
+def test_a_held_step_that_didnt_restart_a_redis_doesnt_read_its_log(host):
+    out = _redis_held(host, "", restarts=False).run(step="postgres")
+    assert out["redis"] == [{"unit": "redis-server.service", "restarted": False}]
+    assert out["verdict"]["ok"] is True
+
+
 # --- Qdrant (#367) ------------------------------------------------------------------
 
 QURL = "https://q.example:6333"

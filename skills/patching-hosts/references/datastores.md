@@ -36,6 +36,14 @@ Stage the RDB file as the AOF's base instead, with Redis stopped. Under multi-pa
 
 Measured on noble's 7.0: a snapshot copied over `dump.rdb` came up with the AOF's keys, and the same file staged as the base came up with its own. Or use the host's own restore procedure, as broker's `docs/RECOVERY.md` is. The record's `persistence redis <unit> aof` says when this applies, and so does `recovery-point.sh`'s `next`. A backup line that ships the RDB file carries the same caveat.
 
+### After a restart
+
+`probe.sh --post-boot` reads each Redis from its own log, and so does a held step that restarted one (noble's `redis-server` postinst does). That log is the `logfile` its file sets, read as root, or the unit's journal where it sets none. broker's logs to a file, so a check of the journal alone would read an empty pass (#380). Its run starts at its main PID's banner, or its first line after another process's, since a PID can come round again after a boot. The check wants:
+- **the process before it** to have ended on `Redis is now ready to exit, bye bye...`, a clean shutdown;
+- **this one** to have logged `DB loaded from …` where it persists anything, then `Ready to accept connections`.
+
+Under `appendonly yes`, `Creating AOF base file … on server start` means it found no AOF, so it loaded nothing: the check fails, and the recovery point is what restores it. `keys loaded: <N>` counts the RDB base alone, not the incr's keys, so it's no total (measured on 7.0). A held step asks once a second, for up to `--health-within` seconds, until it logs that it's ready.
+
 ## Qdrant
 
 ### The recovery point

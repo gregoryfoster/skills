@@ -3679,6 +3679,24 @@ check_qdrant() {
   done
 }
 
+# Each Redis from its own log (#380): a clean shutdown before the boot, and
+# a load and a ready after it.
+check_redis() {
+  local r u
+  local -a f=()
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    [ "${f[0]}" = redis ] || continue
+    unit_name u "${f[1]}"
+    if [ "$P_LIVE" -ne 1 ] || [ "$P_PRIV" = none ]; then
+      check "redis:$u" "" "its log needs a running system, read as root"
+      continue
+    fi
+    redis_restart_check "$u"
+    check "redis:$u" "$RL_OK" "$RL_WHY"
+  done
+}
+
 check_journal_record() {
   local out r
   if [ "$JOURNAL_VERDICT" = persistent ]; then
@@ -3805,6 +3823,7 @@ read_post_boot() {
     check needrestart "" "needrestart couldn't be run as root"
   fi
   check_qdrant
+  check_redis
   read_reboot post-boot
   check_tailscale_auto_update
   if is_int "$REBOOT_DEL"; then
