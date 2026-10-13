@@ -82,15 +82,15 @@ It refuses (exit 3) for each reason under refused, among them: without
 on PATH (sha256sum and systemctl, and pg_lsclusters, pg_dump, pg_dumpall,
 pg_restore and runuser for Postgres, redis-cli and ss for Redis, curl,
 docker and tar for Qdrant); when the knob declares no datastore; when an
-existing --run isn't mode 0700; once the run's bulk has started; when --personal-data names a Postgres unit, or
-nothing the knob declares; when a cluster or a database can't be found, a
-cluster isn't online or its port can't be read, or a Redis to dump isn't
-the process ss finds listening at its address, can't say where its RDB
-file is, refuses the login, or has none to make (an aclfile, and no user
-and key file on its datastore line), or its key file can't be read as
-root; when a Qdrant's container isn't running, its storage's size
-can't be read, its key file can't be read, or its collections can't be
-listed; when a backup line names a datastore no datastore line
+existing --run isn't mode 0700; once the run's bulk has started; when
+--personal-data names a Postgres unit, or nothing the knob declares; when a
+cluster or a database can't be found, a cluster isn't online or its port
+can't be read, or a Redis to dump isn't the process ss finds listening at
+its address, can't say where its RDB file is, refuses the login, or has none
+to make (an aclfile, and no user and key file on its datastore line), or its
+key file can't be read as root; when a Qdrant's container isn't running, its
+storage's size can't be read, its key file can't be read, or its collections
+can't be listed; when a backup line names a datastore no datastore line
 declares; and when the run's filesystem has less free space than the data it
 would dump, or its free space can't be read. A Qdrant snapshot is written
 under Docker's root first, then copied out: on one filesystem it counts

@@ -56,17 +56,18 @@ It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host; without root, or as root with no invoking
 user while the knob has inflight or health commands (run it through sudo
 from your own account); when systemd-run, systemctl, journalctl, pgrep or
-runuser isn't on PATH, or ss with a Redis datastore; when --run doesn't exist or isn't mode 0700; when the
-run aborted at a step; while the run's chain is scheduled or running, or
-once one ran and didn't end in ABORT (an aborted one stopped nothing, and
-may go again); when the span isn't wholly inside one window or meets a
-quiet range; while a package manager runs or an inflight command prints
-anything but 0; when a Postgres datastore's cluster can't be found, isn't
-online, or its port can't be read, so a stopped cluster blocks the reboot;
-when a running Redis's unit isn't the process ss finds listening at its
-address, or the chain must SAVE it and has no login to (an aclfile, and no
-user and key file on its datastore line), or its key file can't be read as
-root; and when a Qdrant's unit isn't active or its container isn't running.
+runuser isn't on PATH, or ss with a Redis datastore; when --run doesn't
+exist or isn't mode 0700; when the run aborted at a step; while the run's
+chain is scheduled or running, or once one ran and didn't end in ABORT (an
+aborted one stopped nothing, and may go again); when the span isn't wholly
+inside one window or meets a quiet range; while a package manager runs or an
+inflight command prints anything but 0; when a Postgres datastore's cluster
+can't be found, isn't online, or its port can't be read, so a stopped
+cluster blocks the reboot; when a running Redis's unit isn't the process ss
+finds listening at its address, or the chain must SAVE it and has no login
+to (an aclfile, and no user and key file on its datastore line), or its key
+file can't be read as root; and when a Qdrant's unit isn't active or its
+container isn't running.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 (its lines), launched, tmp (the tmpfiles rule for /tmp, and whether the
