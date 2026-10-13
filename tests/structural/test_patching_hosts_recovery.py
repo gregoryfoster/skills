@@ -773,6 +773,15 @@ def test_a_command_the_user_lacks_is_named(tmp_path):
     assert not (host.run_dir / "recovery-point").exists()
 
 
+def test_a_redis_without_ss_on_path_is_refused_up_front(tmp_path):
+    # CR 239: ownership is read from the socket.
+    host = _redis(_ready(Host(tmp_path)))
+    host.absent("ss")
+    out = host.recover(rc=3)
+    assert "ss isn't on PATH, and the knob declares a Redis datastore" in out["refused"]
+    assert not [a for _, a, _ in host.calls("redis-cli") if a.endswith("BGSAVE")]
+
+
 # --- the backup regime ------------------------------------------------------------
 
 

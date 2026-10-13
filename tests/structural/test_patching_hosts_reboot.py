@@ -804,6 +804,13 @@ def test_redis_is_saved_first_only_where_its_stop_wouldnt_persist_it(
     assert "pw-in-the-file" not in (host.run_dir / "reboot-chain.sh").read_text()
 
 
+def test_a_redis_without_ss_on_path_is_refused_up_front(host):
+    # CR 239: ownership is read from the socket.
+    host.absent("ss")
+    out = host.reboot(rc=3)
+    assert "ss isn't on PATH, and the knob declares a Redis datastore" in out["refused"]
+
+
 # --- an ACL'd Redis (#379) ---------------------------------------------------------
 # broker's Redis runs an aclfile with default off, and its requirepass is a
 # password nobody holds: a login as default is refused, and each attempt

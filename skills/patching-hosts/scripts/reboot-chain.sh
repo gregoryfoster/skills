@@ -56,7 +56,7 @@ It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host; without root, or as root with no invoking
 user while the knob has inflight or health commands (run it through sudo
 from your own account); when systemd-run, systemctl, journalctl, pgrep or
-runuser isn't on PATH; when --run doesn't exist or isn't mode 0700; when the
+runuser isn't on PATH, or ss with a Redis datastore; when --run doesn't exist or isn't mode 0700; when the
 run aborted at a step; while the run's chain is scheduled or running, or
 once one ran and didn't end in ABORT (an aborted one stopped nothing, and
 may go again); when the span isn't wholly inside one window or meets a
@@ -181,7 +181,8 @@ J_GATE="" J_LAUNCHED=null
 NEXT=()
 
 gate_host() {
-  local why t
+  local why t r
+  local -a f=()
   [ "$approve" -eq 1 ] ||
     refuse "no --approve: the owner approves the reboot, 3(b), in the host's own session. The chain is below, every command it would run"
   for why in ${KNOB_REPORT_ONLY_WHY[@]+"${KNOB_REPORT_ONLY_WHY[@]}"}; do
@@ -192,6 +193,14 @@ gate_host() {
   fi
   for t in systemd-run systemctl journalctl pgrep runuser; do
     have "$t" || refuse "$t isn't on PATH"
+  done
+  # ss reads which process listens at a Redis's address (#379, CR 239).
+  for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    if [ "${f[0]}" = redis ]; then
+      have ss || refuse "ss isn't on PATH, and the knob declares a Redis datastore"
+      break
+    fi
   done
 }
 

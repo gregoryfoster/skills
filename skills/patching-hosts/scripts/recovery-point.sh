@@ -80,10 +80,9 @@ a usage error.
 It refuses (exit 3) for each reason under refused, among them: without
 --approve; on a report-only host; without root; when a tool it needs isn't
 on PATH (sha256sum and systemctl, and pg_lsclusters, pg_dump, pg_dumpall,
-pg_restore and runuser for Postgres, redis-cli for Redis, curl, docker and
-tar for Qdrant); when the knob
-declares no datastore; when an existing --run isn't mode 0700; once the
-run's bulk has started; when --personal-data names a Postgres unit, or
+pg_restore and runuser for Postgres, redis-cli and ss for Redis, curl,
+docker and tar for Qdrant); when the knob declares no datastore; when an
+existing --run isn't mode 0700; once the run's bulk has started; when --personal-data names a Postgres unit, or
 nothing the knob declares; when a cluster or a database can't be found, a
 cluster isn't online or its port can't be read, or a Redis to dump isn't
 the process ss finds listening at its address, can't say where its RDB
@@ -280,7 +279,11 @@ gate_host() {
         for t in curl docker tar; do
           have "$t" || refuse "$t isn't on PATH, and the knob declares a Qdrant datastore"
         done ;;
-      *) have redis-cli || refuse "redis-cli isn't on PATH, and the knob declares a Redis datastore" ;;
+      *)
+        # ss reads which process listens at its address (#379, CR 239).
+        for t in redis-cli ss; do
+          have "$t" || refuse "$t isn't on PATH, and the knob declares a Redis datastore"
+        done ;;
     esac
   done
   # A Postgres datastore is flagged by database, as its dumps are; a Redis
