@@ -8,6 +8,7 @@ usage() {
 Usage: bash recovery-point.sh --retain-until YYYY-MM-DD [--approve] [--run DIR]
                               [--personal-data NAME]... [--dump]
                               [--redis-within SECONDS] [--qdrant-within SECONDS]
+                              [--rdb-within SECONDS]
                               [--config FILE] [--host NAME] [--today YYYY-MM-DD]
 
 Takes the recovery point in references/run.md section 2 for each datastore
@@ -18,7 +19,10 @@ directory. Until every check passes it changes nothing, and prints why.
   whose last run succeeded is started, and must succeed again. It writes off
   the node itself, so it stands in for the dumps of the datastores its
   backup line names, and no others: each datastore no usable unit covers is
-  dumped. --dump takes dumps of them all instead.
+  dumped. --dump takes dumps of them all instead. A Redis a backup unit
+  covers is saved first, since the unit ships its RDB file as it stands:
+  BGSAVE and the wait, where it can log in, or else its RDB file must have
+  been written within --rdb-within of the run's start (#382).
 
   Otherwise a dump of each declared Postgres database (pg_dump -Fc) and of
   each Redis (BGSAVE, then a copy of its RDB file), written as root at mode
@@ -59,6 +63,9 @@ Options:
   --dump                   dump, even where a backup regime would stand in
   --redis-within SECONDS   how long a BGSAVE may take (default 300)
   --qdrant-within SECONDS  how long a Qdrant snapshot may take (default 1800)
+  --rdb-within SECONDS     how old the RDB file of a Redis a backup unit
+                           ships may be, where it can't be saved first for
+                           want of a login (default 600)
   --config FILE            the knob (default: .skills/patching-hosts at the
                            root of the repo around the current directory,
                            or in the current directory outside a repo)
@@ -118,11 +125,11 @@ Exit codes:
 USAGE
 }
 
-approve=0 run="" retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800
+approve=0 run="" retain="" config="" host="" today="" force_dump=0 redis_within=300 qdrant_within=1800 rdb_within=600
 personal=()
 while [ "$#" -gt 0 ]; do
   case $1 in
-    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --config | --host | --today)
+    --run | --retain-until | --personal-data | --redis-within | --qdrant-within | --rdb-within | --config | --host | --today)
       [ "$#" -ge 2 ] || { echo "ERROR $1 needs a value" >&2; exit 2; }
       case $1 in
         --run) run=$2 ;;
@@ -130,6 +137,7 @@ while [ "$#" -gt 0 ]; do
         --personal-data) personal+=("$2") ;;
         --redis-within) redis_within=$2 ;;
         --qdrant-within) qdrant_within=$2 ;;
+        --rdb-within) rdb_within=$2 ;;
         --config) config=$2 ;;
         --host) host=$2 ;;
         --today) today=$2 ;;
@@ -166,6 +174,9 @@ case $redis_within in
 esac
 case $qdrant_within in
   '' | *[!0-9]* | 0) echo "ERROR --qdrant-within takes a number of seconds, 1 or more" >&2; exit 2 ;;
+esac
+case $rdb_within in
+  '' | *[!0-9]* | 0) echo "ERROR --rdb-within takes a number of seconds, 1 or more" >&2; exit 2 ;;
 esac
 
 # --- shared libraries ---------------------------------------------------------
@@ -231,7 +242,7 @@ stamp=${stamp//[-:]/}
 # --- the gate -------------------------------------------------------------------
 # No function here ends on a bare `[ … ] && …`: a function that returns
 # non-zero stops the script under errexit, wherever it is called plainly.
-J_GATE="" J_BACKUP=null J_DUMPS=null J_LOCAL=null J_VERDICT=null BACKUP_A=""
+J_GATE="" J_BACKUP=null J_DUMPS=null J_LOCAL=null J_VERDICT=null BACKUP_A="" FRESH_A=""
 NEXT=()
 
 # The datastores, one entry each: "postgres <unit> <port> <database>" per
@@ -647,8 +658,74 @@ file_sha() {  # <var> <path>
 }
 sha_re='^[0-9a-f]{64}$'
 
+# A Redis a backup unit covers, saved first: the unit ships its RDB file as
+# it stands, and Redis rewrites it only at a save point, so without one it
+# would ship an old snapshot, attested as this run's (#382: broker's was 44
+# minutes old). With a login, BGSAVE and the wait, as a dump takes; without
+# one, the file's own time must be within --rdb-within of the run's start.
+fresh_redis() {  # <unit> <user> <key file>
+  local u=$1 o="" rdb="" t="" iso how rc=0
+  BS_ST=""
+  redis_conn "$u" "$2" "$3"
+  jadds o datastore "redis $u"
+  if [ "$REDIS_LOGIN" != none ]; then
+    how="bgsave"
+    redis_owned "$u" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      fail "datastore redis $u, which a backup unit ships: $REDIS_WHY"
+    elif ! redis_key_ok; then
+      fail "datastore redis $u: $REDIS_WHY"
+    else
+      echo "recovery-point: BGSAVE on $u, so the backup ships a fresh snapshot" >&2
+      bgsave_wait "$u"
+      [ -z "$BS_WHY" ] || fail "$BS_WHY, so the backup would ship an old snapshot"
+    fi
+    jaddsn o bgsave "${BS_ST:-}"
+  else
+    how="file"
+    case $RC_DIR in /*) rdb=$RC_DIR/$RC_DBFILENAME ;; esac
+    if [ -n "$rdb" ]; then
+      capture t as_root stat -c %Y -- "$rdb"
+      is_int "$t" || capture t as_root stat -f %m -- "$rdb"
+      is_int "$t" || t=""
+    fi
+    iso_utc iso "$t"
+    jaddsn o rdb "$rdb"
+    jaddsn o rdb_written "$iso"
+    if [ -z "$rdb" ]; then
+      fail "datastore redis $u: its file sets no absolute dir, so the RDB file its backup ships can't be found, and with no login it can't be saved first: give its datastore line a user and key file"
+    elif [ -z "$t" ]; then
+      fail "datastore redis $u: $rdb, the RDB file its backup ships, couldn't be read as root"
+    elif [ "$t" -lt $((P_NOW - rdb_within)) ]; then
+      fail "datastore redis $u: $rdb was last written $iso, more than $rdb_within s before this run began, and its backup ships it as it stands. With no login to save it first, SAVE it by hand as a user that may, then take the recovery point again; or give its datastore line a user and key file"
+    fi
+  fi
+  jadds o how "$how"
+  jpush FRESH_A "{$o}"
+}
+
 take_backup() {  # <service> <datastore units it covers>
-  local o="" s x iso ok=0 w BACKUP_SVC=$1
+  local o="" s x iso ok=0 w BACKUP_SVC=$1 d r u ru rk
+  local -a f=()
+  FRESH_A=""
+  for d in $2; do
+    for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
+      IFS=$KNOB_US read -r -a f <<<"$r"
+      [ "${f[0]}" = redis ] || continue
+      unit_name u "${f[1]}"
+      [ "$u" = "$d" ] || continue
+      read -r ru rk <<<"${f[2]:-}" || true
+      fresh_redis "$u" "$ru" "$rk"
+    done
+  done
+  if [ -n "$FRESH_A" ]; then jadd o saved_first "[$FRESH_A]"; fi
+  # Nothing is started on an old snapshot.
+  if [ "${#FAILED[@]}" -gt 0 ]; then
+    jadds o unit "$BACKUP_SVC"
+    jaddb o ok 0
+    jpush BACKUP_A "{$o}"
+    return 0
+  fi
   echo "recovery-point: starting $BACKUP_SVC, the host's own backup regime" >&2
   if ! as_root systemctl start -- "$BACKUP_SVC"; then
     fail "systemctl start $BACKUP_SVC failed: read its journal. Run again with --dump to take dumps instead"
@@ -771,48 +848,69 @@ dump_globals() {  # <unit> <port>
 # shellcheck disable=SC2016
 copy_root() { as_root sh -c 'umask 077; cat -- "$1" >"$2"' sh "$1" "$2"; }
 
-dump_redis() {  # <unit> <rdb> <user or -> <key file or ->
-  local u=$1 rdb=$2 path t0 now="" out line st="" busy="" crc="" rrc="" mode sha="" e="" ok=0 w0 n=0 bg="" no=""
-  path=$run/${u%.service}-$stamp.rdb
-  redis_conn "$u" "${3#-}" "${4#-}"
-  echo "recovery-point: BGSAVE on $u, then a copy into $path" >&2
-  w0=$SECONDS
+# A BGSAVE at REDIS_ARGS, and the wait for it: BS_ST is ok once LASTSAVE
+# moves past the time it was asked and the save reports ok, and BS_WHY says
+# why not otherwise. A refused login is tried once: each one is an ACL LOG
+# entry (#379).
+BS_ST="" BS_WHY=""
+bgsave_wait() {  # <unit>
+  local u=$1 t0 now="" out line busy="" w0=$SECONDS bg=""
+  BS_ST="" BS_WHY=""
   capture out redis_cli LASTSAVE
   t0=$out
   is_int "$t0" || t0=""
   line=${out:-${CAP_ERR:-no reply}}
-  # A refused login is tried once: each one is an ACL LOG entry.
   if redis_refused "$u" LASTSAVE "$out"; then
-    no=$REDIS_WHY t0=""
-  else
-    capture out redis_cli BGSAVE
-    if redis_refused "$u" BGSAVE "$out"; then no=$REDIS_WHY; fi
-    # A reply that neither starts a save nor joins one means none is coming:
-    # it fails now, with Redis's own words, instead of after the wait.
-    case $out in
-      *"Background saving started"* | *"already in progress"* | *scheduled*) ;;
-      *)
-        bg=${out:-${CAP_ERR:-no reply}}
-        bg=${bg%%$'\n'*}
-        st=refused ;;
-    esac
+    BS_WHY="datastore redis $u: $REDIS_WHY"
+    return 0
   fi
-  while [ -n "$t0" ] && [ -z "$bg" ]; do
+  if [ -z "$t0" ]; then
+    BS_WHY="redis-cli ${REDIS_ARGS[*]} LASTSAVE answered \"$line\", not a time, so a BGSAVE couldn't be told from an old save"
+    return 0
+  fi
+  capture out redis_cli BGSAVE
+  if redis_refused "$u" BGSAVE "$out"; then
+    BS_ST=refused BS_WHY="datastore redis $u: $REDIS_WHY"
+    return 0
+  fi
+  # A reply that neither starts a save nor joins one means none is coming:
+  # it fails now, with Redis's own words, instead of after the wait.
+  case $out in
+    *"Background saving started"* | *"already in progress"* | *scheduled*) ;;
+    *)
+      bg=${out:-${CAP_ERR:-no reply}}
+      BS_ST=refused BS_WHY="redis-cli ${REDIS_ARGS[*]} BGSAVE answered \"${bg%%$'\n'*}\": Redis started no save"
+      return 0 ;;
+  esac
+  while :; do
     capture out redis_cli INFO persistence
-    busy="" st="" now=""
+    busy="" BS_ST="" now=""
     while IFS= read -r line; do
       line=${line%$'\r'}
       case $line in
         rdb_bgsave_in_progress:*) busy=${line#*:} ;;
-        rdb_last_bgsave_status:*) st=${line#*:} ;;
+        rdb_last_bgsave_status:*) BS_ST=${line#*:} ;;
         rdb_last_save_time:*) now=${line#*:} ;;
       esac
     done <<<"$out"
     if [ "$busy" = 0 ] && is_int "$now" && [ "$now" -gt "$t0" ]; then break; fi
-    if [ $((SECONDS - w0)) -ge "$redis_within" ]; then st=timeout; break; fi
-    n=$((n + 1))
+    if [ $((SECONDS - w0)) -ge "$redis_within" ]; then BS_ST=timeout; break; fi
     sleep 1
   done
+  if [ "$BS_ST" != ok ]; then
+    BS_WHY="the BGSAVE on $u didn't end ok (${BS_ST:-unknown}) within $redis_within s"
+  fi
+}
+
+# BGSAVE, then a copy of the file it wrote.
+dump_redis() {  # <unit> <rdb> <user or -> <key file or ->
+  local u=$1 rdb=$2 path st crc="" rrc="" mode sha="" e="" ok=0 w0
+  path=$run/${u%.service}-$stamp.rdb
+  redis_conn "$u" "${3#-}" "${4#-}"
+  echo "recovery-point: BGSAVE on $u, then a copy into $path" >&2
+  w0=$SECONDS
+  bgsave_wait "$u"
+  st=$BS_ST
   if [ "$st" = ok ]; then
     crc=0
     copy_root "$rdb" "$path" || crc=$?
@@ -831,14 +929,8 @@ dump_redis() {  # <unit> <rdb> <user or -> <key file or ->
   jaddsn e mode "$mode"
   jaddsn e sha256 "$sha"
   jaddn e seconds "$((SECONDS - w0))"
-  if [ -n "$no" ]; then
-    fail "datastore redis $u: $no"
-  elif [ -z "$t0" ]; then
-    fail "redis-cli ${REDIS_ARGS[*]} LASTSAVE answered \"$line\", not a time, so a BGSAVE couldn't be told from an old save"
-  elif [ -n "$bg" ]; then
-    fail "redis-cli ${REDIS_ARGS[*]} BGSAVE answered \"$bg\": Redis started no save"
-  elif [ "$st" != ok ]; then
-    fail "the BGSAVE on $u didn't end ok (${st:-unknown}) within $redis_within s"
+  if [ -n "$BS_WHY" ]; then
+    fail "$BS_WHY"
   elif [ "$crc" != 0 ]; then
     fail "the copy of $rdb exited $crc"
   elif [ -n "$rrc" ] && [ "$rrc" != 0 ]; then

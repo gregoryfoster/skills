@@ -49,6 +49,7 @@ by a stub, through the apply tests' host.
 import hashlib
 import io
 import json
+import os
 import subprocess
 import tarfile
 
@@ -800,6 +801,99 @@ def test_a_backup_unit_stands_in_only_for_the_datastores_it_names(host):
     assert "backup app-backup.service postgresql@16-main.service\n" in rec
     assert "dump redis redis-server.service " in rec
     assert "dump postgres" not in rec
+
+
+# --- a Redis a backup unit ships (#382) ------------------------------------------
+# broker's backup ships dump.rdb as it stands, and Redis rewrites it only at
+# a save point: without a save first, the recovery point would have been a
+# 44-minute-old snapshot, attested as this run's.
+
+
+def _shipped(
+    host: Host, conf: str = "", line: str = "datastore redis redis-server\n"
+) -> Host:
+    _redis(host, conf=conf)
+    _regime(host)
+    host.knob(KNOB + line + "backup app-backup.timer redis-server\n")
+    return host
+
+
+def _starts(host: Host) -> list[str]:
+    return [a for _, a, _ in host.calls("systemctl") if a.startswith("start ")]
+
+
+def test_a_redis_a_backup_ships_is_saved_first(host):
+    out = _shipped(host).recover()
+    [b] = out["backup"]
+    assert b["ok"] is True
+    assert b["saved_first"] == [
+        {"datastore": "redis redis-server.service", "bgsave": "ok", "how": "bgsave"}
+    ]
+    calls = [(n, a) for n, a, _ in host.calls() if n in ("redis-cli", "systemctl")]
+    bgsave = calls.index(("redis-cli", "-h 127.0.0.1 -p 6379 BGSAVE"))
+    assert bgsave < calls.index(("systemctl", "start -- app-backup.service"))
+    assert out["dumps"] is None
+
+
+def test_a_save_that_fails_starts_no_backup(host):
+    _shipped(host)
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if "INFO persistence" not in c[0]
+    ]
+    host.on("redis-cli", "* INFO persistence", "rdb_bgsave_in_progress:1\r\n")
+    out = host.recover("--redis-within", "1", rc=1)
+    assert any(
+        "didn't end ok (timeout) within 1 s, so the backup would ship an old snapshot"
+        in w
+        for w in out["verdict"]["why"]
+    ), out["verdict"]
+    assert _starts(host) == []
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+def _rdb_age(host: Host, seconds: int) -> None:
+    rdb = host.tmp / "redis" / "dump.rdb"
+    os.utime(rdb, (host.clock - seconds, host.clock - seconds))
+
+
+@pytest.mark.parametrize(
+    "age, ok", [(120, True), (3600, False)], ids=["fresh", "stale"]
+)
+def test_with_no_login_the_rdb_files_own_time_must_be_recent(host, age, ok):
+    _shipped(host, conf=ACL_CONF + f"dir {host.tmp / 'redis'}\n")
+    _rdb_age(host, age)
+    out = host.recover(rc=0 if ok else 1)
+    # No login is tried, so nothing reaches ACL LOG.
+    assert host.calls("redis-cli") == []
+    [b] = out["backup"]
+    [f] = b["saved_first"]
+    assert (f["how"], f["rdb"]) == ("file", f"{host.tmp / 'redis'}/dump.rdb")
+    if ok:
+        assert b["ok"] is True
+        assert _starts(host) == ["start -- app-backup.service"]
+    else:
+        assert any(
+            "more than 600 s before this run began, and its backup ships it as it stands"
+            in w
+            and "SAVE it by hand" in w
+            for w in out["verdict"]["why"]
+        ), out["verdict"]
+        assert _starts(host) == []
+
+
+def test_with_no_login_and_no_dir_the_rdb_file_cant_be_found(host):
+    _shipped(host, conf=ACL_CONF)
+    out = host.recover(rc=1)
+    assert any("sets no absolute dir" in w for w in out["verdict"]["why"]), out[
+        "verdict"
+    ]
+    assert _starts(host) == []
+
+
+def test_rdb_within_bounds_the_age_it_takes(host):
+    _shipped(host, conf=ACL_CONF + f"dir {host.tmp / 'redis'}\n")
+    _rdb_age(host, 3600)
+    assert host.recover("--rdb-within", "7200")["backup"][0]["ok"] is True
 
 
 @pytest.mark.parametrize(

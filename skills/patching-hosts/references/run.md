@@ -37,6 +37,7 @@ $nrconf{restart} = 'l';
 Every host records its before-versions (below). A host that declares a `datastore` also needs a dump that has left the node before the apply. A host with none, such as a pure bus worker, has nothing to dump. `recovery-point.sh --approve --retain-until <date>` takes it, as below, and writes the record the bulk reads. Like a step, it takes minutes: run it in the background.
 
 - **Prefer the host's own backup regime** when one exists and succeeded recently, for the datastores it covers: its `backup` line names them, and the rest are dumped. Start it by hand, then confirm the new object, its verification and its check-in (CannObserv/watcher#331).
+  - **A Redis it covers is saved first.** A backup that ships the RDB file ships it as it stands, and Redis rewrites the file only at a save point: broker's was 44 minutes old (#382). `recovery-point.sh` takes a `BGSAVE` and waits for it, as a dump does, where it can log in. Where it can't (an `aclfile`, and no user and key file on the line), it reads the file's own time instead, and refuses one written more than `--rdb-within` (600 s) before the run began. Then `SAVE` by hand, as a user that may, and take the recovery point again.
 - **Otherwise, dump each data store as root**, mode 600 from creation. A `>` from the session shell can't write to `/var/backups` (CannObserv/address-validator#235):
 
   ```
