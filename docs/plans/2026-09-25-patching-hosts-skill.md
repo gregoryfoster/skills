@@ -997,6 +997,96 @@ base image, or an owner-approved remedy the profile documents.
     (CannObserv/notifier#113): no known vulnerabilities in 63 packages, and
     in 33 for its `clients/python` lock, which no unit runs from.
 
+6h. **An ACL'd Redis, and broker's other rough edges (#379 to #385).**
+    broker's run (CannObserv/broker#67) was the first against a Redis data
+    store. Its Redis runs an `aclfile` with `default` off, and `requirepass`
+    is a password nobody holds. So `redis_owned` logged in as `default`, got
+    WRONGPASS, read the `NOAUTH` that followed as "reaches no Redis", and
+    refused. The reboot chain couldn't run, and the owner ran its steps by
+    hand. Every failed login also left an `ACL LOG` entry the host had to
+    attribute. Decided with the owner 2026-10-13:
+    - **Hybrid authentication (#379).** The scripts log in only for a
+      command that needs a login, and then as a user the knob names.
+      - *Ownership without a login:* root reads the listening socket's
+        processes (`ss -Hltnp` for the bound address and port, `ss -Hlxp`
+        for a socket path). The unit's `MainPID` must be among them, so a
+        second process on the socket doesn't matter. No credential, no
+        `ACL LOG` entry.
+        `ss` missing or unreadable refuses, as an unread port does today.
+      - *Persistence from the file:* `save` and `appendonly` are read from
+        `redis.conf` as root, as `port` and `bind` already are. The chain
+        skips its `SAVE` where either is set, since the stop then persists
+        (an AOF is fsynced at shutdown). Only a Redis with neither needs a
+        login there.
+      - *A credential where one is needed:* `datastore redis <unit>
+        [<user> <key-file>]`. The key file is root-only, as Qdrant's is, or
+        a `systemd-creds` file under `/etc/credstore.encrypted/`, decrypted
+        by root. Either way the password goes into `REDISCLI_AUTH` inside
+        root's sh, never argv, never the knob; the user goes to `--user`.
+        It's used by the dump path (`LASTSAVE`, `BGSAVE`, `INFO
+        persistence`, `CONFIG GET dir`/`dbfilename`), the chain's `SAVE`
+        and #382's save.
+      - *`requirepass` stays the fallback* where the line names no user,
+        **except under `aclfile`**, where it isn't authoritative: there the
+        scripts never try it, so they leave nothing in `ACL LOG`.
+      - *Refusals say which:* `NOAUTH`, `WRONGPASS` or `NOPERM` is "Redis
+        refused the login as `<user>`: give its datastore line a user and
+        key file, or cover it with a backup line", never "reaches no Redis".
+        A command that needs a login, with none usable, refuses before it
+        runs. The probe's unauthenticated `INFO` says "needs a login", not
+        "a password?".
+    - **A fresh snapshot behind a backup line (#382).** Before starting a
+      `backup` unit that covers a Redis, the recovery point saves it:
+      `BGSAVE` and wait, as the dump path does, when it can log in. When it
+      can't, it reads the RDB file's mtime (`dir`/`dbfilename` from the
+      file, stat as root) and refuses one older than `began`, telling the
+      operator to `SAVE` first or add a credential.
+    - **What a Redis restore takes under AOF (#381).** The record gains
+      `persistence redis <unit> aof|rdb`, beside each dump or backup line.
+      run.md §2 says that under `appendonly yes` a restored RDB is ignored
+      unless it's staged as the AOF's base: a new
+      `appendonly.aof.<n>.base.rdb`, and a manifest naming it with an empty
+      incr (7.0+), or the host's own restore procedure.
+    - **A Redis check after a restart (#380).** `--post-boot --run`, and a
+      held `redis` step that restarted the unit, read Redis's log: its
+      `logfile` from the conf, as root, or the unit's journal where that's
+      empty or `""`. They want the old process's `ready to exit` and, for
+      the current `MainPID`'s lines, `DB loaded from` (or `Done loading
+      RDB`) and `Ready to accept connections`. Under `appendonly yes`,
+      `Creating AOF base file ... on server start` means it loaded nothing:
+      a failed check where the recovery point recorded keys (from `INFO
+      keyspace`, when it could log in), and otherwise a check by hand, as
+      for Qdrant.
+    - **A held step's version against the dry run's (#383).** The dry run
+      records each held group's candidate version from its simulation. The
+      bulk records them again after its list refresh, and each held step
+      records what it installed (`dpkg-query`). A difference from the dry
+      run is a `version-moved` line in the verdict before approval 3(a),
+      never a refusal.
+    - **The knob (#384).**
+      - `depends <datastore unit> <unit>`: a unit the data store needs up
+        first (broker's Redis binds the tailnet address, so it needs
+        `tailscaled`). The probe's finding `depends:<datastore>` is a
+        missing `After=` on it, the right way round, where a `service`
+        line would draw `ordering:` the wrong way. `--post-boot` checks it
+        entered `active` before the data store. The chain never stops it.
+      - `quiet *:MM-*:MM` is every hour's range: one line, not 24.
+      - knob.md: a private `caller` is #350's leak, as a private
+        `image-owner` is. A public knob leaves it out, with a comment, and
+        the run tells that caller by hand.
+    - **The process log (#385):** broker's entry from the draft, counts and
+      families only.
+
+    *Done when* stub tests cover ownership by socket (port, socket path, a
+    second process beside the main one, another process, `ss` absent), each
+    login refusal by name, `aclfile` suppressing `requirepass`, the
+    credential line, its key file and its malformed forms, the chain
+    skipping `SAVE` under save points and under AOF, the pre-backup save and
+    the stale-file refusal, the `persistence` record, each post-boot Redis
+    outcome (file log and journal), `version-moved`, `depends` both ways,
+    and an hourly `quiet`; knob.md, run.md, readings.md and KNOBS.md say
+    each; and the Linux suite passes.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
@@ -1141,6 +1231,17 @@ base image, or an owner-approved remedy the profile documents.
     `redis-server` held step. Its Redis is ACL'd with `default` off, which
     the scripts' `requirepass`-based authentication is expected not to
     reach.
+
+    **broker, 2026-10-13** (CannObserv/broker#67): the fifth run, 57
+    applied, with `redis` and `tailscale` as held steps. The owner took a
+    `SAVE`, then the backup line's run stood in for the dump, and its
+    object was attested off the node. The bus was down about 0.5 s in the
+    Redis step and about 10.6 s across the reboot. All five participants
+    reconnected on their own, and no consumer group was lost. As expected,
+    the chain's Redis gate refused, so the owner ran the chain's steps by
+    hand. It filed six rough edges and its process-log entry (#379 to
+    #385), plan step 6h. It also filed two using-mayfly-chat issues, #386
+    and #387, left for their own round (decided 2026-10-13).
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
