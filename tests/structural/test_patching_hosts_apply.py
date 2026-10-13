@@ -1421,7 +1421,10 @@ def _counted(host: Host, held: str | None) -> Host:
     return host
 
 
-def test_the_bulk_says_which_held_versions_moved_since_the_dry_run(host):
+def test_the_security_lane_records_held_versions_and_compares_none(host):
+    # CR 238: the simulation's candidate is the newest from any pocket, and
+    # the security lane takes the -security version (usa-wa), so a moved
+    # candidate there names a version the step won't install.
     _counted(
         host,
         f"postgresql-16={PG_NOW} libpq5={PG_NOW} redis-server=5:7.0.15-1ubuntu0.24.04.0",
@@ -1429,38 +1432,19 @@ def test_the_bulk_says_which_held_versions_moved_since_the_dry_run(host):
     out = host.run()
     assert out["verdict"]["ok"] is True
     versions = {v["package"]: v for v in out["holds"]["versions"]}
-    assert versions["postgresql-16"] == {
-        "package": "postgresql-16",
-        "step": "postgres",
-        "dry_run": PG_NOW,
-        "candidate": PG_NOW,
-    }
     assert versions["redis-server"]["candidate"] == REDIS_NOW
-    [moved] = out["verdict"]["version_moved"]
-    assert moved.startswith(
-        "redis-server (redis): the dry run counted 5:7.0.15-1ubuntu0.24.04.0,"
-        f" and the refreshed lists offer {REDIS_NOW}, which its held step would take"
+    assert versions["redis-server"]["dry_run"] == "5:7.0.15-1ubuntu0.24.04.0"
+    assert (
+        "takes each package's -security version"
+        in out["holds"]["versions_not_compared"]
     )
-    assert any(moved in n for n in out["next"])
-    assert f"redis-server {REDIS_NOW}\n" in host.record("hold-versions")
-
-
-def test_a_dry_run_from_before_383_compares_nothing(host):
-    out = _counted(host, None).run()
     assert out["verdict"]["version_moved"] == []
-    assert {v["dry_run"] for v in out["holds"]["versions"]} == {None}
-
-
-def test_a_held_step_records_what_it_installed_against_the_dry_run(host):
-    _counted(host, f"postgresql-16={PG_NOW} libpq5={PG_NOW}")
-    host.run()
+    assert f"redis-server {REDIS_NOW}\n" in host.record("hold-versions")
     newer = "16.11-0ubuntu0.24.04.1"
     host.cases["dpkg-query"].insert(
         0,
         (
             "-W postgresql-16 libpq5",
-            # libpq5 is Multi-Arch: same, so dpkg-query names its
-            # architecture (CR 237).
             f"postgresql-16\t{newer}\nlibpq5:arm64\t{PG_NOW}\n",
             0,
             "",
@@ -1468,24 +1452,8 @@ def test_a_held_step_records_what_it_installed_against_the_dry_run(host):
         ),
     )
     out = host.run(step="postgres")
-    assert out["verdict"]["ok"] is True
-    assert out["installed"] == [
-        {
-            "package": "postgresql-16",
-            "version": newer,
-            "dry_run": PG_NOW,
-            "candidate": PG_NOW,
-        },
-        {
-            "package": "libpq5",
-            "version": PG_NOW,
-            "dry_run": PG_NOW,
-            "candidate": PG_NOW,
-        },
-    ]
-    assert out["verdict"]["version_moved"] == [
-        f"postgresql-16 (postgres): the step installed {newer}, and the dry run counted {PG_NOW}"
-    ]
+    assert out["installed"][0]["version"] == newer
+    assert out["verdict"]["version_moved"] == []
 
 
 # --- Redis after a held step (#380) -------------------------------------------------

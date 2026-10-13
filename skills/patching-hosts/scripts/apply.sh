@@ -141,8 +141,8 @@ step installed of its group), upgrade, health, qdrant
 against the recovery point's), redis (each Redis datastore, and for one the
 held step restarted, what its log says of the shutdown before and the load
 after), restarters, verdict (version_moved lists each held package whose
-version differs from the one the dry run counted: a line for the owner,
-never a refusal), abort, next and reprobe.
+version differs from the one the dry run counted, outside the security lane:
+a line for the owner, never a refusal), abort, next and reprobe.
 
 Exit codes:
   0  the step ran, and its verdict is green
@@ -1448,7 +1448,10 @@ do_bulk() {
   # Each held package's candidate now, from the lists just refreshed,
   # against the version the dry run counted (#383): a release published
   # between the two is what its held step would take, so the owner reads it
-  # before approving 3(a). Never a refusal.
+  # before approving 3(a). Never a refusal. Not in the security lane: there
+  # the simulation's candidate can be a newer -updates version than the one
+  # unattended-upgrade takes from -security (usa-wa), so a comparison would
+  # name a version the step won't install (CR 238).
   hold_group_versions bv "$sim"
   while IFS= read -r line; do
     case $line in held_versions=*) dv=${line#held_versions=} dseen=1 ;; esac
@@ -1464,11 +1467,14 @@ do_bulk() {
     if [ "$dseen" -eq 1 ]; then jaddsn e dry_run "$d"; else jadd e dry_run null; fi
     jaddsn e candidate "$c"
     jpush va "{$e}"
-    if [ "$dseen" -eq 1 ] && [ -n "$c" ] && [ "$c" != "$d" ]; then
+    if [ "$LANE" != security ] && [ "$dseen" -eq 1 ] && [ -n "$c" ] && [ "$c" != "$d" ]; then
       VERSION_MOVED+=("$p (${RUN_HOLD_STEP[$i]}): the dry run counted ${d:-no version of it}, and the refreshed lists offer $c, which its held step would take")
     fi
   done
   jadd o versions "[$va]"
+  if [ "$LANE" = security ]; then
+    jadds o versions_not_compared "the security lane takes each package's -security version, which the simulation's candidate isn't where -updates has a newer one"
+  fi
   if ! printf '%s' "$vout" | root_write "$run/hold-versions"; then
     fail "$run/hold-versions couldn't be written: nothing was held or upgraded"
     return 0
@@ -1615,7 +1621,7 @@ held_installed() {  # <packages>...
     jaddsn e dry_run "$d"
     jaddsn e candidate "$c"
     jpush a "{$e}"
-    if [ -n "$v" ] && [ -n "$d" ] && [ "$v" != "$d" ]; then
+    if [ "$LANE" != security ] && [ -n "$v" ] && [ -n "$d" ] && [ "$v" != "$d" ]; then
       VERSION_MOVED+=("$p ($step): the step installed $v, and the dry run counted $d")
     fi
   done

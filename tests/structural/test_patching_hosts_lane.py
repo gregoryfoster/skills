@@ -112,6 +112,89 @@ def _lane(tmp_path, knob: str = KNOB + ORIGINS, extra: str = "") -> ApplyHost:
     return host
 
 
+# --- a held version against the dry run's (#383) ------------------------------------
+# broker's dry run counted tailscale 1.102.4 twice; the maintenance lane's
+# list refresh found 1.104.1, and the held step installed it.
+
+PG_NOW = "16.10-0ubuntu0.24.04.1"
+REDIS_NOW = "5:7.0.15-1ubuntu0.24.04.1"
+
+
+def _counted(tmp_path, held: str | None) -> ApplyHost:
+    host = _lane(tmp_path)
+    if held is not None:
+        with (host.dry / "summary").open("a") as f:
+            f.write(f"held_versions={held}\n")
+    return host
+
+
+def test_the_bulk_says_which_held_versions_moved_since_the_dry_run(tmp_path):
+    host = _counted(
+        tmp_path,
+        f"postgresql-16={PG_NOW} libpq5={PG_NOW} redis-server=5:7.0.15-1ubuntu0.24.04.0",
+    )
+    out = host.run("--lane", "maintenance")
+    assert out["verdict"]["ok"] is True, out
+    versions = {v["package"]: v for v in out["holds"]["versions"]}
+    assert versions["postgresql-16"] == {
+        "package": "postgresql-16",
+        "step": "postgres",
+        "dry_run": PG_NOW,
+        "candidate": PG_NOW,
+    }
+    assert "versions_not_compared" not in out["holds"]
+    [moved] = out["verdict"]["version_moved"]
+    assert moved.startswith(
+        "redis-server (redis): the dry run counted 5:7.0.15-1ubuntu0.24.04.0,"
+        f" and the refreshed lists offer {REDIS_NOW}, which its held step would take"
+    )
+    assert any(moved in n for n in out["next"])
+
+
+def test_a_dry_run_from_before_383_compares_nothing(tmp_path):
+    out = _counted(tmp_path, None).run("--lane", "maintenance")
+    assert out["verdict"]["version_moved"] == []
+    assert {v["dry_run"] for v in out["holds"]["versions"]} == {None}
+
+
+def test_a_held_step_records_what_it_installed_against_the_dry_run(tmp_path):
+    host = _counted(tmp_path, f"postgresql-16={PG_NOW} libpq5={PG_NOW}")
+    host.run("--lane", "maintenance")
+    newer = "16.11-0ubuntu0.24.04.1"
+    host.cases["dpkg-query"].insert(
+        0,
+        (
+            "-W postgresql-16 libpq5",
+            # libpq5 is Multi-Arch: same, so dpkg-query names its
+            # architecture (CR 237).
+            f"postgresql-16\t{newer}\nlibpq5:arm64\t{PG_NOW}\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    # The held step runs its bulk's lane, as the run's dry run says.
+    out = host.run(step="postgres")
+    assert out["verdict"]["ok"] is True, out
+    assert out["installed"] == [
+        {
+            "package": "postgresql-16",
+            "version": newer,
+            "dry_run": PG_NOW,
+            "candidate": PG_NOW,
+        },
+        {
+            "package": "libpq5",
+            "version": PG_NOW,
+            "dry_run": PG_NOW,
+            "candidate": PG_NOW,
+        },
+    ]
+    assert out["verdict"]["version_moved"] == [
+        f"postgresql-16 (postgres): the step installed {newer}, and the dry run counted {PG_NOW}"
+    ]
+
+
 def _uu_apt_config(host: ApplyHost) -> list[str]:
     return [c for _, _, c in host.calls("unattended-upgrade")]
 
