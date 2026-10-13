@@ -37,12 +37,17 @@ Beyond that list:
   then could cut dpkg off mid-run;
 - a journal copy that fails still reboots: by then the services are down;
 - only the volatile journal is copied: a persistent one survives the boot;
-- Redis is saved first only when it has no save points, and its password
-  stays in its own config file;
+- Redis is saved first only where its file sets no save points and no
+  appendonly, or can't say, and its password stays in its own config file;
 - Redis is reached where its unit's own arguments say, over the file's;
 - a SAVE Redis refuses is logged, although redis-cli exits 0 on it;
-- a running Redis whose address reaches another process refuses: the chain
-  would check and save that one;
+- a running Redis whose address another process listens at, as ss reads it
+  with no login, refuses: the chain would check and save that one;
+- an ACL'd Redis (#379) passes with no login where its stop persists it,
+  needs the knob's user and key file where the chain must save it, never
+  has its requirepass tried, and has its key read from the file at the
+  stop, in no argv;
+- a Redis stopped at the gate is asked again at the stop (CR 240);
 - its unit is recorded before it's launched, and one it can't record is
   never launched; a launch that fails removes the record (CR 189);
 - where the tmpfiles rule keeps /tmp, nothing is listed as staged, since the
