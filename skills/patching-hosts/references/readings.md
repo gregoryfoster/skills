@@ -15,7 +15,7 @@ The probe reads the root-only readings through `sudo -n`, so it never prompts. W
 
 | Reading | How | Mistake it prevents |
 |---|---|---|
-| Which profile, and which image generation | markers, not a digest ([environments/exe-dev-exeuntu.md](environments/exe-dev-exeuntu.md)) | assuming the newer image's `exe-setup`, journal and session path on a Feb-2026 host |
+| Which profile, and which image generation | markers, not a digest ([environments/exe-dev-exeuntu.md](environments/exe-dev-exeuntu.md)) | assuming the newer image's `exe-setup`, journal and `/tmp` rule on an older host, or its `exe-init` layout from its generation |
 | Boot time | `/proc/stat` btime | `who -b` was wrong on three hosts |
 | **Where the journal actually lives** | files under `/var/log/journal`; `systemctl is-enabled systemd-journal-flush`; the days the oldest entry reaches back | `Storage=persistent` with the flush masked: address-validator's 51 days were lost at the reboot |
 | PID 1's log target | `systemd-analyze get-log-target` | expecting PID 1's lines as clean-shutdown evidence when it logs to `console` |

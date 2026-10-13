@@ -4,11 +4,16 @@ This profile records how exe.dev's exeuntu image behaves where it differs from s
 
 ## Detection
 
-The guest can't see its own image digest (CannObserv/broker#65, 2026-09-25), so detect the image by markers. The probe reads each one on its own, and names the profile and the generation in `environment.profile`.
+The guest can't see its own image digest (CannObserv/broker#65, 2026-09-25), and `ssh exe.dev ls --json` names every image `boldsoftware/exeuntu`, with no tag. What the guest can read is `/exe.dev/etc/image.conf`, the image's OCI config. All 13 cohort hosts read on 2026-10-01 have it, the Feb-2026 images included (#346). Its labels give:
+- the build's time, `org.opencontainers.image.created`;
+- its commit, `org.opencontainers.image.revision`;
+- its channel, `org.opencontainers.image.version`: `main` on 11 hosts, `nightly` on 2.
+
+The probe doesn't read `image.conf` yet, so it detects the image by markers. It reads each one on its own, and names the profile and the generation in `environment.profile`.
 
 The platform's exist only on an exe.dev VM:
 - the kernel's `init=/exe.dev/bin/exe-init` in `/proc/cmdline`;
-- `/exe.dev/`, which the platform supplies at boot. The image doesn't carry it;
+- `/exe.dev/`, which the platform supplies at boot. The image doesn't carry it. `/exe.dev/etc/init-style` (it reads `metadata`) appears from the May-2026 image on, and `/exe.dev/etc/shelley-version` from the August one;
 - a platform kernel (6.12.93 in the round), with no installed `linux-image-*` package.
 
 The image's are in any tree of it, so they're all an offline read sees. Their dates come from [boldsoftware/exeuntu](https://github.com/boldsoftware/exeuntu)'s history, read 2026-10-01:
@@ -25,22 +30,35 @@ The round met two generations. The probe reports which one it's on, because the 
 | | Feb-2026 images | Newer images |
 |---|---|---|
 | Hosts | power-map, address-validator, wslcb-licensing-tracker | broker, archiver, notifier, replicator, watcher |
-| `exe-init` | runs as `init=`, execs exeuntu's `/usr/local/bin/init`, which execs systemd; nothing stays resident | stays resident; sessions start under it |
 | `exe-setup.service` | none, and no `/exe.dev/setup` | present; re-runs the creation-time script on every boot |
 | Journal | **volatile**: `systemd-journal-flush.service` is masked, so `/var/log/journal` stays empty despite `Storage=persistent` | persistent |
-| Session path | through exe.dev's own `/exe.dev/bin/sshd`, at adj -1000 | through `exe-init`, until the session is reparented to PID 1 |
+| `/tmp` at boot | emptied, by Ubuntu's `D` rule | kept, on every image built from 2026-08-25 the cohort runs ([below](#tmp-and-vartmp)) |
 
-Not every row was read on every host. For the newer images, the unit's presence comes from all five hosts, but its re-run on every boot was counted on replicator and watcher only. notifier's failed on every boot, which is consistent with it. The journal row comes from notifier, replicator and watcher, and the session path from replicator and watcher. For the Feb-2026 images, the journal row comes from all three, and the `exe-init` and session rows from address-validator and wslcb.
+Not every row was read on every host. For the newer images, the unit's presence comes from all five hosts, but its re-run on every boot was counted on replicator and watcher only. notifier's failed on every boot, which is consistent with it. The journal row comes from notifier, replicator and watcher. For the Feb-2026 images, the journal row comes from all three. The `/tmp` row comes from 13 hosts (#346, 2026-10-01).
 
-usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu`, and masks 3 units rather than 5 (CannObserv/usa-wa#430). The probe calls it `may-2026`. Detect each marker on its own rather than inferring one from another.
+usa-wa's image (May 2026) sat between the two: it has `exe-setup.service` but no `exeuntu` (CannObserv/usa-wa#430). The probe calls it `may-2026`. Detect each marker on its own rather than inferring one from another.
 
 On a volatile journal the reboot erases everything before it. That's how address-validator lost 51 days (CannObserv/address-validator#241, 2026-09-29), and wslcb 10 (CannObserv/wslcb-licensing-tracker#186). Copy the journal as the last step of the reboot chain ([run.md](../run.md)).
+
+### `exe-init`'s layout is a separate axis
+
+Read across 13 cohort hosts on 2026-10-01 (#346):
+
+| Layout | Images | Resident | A session's parent |
+|---|---|---|---|
+| init only | Feb and Mar 2026, and one Apr 2026 | nothing: `exe-init` runs as `init=`, execs exeuntu's `/usr/local/bin/init`, which execs systemd | `sshd-session`, under exe.dev's own `/exe.dev/bin/sshd` |
+| op-ssh + memd | usa-wa's, May 2026 | `exe-init op-ssh` and `exe-init memd`; no `exe-scroll` | `sshd-session`, under exe.dev's `sshd` |
+| guestd | every image from 2026-08-25 | `exe-init guestd`, with `exe-scroll` | `exe-init`, until the session is reparented to PID 1 |
+
+The April image has `exe-setup.service`, so its markers date it `may-2026`, but its layout is init-only: the layout doesn't follow the generation. exe.dev's `sshd` and a resident `exe-init` read adj -1000 on every host. What a session reads is under [Sessions and OOM](#sessions-and-oom).
+
+`exe-init --version` prints `exe-init version <build>`. Where it prints `next-dev (HEAD) linux/amd64` (two Feb-2026 hosts) or `unknown` (one guestd host), the version names no build, so hash the binary: `14fd603` is `6403375d…` (#313).
 
 ## Update channels
 
 | Channel | State on the image | Owner |
 |---|---|---|
-| apt (Ubuntu archive + security) | **off**: `apt-daily.timer`, `apt-daily-upgrade.timer` and `unattended-upgrades.service` are masked on every host the round read, and usa-wa's image masks only those 3. The newer images, exeuntu `main` at `ae8be4d` (#313, 2026-09-24), and the image built from `1b74aabd` (read 2026-10-01) mask both `update-notifier` timers too, for 5 | the host's run ([policy.md](../policy.md)) |
+| apt (Ubuntu archive + security) | **off**: 5 units are masked, `apt-daily.timer`, `apt-daily-upgrade.timer`, `unattended-upgrades.service` and both `update-notifier` timers. That holds on all 13 cohort hosts read, usa-wa's May image included, and every mask predates its VM, so each came with the image (#346, 2026-10-01). So do exeuntu `main` at `ae8be4d` (#313, 2026-09-24) and the image built from `1b74aabd` (read 2026-10-01) | the host's run ([policy.md](../policy.md)) |
 | `APT::Periodic::Enable` | **0**, from `/etc/apt/apt.conf.d/docker-disable-periodic-update`, a Docker-base-image file. It makes the timers no-ops even when they're unmasked (CannObserv/archiver#278). A policy that turns them on must set `"1"` in a file sorting after it. | image |
 | Kernel | the platform's; no guest kernel, so a kernel never decides a reboot | platform |
 | `exeuntu update` | the agent binaries the image ships under `/usr/local/bin` | image / platform |
@@ -90,12 +108,18 @@ u-u's `Remove-New-Unused-Dependencies` removed packages the upgrade left unused:
 
 ## `/tmp` and `/var/tmp`
 
-noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `systemd-tmpfiles-setup.service` runs `--create --remove --boot`, so **`/tmp` is emptied at every boot** (read in the package, 2026-09-29; measured on wslcb). `/var/tmp` isn't. Anything staged under `/tmp` is lost at the reboot; list it first.
+**Whether the boot empties `/tmp` depends on the image, not the package.**
+- noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `systemd-tmpfiles-setup.service` runs `--create --remove --boot`. Under that rule the boot empties `/tmp` (read in the package, 2026-09-29; measured on wslcb).
+- exeuntu overrides it since `120bf12` (2026-07-17) with `/etc/tmpfiles.d/tmp.conf`, which reads `d /tmp 1777 root root 30d`. Lowercase `d` keeps the 30-day age cleanup, but empties nothing at boot. On an image built 2026-09-29, a marker in `/tmp` survived a platform restart and an in-guest reboot, with the same systemd (#346).
+- Across 13 cohort hosts on 2026-10-01, the 8 on images built from 2026-08-25 had `d`, and the 5 built from February to May had `D`.
+
+The probe reads the effective rule as `environment.tmp`: the rule, its file, `cleared_at_boot`, and what's staged. `reboot-chain.sh` lists what's staged only where the boot empties it (#355). By hand: `systemd-tmpfiles --cat-config | grep -E '[[:space:]]/tmp[[:space:]]'`. `/var/tmp` isn't emptied at boot under either rule.
 
 ## Provisioning leftovers: `exe-setup.service`
 
 - `ConditionPathExists=/exe.dev/setup`, `User=exedev`. Its cleanup is an `ExecStartPost=` `rm`, which runs only if `ExecStart` succeeded. So a failing script leaves itself, and any secret in it, on disk (CannObserv/notifier#93, 2026-09-28).
-- **The platform delivers the creation-time script again on every boot.** On replicator it ran 5 of 5 in-guest reboots and 1 of 1 platform reset (CannObserv/replicator#122). On watcher it ran 4 of 4 (CannObserv/watcher#331). The file is absent between boots, so an absent file isn't evidence of cleanup.
+- **The platform delivers the creation-time script again on every boot.** On replicator it ran 5 of 5 in-guest reboots and 1 of 1 platform reset (CannObserv/replicator#122). On watcher it ran 4 of 4 (CannObserv/watcher#331). On a VM created 2026-09-30 it ran 3 of 3: at first boot, after a platform restart, and after an in-guest reboot (#346). exe.dev's docs say it runs once, at first boot. The file is absent between boots, so an absent file isn't evidence of cleanup.
+- **A variable set with `new --env` doesn't reach the script** (#346). It's in PID 1's environment, `/exe.dev/etc/env` and `/etc/profile.d/exe-env.sh`, which only login shells read, but not in `exe-setup.service`'s.
 - A VM created without a script has nothing to deliver ("condition unmet"). A Feb-2026 image has no consumer at all.
 - **Contain it in place, root's alone** (CannObserv/notifier#99, verified across an in-guest reboot on 2026-10-02):
 
@@ -117,12 +141,21 @@ noble's systemd 255.4-1ubuntu8.17 ships `D /tmp 1777 root root 30d`, and `system
   - no EXT4 orphan recovery at the next boot;
   - on a volatile journal, the copy the reboot chain took.
 - **A service's first start** shows in its `InactiveEnterTimestamp`, not the journal: unset, the unit never stopped or failed after it started. `NRestarts` doesn't count a start by hand.
-- **A platform restart or resize is a hard reset.** replicator's resize left no stop line and forced orphan recovery. Reboot in-guest only.
+- **A platform restart or resize is a hard reset.** replicator's resize left no stop line and forced orphan recovery. On an image built 2026-09-29, both platform restarts left `EXT4-fs (vda): recovery complete`, journald reported its files corrupted or uncleanly shut down, and each restart gave the VM a new MAC address (#346). Reboot in-guest only.
 - `who -b` was wrong on three hosts. Read `/proc/stat` btime.
+
+## `ssh exe.dev cp` is not a pre-patch snapshot
+
+A copy of the whole VM looks like a rollback point. Measured on two throwaway VMs on 2026-09-30, it's a second live host (#346):
+- **The copy takes** the whole disk as it stood when `cp` ran, the `/exe.dev/bin` base and `image.conf`, the `--env` variables, and the VM's tags, size and region. **Its enabled units start at its first boot.** `/var/lib/tailscale` is on the disk, so a copy would join the tailnet as the source's node (inferred, not tested).
+- **It changes** the hostname and `/etc/hosts`, `/etc/machine-id` (so its journal starts fresh), exe.dev's host key and `authorized_keys`, and the MAC. The private IP is the same, behind each VM's own NAT. The stored setup script never ran on the copy, over 3 boots.
+- **The source isn't paused:** a 1-second ticker on it showed no gap, and `cp` returned in 0.7 s. The copy's first boot needed no ext4 recovery, in one sample.
+
+So a copy isn't the recovery point: that's the data store's own ([run.md](../run.md)). Don't copy a host whose units touch shared state, such as a bus, a bucket or a tailnet name, unless those units are guarded, for example with `ConditionHost=<vm-name>`. The copy's new hostname then keeps a guarded unit down.
 
 ## Sessions and OOM
 
-- Agent sessions run at `oom_score_adj` -1000 (CannObserv/notifier#88; the platform confirmed some `exe-init` builds do this, CannObserv/wslcb-licensing-tracker#182). Neither the kernel nor earlyoom will kill them, so under pressure a production service goes first.
+- **On the affected `exe-init` builds, agent sessions start at `oom_score_adj` -1000** (CannObserv/notifier#88; the platform confirmed some builds do this, CannObserv/wslcb-licensing-tracker#182). Neither the kernel nor earlyoom will kill them there, so under pressure a production service goes first. Fixed builds start them at 0, so read the chain rather than assume either.
 - **`exe-init` itself stays at -1000**, as the platform's agent. Its fixed build starts each session's processes at 0: on co-replicator on 2026-10-06, every process the session owned read 0 under an `exe-init` at -1000 (CannObserv/replicator#125, #131). So the probe stops its session minimum below `exe-init`, and reports that process's adj apart, as `platform_agent` (#353). On the older layouts the session's parent is `sshd-session`, under exe.dev's `sshd` at -1000 on every build. There the session follows `sshd-session`, which read 0 on builds `7f05521` and `b862c44` and -1000 on `2275ca7` and `next-dev` (#346, 13 hosts, 2026-10-01). So the probe stops at `sshd` too.
 - **Run an apply at adj 0**: `choom -n 0 -- …`. Don't use a hard memory cap: a kill mid-dpkg is worse than the risk it covers. A dry run peaked at 261–268 MiB in the round.
 - **A session's path to PID 1 changes over its life.** A long-lived VS Code server is reparented to PID 1 through an `sh`, so a host test that looks for `exe-init` or `sshd` as the parent skips and reads green (CannObserv/watcher#333, CannObserv/address-validator#236). Read the adj of every process up the chain directly.
