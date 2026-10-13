@@ -69,6 +69,7 @@ esac
 #   KNOB_RESTARTER, KNOB_SERVICE                unit line
 #   KNOB_BACKUP     unit datastore-units line (the units space-separated)
 #   KNOB_CALLER     repo line
+#   KNOB_DEPENDS    datastore-unit unit line
 #   KNOB_DATASTORE  engine unit databases(space-separated) line; for
 #                   qdrant, the third field is "container url key-file"
 #                   (key-file - for none), and for redis "user key-file",
@@ -86,7 +87,7 @@ knob_reset() {
   KNOB_RECORDS="" KNOB_RECORDS_LINE=""
   KNOB_SECTIONS=()
   KNOB_WINDOW=() KNOB_QUIET=() KNOB_INFLIGHT=() KNOB_HEALTH=()
-  KNOB_RESTARTER=() KNOB_SERVICE=() KNOB_BACKUP=() KNOB_CALLER=()
+  KNOB_RESTARTER=() KNOB_SERVICE=() KNOB_BACKUP=() KNOB_CALLER=() KNOB_DEPENDS=()
   KNOB_DATASTORE=() KNOB_HOLD=() KNOB_OWNER=() KNOB_ORIGIN=()
   KNOB_EXCEPTION=() KNOB_FINDING=()
   KNOB_REPORT_ONLY=0 KNOB_REPORT_ONLY_WHY=()
@@ -173,17 +174,38 @@ _knob_directive() {  # <line> <sec> <text>
         _knob_malformed "$n" "window takes <weekday> <HH:MM-HH:MM>, with a weekday Mon to Sun and an end that differs from the start"
       fi ;;
     quiet)
+      local qre='^\*:([0-5][0-9])-\*:([0-5][0-9])$' qa qb qh qe
       if { [ "$nt" -eq 1 ] || { [ "$nt" -eq 2 ] && _knob_is_weekday "${tok[1]}"; }; } &&
         _knob_is_time_range "${tok[0]}"; then
         _knob_record "$n" "$sec" quiet "" "${tok[1]:-}$u$_KT_START$u$_KT_END$u$_KT_WRAPS"
+      elif { [ "$nt" -eq 1 ] || { [ "$nt" -eq 2 ] && _knob_is_weekday "${tok[1]}"; }; } &&
+        [[ ${tok[0]} =~ $qre ]] && [ "${BASH_REMATCH[1]}" != "${BASH_REMATCH[2]}" ]; then
+        # #384: every hour's range, as an hourly backup needs: one record
+        # per hour, so a span is held to each as to a line of its own. An
+        # end before the start runs into the next hour.
+        qa=${BASH_REMATCH[1]} qb=${BASH_REMATCH[2]}
+        for qh in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23; do
+          qe=$qh
+          if [[ $qb < $qa ]]; then qe=$(printf '%02d' $(((10#$qh + 1) % 24))); fi
+          _knob_is_time_range "$qh:$qa-$qe:$qb"
+          _knob_record "$n" "$sec" quiet "" "${tok[1]:-}$u$_KT_START$u$_KT_END$u$_KT_WRAPS"
+        done
       else
-        _knob_malformed "$n" "quiet takes <HH:MM-HH:MM> [<weekday>], with an end that differs from the start"
+        _knob_malformed "$n" "quiet takes <HH:MM-HH:MM> [<weekday>], or *:MM-*:MM for every hour, with an end that differs from the start"
       fi ;;
     inflight | health)
       if [ -n "$rest" ]; then
         _knob_record "$n" "$sec" "$dir" "" "$rest"
       else
         _knob_malformed "$n" "$dir takes a command"
+      fi ;;
+    # #384: a unit a data store needs up first, as broker's Redis needs
+    # tailscaled for the address it binds.
+    depends)
+      if [ "$nt" -eq 2 ]; then
+        _knob_record "$n" "$sec" depends "" "${tok[0]}$u${tok[1]}"
+      else
+        _knob_malformed "$n" "depends takes <datastore unit> <unit it needs up first>"
       fi ;;
     restarter | service)
       if [ "$nt" -eq 1 ]; then
@@ -466,7 +488,7 @@ _knob_resolve() {
   _knob_select records keyed
   for i in ${_KSEL[@]+"${_KSEL[@]}"}; do KNOB_RECORDS=${_KP_VAL[$i]} KNOB_RECORDS_LINE=${_KP_LINE[$i]}; done
 
-  for d in window quiet inflight health restarter service backup caller; do
+  for d in window quiet inflight health restarter service backup caller depends; do
     _knob_select "$d" list
     for i in ${_KSEL[@]+"${_KSEL[@]}"}; do
       val="${_KP_VAL[$i]}$u${_KP_LINE[$i]}"
@@ -479,6 +501,7 @@ _knob_resolve() {
         service) KNOB_SERVICE+=("$val") ;;
         backup) KNOB_BACKUP+=("$val") ;;
         caller) KNOB_CALLER+=("$val") ;;
+        depends) KNOB_DEPENDS+=("$val") ;;
       esac
     done
   done

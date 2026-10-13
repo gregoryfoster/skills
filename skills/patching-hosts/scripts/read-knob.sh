@@ -22,8 +22,8 @@ Options:
 
 Output keys: knob, host, sections, class, posture, report_only,
 report_only_reasons, window, quiet, inflight, health, restarter, service,
-backup, caller, datastore, hold, owner, image_owner, origin, exception,
-records, findings. Every value from the knob carries its line number, but a
+backup, caller, depends, datastore, hold, owner, image_owner, origin,
+exception, records, findings. Every value from the knob carries its line number, but a
 datastore's databases, merged per unit, carry the line that first names the
 unit; sections are the matching headers' globs, with no line. A default
 carries line null. The grammar: references/knob.md.
@@ -154,6 +154,7 @@ o_quiet() { printf '{"weekday": %s, "start": %s, "end": %s, "wraps": %s, "line":
 o_command() { printf '{"command": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_unit() { printf '{"unit": %s, "line": %s}' "$(js "$1")" "$2"; }
 o_caller() { printf '{"repo": %s, "line": %s}' "$(js "$1")" "$2"; }
+o_depends() { printf '{"datastore": %s, "unit": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$3"; }
 o_datastore() {
   local key
   local -a q=()
@@ -201,6 +202,7 @@ emit_records restarter o_unit , ${KNOB_RESTARTER[@]+"${KNOB_RESTARTER[@]}"}
 emit_records service o_unit , ${KNOB_SERVICE[@]+"${KNOB_SERVICE[@]}"}
 emit_records backup o_backup , ${KNOB_BACKUP[@]+"${KNOB_BACKUP[@]}"}
 emit_records caller o_caller , ${KNOB_CALLER[@]+"${KNOB_CALLER[@]}"}
+emit_records depends o_depends , ${KNOB_DEPENDS[@]+"${KNOB_DEPENDS[@]}"}
 emit_records datastore o_datastore , ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}
 emit_records hold o_hold , ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}
 emit_records owner o_owner , ${KNOB_OWNER[@]+"${KNOB_OWNER[@]}"}

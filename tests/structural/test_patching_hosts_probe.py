@@ -3201,6 +3201,67 @@ def test_post_boot_starts_a_redis_run_at_its_banner_when_its_pid_comes_round(hos
     assert 'logged no "DB loaded from"' in c["evidence"]
 
 
+# --- a data store's own dependency (#384) ----------------------------------------
+# broker's Redis binds the tailnet address, so it needs tailscaled up first.
+
+
+@pytest.mark.parametrize(
+    "after, finds",
+    [("network.target tailscaled.service", False), ("network.target", True)],
+    ids=["after-it", "not-after-it"],
+)
+def test_a_datastore_with_no_after_on_what_it_depends_on_is_a_finding(
+    host, after, finds
+):
+    host.knob(
+        "posture scheduled\ndatastore redis redis-server\ndepends redis-server tailscaled\n"
+    )
+    host.show("redis-server.service", After=after)
+    out = host.run()
+    assert out["impact"]["depends"] == [
+        {
+            "datastore": "redis-server.service",
+            "unit": "tailscaled.service",
+            "after": not finds,
+        }
+    ]
+    hit = "depends:redis-server.service:tailscaled.service" in _ids(out)
+    assert hit is finds
+    # Not a service: nothing is held to ordering on the data store.
+    assert not [i for i in _ids(out) if i.startswith("ordering:")]
+
+
+def test_a_depends_line_naming_no_datastore_is_a_knob_finding(host):
+    host.knob("posture scheduled\ndepends redis-server tailscaled\n")
+    out = host.run()
+    f = _finding(out, "depends:redis-server.service:tailscaled.service")
+    assert "which no datastore line declares" in f["message"]
+
+
+@pytest.mark.parametrize(
+    "ts, state, ok",
+    [
+        (5_000_000, "active", True),
+        (9_000_000, "active", False),
+        (5_000_000, "inactive", False),
+    ],
+    ids=["first", "after-it", "down"],
+)
+def test_post_boot_checks_a_dependency_came_up_before_its_datastore(
+    host, ts, state, ok
+):
+    host.knob(
+        "posture scheduled\ndatastore redis redis-server\ndepends redis-server tailscaled\n"
+    )
+    host.show("redis-server.service", ActiveEnterTimestampMonotonic="7000000")
+    host.show(
+        "tailscaled.service", ActiveState=state, ActiveEnterTimestampMonotonic=str(ts)
+    )
+    checks = {c["check"]: c for c in host.run("--post-boot")["post_boot"]}
+    c = checks["depends:redis-server.service:tailscaled.service"]
+    assert c["ok"] is ok, c
+
+
 def test_post_boot_reads_the_run_it_is_given(host):
     host.write("run/log/journal/" + "a" * 32 + "/system.journal", "x")
     host.write(f"{RUN}/reboot-chain.log", COPIED)

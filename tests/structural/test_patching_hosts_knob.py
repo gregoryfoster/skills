@@ -159,6 +159,11 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "hold postgresql-* Postgres",  # step name case
         "datastore postgres pg@16-main",  # no database
         "datastore redis",
+        "depends redis-server",  # #384: no unit it needs
+        "depends redis-server tailscaled extra",
+        "quiet *:00-*:00",  # an hour's range ending where it starts
+        "quiet *:60-*:07",
+        "quiet *:00-07:00",  # the hour on one end only
         "datastore redis redis-server ops",  # #379: a user and no key file
         "datastore redis redis-server ops etc/ops.key",  # relative
         "datastore redis redis-server 'ops' /etc/ops.key",  # user's quoting
@@ -480,6 +485,7 @@ EVERY_DIRECTIVE = {
     "inflight": "inflight systemctl list-units 'app-task@*' --state=activating,active,deactivating --no-legend | wc -l",
     "restarter": "restarter app-healthcheck.timer",
     "service": "service app-web.service",
+    "depends": "depends postgresql@16-main tailscaled.service",
     "health": "health curl -sf http://localhost:8000/health",
     "datastore": "datastore postgres postgresql@16-main app",
     "backup": "backup app-backup.service postgresql@16-main",
@@ -508,6 +514,7 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
         "inflight",
         "restarter",
         "service",
+        "depends",
         "health",
         "datastore",
         "backup",
@@ -518,6 +525,41 @@ def test_every_directive_in_knob_md_is_one_the_parser_reads(tmp_path):
     ):
         assert out[key], f"{key} parsed to nothing"
     assert out["records"]["value"] == "example-org/host-records"
+
+
+def test_an_hourly_quiet_range_is_one_for_every_hour(tmp_path):
+    # #384: broker's hourly backup took 24 quiet lines.
+    out = _read(tmp_path, "posture scheduled\nquiet *:55-*:07 Mon\nquiet *:00-*:07\n")
+    late = [q for q in out["quiet"] if q["line"] == 2]
+    assert len(late) == 24
+    assert late[0] == {
+        "weekday": "Mon",
+        "start": "00:55",
+        "end": "01:07",
+        "wraps": False,
+        "line": 2,
+    }
+    # 23:55 runs past midnight.
+    assert late[-1] == {
+        "weekday": "Mon",
+        "start": "23:55",
+        "end": "00:07",
+        "wraps": True,
+        "line": 2,
+    }
+    every = [(q["start"], q["end"]) for q in out["quiet"] if q["line"] == 3]
+    assert every == [(f"{h:02d}:00", f"{h:02d}:07") for h in range(24)]
+    assert out["findings"] == []
+
+
+def test_a_depends_line_names_a_datastore_and_the_unit_it_needs(tmp_path):
+    out = _read(
+        tmp_path,
+        "posture scheduled\ndatastore redis redis-server\ndepends redis-server tailscaled\n",
+    )
+    assert out["depends"] == [
+        {"datastore": "redis-server", "unit": "tailscaled", "line": 3}
+    ]
 
 
 def test_a_backup_line_names_the_datastores_it_covers(tmp_path):

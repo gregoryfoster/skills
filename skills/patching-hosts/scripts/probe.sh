@@ -246,7 +246,7 @@ DPKG_STATUS='${db:Status-Abbrev}' DPKG_VERSION='${Version}' DPKG_PKG_STATUS='${P
 # unit_show sets these by name.
 U_LoadState="" U_ConditionResult="" U_Result="" U_ActiveState="" U_MainPID="" U_After=""
 U_RequiredBy="" U_BoundBy="" U_NRestarts="" U_ExecMainExitTimestamp="" U_InactiveEnterTimestamp=""
-U_NextElapseUSecRealtime="" U_NextElapseUSecMonotonic="" U_ActiveEnterTimestamp="" U_InactiveExitTimestamp=""
+U_NextElapseUSecRealtime="" U_NextElapseUSecMonotonic="" U_ActiveEnterTimestamp="" U_InactiveExitTimestamp="" U_ActiveEnterTimestampMonotonic=""
 
 capture2() {  # <var> <cmd>...: as capture, with stderr in VAR too
   local _cv=$1 _co
@@ -2627,6 +2627,39 @@ read_services() {
   done
 }
 
+# Each depends line: the unit a data store needs up first, and whether the
+# data store is ordered After= it (#384). broker's Redis binds the tailnet
+# address and needs tailscaled; a service line naming tailscaled would draw
+# ordering: the wrong way round, since tailscaled has no After= on Redis.
+R_DEPENDS=""
+read_depends() {
+  local r ds u e
+  local -a f=()
+  R_DEPENDS=""
+  for r in ${KNOB_DEPENDS[@]+"${KNOB_DEPENDS[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name ds "${f[0]}"
+    unit_name u "${f[1]}"
+    e=""
+    jadds e datastore "$ds"
+    jadds e unit "$u"
+    if ! in_words "$ds" "$DS_UNITS"; then
+      jadd e after null
+      finding knob "depends:$ds:$u" "" "The knob's depends line ${f[2]} names $ds, which no datastore line declares: depends is a data store's own dependency."
+    elif unit_show "$ds" After; then
+      if ordering_ok "$u" "$U_After"; then
+        jaddb e after 1
+      else
+        jaddb e after 0
+        finding risk "depends:$ds:$u" "depends:$ds:$u" "$ds has no After= on $u, which it needs up first: its first start after a boot succeeds only by luck. Add After=$u to it (with Wants= where nothing else starts $u)."
+      fi
+    else
+      jadd e after null
+    fi
+    jpush R_DEPENDS "{$e}"
+  done
+}
+
 # What runs a unit's Exec lines can restart: a systemctl start or restart on
 # the line, or in a script it runs. Comment lines don't count: replicator's
 # notifier mentions `systemctl status` in one.
@@ -3088,6 +3121,7 @@ read_impact() {
   read_qdrant_containers
   read_cmdlines
   read_services
+  read_depends
   read_restarters
   read_backups
   read_health pre-run
@@ -3096,6 +3130,7 @@ read_impact() {
   jadd o datastores "{$R_DS}"
   jadd o live_args "[$R_ARGS]"
   jadd o services "[$R_SVC]"
+  jadd o depends "[$R_DEPENDS]"
   jadd o restarters "[$R_RESTARTERS]"
   jaddb o restarters_complete "$R_RESTARTERS_READ"
   jadd o backups "[$R_BACKUPS]"
@@ -3691,6 +3726,34 @@ check_qdrant() {
   done
 }
 
+# Each depends line after the boot (#384): the unit is active, and it
+# entered active before the data store did.
+check_depends() {
+  local r ds u t_ds t_u
+  local -a f=()
+  for r in ${KNOB_DEPENDS[@]+"${KNOB_DEPENDS[@]}"}; do
+    IFS=$KNOB_US read -r -a f <<<"$r"
+    unit_name ds "${f[0]}"
+    unit_name u "${f[1]}"
+    t_ds="" t_u=""
+    if unit_show "$ds" ActiveEnterTimestampMonotonic; then t_ds=$U_ActiveEnterTimestampMonotonic; fi
+    if ! unit_show "$u" ActiveState ActiveEnterTimestampMonotonic || ! is_int "$t_ds"; then
+      check "depends:$ds:$u" "" "systemctl couldn't be read"
+    elif [ "$U_ActiveState" != active ]; then
+      check "depends:$ds:$u" 0 "$u is $U_ActiveState, and $ds needs it up first"
+    else
+      t_u=$U_ActiveEnterTimestampMonotonic
+      if ! is_int "$t_u"; then
+        check "depends:$ds:$u" "" "$u's start couldn't be read"
+      elif [ "$t_u" -le "$t_ds" ]; then
+        check "depends:$ds:$u" 1 "$u entered active before $ds"
+      else
+        check "depends:$ds:$u" 0 "$u entered active after $ds: its start at this boot didn't wait for it"
+      fi
+    fi
+  done
+}
+
 # Each Redis from its own log (#380): a clean shutdown before the boot, and
 # a load and a ready after it.
 check_redis() {
@@ -3803,6 +3866,7 @@ read_post_boot() {
       check "service:$svc" "" "systemctl couldn't be read"
     fi
   done
+  check_depends
   for t in $KNOB_RESTARTERS; do
     if unit_show "$t" ActiveState NextElapseUSecRealtime NextElapseUSecMonotonic; then
       if [ "$U_ActiveState" = active ]; then check "restarter:$t" 1 active; else check "restarter:$t" 0 "$U_ActiveState"; fi
