@@ -52,7 +52,7 @@ Every host records its before-versions (below). A host that declares a `datastor
 
   **Send the pipeline and gate 1 as one command.** `PIPESTATUS` belongs to the shell that ran the pipeline, and an agent's tool starts a fresh shell for each call. There, it describes whatever that shell ran last, not the dump.
 
-  For Redis: `BGSAVE`, wait for it to finish, then copy the RDB file the same way.
+  For Redis: `BGSAVE`, wait for it to finish, then copy the RDB file the same way. That takes a login. Under an `aclfile` with `default` off (broker), give the `datastore redis` line a user and key file, or cover it with a `backup` line; never re-enable `default` to get past it. A refused login is an `ACL LOG` entry the host has to attribute, so the scripts try one only where a command needs it, and only once (#379).
 
   For Qdrant (#367): each collection's exact point count, kept on the node, then a full-storage snapshot through its API (`POST /snapshots?wait=true`). **Copy it out of the container:** its snapshots directory isn't on a volume, so under `docker run --rm` the next restart deletes it (co-index: 1.56 GB in 48 s). The copy counts when it reads back with `tar -tf`, at mode 600, with its sha256 read; then delete the copy inside.
 - **The owner copies the dump off the node** and checks it against that sha256 **before the apply**. The dump and its directory are root's, so a plain `scp` can't read them. Stream it through `sudo` instead, which leaves no second copy on the node: `ssh <host> 'sudo cat <path>' > <name> && sha256sum <name>`, as `recovery-point.sh`'s `next` prints for each dump (notifier, #374). It needs sudo without a password, as on exe.dev. Don't reach for `ssh -t`: a remote terminal turns each LF of the stream into CRLF, so the copy's sha256 won't match, through no fault of the dump.
@@ -171,7 +171,7 @@ sudo systemd-run --unit=patching-hosts-reboot-<utc> --on-active=120 --timer-prop
 
 1. **The gate** again: no package manager is running, since a reboot then could cut dpkg off mid-run, and every `inflight` is 0, run as the non-root user recorded when the chain was written (`runuser -u <user> --`), never as root. Abort otherwise: an aborted chain stopped nothing, and `reboot-chain.sh` launches it again once the gate would pass. The script shows each knob command verbatim, so the owner approves exactly what runs ([knob.md](knob.md)).
 2. Stop each `restarter`, then each `service`. A timer with `Requires=` on the service stops with it anyway.
-3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured; with none, run `SAVE` first. Qdrant: no checkpoint, since its container's `docker stop` is its clean shutdown.
+3. Checkpoint, then stop each data store. Postgres: `sudo -u postgres psql -c CHECKPOINT`. Redis: `systemctl stop` saves the RDB file when save points are configured, and fsyncs the AOF under `appendonly yes`; with neither, run `SAVE` first. `reboot-chain.sh` reads which from the unit's own file and arguments, as root, so it logs in only for that `SAVE`. It asks Redis at the stop only where an `include` or an unreadable file leaves it unknown. Qdrant: no checkpoint, since its container's `docker stop` is its clean shutdown.
 4. `journalctl --sync`.
 5. **Copy the volatile journal, last**, so it holds every stop line. This copy is the only record of the shutdown:
 

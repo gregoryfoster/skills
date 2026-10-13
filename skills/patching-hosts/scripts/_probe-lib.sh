@@ -61,6 +61,11 @@ The primitives these scripts reach a host through:
                             file, from tmpfiles' tmp.conf or tmp.mount
   unit_show UNIT PROP...    systemctl show, setting U_<PROP> for each PROP;
                             returns 1, every U_<PROP> empty, when it can't
+  redis_conf UNIT           RC_* := what a Redis unit's file, read as root,
+                            and its own arguments set: port, bind, socket,
+                            logfile, dir, dbfilename, save, appendonly, and
+                            whether an aclfile or an include is there
+  redis_persistence VAR     aof, rdb, none or unknown, from redis_conf
   file_mode VAR PATH        permission bits as four octal digits, or empty
   file_mtime VAR PATH       modification time in epoch seconds, or empty
   file_owner VAR PATH       the owner's uid, or empty
@@ -661,4 +666,93 @@ qdrant_loss() {  # <url> <key-file> <the counts before>
   fi
   QL_OK=1
   QL_WHY="each of the $_ql_k collections the recovery point counted is there and not emptied; $_ql_moved counts moved, as client writes move them"
+}
+
+# What a Redis unit's config file and its own arguments set, which Redis
+# takes over the file's: a second Redis may share the file and set its own
+# --port (#379). The file is read as root: it's redis's own, and may hold a
+# password. Redis reads a key in any case; read drops the leading space.
+# - RC_SAVE is on unless the last save line is "": with no save line Redis
+#   keeps its default save points, and save lines add up (measured on 7.0).
+# - RC_ACL is 1 where an aclfile or a user line sets the users: requirepass
+#   then isn't what logs in, and a login with it only adds to ACL LOG.
+# - RC_INCLUDE is 1 where an include line may set any of it, and RC_READ is
+#   0 where the unit names a file root couldn't read.
+RC_CONF="" RC_PORT="" RC_BIND="" RC_SOCK="" RC_LOGFILE="" RC_DIR="" RC_DBFILENAME=""
+RC_SAVE="" RC_AOF="" RC_ACL=0 RC_INCLUDE=0 RC_READ=1
+# unit_show sets it by name.
+U_ExecStart=""
+_rc_unq() {  # <var> <value>: one pair of quotes off, as Redis reads it
+  local _ru=$2
+  case $_ru in
+    \"*\") _ru=${_ru#\"} _ru=${_ru%\"} ;;
+    \'*\') _ru=${_ru#\'} _ru=${_ru%\'} ;;
+  esac
+  printf -v "$1" '%s' "$_ru"
+}
+_rc_set() {  # <key> <value>
+  local _rs
+  _rc_unq _rs "$2"
+  case $1 in
+    [Pp][Oo][Rr][Tt]) RC_PORT=$_rs ;;
+    [Bb][Ii][Nn][Dd]) RC_BIND=${_rs#-} ;;
+    [Uu][Nn][Ii][Xx][Ss][Oo][Cc][Kk][Ee][Tt]) RC_SOCK=$_rs ;;
+    [Ll][Oo][Gg][Ff][Ii][Ll][Ee]) RC_LOGFILE=$_rs ;;
+    [Dd][Ii][Rr]) RC_DIR=$_rs ;;
+    [Dd][Bb][Ff][Ii][Ll][Ee][Nn][Aa][Mm][Ee]) RC_DBFILENAME=$_rs ;;
+    [Ss][Aa][Vv][Ee]) if [ -n "$_rs" ]; then RC_SAVE=on; else RC_SAVE=off; fi ;;
+    [Aa][Pp][Pp][Ee][Nn][Dd][Oo][Nn][Ll][Yy])
+      case $_rs in [Yy][Ee][Ss]) RC_AOF=yes ;; *) RC_AOF=no ;; esac ;;
+    [Aa][Cc][Ll][Ff][Ii][Ll][Ee] | [Uu][Ss][Ee][Rr]) RC_ACL=1 ;;
+    [Ii][Nn][Cc][Ll][Uu][Dd][Ee]) RC_INCLUDE=1 ;;
+  esac
+}
+redis_conf() {  # <unit>
+  local _rf_t="" _rf_w _rf_l _rf_k _rf_v _rf_i
+  local -a _rf_a=()
+  RC_CONF="" RC_PORT="" RC_BIND="" RC_SOCK="" RC_LOGFILE="" RC_DIR=""
+  RC_DBFILENAME=dump.rdb RC_SAVE=on RC_AOF=no RC_ACL=0 RC_INCLUDE=0 RC_READ=1
+  if unit_show "$1" ExecStart; then
+    _rf_t=${U_ExecStart#*argv[]=}
+    _rf_t=${_rf_t%% ;*}
+    read -r -a _rf_a <<<"$_rf_t" || true
+    for _rf_w in ${_rf_a[@]+"${_rf_a[@]}"}; do
+      case $_rf_w in /*.conf) RC_CONF=$_rf_w ;; esac
+    done
+  fi
+  if [ -n "$RC_CONF" ]; then
+    capture _rf_t as_root cat -- "$RC_CONF"
+    if [ "$CAP_RC" -ne 0 ]; then RC_READ=0 _rf_t=""; fi
+    while IFS= read -r _rf_l; do
+      read -r _rf_k _rf_v _rf_w <<<"$_rf_l" || true
+      case $_rf_k in '' | '#'*) continue ;; esac
+      _rc_set "$_rf_k" "$_rf_v"
+    done <<<"$_rf_t"
+  fi
+  for ((_rf_i = 0; _rf_i < ${#_rf_a[@]}; _rf_i++)); do
+    _rf_w=${_rf_a[_rf_i]}
+    case $_rf_w in
+      --port | --bind | --unixsocket | --logfile | --dir | --dbfilename | --save | --appendonly | --aclfile | --include)
+        # An empty argument (--save "") reads as none at all: the next
+        # word is then another option, not its value.
+        _rf_v=${_rf_a[_rf_i + 1]:-}
+        case $_rf_v in --*) _rf_v="" ;; esac
+        _rc_set "${_rf_w#--}" "$_rf_v" ;;
+    esac
+  done
+}
+
+# How a Redis persists what it holds, from redis_conf: aof under appendonly
+# yes, rdb with save points and no AOF, none with neither, and unknown where
+# an include, or a file root couldn't read, may say otherwise.
+redis_persistence() {  # <var>
+  local _rp=none
+  if [ "$RC_READ" -eq 0 ] || [ "$RC_INCLUDE" -eq 1 ]; then
+    _rp=unknown
+  elif [ "$RC_AOF" = yes ]; then
+    _rp=aof
+  elif [ "$RC_SAVE" = on ]; then
+    _rp=rdb
+  fi
+  printf -v "$1" '%s' "$_rp"
 }

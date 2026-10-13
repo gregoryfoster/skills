@@ -165,6 +165,13 @@ o_datastore() {
       "$(js "$1")" "$(js "$2")" "$(js "${q[0]}")" "$(js "${q[1]}")" "$(js_or_null "$key")" "$4"
     return 0
   fi
+  if [ "$1" = redis ]; then
+    # #379: the ACL user and its key file, or none.
+    read -r -a q <<<"$3" || true
+    printf '{"engine": %s, "unit": %s, "databases": [], "user": %s, "key_file": %s, "line": %s}' \
+      "$(js "$1")" "$(js "$2")" "$(js_or_null "${q[0]:-}")" "$(js_or_null "${q[1]:-}")" "$4"
+    return 0
+  fi
   printf '{"engine": %s, "unit": %s, "databases": %s, "line": %s}' "$(js "$1")" "$(js "$2")" "$(js_words "$3")" "$4"
 }
 o_hold() { printf '{"step": %s, "globs": %s, "line": %s}' "$(js "$1")" "$(js_words "$2")" "$(num_or_null "${3:-}")"; }

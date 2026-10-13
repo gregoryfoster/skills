@@ -3468,7 +3468,12 @@ read_redis() {
           UNK="no key, but up only ${up:-an unknown number of} days: fewer than 30"
         fi
       else
-        UNK="redis-cli INFO couldn't be read (a password?)"
+        # Unauthenticated, so a Redis that needs a login answers NOAUTH, and
+        # nothing reaches its ACL LOG (#379; measured on 7.0).
+        case $out in
+          NOAUTH*) UNK="active, but it needs a login (INFO answered NOAUTH), so its keys weren't read" ;;
+          *) UNK="redis-cli INFO couldn't be read${CAP_ERR:+: $CAP_ERR}" ;;
+        esac
       fi
     elif [ "$U_ActiveState" = active ]; then
       UNK="active, but redis-cli isn't on PATH, so its keys weren't read"

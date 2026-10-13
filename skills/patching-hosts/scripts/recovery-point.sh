@@ -78,9 +78,11 @@ tar for Qdrant); when the knob
 declares no datastore; when an existing --run isn't mode 0700; once the
 run's bulk has started; when --personal-data names a Postgres unit, or
 nothing the knob declares; when a cluster or a database can't be found, a
-cluster isn't online or its port can't be read, or a Redis can't be
-reached, can't say where its RDB file is, or what answers isn't the unit's
-own process; when a Qdrant's container isn't running, its storage's size
+cluster isn't online or its port can't be read, or a Redis to dump isn't
+the process ss finds listening at its address, can't say where its RDB
+file is, refuses the login, or has none to make (an aclfile, and no user
+and key file on its datastore line), or its key file can't be read as
+root; when a Qdrant's container isn't running, its storage's size
 can't be read, its key file can't be read, or its collections can't be
 listed; when a backup line names a datastore no datastore line
 declares; and when the run's filesystem has less free space than the data it
@@ -397,7 +399,7 @@ pg_size() {  # <port> <database>
 # What each dump would hold, and whether the run's filesystem has room for
 # it: a full disk mid-dump can stop the data store it shares the disk with.
 gate_datastores() {
-  local r u port db out sz e a="" need=0 avail="" dir qc qurl qkey snap store src line dst kib
+  local r u port db out sz e a="" need=0 avail="" dir qc qurl qkey snap store src line dst kib ru rk
   local qsnap=0 droot="" dfree="" dmount="" rmount=""
   local -a f=() dbs=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
@@ -497,14 +499,29 @@ gate_datastores() {
       need=$((need + sz)) qsnap=$((qsnap + sz))
     else
       # Raw replies, since stdout isn't a terminal: the key, then its value.
-      redis_conn "$u"
+      read -r ru rk <<<"${f[2]:-}" || true
+      redis_conn "$u" "$ru" "$rk"
       # Another Redis's data would be dumped, and attested, as this one's.
       if ! redis_owned "$u"; then
         refuse "datastore redis $u: $REDIS_WHY"
         continue
       fi
+      # A dump needs a login, for BGSAVE: never one Redis's aclfile makes
+      # nobody's, so a failed one doesn't reach ACL LOG (#379).
+      if [ "$REDIS_LOGIN" = none ]; then
+        refuse "datastore redis $u: its dump needs a login, to BGSAVE, and its aclfile sets the users, so its requirepass isn't one to try. Give its datastore line a user and key file (datastore redis <unit> <user> <key-file>), or cover it with a backup line"
+        continue
+      fi
+      if ! redis_key_ok; then
+        refuse "datastore redis $u: $REDIS_WHY"
+        continue
+      fi
       dir="" sz=""
       capture out redis_cli CONFIG GET dir
+      if redis_refused "$u" "CONFIG GET dir" "$out"; then
+        refuse "datastore redis $u: $REDIS_WHY"
+        continue
+      fi
       [ "$CAP_RC" -ne 0 ] || dir=$(printf '%s\n' "$out" | sed -n '2p')
       capture out redis_cli CONFIG GET dbfilename
       [ "$CAP_RC" -ne 0 ] || dir="$dir/$(printf '%s\n' "$out" | sed -n '2p')"
@@ -526,7 +543,7 @@ gate_datastores() {
         refuse "datastore redis $u: redis-cli ${REDIS_ARGS[*]} couldn't say where its RDB file is (CONFIG GET dir and dbfilename)"
         continue
       fi
-      DS+=("redis $u $dir") DS_BYTES+=("$sz")
+      DS+=("redis $u $dir ${ru:--} ${rk:--}") DS_BYTES+=("$sz")
       need=$((need + sz))
     fi
   done
@@ -754,26 +771,32 @@ dump_globals() {  # <unit> <port>
 # shellcheck disable=SC2016
 copy_root() { as_root sh -c 'umask 077; cat -- "$1" >"$2"' sh "$1" "$2"; }
 
-dump_redis() {  # <unit> <rdb>
-  local u=$1 rdb=$2 path t0 now="" out line st="" busy="" crc="" rrc="" mode sha="" e="" ok=0 w0 n=0 bg=""
+dump_redis() {  # <unit> <rdb> <user or -> <key file or ->
+  local u=$1 rdb=$2 path t0 now="" out line st="" busy="" crc="" rrc="" mode sha="" e="" ok=0 w0 n=0 bg="" no=""
   path=$run/${u%.service}-$stamp.rdb
-  redis_conn "$u"
+  redis_conn "$u" "${3#-}" "${4#-}"
   echo "recovery-point: BGSAVE on $u, then a copy into $path" >&2
   w0=$SECONDS
   capture out redis_cli LASTSAVE
   t0=$out
   is_int "$t0" || t0=""
   line=${out:-${CAP_ERR:-no reply}}
-  capture out redis_cli BGSAVE
-  # A reply that neither starts a save nor joins one means none is coming:
-  # it fails now, with Redis's own words, instead of after the wait.
-  case $out in
-    *"Background saving started"* | *"already in progress"* | *scheduled*) ;;
-    *)
-      bg=${out:-${CAP_ERR:-no reply}}
-      bg=${bg%%$'\n'*}
-      st=refused ;;
-  esac
+  # A refused login is tried once: each one is an ACL LOG entry.
+  if redis_refused "$u" LASTSAVE "$out"; then
+    no=$REDIS_WHY t0=""
+  else
+    capture out redis_cli BGSAVE
+    if redis_refused "$u" BGSAVE "$out"; then no=$REDIS_WHY; fi
+    # A reply that neither starts a save nor joins one means none is coming:
+    # it fails now, with Redis's own words, instead of after the wait.
+    case $out in
+      *"Background saving started"* | *"already in progress"* | *scheduled*) ;;
+      *)
+        bg=${out:-${CAP_ERR:-no reply}}
+        bg=${bg%%$'\n'*}
+        st=refused ;;
+    esac
+  fi
   while [ -n "$t0" ] && [ -z "$bg" ]; do
     capture out redis_cli INFO persistence
     busy="" st="" now=""
@@ -808,7 +831,9 @@ dump_redis() {  # <unit> <rdb>
   jaddsn e mode "$mode"
   jaddsn e sha256 "$sha"
   jaddn e seconds "$((SECONDS - w0))"
-  if [ -z "$t0" ]; then
+  if [ -n "$no" ]; then
+    fail "datastore redis $u: $no"
+  elif [ -z "$t0" ]; then
     fail "redis-cli ${REDIS_ARGS[*]} LASTSAVE answered \"$line\", not a time, so a BGSAVE couldn't be told from an old save"
   elif [ -n "$bg" ]; then
     fail "redis-cli ${REDIS_ARGS[*]} BGSAVE answered \"$bg\": Redis started no save"
@@ -929,7 +954,7 @@ if [ "${#FAILED[@]}" -eq 0 ]; then
       case ${_ds[0]} in
         postgres) dump_postgres "${_ds[1]}" "${_ds[2]}" "${_ds[3]}" ;;
         qdrant) dump_qdrant "${_ds[1]}" "${_ds[2]}" "${_ds[3]}" "${_ds[4]}" "${_ds[5]}" ;;
-        *) dump_redis "${_ds[1]}" "${_ds[2]}" ;;
+        *) dump_redis "${_ds[1]}" "${_ds[2]}" "${_ds[3]}" "${_ds[4]}" ;;
       esac
     done
     J_DUMPS="[$DUMPS_A]"

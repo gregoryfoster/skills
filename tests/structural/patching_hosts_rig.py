@@ -204,6 +204,29 @@ class Host:
         self.cases[cmd].append((glob, stdout, rc, stderr, script))
         return self
 
+    def redis_listens(self, pid: int = 4242, address: str = "0.0.0.0") -> "Host":
+        """ss, as root reads it (#379): PID listens at ADDRESS on whichever
+        port is asked, and on whichever socket path, in noble's format."""
+        tcp = (
+            f'echo "LISTEN 0      511    {address}:${{2##*:}} 0.0.0.0:* '
+            f'users:((\\"redis-server\\",pid={pid},fd=6))"; exit 0'
+        )
+        unix = (
+            'echo "u_str LISTEN 0      511    $3 37300184 * 0 '
+            f'users:((\\"redis-server\\",pid={pid},fd=8))"; exit 0'
+        )
+        keep = [
+            c
+            for c in self.cases["ss"]
+            if c[0] not in ("-Hltnp sport = *", "-Hlxp src *")
+        ]
+        self.cases["ss"] = [
+            ("-Hltnp sport = *", "", 0, "", tcp),
+            ("-Hlxp src *", "", 0, "", unix),
+            *keep,
+        ]
+        return self
+
     def installed(self, *pkgs: str) -> "Host":
         for p in pkgs:
             self.on("dpkg-query", "*-W -f ${db:Status-Abbrev} " + p, "ii ")

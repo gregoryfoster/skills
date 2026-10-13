@@ -153,26 +153,34 @@ KNOB_CHAIN = (
 )
 
 
+# A Redis whose file sets no save points and no appendonly, so its stop
+# would persist nothing: the chain SAVEs it first, logged in.
+REDIS_CONF = 'port 6380\nrequirepass pw-in-the-file\nsave ""\n'
+
+
 def _ready(host: Host, save: str = "3600 1 300 100") -> Host:
     host.knob(KNOB_CHAIN)
     host.run_dir.mkdir()
     host.run_dir.chmod(0o700)
     host.on("pg_lsclusters", "-h", CLUSTER)
     conf = host.tmp / "redis.conf"
-    conf.write_text("port 6380\nrequirepass pw-in-the-file\n")
+    conf.write_text(REDIS_CONF)
     host.show(
         "redis-server.service",
         ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} ; }}",
         MainPID="4242",
     )
-    host.on("redis-cli", "* INFO server", "# Server\r\nprocess_id:4242\r\n")
+    # Ownership is read from the socket, with no login (#379).
+    host.redis_listens()
     s = host.state
+    # Asked only where its file can't say: SAVE's password is recorded.
+    host.on("redis-cli", "* CONFIG GET save", f"save\n{save}\n")
+    host.on("redis-cli", "* CONFIG GET appendonly", "appendonly\nno\n")
     host.on(
         "redis-cli",
-        "* CONFIG GET save",
-        script=f'echo "${{REDISCLI_AUTH:-}}" >> "{s}/auth"; printf "save\\n{save}\\n"; exit 0',
+        "* SAVE",
+        script=f'echo "${{REDISCLI_AUTH:-}}" >> "{s}/auth"; echo OK; exit 0',
     )
-    host.on("redis-cli", "* SAVE", "OK\n")
     host.on("psql", "*CHECKPOINT", "")
     host.on("journalctl", "*", "")
     host.on("systemctl", "stop -- *", "")
@@ -563,14 +571,16 @@ def test_no_value_reaches_the_chain_unquoted(host):
     # $( ) in either would too.
     mark = host.tmp / "ran"
     host.knob(KNOB_CHAIN + f"service app-$(id>{mark}-unit)\n")
-    (host.tmp / "redis.conf").write_text(f"bind 127.0.0.1;id>{mark}-bind\nport 6380\n")
+    (host.tmp / "redis.conf").write_text(
+        f'bind 127.0.0.1;id>{mark}-bind\nport 6380\nsave ""\n'
+    )
     host.reboot()
     r = host.fire(_journals(host))
     assert r.returncode == 0, r.stderr
     assert not list(host.tmp.glob("ran-*"))
     seq = host.sequence()
     assert f"systemctl stop -- app-$(id>{mark}-unit).service" in seq
-    assert f"redis-cli -h 127.0.0.1;id>{mark}-bind -p 6380 CONFIG GET save" in seq
+    assert f"redis-cli -h 127.0.0.1;id>{mark}-bind -p 6380 SAVE" in seq
 
 
 def test_a_chain_whose_gate_fails_at_its_start_stops_nothing(host):
@@ -651,9 +661,10 @@ def test_redis_is_reached_where_its_units_own_arguments_say(host, args, words):
     host.show(
         "redis-server.service",
         ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} {args} ; }}",
+        MainPID="4242",
     )
     chain = host.reboot(approve=False, rc=3)["chain"]
-    assert any(f"redis-cli {words} CONFIG GET save" in line for line in chain)
+    assert any(f"redis-cli {words} SAVE" in line for line in chain)
 
 
 @pytest.mark.parametrize(
@@ -668,7 +679,7 @@ def test_redis_is_reached_where_its_units_own_arguments_say(host, args, words):
 )
 def test_the_chain_reads_the_password_as_redis_does(host, line):
     # Measured on Redis 7.0: each form sets the same password.
-    conf = "port 6380\n" + line.format(pw="pw-in-the-file") + "\n"
+    conf = 'port 6380\nsave ""\n' + line.format(pw="pw-in-the-file") + "\n"
     (host.tmp / "redis.conf").write_text(conf)
     host.reboot()
     host.fire(_journals(host))
@@ -698,28 +709,26 @@ def test_a_redis_with_no_file_gets_no_other_redis_password(host):
     host.knob(KNOB_CHAIN + "datastore redis redis-cache\n")
     host.show(
         "redis-cache.service",
-        ExecStart="{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server --port 6390 ; }",
+        ExecStart='{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server --port 6390 --save "" ; }',
+        MainPID="4242",
     )
     host.reboot()
     host.fire(_journals(host))
-    # The first Redis's CONFIG GET with its file's password, the second's
-    # with none.
+    # The first Redis's SAVE with its file's password, the second's with
+    # none.
     assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", "", ""]
 
 
 @pytest.mark.parametrize(
-    "answer, refused",
-    [("process_id:999\r\n", True), ("process_id:4242\r\n", False)],
-    ids=["another-redis", "its-own"],
+    "pid, refused", [(999, True), (4242, False)], ids=["another-redis", "its-own"]
 )
-def test_a_redis_address_that_reaches_another_process_is_refused(host, answer, refused):
-    host.cases["redis-cli"] = [
-        c for c in host.cases["redis-cli"] if c[0] != "* INFO server"
-    ]
-    host.on("redis-cli", "* INFO server", answer)
+def test_a_redis_address_that_reaches_another_process_is_refused(host, pid, refused):
+    host.redis_listens(pid=pid)
     out = host.reboot(rc=3 if refused else 0)
-    hit = any("reaches process 999" in r for r in out["refused"])
+    hit = any("127.0.0.1:6380 is process 999's (ss)" in r for r in out["refused"])
     assert hit is refused, out["refused"]
+    # Ownership takes no login, so it leaves nothing in ACL LOG (#379).
+    assert not [a for _, a, _ in host.calls("redis-cli") if "INFO" in a]
 
 
 def test_a_redis_that_isnt_running_has_nothing_to_save(host):
@@ -732,10 +741,12 @@ def test_a_redis_that_isnt_running_has_nothing_to_save(host):
 
 def test_the_chain_reads_a_key_in_any_case_after_leading_space(host):
     # Redis takes both (measured on 7.0).
-    (host.tmp / "redis.conf").write_text("  Port 6380\n  REQUIREPASS pw-in-the-file\n")
+    (host.tmp / "redis.conf").write_text(
+        '  Port 6380\n  REQUIREPASS pw-in-the-file\n  SAVE ""\n'
+    )
     host.reboot()
     host.fire(_journals(host))
-    assert "redis-cli -h 127.0.0.1 -p 6380 CONFIG GET save" in host.sequence()
+    assert "redis-cli -h 127.0.0.1 -p 6380 SAVE" in host.sequence()
     assert (host.state / "auth").read_text().split("\n") == ["pw-in-the-file", ""]
 
 
@@ -754,17 +765,139 @@ def test_a_save_redis_refuses_is_logged(tmp_path):
     assert "systemctl stop -- redis-server.service" in host.sequence()
 
 
-@pytest.mark.parametrize("save, saved", [("3600 1 300 100", False), ("", True)])
-def test_redis_is_saved_first_only_without_save_points(tmp_path, save, saved):
-    host = _ready(Host(tmp_path), save=save)
-    host.reboot()
+@pytest.mark.parametrize(
+    "lines, persistence, calls",
+    [
+        # Its stop persists it: no SAVE, and no login (#379).
+        ("save 3600 1\n", "rdb", []),
+        ("", "rdb", []),  # no save line keeps Redis's default save points
+        ('save ""\nappendonly yes\n', "aof", []),
+        ('save ""\n', "none", ["SAVE"]),
+        # A later save line adds save points back (measured on 7.0).
+        ('save ""\nsave 900 1\n', "rdb", []),
+        # An include may set either, so the chain asks at the stop.
+        ("include /etc/redis/more.conf\n", "unknown", ["CONFIG GET save"]),
+    ],
+    ids=["save-points", "default", "aof", "neither", "save-after-none", "include"],
+)
+def test_redis_is_saved_first_only_where_its_stop_wouldnt_persist_it(
+    tmp_path, lines, persistence, calls
+):
+    host = _ready(Host(tmp_path), save="")
+    (host.tmp / "redis.conf").write_text(
+        "port 6380\nrequirepass pw-in-the-file\n" + lines
+    )
+    out = host.reboot()
+    assert out["gate"]["datastores"][-1]["persistence"] == persistence
     host.fire(_journals(host))
-    calls = [c for c in host.sequence() if c.startswith("redis-cli")]
-    assert calls[0] == "redis-cli -h 127.0.0.1 -p 6380 CONFIG GET save"
-    assert ("redis-cli -h 127.0.0.1 -p 6380 SAVE" in calls) is saved
-    # Read from its own file when the chain runs, not written into it.
-    assert (host.state / "auth").read_text().split() == ["pw-in-the-file"]
+    seq = [c for c in host.sequence() if c.startswith("redis-cli")]
+    pre = "redis-cli -h 127.0.0.1 -p 6380 "
+    assert [c for c in seq if c in [pre + w for w in calls]] == [pre + w for w in calls]
+    if persistence == "unknown":
+        # Asked, and saved since it has neither.
+        assert pre + "SAVE" in seq
+    if calls:
+        # Read from its own file when the chain runs, not written into it.
+        assert (host.state / "auth").read_text().split() == ["pw-in-the-file"]
+    else:
+        assert seq == []
     assert "pw-in-the-file" not in (host.run_dir / "reboot-chain.sh").read_text()
+
+
+# --- an ACL'd Redis (#379) ---------------------------------------------------------
+# broker's Redis runs an aclfile with default off, and its requirepass is a
+# password nobody holds: a login as default is refused, and each attempt
+# writes an ACL LOG entry the host has to attribute.
+
+ACL_CONF = "port 6380\naclfile /etc/redis/users.acl\nrequirepass nobodys\n"
+
+
+@pytest.mark.parametrize(
+    "lines, persistence", [("appendonly yes\n", "aof"), ("", "rdb")], ids=["aof", "rdb"]
+)
+def test_an_acld_redis_whose_stop_persists_it_needs_no_login(host, lines, persistence):
+    (host.tmp / "redis.conf").write_text(ACL_CONF + lines)
+    out = host.reboot()
+    assert out["refused"] == []
+    assert out["gate"]["datastores"][-1]["persistence"] == persistence
+    host.fire(_journals(host))
+    # Neither the gate nor the chain logs in.
+    assert host.calls("redis-cli") == []
+    assert "systemctl stop -- redis-server.service" in host.sequence()
+
+
+def test_an_acld_redis_the_chain_must_save_needs_a_user_and_key_file(host):
+    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+    out = host.reboot(rc=3)
+    [why] = [r for r in out["refused"] if "redis-server" in r]
+    assert "no save points and no appendonly" in why
+    assert "datastore redis <unit> <user> <key-file>" in why
+    # Its requirepass is never tried: a refused login is an ACL LOG entry.
+    assert host.calls("redis-cli") == []
+
+
+def test_an_acld_redis_that_isnt_running_needs_no_login(host):
+    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
+    ]
+    conf = host.tmp / "redis.conf"
+    host.show(
+        "redis-server.service",
+        ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} ; }}",
+        MainPID="0",
+    )
+    assert host.reboot()["refused"] == []
+
+
+def test_the_chain_saves_as_the_knobs_user_with_its_key_file(host):
+    key = host.tmp / "ops.key"
+    key.write_text("ops-password\n")
+    key.chmod(0o600)
+    host.knob(KNOB_CHAIN + f"datastore redis redis-server ops {key}\n")
+    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+    out = host.reboot()
+    assert out["refused"] == []
+    chain = out["chain"]
+    assert f"REDISCLI_AUTH=$(cat -- '{key}' 2>/dev/null)" in chain
+    assert any(
+        "redis-cli --user 'ops' -h '127.0.0.1' -p '6380' SAVE" in line for line in chain
+    )
+    host.fire(_journals(host))
+    assert "redis-cli --user ops -h 127.0.0.1 -p 6380 SAVE" in host.sequence()
+    # Read from its file when the chain runs: in no argv, and not in the
+    # chain's text.
+    assert (host.state / "auth").read_text().split() == ["ops-password"]
+    assert "ops-password" not in (host.run_dir / "reboot-chain.sh").read_text()
+    assert not [a for _, a, _ in host.calls() if "ops-password" in a]
+
+
+def test_an_encrypted_credential_is_decrypted_by_systemd_creds(host):
+    store = host.tmp / "credstore.encrypted"
+    store.mkdir()
+    (store / "redis-ops").write_text("ciphertext")
+    lib = host.scripts / "_gate-lib.sh"
+    text = lib.read_text()
+    line = "REDIS_CREDSTORE=/etc/credstore.encrypted/"
+    assert text.count(line) == 1
+    lib.write_text(text.replace(line, f"REDIS_CREDSTORE={store}/"))
+    host.knob(KNOB_CHAIN + f"datastore redis redis-server ops {store}/redis-ops\n")
+    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+    chain = host.reboot()["chain"]
+    assert (
+        f"REDISCLI_AUTH=$(systemd-creds decrypt '{store}/redis-ops' - 2>/dev/null)"
+        in chain
+    )
+
+
+def test_a_key_file_root_cant_read_refuses(host):
+    host.knob(KNOB_CHAIN + f"datastore redis redis-server ops {host.tmp}/absent.key\n")
+    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+    out = host.reboot(rc=3)
+    assert any(
+        f"its key file {host.tmp}/absent.key can't be read as root" in r
+        for r in out["refused"]
+    ), out["refused"]
 
 
 # --- Qdrant (#367) ------------------------------------------------------------------

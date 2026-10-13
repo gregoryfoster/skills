@@ -36,7 +36,11 @@ Beyond that list:
 - a BGSAVE Redis refuses fails at once, with Redis's reply;
 - an attempt that fails leaves no record, not even an earlier attempt's;
 - a Redis is dumped only where what redis-cli reaches is the unit's own
-  process: its main PID is the process_id INFO reports.
+  process: its main PID listens at the address, as ss reads it as root,
+  with no login (#379);
+- a dump needs a login: under an aclfile, requirepass is never tried, and
+  the knob's user logs in with its key file, which never reaches an argv;
+  a refused login is tried once, and named.
 
 Each case runs from a copy of the skill's scripts, with probe.sh replaced
 by a stub, through the apply tests' host.
@@ -420,7 +424,8 @@ def _redis(
         ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf_path} ; ignore_errors=no ; }}",
         MainPID="4242",
     )
-    host.on("redis-cli", "* INFO server", "# Server\r\nprocess_id:4242\r\n")
+    # Its own, read from the socket with no login (#379).
+    host.redis_listens()
     s = host.state
     auth = f'echo "${{REDISCLI_AUTH:-}}" >> "{s}/auth"; '
     host.on(
@@ -534,26 +539,31 @@ def test_the_password_is_read_as_redis_reads_it(tmp_path, line):
 
 
 @pytest.mark.parametrize(
-    "answer, pid, why",
+    "listener, pid, why",
     [
         # --port ${VAR} reads as no port, and the fallback reaches another
         # Redis (measured on 7.0).
         (
-            "process_id:999\r\n",
+            999,
             "4242",
-            "reaches process 999, and redis-server.service's main process is 4242",
+            "127.0.0.1:6379 is process 999's (ss), and redis-server.service's main process is 4242",
         ),
-        ("", "4242", "reaches no Redis"),
-        ("process_id:4242\r\n", "0", "redis-server.service has no main process"),
+        (None, "4242", "nothing listens at 127.0.0.1:6379 (ss)"),
+        # Listening on another address: not the one redis-cli would reach.
+        ("10.9.9.9", "4242", "nothing listens at 127.0.0.1:6379 (ss)"),
+        (4242, "0", "redis-server.service has no main process"),
     ],
-    ids=["another-redis", "no-redis", "not-running"],
+    ids=["another-redis", "no-redis", "another-address", "not-running"],
 )
-def test_a_redis_that_isnt_the_units_own_is_refused(tmp_path, answer, pid, why):
+def test_a_redis_that_isnt_the_units_own_is_refused(tmp_path, listener, pid, why):
     host = _redis(_ready(Host(tmp_path)))
-    host.cases["redis-cli"] = [
-        c for c in host.cases["redis-cli"] if c[0] != "* INFO server"
-    ]
-    host.on("redis-cli", "* INFO server", answer)
+    if listener is None:
+        host.cases["ss"] = []
+        host.on("ss", "*", "")
+    elif isinstance(listener, str):
+        host.redis_listens(address=listener)
+    else:
+        host.redis_listens(pid=listener)
     host.cases["systemctl"] = [
         c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
     ]
@@ -642,6 +652,86 @@ def test_a_bgsave_redis_refuses_fails_at_once_with_its_reply(tmp_path):
     assert not [
         a for _, a, _ in host.calls("redis-cli") if a.endswith("INFO persistence")
     ]
+    assert not (host.run_dir / "recovery-point").exists()
+
+
+# --- an ACL'd Redis (#379) -----------------------------------------------------
+# broker's Redis runs an aclfile with default off, and its requirepass is a
+# password nobody holds: each refused login is an ACL LOG entry.
+
+ACL_CONF = "port 6379\naclfile /etc/redis/users.acl\nrequirepass nobodys\n"
+
+
+def test_an_acld_redis_with_no_user_isnt_dumped_and_no_login_is_tried(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), conf=ACL_CONF)
+    out = host.recover(rc=3)
+    [why] = [r for r in out["refused"] if "redis-server" in r]
+    assert "its dump needs a login, to BGSAVE" in why
+    assert "datastore redis <unit> <user> <key-file>" in why
+    assert "or cover it with a backup line" in why
+    assert host.calls("redis-cli") == []
+
+
+def test_a_dump_logs_in_as_the_knobs_user_with_its_key_file(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), conf=ACL_CONF)
+    key = host.tmp / "ops.key"
+    key.write_text("ops-password\n")
+    key.chmod(0o600)
+    host.knob(KNOB + f"datastore redis redis-server ops {key}\n")
+    out = host.recover()
+    assert out["verdict"]["ok"] is True
+    calls = [a for _, a, _ in host.calls("redis-cli")]
+    assert calls and all(
+        a.startswith("--user ops -h 127.0.0.1 -p 6379 ") for a in calls
+    )
+    assert set((host.state / "auth").read_text().split()) == {"ops-password"}
+    assert "ops-password" not in host.log.read_text()
+    assert "ops-password" not in host.result.stdout + host.result.stderr
+
+
+def test_a_refused_login_is_named_and_tried_once(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), conf="port 6379\nrequirepass stale\n")
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if "CONFIG GET dir" not in c[0]
+    ]
+    # redis-cli exits 0: the failed AUTH on stderr, then NOAUTH on stdout
+    # (measured on 7.0).
+    host.on(
+        "redis-cli",
+        "* CONFIG GET dir",
+        "NOAUTH Authentication required.\n",
+        0,
+        "AUTH failed: WRONGPASS invalid username-password pair or user is disabled.\n",
+    )
+    out = host.recover(rc=3)
+    [why] = [r for r in out["refused"] if "redis-server" in r]
+    assert (
+        "refused CONFIG GET dir to the login as default, with its file's requirepass"
+        " (AUTH failed: WRONGPASS" in why
+    )
+    assert "reaches no Redis" not in why
+    assert len(host.calls("redis-cli")) == 1
+
+
+def test_a_command_the_user_lacks_is_named(tmp_path):
+    host = _redis(_ready(Host(tmp_path)), conf=ACL_CONF)
+    key = host.tmp / "ops.key"
+    key.write_text("ops-password\n")
+    host.knob(KNOB + f"datastore redis redis-server ops {key}\n")
+    host.cases["redis-cli"] = [
+        c for c in host.cases["redis-cli"] if "BGSAVE" not in c[0]
+    ]
+    host.on(
+        "redis-cli",
+        "* BGSAVE",
+        "NOPERM this user has no permissions to run the 'bgsave' command\n",
+    )
+    out = host.recover(rc=1)
+    assert any(
+        "refused BGSAVE to ops (NOPERM this user has no permissions" in w
+        and "give that user the command in Redis's ACL" in w
+        for w in out["verdict"]["why"]
+    ), out["verdict"]
     assert not (host.run_dir / "recovery-point").exists()
 
 

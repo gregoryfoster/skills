@@ -25,7 +25,8 @@ The chain, logged to the run's reboot-chain.log, root's only:
      stops nothing and ends;
   2. stop each restarter, then each service;
   3. a checkpoint, then stop each data store (Postgres: CHECKPOINT; Redis:
-     SAVE first when it has no save points);
+     SAVE first only where its file sets no save points and no appendonly,
+     or can't be read, so its stop wouldn't persist it);
   4. journalctl --sync;
   5. copy the volatile journal into the run, last, so it holds every stop
      line, and read it back: it's the only record of the shutdown. A
@@ -62,8 +63,10 @@ may go again); when the span isn't wholly inside one window or meets a
 quiet range; while a package manager runs or an inflight command prints
 anything but 0; when a Postgres datastore's cluster can't be found, isn't
 online, or its port can't be read, so a stopped cluster blocks the reboot;
-when a running Redis's address reaches no Redis, or another process; and
-when a Qdrant's unit isn't active or its container isn't running.
+when a running Redis's unit isn't the process ss finds listening at its
+address, or the chain must SAVE it and has no login to (an aclfile, and no
+user and key file on its datastore line), or its key file can't be read as
+root; and when a Qdrant's unit isn't active or its container isn't running.
 
 Output: one JSON object on stdout. Keys: reboot_chain, refused, gate, chain
 (its lines), launched, tmp (the tmpfiles rule for /tmp, and whether the
@@ -241,7 +244,7 @@ gate_packages() {
 # nothing to checkpoint: its container's stop is its clean shutdown (#367).
 DS_LINES=()
 gate_datastores() {
-  local r u port a="" e seen="" rc qc out
+  local r u port a="" e seen="" rc qc out ru rk persist who why
   local -a f=()
   for r in ${KNOB_DATASTORE[@]+"${KNOB_DATASTORE[@]}"}; do
     IFS=$KNOB_US read -r -a f <<<"$r"
@@ -274,7 +277,8 @@ gate_datastores() {
       fi
       DS_LINES+=("qdrant $u")
     else
-      redis_conn "$u"
+      read -r ru rk <<<"${f[2]:-}" || true
+      redis_conn "$u" "$ru" "$rk"
       # The chain would check and save another Redis. One that isn't running
       # has nothing to save.
       rc=0
@@ -284,7 +288,34 @@ gate_datastores() {
         continue
       fi
       jadds e address "${REDIS_ARGS[*]}"
-      DS_LINES+=("redis $u ${REDIS_CONF:--} ${REDIS_ARGS[*]}")
+      # Its stop persists it under appendonly yes, which fsyncs the AOF,
+      # or with save points, which save the RDB file (measured on 7.0): no
+      # login then. Only one with neither, or unknown, is saved first, and
+      # that needs a login the chain can make (#379).
+      redis_persistence persist
+      jadds e persistence "$persist"
+      # One that isn't running has nothing to save, and needs no login.
+      [ "$rc" -ne 2 ] || persist=stopped
+      case $persist in
+        none | unknown)
+          if [ "$REDIS_LOGIN" = none ]; then
+            if [ "$persist" = none ]; then
+              why="its file sets no save points and no appendonly, so the chain must SAVE it before the stop"
+            elif [ "$RC_READ" -eq 0 ]; then
+              why="$RC_CONF couldn't be read as root, so the chain must ask it at the stop whether it saves"
+            else
+              why="$RC_CONF has an include, which may set how it persists, so the chain must ask it at the stop whether it saves"
+            fi
+            redis_as who
+            refuse "datastore redis $u: $why, and it would log in as $who. Give its datastore line a user and key file (datastore redis <unit> <user> <key-file>)"
+            continue
+          fi
+          if ! redis_key_ok; then
+            refuse "datastore redis $u: $REDIS_WHY"
+            continue
+          fi ;;
+      esac
+      DS_LINES+=("redis $u $persist ${REDIS_CONF:--} $REDIS_LOGIN ${REDIS_USER:--} ${REDIS_KEY:--} ${REDIS_ARGS[*]}")
     fi
     jpush a "{$e}"
   done
@@ -337,7 +368,7 @@ stop_line() {  # <unit>
 # The chain is sh text, written literally: its expansions are its own.
 # shellcheck disable=SC2016
 write_chain() {
-  local r q u kind conf rest l cmd user t m x ra pw
+  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey
   local -a f=() w=()
   sq q "$log"
   c '#!/bin/sh'
@@ -386,8 +417,9 @@ write_chain() {
   c ''
   c '# 3. A checkpoint, then each data store.'
   for r in ${DS_LINES[@]+"${DS_LINES[@]}"}; do
-    # "postgres <unit> <port>", "redis <unit> <conf or -> <redis-cli words>",
-    # or "qdrant <unit>".
+    # "postgres <unit> <port>", "redis <unit> <persistence> <conf or ->
+    # <login> <user or -> <key file or -> <redis-cli words>", or
+    # "qdrant <unit>".
     read -r kind u conf rest <<<"$r"
     if [ "$kind" = qdrant ]; then
       c "# Its container's stop is Qdrant's clean shutdown: no checkpoint."
@@ -396,15 +428,44 @@ write_chain() {
       sq m "checkpoint $u"
       c "say $m; runuser -u postgres -- psql -XAtq -p $conf -d postgres -c CHECKPOINT || say \"CHECKPOINT failed: the stop checkpoints anyway\""
     else
+      persist=$conf
+      read -r conf login ruser rkey rest <<<"$rest"
+      case $persist in
+        aof)
+          c "# Its stop fsyncs its AOF (appendonly yes, as its file says): no SAVE, and no login."
+          stop_line "$u"
+          continue ;;
+        rdb)
+          c "# Its stop saves the RDB file (its file's save points): no SAVE, and no login."
+          stop_line "$u"
+          continue ;;
+        stopped)
+          c "# It wasn't running at the gate: nothing to save."
+          stop_line "$u"
+          continue ;;
+      esac
       # The address and the socket come from redis.conf, which the redis
       # user can write: each one quoted.
       read -r -a w <<<"$rest"
       ra=""
+      if [ "$login" = key ]; then
+        sq x "$ruser"
+        ra=" --user $x"
+      fi
       for x in ${w[@]+"${w[@]}"}; do
         case $x in -h | -p | -s) ;; *) sq x "$x" ;; esac
         ra="$ra $x"
       done
-      if [ "$conf" != - ]; then
+      if [ "$login" = key ]; then
+        # The knob's user, with its key file, decrypted by systemd-creds
+        # where it's an encrypted credential: read as redis_cli reads it.
+        sq l "$rkey"
+        case $rkey in
+          "$REDIS_CREDSTORE"*) c "REDISCLI_AUTH=\$(systemd-creds decrypt $l - 2>/dev/null)" ;;
+          *) c "REDISCLI_AUTH=\$(cat -- $l 2>/dev/null)" ;;
+        esac
+        c '[ -n "$REDISCLI_AUTH" ] && export REDISCLI_AUTH || unset REDISCLI_AUTH'
+      elif [ "$conf" != - ]; then
         # Read as redis_cli reads it, and as Redis does.
         sq l "$conf"
         sq pw "$REDIS_PW_SED"
@@ -414,12 +475,17 @@ write_chain() {
         # No file to read one from, and the last Redis's isn't this one's.
         c 'unset REDISCLI_AUTH'
       fi
-      c "# Its stop saves the RDB file only where save points are set."
       # redis-cli exits 0 on an error reply, and prints it on stdout; an
       # AUTH warning goes to stderr, which is the log (measured on 7.0). So
       # stdout alone says whether the SAVE took.
       sq m "SAVE $u"
-      c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ]; then say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
+      if [ "$persist" = none ]; then
+        c "# Its file sets no save points and no appendonly: its stop would save nothing."
+        c "say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\""
+      else
+        c "# Whether its stop saves can't be read from its file: asked now."
+        c "if [ -z \"\$(redis-cli$ra CONFIG GET save | sed -n 2p)\" ] && [ \"\$(redis-cli$ra CONFIG GET appendonly | sed -n 2p)\" != yes ]; then say $m; reply=\$(redis-cli$ra SAVE); [ \"\$reply\" = OK ] || say \"SAVE failed: \$reply\"; fi"
+      fi
     fi
     stop_line "$u"
   done

@@ -159,6 +159,10 @@ def test_a_last_line_without_a_newline_is_read(tmp_path):
         "hold postgresql-* Postgres",  # step name case
         "datastore postgres pg@16-main",  # no database
         "datastore redis",
+        "datastore redis redis-server ops",  # #379: a user and no key file
+        "datastore redis redis-server ops etc/ops.key",  # relative
+        "datastore redis redis-server 'ops' /etc/ops.key",  # user's quoting
+        "datastore redis redis-server ops /etc/ops.key extra",
         "datastore qdrant qdrant.service qdrant https://q:6333",  # no key file
         "datastore qdrant qdrant.service qdrant q:6333 -",  # no scheme
         "datastore qdrant qdrant.service qdrant https://q:6333 key",  # relative
@@ -336,8 +340,36 @@ def test_datastore_lines_naming_one_cluster_add_up(tmp_path):
             "databases": ["app", "audit", "reports"],
             "line": 2,
         },
-        {"engine": "redis", "unit": "redis-server.service", "databases": [], "line": 4},
+        {
+            "engine": "redis",
+            "unit": "redis-server.service",
+            "databases": [],
+            "user": None,
+            "key_file": None,
+            "line": 4,
+        },
     ]
+
+
+def test_a_redis_datastore_may_name_the_user_it_logs_in_as(tmp_path):
+    # #379: broker's Redis runs an aclfile with default off, so a command
+    # that needs a login needs a user, and a key file only root reads.
+    out = _read(
+        tmp_path,
+        "posture scheduled\n"
+        "datastore redis redis-server ops /etc/credstore.encrypted/redis-ops\n",
+    )
+    assert out["datastore"] == [
+        {
+            "engine": "redis",
+            "unit": "redis-server",
+            "databases": [],
+            "user": "ops",
+            "key_file": "/etc/credstore.encrypted/redis-ops",
+            "line": 2,
+        }
+    ]
+    assert out["findings"] == []
 
 
 def test_a_qdrant_datastore_names_its_container_url_and_key_file(tmp_path):

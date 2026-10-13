@@ -2634,6 +2634,17 @@ def test_a_redis_with_no_key_is_dormant_only_when_nothing_uses_it(
     assert evidence in d["evidence"]
 
 
+def test_a_redis_that_needs_a_login_says_so(host):
+    # Unauthenticated, as the probe asks: an ACL'd Redis answers NOAUTH, and
+    # nothing reaches its ACL LOG (#379; measured on 7.0).
+    host.installed("redis-server")
+    host.show("redis-server.service", ActiveState="active")
+    host.on("redis-cli", "INFO", "NOAUTH Authentication required.\n")
+    d = _dormant(host.run(), "redis")
+    assert d["verdict"] == "unknown"
+    assert "it needs a login (INFO answered NOAUTH)" in d["evidence"]
+
+
 def test_an_unpackaged_engine_counts_from_its_own_start(host):
     host.write("usr/lib/systemd/system/ollama.service", "[Service]\n")
     (host.root / "usr/share/ollama/.ollama/models/manifests").mkdir(parents=True)
