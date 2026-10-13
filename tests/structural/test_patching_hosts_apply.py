@@ -1405,6 +1405,87 @@ def test_a_whole_run_never_unmasks_enables_reboots_removes_or_purges(host):
     assert host.holds() == []
 
 
+# --- a held version against the dry run's (#383) ------------------------------------
+# broker's dry run counted tailscale 1.102.4 twice; the bulk's list refresh
+# found 1.104.1, and the held step installed it, recorded by name alone.
+
+PG_NOW = "16.10-0ubuntu0.24.04.1"
+REDIS_NOW = "5:7.0.15-1ubuntu0.24.04.1"
+
+
+def _counted(host: Host, held: str | None) -> Host:
+    line = "" if held is None else f"held_versions={held}\n"
+    (host.dry / "summary").write_text(
+        f"began={TUE_1530 - 3600}\nexit=0\ncount=4\nwall_seconds=540\nsecurity_only=1\n{line}"
+    )
+    return host
+
+
+def test_the_bulk_says_which_held_versions_moved_since_the_dry_run(host):
+    _counted(
+        host,
+        f"postgresql-16={PG_NOW} libpq5={PG_NOW} redis-server=5:7.0.15-1ubuntu0.24.04.0",
+    )
+    out = host.run()
+    assert out["verdict"]["ok"] is True
+    versions = {v["package"]: v for v in out["holds"]["versions"]}
+    assert versions["postgresql-16"] == {
+        "package": "postgresql-16",
+        "step": "postgres",
+        "dry_run": PG_NOW,
+        "candidate": PG_NOW,
+    }
+    assert versions["redis-server"]["candidate"] == REDIS_NOW
+    [moved] = out["verdict"]["version_moved"]
+    assert moved.startswith(
+        "redis-server (redis): the dry run counted 5:7.0.15-1ubuntu0.24.04.0,"
+        f" and the refreshed lists offer {REDIS_NOW}, which its held step would take"
+    )
+    assert any(moved in n for n in out["next"])
+    assert f"redis-server {REDIS_NOW}\n" in host.record("hold-versions")
+
+
+def test_a_dry_run_from_before_383_compares_nothing(host):
+    out = _counted(host, None).run()
+    assert out["verdict"]["version_moved"] == []
+    assert {v["dry_run"] for v in out["holds"]["versions"]} == {None}
+
+
+def test_a_held_step_records_what_it_installed_against_the_dry_run(host):
+    _counted(host, f"postgresql-16={PG_NOW} libpq5={PG_NOW}")
+    host.run()
+    newer = "16.11-0ubuntu0.24.04.1"
+    host.cases["dpkg-query"].insert(
+        0,
+        (
+            "-W postgresql-16 libpq5",
+            f"postgresql-16\t{newer}\nlibpq5\t{PG_NOW}\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    out = host.run(step="postgres")
+    assert out["verdict"]["ok"] is True
+    assert out["installed"] == [
+        {
+            "package": "postgresql-16",
+            "version": newer,
+            "dry_run": PG_NOW,
+            "candidate": PG_NOW,
+        },
+        {
+            "package": "libpq5",
+            "version": PG_NOW,
+            "dry_run": PG_NOW,
+            "candidate": PG_NOW,
+        },
+    ]
+    assert out["verdict"]["version_moved"] == [
+        f"postgresql-16 (postgres): the step installed {newer}, and the dry run counted {PG_NOW}"
+    ]
+
+
 # --- Redis after a held step (#380) -------------------------------------------------
 # noble's redis-server postinst restarts it: its own log says whether the
 # process before shut down cleanly, and whether this one loaded its data.

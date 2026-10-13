@@ -44,10 +44,10 @@ Options:
                       security_only is true; wider origins, or another lane,
                       put other packages on the same line. DIR/summary holds
                       when it began, its exit, count, wall time, lane and
-                      security_only, and in the one-origin lane what it
-                      would leave, which apply.sh --dry-run reads; its
-                      download size,
-                      memory and free disk are in the JSON. An earlier
+                      security_only, in the one-origin lane what it would
+                      leave, and the version it counted of each package a
+                      hold group takes, which apply.sh --dry-run reads; its
+                      download size, memory and free disk are in the JSON. An earlier
                       summary is removed first. A dry run that doesn't run
                       (no root, a lane the knob doesn't resolve, an
                       unsimulated set, an origin's site unread) still exits
@@ -2013,7 +2013,7 @@ conffile_states() {  # <var> <package>: VAR := a JSON array body
 
 read_dry_run() {
   local o="" conf t0 t1 out rc line names="" n="" dlk="" free="" rss="" w sel=0 lnames="" lkeep="" lskip=""
-  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po=""
+  local oleft="" left_read=0 kw p rest unlisted="" prompts="" cfp="" cfs="" i k keys="" po="" hv
   local -a words=() cf_states=() cf_keys=()
   R_DRY=null R_PASSED_OVER=null
   if [ -z "$dryrun" ]; then
@@ -2199,12 +2199,24 @@ read_dry_run() {
       if [ "$left_read" -eq 1 ]; then json_list w "$oleft"; fi
       jadd o origin_left "$w" ;;
   esac
+  # Each held group's candidate versions, for the steps to compare (#383).
+  hold_group_versions hv "$SIM_DIST_OUT"
+  w=""
+  for p in $hv; do
+    k=""
+    jadds k package "${p%%=*}"
+    jadds k version "${p#*=}"
+    jpush w "{$k}"
+  done
+  jadd o held_versions "[$w]"
   # apply.sh reads it: the dry run's wall time is the floor of each step's
-  # expected duration, and in the one-origin lane, what it would leave.
+  # expected duration, in the one-origin lane what it would leave, and the
+  # versions it counted for the held steps.
   {
     printf 'began=%s\nexit=%s\ncount=%s\nwall_seconds=%s\nsecurity_only=%s\nlane=%s\n' \
       "$t0" "$rc" "$n" "$((t1 - t0))" "$DRY_SECURITY_ONLY" "$lane"
     if [ "$left_read" -eq 1 ]; then printf 'origin_left=%s\n' "${oleft# }"; fi
+    printf 'held_versions=%s\n' "$hv"
   } >"$dryrun/summary"
   jadds o summary "$dryrun/summary"
   R_DRY="{$o}"

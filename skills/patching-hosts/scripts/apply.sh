@@ -124,6 +124,8 @@ The run's directory is root-only: 0700, and each file 0600.
   dry-run          the dry run's summary, for the held steps' gate
   before-versions, before-showhold, before-showauto
   holds            "<step> <package>": each hold the run placed
+  hold-versions    "<package> <version>": each held package's candidate
+                   after the bulk's list refresh
   steps            one tab-separated line per step that began its upgrade:
                    <step>, ok or failed, when apply.sh started (epoch), and
                    the upgrade's wall seconds and max RSS in KiB, either
@@ -132,11 +134,15 @@ The run's directory is root-only: 0700, and each file 0600.
   probe-after-<step>.json and .err
 
 Output: one JSON object on stdout, for exits 0, 1 and 3. Keys: apply,
-refused, gate, then what the step did: holds, upgrade, health, qdrant
+refused, gate, then what the step did: holds (the bulk's with each held
+package's candidate against the dry run's version), installed (what a held
+step installed of its group), upgrade, health, qdrant
 (each Qdrant datastore, and for one the held step restarted, its counts
 against the recovery point's), redis (each Redis datastore, and for one the
 held step restarted, what its log says of the shutdown before and the load
-after), restarters, verdict, abort, next and reprobe.
+after), restarters, verdict (version_moved lists each held package whose
+version differs from the one the dry run counted: a line for the owner,
+never a refusal), abort, next and reprobe.
 
 Exit codes:
   0  the step ran, and its verdict is green
@@ -302,7 +308,9 @@ case $LANE in security | maintenance | origin:?*) ;; *) LANE=unknown ;; esac
 # returns non-zero stops the script under errexit, wherever it is called
 # plainly.
 NEXT=()
-J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null J_QDRANT=null J_REDIS=null
+J_GATE="" J_HOLDS=null J_UPGRADE=null J_HEALTH=null J_RESTARTERS=null J_QDRANT=null J_REDIS=null J_INSTALLED=null
+# A held group's version that differs from the dry run's (#383).
+VERSION_MOVED=()
 J_VERDICT=null J_ABORT=null J_REPROBE=null
 
 HOLD_STEPS=""
@@ -1017,6 +1025,7 @@ emit() {
   jadd o refused "[$a]"
   jadd o gate "{$J_GATE}"
   jadd o holds "$J_HOLDS"
+  jadd o installed "$J_INSTALLED"
   jadd o upgrade "$J_UPGRADE"
   jadd o health "$J_HEALTH"
   jadd o qdrant "$J_QDRANT"
@@ -1265,6 +1274,12 @@ finish() {
   if [ "$result" = failed ]; then ok=0; fi
   jaddb o ok "$ok"
   jadd o why "[$a]"
+  a=""
+  for r in ${VERSION_MOVED[@]+"${VERSION_MOVED[@]}"}; do
+    jpushs a "$r"
+    NEXT+=("A version moved since the dry run, for the owner to read before the next approval: $r.")
+  done
+  jadd o version_moved "[$a]"
   J_VERDICT="{$o}"
   if [ "$result" = failed ] && [ "$STARTED" -eq 0 ]; then
     o="" a="" left="[]"
@@ -1340,7 +1355,7 @@ STARTED=0
 
 LANE_KEEP=""
 do_bulk() {
-  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip
+  local out pend="" p i r s g o="" a="" names="" e kw rest pol onames oskip sim bv dv="" dseen=0 c d line vout="" va=""
   local -a f=() w=()
   if ! root_has "$run" && ! as_root mkdir -p -m 700 -- "$run"; then
     fail "$run couldn't be made"
@@ -1385,6 +1400,7 @@ do_bulk() {
   while read -r kw p rest; do
     case $kw:$rest in Inst:"["*) pend="$pend $p" ;; esac
   done <<<"$out"
+  sim=$out
   # The one-origin lane takes that origin's packages alone: every other
   # pending package goes in its file's Package-Blacklist, and only its own
   # are candidates for a hold group. The split reads the lists just
@@ -1429,6 +1445,34 @@ do_bulk() {
       fi
     done
   done
+  # Each held package's candidate now, from the lists just refreshed,
+  # against the version the dry run counted (#383): a release published
+  # between the two is what its held step would take, so the owner reads it
+  # before approving 3(a). Never a refusal.
+  hold_group_versions bv "$sim"
+  while IFS= read -r line; do
+    case $line in held_versions=*) dv=${line#held_versions=} dseen=1 ;; esac
+  done <<<"$DRY_SUMMARY"
+  for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
+    p=${RUN_HOLD_PKG[$i]}
+    version_in c "$bv" "$p"
+    version_in d "$dv" "$p"
+    vout="$vout$p $c"$'\n'
+    e=""
+    jadds e package "$p"
+    jadds e step "${RUN_HOLD_STEP[$i]}"
+    if [ "$dseen" -eq 1 ]; then jaddsn e dry_run "$d"; else jadd e dry_run null; fi
+    jaddsn e candidate "$c"
+    jpush va "{$e}"
+    if [ "$dseen" -eq 1 ] && [ -n "$c" ] && [ "$c" != "$d" ]; then
+      VERSION_MOVED+=("$p (${RUN_HOLD_STEP[$i]}): the dry run counted ${d:-no version of it}, and the refreshed lists offer $c, which its held step would take")
+    fi
+  done
+  jadd o versions "[$va]"
+  if ! printf '%s' "$vout" | root_write "$run/hold-versions"; then
+    fail "$run/hold-versions couldn't be written: nothing was held or upgraded"
+    return 0
+  fi
   out=""
   for i in ${RUN_HOLD_PKG[@]+"${!RUN_HOLD_PKG[@]}"}; do
     out="$out${RUN_HOLD_STEP[$i]} ${RUN_HOLD_PKG[$i]}"$'\n'
@@ -1540,6 +1584,42 @@ qdrant_after() {
   if [ "${#QD_UNITS[@]}" -gt 0 ]; then J_QDRANT="[$a]"; fi
 }
 
+# What a held step installed of its packages, against the version the dry
+# run counted and the bulk's candidate after its refresh (#383).
+held_installed() {  # <packages>...
+  local p v x y d c out dv="" bv="" line a="" e
+  [ "$#" -gt 0 ] || return 0
+  if root_read out "$run/dry-run"; then
+    while IFS= read -r line; do
+      case $line in held_versions=*) dv=${line#held_versions=} ;; esac
+    done <<<"$out"
+  fi
+  if root_read out "$run/hold-versions"; then
+    while read -r x y; do
+      if [ -n "$x" ]; then bv="$bv $x=$y"; fi
+    done <<<"$out"
+  fi
+  capture out dpkg-query -W "$@"
+  for p in "$@"; do
+    v=""
+    while read -r x y; do
+      if [ "$x" = "$p" ]; then v=$y; fi
+    done <<<"$out"
+    version_in d "$dv" "$p"
+    version_in c "$bv" "$p"
+    e=""
+    jadds e package "$p"
+    jaddsn e version "$v"
+    jaddsn e dry_run "$d"
+    jaddsn e candidate "$c"
+    jpush a "{$e}"
+    if [ -n "$v" ] && [ -n "$d" ] && [ "$v" != "$d" ]; then
+      VERSION_MOVED+=("$p ($step): the step installed $v, and the dry run counted $d")
+    fi
+  done
+  J_INSTALLED="[$a]"
+}
+
 # Each Redis datastore's start, before a held step, so a restart the step
 # caused (noble's redis-server postinst restarts it) is checked from its own
 # log after it, as --post-boot checks one after a boot (#380).
@@ -1646,6 +1726,7 @@ do_held() {
     redis_mark
     run_uu
     check_holds
+    held_installed ${w[@]+"${w[@]}"}
     poll_health
     qdrant_after
     redis_after

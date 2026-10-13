@@ -71,6 +71,7 @@ Then:
 
 1. **Refresh the host's own lists** (`apt-get update`): the probe counted against a scratch copy, and on a host whose timers are masked, the host's may be months old.
 2. **Hold** each `hold` group in the set. Expand its globs against what's pending once the lists are fresh (`apt-get -s dist-upgrade`, any origin), record the names, and `sudo apt-mark hold` those names: the recorded list is exactly what step 4 releases. **Leave the owner's own holds alone:** a package in `apt-mark showhold` before the run was held on purpose, so the run never holds or unholds it. Report it as held by the owner. If it's in the pending set, that's a finding unless a `held:<package>` exception covers it ([policy.md](policy.md#exceptions)).
+   **Read each held package's candidate there too, against the version the dry run counted** (#383). A release published between the two is what its held step takes: broker's dry run counted Tailscale 1.102.4, and its step installed 1.104.1. `apply.sh` lists each one that moved under the bulk's `verdict.version_moved`, for the owner to read before approving 3(a), and each held step does the same for what it installed. It's never a refusal.
 3. **Bulk:** `sudo NEEDRESTART_MODE=l choom -n 0 -- unattended-upgrade -v`.
    - `choom -n 0` puts the apply at adj 0, so the kernel doesn't sacrifice a production service to protect a -1000 session.
    - **No hard memory cap:** a `MemoryMax` kill mid-dpkg leaves packages half-configured.
@@ -78,7 +79,7 @@ Then:
 4. **Each held group, under approval 3(a):**
    - stop each `restarter`;
    - unhold the packages the run held, and only those. In this order, a stop that fails leaves the group held, and the step can run again;
-   - run the same command;
+   - run the same command, and record what it installed (`dpkg-query -W`);
    - poll every `health` command **every second, logging each result with its timestamp**, until all of them exit 0 twice in a row;
    - start each `restarter` again, and confirm `is-active`.
 5. **Record auto-removals** apart from upgrades (`Remove-New-Unused-Dependencies`).

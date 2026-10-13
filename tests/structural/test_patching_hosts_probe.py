@@ -656,6 +656,42 @@ def test_the_dry_run_counts_security_exactly_into_its_scratch_cache(host):
     assert [c for c in host.calls("choom") if "-n 0" in c[1]]
 
 
+def test_the_dry_run_records_the_version_it_counted_of_each_held_package(host):
+    # #383: broker's tailscale step took a release published between the dry
+    # run and the apply. The summary keeps what the dry run counted, for the
+    # steps to compare.
+    scratch = host.tmp / "dry"
+    host.knob("class production\nposture automatic\nhold tailscale tailscale\n")
+    host.cases["apt-get"].insert(
+        0,
+        (
+            "-s *dist-upgrade",
+            "Inst libc6 [2.39-0ubuntu8.5] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-security [arm64])\n"
+            "Inst postgresql-16 [16.9-0ubuntu0.24.04.1] (16.10-0ubuntu0.24.04.1 Ubuntu:24.04/noble-security [arm64])\n"
+            "Inst tailscale [1.102.3] (1.102.4 Tailscale:stable [arm64])\n"
+            "Inst newpkg (1.0 Ubuntu:24.04/noble-security [arm64])\n",
+            0,
+            "",
+            None,
+        ),
+    )
+    host.on(
+        "unattended-upgrade",
+        "--dry-run -d",
+        "Packages that will be upgraded: libc6 postgresql-16 tailscale\n",
+    )
+    out = host.run("--dry-run-into", str(scratch))
+    assert out["pending"]["dry_run"]["held_versions"] == [
+        {"package": "postgresql-16", "version": "16.10-0ubuntu0.24.04.1"},
+        {"package": "tailscale", "version": "1.102.4"},
+    ]
+    summary = (scratch / "summary").read_text()
+    assert (
+        "held_versions=postgresql-16=16.10-0ubuntu0.24.04.1 tailscale=1.102.4\n"
+        in summary
+    )
+
+
 PHASED_SIM = (
     "Inst libc6 [2.39-0ubuntu8.3] (2.39-0ubuntu8.4 Ubuntu:24.04/noble-security [amd64])\n"
     "Inst dnsmasq-base [2.90-2ubuntu0.4] (2.91-0ubuntu0.24.04.2 Ubuntu:24.04/noble-updates [amd64])\n"

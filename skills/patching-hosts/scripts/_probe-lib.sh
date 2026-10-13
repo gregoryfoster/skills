@@ -66,6 +66,11 @@ The primitives these scripts reach a host through:
                             logfile, dir, dbfilename, save, appendonly, and
                             whether an aclfile or an include is there
   redis_persistence VAR     aof, rdb, none or unknown, from redis_conf
+  hold_group_versions VAR SIM
+                            "<pkg>=<version>" for each pending package a hold
+                            group takes, from apt-get -s dist-upgrade's SIM
+  version_in VAR WORDS PKG  PKG's version in hold_group_versions' WORDS, or
+                            empty
   redis_restart_check UNIT  RL_OK (1, 0, or "" unread) and RL_WHY: a clean
                             shutdown before, and a load and a ready after,
                             from Redis's logfile or its unit's journal
@@ -758,6 +763,37 @@ redis_persistence() {  # <var>
     _rp=rdb
   fi
   printf -v "$1" '%s' "$_rp"
+}
+
+# The candidate version of each pending package a hold group's globs take,
+# from an apt-get -s dist-upgrade's Inst lines ("Inst <pkg> [<old>] (<new>
+# <origin> [<arch>])"), as "<pkg>=<version>" words: so a held step's version
+# can be told from the one the dry run counted (#383).
+hold_group_versions() {  # <var> <simulation>
+  local _hv="" _hk _hp _hr _hx _hg
+  local -a _hf=()
+  while read -r _hk _hp _hr; do
+    case $_hk:$_hr in Inst:"["*"("*) ;; *) continue ;; esac
+    _hx=${_hr#*(}
+    _hx=${_hx%% *}
+    for _hg in ${KNOB_HOLD[@]+"${KNOB_HOLD[@]}"}; do
+      IFS=$KNOB_US read -r -a _hf <<<"$_hg"
+      if glob_match "$_hp" "${_hf[1]}"; then
+        _hv="$_hv $_hp=$_hx"
+        break
+      fi
+    done
+  done <<<"$2"
+  printf -v "$1" '%s' "${_hv# }"
+}
+
+# A package's version in hold_group_versions' words, or empty.
+version_in() {  # <var> <words> <package>
+  local _vw _vv=""
+  for _vw in $2; do
+    if [ "${_vw%%=*}" = "$3" ]; then _vv=${_vw#*=}; fi
+  done
+  printf -v "$1" '%s' "$_vv"
 }
 
 # A Redis after a restart, from its own log (#380): the process before it
