@@ -311,8 +311,11 @@ gate_datastores() {
         jaddb e running 0
         case $persist in
           none | unknown)
-            if [ "$REDIS_LOGIN" = none ] || ! redis_key_ok; then
+            if [ "$REDIS_LOGIN" = none ]; then
               persist=stopped-nologin
+            elif ! redis_key_ok; then
+              # Its own reason, at the stop (CR 243).
+              persist=stopped-nokey
             else
               persist=stopped-$persist
             fi ;;
@@ -390,7 +393,7 @@ stop_line() {  # <unit>
 # The chain is sh text, written literally: its expansions are its own.
 # shellcheck disable=SC2016
 write_chain() {
-  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey guard
+  local r q u kind conf rest l cmd user t m x ra pw persist login ruser rkey guard why
   local -a f=() w=()
   sq q "$log"
   c '#!/bin/sh'
@@ -461,10 +464,15 @@ write_chain() {
           c "# Its stop saves the RDB file (its file's save points): no SAVE, and no login."
           stop_line "$u"
           continue ;;
-        stopped-nologin)
+        stopped-nologin | stopped-nokey)
           sq x "$u"
-          sq m "$u started since the gate, and its stop may persist nothing it holds: the chain has no login to SAVE it"
-          c "# It wasn't running at the gate, and the chain has no login to SAVE it."
+          if [ "$persist" = stopped-nokey ]; then
+            why="its key file $rkey can't be read as root"
+          else
+            why="the chain has no login to SAVE it"
+          fi
+          sq m "$u started since the gate, and its stop may persist nothing it holds: $why"
+          c "# It wasn't running at the gate, and $why."
           c "if systemctl is-active --quiet $x; then say $m; fi"
           stop_line "$u"
           continue ;;

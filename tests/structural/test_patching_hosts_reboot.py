@@ -926,6 +926,28 @@ def test_an_encrypted_credential_is_decrypted_by_systemd_creds(host):
     )
 
 
+def test_a_stopped_redis_whose_key_file_cant_be_read_says_so_at_the_stop(host):
+    # CR 243: not "no login", which names the wrong remedy.
+    key = f"{host.tmp}/absent.key"
+    host.knob(KNOB_CHAIN + f"datastore redis redis-server ops {key}\n")
+    (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
+    host.cases["systemctl"] = [
+        c for c in host.cases["systemctl"] if "redis-server.service" not in c[0]
+    ]
+    conf = host.tmp / "redis.conf"
+    host.show(
+        "redis-server.service",
+        ExecStart=f"{{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {conf} ; }}",
+        MainPID="0",
+    )
+    assert host.reboot()["refused"] == []
+    host.on("systemctl", "is-active --quiet redis-server.service", "")
+    host.fire(_journals(host))
+    log = host.record("reboot-chain.log")
+    assert f"its key file {key} can't be read as root" in log
+    assert "no login" not in log
+
+
 def test_a_key_file_root_cant_read_refuses(host):
     host.knob(KNOB_CHAIN + f"datastore redis redis-server ops {host.tmp}/absent.key\n")
     (host.tmp / "redis.conf").write_text(ACL_CONF + 'save ""\n')
