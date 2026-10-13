@@ -1087,6 +1087,35 @@ base image, or an owner-approved remedy the profile documents.
     and an hourly `quiet`; knob.md, run.md, readings.md and KNOBS.md say
     each; and the Linux suite passes.
 
+    **Done 2026-10-13** (4c9e465, then 9bfab3a to db874cd, one commit per
+    issue), as written, with five details settled in the building:
+    - **No key count after a restart.** Under AOF, `keys loaded` counts
+      the RDB base alone, not the incr's keys (measured on noble's 7.0: 0
+      loaded with 2 in the incr), so it's no total. The check wants the
+      old process's `ready to exit`, then `DB loaded from` and `Ready to
+      accept connections`. A run starts at its main PID's banner, since a
+      PID can come round after a boot.
+    - **A stale RDB file under no login** is one written more than
+      `--rdb-within` (600 s) before the run began, not before `began`
+      itself: the owner's own `SAVE` comes just before the recovery point.
+    - **The `depends` finding is `depends:<datastore>:<unit>`**, so two
+      lines for one data store stay apart; one naming no declared data
+      store is a knob finding.
+    - **A Redis that isn't running at the chain's gate** needs no login:
+      it has nothing to save.
+    - **The detail went into a new `references/datastores.md`**, Redis's
+      and Qdrant's, since run.md had reached its per-doc budget. KNOBS.md
+      needed nothing: it links knob.md for the grammar.
+
+    Measured on noble's 7.0 for the docs:
+    - an anonymous command gets `NOAUTH` and writes nothing to `ACL LOG`;
+    - a failed login prints `AUTH failed` on stderr and `NOAUTH` on
+      stdout, exits 0, and writes an entry;
+    - a save's child closes the listening sockets;
+    - a snapshot copied over `dump.rdb` under AOF came up with the AOF's
+      keys, and the same file staged as the AOF's base came up with its
+      own.
+
 7. **Process log.**
    - `references/process-log.md` as the root, with a 2026 index and "Adding
      an entry" rules copied from the orchestrator's: a vendored copy files an
