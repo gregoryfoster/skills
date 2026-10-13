@@ -1271,6 +1271,35 @@ base image, or an owner-approved remedy the profile documents.
     hand. It filed six rough edges and its process-log entry (#379 to
     #385), plan step 6h. It also filed two using-mayfly-chat issues, #386
     and #387, left for their own round (decided 2026-10-13).
+
+    broker's fixes reach its next run through a skills bump, tracked on
+    CannObserv/broker#91, with four read-only checks on the node.
+
+    **v1's scope, decided with the owner 2026-10-13:**
+    - **Step 8b counts the five runs of this cycle.** Between them they
+      cover every data-store kind the knob has: none (replicator), Postgres
+      (wslcb-licensing-tracker, notifier), Qdrant (co-index) and Redis
+      (broker). The other six exe.dev hosts (archiver, usa-wa, power-map,
+      host 6, watcher, address-validator) adopt the skill at their first
+      monthly run. Each gets an adoption issue, filed only on the owner's
+      go-ahead for that repo. power-map's is the one to watch: the `docker`
+      held step hasn't run under the scripts yet.
+    - **v1 still takes:**
+      - broker#91's read-only checks, the first test of the Redis work on a
+        real host;
+      - #346's corrections to the exe.dev profile;
+      - SKILL.md's description naming the sixth pending class;
+      - closing #344, whose points step 6e built.
+    - **v1.1 takes:** #365 (the reboot prediction reads PID 1's maps
+      alone), #370 (a prune of any apt package), #350 together with
+      `notify-owners.sh` (step 6c's owner notices, blocked on the image
+      repo), and step 9's follow-ups.
+    - **Closing out:**
+      - drop "In development" from the README row;
+      - post a wrap-up on #313, drafted for the owner's approval, covering
+        steps 6e to 8b, the five runs, and what v1.1 takes and where it's
+        tracked;
+      - then close #313.
 9. **Follow-ups, drafted and filed only on your go-ahead per repo:**
    - in this repo, a once-a-day `SessionStart` hook that prints the probe's
      one-line status;
