@@ -79,8 +79,9 @@ exit codes:
   1  usage error: a bad flag, or a malformed ops or --scan file. Nothing was
      fetched or written.
   2  infrastructure failure (gh or python3 failed; gh's own stderr is shown)
-  3  refused: a foreign edit, a missing anchor, a count or lint failure, or an
-     open issue the epic doesn't list (--account [FROM]). Nothing was written.
+  3  refused: a foreign edit, a missing anchor, a count or lint failure, an
+     open issue the epic doesn't list (--account [FROM]), or a new issue in the
+     --scan report that the body doesn't mention. Nothing was written.
   4  written, but the body read back differs from the body sent. The baseline
      was not updated; read the epic before the next edit.
 """
@@ -836,7 +837,8 @@ def run(argv: list[str]) -> int:
     p.add_argument(
         "--scan",
         metavar="FILE",
-        help="scan.sh's JSON report, for {checked} and {last_seen} (must be this repo's epic)",
+        help="scan.sh's JSON report, the one you read, for {checked} and {last_seen}."
+        " Every new issue it found must be mentioned in the body (a tier line or the log)",
     )
     p.add_argument(
         "--no-link-check", action="store_true", help="skip resolving new comment links"
