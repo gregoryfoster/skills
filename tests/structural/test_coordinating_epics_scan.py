@@ -10,13 +10,14 @@ throwaway git repo built with GIT_* scrubbed (docs/STYLE.md).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
 
 import pytest
 
-from tests.structural.coordinating_epics_rig import Rig
+from tests.structural.coordinating_epics_rig import SCRIPTS, Rig
 
 REPO = "acme/widgets"
 EPIC = 10
@@ -249,3 +250,31 @@ def test_since_is_converted_to_utc_z_and_a_naive_time_is_refused(rig):
         "scan.sh", "--repo", REPO, "--epic", str(EPIC), "--since", "2026-10-03T09:30"
     )
     assert res.returncode == 1 and "time zone" in res.stderr
+
+
+def test_a_page_cap_is_a_warning_not_a_silent_cut(rig, monkeypatch, capsys):
+    """CR 259: 101 updated issues against a one-page cap."""
+    for n in range(100, 201):
+        rig.issue(REPO, n, updated_at="2026-10-02T00:00:00Z", body="")
+    spec = importlib.util.spec_from_file_location("_scan", SCRIPTS / "_scan.py")
+    scan_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_mod)
+    monkeypatch.setattr(scan_mod, "MAX_PAGES", 1)
+    for k, v in rig.env().items():
+        monkeypatch.setenv(k, v)
+    assert (
+        scan_mod.run(
+            [
+                "--repo",
+                REPO,
+                "--epic",
+                str(EPIC),
+                "--no-fetch",
+                "--git-dir",
+                str(rig.checkout),
+            ]
+        )
+        == 0
+    )
+    r = json.loads(capsys.readouterr().out)
+    assert any("listing updates: stopped at 100 rows" in w for w in r["warnings"])

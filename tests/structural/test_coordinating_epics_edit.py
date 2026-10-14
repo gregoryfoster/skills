@@ -482,6 +482,28 @@ def test_an_edit_landing_during_the_run_refuses_the_write(adopted):
     assert "second thing, edited" in adopted.body(REPO, EPIC)
 
 
+def test_account_refuses_when_the_open_list_may_be_cut_off(
+    adopted, monkeypatch, capsys
+):
+    """CR 259: at the listing's limit, an empty 'unlisted' proves nothing."""
+    monkeypatch.setattr(ee, "ACCOUNT_LIMIT", 3)
+    for k, v in adopted.env().items():
+        monkeypatch.setenv(k, v)
+    rc = ee.run(
+        [
+            "--repo",
+            REPO,
+            "--epic",
+            str(EPIC),
+            "--state-dir",
+            str(adopted.state_dir),
+            "--account",
+        ]
+    )
+    assert rc == 3
+    assert "may be cut off" in capsys.readouterr().err
+
+
 def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     adopted.set_flag("patch_noop", True)
     base = (adopted.state_dir / "acme-widgets-10" / "last-written.md").read_text()

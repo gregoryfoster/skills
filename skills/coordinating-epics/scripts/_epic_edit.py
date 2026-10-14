@@ -153,6 +153,8 @@ class Parser(argparse.ArgumentParser):
         sys.exit(EXIT_USAGE)
 
 
+ACCOUNT_LIMIT = 5000
+
 OP_FIELDS = {
     "tick": ("ref",),
     "untick": ("ref",),
@@ -878,12 +880,17 @@ def run(argv: list[str]) -> int:
                     "--state",
                     "open",
                     "--limit",
-                    "1000",
+                    str(ACCOUNT_LIMIT),
                     "--json",
                     "number",
                 ],
                 "listing open issues",
             )
+            if len(open_issues) >= ACCOUNT_LIMIT:
+                raise Refused(
+                    f"{ACCOUNT_LIMIT} or more open issues: the list may be cut off, so"
+                    " the accounting can't be trusted (CR 259)"
+                )
             # The header's "Last issue seen: #N" and "Next: #N" don't track an issue.
             listed = refs_in([ln for ln in new if not FIELD_RE.match(ln)], host)
             unlisted = sorted(

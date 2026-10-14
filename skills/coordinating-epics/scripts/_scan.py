@@ -99,6 +99,9 @@ def item_keys(lines: list[str], host: str) -> set[str]:
     return out
 
 
+CAPPED: list[str] = []  # what stopped at MAX_PAGES this run, for the warnings
+
+
 def pages(path: str, what: str, stop=None):
     sep = "&" if "?" in path else "?"
     for page in range(1, MAX_PAGES + 1):
@@ -108,6 +111,8 @@ def pages(path: str, what: str, stop=None):
         yield from batch
         if len(batch) < 100 or (stop and stop(batch[-1])):
             return
+    # A cap reached in silence reads as a complete answer (CR 259).
+    CAPPED.append(f"{what}: stopped at {MAX_PAGES * 100} rows; the list is incomplete")
 
 
 def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
@@ -274,6 +279,7 @@ def run(argv: list[str]) -> int:
             p.error(f"--since: {e}")
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     warnings: list[str] = []
+    CAPPED.clear()
     try:
         lines = normalize(fetch_body(host, a.epic))
         cur = cursors_from_body(lines)
@@ -385,7 +391,7 @@ def run(argv: list[str]) -> int:
                 )
             cross.append(row)
         report["cross_repo"] = cross
-        report["warnings"] = warnings
+        report["warnings"] = warnings + CAPPED
         print(json.dumps(report, indent=2))
         return EXIT_OK
     except Infra as e:
