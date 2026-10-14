@@ -169,6 +169,20 @@ def test_a_foreign_edit_beyond_ticks_is_refused_with_the_diff(adopted):
     assert "patches" not in adopted.load()
 
 
+def test_a_hard_line_break_survives_a_write(rig):
+    """CR 244: the write is the live body with the ops applied, not a normalized copy."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.replace("# Burn-down\n", "# Burn-down\n\nIntro  \nsecond line\n"),
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 0, res.stderr
+    body = rig.body(REPO, EPIC)
+    assert "Intro  \nsecond line" in body and "- [x] #11" in body
+
+
 def test_trailing_whitespace_and_crlf_are_not_foreign_edits(adopted):
     adopted.issue(REPO, EPIC, body=BODY.rstrip("\n").replace("\n", "  \r\n"))
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])

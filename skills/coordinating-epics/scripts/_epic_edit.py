@@ -132,6 +132,18 @@ def normalize(body: str) -> list[str]:
     return lines
 
 
+def split_raw(body: str) -> list[str]:
+    """Lines to edit: CRLF folded and the blank tail dropped, nothing else.
+
+    Trailing spaces stay: two of them are a Markdown hard line break, and an
+    edit must not rewrite lines its operations never touched.
+    """
+    lines = body.replace("\r\n", "\n").split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
 def fenced(lines: list[str]) -> list[bool]:
     """True for each line inside (or opening/closing) a fenced code block."""
     out, inside, marker = [], False, ""
@@ -645,7 +657,8 @@ def run(argv: list[str]) -> int:
         base_path = sd / "last-written.md"
 
         live_raw = fetch_body(host, a.epic)
-        live = normalize(live_raw)
+        live = normalize(live_raw)  # for comparisons only
+        live_lines = split_raw(live_raw)  # what the operations edit
         if not live:
             raise Refused(
                 "the live body is empty; restore it from the edit history before editing"
@@ -678,8 +691,8 @@ def run(argv: list[str]) -> int:
                 + ". A tick is a claim: verify each child, then pass --accept-ticks"
             )
 
-        before = counts(live)
-        new, expect, notes = apply_ops(live, ops, host, now)
+        before = counts(live_lines)
+        new, expect, notes = apply_ops(live_lines, ops, host, now)
         after = counts(new)
         summary.update(counts_before=before, counts_after=after, notes=notes)
         if not new:
@@ -690,7 +703,9 @@ def run(argv: list[str]) -> int:
                 f"checkbox counts {after} don't match the {want} the operations imply"
             )
 
-        problems = lint(introduced(live, new), host, check_links=not a.no_link_check)
+        problems = lint(
+            introduced(live_lines, new), host, check_links=not a.no_link_check
+        )
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))
 
@@ -726,14 +741,16 @@ def run(argv: list[str]) -> int:
                     + ", ".join(f"#{n}" for n in unlisted)
                 )
 
-        diff = list(difflib.unified_diff(live, new, "live", "new", lineterm="", n=1))
+        diff = list(
+            difflib.unified_diff(live_lines, new, "live", "new", lineterm="", n=1)
+        )
         if a.dry_run:
             print("\n".join(diff) or "(no change)", file=sys.stderr)
             print(json.dumps(summary, indent=2))
             return EXIT_OK
-        if new == live:
+        if new == live_lines:
             if summary.get("adopted_live") or ticks:
-                write_atomic(base_path, "\n".join(live) + "\n")
+                write_atomic(base_path, "\n".join(live_lines) + "\n")
             summary["unchanged"] = True
             print(json.dumps(summary, indent=2))
             return EXIT_OK
