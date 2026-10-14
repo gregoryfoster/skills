@@ -837,6 +837,18 @@ def run(argv: list[str]) -> int:
                     if r.get("kind") == "issue" and r.get("number") != a.epic
                 ],
             }
+        if scan is None:
+            needs = sorted(
+                {
+                    p
+                    for op in ops
+                    for v in op.values()
+                    for p in ("{checked}", "{last_seen}")
+                    if isinstance(v, str) and p in v
+                }
+            )
+            if needs:  # before the fetch: exit 1 means nothing was fetched (CR 269)
+                raise Usage(f"{', '.join(needs)} needs --scan with scan.sh's report")
         sd = state_dir(a.state_dir, host, a.epic)
         base_path = sd / "last-written.md"
 

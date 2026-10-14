@@ -653,6 +653,7 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
         ('[{"op": "add-line", "line": "- [ ] #14 x"}]', []),
         ('[{"op": "note", "ref": "#12"}]', []),
         ("not json", []),
+        ('[{"op": "header", "field": "Next", "value": "{checked}"}]', []),
     ],
     ids=[
         "bad-repo",
@@ -661,6 +662,7 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
         "add-line-no-anchor",
         "missing-field",
         "bad-json",
+        "scan-placeholder-without-scan",
     ],
 )
 def test_usage_errors_exit_1_before_any_fetch(adopted, ops, args):
