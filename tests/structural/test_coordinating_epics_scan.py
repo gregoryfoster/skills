@@ -57,7 +57,13 @@ def checkout(tmp_path):
     git(repo, "config", "user.email", "a@b")
     git(repo, "config", "user.name", "Coder")
     for i, msg in enumerate(
-        ["base", "fix: guard the cache (#12)", "chore: bump", "docs: tidy (#10)"]
+        [
+            "base",
+            "fix: guard the cache (#12)",
+            "chore: bump",
+            "docs: tidy (#10)",
+            "feat: cache warmer (#16)",
+        ]
     ):
         (repo / f"f{i}").write_text(str(i))
         git(repo, "add", ".")
@@ -92,6 +98,7 @@ def rig(tmp_path, checkout):
         updated_at="2026-10-02T13:00:00Z",
         body="Refs #10",
     )
+    r.pr(REPO, 16, [12])
     r.comment(
         REPO,
         11,
@@ -162,8 +169,16 @@ def test_updates_since_carry_new_and_edited_comments_on_epic_items(rig):
 
 def test_the_commit_range_attributes_every_commit(rig):
     rows = scan(rig)["commits"]
-    assert [c["attribution"] for c in rows] == ["epic", "unattributed", "child"]
-    assert rows[2]["children"] == ["acme/widgets#12"]
+    assert [c["attribution"] for c in rows] == [
+        "child",
+        "epic",
+        "unattributed",
+        "child",
+    ]
+    assert rows[3]["children"] == ["acme/widgets#12"] and rows[3]["via_pr"] == []
+    # CR 257: a squash commit cites its PR; the child is what the PR closes.
+    assert rows[0]["children"] == ["acme/widgets#12"]
+    assert rows[0]["via_pr"] == ["acme/widgets#16"]
 
 
 def test_cross_repo_refs_carry_state_or_say_why_not(rig):

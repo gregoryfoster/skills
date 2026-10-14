@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _epic_edit import (  # noqa: E402
     FIELD_RE,
+    GH_ISSUE_URL_RE,
     REF_RE,
     Infra,
     Parser,
@@ -149,6 +150,26 @@ def git(args: list[str], git_dir: str, what: str) -> str:
     return r.stdout
 
 
+def pr_closes(num: str, host: str, cache: dict) -> list[str]:
+    """The issues a PR closes, as keys; [] when num is not a PR or can't be read."""
+    if num not in cache:
+        try:
+            data = gh_json(
+                ["pr", "view", num, "-R", host, "--json", "closingIssuesReferences"],
+                f"reading what #{num} closes",
+            )
+        except Infra:
+            cache[num] = []  # an issue, not a PR, or unreadable: nothing to add
+        else:
+            keys = []
+            for it in data.get("closingIssuesReferences") or []:
+                u = GH_ISSUE_URL_RE.match(str(it.get("url", "")))
+                repo = u.group("repo") if u else None
+                keys.append(key(repo, it["number"], host))
+            cache[num] = keys
+    return cache[num]
+
+
 def commits(
     git_dir: str, from_sha: str, ref: str, host: str, epic: int, items: set[str]
 ) -> list[dict]:
@@ -158,6 +179,7 @@ def commits(
         "reading the commit range",
     )
     rows = []
+    prs: dict = {}
     epic_key = key(None, epic, host)
     for rec in out.split("\x1e"):
         rec = rec.strip("\n")
@@ -171,6 +193,18 @@ def commits(
             }
         )
         children = [r for r in refs if r in items]
+        via_pr = []
+        if not children:
+            # A squash merge's subject is "title (#PR)": the child is what the
+            # PR closes, not the number the commit cites (CR 257).
+            for r in refs:
+                repo, num = r.rsplit("#", 1)
+                if repo != host.lower() or r == epic_key:
+                    continue
+                closed = [c for c in pr_closes(num, host, prs) if c in items]
+                if closed:
+                    via_pr.append(r)
+                    children.extend(c for c in closed if c not in children)
         if children:
             attribution = "child"
         elif epic_key in refs:
@@ -186,6 +220,7 @@ def commits(
                 "subject": subject,
                 "refs": refs,
                 "children": children,
+                "via_pr": via_pr,
                 "attribution": attribution,
             }
         )

@@ -47,6 +47,15 @@ if args[:2] == ["issue", "list"]:
     issues = st["repos"].get(repo, {}).get("issues", {})
     out([{"number": int(n)} for n, it in issues.items() if it.get("state") == "open" and not it.get("pull_request")])
 
+if args[:2] == ["pr", "view"]:
+    num, repo = args[2], args[args.index("-R") + 1]
+    closes = st["repos"].get(repo, {}).get("prs", {}).get(num)
+    if closes is None:
+        fail(f"GraphQL: Could not resolve to a PullRequest with the number of {num}.")
+    out({"closingIssuesReferences": [
+        {"number": n, "url": f"https://github.com/{repo}/issues/{n}"} for n in closes
+    ]})
+
 if args[0] != "api":
     fail("unsupported")
 
@@ -149,6 +158,11 @@ class Rig:
         self.state["comment_index"][str(cid)] = (
             f"https://api.github.com/repos/{repo}/issues/{num}"
         )
+        self.save()
+
+    def pr(self, repo: str, num: int, closes: list) -> None:
+        self.load()
+        self.state["repos"][repo].setdefault("prs", {})[str(num)] = closes
         self.save()
 
     def body(self, repo: str, num: int) -> str:
