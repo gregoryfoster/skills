@@ -53,6 +53,19 @@ TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?Z")
 SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
 
 
+def parse_ts(value: str) -> dt.datetime:
+    """An ISO time with a zone, as an aware datetime. A naive time is refused."""
+    d = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if d.tzinfo is None:
+        raise ValueError(f"{value!r} has no time zone; add Z or an offset")
+    return d
+
+
+def utc_z(value: str) -> str:
+    """`…Z` in UTC. A `+02:00` offset would reach GitHub's query as a space (CR 256)."""
+    return parse_ts(value).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def header_fields(lines: list[str]) -> dict[str, str]:
     fence = fenced(lines)
     out = {}
@@ -67,8 +80,7 @@ def cursors_from_body(lines: list[str]) -> dict:
     f = header_fields(lines)
     out: dict = {"since": None, "watermark": None, "from_sha": None}
     if m := TS_RE.search(f.get("last check-in", "")):
-        ts = m.group(0)
-        out["since"] = ts if ts.count(":") == 2 else ts[:-1] + ":00Z"
+        out["since"] = utc_z(m.group(0))
     if m := re.search(r"#(\d+)", f.get("last issue seen", "")):
         out["watermark"] = int(m.group(1))
     if m := SHA_RE.search(f.get("last verified sha", "")):
@@ -220,6 +232,11 @@ def run(argv: list[str]) -> int:
     host = a.repo
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", host):
         p.error("--repo must be owner/repo")
+    if a.since:
+        try:
+            a.since = utc_z(a.since)
+        except ValueError as e:
+            p.error(f"--since: {e}")
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     warnings: list[str] = []
     try:
@@ -326,7 +343,9 @@ def run(argv: list[str]) -> int:
                     updated_at=it.get("updated_at"),
                     closed_at=it.get("closed_at"),
                     updated_since=bool(
-                        cur["since"] and (it.get("updated_at") or "") >= cur["since"]
+                        cur["since"]
+                        and it.get("updated_at")
+                        and parse_ts(it["updated_at"]) >= parse_ts(cur["since"])
                     ),
                 )
             cross.append(row)

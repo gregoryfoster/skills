@@ -221,3 +221,16 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
 def test_a_usage_error_exits_1(rig):
     res = rig.run("scan.sh", "--repo", "not-a-repo", "--epic", str(EPIC))
     assert res.returncode == 1 and "owner/repo" in res.stderr
+
+
+def test_since_is_converted_to_utc_z_and_a_naive_time_is_refused(rig):
+    """CR 256: an offset reaches GitHub as `…Z`; a time with no zone is a usage error."""
+    r = scan(rig, "--since", "2026-10-03T11:30+02:00")
+    assert r["cursors"]["since"] == "2026-10-03T09:30:00Z"
+    assert [x["number"] for x in r["updated_since"]] == [11]
+    calls = [c for c in rig.load()["calls"] if any("since=" in a for a in c)]
+    assert calls and all("since=2026-10-03T09:30:00Z" in " ".join(c) for c in calls)
+    res = rig.run(
+        "scan.sh", "--repo", REPO, "--epic", str(EPIC), "--since", "2026-10-03T09:30"
+    )
+    assert res.returncode == 1 and "time zone" in res.stderr
