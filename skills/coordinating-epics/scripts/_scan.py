@@ -182,9 +182,12 @@ def git_env() -> dict:
 
 def git(args: list[str], git_dir: str, what: str) -> str:
     env = git_env()
-    r = subprocess.run(
-        ["git", "-C", git_dir, *args], capture_output=True, text=True, env=env
-    )
+    try:
+        r = subprocess.run(
+            ["git", "-C", git_dir, *args], capture_output=True, text=True, env=env
+        )
+    except OSError as e:  # git not installed: the commit cursor's loss only (CR 279)
+        raise Infra(f"{what}: git could not run: {e}") from None
     if r.returncode != 0:
         raise Infra(
             f"{what}: git {' '.join(args)} exited {r.returncode}:\n{r.stderr.strip()}"

@@ -365,3 +365,34 @@ def test_a_pr_lookup_failure_is_a_warning(rig):
     r = scan(rig)
     assert r["commits"][0]["attribution"] == "unattributed"
     assert any("rate limit" in w for w in r["warnings"])
+
+
+def test_git_missing_costs_the_commit_cursor_only(rig):
+    """CR 279: no traceback, and the other cursors still report."""
+    import shutil
+    import sys
+
+    minbin = rig.tmp / "minbin"
+    minbin.mkdir()
+    for tool, path in (
+        ("bash", shutil.which("bash")),
+        ("dirname", shutil.which("dirname")),
+    ):
+        (minbin / tool).symlink_to(path)
+    (minbin / "python3").symlink_to(sys.executable)
+    res = rig.run(
+        "scan.sh",
+        "--repo",
+        REPO,
+        "--epic",
+        str(EPIC),
+        "--git-dir",
+        str(rig.checkout),
+        "--ref",
+        "main",
+        extra_env={"PATH": f"{rig.bin}:{minbin}"},
+    )
+    assert res.returncode == 0, res.stderr
+    r = json.loads(res.stdout)
+    assert r["commits"] is None and r["new_numbers"] is not None
+    assert any("git could not run" in w for w in r["warnings"])
