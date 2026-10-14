@@ -239,6 +239,15 @@ def test_the_header_takes_the_scans_time_and_watermark(adopted):
     assert res.returncode == 1 and "not a scan.sh report on this epic" in res.stderr
 
 
+def test_an_empty_header_value_is_idempotent(adopted):
+    """CR 251: the line is written without a trailing space, and once."""
+    ops = [{"op": "header", "field": "Next", "value": ""}]
+    assert summary(adopted.edit(REPO, EPIC, ops))["written"]
+    assert "- **Next:**\n" in adopted.body(REPO, EPIC)
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0 and summary(res).get("unchanged")
+
+
 def test_log_appends_at_the_end_of_its_section_once(adopted):
     ops = [{"op": "log", "text": "{today}: #11 closed. No new issues. Next: #12."}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 0

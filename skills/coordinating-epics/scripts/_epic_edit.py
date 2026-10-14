@@ -505,7 +505,7 @@ def apply_ops(
                     raise Refused(f"{len(hits)} '**{field}:**' lines; want exactly one")
                 m = FIELD_RE.match(lines[hits[0]])
                 assert m
-                new = f"{m.group('lead')} {value}"
+                new = f"{m.group('lead')} {value}".rstrip()
                 if new == lines[hits[0]]:
                     notes.append(f"{where}: {field} already reads so")
                     continue
