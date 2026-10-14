@@ -81,7 +81,7 @@ Show the operator the drafted body and the proposed closures before anything is 
 
 On "I finished #N", "next", or a report between threads:
 
-0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N` for what arrived, and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
+0. **Read the state.** Run `bash "<scan.sh>" --repo OWNER/REPO --epic N > "$SCRATCH/scan.json"` for what arrived, and `epic-edit.sh … --dry-run` for whether the body moved. A box the implementer ticked is a claim. An operator request to unblock someone outside waits on nothing: do it first.
 1. **Verify from evidence** ([check-in.md](references/check-in.md) §1):
    - the whole commit range since the hand-off;
    - CI by job on the final SHA and on `main`'s tip;
@@ -105,7 +105,7 @@ On "I finished #N", "next", or a report between threads:
 4. **Re-check blockers and gates** (§4). Probe each one's observable condition; don't wait to be told. Read the latest comment on each cross-repo ref, and the trigger of each parked item.
 5. **Choose the next child** (§5): the order rule, then the tiebreaks written on the epic. Say when the next child is the last unblocked one. When nothing is unblocked, the hand-off is the blockers instead: each with its owner, its evidence, and the options.
 6. **Hand off** ([hand-off.md](references/hand-off.md)). Post the brief on the issue, after a pre-flight against `origin/main`: what it renames or removes, and who uses that today. Reply with the next ID and a kickoff prompt of 2–6 lines that points to the brief.
-7. **Write the epic in one call.** The ticks and notes, the header (`Last check-in` `{now}`, `Last issue seen` from the scan's `max_number`, `Last verified SHA`, `Next`), and a log line, which is written even when nothing changed.
+7. **Write the epic in one call.** The ticks and notes, the header, and a log line, which is written even when nothing changed. With `--scan "$SCRATCH/scan.json"`, `Last check-in` takes `{checked}` (the scan's own time) and `Last issue seen` takes `{last_seen}`. The next window then starts where this scan looked, not where the write happened. Never type either value.
 
 ## The implementer contract
 

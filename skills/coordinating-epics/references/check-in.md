@@ -8,7 +8,7 @@ The detail behind SKILL.md's check-in steps 1–5 and 7. A citation such as "bro
 3. Verify.
 4. Harvest.
 5. Re-scan and slot, **before** writing the hand-off.
-6. Re-run the probes and the scan just before the write, so the header's time is the scan's time.
+6. Re-run the probes and the scan just before the write, and pass the scan's report to the write (`--scan`), so the header's time is the scan's time.
 7. Write.
 
 ## 1. Verify
@@ -139,7 +139,7 @@ Use the order rule, then these tiebreaks, adding any new one to the epic's list:
 
 ## 7. Writing the epic
 
-One `epic-edit.sh` call per check-in, with every change in its ops file. Write the file with a **quoted** heredoc, so backticks stay text (watcher F10):
+One `epic-edit.sh` call per check-in, with every change in its ops file. Write the file with a **quoted** heredoc, so backticks stay text (watcher F10). `{checked}` and `{last_seen}` come from the scan's report, given with `--scan`. Anything that changed after the scan looked falls inside the next window rather than between two (CR 248):
 
 ```bash
 cat > "$SCRATCH/ops.json" <<'JSON'
@@ -148,15 +148,16 @@ cat > "$SCRATCH/ops.json" <<'JSON'
   {"op": "note", "ref": "#45", "text": "Shipped 1a2b3c4..5d6e7f8, live {today}."},
   {"op": "set-line", "ref": "#46", "line": "- [ ] #46 dependency met: route only forwards retry_after_seconds"},
   {"op": "add-line", "section": "Tier 1 — bugs", "line": "- [ ] #58 follow-up from #45's review · S"},
-  {"op": "header", "field": "Last check-in", "value": "{now}"},
-  {"op": "header", "field": "Last issue seen", "value": "#58"},
+  {"op": "header", "field": "Last check-in", "value": "{checked}"},
+  {"op": "header", "field": "Last issue seen", "value": "{last_seen}"},
   {"op": "header", "field": "Last verified SHA", "value": "5d6e7f8"},
   {"op": "header", "field": "Next", "value": "#46, brief on the issue"},
   {"op": "log", "text": "{today}: #45 closed and live. 1 new (#58, slotted). Next: #46."}
 ]
 JSON
-bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --ops "$SCRATCH/ops.json" --dry-run \
-  && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --ops "$SCRATCH/ops.json"
+bash "<scan.sh>" --repo OWNER/REPO --epic N > "$SCRATCH/scan.json" \
+  && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "$SCRATCH/scan.json" --ops "$SCRATCH/ops.json" --dry-run \
+  && bash "<epic-edit.sh>" --repo OWNER/REPO --epic N --scan "$SCRATCH/scan.json" --ops "$SCRATCH/ops.json"
 ```
 
 - **A refusal (exit 3) wrote nothing.** Read the reason. A foreign tick is a claim: verify that child, then pass `--accept-ticks '#N'`. Any other foreign edit means merging by hand: read the diff, rebuild your ops on the live body, and re-run with `--adopt-live`.

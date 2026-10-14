@@ -12,6 +12,7 @@ called good (address-validator#272 48). A fake gh stands in for GitHub.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 
 import pytest
@@ -204,6 +205,40 @@ def test_header_injects_now(adopted):
     )
 
 
+def test_the_header_takes_the_scans_time_and_watermark(adopted):
+    """CR 248: Last check-in is when the scan looked, not when the write happened."""
+    report = adopted.tmp / "scan.json"
+    report.write_text(
+        json.dumps(
+            {
+                "repo": REPO,
+                "epic": EPIC,
+                "now": "2026-10-14T18:03:27Z",
+                "max_number": 13,
+            }
+        )
+    )
+    ops = [
+        {"op": "header", "field": "Last check-in", "value": "{checked}"},
+        {"op": "header", "field": "Last issue seen", "value": "{last_seen}"},
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 3 and "needs --scan" in res.stderr
+    res = adopted.edit(REPO, EPIC, ops, "--scan", str(report))
+    assert res.returncode == 0, res.stderr
+    body = adopted.body(REPO, EPIC)
+    assert "- **Last check-in:** 2026-10-14T18:03:27Z" in body
+    assert "- **Last issue seen:** #13" in body
+    other = adopted.tmp / "other.json"
+    other.write_text(
+        json.dumps(
+            {"repo": REPO, "epic": 99, "now": "2026-10-14T18:03:27Z", "max_number": 1}
+        )
+    )
+    res = adopted.edit(REPO, EPIC, ops, "--scan", str(other))
+    assert res.returncode == 3 and "another epic" in res.stderr
+
+
 def test_log_appends_at_the_end_of_its_section_once(adopted):
     ops = [{"op": "log", "text": "{today}: #11 closed. No new issues. Next: #12."}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 0
@@ -394,8 +429,8 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
     """The derived-count check is the backstop for a transform bug (seventh run 92)."""
     real = ee.apply_ops
 
-    def lossy(lines, ops, host, now):
-        new, expect, notes = real(lines, ops, host, now)
+    def lossy(*args):
+        new, expect, notes = real(*args)
         return [ln for ln in new if "#12 second" not in ln], expect, notes
 
     monkeypatch.setattr(ee, "apply_ops", lossy)

@@ -18,7 +18,8 @@ damaged an epic (gregoryfoster/skills#348):
 - new lines are linted for refs, placeholders, unexpanded variables, escaped
   backticks, unresolvable comment links and secrets (watcher F61,
   processor F129/F134, broker 120);
-- `{now}` and `{today}` are injected, never typed (processor F91/F127);
+- `{now}`, `{today}`, and the scan's `{checked}` and `{last_seen}`, are
+  injected, never typed (processor F91/F127, CR 248);
 - the write is read back, because an exit code alone proves nothing
   (address-validator 48).
 """
@@ -50,7 +51,7 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   {"op": "add-line", "line": "- [ ] #44 ...", "section": "Tier 2"}
                                               insert, once; refuses a second
                                               line for a ref that has one
-  {"op": "header", "field": "Last check-in", "value": "{now}"}
+  {"op": "header", "field": "Last check-in", "value": "{checked}"}
                                               set a "- **Field:** value" line
   {"op": "log", "text": "{today}: #12 closed. No new issues. Next: #13."}
                                               append "- text" to the Log section
@@ -60,6 +61,10 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   A ref is "#N" for this repo or "owner/repo#N". A ref's line is the checklist
   item, bullet or table row whose first token is that ref. In any text,
   {now} becomes the UTC time (2026-10-14T18:03Z) and {today} the UTC date.
+  With --scan FILE (scan.sh's report), {checked} becomes the report's own time
+  and {last_seen} its highest number (#58). Write those two into the header's
+  Last check-in and Last issue seen: the next scan's window then starts where
+  this one looked, not where the write happened.
 
 exit codes:
   0  written and read back, or nothing to write (every operation already held)
@@ -89,7 +94,10 @@ CODE_SPAN_RE = re.compile(r"`[^`]*`")
 PLACEHOLDER_RES = [
     (re.compile(r"\bSUB\d+\b"), "an unfilled SUBn placeholder"),
     (re.compile(r"\{\{[^}]*\}\}"), "an unfilled {{...}} placeholder"),
-    (re.compile(r"\{(?:now|today)\}"), "an uninjected {now}/{today}"),
+    (
+        re.compile(r"\{(?:now|today|checked|last_seen)\}"),
+        "an uninjected {now}/{today}/{checked}/{last_seen}",
+    ),
     (re.compile(r"\\`"), "an escaped backtick"),
 ]
 SECRET_RES = [
@@ -314,7 +322,12 @@ def refs_in(lines: list[str], host: str) -> set[str]:
 # ---------------------------------------------------------------- operations
 
 
-def inject(text: str, now: dt.datetime) -> str:
+def inject(text: str, now: dt.datetime, scan: dict | None = None) -> str:
+    for name in ("checked", "last_seen"):
+        if "{" + name + "}" in text:
+            if not scan:
+                raise Refused(f"{{{name}}} needs --scan with scan.sh's report")
+            text = text.replace("{" + name + "}", scan[name])
     return text.replace("{now}", now.strftime("%Y-%m-%dT%H:%MZ")).replace(
         "{today}", now.strftime("%Y-%m-%d")
     )
@@ -335,7 +348,11 @@ def _add(acc: dict[str, int], d: dict[str, int]) -> None:
 
 
 def apply_ops(
-    body_lines: list[str], ops: list[dict], host: str, now: dt.datetime
+    body_lines: list[str],
+    ops: list[dict],
+    host: str,
+    now: dt.datetime,
+    scan: dict | None = None,
 ) -> tuple[list[str], dict[str, int], list[str]]:
     """Apply ops in order. Returns (lines, expected count delta, notes)."""
     lines = list(body_lines)
@@ -360,7 +377,7 @@ def apply_ops(
                 _add(expect, _delta(before, box_state(lines[i])))
             elif kind == "note":
                 i = find_ref_line(lines, parse_ref(op["ref"], host), host)
-                text = inject(op["text"], now).strip()
+                text = inject(op["text"], now, scan).strip()
                 if not text or "\n" in text:
                     raise Refused("note text must be one non-empty line")
                 if text in lines[i]:
@@ -370,7 +387,7 @@ def apply_ops(
             elif kind == "set-line":
                 ref_key = parse_ref(op["ref"], host)
                 i = find_ref_line(lines, ref_key, host)
-                new = inject(op["line"], now).rstrip()
+                new = inject(op["line"], now, scan).rstrip()
                 if "\n" in new:
                     raise Refused("set-line takes one line")
                 lr = line_ref(new, host)
@@ -382,7 +399,7 @@ def apply_ops(
                 _add(expect, _delta(box_state(lines[i]), box_state(new)))
                 lines[i] = new
             elif kind == "add-line":
-                new = inject(op["line"], now).rstrip()
+                new = inject(op["line"], now, scan).rstrip()
                 if "\n" in new or not new.strip():
                     raise Refused("add-line takes one non-empty line")
                 if new in lines:
@@ -411,7 +428,7 @@ def apply_ops(
                 _add(expect, _delta(None, box_state(new)))
             elif kind == "header":
                 field = op["field"].strip()
-                value = inject(op["value"], now).strip()
+                value = inject(op["value"], now, scan).strip()
                 fence = fenced(lines)
                 hits = [
                     i
@@ -430,7 +447,7 @@ def apply_ops(
                     continue
                 lines[hits[0]] = new
             elif kind == "log":
-                text = inject(op["text"], now).strip()
+                text = inject(op["text"], now, scan).strip()
                 if not text or "\n" in text:
                     raise Refused("log text must be one non-empty line")
                 start, end = section_span(lines, "Log")
@@ -441,7 +458,7 @@ def apply_ops(
                 lines.insert(section_tail(lines, start, end), entry)
             elif kind == "replace-section":
                 start, end = section_span(lines, op["heading"])
-                text = inject(op["text"], now).strip("\n")
+                text = inject(op["text"], now, scan).strip("\n")
                 new_body = [""] + [ln.rstrip() for ln in text.split("\n")] + [""]
                 if end == len(lines):
                     new_body.pop()
@@ -670,6 +687,11 @@ def run(argv: list[str]) -> int:
         " in the body. For a whole-backlog or number-range epic, not a chosen subset",
     )
     p.add_argument(
+        "--scan",
+        metavar="FILE",
+        help="scan.sh's JSON report, for {checked} and {last_seen} (must be this repo's epic)",
+    )
+    p.add_argument(
         "--no-link-check", action="store_true", help="skip resolving new comment links"
     )
     p.add_argument(
@@ -694,6 +716,22 @@ def run(argv: list[str]) -> int:
             ops = json.loads(raw)
             if not isinstance(ops, list) or not all(isinstance(o, dict) for o in ops):
                 raise Refused("--ops must be a JSON array of objects")
+        scan = None
+        if a.scan:
+            report = json.loads(Path(a.scan).read_text())
+            if (
+                str(report.get("repo", "")).lower() != host.lower()
+                or report.get("epic") != a.epic
+            ):
+                raise Refused(f"--scan {a.scan} is a report on another epic")
+            if not re.fullmatch(
+                r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", str(report.get("now"))
+            ):
+                raise Refused(f"--scan {a.scan} has no usable 'now'")
+            scan = {
+                "checked": report["now"],
+                "last_seen": f"#{int(report['max_number'])}",
+            }
         sd = state_dir(a.state_dir, host, a.epic)
         base_path = sd / "last-written.md"
 
@@ -733,7 +771,7 @@ def run(argv: list[str]) -> int:
             )
 
         before = counts(live_lines)
-        new, expect, notes = apply_ops(live_lines, ops, host, now)
+        new, expect, notes = apply_ops(live_lines, ops, host, now, scan)
         after = counts(new)
         summary.update(counts_before=before, counts_after=after, notes=notes)
         if not new:
