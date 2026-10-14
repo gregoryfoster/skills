@@ -378,6 +378,38 @@ def test_replace_section_counts_its_boxes(adopted):
     assert "acme/gadgets#3" not in adopted.body(REPO, EPIC)
 
 
+def test_adopt_live_with_ops_writes_on_the_adopted_body(rig):
+    """CR 264: first use can adopt and edit in one call."""
+    res = rig.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--adopt-live")
+    assert res.returncode == 0, res.stderr
+    s = summary(res)
+    assert s["adopted_live"] and s["written"] and s["readback"] == "matches"
+    base = (rig.state_dir / "acme-widgets-10" / "last-written.md").read_text()
+    assert "- [x] #11" in base
+
+
+def test_replace_section_at_the_end_of_the_body(adopted):
+    """CR 264: the last section has no following heading; the edit stays idempotent."""
+    ops = [
+        {"op": "replace-section", "heading": "Log", "text": "- 2026-10-14: rewritten."}
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    assert (
+        adopted.body(REPO, EPIC).rstrip().endswith("## Log\n\n- 2026-10-14: rewritten.")
+    )
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0 and summary(res).get("unchanged")
+
+
+def test_each_write_keeps_a_history_copy(adopted):
+    """CR 264: the fallback when the baseline is lost is a local copy of each write."""
+    adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    history = list((adopted.state_dir / "acme-widgets-10" / "history").glob("*.md"))
+    assert len(history) == 1
+    assert history[0].read_text() == adopted.body(REPO, EPIC)
+
+
 def test_dry_run_writes_nothing(adopted):
     res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--dry-run")
     assert res.returncode == 0
