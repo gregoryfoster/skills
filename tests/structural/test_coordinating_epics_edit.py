@@ -583,6 +583,19 @@ def test_fences_follow_commonmark(body):
     )
 
 
+@pytest.mark.parametrize(
+    "line, text",
+    [
+        ("## Notes on C#", "Notes on C#"),
+        ("## Log ##", "Log"),
+        ("### Tier 1 — bugs", "Tier 1 — bugs"),
+    ],
+)
+def test_heading_text_follows_commonmark(line, text):
+    """CR 255."""
+    assert ee.headings([line]) == [(0, line.index(" "), text)]
+
+
 def test_two_items_for_one_ref_are_ambiguous():
     lines = ee.normalize("- [ ] #1 a\n- [ ] #1 b\n")
     with pytest.raises(ee.Refused, match="ambiguous"):

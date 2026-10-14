@@ -84,7 +84,9 @@ LEAD = r"(?:~~|\*\*|\[|`)*"
 ITEM_RE = re.compile(r"^\s*[-*+] \[[ xX]\] " + LEAD + REF_PAT)
 BULLET_RE = re.compile(r"^\s*[-*+] " + LEAD + REF_PAT)
 ROW_RE = re.compile(r"^\|\s*" + LEAD + REF_PAT)
-HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
+# A closing #-sequence needs whitespace before it, as in CommonMark, so
+# "## Notes on C#" keeps its "#" (CR 255).
+HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})[ \t]+(?P<text>.+?)(?:[ \t]+#+)?[ \t]*$")
 FENCE_RE = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 FIELD_RE = re.compile(
     r"^(?P<lead>\s*(?:[-*+]\s+)?\*\*(?P<field>[^*]+?):\*\*)(?P<value>.*)$"
