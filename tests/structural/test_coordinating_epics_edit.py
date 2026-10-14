@@ -160,6 +160,16 @@ def test_a_foreign_tick_is_a_claim_until_accepted(adopted):
     assert "- [x] #11" in body and "- [x] #12" in body
 
 
+def test_an_uppercase_foreign_tick_is_still_a_tick(adopted):
+    """CR 254: GitHub's own UI writes [x], but [X] is a tick too."""
+    adopted.issue(REPO, EPIC, body=BODY.replace("- [ ] #12", "- [X] #12"))
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "tick", "ref": "#11"}], "--accept-ticks", "#12"
+    )
+    assert res.returncode == 0, res.stderr
+    assert summary(res)["foreign_ticks"] == ["acme/widgets#12"]
+
+
 def test_a_foreign_edit_beyond_ticks_is_refused_with_the_diff(adopted):
     adopted.issue(
         REPO, EPIC, body=BODY.replace("second thing", "second thing, rescoped")

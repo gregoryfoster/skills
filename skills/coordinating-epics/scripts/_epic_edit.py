@@ -685,7 +685,7 @@ def foreign_changes(
                     and lr[0] == "item"
                     and box_state(a) == "open"
                     and box_state(b) == "done"
-                    and set_box(a, True) == b
+                    and set_box(a, True) == set_box(b, True)  # [X] ticks too (CR 254)
                 ):
                     ticks.append(lr[1])
                 else:
