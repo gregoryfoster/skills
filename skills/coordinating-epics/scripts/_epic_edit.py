@@ -79,7 +79,7 @@ ITEM_RE = re.compile(r"^\s*[-*+] \[[ xX]\] " + LEAD + REF_PAT)
 BULLET_RE = re.compile(r"^\s*[-*+] " + LEAD + REF_PAT)
 ROW_RE = re.compile(r"^\|\s*" + LEAD + REF_PAT)
 HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
-FENCE_RE = re.compile(r"^\s*(```|~~~)")
+FENCE_RE = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 FIELD_RE = re.compile(
     r"^(?P<lead>\s*(?:[-*+]\s+)?\*\*(?P<field>[^*]+?):\*\*)(?P<value>.*)$"
 )
@@ -145,15 +145,32 @@ def split_raw(body: str) -> list[str]:
 
 
 def fenced(lines: list[str]) -> list[bool]:
-    """True for each line inside (or opening/closing) a fenced code block."""
-    out, inside, marker = [], False, ""
+    """True for each line inside (or opening/closing) a fenced code block.
+
+    CommonMark's rules (CR 246): a closing fence uses the opener's character,
+    is at least as long, and carries no info string. So a ```` block can hold
+    ``` examples, and ```python inside a block doesn't close it.
+    """
+    out: list[bool] = []
+    opener = ""
     for ln in lines:
         m = FENCE_RE.match(ln)
-        if m and (not inside or m.group(1) == marker):
-            out.append(True)
-            inside, marker = (not inside), m.group(1)
+        if not opener:
+            fence = m.group("fence") if m else ""
+            if m and not (fence[0] == "`" and "`" in m.group("info")):
+                opener = fence
+                out.append(True)
+            else:
+                out.append(False)
             continue
-        out.append(inside)
+        out.append(True)
+        if (
+            m
+            and m.group("fence")[0] == opener[0]
+            and len(m.group("fence")) >= len(opener)
+            and not m.group("info").strip()
+        ):
+            opener = ""
     return out
 
 

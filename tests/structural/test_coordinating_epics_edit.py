@@ -411,6 +411,25 @@ def test_boxes_inside_a_fence_are_not_counted():
         ee.find_ref_line(lines, ee.key(None, 2, REPO), REPO, want_item=True)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "````md\n```bash\n- [ ] #2 b\n```\n- [ ] #4 d\n````\n- [ ] #1 a\n",
+        "```\n- [ ] #2 b\n```python\n- [ ] #4 d\n```\n- [ ] #1 a\n",
+        "~~~\n- [ ] #2 b\n```\n- [ ] #4 d\n~~~\n- [ ] #1 a\n",
+    ],
+    ids=["longer-outer", "info-string-is-not-a-close", "tilde-outer"],
+)
+def test_fences_follow_commonmark(body):
+    """CR 246: only #1 is outside every fence."""
+    lines = ee.normalize(body)
+    assert ee.counts(lines) == {"open": 1, "done": 0}
+    assert (
+        ee.find_ref_line(lines, ee.key(None, 1, REPO), REPO, want_item=True)
+        == len(lines) - 1
+    )
+
+
 def test_two_items_for_one_ref_are_ambiguous():
     lines = ee.normalize("- [ ] #1 a\n- [ ] #1 b\n")
     with pytest.raises(ee.Refused, match="ambiguous"):
