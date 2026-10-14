@@ -409,6 +409,19 @@ def test_lint_refuses_new_lines(adopted, line, why):
     assert "ghp_aaaa" not in res.stderr + res.stdout
 
 
+def test_a_transferred_issue_above_the_newest_created_is_not_refused(adopted):
+    """CR 260: #20 exists, though the newest-created issue is #14."""
+    adopted.issue(REPO, 20, created_at="2025-01-01T00:00:00Z")
+    for n in (10, 11, 12, 13, 14):
+        adopted.issue(REPO, n, created_at=f"2026-10-0{n - 9}T00:00:00Z")
+    res = adopted.edit(
+        REPO,
+        EPIC,
+        [{"op": "add-line", "section": "Tier 1", "line": "- [ ] #20 moved here"}],
+    )
+    assert res.returncode == 0, res.stderr
+
+
 def test_a_shell_variable_inside_a_code_span_is_fine(adopted):
     res = adopted.edit(
         REPO,

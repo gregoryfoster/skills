@@ -92,7 +92,10 @@ if len(parts) == 4 and parts[3] == "issues":
     rows = [dict(it, number=int(n)) for n, it in issues.items()]
     if "since" in q:
         rows = [x for x in rows if x.get("updated_at", "") >= q["since"]]
-    rows.sort(key=lambda x: x["number"], reverse=True)
+    if q.get("sort") == "created":
+        rows.sort(key=lambda x: (x.get("created_at", ""), x["number"]), reverse=True)
+    else:
+        rows.sort(key=lambda x: x["number"], reverse=True)
     per, page = int(q.get("per_page", 30)), int(q.get("page", 1))
     out(rows[(page - 1) * per : page * per])
 

@@ -242,6 +242,10 @@ def run(argv: list[str]) -> int:
             "  - **Last issue seen:** #57\n"
             "  - **Last verified SHA:** 1a2b3c4\n"
             "A cursor that is neither given nor in the header is skipped, with a warning.\n\n"
+            "max_number is the highest number seen by any cursor. An issue transferred in\n"
+            "keeps its old creation date, so the newest-created row isn't always the\n"
+            "highest number, and the watermark walk can stop before reaching it. Its\n"
+            "transfer updates it, so updated-since still lists it.\n\n"
             "exit codes: 0 report written; 1 usage; 2 gh or git failed (their stderr shown)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -317,6 +321,9 @@ def run(argv: list[str]) -> int:
                 if it["number"] > wm
             ]
             report["new_numbers"] = sorted(rows, key=lambda r: r["number"])
+            report["max_number"] = max(
+                [report["max_number"]] + [r["number"] for r in rows]
+            )
 
         if cur["since"] is None:
             warnings.append("no since: updates and comments not scanned")
@@ -347,6 +354,9 @@ def run(argv: list[str]) -> int:
                     ]
                 rows.append(row)
             report["updated_since"] = sorted(rows, key=lambda r: r["number"])
+            report["max_number"] = max(
+                [report["max_number"]] + [r["number"] for r in rows]
+            )
 
         if cur["from_sha"] is None:
             warnings.append("no from-sha: commit range not scanned")

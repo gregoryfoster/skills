@@ -278,3 +278,19 @@ def test_a_page_cap_is_a_warning_not_a_silent_cut(rig, monkeypatch, capsys):
     )
     r = json.loads(capsys.readouterr().out)
     assert any("listing updates: stopped at 100 rows" in w for w in r["warnings"])
+
+
+def test_max_number_is_the_highest_seen_not_the_newest_created(rig):
+    """CR 260: a transferred issue keeps its old created_at but takes a new number."""
+    for n in (10, 11, 12, 14, 15, 16):
+        rig.issue(REPO, n, created_at=f"2026-10-0{n % 9 + 1}T00:00:00Z")
+    rig.issue(
+        REPO,
+        17,
+        created_at="2025-01-01T00:00:00Z",
+        updated_at="2026-10-04T00:00:00Z",
+        body="",
+    )
+    r = scan(rig)
+    assert r["max_number"] == 17
+    assert 17 in [x["number"] for x in r["updated_since"]]

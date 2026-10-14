@@ -640,6 +640,13 @@ def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
         )
         top = newest[0]["number"] if newest else 0
         for n in sorted(x for x in bare if x > top):
+            # The newest-created issue isn't always the highest number: an
+            # issue transferred in keeps its old creation date. Ask (CR 260).
+            try:
+                gh_json(["api", f"repos/{host}/issues/{n}"], f"checking #{n}")
+                continue
+            except Infra:
+                pass
             problems.append(
                 f"#{n} is above {host}'s highest number (#{top}); a ref from another repo?"
             )
