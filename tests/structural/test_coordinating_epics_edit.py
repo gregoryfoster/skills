@@ -337,6 +337,14 @@ def test_a_bold_led_line_still_mentions_its_ref(adopted, op):
     assert res.returncode == 0, res.stderr
 
 
+@pytest.mark.parametrize("rows", [[15], "15", [{"number": "15"}]])
+def test_a_malformed_report_row_is_a_usage_error(adopted, rows):
+    """CR 282."""
+    report = _report(adopted, new_numbers=rows)
+    res = adopted.edit(REPO, EPIC, [], "--scan", report)
+    assert res.returncode == 1 and "Traceback" not in res.stderr, res.stderr
+
+
 def test_last_seen_needs_a_report_that_scanned_numbers(adopted):
     """CR 276: with new_numbers null, {last_seen} would set a watermark over unseen issues."""
     report = _report(adopted, new_numbers=None)

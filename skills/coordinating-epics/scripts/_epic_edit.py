@@ -870,6 +870,18 @@ def run(argv: list[str]) -> int:
                 or type(report.get("max_number")) is not int
             ):  # bool is an int (CR 270)
                 raise Usage(f"--scan {a.scan} has no usable 'now' or 'max_number'")
+            for name in ("new_numbers", "updated_since"):  # CR 282
+                rows = report.get(name)
+                if rows is not None and not (
+                    isinstance(rows, list)
+                    and all(
+                        isinstance(r, dict) and type(r.get("number")) is int
+                        for r in rows
+                    )
+                ):
+                    raise Usage(
+                        f"--scan {a.scan}: {name} must be a list of rows with a number"
+                    )
             scan = {
                 "checked": report["now"],
                 "last_seen": f"#{report['max_number']}",
