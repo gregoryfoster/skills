@@ -429,6 +429,21 @@ def test_add_line_after_a_ref_spans_blank_lines_in_its_block(rig):
     assert "  - sub a\n\n  - sub b\n- [ ] #14 follow-up\n" in rig.body(REPO, EPIC)
 
 
+def test_add_line_without_a_ref_is_idempotent_despite_trailing_spaces(adopted):
+    """CR 280."""
+    assert (
+        adopted.edit(
+            REPO, EPIC, [{"op": "add-line", "section": "Tier 1", "line": "plain note"}]
+        ).returncode
+        == 0
+    )
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "add-line", "section": "Tier 1", "line": "plain note  "}]
+    )
+    assert res.returncode == 0 and summary(res).get("unchanged")
+    assert adopted.body(REPO, EPIC).count("plain note") == 1
+
+
 def test_set_line_must_keep_its_ref(adopted):
     res = adopted.edit(
         REPO, EPIC, [{"op": "set-line", "ref": "#12", "line": "- [ ] #11 oops"}]

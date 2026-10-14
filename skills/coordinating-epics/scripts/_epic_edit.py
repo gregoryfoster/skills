@@ -525,7 +525,9 @@ def apply_ops(
                 new = inject(op["line"], now, scan).rstrip("\r\n")
                 if "\n" in new or not new.strip():
                     raise Refused("add-line takes one non-empty line")
-                if new in lines:
+                # Compared without trailing whitespace, so "note " finds "note";
+                # the raw text, break and all, is what gets inserted (CR 280).
+                if new.rstrip() in (ln.rstrip() for ln in lines):
                     notes.append(f"{where}: line already present")
                     continue
                 lr = line_ref(new, host)
