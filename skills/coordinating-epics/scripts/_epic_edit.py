@@ -180,7 +180,9 @@ def check_ops(ops) -> None:
         raise Usage("--ops must be a JSON array of objects")
     for n, op in enumerate(ops, 1):
         kind = op.get("op")
-        if kind not in OP_FIELDS:
+        if (
+            not isinstance(kind, str) or kind not in OP_FIELDS
+        ):  # unhashable too (CR 270)
             raise Usage(f"op {n}: unknown op {kind!r}")
         allowed = {"op", *OP_FIELDS[kind], *OP_OPTIONAL.get(kind, ())}
         if set(op) - allowed:
@@ -824,9 +826,12 @@ def run(argv: list[str]) -> int:
                 or report.get("epic") != a.epic
             ):
                 raise Usage(f"--scan {a.scan} is not a scan.sh report on this epic")
-            if not re.fullmatch(
-                r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", str(report.get("now"))
-            ) or not isinstance(report.get("max_number"), int):
+            if (
+                not re.fullmatch(
+                    r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", str(report.get("now"))
+                )
+                or type(report.get("max_number")) is not int
+            ):  # bool is an int (CR 270)
                 raise Usage(f"--scan {a.scan} has no usable 'now' or 'max_number'")
             scan = {
                 "checked": report["now"],

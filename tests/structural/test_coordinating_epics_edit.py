@@ -239,6 +239,19 @@ def test_the_header_takes_the_scans_time_and_watermark(adopted):
     body = adopted.body(REPO, EPIC)
     assert "- **Last check-in:** 2026-10-14T18:03:27Z" in body
     assert "- **Last issue seen:** #13" in body
+    flagged = adopted.tmp / "bool.json"
+    flagged.write_text(
+        json.dumps(
+            {
+                "repo": REPO,
+                "epic": EPIC,
+                "now": "2026-10-14T18:03:27Z",
+                "max_number": True,
+            }
+        )
+    )
+    res = adopted.edit(REPO, EPIC, ops, "--scan", str(flagged))
+    assert res.returncode == 1 and "max_number" in res.stderr  # CR 270
     other = adopted.tmp / "other.json"
     other.write_text(
         json.dumps(
@@ -654,6 +667,7 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
         ('[{"op": "note", "ref": "#12"}]', []),
         ("not json", []),
         ('[{"op": "header", "field": "Next", "value": "{checked}"}]', []),
+        ('[{"op": ["tick"]}]', []),
     ],
     ids=[
         "bad-repo",
@@ -663,6 +677,7 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
         "missing-field",
         "bad-json",
         "scan-placeholder-without-scan",
+        "op-name-not-a-string",
     ],
 )
 def test_usage_errors_exit_1_before_any_fetch(adopted, ops, args):
