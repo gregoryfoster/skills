@@ -350,3 +350,18 @@ def test_git_keeps_auth_variables_and_never_prompts(monkeypatch):
         env["GIT_SSH_COMMAND"] == "ssh -i /k" and env["GIT_ASKPASS"] == "/bin/askpass"
     )
     assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_a_pr_closing_another_repos_issue_isnt_this_repos_child(rig):
+    """CR 273: the closing reference's repo comes from its own fields."""
+    rig.pr(REPO, 16, ["other/repo#12"])
+    rows = scan(rig)["commits"]
+    assert rows[0]["attribution"] == "unattributed" and rows[0]["children"] == []
+
+
+def test_a_pr_lookup_failure_is_a_warning(rig):
+    """CR 273: only gh's own "not a PR" answer is read as one."""
+    rig.set_flag("pr_error", "HTTP 403: API rate limit exceeded")
+    r = scan(rig)
+    assert r["commits"][0]["attribution"] == "unattributed"
+    assert any("rate limit" in w for w in r["warnings"])

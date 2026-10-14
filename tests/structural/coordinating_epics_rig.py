@@ -49,12 +49,17 @@ if args[:2] == ["issue", "list"]:
 
 if args[:2] == ["pr", "view"]:
     num, repo = args[2], args[args.index("-R") + 1]
+    if st.get("pr_error"):
+        fail(st["pr_error"])
     closes = st["repos"].get(repo, {}).get("prs", {}).get(num)
     if closes is None:
         fail(f"GraphQL: Could not resolve to a PullRequest with the number of {num}.")
-    out({"closingIssuesReferences": [
-        {"number": n, "url": f"https://github.com/{repo}/issues/{n}"} for n in closes
-    ]})
+    refs = []
+    for c in closes:  # an int is this repo's issue; "owner/repo#N" another's
+        r, n = (c.rsplit("#", 1) if isinstance(c, str) else (repo, c))
+        o, name = r.split("/")
+        refs.append({"number": int(n), "repository": {"name": name, "owner": {"login": o}}})
+    out({"closingIssuesReferences": refs})
 
 if args[0] != "api":
     fail("unsupported")

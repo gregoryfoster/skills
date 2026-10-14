@@ -192,28 +192,52 @@ def git(args: list[str], git_dir: str, what: str) -> str:
     return r.stdout
 
 
-def pr_closes(num: str, host: str, cache: dict) -> list[str]:
-    """The issues a PR closes, as keys; [] when num is not a PR or can't be read."""
+def pr_closes(num: str, host: str, cache: dict, warnings: list[str]) -> list[str]:
+    """The issues a PR closes, as keys; [] when num is an issue, not a PR.
+
+    Only gh's own "not a PR" answer means that. A rate limit or an auth
+    failure is a warning, not a silent "unattributed" (CR 273).
+    """
     if num not in cache:
         try:
             data = gh_json(
                 ["pr", "view", num, "-R", host, "--json", "closingIssuesReferences"],
                 f"reading what #{num} closes",
             )
-        except Infra:
-            cache[num] = []  # an issue, not a PR, or unreadable: nothing to add
+        except Infra as e:
+            if "Could not resolve to a PullRequest" not in str(e):
+                warnings.append(
+                    f"#{num}'s closing issues unread: {str(e).splitlines()[-1]}"
+                )
+            cache[num] = []
         else:
             keys = []
             for it in data.get("closingIssuesReferences") or []:
-                u = GH_ISSUE_URL_RE.match(str(it.get("url", "")))
-                repo = u.group("repo") if u else None
+                repo_obj = it.get("repository") or {}
+                owner = (repo_obj.get("owner") or {}).get("login")
+                if owner and repo_obj.get("name"):
+                    repo = f"{owner}/{repo_obj['name']}"
+                else:
+                    u = GH_ISSUE_URL_RE.match(str(it.get("url", "")))
+                    repo = u.group("repo") if u else None
+                    if repo is None:
+                        warnings.append(
+                            f"#{num} closes #{it.get('number')} in an unnamed repo; skipped"
+                        )
+                        continue
                 keys.append(key(repo, it["number"], host))
             cache[num] = keys
     return cache[num]
 
 
 def commits(
-    git_dir: str, from_sha: str, ref: str, host: str, epic: int, items: set[str]
+    git_dir: str,
+    from_sha: str,
+    ref: str,
+    host: str,
+    epic: int,
+    items: set[str],
+    warnings: list[str],
 ) -> list[dict]:
     out = git(
         ["log", "--format=%H%x1f%an%x1f%s%x1f%b%x1e", f"{from_sha}..{ref}"],
@@ -243,7 +267,7 @@ def commits(
                 repo, num = r.rsplit("#", 1)
                 if repo != host.lower() or r == epic_key:
                     continue
-                closed = [c for c in pr_closes(num, host, prs) if c in items]
+                closed = [c for c in pr_closes(num, host, prs, warnings) if c in items]
                 if closed:
                     via_pr.append(r)
                     children.extend(c for c in closed if c not in children)
@@ -405,7 +429,7 @@ def run(argv: list[str]) -> int:
                 if not a.no_fetch:
                     git(["fetch", "--quiet", "origin"], a.git_dir, "fetching origin")
                 report["commits"] = commits(
-                    a.git_dir, cur["from_sha"], a.ref, host, a.epic, items
+                    a.git_dir, cur["from_sha"], a.ref, host, a.epic, items, warnings
                 )
             except Infra as e:
                 report["commits"] = None
