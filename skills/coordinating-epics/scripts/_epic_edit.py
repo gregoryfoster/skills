@@ -128,6 +128,10 @@ class Refused(Exception):
     """A check failed; nothing was written."""
 
 
+class NotFound(Refused):
+    """No line leads with the ref: the one refusal add-line's duplicate guard expects."""
+
+
 class Infra(Exception):
     """A tool the check depends on failed."""
 
@@ -290,7 +294,7 @@ def find_ref_line(
                 f"{ref_key}: {len(hits[kind])} {kind} lines lead with it; ambiguous"
             )
     what = "checklist item" if want_item else "item, bullet or table row"
-    raise Refused(f"{ref_key}: no {what} leads with it")
+    raise NotFound(f"{ref_key}: no {what} leads with it")
 
 
 def headings(lines: list[str]) -> list[tuple[int, int, str]]:
@@ -470,9 +474,11 @@ def apply_ops(
                     continue
                 lr = line_ref(new, host)
                 if lr:
+                    # Only "no such line" lets the add through; "ambiguous" must
+                    # stop it, or a ref with two lines gets a third (CR 252).
                     try:
                         find_ref_line(lines, lr[1], host, want_item=lr[0] == "item")
-                    except Refused:
+                    except NotFound:
                         pass
                     else:
                         raise Refused(

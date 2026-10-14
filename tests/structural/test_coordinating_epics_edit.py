@@ -296,6 +296,22 @@ def test_add_line_after_a_ref_keeps_that_refs_sub_bullets(rig):
     )
 
 
+def test_add_line_wont_add_a_third_line_for_an_ambiguous_ref(rig):
+    """CR 252."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.replace(
+            "- [ ] #12 second thing\n", "- [ ] #12 second thing\n- [ ] #12 again\n"
+        ),
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(
+        REPO, EPIC, [{"op": "add-line", "section": "Tier 1", "line": "- [ ] #12 third"}]
+    )
+    assert res.returncode == 3 and "ambiguous" in res.stderr
+
+
 def test_set_line_must_keep_its_ref(adopted):
     res = adopted.edit(
         REPO, EPIC, [{"op": "set-line", "ref": "#12", "line": "- [ ] #11 oops"}]
