@@ -68,6 +68,12 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
   Last check-in and Last issue seen: the next scan's window then starts where
   this one looked, not where the write happened.
 
+lint:
+  Every line the edit adds or changes is linted whole, so ticking a line that
+  already holds a short ref or an unexpanded variable is refused with it. That
+  is deliberate: legacy text is fixed the first time it is touched. Rewrite the
+  line with set-line, then tick.
+
 exit codes:
   0  written and read back, or nothing to write (every operation already held)
   1  usage error: a bad flag, or a malformed ops or --scan file. Nothing was

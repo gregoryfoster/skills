@@ -161,6 +161,7 @@ bash "<scan.sh>" --repo OWNER/REPO --epic N > "$SCRATCH/scan.json" \
 ```
 
 - **A refusal (exit 3) wrote nothing.** Read the reason. A foreign tick is a claim: verify that child, then pass `--accept-ticks '#N'`. Any other foreign edit means merging by hand: read the diff, rebuild your ops on the live body, and re-run with `--adopt-live`.
+- **A lint refusal on a line you only ticked** means the line already held something the lint refuses, such as a short ref. Every changed line is linted whole, so legacy text is fixed the first time it's touched: rewrite the line with `set-line`, then tick.
 - **Exit 4: the read-back differs.** The write may have landed partly. Read the epic before anything else.
 - **Log every check-in,** including "No new issues; ranking unchanged". Without that line, nobody can tell "checked and found nothing" from "never checked" (address-validator 49).
 - **The baseline lives in the per-user state directory,** never `/tmp`, which may or may not survive a reboot (broker 101). If it's lost, the issue's edit history (GraphQL `userContentEdits`) is the fallback (private-backlog 113).
