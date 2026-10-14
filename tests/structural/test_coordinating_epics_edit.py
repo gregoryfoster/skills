@@ -331,6 +331,15 @@ def test_set_line_must_keep_its_ref(adopted):
     assert res.returncode == 0, res.stderr
 
 
+def test_a_note_that_is_a_substring_of_the_line_is_still_added(adopted):
+    """CR 253."""
+    res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "second"}])
+    assert res.returncode == 0 and summary(res)["written"], res.stderr
+    assert "- [ ] #12 second thing second" in adopted.body(REPO, EPIC)
+    res = adopted.edit(REPO, EPIC, [{"op": "note", "ref": "#12", "text": "second"}])
+    assert summary(res).get("unchanged")
+
+
 def test_note_works_on_a_table_row(adopted):
     res = adopted.edit(
         REPO, EPIC, [{"op": "note", "ref": "#13", "text": "(re-read {today})"}]

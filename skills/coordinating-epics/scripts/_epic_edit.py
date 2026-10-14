@@ -447,7 +447,9 @@ def apply_ops(
                 text = inject(op["text"], now, scan).strip()
                 if not text or "\n" in text:
                     raise Refused("note text must be one non-empty line")
-                if text in lines[i]:
+                # By the line's end, not a substring: a note "S" on "… · S"
+                # is a new note, not one already there (CR 253).
+                if lines[i].rstrip().endswith(" " + text):
                     notes.append(f"{where}: note already on {op['ref']}'s line")
                     continue
                 lines[i] = lines[i].rstrip() + " " + text
