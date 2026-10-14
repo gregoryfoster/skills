@@ -228,6 +228,25 @@ def split_raw(body: str) -> list[str]:
     return lines
 
 
+CURSOR_FIELDS = {
+    "last check-in",
+    "last probe",
+    "last issue seen",
+    "last verified sha",
+    "next",
+}
+
+
+def is_cursor_line(line: str) -> bool:
+    """A header cursor line, whose refs (Last issue seen, Next) track no issue.
+
+    Only these: a tier line "- **#15:** …" or a log line "**2026-10-14:** #15 …"
+    mentions #15 (CR 278).
+    """
+    m = FIELD_RE.match(line)
+    return bool(m) and m.group("field").strip().lower() in CURSOR_FIELDS
+
+
 def trailing(line: str) -> str:
     """A line's trailing whitespace: two spaces of it are a hard line break."""
     return line[len(line.rstrip()) :]
@@ -953,7 +972,7 @@ def run(argv: list[str]) -> int:
         # (CR 265). A tier line or the log's "out of epic" both count; the
         # header's "Last issue seen" doesn't.
         if scan and scan["new_issues"]:
-            mentioned = refs_in([ln for ln in new if not FIELD_RE.match(ln)], host)
+            mentioned = refs_in([ln for ln in new if not is_cursor_line(ln)], host)
             missing = [
                 n for n in scan["new_issues"] if key(None, n, host) not in mentioned
             ]
@@ -986,7 +1005,7 @@ def run(argv: list[str]) -> int:
                     " the accounting can't be trusted (CR 259)"
                 )
             # The header's "Last issue seen: #N" and "Next: #N" don't track an issue.
-            listed = refs_in([ln for ln in new if not FIELD_RE.match(ln)], host)
+            listed = refs_in([ln for ln in new if not is_cursor_line(ln)], host)
             unlisted = sorted(
                 i["number"]
                 for i in open_issues

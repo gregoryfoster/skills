@@ -322,6 +322,21 @@ def test_an_issue_only_updated_since_shows_still_needs_accounting(adopted):
     assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
 
 
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add-line", "section": "Tier 1", "line": "- **#14:** new follow-up"},
+        {"op": "log", "text": "**{today}:** #14 out of epic"},
+    ],
+    ids=["bold-tier-line", "bold-log-line"],
+)
+def test_a_bold_led_line_still_mentions_its_ref(adopted, op):
+    """CR 278: only the header's cursor lines are excluded."""
+    report = _report(adopted, new_numbers=[{"number": 14, "kind": "issue"}])
+    res = adopted.edit(REPO, EPIC, [op], "--scan", report)
+    assert res.returncode == 0, res.stderr
+
+
 def test_last_seen_needs_a_report_that_scanned_numbers(adopted):
     """CR 276: with new_numbers null, {last_seen} would set a watermark over unseen issues."""
     report = _report(adopted, new_numbers=None)
