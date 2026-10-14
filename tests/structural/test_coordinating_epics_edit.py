@@ -223,7 +223,7 @@ def test_the_header_takes_the_scans_time_and_watermark(adopted):
         {"op": "header", "field": "Last issue seen", "value": "{last_seen}"},
     ]
     res = adopted.edit(REPO, EPIC, ops)
-    assert res.returncode == 3 and "needs --scan" in res.stderr
+    assert res.returncode == 1 and "needs --scan" in res.stderr
     res = adopted.edit(REPO, EPIC, ops, "--scan", str(report))
     assert res.returncode == 0, res.stderr
     body = adopted.body(REPO, EPIC)
@@ -236,7 +236,7 @@ def test_the_header_takes_the_scans_time_and_watermark(adopted):
         )
     )
     res = adopted.edit(REPO, EPIC, ops, "--scan", str(other))
-    assert res.returncode == 3 and "another epic" in res.stderr
+    assert res.returncode == 1 and "not a scan.sh report on this epic" in res.stderr
 
 
 def test_log_appends_at_the_end_of_its_section_once(adopted):
@@ -453,6 +453,39 @@ def test_counts_catch_a_transform_that_drops_a_line(adopted, monkeypatch, capsys
     assert rc == 3
     assert "checkbox counts" in capsys.readouterr().err
     assert "patches" not in adopted.load()
+
+
+@pytest.mark.parametrize(
+    "ops, args",
+    [
+        (None, ["--repo", "not-a-repo"]),
+        ('[{"op": "tick", "ref": 12}]', []),
+        ('[{"op": "frobnicate"}]', []),
+        ('[{"op": "add-line", "line": "- [ ] #14 x"}]', []),
+        ('[{"op": "note", "ref": "#12"}]', []),
+        ("not json", []),
+    ],
+    ids=[
+        "bad-repo",
+        "ref-not-a-string",
+        "unknown-op",
+        "add-line-no-anchor",
+        "missing-field",
+        "bad-json",
+    ],
+)
+def test_usage_errors_exit_1_before_any_fetch(adopted, ops, args):
+    """CR 249: 1 is usage, 2 is infrastructure, and a typo is not an outage."""
+    base = ["--repo", REPO, "--epic", str(EPIC), "--state-dir", str(adopted.state_dir)]
+    if args:
+        base = args + ["--epic", str(EPIC)]
+    calls = len(adopted.load().get("calls", []))
+    res = adopted.run(
+        "epic-edit.sh", *base, *(["--ops", "-"] if ops else []), stdin=ops
+    )
+    assert res.returncode == 1, (res.returncode, res.stderr)
+    assert "Traceback" not in res.stderr
+    assert len(adopted.load().get("calls", [])) == calls
 
 
 # ---------------------------------------------------------------- pure functions

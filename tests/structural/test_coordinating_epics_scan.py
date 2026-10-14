@@ -216,3 +216,8 @@ def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
     assert r["commits"] is None
     assert any(w.startswith("commit range not scanned") for w in r["warnings"])
     assert [x["number"] for x in r["new_numbers"]] == [15, 16]
+
+
+def test_a_usage_error_exits_1(rig):
+    res = rig.run("scan.sh", "--repo", "not-a-repo", "--epic", str(EPIC))
+    assert res.returncode == 1 and "owner/repo" in res.stderr

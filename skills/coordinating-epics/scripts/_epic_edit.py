@@ -68,7 +68,8 @@ operations (a JSON array, from --ops FILE or --ops - for stdin):
 
 exit codes:
   0  written and read back, or nothing to write (every operation already held)
-  1  usage error
+  1  usage error: a bad flag, or a malformed ops or --scan file. Nothing was
+     fetched or written.
   2  infrastructure failure (gh or python3 failed; gh's own stderr is shown)
   3  refused: a foreign edit, a missing anchor, a count or lint failure, or an
      open issue the epic doesn't list (--account [FROM]). Nothing was written.
@@ -129,6 +130,52 @@ class Refused(Exception):
 
 class Infra(Exception):
     """A tool the check depends on failed."""
+
+
+class Usage(Exception):
+    """The invocation or the ops file is malformed; exit 1, nothing fetched or written."""
+
+
+class Parser(argparse.ArgumentParser):
+    """argparse exits 2 on a usage error; 2 means infrastructure here (CR 249)."""
+
+    def error(self, message: str):  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: error: {message}", file=sys.stderr)
+        sys.exit(EXIT_USAGE)
+
+
+OP_FIELDS = {
+    "tick": ("ref",),
+    "untick": ("ref",),
+    "note": ("ref", "text"),
+    "set-line": ("ref", "line"),
+    "add-line": ("line",),
+    "header": ("field", "value"),
+    "log": ("text",),
+    "replace-section": ("heading", "text"),
+}
+OP_OPTIONAL = {"add-line": ("after_ref", "section")}
+
+
+def check_ops(ops) -> None:
+    """Reject a malformed ops file before anything is fetched."""
+    if not isinstance(ops, list) or not all(isinstance(o, dict) for o in ops):
+        raise Usage("--ops must be a JSON array of objects")
+    for n, op in enumerate(ops, 1):
+        kind = op.get("op")
+        if kind not in OP_FIELDS:
+            raise Usage(f"op {n}: unknown op {kind!r}")
+        allowed = {"op", *OP_FIELDS[kind], *OP_OPTIONAL.get(kind, ())}
+        if set(op) - allowed:
+            raise Usage(f"op {n} ({kind}): unknown fields {sorted(set(op) - allowed)}")
+        for f in OP_FIELDS[kind] + OP_OPTIONAL.get(kind, ()):
+            if f in op and not isinstance(op[f], str):
+                raise Usage(f"op {n} ({kind}): {f} must be a string")
+            if f in OP_FIELDS[kind] and f not in op:
+                raise Usage(f"op {n} ({kind}): missing field {f!r}")
+        if kind == "add-line" and ("after_ref" in op) == ("section" in op):
+            raise Usage(f"op {n} (add-line): give exactly one of after_ref or section")
 
 
 # ---------------------------------------------------------------- body model
@@ -326,7 +373,7 @@ def inject(text: str, now: dt.datetime, scan: dict | None = None) -> str:
     for name in ("checked", "last_seen"):
         if "{" + name + "}" in text:
             if not scan:
-                raise Refused(f"{{{name}}} needs --scan with scan.sh's report")
+                raise Usage(f"{{{name}}} needs --scan with scan.sh's report")
             text = text.replace("{" + name + "}", scan[name])
     return text.replace("{now}", now.strftime("%Y-%m-%dT%H:%MZ")).replace(
         "{today}", now.strftime("%Y-%m-%d")
@@ -470,9 +517,11 @@ def apply_ops(
                 _add(expect, {k: after[k] - before[k] for k in expect})
                 lines[start + 1 : end] = new_body
             else:
-                raise Refused(f"unknown op {kind!r}")
+                raise Usage(f"unknown op {kind!r}")
+        except Usage as e:
+            raise Usage(f"{where}: {e}") from None
         except KeyError as e:
-            raise Refused(f"{where}: missing field {e}") from None
+            raise Usage(f"{where}: missing field {e}") from None
         except Refused as e:
             raise Refused(f"{where}: {e}") from None
     return lines, expect, notes
@@ -653,7 +702,7 @@ def write_atomic(path: Path, text: str) -> None:
 
 
 def run(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(
+    p = Parser(
         prog="epic-edit.sh",
         description="Edit an epic's body with every check a coordinator thread once skipped.",
         epilog=USAGE_EXTRA,
@@ -711,26 +760,28 @@ def run(argv: list[str]) -> int:
     }
     try:
         ops = []
-        if a.ops:
-            raw = sys.stdin.read() if a.ops == "-" else Path(a.ops).read_text()
-            ops = json.loads(raw)
-            if not isinstance(ops, list) or not all(isinstance(o, dict) for o in ops):
-                raise Refused("--ops must be a JSON array of objects")
         scan = None
-        if a.scan:
-            report = json.loads(Path(a.scan).read_text())
-            if (
+        try:
+            if a.ops:
+                raw = sys.stdin.read() if a.ops == "-" else Path(a.ops).read_text()
+                ops = json.loads(raw)
+            report = json.loads(Path(a.scan).read_text()) if a.scan else None
+        except (OSError, json.JSONDecodeError) as e:
+            raise Usage(f"reading --ops/--scan: {e}") from None
+        check_ops(ops)
+        if report is not None:
+            if not isinstance(report, dict) or (
                 str(report.get("repo", "")).lower() != host.lower()
                 or report.get("epic") != a.epic
             ):
-                raise Refused(f"--scan {a.scan} is a report on another epic")
+                raise Usage(f"--scan {a.scan} is not a scan.sh report on this epic")
             if not re.fullmatch(
                 r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", str(report.get("now"))
-            ):
-                raise Refused(f"--scan {a.scan} has no usable 'now'")
+            ) or not isinstance(report.get("max_number"), int):
+                raise Usage(f"--scan {a.scan} has no usable 'now' or 'max_number'")
             scan = {
                 "checked": report["now"],
-                "last_seen": f"#{int(report['max_number'])}",
+                "last_seen": f"#{report['max_number']}",
             }
         sd = state_dir(a.state_dir, host, a.epic)
         base_path = sd / "last-written.md"
@@ -873,6 +924,9 @@ def run(argv: list[str]) -> int:
         summary["readback"] = "matches"
         print(json.dumps(summary, indent=2))
         return EXIT_OK
+    except Usage as e:
+        print(f"USAGE {e}", file=sys.stderr)
+        return EXIT_USAGE
     except Refused as e:
         summary["refused"] = str(e)
         print(json.dumps(summary, indent=2))
@@ -881,7 +935,7 @@ def run(argv: list[str]) -> int:
     except Infra as e:
         print(f"ERROR {e}", file=sys.stderr)
         return EXIT_INFRA
-    except (OSError, json.JSONDecodeError) as e:
+    except OSError as e:
         print(f"ERROR {e}", file=sys.stderr)
         return EXIT_INFRA
 

@@ -36,6 +36,7 @@ from _epic_edit import (  # noqa: E402
     FIELD_RE,
     REF_RE,
     Infra,
+    Parser,
     fenced,
     fetch_body,
     gh_json,
@@ -180,7 +181,7 @@ def commits(
 
 
 def run(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(
+    p = Parser(
         prog="scan.sh",
         description="Report what changed around an epic since the last check-in (read-only).",
         epilog=(
