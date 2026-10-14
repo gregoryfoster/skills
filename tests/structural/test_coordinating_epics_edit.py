@@ -265,6 +265,28 @@ def test_add_line_lands_in_its_section_and_refuses_a_duplicate_ref(adopted):
     assert res.returncode == 3 and "already has a line" in res.stderr
 
 
+def test_add_line_after_a_ref_keeps_that_refs_sub_bullets(rig):
+    """CR 250: the new item goes after #12's indented notes, not between them."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.replace(
+            "- [ ] #12 second thing\n", "- [ ] #12 second thing\n  - verify on dev\n"
+        ),
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(
+        REPO,
+        EPIC,
+        [{"op": "add-line", "after_ref": "#12", "line": "- [ ] #14 follow-up"}],
+    )
+    assert res.returncode == 0, res.stderr
+    assert (
+        "- [ ] #12 second thing\n  - verify on dev\n- [ ] #14 follow-up\n"
+        in rig.body(REPO, EPIC)
+    )
+
+
 def test_set_line_must_keep_its_ref(adopted):
     res = adopted.edit(
         REPO, EPIC, [{"op": "set-line", "ref": "#12", "line": "- [ ] #11 oops"}]

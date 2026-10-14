@@ -323,6 +323,22 @@ def section_span(lines: list[str], heading: str) -> tuple[int, int]:
     return start, end
 
 
+def after_block(lines: list[str], i: int) -> int:
+    """The index just past line i and the lines indented under it (CR 250).
+
+    Inserting at i + 1 would put a new item between an item and its
+    sub-bullets, and re-parent them under the new one.
+    """
+
+    def indent(ln: str) -> int:
+        return len(ln) - len(ln.lstrip())
+
+    j = i + 1
+    while j < len(lines) and lines[j].strip() and indent(lines[j]) > indent(lines[i]):
+        j += 1
+    return j
+
+
 def section_tail(lines: list[str], start: int, end: int) -> int:
     """Insertion point at a section's end, before its trailing blank lines."""
     pos = end
@@ -463,9 +479,10 @@ def apply_ops(
                             f"{lr[1]} already has a line; use set-line or note"
                         )
                 if "after_ref" in op:
-                    pos = (
-                        find_ref_line(lines, parse_ref(op["after_ref"], host), host) + 1
+                    anchor = find_ref_line(
+                        lines, parse_ref(op["after_ref"], host), host
                     )
+                    pos = after_block(lines, anchor)
                 elif "section" in op:
                     start, end = section_span(lines, op["section"])
                     pos = section_tail(lines, start, end)
