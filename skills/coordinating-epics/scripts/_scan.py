@@ -143,11 +143,45 @@ def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
     }
 
 
+# Always dropped, whatever the installed git lists: the ones #189 and CR 261
+# were about.
+GIT_LOCAL_FLOOR = {
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+}
+
+
+def git_env() -> dict:
+    """The environment minus git's repository-local variables.
+
+    An inherited GIT_DIR beats `git -C` (docs/STYLE.md, #189), and so do
+    GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and the rest of what
+    `git rev-parse --local-env-vars` lists (CR 261). Auth and config variables
+    such as GIT_SSH_COMMAND and GIT_ASKPASS stay, or the fetch can't
+    authenticate. Prompts are off, so a fetch fails rather than hangs (CR 268).
+    """
+    bare = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--local-env-vars"],
+            capture_output=True,
+            text=True,
+            env=bare,
+        )
+        local = set(r.stdout.split()) if r.returncode == 0 else set()
+    except OSError:
+        local = set()
+    env = {k: v for k, v in os.environ.items() if k not in local | GIT_LOCAL_FLOOR}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def git(args: list[str], git_dir: str, what: str) -> str:
-    # An inherited GIT_DIR beats `git -C` (docs/STYLE.md, #189): from a hook
-    # or a linked worktree it would aim the range at another checkout. So can
-    # GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and the rest: drop them all (CR 261).
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = git_env()
     r = subprocess.run(
         ["git", "-C", git_dir, *args], capture_output=True, text=True, env=env
     )

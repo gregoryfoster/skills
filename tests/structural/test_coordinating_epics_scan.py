@@ -333,3 +333,20 @@ def test_a_bad_header_time_is_a_warning_not_a_traceback(rig, value, since, warne
     r = scan(rig)
     assert r["cursors"]["since"] == since
     assert (warned is None) or any(warned in w for w in r["warnings"])
+
+
+def test_git_keeps_auth_variables_and_never_prompts(monkeypatch):
+    """CR 268: only repository-local variables go; auth ones stay."""
+    spec = importlib.util.spec_from_file_location("_scan", SCRIPTS / "_scan.py")
+    scan_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scan_mod)
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/.git")
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", "/elsewhere/objects")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /k")
+    monkeypatch.setenv("GIT_ASKPASS", "/bin/askpass")
+    env = scan_mod.git_env()
+    assert "GIT_DIR" not in env and "GIT_OBJECT_DIRECTORY" not in env
+    assert (
+        env["GIT_SSH_COMMAND"] == "ssh -i /k" and env["GIT_ASKPASS"] == "/bin/askpass"
+    )
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
