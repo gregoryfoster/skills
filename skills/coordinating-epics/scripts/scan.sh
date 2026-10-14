@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# scan.sh — report what changed around a coordinating-epics epic since the
+# last check-in, by three cursors: numbers above the watermark, everything
+# updated since the last check-in (with new comments on the epic's items),
+# and the commit range from the last verified SHA. Also lists every
+# cross-repo ref in the body with its state. Read-only on GitHub; the logic
+# is in _scan.py beside this file (gregoryfoster/skills#348).
+#
+# Usage: scan.sh --repo OWNER/REPO --epic N [--since TS] [--watermark N]
+#                [--from-sha SHA] [--git-dir DIR] [--ref REF] [--no-fetch]
+#        scan.sh --help    full usage and exit codes
+#
+# Needs python3 (3.9+), git and an authenticated gh. JSON report on stdout;
+# warnings inside it, failures and gh's or git's own stderr on stderr.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+command -v python3 >/dev/null 2>&1 || {
+  echo "ERROR python3 is required" >&2
+  exit 2
+}
+
+exec python3 "$HERE/_scan.py" "$@"

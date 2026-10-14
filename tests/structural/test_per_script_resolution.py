@@ -98,6 +98,7 @@ PUBLISHERS = sorted(
     SHIPPING
     + [
         "auditing-ci-cost",
+        "coordinating-epics",
         "curating-context",
         "patching-hosts",
         "using-git-worktrees",
