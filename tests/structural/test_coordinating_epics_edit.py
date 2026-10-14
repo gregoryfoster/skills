@@ -635,6 +635,33 @@ def test_account_refuses_when_the_open_list_may_be_cut_off(
     assert "may be cut off" in capsys.readouterr().err
 
 
+def test_touched_lines_keep_their_hard_break(rig):
+    """CR 274: note and header keep a line's trailing break; caller text keeps its own."""
+    body = BODY.replace(
+        "- [ ] #12 second thing\n", "- [ ] #12 second thing  \n"
+    ).replace("- **Next:** #12\n", "- **Next:** #12  \n")
+    rig.issue(REPO, EPIC, body=body)
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    ops = [
+        {"op": "note", "ref": "#12", "text": "(re-read)"},
+        {"op": "header", "field": "Next", "value": "#11"},
+        {"op": "add-line", "section": "Tier 1", "line": "- [ ] #14 two lines  "},
+    ]
+    res = rig.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    out = rig.body(REPO, EPIC)
+    assert "- [ ] #12 second thing (re-read)  \n" in out
+    assert "- **Next:** #11  \n" in out
+    assert "- [ ] #14 two lines  \n" in out
+
+
+def test_a_whitespace_only_edit_during_the_run_refuses_the_write(adopted):
+    """CR 274: the compare-and-swap compares raw text."""
+    adopted.change_on_get(EPIC, 2, BODY.replace("first thing\n", "first thing  \n"))
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#12"}])
+    assert res.returncode == 3 and "changed while this run" in res.stderr
+
+
 def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     adopted.set_flag("patch_noop", True)
     base = (adopted.state_dir / "acme-widgets-10" / "last-written.md").read_text()

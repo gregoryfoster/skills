@@ -227,6 +227,11 @@ def split_raw(body: str) -> list[str]:
     return lines
 
 
+def trailing(line: str) -> str:
+    """A line's trailing whitespace: two spaces of it are a hard line break."""
+    return line[len(line.rstrip()) :]
+
+
 def fenced(lines: list[str]) -> list[bool]:
     """True for each line inside (or opening/closing) a fenced code block.
 
@@ -478,11 +483,12 @@ def apply_ops(
                 if lines[i].rstrip().endswith(" " + text):
                     notes.append(f"{where}: note already on {op['ref']}'s line")
                     continue
-                lines[i] = lines[i].rstrip() + " " + text
+                # The note goes before the line's own trailing break (CR 274).
+                lines[i] = lines[i].rstrip() + " " + text + trailing(lines[i])
             elif kind == "set-line":
                 ref_key = parse_ref(op["ref"], host)
                 i = find_ref_line(lines, ref_key, host)
-                new = inject(op["line"], now, scan).rstrip()
+                new = inject(op["line"], now, scan).rstrip("\r\n")
                 if "\n" in new:
                     raise Refused("set-line takes one line")
                 lr = line_ref(new, host)
@@ -494,7 +500,7 @@ def apply_ops(
                 _add(expect, _delta(box_state(lines[i]), box_state(new)))
                 lines[i] = new
             elif kind == "add-line":
-                new = inject(op["line"], now, scan).rstrip()
+                new = inject(op["line"], now, scan).rstrip("\r\n")
                 if "\n" in new or not new.strip():
                     raise Refused("add-line takes one non-empty line")
                 if new in lines:
@@ -539,7 +545,7 @@ def apply_ops(
                     raise Refused(f"{len(hits)} '**{field}:**' lines; want exactly one")
                 m = FIELD_RE.match(lines[hits[0]])
                 assert m
-                new = f"{m.group('lead')} {value}".rstrip()
+                new = f"{m.group('lead')} {value}".rstrip() + trailing(lines[hits[0]])
                 if new == lines[hits[0]]:
                     notes.append(f"{where}: {field} already reads so")
                     continue
@@ -557,7 +563,7 @@ def apply_ops(
             elif kind == "replace-section":
                 start, end = section_span(lines, op["heading"])
                 text = inject(op["text"], now, scan).strip("\n")
-                new_body = [""] + [ln.rstrip() for ln in text.split("\n")] + [""]
+                new_body = [""] + [ln.rstrip("\r") for ln in text.split("\n")] + [""]
                 if end == len(lines):
                     new_body.pop()
                 old_body = lines[start + 1 : end]
@@ -985,7 +991,8 @@ def run(argv: list[str]) -> int:
             return EXIT_OK
 
         # Compare-and-swap, as near as the API allows (CR 258).
-        if normalize(fetch_body(host, a.epic)) != live:
+        # Raw, not normalized: a whitespace-only edit is an edit too (CR 274).
+        if split_raw(fetch_body(host, a.epic)) != live_lines:
             raise Refused(
                 "the live body changed while this run was checking it; nothing was"
                 " written. Re-run to pick up the change"

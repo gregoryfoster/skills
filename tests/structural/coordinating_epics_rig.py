@@ -179,7 +179,11 @@ class Rig:
         self.save()
 
     def change_on_get(self, num: int, at: int, body: str) -> None:
-        """Another writer edits issue num just before the at-th GET of it."""
+        """Another writer edits issue num just before the at-th GET of it.
+
+        The edit persists, so every GET from the at-th on sees it: at=2 means
+        "after the first fetch", whichever later fetch comes next.
+        """
         self.load()
         self.state.setdefault("change_on_get", {})[str(num)] = {"at": at, "body": body}
         self.state["gets"] = {}
