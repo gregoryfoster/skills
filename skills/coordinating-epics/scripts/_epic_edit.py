@@ -826,6 +826,11 @@ def run(argv: list[str]) -> int:
             scan = {
                 "checked": report["now"],
                 "last_seen": f"#{report['max_number']}",
+                "new_issues": [
+                    r["number"]
+                    for r in report.get("new_numbers") or []
+                    if r.get("kind") == "issue" and r.get("number") != a.epic
+                ],
             }
         sd = state_dir(a.state_dir, host, a.epic)
         base_path = sd / "last-written.md"
@@ -882,6 +887,22 @@ def run(argv: list[str]) -> int:
         )
         if problems:
             raise Refused("lint:\n" + "\n".join(f"  {x}" for x in problems))
+
+        # The report moves the watermark past every issue it found, so each of
+        # them must be accounted for in this write, or it is never seen again
+        # (CR 265). A tier line or the log's "out of epic" both count; the
+        # header's "Last issue seen" doesn't.
+        if scan and scan["new_issues"]:
+            mentioned = refs_in([ln for ln in new if not FIELD_RE.match(ln)], host)
+            missing = [
+                n for n in scan["new_issues"] if key(None, n, host) not in mentioned
+            ]
+            if missing:
+                raise Refused(
+                    "the scan found issues this write doesn't mention: "
+                    + ", ".join(f"#{n}" for n in missing)
+                    + ". Slot each, or name it in the log line (e.g. 'out of epic')"
+                )
 
         if a.account is not None:
             open_issues = gh_json(

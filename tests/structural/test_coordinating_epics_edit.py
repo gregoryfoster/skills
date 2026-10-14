@@ -258,6 +258,33 @@ def test_an_empty_header_value_is_idempotent(adopted):
     assert res.returncode == 0 and summary(res).get("unchanged")
 
 
+def test_a_scans_new_issues_must_be_accounted_for_in_the_write(adopted):
+    """CR 265: the report moves the watermark past them, so each is slotted or logged."""
+    report = adopted.tmp / "scan.json"
+    report.write_text(
+        json.dumps(
+            {
+                "repo": REPO,
+                "epic": EPIC,
+                "now": "2026-10-14T18:03:27Z",
+                "max_number": 14,
+                "new_numbers": [
+                    {"number": 14, "kind": "issue"},
+                    {"number": 13, "kind": "pr"},
+                ],
+            }
+        )
+    )
+    header = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = adopted.edit(REPO, EPIC, header, "--scan", str(report))
+    assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
+    logged = header + [
+        {"op": "log", "text": "{today}: 1 new (#14, out of epic). Next: #12."}
+    ]
+    res = adopted.edit(REPO, EPIC, logged, "--scan", str(report))
+    assert res.returncode == 0, res.stderr
+
+
 def test_log_appends_at_the_end_of_its_section_once(adopted):
     ops = [{"op": "log", "text": "{today}: #11 closed. No new issues. Next: #12."}]
     assert adopted.edit(REPO, EPIC, ops).returncode == 0
