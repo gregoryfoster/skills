@@ -195,3 +195,22 @@ def test_a_gh_failure_is_exit_2(rig):
     rig.set_flag("fail_all", "HTTP 401: Bad credentials")
     res = rig.run("scan.sh", "--repo", REPO, "--epic", str(EPIC), "--no-fetch")
     assert res.returncode == 2 and "Bad credentials" in res.stderr
+
+
+def test_a_git_failure_costs_the_commit_cursor_only(rig, tmp_path):
+    """CR 245: not a checkout, a missing ref or an unknown SHA keeps the rest."""
+    res = rig.run(
+        "scan.sh",
+        "--repo",
+        REPO,
+        "--epic",
+        str(EPIC),
+        "--git-dir",
+        str(tmp_path / "nowhere"),
+        "--no-fetch",
+    )
+    assert res.returncode == 0, res.stderr
+    r = json.loads(res.stdout)
+    assert r["commits"] is None
+    assert any(w.startswith("commit range not scanned") for w in r["warnings"])
+    assert [x["number"] for x in r["new_numbers"]] == [15, 16]

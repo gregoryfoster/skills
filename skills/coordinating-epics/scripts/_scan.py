@@ -209,7 +209,9 @@ def run(argv: list[str]) -> int:
         help="local checkout for the commit range (default: .)",
     )
     p.add_argument(
-        "--ref", default="origin/main", help="tip of the range (default: origin/main)"
+        "--ref",
+        default="origin/HEAD",
+        help="tip of the range (default: origin/HEAD, the remote's default branch)",
     )
     p.add_argument("--no-fetch", action="store_true", help="don't run git fetch first")
     a = p.parse_args(argv)
@@ -290,11 +292,17 @@ def run(argv: list[str]) -> int:
             warnings.append("no from-sha: commit range not scanned")
             report["commits"] = None
         else:
-            if not a.no_fetch:
-                git(["fetch", "--quiet", "origin"], a.git_dir, "fetching origin")
-            report["commits"] = commits(
-                a.git_dir, cur["from_sha"], a.ref, host, a.epic, items
-            )
+            # A git failure costs this cursor only: the other two, and the
+            # cross-repo states, are still worth having (CR 245).
+            try:
+                if not a.no_fetch:
+                    git(["fetch", "--quiet", "origin"], a.git_dir, "fetching origin")
+                report["commits"] = commits(
+                    a.git_dir, cur["from_sha"], a.ref, host, a.epic, items
+                )
+            except Infra as e:
+                report["commits"] = None
+                warnings.append(f"commit range not scanned: {e}")
 
         cross = []
         for ref in sorted(
