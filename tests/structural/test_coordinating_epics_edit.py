@@ -548,6 +548,32 @@ def test_markdown_links_read_as_github_renders_them(adopted):
     assert "acme/widgets#3" not in ee.refs_in(lines, REPO)
 
 
+@pytest.mark.parametrize(
+    "text, refs",
+    [
+        ("[x](docs/plan.md#2-steps 'T')", set()),
+        ("[x](docs/plan.md#2-steps (T))", set()),
+        ("[[#8] x](https://github.com/o/r/issues/8)", {"o/r#8"}),
+        ("[w](https://en.wikipedia.org/wiki/C_(x)#3)", set()),
+        ("[see #5](docs/a.md)", set()),
+        ("![#6](img.png)", set()),
+        ("[#9](<https://github.com/o/r/issues/9>)", {"o/r#9"}),
+    ],
+    ids=[
+        "single-title",
+        "paren-title",
+        "nested-text",
+        "paren-target",
+        "link-text",
+        "image",
+        "angled",
+    ],
+)
+def test_link_shapes_read_as_github_renders_them(text, refs):
+    """CR 271."""
+    assert ee.refs_in([f"see {text} here"], REPO) == refs
+
+
 def test_a_comment_link_must_resolve_to_its_issue(adopted):
     adopted.comment(REPO, 12, 555, body="brief")
     good = f"https://github.com/{REPO}/issues/12#issuecomment-555"

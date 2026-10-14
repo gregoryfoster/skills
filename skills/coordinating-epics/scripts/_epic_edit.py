@@ -123,8 +123,12 @@ BARE_AFTER_QUALIFIED_RE = re.compile(
     r"(?<![\w/.-])(?P<repo>[\w.-]+/[\w.-]+)#\d+(?:\s*(?:,|/|;|&|\band\b|\bor\b)\s*)(?P<bare>#\d+)\b"
 )
 SHORT_REF_RE = re.compile(r"(?<![\w/.#-])(?P<ref>[A-Za-z][\w.-]*#\d+)\b")
+# Link text may hold one level of brackets; the target may be <angled> or hold
+# one level of parentheses; the title may be "…", '…' or (…) (CR 271).
 MD_LINK_RE = re.compile(
-    r"\[(?P<text>[^\]]*)\]\((?P<target>[^)\s]*)(?:\s+\"[^\"]*\")?\)"
+    r"\[(?P<text>(?:[^\[\]]|\[[^\[\]]*\])*)\]"
+    r"\((?P<target><[^>]*>|(?:[^()\s]|\([^()\s]*\))*)"
+    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
 )
 GH_ISSUE_URL_RE = re.compile(
     r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)(?![\w/])"
@@ -265,15 +269,18 @@ def parse_ref(ref: str, host: str) -> str:
 
 
 def ref_text(line: str) -> str:
-    """The line as refs read it: a Markdown link becomes its GitHub ref, or its text.
+    """The line as refs read it: a link to an issue becomes its ref; any other, nothing.
 
     `[#400](https://github.com/o/r/issues/400)` is o/r#400, not this repo's #400,
     and `[plan](docs/plan.md#2-steps)` or `[s](#3-rescan)` holds no ref (CR 247).
+    GitHub doesn't autolink inside link text, so `[see #5](doc)` holds none
+    either (CR 271). Reference-style links (`[text][id]`) aren't resolved: their
+    text reads as plain text.
     """
 
     def sub(m: re.Match) -> str:
-        u = GH_ISSUE_URL_RE.match(m.group("target"))
-        return f"{u.group('repo')}#{u.group('num')}" if u else m.group("text")
+        u = GH_ISSUE_URL_RE.match(m.group("target").strip("<>"))
+        return f"{u.group('repo')}#{u.group('num')}" if u else ""
 
     return MD_LINK_RE.sub(sub, line)
 
