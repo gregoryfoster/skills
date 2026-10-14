@@ -343,16 +343,21 @@ def after_block(lines: list[str], i: int) -> int:
     """The index just past line i and the lines indented under it (CR 250).
 
     Inserting at i + 1 would put a new item between an item and its
-    sub-bullets, and re-parent them under the new one.
+    sub-bullets, and re-parent them under the new one. Blank lines inside
+    the block don't end it while deeper lines follow (CR 266).
     """
 
     def indent(ln: str) -> int:
-        return len(ln) - len(ln.lstrip())
+        return len(ln.expandtabs(4)) - len(ln.expandtabs(4).lstrip())
 
-    j = i + 1
-    while j < len(lines) and lines[j].strip() and indent(lines[j]) > indent(lines[i]):
+    base, end, j = indent(lines[i]), i + 1, i + 1
+    while j < len(lines):
+        if lines[j].strip():
+            if indent(lines[j]) <= base:
+                break
+            end = j + 1
         j += 1
-    return j
+    return end
 
 
 def section_tail(lines: list[str], start: int, end: int) -> int:

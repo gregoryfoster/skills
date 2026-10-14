@@ -349,6 +349,26 @@ def test_add_line_wont_add_a_third_line_for_an_ambiguous_ref(rig):
     assert res.returncode == 3 and "ambiguous" in res.stderr
 
 
+def test_add_line_after_a_ref_spans_blank_lines_in_its_block(rig):
+    """CR 266: a blank line between sub-bullets doesn't end #12's block."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.replace(
+            "- [ ] #12 second thing\n",
+            "- [ ] #12 second thing\n  - sub a\n\n  - sub b\n",
+        ),
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(
+        REPO,
+        EPIC,
+        [{"op": "add-line", "after_ref": "#12", "line": "- [ ] #14 follow-up"}],
+    )
+    assert res.returncode == 0, res.stderr
+    assert "  - sub a\n\n  - sub b\n- [ ] #14 follow-up\n" in rig.body(REPO, EPIC)
+
+
 def test_set_line_must_keep_its_ref(adopted):
     res = adopted.edit(
         REPO, EPIC, [{"op": "set-line", "ref": "#12", "line": "- [ ] #11 oops"}]
