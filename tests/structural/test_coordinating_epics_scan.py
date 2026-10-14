@@ -313,3 +313,23 @@ def test_an_inherited_git_variable_cant_aim_the_range_elsewhere(rig):
     )
     assert res.returncode == 0, res.stderr
     assert json.loads(res.stdout)["commits"] is not None
+
+
+@pytest.mark.parametrize(
+    "value, since, warned",
+    [
+        ("2026-02-30T10:00Z", None, "not a valid time"),
+        ("yesterday", None, "no ISO time"),
+        ("2026-10-01T11:00+02:00", "2026-10-01T09:00:00Z", None),
+    ],
+)
+def test_a_bad_header_time_is_a_warning_not_a_traceback(rig, value, since, warned):
+    """CR 267."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.format(sha=rig.base[:9]).replace("2026-10-01T09:00Z", value),
+    )
+    r = scan(rig)
+    assert r["cursors"]["since"] == since
+    assert (warned is None) or any(warned in w for w in r["warnings"])

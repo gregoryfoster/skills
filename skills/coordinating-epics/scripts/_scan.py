@@ -50,7 +50,7 @@ from _epic_edit import (  # noqa: E402
 
 EXIT_OK, EXIT_USAGE, EXIT_INFRA = 0, 1, 2
 MAX_PAGES = 20
-TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?Z")
+TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?(?:Z|[+-]\d\d:\d\d)")
 SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
 
 
@@ -77,11 +77,17 @@ def header_fields(lines: list[str]) -> dict[str, str]:
     return out
 
 
-def cursors_from_body(lines: list[str]) -> dict:
+def cursors_from_body(lines: list[str], warnings: list[str]) -> dict:
     f = header_fields(lines)
     out: dict = {"since": None, "watermark": None, "from_sha": None}
-    if m := TS_RE.search(f.get("last check-in", "")):
-        out["since"] = utc_z(m.group(0))
+    checked = f.get("last check-in", "")
+    if m := TS_RE.search(checked):
+        try:
+            out["since"] = utc_z(m.group(0))
+        except ValueError as e:  # the right shape, not a real time (CR 267)
+            warnings.append(f"Last check-in {m.group(0)!r} is not a valid time: {e}")
+    elif checked:
+        warnings.append(f"Last check-in {checked!r} holds no ISO time with a zone")
     if m := re.search(r"#(\d+)", f.get("last issue seen", "")):
         out["watermark"] = int(m.group(1))
     if m := SHA_RE.search(f.get("last verified sha", "")):
@@ -283,7 +289,7 @@ def run(argv: list[str]) -> int:
     CAPPED.clear()
     try:
         lines = normalize(fetch_body(host, a.epic))
-        cur = cursors_from_body(lines)
+        cur = cursors_from_body(lines, warnings)
         if a.since:
             cur["since"] = a.since
         if a.watermark is not None:
