@@ -225,6 +225,7 @@ def test_the_header_takes_the_scans_time_and_watermark(adopted):
                 "epic": EPIC,
                 "now": "2026-10-14T18:03:27Z",
                 "max_number": 13,
+                "new_numbers": [],
             }
         )
     )
@@ -296,6 +297,37 @@ def test_a_scans_new_issues_must_be_accounted_for_in_the_write(adopted):
     ]
     res = adopted.edit(REPO, EPIC, logged, "--scan", str(report))
     assert res.returncode == 0, res.stderr
+
+
+def _report(adopted, **fields):
+    report = adopted.tmp / "scan.json"
+    base = {"repo": REPO, "epic": EPIC, "now": "2026-10-14T18:03:27Z", "max_number": 14}
+    report.write_text(json.dumps({**base, **fields}))
+    return str(report)
+
+
+def test_an_issue_only_updated_since_shows_still_needs_accounting(adopted):
+    """CR 276: a transfer keeps its old creation date, so the number walk can miss it."""
+    report = _report(
+        adopted,
+        cursors={"watermark": 13},
+        new_numbers=[],
+        updated_since=[
+            {"number": 14, "kind": "issue"},
+            {"number": 12, "kind": "issue"},
+        ],
+    )
+    ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 3 and "doesn't mention: #14" in res.stderr
+
+
+def test_last_seen_needs_a_report_that_scanned_numbers(adopted):
+    """CR 276: with new_numbers null, {last_seen} would set a watermark over unseen issues."""
+    report = _report(adopted, new_numbers=None)
+    ops = [{"op": "header", "field": "Last issue seen", "value": "{last_seen}"}]
+    res = adopted.edit(REPO, EPIC, ops, "--scan", report)
+    assert res.returncode == 1 and "scanned no numbers" in res.stderr
 
 
 def test_log_appends_at_the_end_of_its_section_once(adopted):

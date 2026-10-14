@@ -849,12 +849,34 @@ def run(argv: list[str]) -> int:
             scan = {
                 "checked": report["now"],
                 "last_seen": f"#{report['max_number']}",
-                "new_issues": [
-                    r["number"]
-                    for r in report.get("new_numbers") or []
-                    if r.get("kind") == "issue" and r.get("number") != a.epic
-                ],
+                # Everything the report moves the watermark past: the number walk's
+                # finds, and any issue updated-since shows above the old watermark
+                # (a transfer keeps its old creation date) (CR 276).
+                "new_issues": sorted(
+                    {
+                        r["number"]
+                        for r in (report.get("new_numbers") or [])
+                        + [
+                            u
+                            for u in report.get("updated_since") or []
+                            if isinstance(u.get("number"), int)
+                            and u["number"]
+                            > ((report.get("cursors") or {}).get("watermark") or 0)
+                        ]
+                        if r.get("kind") == "issue" and r.get("number") != a.epic
+                    }
+                ),
+                "numbers_scanned": report.get("new_numbers") is not None,
             }
+            if not scan["numbers_scanned"] and any(
+                isinstance(v, str) and "{last_seen}" in v
+                for op in ops
+                for v in op.values()
+            ):
+                raise Usage(
+                    "the report scanned no numbers (no watermark), so {last_seen} would"
+                    " skip issues nobody saw. Give scan.sh --watermark N, then re-run"
+                )
         if scan is None:
             needs = sorted(
                 {
