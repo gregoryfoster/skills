@@ -375,23 +375,33 @@ def section_span(lines: list[str], heading: str) -> tuple[int, int]:
     return start, end
 
 
+LIST_MARK_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])(\s+)")
+
+
 def after_block(lines: list[str], i: int) -> int:
     """The index just past line i and the lines indented under it (CR 250).
 
     Inserting at i + 1 would put a new item between an item and its
     sub-bullets, and re-parent them under the new one. Blank lines inside
-    the block don't end it while deeper lines follow (CR 266).
+    the block don't end it while deeper lines follow (CR 266). After a blank
+    line, a line belongs to the item only at the item's content column, as
+    in CommonMark: a top-level paragraph indented one space doesn't (CR 283).
     """
 
     def indent(ln: str) -> int:
         return len(ln.expandtabs(4)) - len(ln.expandtabs(4).lstrip())
 
-    base, end, j = indent(lines[i]), i + 1, i + 1
+    base = indent(lines[i])
+    m = LIST_MARK_RE.match(lines[i].expandtabs(4))
+    content = len(m.group(0)) if m else base + 1
+    end, j, after_blank = i + 1, i + 1, False
     while j < len(lines):
-        if lines[j].strip():
-            if indent(lines[j]) <= base:
-                break
-            end = j + 1
+        if not lines[j].strip():
+            after_blank = True
+        elif indent(lines[j]) >= (content if after_blank else base + 1):
+            end, after_blank = j + 1, False
+        else:
+            break
         j += 1
     return end
 

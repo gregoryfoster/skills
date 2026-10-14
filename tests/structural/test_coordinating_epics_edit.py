@@ -452,6 +452,26 @@ def test_add_line_without_a_ref_is_idempotent_despite_trailing_spaces(adopted):
     assert adopted.body(REPO, EPIC).count("plain note") == 1
 
 
+def test_a_paragraph_after_a_blank_line_needs_the_content_column(rig):
+    """CR 283: " note" (one space) after a blank line isn't part of #12's item."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.replace(
+            "- [ ] #12 second thing\n",
+            "- [ ] #12 second thing\n  - sub\n\n not the item's\n",
+        ),
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(
+        REPO,
+        EPIC,
+        [{"op": "add-line", "after_ref": "#12", "line": "- [ ] #14 follow-up"}],
+    )
+    assert res.returncode == 0, res.stderr
+    assert "  - sub\n- [ ] #14 follow-up\n\n not the item's\n" in rig.body(REPO, EPIC)
+
+
 def test_set_line_must_keep_its_ref(adopted):
     res = adopted.edit(
         REPO, EPIC, [{"op": "set-line", "ref": "#12", "line": "- [ ] #11 oops"}]
