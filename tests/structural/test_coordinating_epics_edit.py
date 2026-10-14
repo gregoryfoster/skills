@@ -606,6 +606,22 @@ def test_link_shapes_read_as_github_renders_them(text, refs):
     assert ee.refs_in([f"see {text} here"], REPO) == refs
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- [ ] #14 upstream a/b#5 [design](docs/d.md), #12 next",
+        "- [ ] #14 a/b#5 and [this note](https://example.com) #12",
+        "- [ ] #14 a/b#5 [plan](x.md#2) / #12",
+    ],
+)
+def test_a_dropped_link_doesnt_join_refs_across_it(adopted, line):
+    """CR 277: the link between them is not a separator."""
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "add-line", "section": "Tier 1", "line": line}]
+    )
+    assert res.returncode == 0, res.stderr
+
+
 def test_a_comment_link_must_resolve_to_its_issue(adopted):
     adopted.comment(REPO, 12, 555, body="brief")
     good = f"https://github.com/{REPO}/issues/12#issuecomment-555"

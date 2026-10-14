@@ -125,6 +125,7 @@ BARE_AFTER_QUALIFIED_RE = re.compile(
 SHORT_REF_RE = re.compile(r"(?<![\w/.#-])(?P<ref>[A-Za-z][\w.-]*#\d+)\b")
 # Link text may hold one level of brackets; the target may be <angled> or hold
 # one level of parentheses; the title may be "…", '…' or (…) (CR 271).
+LINK_MARK = "\ufffc"  # what a non-issue link reads as: no ref, no separator
 MD_LINK_RE = re.compile(
     r"\[(?P<text>(?:[^\[\]]|\[[^\[\]]*\])*)\]"
     r"\((?P<target><[^>]*>|(?:[^()\s]|\([^()\s]*\))*)"
@@ -285,7 +286,9 @@ def ref_text(line: str) -> str:
 
     def sub(m: re.Match) -> str:
         u = GH_ISSUE_URL_RE.match(m.group("target").strip("<>"))
-        return f"{u.group('repo')}#{u.group('num')}" if u else ""
+        # A neutral mark, not "": dropping the link could join a qualified ref
+        # and a bare one into what reads as "a/b#5, #6" (CR 277).
+        return f"{u.group('repo')}#{u.group('num')}" if u else LINK_MARK
 
     return MD_LINK_RE.sub(sub, line)
 
@@ -642,13 +645,13 @@ def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
         ln = ref_text(raw)
         for m in SHORT_REF_RE.finditer(CODE_SPAN_RE.sub("", ln)):
             problems.append(
-                f"short ref {m.group('ref')} links nowhere; write owner/repo#N: {ln.strip()[:120]}"
+                f"short ref {m.group('ref')} links nowhere; write owner/repo#N: {raw.strip()[:120]}"
             )
         for m in BARE_AFTER_QUALIFIED_RE.finditer(ln):
             if m.group("repo").lower() != host.lower():
                 problems.append(
                     f"bare {m.group('bare')} after {m.group('repo')}# reads as this repo's;"
-                    f" qualify it: {ln.strip()[:120]}"
+                    f" qualify it: {raw.strip()[:120]}"
                 )
     bare = {
         int(m.group("num"))
