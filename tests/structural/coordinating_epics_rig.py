@@ -196,14 +196,18 @@ class Rig:
         return env
 
     def run(
-        self, script: str, *args: str, stdin: str | None = None
+        self,
+        script: str,
+        *args: str,
+        stdin: str | None = None,
+        extra_env: dict | None = None,
     ) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["bash", str(SCRIPTS / script), *args],
             input=stdin,
             capture_output=True,
             text=True,
-            env=self.env(),
+            env={**self.env(), **(extra_env or {})},
             timeout=60,
         )
 

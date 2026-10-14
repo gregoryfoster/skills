@@ -294,3 +294,22 @@ def test_max_number_is_the_highest_seen_not_the_newest_created(rig):
     r = scan(rig)
     assert r["max_number"] == 17
     assert 17 in [x["number"] for x in r["updated_since"]]
+
+
+def test_an_inherited_git_variable_cant_aim_the_range_elsewhere(rig):
+    """CR 261: any GIT_* from a hook or worktree is dropped, not just GIT_DIR."""
+    res = rig.run(
+        "scan.sh",
+        "--repo",
+        REPO,
+        "--epic",
+        str(EPIC),
+        "--git-dir",
+        str(rig.checkout),
+        "--ref",
+        "main",
+        "--no-fetch",
+        extra_env={"GIT_OBJECT_DIRECTORY": str(rig.tmp / "no-objects")},
+    )
+    assert res.returncode == 0, res.stderr
+    assert json.loads(res.stdout)["commits"] is not None

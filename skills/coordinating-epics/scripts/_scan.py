@@ -139,12 +139,9 @@ def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
 
 def git(args: list[str], git_dir: str, what: str) -> str:
     # An inherited GIT_DIR beats `git -C` (docs/STYLE.md, #189): from a hook
-    # or a linked worktree it would aim the range at another checkout.
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
-    }
+    # or a linked worktree it would aim the range at another checkout. So can
+    # GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and the rest: drop them all (CR 261).
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     r = subprocess.run(
         ["git", "-C", git_dir, *args], capture_output=True, text=True, env=env
     )
