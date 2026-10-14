@@ -342,10 +342,14 @@ def test_git_keeps_auth_variables_and_never_prompts(monkeypatch):
     spec.loader.exec_module(scan_mod)
     monkeypatch.setenv("GIT_DIR", "/elsewhere/.git")
     monkeypatch.setenv("GIT_OBJECT_DIRECTORY", "/elsewhere/objects")
+    monkeypatch.setenv(
+        "GIT_SHALLOW_FILE", "/elsewhere/shallow"
+    )  # listed by git, not the floor
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /k")
     monkeypatch.setenv("GIT_ASKPASS", "/bin/askpass")
     env = scan_mod.git_env()
     assert "GIT_DIR" not in env and "GIT_OBJECT_DIRECTORY" not in env
+    assert "GIT_SHALLOW_FILE" not in env  # CR 285: the --local-env-vars query is used
     assert (
         env["GIT_SSH_COMMAND"] == "ssh -i /k" and env["GIT_ASKPASS"] == "/bin/askpass"
     )

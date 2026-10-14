@@ -345,6 +345,20 @@ def test_a_malformed_report_row_is_a_usage_error(adopted, rows):
     assert res.returncode == 1 and "Traceback" not in res.stderr, res.stderr
 
 
+@pytest.mark.parametrize(
+    "row",
+    [{"number": 14, "kind": "pr"}, {"number": EPIC, "kind": "issue"}],
+    ids=["a-pr", "the-epic-itself"],
+)
+def test_prs_and_the_epic_need_no_mention(adopted, row):
+    """CR 285 (for 265): a PR isn't an issue to slot, and the epic is the body itself."""
+    report = _report(adopted, new_numbers=[row])
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "log", "text": "{today}: nothing new."}], "--scan", report
+    )
+    assert res.returncode == 0, res.stderr
+
+
 def test_last_seen_needs_a_report_that_scanned_numbers(adopted):
     """CR 276: with new_numbers null, {last_seen} would set a watermark over unseen issues."""
     report = _report(adopted, new_numbers=None)
@@ -470,6 +484,37 @@ def test_a_paragraph_after_a_blank_line_needs_the_content_column(rig):
     )
     assert res.returncode == 0, res.stderr
     assert "  - sub\n- [ ] #14 follow-up\n\n not the item's\n" in rig.body(REPO, EPIC)
+
+
+def test_a_tab_indented_sub_line_belongs_to_its_item(rig):
+    """CR 285 (for 266): a tab counts as indentation."""
+    rig.issue(
+        REPO,
+        EPIC,
+        body=BODY.replace(
+            "- [ ] #12 second thing\n", "- [ ] #12 second thing\n\tdetail\n"
+        ),
+    )
+    assert rig.edit(REPO, EPIC, [], "--adopt-live").returncode == 0
+    res = rig.edit(
+        REPO,
+        EPIC,
+        [{"op": "add-line", "after_ref": "#12", "line": "- [ ] #14 follow-up"}],
+    )
+    assert res.returncode == 0, res.stderr
+    assert "\tdetail\n- [ ] #14 follow-up\n" in rig.body(REPO, EPIC)
+
+
+def test_set_line_and_replace_section_keep_the_callers_hard_breaks(adopted):
+    """CR 285 (for 274): caller text keeps its trailing spaces."""
+    ops = [
+        {"op": "set-line", "ref": "#12", "line": "- [ ] #12 two lines  "},
+        {"op": "replace-section", "heading": "Parked", "text": "first  \nsecond"},
+    ]
+    res = adopted.edit(REPO, EPIC, ops)
+    assert res.returncode == 0, res.stderr
+    body = adopted.body(REPO, EPIC)
+    assert "- [ ] #12 two lines  \n" in body and "first  \nsecond" in body
 
 
 def test_set_line_must_keep_its_ref(adopted):
