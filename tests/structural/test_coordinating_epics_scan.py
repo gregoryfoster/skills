@@ -35,6 +35,7 @@ BODY = """\
 ## Waits
 
 - acme/private#9 their answer
+- the [plan](docs/plan.md#2-steps) holds no ref
 """
 
 
@@ -173,6 +174,7 @@ def test_cross_repo_refs_carry_state_or_say_why_not(rig):
         and cross["acme/gadgets#3"]["updated_since"]
     )
     assert "error" in cross["acme/private#9"]
+    assert set(cross) == {"acme/gadgets#3", "acme/private#9"}
     assert any("acme/private#9" in w for w in r["warnings"])
 
 

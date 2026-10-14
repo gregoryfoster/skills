@@ -104,6 +104,12 @@ BARE_AFTER_QUALIFIED_RE = re.compile(
     r"(?<![\w/.-])(?P<repo>[\w.-]+/[\w.-]+)#\d+(?:\s*(?:,|/|;|&|\band\b|\bor\b)\s*)(?P<bare>#\d+)\b"
 )
 SHORT_REF_RE = re.compile(r"(?<![\w/.#-])(?P<ref>[A-Za-z][\w.-]*#\d+)\b")
+MD_LINK_RE = re.compile(
+    r"\[(?P<text>[^\]]*)\]\((?P<target>[^)\s]*)(?:\s+\"[^\"]*\")?\)"
+)
+GH_ISSUE_URL_RE = re.compile(
+    r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)(?![\w/])"
+)
 COMMENT_LINK_RE = re.compile(
     r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)#issuecomment-(?P<id>\d+)"
 )
@@ -185,8 +191,23 @@ def parse_ref(ref: str, host: str) -> str:
     return key(m.group("repo"), m.group("num"), host)
 
 
+def ref_text(line: str) -> str:
+    """The line as refs read it: a Markdown link becomes its GitHub ref, or its text.
+
+    `[#400](https://github.com/o/r/issues/400)` is o/r#400, not this repo's #400,
+    and `[plan](docs/plan.md#2-steps)` or `[s](#3-rescan)` holds no ref (CR 247).
+    """
+
+    def sub(m: re.Match) -> str:
+        u = GH_ISSUE_URL_RE.match(m.group("target"))
+        return f"{u.group('repo')}#{u.group('num')}" if u else m.group("text")
+
+    return MD_LINK_RE.sub(sub, line)
+
+
 def line_ref(line: str, host: str) -> tuple[str, str] | None:
     """(kind, key) when the line is an item, bullet or row led by a ref."""
+    line = ref_text(line)
     for kind, rx in (("item", ITEM_RE), ("bullet", BULLET_RE), ("row", ROW_RE)):
         m = rx.match(line)
         if m:
@@ -285,7 +306,7 @@ def refs_in(lines: list[str], host: str) -> set[str]:
     for i, ln in enumerate(lines):
         if fence[i]:
             continue
-        for m in REF_RE.finditer(ln):
+        for m in REF_RE.finditer(ref_text(ln)):
             out.add(key(m.group("repo"), m.group("num"), host))
     return out
 
@@ -482,17 +503,20 @@ def introduced(old: list[str], new: list[str]) -> list[str]:
 
 def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
     problems = []
-    for ln in new_lines:
+    for raw in new_lines:
+        # Placeholders, variables and secrets are read in the whole line, link
+        # targets included; refs are read the way GitHub renders them.
         for rx, what in PLACEHOLDER_RES:
-            if rx.search(ln):
-                problems.append(f"{what}: {ln.strip()[:120]}")
-        if SHELL_VAR_RE.search(CODE_SPAN_RE.sub("", ln)):
+            if rx.search(raw):
+                problems.append(f"{what}: {raw.strip()[:120]}")
+        if SHELL_VAR_RE.search(CODE_SPAN_RE.sub("", raw)):
             problems.append(
-                f"an unexpanded shell variable outside a code span: {ln.strip()[:120]}"
+                f"an unexpanded shell variable outside a code span: {raw.strip()[:120]}"
             )
         for rx in SECRET_RES:
-            if rx.search(ln):
+            if rx.search(raw):
                 problems.append("what looks like a secret (line withheld)")
+        ln = ref_text(raw)
         for m in SHORT_REF_RE.finditer(CODE_SPAN_RE.sub("", ln)):
             problems.append(
                 f"short ref {m.group('ref')} links nowhere; write owner/repo#N: {ln.strip()[:120]}"
@@ -506,7 +530,7 @@ def lint(new_lines: list[str], host: str, check_links: bool) -> list[str]:
     bare = {
         int(m.group("num"))
         for ln in new_lines
-        for m in REF_RE.finditer(ln)
+        for m in REF_RE.finditer(ref_text(ln))
         if not m.group("repo")
     }
     if bare:

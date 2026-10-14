@@ -323,6 +323,25 @@ def test_a_shell_variable_inside_a_code_span_is_fine(adopted):
     assert res.returncode == 0, res.stderr
 
 
+def test_markdown_links_read_as_github_renders_them(adopted):
+    """CR 247: a link to another repo's issue is that repo's ref; a doc anchor is no ref."""
+    line = (
+        "- [ ] #14 see [#400](https://github.com/other/repo/issues/400),"
+        " [plan](docs/plan.md#2-steps) and [step](#3-rescan)"
+    )
+    res = adopted.edit(
+        REPO, EPIC, [{"op": "add-line", "section": "Tier 1", "line": line}]
+    )
+    assert res.returncode == 0, res.stderr
+    lines = ee.normalize(adopted.body(REPO, EPIC))
+    assert ee.refs_in([line], REPO) == {"acme/widgets#14", "other/repo#400"}
+    assert ee.line_ref(f"- [ ] [#12](https://github.com/{REPO}/issues/12) x", REPO) == (
+        "item",
+        "acme/widgets#12",
+    )
+    assert "acme/widgets#3" not in ee.refs_in(lines, REPO)
+
+
 def test_a_comment_link_must_resolve_to_its_issue(adopted):
     adopted.comment(REPO, 12, 555, body="brief")
     good = f"https://github.com/{REPO}/issues/12#issuecomment-555"

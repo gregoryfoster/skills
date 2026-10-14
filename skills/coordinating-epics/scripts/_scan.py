@@ -42,6 +42,7 @@ from _epic_edit import (  # noqa: E402
     key,
     line_ref,
     normalize,
+    ref_text,
     refs_in,
 )
 
@@ -100,7 +101,7 @@ def issue_row(it: dict, host: str, epic: int, items: set[str]) -> dict:
     epic_key = key(None, epic, host)
     mentions = any(
         key(m.group("repo"), m.group("num"), host) == epic_key
-        for m in REF_RE.finditer(body)
+        for m in REF_RE.finditer(ref_text(body))
     )
     return {
         "number": it["number"],
@@ -153,7 +154,7 @@ def commits(
         refs = sorted(
             {
                 key(m.group("repo"), m.group("num"), host)
-                for m in REF_RE.finditer(subject + "\n" + body)
+                for m in REF_RE.finditer(ref_text(subject + "\n" + body))
             }
         )
         children = [r for r in refs if r in items]
