@@ -473,6 +473,15 @@ def test_account_from_scopes_a_number_range(adopted):
     assert summary(res)["unlisted"] == [15]
 
 
+def test_an_edit_landing_during_the_run_refuses_the_write(adopted):
+    """CR 258: the second fetch, just before the PATCH, sees the concurrent edit."""
+    adopted.change_on_get(EPIC, 2, BODY.replace("second thing", "second thing, edited"))
+    res = adopted.edit(REPO, EPIC, [{"op": "tick", "ref": "#11"}])
+    assert res.returncode == 3 and "changed while this run" in res.stderr
+    assert "patches" not in adopted.load()
+    assert "second thing, edited" in adopted.body(REPO, EPIC)
+
+
 def test_a_write_the_read_back_contradicts_is_exit_4(adopted):
     adopted.set_flag("patch_noop", True)
     base = (adopted.state_dir / "acme-widgets-10" / "last-written.md").read_text()

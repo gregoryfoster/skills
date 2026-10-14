@@ -100,6 +100,11 @@ if len(parts) == 5 and parts[3] == "issues":
     it = issues.get(parts[4])
     if it is None:
         fail()
+    gets = st.setdefault("gets", {})
+    gets[parts[4]] = gets.get(parts[4], 0) + 1
+    change = st.get("change_on_get", {}).get(parts[4])
+    if change and gets[parts[4]] == change["at"]:
+        it["body"] = change["body"]
     out(dict(it, number=int(parts[4])))
 
 if len(parts) == 6 and parts[5] == "comments":
@@ -163,6 +168,13 @@ class Rig:
     def pr(self, repo: str, num: int, closes: list) -> None:
         self.load()
         self.state["repos"][repo].setdefault("prs", {})[str(num)] = closes
+        self.save()
+
+    def change_on_get(self, num: int, at: int, body: str) -> None:
+        """Another writer edits issue num just before the at-th GET of it."""
+        self.load()
+        self.state.setdefault("change_on_get", {})[str(num)] = {"at": at, "body": body}
+        self.state["gets"] = {}
         self.save()
 
     def body(self, repo: str, num: int) -> str:

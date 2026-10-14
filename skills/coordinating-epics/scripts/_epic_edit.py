@@ -9,8 +9,10 @@ damaged an epic (gregoryfoster/skills#348):
 - the transform runs on the body fetched live, in memory, so no stale or empty
   output file can be uploaded (archiver#300 finding 2, watcher#348 F43);
 - the live body must equal the last body this tool wrote, or differ only by
-  box ticks the caller has verified, so a concurrent edit is never overwritten
-  (address-validator#272 finding 47, the seventh run's finding 102);
+  box ticks the caller has verified (address-validator#272 finding 47, the
+  seventh run's finding 102). It is fetched again just before the PATCH, and
+  any change refuses the write, which leaves a window of one round trip, not
+  the whole run, in which a concurrent edit could still be lost (CR 258);
 - each operation's anchor must exist, and is found by its ref, never by the
   line's exact old text, so a tick made elsewhere can't break the match
   (the third run's finding 34, broker#80 finding 147);
@@ -912,6 +914,12 @@ def run(argv: list[str]) -> int:
             print(json.dumps(summary, indent=2))
             return EXIT_OK
 
+        # Compare-and-swap, as near as the API allows (CR 258).
+        if normalize(fetch_body(host, a.epic)) != live:
+            raise Refused(
+                "the live body changed while this run was checking it; nothing was"
+                " written. Re-run to pick up the change"
+            )
         text = "\n".join(new) + "\n"
         fd, payload = tempfile.mkstemp(dir=None, prefix="epic-edit-", suffix=".json")
         try:
