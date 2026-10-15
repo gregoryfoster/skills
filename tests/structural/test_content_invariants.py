@@ -1530,12 +1530,16 @@ NON_GATE_SCRIPTS = {
     ),
     "scan.sh": (
         "reporting: a JSON report a coordinator reads to decide what gets "
-        "slotted, so it must not hide a producer either way. A gh failure "
-        "exits 2 with gh's stderr shown (test_a_gh_failure_is_exit_2); a git "
-        "failure costs the commit cursor only, with git's stderr in the "
-        "report's warnings (test_a_git_failure_costs_the_commit_cursor_only, "
-        "both in test_coordinating_epics_scan.py). The wrapper `exec`s _scan.py "
-        "and those tests run through it"
+        "slotted, so it must not hide a producer either way. gh failing on the "
+        "epic or a listing exits 2 with gh's stderr shown "
+        "(test_a_gh_failure_is_exit_2); gh failing on one cross-repo ref or "
+        "one PR's closing issues costs only that, with gh's error in the "
+        "report's warnings (test_cross_repo_refs_carry_state_or_say_why_not, "
+        "test_a_pr_lookup_failure_is_a_warning); a git failure "
+        "costs the commit cursor only, with git's stderr in the warnings "
+        "(test_a_git_failure_costs_the_commit_cursor_only, all four in "
+        "test_coordinating_epics_scan.py). The wrapper `exec`s _scan.py and "
+        "those tests run through it"
     ),
 }
 
