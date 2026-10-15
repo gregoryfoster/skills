@@ -726,6 +726,10 @@ def test_markdown_links_read_as_github_renders_them(adopted):
         ("[see #5](docs/a.md)", set()),
         ("![#6](img.png)", set()),
         ("[#9](<https://github.com/o/r/issues/9>)", {"o/r#9"}),
+        ("https://github.com/o/r/issues/8", {"o/r#8"}),
+        ("<https://github.com/o/r/pull/9>", {"o/r#9"}),
+        (f"https://github.com/{REPO}/issues/12#issuecomment-1", {"acme/widgets#12"}),
+        ("https://github.com/o/r/issues/8/files", set()),
     ],
     ids=[
         "single-title",
@@ -735,6 +739,10 @@ def test_markdown_links_read_as_github_renders_them(adopted):
         "link-text",
         "image",
         "angled",
+        "bare-url",
+        "autolink",
+        "comment-url",
+        "not-an-issue-url",
     ],
 )
 def test_link_shapes_read_as_github_renders_them(text, refs):
@@ -771,6 +779,14 @@ def test_a_comment_link_must_resolve_to_its_issue(adopted):
 
 
 # ---------------------------------------------------------------- accounting, readback, infra
+
+
+def test_a_child_listed_by_url_is_accounted_for(adopted):
+    """CR 288: GitHub renders the URL as #14, so the epic lists it."""
+    line = f"- [ ] https://github.com/{REPO}/issues/14 by url"
+    ops = [{"op": "add-line", "section": "Tier 1", "line": line}]
+    res = adopted.edit(REPO, EPIC, ops, "--account")
+    assert res.returncode == 0, res.stderr
 
 
 def test_account_names_open_issues_the_epic_misses(adopted):

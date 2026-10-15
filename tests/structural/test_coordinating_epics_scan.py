@@ -182,6 +182,38 @@ def test_the_commit_range_attributes_every_commit(rig):
     assert rows[0]["via_pr"] == ["acme/widgets#16"]
 
 
+def test_an_issue_url_is_a_ref_as_github_renders_it(rig):
+    """CR 288: a bare or <angled> issue URL mentions the issue, and closes it."""
+    rig.issue(
+        REPO,
+        17,
+        updated_at="2026-10-02T14:00:00Z",
+        body=f"Part of https://github.com/{REPO}/issues/10",
+    )
+    rig.issue(
+        REPO,
+        18,
+        updated_at="2026-10-02T14:00:00Z",
+        body=f"<https://github.com/{REPO}/issues/10>",
+    )
+    (rig.checkout / "url").write_text("u")
+    git(rig.checkout, "add", ".")
+    git(
+        rig.checkout,
+        "commit",
+        "-q",
+        "-m",
+        "fix: x",
+        "-m",
+        f"Fixes https://github.com/{REPO}/issues/12",
+    )
+    r = scan(rig)
+    rows = {x["number"]: x for x in r["new_numbers"]}
+    assert rows[17]["mentions_epic"] and rows[18]["mentions_epic"]
+    last = r["commits"][0]
+    assert last["attribution"] == "child" and last["children"] == ["acme/widgets#12"]
+
+
 def test_cross_repo_refs_carry_state_or_say_why_not(rig):
     r = scan(rig)
     cross = {x["ref"]: x for x in r["cross_repo"]}

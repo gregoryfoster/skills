@@ -133,9 +133,12 @@ MD_LINK_RE = re.compile(
     r"\((?P<target><[^>]*>|(?:[^()\s]|\([^()\s]*\))*)"
     r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
 )
-GH_ISSUE_URL_RE = re.compile(
-    r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)(?![\w/])"
-)
+_ISSUE_URL = r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)(?![\w/])"
+GH_ISSUE_URL_RE = re.compile(_ISSUE_URL)
+# GitHub renders a bare or <angled> issue URL as its ref, and "Fixes <url>"
+# closes the issue (CR 288). A fragment (#issuecomment-…) stays a ref.
+ANGLED_ISSUE_URL_RE = re.compile(r"<" + _ISSUE_URL + r"[^<>\s]*>")
+BARE_ISSUE_URL_RE = re.compile(r"(?<![\w/<])" + _ISSUE_URL)
 COMMENT_LINK_RE = re.compile(
     r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/(?:issues|pull)/(?P<num>\d+)#issuecomment-(?P<id>\d+)"
 )
@@ -302,7 +305,7 @@ def ref_text(line: str) -> str:
     and `[plan](docs/plan.md#2-steps)` or `[s](#3-rescan)` holds no ref (CR 247).
     GitHub doesn't autolink inside link text, so `[see #5](doc)` holds none
     either (CR 271). Reference-style links (`[text][id]`) aren't resolved: their
-    text reads as plain text.
+    text reads as plain text. A bare or <angled> issue URL is its ref (CR 288).
     """
 
     def sub(m: re.Match) -> str:
@@ -311,7 +314,11 @@ def ref_text(line: str) -> str:
         # and a bare one into what reads as "a/b#5, #6" (CR 277).
         return f"{u.group('repo')}#{u.group('num')}" if u else LINK_MARK
 
-    return MD_LINK_RE.sub(sub, line)
+    def as_ref(m: re.Match) -> str:
+        return f"{m.group('repo')}#{m.group('num')}"
+
+    line = MD_LINK_RE.sub(sub, line)
+    return BARE_ISSUE_URL_RE.sub(as_ref, ANGLED_ISSUE_URL_RE.sub(as_ref, line))
 
 
 def line_ref(line: str, host: str) -> tuple[str, str] | None:
